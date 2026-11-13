@@ -530,6 +530,18 @@ legacy handoff bodies before hydration; bounded source readers preserve old embe
 and summary-only text. The existing V2 event transaction, delivery receipts and pending-delivery
 uncertainty own execution. See [context handoffs](./context-handoffs.md).
 
+Archived bodies are stored once. Before the 2026-10-13 reference change, handoffs copied whole
+conversations into the archive, once per status event; on one real database 1.6M archived
+messages were copies of 279k distinct bodies. A background pass at 10% duty
+(`shareLegacyContextHistories`, started by `DatabaseStorage`) moves each verified source to the
+content-addressed `scient_history_bodies` table, recording it in `scient_handoff_shared_sources`
+and `scient_handoff_shared_messages`. Hashes cover the stored bytes and bodies are copied inside
+SQLite, so readers return byte-identical text; a source that does not verify stays inline. A
+large `summary` on a handoff timeline item that equals its own source's summary keeps a 960-char
+inline prefix (all the delta summarizer reads) and a private `scientSummaryBody` reference that
+wire and detail reads never return. Freed pages return to disk only through the offline repair
+in Settings > Storage; databases copied from V1 keep `auto_vacuum = NONE` until then.
+
 Cleanup acceptance must cover the actual default Scient composition and resource use, alongside
 native/portable continuity and frozen visibility. Testing an unused budget formula or forcing the
 generic fixture policy does not establish Scient's behavior. Check serialized bytes fetched,

@@ -147,8 +147,12 @@ export default function WordDocument(props: {
       if (state.error !== undefined) onError(state.error);
       if (state.limited) onLimited();
       setOpened(state.opened);
-      if (state.opened)
-        onDetails(`${state.opened.pages.length}${state.opened.complete ? "" : "+"} pages`);
+      if (state.opened) {
+        const { pages, complete } = state.opened;
+        onDetails(
+          `${pages.length}${complete ? "" : "+"} page${pages.length === 1 && complete ? "" : "s"}`,
+        );
+      }
     };
     show(session.state());
     const unsubscribe = session.subscribe(show);

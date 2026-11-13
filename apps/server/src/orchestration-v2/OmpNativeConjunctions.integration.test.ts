@@ -28,7 +28,7 @@ it.live.each(
       const receipts = yield* CommandReceiptStoreV2;
       const outbox = yield* EffectOutboxV2;
       const original = yield* f.seed;
-      const opening = yield* worker.runOnce.pipe(Effect.forkScoped);
+      const opening = yield* worker.runOnce().pipe(Effect.forkScoped);
       yield* Deferred.await(f.readyEntered).pipe(Effect.timeout("10 seconds"));
       const parked = yield* f.snapshot("startup-held");
       assert.include(["preparing", "starting"], parked.runs[0]!.status);

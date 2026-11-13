@@ -167,6 +167,7 @@ function startWithMissingWorktree(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
         Layer.succeed(FileSystem.FileSystem, {
           exists: () => Effect.succeed(false),
           realPath: (target: string) =>
@@ -1010,6 +1011,25 @@ function makeLocalCommandHarness(input: {
     ProjectionStore.ProjectionStoreV2Shape["getContextHistoryCandidates"]
   >(() => Effect.succeed([]));
   const prepareProviderHandoff = vi.fn();
+  const getRuntimeRecoveryProjection = vi.fn<
+    ProjectionStore.ProjectionStoreV2Shape["getRuntimeRecoveryProjection"]
+  >(() =>
+    "recoveryPreparationFailure" in input || recoveryReadsFailed
+      ? Effect.fail(
+          new ProjectionStore.ProjectionStoreReadError({
+            threadId,
+            cause: input.recoveryPreparationFailure ?? "database unavailable after running commit",
+          }),
+        )
+      : Effect.succeed({
+          ...projection,
+          hasConversation: projection.messages.some(
+            (m) =>
+              m.role === "user" &&
+              (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
+          ),
+        }),
+  );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -1042,6 +1062,7 @@ function makeLocalCommandHarness(input: {
             }),
         }),
         IdAllocator.layer,
+        Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
@@ -1062,24 +1083,16 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,
           getTurnStartContext,
-          getRuntimeRecoveryProjection: () =>
-            "recoveryPreparationFailure" in input || recoveryReadsFailed
+          getRuntimeRecoveryProjection,
+          getRun: (_threadId, id) =>
+            recoveryReadsFailed
               ? Effect.fail(
                   new ProjectionStore.ProjectionStoreReadError({
                     threadId,
-                    cause:
-                      input.recoveryPreparationFailure ??
-                      "database unavailable after running commit",
+                    cause: "database unavailable after running commit",
                   }),
                 )
-              : Effect.succeed({
-                  ...projection,
-                  hasConversation: projection.messages.some(
-                    (m) =>
-                      m.role === "user" &&
-                      (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
-                  ),
-                }),
+              : Effect.succeed(projection.runs.find((candidate) => candidate.id === id)),
           hasUnpairedRunInterruptRequest: () => Effect.succeed(false),
           getTurnStartHistory: () =>
             input.previousTurn !== undefined
@@ -1136,6 +1149,7 @@ function makeLocalCommandHarness(input: {
     settledRuns,
     getThreadRecords,
     getTurnStartContext,
+    getRuntimeRecoveryProjection,
     setProjection: (next: OrchestrationV2ThreadProjection) => {
       projection = next;
     },
@@ -1938,6 +1952,29 @@ effectIt.effect("does not overwrite a run interrupted while its provider session
     expect(projection.nodes[0]?.status).toBe("pending");
     expect(projection.turnItems).toEqual([]);
     expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("checks the run's status without loading the thread's history", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+
+    yield* harness.start;
+
+    const controls = harness.startRootRun.mock.calls[0]?.[0];
+    expect(controls).toBeDefined();
+    if (controls === undefined) return;
+    expect(yield* controls.shouldStartProviderTurn!()).toBe(true);
+    expect(yield* controls.shouldFinalizeRun!()).toBe(true);
+    // Each check needs one run row; the recovery projection reads every run and open turn item.
+    // The one read left is the start's inherited background items snapshot, not a status check.
+    expect(
+      harness.getRuntimeRecoveryProjection.mock.calls.length,
+      "recovery projection reads beyond the inherited background items snapshot",
+    ).toBe(1);
   }),
 );
 

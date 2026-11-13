@@ -148,8 +148,8 @@ Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
 (`scient/presentation/MarkdownCodeBlock.tsx`, with `CodeBlockActions.tsx` and
 `CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
 `ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
-hand. T3's invisible placeholder while a language loads (#11062), the MorphIcon copy button
-(#14924) and the pressed wrap toggle (#13208) are ported. Sharing the generic implementation with
+hand. T3's invisible placeholder while a language loads (#11062), the copy button that swaps its
+icon without morphing (#33985) and the pressed wrap toggle (#13208) are ported. Sharing the generic implementation with
 upstream's extracted `chat/MarkdownCodeBlock.tsx` remains an open follow-up. Closed Mermaid fences render
 even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
 through `scient/presentation/ScientRichFence.tsx`. Its Mermaid card, document previews and Word
@@ -428,9 +428,8 @@ Status layout entirely. The shelf therefore lives only in the Status layout, and
 the Sections view receives the complete inbox in normal order so the toggle can
 neither hide nor reorder a thread inside a section. The shelf setting still
 decodes to `false`, so the beta is opt-in. Separately, upstream's mobile update
-documentation was removed from user Help: `docs/internals/scient-mobile-release-hold.md`
-records that there is no supported Scient mobile app and prohibits presenting that
-channel as Scient distribution.
+documentation was removed from user Help; the mobile hold it recorded is now part of
+[Mobile release](docs/operations/mobile-release.md).
 
 The preceding qualified alignment is recorded in
 [the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md) ([Scient PR #472](https://github.com/ScientFactory/scient-desktop/pull/472)).
@@ -643,6 +642,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`eceeab4d5c5bb02b58906978ff9e50bbd595ec19` is recorded in
+[the 2026-11-12 eceeab4d5c receipt](docs/internals/t3-upstream-sync-20261112-eceeab4d5c.md).
+Literal merge `24bf8e8936698b61e604963c41cf9bd5f016140a` has owned base
+`e95317fe8b7dff07b0b017599daa24e7bd4b296b` and the frozen official target as parents, retaining
+the 243 official commits after `44ebb2fe57`. Scient's copies of its own fixes T3 merged (#34460,
+#34461, #32040) give way to T3's code. "Continue threads after restarts" takes T3's default (on)
+and is turned on once for everyone. Grok skips an effort it cannot apply, as in T3. T3's two
+migrations are appended as 85 and 86. Release remains separate.
+
+The previous committed alignment through
 `44ebb2fe57465d32f2bd07c5eb3d8e871bdf5ed5` is recorded in
 [the 2026-11-11 44ebb2fe57 receipt](docs/internals/t3-upstream-sync-20261111-44ebb2fe57.md).
 Literal merge `18697158fb3c076f62fbe0aee8c9c37c0314d022` has owned base
@@ -651,7 +660,7 @@ the 61 official commits after `7171fdd771`. T3's timeline viewport rules land in
 scrolling. A restart that Stop already reached is still refused, so nothing starts while a
 provider shuts down. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `7171fdd7716b05dc1b4be40c26ac78e8bb35f80c` is recorded in
 [the 2026-11-10 7171fdd771 receipt](docs/internals/t3-upstream-sync-20261110-7171fdd771.md).
 Literal merge `3bce08006815ca295d8e60f2402606ad4d666f0d` has owned base
@@ -1920,6 +1929,18 @@ merges must not restore `~/.t3` paths in these scripts. The
 Codex desktop handoff and its return addresses use Scient's registered
 `scient://` schemes, never `t3code://` or T3's hosted origin.
 
+T3's mobile workflows (`.github/workflows/mobile-*.yml`) keep their structure but
+run only when the owner sets repository variable `SCIENT_MOBILE_RELEASE=true`;
+the fork-preview and APK-mirror workflows need their own variables as well. They
+use GitHub-hosted runners with the Actions cache instead of Blacksmith sticky disks,
+take Scient's Expo project from `T3CODE_EAS_OWNER` and `T3CODE_EAS_PROJECT_ID`,
+and keep a development client as a run artifact because Scient has no shared
+native-client cache. Upstream refreshes must not restore the `pingdotgg/t3code`
+guards or Blacksmith labels. The hosted web build writes the phone app's
+`.well-known` link files (`infra/scient-web/well-known.mjs`): only `com.scientfactory.*`
+identifiers, with Android fingerprints from build-time variables. See
+[Mobile release](docs/operations/mobile-release.md).
+
 Native helpers ship as `scient-resource-monitor` (`.exe` on Windows),
 `scient-kde-snap-shot`, `scient-hyprland-snap-shot` and `scient-browser-secret`,
 because process lists such as Windows Task Manager show those names.
@@ -2062,6 +2083,44 @@ desktop tab is never set up and keeps showing the start page over a page that lo
 T3 as pingdotgg/t3code#34252 (issue #34251). When it merges, take T3's version, then delete the
 marked block and `DesktopBrowserChannel.scient.test.ts`.
 
+## Git maintenance, untracked scans and owned processes
+
+Scient's checkpoints publish with a `git fetch`, which T3 does not (T3 uses `update-ref`), so
+Scient owns the fix that keeps that fetch from starting Git's automatic maintenance
+(`ScientCheckpointCapture.ts`) and the server-owned upkeep that replaces it
+(`ScientCheckpointUpkeep.ts`, provided once in `server.ts`, requested from `GitVcsDriver.ts`).
+Detached maintenance escaped the app's process group, and on Git without the detached-lock fix
+(Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
+Checkpoint packing and upkeep share one pack-memory setting (one thread, a 256 MiB delta window).
+The server keeps a minute-by-minute memory record that outlives a crash
+(`scient/observability/ResourceRecord.ts`, `logs/resource-record.ndjson`, provided in `server.ts`
+beside the upkeep).
+
+Marked blocks in T3-owned files, to offer upstream and then drop:
+
+- `GitVcsDriverCore.ts` and `GitVcsDriver.ts`: the worktree base fetch and the storage cleanup's
+  tracking-branch fetch pass `--no-auto-gc` (T3 already does this for its status fetch). Tested in
+  `GitVcsDriverCore.scient.test.ts`. Asked on pingdotgg/t3code#34042, which reworks these fetches.
+- `GitVcsDriverCore.ts`: T3's backoff for a failed untracked-file listing (pingdotgg/t3code#34460,
+  from Scient) is upstream code now. Scient's marked blocks keep only its follow-up: overlapping
+  status reads share one running listing, and the error keeps the listing's `GitCommandError` as
+  `cause`. Tested in `GitVcsDriverCore.scient.test.ts`; offered as pingdotgg/t3code#34574.
+- `GitVcsDriverCore.ts` (`prepareCommitContext`): drafting a commit message stages into a
+  temporary object directory, reading the repository's own objects and every alternate it lists
+  directly, so a draft without a commit leaves no objects in the repository. Tested in
+  `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34595 (issue #34594).
+- `CodexAdapterV2.ts`: T3's 2 s force-kill deadline (pingdotgg/t3code#34461, from Scient) is
+  upstream code now. Only its test keeps a marked wait for the stand-in's `ready` line in
+  `CodexAdapterV2.test.ts`, offered as pingdotgg/t3code#34575.
+- `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
+  (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
+  is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the
+  server dies, the fd-3 watcher lists the CLI's live descendants in other groups before its group
+  kill. Only the agent's own tree, never terminals. Tested in `ClaudeProcessGroup.scient.test.ts`.
+  Reported as pingdotgg/t3code#34459 with this design as a proposal.
+
+When T3 takes an equal change, use its version and delete the block and its `.scient` test.
+
 ## Multiple app windows
 
 Scient Desktop can run several full app windows in one Electron process
@@ -2070,18 +2129,18 @@ Scient Desktop can run several full app windows in one Electron process
 files keep marked seams only. Paths below are relative to `apps/desktop/src`, or
 to `apps/web/src` after `web/`.
 
-| Area                      | T3 files with marked seams                                                                                                                              | What the seam does                                                                                                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Window registry           | `electron/ElectronWindow.ts`                                                                                                                            | Keeps app windows in focus order; the head is the main window (`appWindows`)                                                                                                                         |
-| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `electron/ElectronMenu.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts` | `createWindow({ route, cascadeFrom, atCursor })`, `openNewWindow`, New Window in File and Dock menus, per-window bounds, focus; registers `scient/multiWindow/ipc.ts` and spreads its preload bridge |
-| Sender checks             | `ipc/DesktopIpc.ts`, `ipc/methods/{window,snapShot,appActivation,webLinks}.ts`, `app/DesktopAppActivation.ts`, `app/DesktopWebLinks.ts`                 | Accept any app window's renderer and act on its window; deliver to a ready renderer                                                                                                                  |
-| Shared settings           | `ipc/methods/{clientSettings,connectionCatalog}.ts`, `web/hooks/useSettings.ts`, `web/connection/storage.ts`                                            | Change notices to other windows; Web Lock around writes                                                                                                                                              |
-| Preview hosting           | `preview/Manager.ts`, `web/browser/ElectronBrowserHost.tsx`, `web/browser/desktopTabLifetime.ts`                                                        | Guests from any app window; one window mounts each tab's webview; another window's close waits                                                                                                       |
-| Persisted renderer stores | `web/composerDraftStore.ts`, `web/promptStashStore.ts`, `web/uiStateStore.ts`, `web/rightPanelStore.ts`                                                 | Merge on save with what other windows or web client tabs stored (the stash adopts it before each change); adopt their saves from `storage` events                                                    |
-| Notifications             | `web/components/ThreadNotificationCoordinator.tsx`                                                                                                      | Only the presenter window plays sounds and shows system notifications                                                                                                                                |
-| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                            | Thread and draft menu item, shown only when the desktop bridge can open windows                                                                                                                      |
-| Side panel tab windows    | `web/components/RightPanelTabs.tsx`, `web/components/ChatView.tsx`, `web/appInit.tsx`                                                                   | Tab menu item, dragging a tab out of the strip, the shown page's opener, and the new window's request to show that tab                                                                               |
-| Page menus                | `web/components/preview/PreviewView.tsx`, `web/components/device/DeviceControlsRail.tsx`, `web/components/pullRequest/PullRequestActionsMenu.tsx`       | Open in new window in the browser, device and pull request menus: an import and one `PanelTabNewWindowItem` element each                                                                             |
+| Area                      | T3 files with marked seams                                                                                                                                                                                           | What the seam does                                                                                                                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Window registry           | `electron/ElectronWindow.ts`                                                                                                                                                                                         | Keeps app windows in focus order; the head is the main window (`appWindows`)                                                                                                                         |
+| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `electron/ElectronMenu.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts`                                                              | `createWindow({ route, cascadeFrom, atCursor })`, `openNewWindow`, New Window in File and Dock menus, per-window bounds, focus; registers `scient/multiWindow/ipc.ts` and spreads its preload bridge |
+| Sender checks             | `ipc/DesktopIpc.ts` (T3 answers only the main window; Scient also answers its other app windows), `ipc/methods/{window,snapShot,appActivation,webLinks}.ts`, `app/DesktopAppActivation.ts`, `app/DesktopWebLinks.ts` | Accept any app window's renderer and act on its window; deliver to a ready renderer                                                                                                                  |
+| Shared settings           | `ipc/methods/{clientSettings,connectionCatalog}.ts`, `web/hooks/useSettings.ts`, `web/connection/storage.ts`                                                                                                         | Change notices to other windows; Web Lock around writes                                                                                                                                              |
+| Preview hosting           | `preview/Manager.ts`, `web/browser/ElectronBrowserHost.tsx`, `web/browser/desktopTabLifetime.ts`                                                                                                                     | Guests from any app window; one window mounts each tab's webview; another window's close waits                                                                                                       |
+| Persisted renderer stores | `web/composerDraftStore.ts`, `web/promptStashStore.ts`, `web/uiStateStore.ts`, `web/rightPanelStore.ts`                                                                                                              | Merge on save with what other windows or web client tabs stored (the stash adopts it before each change); adopt their saves from `storage` events                                                    |
+| Notifications             | `web/components/ThreadNotificationCoordinator.tsx`                                                                                                                                                                   | Only the presenter window plays sounds and shows system notifications                                                                                                                                |
+| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                                                                                         | Thread and draft menu item, shown only when the desktop bridge can open windows                                                                                                                      |
+| Side panel tab windows    | `web/components/RightPanelTabs.tsx`, `web/components/ChatView.tsx`, `web/appInit.tsx`                                                                                                                                | Tab menu item, dragging a tab out of the strip, the shown page's opener, and the new window's request to show that tab                                                                               |
+| Page menus                | `web/components/preview/PreviewView.tsx`, `web/components/device/DeviceControlsRail.tsx`, `web/components/pullRequest/PullRequestActionsMenu.tsx`                                                                    | Open in new window in the browser, device and pull request menus: an import and one `PanelTabNewWindowItem` element each                                                                             |
 
 Desktop test files that build `ElectronWindow`, `DesktopWindow` or `ElectronMenu`
 fakes carry marked `appWindows`, `openNewWindow` and `setDockMenu` members;
@@ -2114,33 +2173,10 @@ When aligning, check:
 ## Office preview limits
 
 T3's `apps/web/src/components/files/officeArchive.ts` bounds a Word file before its engine opens it.
-The bounds were sized for a renderer on the page's main thread, so ordinary documents lost parts:
-any table over about 2,000 tags or 128 KB cut the document off there, a body stopped at 5,000
-paragraphs, and styles past 1,024 definitions or lists past 2,000 tags were dropped, which unstyled
-the whole document. Scient replaces the numbers with `WORD_LIMITS`, measured against the
-`@betteroffice/docx` engine, which runs in its own worker:
-
-- Paragraph text, 32K characters. Line breaking grows with the square of one paragraph's text
-  (16K 0.7 s, 32K 1.5 s, 128K 11.6 s on an M-series Mac). This replaces the 128 KB element limit,
-  which mostly measured picture markup.
-- One body element, 100,000 tags: a table is laid out in one go, and a 4,000-row table takes 2.2 s.
-- A header or footer, 128 KB: its cost grows with its own length, not the page count. A longer
-  one alone is left out, as an unused one is, and the preview says it is limited only when the
-  document uses it. Text in CDATA counts toward a paragraph's limit.
-- The body's 4 MB read limit stays (about 700 pages of prose, opened in under 1 s). Styles, lists,
-  notes and the expansion totals rose to where they no longer bind real documents; the engine opened
-  4,000 chained styles, 2,000 lists or 5,000 footnotes in under 0.75 s.
-- Archive, entry and nesting limits are T3's, unchanged.
-
-`WordDocument.tsx` shows the first 1,000 pages with the "Preview limited" notice instead of
-replacing them with an error once layout passes 1,000. Each changed line in these files names a
-`WORD_LIMITS` field or sits in a marked block. T3's limit cases in
-`AttachmentFilePreview.browser.test.tsx` size their inputs and bounds from `WORD_LIMITS`, so each
-still crosses the limit it checks. If T3 resizes its own budgets, compare them with these
-measurements before taking either.
-
-The limits (not the 1,000-page change) are offered to T3 as pingdotgg/t3code#32040 (issue #32039).
-If it merges, take T3's version and drop the marked lines in `officeArchive.ts` and its test.
+Its limits are the ones Scient measured against the `@betteroffice/docx` engine, which runs in its
+own worker; they reached T3 as pingdotgg/t3code#32040 and the file is T3's, unchanged. Scient's
+`WordDocument.tsx` adds one thing: once layout passes 1,000 pages it shows the first 1,000 with the
+"Preview limited" notice instead of replacing them with an error.
 
 ## Office reader
 

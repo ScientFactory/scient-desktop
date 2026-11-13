@@ -4,10 +4,12 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 import type { CursorSettings } from "../settings.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
@@ -704,6 +706,36 @@ describe("checkCursorProviderStatus", () => {
       }).pipe(Effect.provideService(CursorSdkCatalog.CursorSdkCatalog, catalog));
 
       expect(provider).toMatchObject(expected);
+    }),
+  );
+
+  effectIt.effect("does not report a single slow catalog read as a provider error", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() => {
+            reads += 1;
+            return reads === 1
+              ? Effect.never
+              : Effect.succeed({
+                  user: {
+                    apiKeyName: "test-key",
+                    userEmail: "cursor@example.com",
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                  },
+                  models: [sdkParameterizedModel],
+                });
+          }),
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 minute");
+      const provider = yield* Fiber.join(fiber);
+
+      expect(provider.status).not.toBe("error");
     }),
   );
 

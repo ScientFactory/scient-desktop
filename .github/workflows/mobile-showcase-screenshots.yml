@@ -44,10 +44,10 @@ env:
 jobs:
   ios:
     name: iPhone, iPhone Duo, and iPad 13
-    # Mobile showcase capture remains disabled until its product and release
-    # owners explicitly enable it.
-    if: ${{ false }}
-    runs-on: blacksmith-12vcpu-macos-26
+    # SCIENT-FORK: off until the owner sets the SCIENT_MOBILE_RELEASE repository variable;
+    # SCIENT_MOBILE_MACOS_RUNNER names another macOS runner label.
+    if: vars.SCIENT_MOBILE_RELEASE == 'true' && (inputs.platform == 'all' || inputs.platform == 'ios')
+    runs-on: ${{ vars.SCIENT_MOBILE_MACOS_RUNNER || 'xcode-27' }}
     # Capturing every palette multiplies the device matrix by six, and only the
     # one native build is shared between them.
     timeout-minutes: ${{ inputs.theme == 'all' && 300 || 60 }}
@@ -90,7 +90,7 @@ jobs:
           axe --version
 
       - name: Install foldable simulator controls
-        run: npm install --global agent-device@0.21.25
+        run: npm install --global agent-device@0.21.36
 
       - name: Capture iOS showcase
         run: pnpm screenshots:mobile --platform ios --appearance "${{ inputs.appearance }}" --theme "${{ inputs.theme }}"
@@ -109,10 +109,9 @@ jobs:
 
   android:
     name: Android phone, 7-inch tablet, and 10-inch tablet
-    # Mobile showcase capture remains disabled until its product and release
-    # owners explicitly enable it.
-    if: ${{ false }}
-    runs-on: blacksmith-16vcpu-ubuntu-2404
+    # SCIENT-FORK: off until the owner sets the SCIENT_MOBILE_RELEASE repository variable.
+    if: vars.SCIENT_MOBILE_RELEASE == 'true' && (inputs.platform == 'all' || inputs.platform == 'android')
+    runs-on: ubuntu-24.04
     # Capturing every palette multiplies the device matrix by six, and only the
     # one native build is shared between them.
     timeout-minutes: ${{ inputs.theme == 'all' && 300 || 60 }}
@@ -169,7 +168,8 @@ jobs:
           arch: x86_64
           profile: pixel_7_pro
           avd-name: Pixel_10_Pro
-          cores: 8
+          # SCIENT-FORK: a standard GitHub-hosted Linux runner has 4 vCPUs.
+          cores: 4
           ram-size: 4096M
           disable-animations: false
           script: pnpm screenshots:mobile --platform android --appearance "${{ inputs.appearance }}" --theme "${{ inputs.theme }}"

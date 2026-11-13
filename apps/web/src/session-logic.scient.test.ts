@@ -489,7 +489,7 @@ describe("rewind targets without a file snapshot", () => {
         deriveRevertTurnCountByUserMessageId({
           timelineEntries: [1, 2, 3].map(userTurn),
           checkpoints,
-          threadStartCheckpointReady: true,
+          threadStartCheckpointAvailable: true,
         }),
       );
     expect(targets([summary(1, "error"), summary(2, "missing")])).toEqual({

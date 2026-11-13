@@ -133,6 +133,9 @@ export * from "./scientConversationExport.ts";
 // SCIENT-FORK:START — Scient conversation import contracts (new file, no upstream edits).
 export * from "./scientConversationImport.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Cloud desktop-server contracts (new file, no upstream edits).
+export * from "./scientCloud.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient managed Pandoc contracts (new file, no upstream edits).
 export * from "./scientPandoc.ts";
 // SCIENT-FORK:END

@@ -162,6 +162,26 @@ export default function OfficeViewer(props: {
     );
   if (!opened) return <FileSurfaceLoading />;
   const prepared = opened.prepared; // SCIENT-FORK
+  // SCIENT-FORK:START — Word and PowerPoint keep their engine session with the document.
+  const viewer =
+    props.kind === "docx" ? (
+      <WordDocument
+        bytes={prepared.bytes}
+        session={opened.session}
+        onDetails={setDetails}
+        onError={fail}
+        // A stable callback, as the viewer's effect depends on it.
+        onLimited={showLimited}
+      />
+    ) : (
+      <Presentation
+        bytes={prepared.bytes}
+        session={opened.session}
+        onDetails={setDetails}
+        onError={fail}
+      />
+    );
+  // SCIENT-FORK:END
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* SCIENT-FORK:START — no details row; the page count stays announced for assistive tech. */}
@@ -177,27 +197,16 @@ export default function OfficeViewer(props: {
         </FileSurfaceNotice>
       ) : null}
       <Suspense fallback={<FileSurfaceLoading />}>
-        {/* SCIENT-FORK:START — Word and PowerPoint keep their engine session with the document. */}
-        {props.kind === "xlsx" ? (
-          <Spreadsheet bytes={prepared.bytes} onDetails={setDetails} onError={fail} />
-        ) : props.kind === "docx" ? (
-          <WordDocument
+        {prepared.view ? (
+          <Spreadsheet
             bytes={prepared.bytes}
-            session={opened.session}
+            view={prepared.view}
             onDetails={setDetails}
             onError={fail}
-            // A stable callback, as the viewer's effect depends on it.
-            onLimited={showLimited}
           />
         ) : (
-          <Presentation
-            bytes={prepared.bytes}
-            session={opened.session}
-            onDetails={setDetails}
-            onError={fail}
-          />
+          viewer
         )}
-        {/* SCIENT-FORK:END */}
       </Suspense>
     </div>
   );

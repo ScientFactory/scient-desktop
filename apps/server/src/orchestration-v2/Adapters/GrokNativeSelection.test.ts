@@ -452,9 +452,10 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
           options: [{ id: "reasoningEffort", value: "high" }],
         });
         yield* h.send;
+        // V1 re-applies the alias with its effort; V2 already reads it from the session.
         assert.lengthOf(
           h.requests().filter((request) => request.method.startsWith("session/set_")),
-          0,
+          generation === "1" ? 1 : 0,
         );
         assert.lengthOf(
           h.requests().filter((request) => request.method === "session/prompt"),
@@ -511,27 +512,25 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
         }),
       ),
   );
-  it.effect(
-    "rejects a well-formed V2 effort absent from the native ladder before any write or prompt",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const h = yield* harness("2", {
-            model: "grok-build",
-            options: [{ id: "reasoningEffort", value: "medium" }],
-          });
-          assert.isTrue(Exit.isFailure(yield* h.send.pipe(Effect.exit)));
-          assert.lengthOf(
-            h
-              .requests()
-              .filter(
-                (request) =>
-                  request.method.startsWith("session/set_") || request.method === "session/prompt",
-              ),
-            0,
-          );
-        }),
-      ),
+  // An effort Grok cannot apply is skipped with a warning; the turn still runs, as in T3.
+  it.effect("skips a V2 effort absent from the native ladder and still prompts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness("2", {
+          model: "grok-build",
+          options: [{ id: "reasoningEffort", value: "medium" }],
+        });
+        yield* h.send;
+        assert.lengthOf(
+          h.requests().filter((request) => request.method === "session/set_config_option"),
+          0,
+        );
+        assert.lengthOf(
+          h.requests().filter((request) => request.method === "session/prompt"),
+          1,
+        );
+      }),
+    ),
   );
   it.effect.each(
     (
@@ -540,7 +539,7 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
         ["unavailable", { T3_ACP_GROK_EFFORT_UNAVAILABLE: "1" }],
       ] as const
     ).map(([name, options]) => ({
-      caseTitle: `rejects ${name} explicit reasoning before any prompt`,
+      caseTitle: `still prompts with ${name} explicit reasoning`,
       name,
       options,
     })),
@@ -552,10 +551,10 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
           { model: "grok-build", options: [{ id: "reasoningEffort", value: "low" }] },
           options,
         );
-        assert.isTrue(Exit.isFailure(yield* h.send.pipe(Effect.exit)));
+        yield* h.send;
         assert.lengthOf(
           h.requests().filter((request) => request.method === "session/prompt"),
-          0,
+          1,
         );
       }),
     ),

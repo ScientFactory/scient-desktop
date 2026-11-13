@@ -41,7 +41,6 @@ const diskImage = (root: string, format: "APFS" | "ExFAT" | "JHFS+" | "MS-DOS FA
     yield* Effect.promise(async () => {
       NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
         "create",
-        "-quiet",
         "-size",
         "40m",
         "-fs",
@@ -57,7 +56,7 @@ const diskImage = (root: string, format: "APFS" | "ExFAT" | "JHFS+" | "MS-DOS FA
     let mounted: string | null = null;
     const detach = Effect.sync(() => {
       if (mounted === null) return;
-      NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", "-quiet", mounted]);
+      NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", mounted]);
       mounted = null;
     });
     yield* Effect.addFinalizer(() => detach);
@@ -68,7 +67,6 @@ const diskImage = (root: string, format: "APFS" | "ExFAT" | "JHFS+" | "MS-DOS FA
           await NodeFSP.mkdir(point);
           NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
             "attach",
-            "-quiet",
             "-nobrowse",
             "-mountpoint",
             point,

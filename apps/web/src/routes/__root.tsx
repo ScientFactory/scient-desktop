@@ -12,7 +12,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { Check, Copy } from "lucide";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
@@ -32,6 +32,9 @@ import { OverleafNewProjectDialogHost } from "../scient/overleaf/OverleafNewProj
 import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
 // SCIENT-FORK:END
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+// SCIENT-FORK:START — the Share link dialog.
+import { ShareLinkDialogHost } from "../scient/cloud/ShareLinkDialog";
+// SCIENT-FORK:END
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -51,14 +54,12 @@ import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoo
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { AppToastProviders } from "../components/ui/toast";
 import { isElectron } from "../env";
 // SCIENT-FORK:START — route recovery respects the file save barrier.
 import { requestDesktopReload } from "../lib/desktopReload";
 // SCIENT-FORK:END
-import { cn } from "../lib/utils";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -179,6 +180,9 @@ function RootRouteBranch() {
   // SCIENT-FORK:END hosted-landing
 
   if (pathname === GUEST_PAGE_PATH) return <Outlet />;
+  // SCIENT-FORK:START — a shared conversation opened while signed in reads like the public page.
+  if (pathname.startsWith("/shared/")) return <Outlet />;
+  // SCIENT-FORK:END
 
   if (
     pathname === "/pair" ||
@@ -224,6 +228,9 @@ function RootRouteBranch() {
       <ProviderSignInPageCoordinator />
       {/* SCIENT-FORK:END */}
       <GuestShareDialogHost />
+      {/* SCIENT-FORK:START — the Share link dialog. */}
+      <ShareLinkDialogHost />
+      {/* SCIENT-FORK:END */}
       <ProjectCloneToastCoordinator />
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
@@ -353,7 +360,7 @@ function CopyErrorButton({ report }: { report: string }) {
 
   return (
     <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
-      <MorphIcon className={cn(isCopied && "text-success")} icon={isCopied ? Check : Copy} />
+      {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
       {isCopied ? "Copied" : "Copy error"}
     </Button>
   );

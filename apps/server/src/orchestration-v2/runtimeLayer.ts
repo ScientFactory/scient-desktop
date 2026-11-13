@@ -206,6 +206,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       contextHandoffSettings,
       Layer.effect(ServerConfig, ServerConfig),
       Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
+      TurnItemPositionStore.layer,
     ),
   ),
 );
@@ -283,6 +284,8 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
       layerEventSink,
       IdAllocator.layer,
       ProviderSessionRuntime.layer,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
+      ThreadCommandExecutor.layer,
     ),
   ),
 );

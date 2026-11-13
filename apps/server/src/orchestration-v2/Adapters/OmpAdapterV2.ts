@@ -47,6 +47,7 @@ import {
   ompDashboardProgress,
 } from "../../provider/omp/OmpDashboardPage.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
+import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import {
   assertReadableOmpSessionFile,
   ompSessionFilesEqual,
@@ -663,6 +664,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           });
 
         const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
+        const waitRows = new OmpWaitRows();
         // Native subagents' own steps, read from the conversation OMP saves for each:
         // at most once a second while one runs, then twice after it ends, since its last
         // record can land after its ending frame. Two reads run at a time per session.
@@ -920,12 +922,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               return Effect.void;
             }
             case "assistant-delta":
+              waitRows.noteActivity();
               return onUpdate({
                 type: "text",
                 id: update.messageId,
                 delta: client.redaction.exact(update.delta),
               });
             case "reasoning-delta":
+              waitRows.noteActivity();
               return onUpdate({
                 type: "text",
                 id: update.messageId,
@@ -951,6 +955,16 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               if (previous && previous.status !== "running") return Effect.void;
               const rawOutput = nativeToolText(update.data) ?? update.detail;
               const name = update.name === "tool" && previous ? previous.name : update.name;
+              const waitTitle = waitRows.isWait(name)
+                ? waitRows.title(
+                    update.toolCallId,
+                    update.status === "inProgress" ? "running" : update.status,
+                    update.data,
+                  )
+                : undefined;
+              if (waitRows.isWait(name)) {
+                if (waitTitle === undefined) return Effect.void;
+              } else waitRows.noteActivity();
               const computer =
                 ompComputerPresentation(
                   name,
@@ -968,6 +982,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 type: "tool",
                 id: update.toolCallId,
                 name,
+                ...(waitTitle === undefined ? {} : { title: waitTitle }),
                 ...computer,
                 ...(images.length > 0
                   ? { images }
@@ -1106,6 +1121,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     ...(update.failureClass === undefined
                       ? {}
                       : { failureClass: update.failureClass }),
+                    ...(update.resetAt === undefined ? {} : { resetAt: update.resetAt }),
                     ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
                     broken,
                   }),
@@ -1142,6 +1158,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             case "warning":
               return notice(update.message);
             case "subagent":
+              // Only a settled subagent whose row shows its outcome makes a wait's copy redundant.
+              waitRows.noteSubagent(
+                update.id,
+                update.status !== "inProgress" &&
+                  (update.detail !== undefined ||
+                    (target.driverKind === "scient" && update.result !== undefined)),
+              );
               return Effect.andThen(
                 onUpdate({
                   type: "subagent",
@@ -1302,6 +1325,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             case "turn-started":
               manualCompaction = false;
               ordinaryTools.clear();
+              waitRows.reset();
               return onUpdate({ type: "continuation-started" });
             case "model-changed":
               if (update.model) activeModel = decodeOmpModelSlug(update.model);

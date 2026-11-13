@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scientOwnedProcessTree": {
+      "types": "./src/scientOwnedProcessTree.ts",
+      "import": "./src/scientOwnedProcessTree.ts"
+    },
     "./scientAccountSecretRequest": {
       "types": "./src/scientAccountSecretRequest.ts",
       "import": "./src/scientAccountSecretRequest.ts"
@@ -54,6 +58,10 @@
     "./scientTextGenerationSelection": {
       "types": "./src/scientTextGenerationSelection.ts",
       "import": "./src/scientTextGenerationSelection.ts"
+    },
+    "./pullRequestAnchor": {
+      "types": "./src/pullRequestAnchor.ts",
+      "import": "./src/pullRequestAnchor.ts"
     },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",

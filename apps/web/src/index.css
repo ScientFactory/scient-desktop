@@ -4,6 +4,7 @@
 @import "./scient/typography/profile.css";
 @import "./scient/presentation/scient-content-scrollbar.css";
 @import "./scient/presentation/scient-trace.css";
+@import "./scient/presentation/scient-reasoning-trace.css";
 
 /* SCIENT-FORK:START — tests, fixtures and docs never render in the app, so their
    class names must not reach production CSS. CI skips desktop packaging for
@@ -2096,6 +2097,10 @@ code {
 
 .chat-markdown ol ol ol {
   list-style-type: lower-roman;
+}
+
+.chat-markdown.user-message-markdown ol {
+  list-style-type: decimal;
 }
 
 .chat-markdown li + li {

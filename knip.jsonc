@@ -32,6 +32,10 @@
         "qualify-managed-runtime-catalog.ts",
         "mobile-behavior/run.ts",
         "mobile-native-client.ts",
+        // e2e loads its config and the scenarios by path, and starts the app script.
+        "e2e.config.ts",
+        "prove-scenario.ts",
+        "scenarios/*.ts",
         "setup-worktree.ts",
         "sign-macos.ts",
         "publication-after-sign.ts",
@@ -46,7 +50,7 @@
         // Documented manual TeX-to-SVG math-symbol atlas generator.
         "generate-math-symbol-glyphs.mjs",
       ],
-      "ignoreDependencies": ["agent-device", "esbuild"],
+      "ignoreDependencies": ["esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.
       // knip-schemas.test.ts writes a throwaway project to .knip-test-*, which a
       // knip run beside it in check:changed must not report.
@@ -83,6 +87,8 @@
         // graphqlgen reads its config.
         "graphql.config.ts",
       ],
+      // Example programs in skills: agents copy them into connector folders; nothing imports them.
+      "ignore": ["src/scient/skills/built-ins/*/templates/**"],
       // The generated operations export every selection's class.
       "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
       // Keep the transitive Effect runtime pinned for standalone npm installs.
@@ -144,6 +150,9 @@
         "latexPaging.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
         "src/scient/documentPage/main.tsx!",
+        // The public share page (infra/scient-cloud/share) builds from these.
+        "src/scient/cloud/share/main.tsx!",
+        "vite/sharePage.ts",
         // The Visual performance benchmark: its production build configuration,
         // page entry (latex-visual-benchmark.html) and Node runner.
         "latexVisualBenchmark.config.ts",
@@ -228,6 +237,11 @@
     "infra/relay": {
       // Alchemy loads src/worker.ts as the Worker entry and reads its default export.
       "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!", "src/worker.ts!"],
+    },
+    "infra/scient-cloud": {
+      // Alchemy loads src/worker.ts as the Worker entry; scripts/dev.ts serves it locally.
+      // share/vite.config.ts builds the share page from apps/web (apps/web/vite/sharePage.ts).
+      "entry": ["alchemy.run.ts!", "src/worker.ts!", "scripts/*.ts", "share/vite.config.ts"],
     },
     "packages/*": {
       // These workspace packages are private to this monorepo.

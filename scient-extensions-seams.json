@@ -267,6 +267,11 @@
       "purpose": "T3's \"use in another app (MCP)\" palette action lists \"connector\" as a search word; Scient only hides the action without cloud public config. Not part of Scient Extensions."
     },
     {
+      "path": "patches/@cursor__sdk@1.2.0.patch",
+      "anchor": "createLocalExecutor",
+      "purpose": "T3's patch to Cursor's bundled SDK (attribution follows cli-config.json); Cursor's minified code names its own connectors. Not part of Scient Extensions."
+    },
+    {
       "path": "apps/web/src/components/mcp/mcpApps.ts",
       "anchor": "connectorName=",
       "purpose": "T3's MCP wizard fills claude.ai's add-connector link; Scient only renames the connector to Scient. Not part of Scient Extensions."
@@ -447,6 +452,61 @@
       "path": "apps/server/src/scient/skills/PersonalSkillSources.ts",
       "anchor": "scient.plugin.json",
       "purpose": "Leave connector and plugin folders to the connector path when adding skills."
+    },
+    {
+      "path": "apps/server/src/provider/ScientAwareness.ts",
+      "anchor": "buildScientConnectorsAwareness",
+      "purpose": "Offer agents to build a connector when none reaches a service, or to fix one that fails."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/connectorAuthoring.ts",
+      "anchor": "export const copyConnector",
+      "purpose": "Serve scient_connector_copy, check and save from the Accounts toolkit, in the chat's own folder."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/guardedSignIn.ts",
+      "anchor": "kind: \"connector\"",
+      "purpose": "Let a local connector's linked sign-in be renewed unattended, stopping where the person is needed."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/connectorSessions.ts",
+      "anchor": "export const makeConnectorSessions",
+      "purpose": "Hand a signed-in local connector its site's cookies and sign the account in again when the site ends the session."
+    },
+    {
+      "path": "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+      "anchor": "directoryName: \"connector-authoring\"",
+      "purpose": "Embed the connector-authoring skill that agents follow to make and fix connectors."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/scient.skill.json",
+      "anchor": "scient.connector-authoring",
+      "purpose": "Release manifest of the built-in connector-authoring skill."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/http.mjs",
+      "anchor": "export function createHttp",
+      "purpose": "Template connector's polite HTTP helper, written by scient_connector_copy."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/manifest.json",
+      "anchor": "{{NAME}}",
+      "purpose": "Template connector's manifest; scient_connector_copy fills its names."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/mcp.mjs",
+      "anchor": "SIGN_IN_EXPIRED",
+      "purpose": "Template connector's MCP stdio helper, including the session-ended marker Scient reacts to."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/server.mjs",
+      "anchor": "serve({",
+      "purpose": "Template connector's tools (an OpenAlex example), written by scient_connector_copy."
+    },
+    {
+      "path": "apps/server/src/scient/skills/built-ins/connector-authoring/templates/session.mjs",
+      "anchor": "SCIENT_SIGN_IN_COOKIES",
+      "purpose": "Template connector's reader of the session Scient hands a signed-in connector."
     }
   ]
 }

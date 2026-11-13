@@ -23,6 +23,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
+import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 // SCIENT-FORK:START clerk-sign-in-return
@@ -124,6 +125,11 @@ export const make = Effect.gen(function* () {
     yield* electronApp.quit;
     return yield* Effect.interrupt;
   }
+  // Chromium opens these caches at the first event-loop turn, before ready.
+  yield* DesktopUserData.clearStaleGpuCaches({
+    userDataPath,
+    electronVersion: process.versions.electron,
+  });
 
   const pendingSecondInstances: Array<readonly string[]> = [];
   let handleSecondInstance = (argv: readonly string[]) => {

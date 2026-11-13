@@ -15,16 +15,18 @@ concurrency:
 jobs:
   mirror:
     name: Mirror beta APK
-    # SCIENT-FORK:START mobile-publication-hold
-    # Scient mobile artifacts remain held until separately authorized and qualified.
-    if: ${{ false }}
-    # SCIENT-FORK:END mobile-publication-hold
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # SCIENT-FORK:START mobile-release-gate
+    # The mirror publishes GitHub prereleases beside the desktop releases, so it needs its
+    # own SCIENT_MOBILE_APK_MIRROR variable on top of SCIENT_MOBILE_RELEASE
+    # (docs/operations/mobile-release.md).
+    if: vars.SCIENT_MOBILE_RELEASE == 'true' && vars.SCIENT_MOBILE_APK_MIRROR == 'true'
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     env:
-      PACKAGE_NAME: com.t3tools.t3code
+      PACKAGE_NAME: com.scientfactory.mobile
+    # SCIENT-FORK:END mobile-release-gate
     steps:
       - id: credentials
         name: Check for Play credentials

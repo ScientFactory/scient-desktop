@@ -44,6 +44,9 @@ import {
   publishStagedCheckpoint,
   scopedCheckpointCapture,
 } from "./ScientCheckpointCapture.ts";
+// SCIENT-FORK:START — checkpoint repositories get server-owned Git upkeep.
+import { CheckpointUpkeep } from "./ScientCheckpointUpkeep.ts";
+// SCIENT-FORK:END
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -63,7 +66,6 @@ export interface ExecuteGitInput {
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number | null;
-  readonly forceKillAfterMs?: number;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
   /** With appendTruncationMarker, line callbacks continue beyond the buffer cap for progress-only consumers. */
@@ -263,6 +265,10 @@ export interface GitFetchRemoteInput {
   cwd: string;
   remoteName: string;
   refName?: string;
+  // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+  /** For fetches the person did not ask for: Git's maintenance would run detached, unowned. */
+  skipAutoMaintenance?: boolean;
+  // SCIENT-FORK:END
 }
 
 export interface GitRemoteExistsInput {
@@ -556,6 +562,13 @@ function parseGitRemoteVerboseOutput(
   return remotes;
 }
 
+// Trace output and deprecation warnings can precede Git's own message, so check every line.
+const hasStderrLine = (stderr: string, prefixes: ReadonlyArray<string>) =>
+  stderr.split("\n").some((line) => prefixes.some((prefix) => line.startsWith(prefix)));
+
+/** Operation of the error raised when Git cannot say whether a cwd is a work tree. */
+export const WORK_TREE_PROBE_OPERATION = "GitVcsDriver.probeWorkTree";
+
 const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
   (
     process: VcsProcess.VcsProcess["Service"],
@@ -611,21 +624,62 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const commandAvailable = yield* CommandAvailability;
   const random = yield* SecureRandom.SecureRandom;
   const hostPlatform = yield* HostProcess.Platform;
+  // Returns stdout, or null when there is no work tree. A non-repository exits 128 like a broken
+  // one, so only Git's message (pinned to the C locale) or a missing cwd tells them apart.
+  const probeWorkTree = Effect.fn("GitVcsDriver.probeWorkTree")(function* (
+    operation: string,
+    cwd: string,
+    args: ReadonlyArray<string>,
+    maxOutputBytes: number,
+    // SCIENT-FORK: discovery reports missing Git instead of reading it as no repository.
+    missingExecutableFails = false,
+  ) {
+    const result = yield* gitCommand(vcsProcess, operation, cwd, args, {
+      env: { LC_ALL: "C" },
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+      maxOutputBytes,
+    }).pipe(
+      Effect.catchIf(isMissingExecutable, () =>
+        // SCIENT-FORK:START — discovery reports missing Git instead of reading it as no repository.
+        missingExecutableFails
+          ? Effect.fail(
+              new VcsExecutableUnavailableError({ operation, kind: "git", command: "git", cwd }),
+            )
+          : // SCIENT-FORK:END
+            Effect.succeed(null),
+      ),
+    );
+    if (result === null) return null;
+    if (result.exitCode === 0) return result.stdout;
+    // Git before 2.38 answers "false" for a bare repo, then fails on --show-toplevel.
+    // Match line prefixes only: a path inside a diagnostic may contain the same words.
+    if (
+      result.stdout.startsWith("false") ||
+      hasStderrLine(result.stderr, [
+        "fatal: not a git repository",
+        "fatal: cannot use bare repository",
+      ]) ||
+      !(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))
+    ) {
+      return null;
+    }
+    return yield* new VcsProcessExitError({
+      operation: WORK_TREE_PROBE_OPERATION,
+      command: "git rev-parse",
+      cwd,
+      exitCode: result.exitCode,
+      detail: result.stderr.trim() || "git rev-parse failed",
+    });
+  });
+
   const isInsideWorkTree: VcsDriver.VcsDriver["Service"]["isInsideWorkTree"] = (cwd) =>
-    gitCommand(
-      vcsProcess,
+    probeWorkTree(
       "GitVcsDriver.isInsideWorkTree",
       cwd,
       ["rev-parse", "--is-inside-work-tree"],
-      {
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-        maxOutputBytes: 4_096,
-      },
-    ).pipe(
-      Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
-      Effect.catchIf(isMissingExecutable, () => Effect.succeed(false)),
-    );
+      4_096,
+    ).pipe(Effect.map((stdout) => stdout?.trim() === "true"));
 
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
@@ -666,32 +720,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     }
     // SCIENT-FORK:END
     // One spawn answers all three; outside a work tree it exits non-zero or prints "false".
-    const result = yield* gitCommand(
-      vcsProcess,
+    const stdout = yield* probeWorkTree(
       "GitVcsDriver.detectRepository",
       cwd,
       ["rev-parse", "--is-inside-work-tree", "--show-toplevel", "--git-common-dir"],
-      {
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-        maxOutputBytes: 16_384,
-      },
-    ).pipe(
-      // SCIENT-FORK:START — unavailable Git even after a successful preflight is not a non-repository.
-      Effect.catchIf(
-        isMissingExecutable,
-        () =>
-          new VcsExecutableUnavailableError({
-            operation: "GitVcsDriver.detectRepository",
-            kind: "git",
-            command: "git",
-            cwd,
-          }),
-      ),
-      // SCIENT-FORK:END
+      16_384,
+      // SCIENT-FORK: unavailable Git even after a successful preflight is not a non-repository.
+      true,
     );
-    if (result.exitCode !== 0) return null;
-    const lines = result.stdout.replace(/\r?\n$/u, "").split(/\r?\n/u);
+    if (stdout === null) return null;
+    const lines = stdout.replace(/\r?\n$/u, "").split(/\r?\n/u);
     if (lines[0]?.trim() !== "true") return null;
     // A newline inside a path breaks the line framing; ask for each path on its own.
     if (lines.length !== 3) {
@@ -890,14 +928,28 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       operation: "GitVcsDriver.checkpoints.resolveCheckpointCommit",
       cwd,
       args: ["rev-parse", "--verify", "--quiet", `${checkpointRef}^{commit}`],
+      env: { LC_ALL: "C" },
       allowNonZeroExit: true,
     }).pipe(
-      Effect.map((result) => {
+      Effect.flatMap((result) => {
+        // --quiet reports an absent ref as exit 1 with no error; an unreadable object also exits 1
+        // but reports an error line.
+        if (result.exitCode === 1 && !hasStderrLine(result.stderr, ["error:", "fatal:"])) {
+          return Effect.succeed(null);
+        }
         if (result.exitCode !== 0) {
-          return null;
+          return Effect.fail(
+            new VcsProcessExitError({
+              operation: "GitVcsDriver.checkpoints.resolveCheckpointCommit",
+              command: "git rev-parse",
+              cwd,
+              exitCode: result.exitCode,
+              detail: result.stderr.trim() || "git rev-parse failed",
+            }),
+          );
         }
         const commit = result.stdout.trim();
-        return commit.length > 0 ? commit : null;
+        return Effect.succeed(commit.length > 0 ? commit : null);
       }),
     );
 
@@ -918,6 +970,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
   // SCIENT-FORK:START — checkpoint size limits live in ScientCheckpointCapture.
   const checkCheckpointSize = makeCheckpointSizeCheck({ execute });
+  // Absent in tests that build a bare driver; the server provides one for all drivers.
+  const checkpointUpkeep = yield* Effect.serviceOption(CheckpointUpkeep);
   // SCIENT-FORK:END
 
   // --verify prints HEAD after the paths; --quiet leaves only paths for an unborn HEAD.
@@ -1413,6 +1467,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           commitOid,
           checkpointRef: input.checkpointRef,
         });
+        // Publication skips Git's automatic maintenance; the server runs it later, owned.
+        if (Option.isSome(checkpointUpkeep)) yield* checkpointUpkeep.value.request(gitCommonDir);
         // SCIENT-FORK:END
       }).pipe(
         Effect.ensuring(cleanupTempIndex),

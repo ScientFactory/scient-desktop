@@ -1260,6 +1260,7 @@ describe("CodexAdapterV2 post-settle continuation (McpFork)", () => {
                 method: "thread/fork",
                 params: {
                   threadId: nativeThreadId,
+                  excludeTurns: true,
                   lastTurnId: "scient-mcp-boundary",
                   config: targetConfig,
                 },
@@ -1357,7 +1358,11 @@ describe("CodexAdapterV2 post-settle continuation (McpFork)", () => {
             frame: {
               id: 3,
               method: "thread/fork",
-              params: { threadId: nativeThreadId, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+              params: {
+                threadId: nativeThreadId,
+                excludeTurns: true,
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+              },
             },
           },
           {
@@ -2134,6 +2139,18 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
                 },
               },
             },
+            // Codex restores context only after the compacting turn completes.
+            {
+              type: "emit_inbound",
+              label: "done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
             {
               type: "expect_outbound",
               label: "restore context",
@@ -2151,19 +2168,9 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
               },
             },
             { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
-            {
-              type: "emit_inbound",
-              label: "done",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
-              },
-            },
           ],
         });
+        const restoreRequested = yield* Deferred.make<void>();
         const harness = yield* makeCodexReplayHarness(transcript, undefined, (method, packet) =>
           method === "turn/start"
             ? decodeContext(packet).pipe(
@@ -2172,7 +2179,9 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
                   Ref.update(delivered, (current) => [...current, context]),
                 ),
               )
-            : Effect.void,
+            : method === "thread/inject_items"
+              ? Deferred.succeed(restoreRequested, undefined)
+              : Effect.void,
         );
         if (hasMcp)
           yield* sessions.set({
@@ -2198,6 +2207,7 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
           runtimePolicy,
         });
         yield* harness.firstTerminal;
+        yield* Deferred.await(restoreRequested);
         const contexts = yield* Ref.get(delivered);
         assert.lengthOf(contexts, 1);
         const context = contexts[0]!.additionalContext;
@@ -4388,7 +4398,11 @@ describe("Codex restored McpFork", () => {
                 frame: {
                   id: 3,
                   method: "thread/fork",
-                  params: { threadId: nativeThreadId, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
                 },
               },
               {
@@ -4500,6 +4514,7 @@ describe("Codex restored McpFork", () => {
                 method: "thread/fork",
                 params: {
                   threadId: nativeThreadId,
+                  excludeTurns: true,
                   lastTurnId: "native-turn-first",
                   config: CodexAdapterV2.CODEX_THREAD_CONFIG,
                 },

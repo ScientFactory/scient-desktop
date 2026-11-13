@@ -28,6 +28,7 @@ import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationDefinition } from "../../../mcp/ScientOperationTool.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 
+import { AGENT_CONNECTOR_STATUSES } from "../../extensions/connectors/agentStatus.ts";
 import { ProfileResult } from "./profileClassification.ts";
 
 const ResultFiles = Schema.Struct({ paths: Schema.Array(Schema.String), usage: Schema.String });
@@ -300,6 +301,9 @@ const connectorSetup = metadata(
         ),
       ).annotate({ description: "Plain answers by setting key." }),
       replaceKeys: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+      signIn: Schema.optional(TrimmedNonEmptyString).annotate({
+        description: "Which Accounts sign-in to use for its site.",
+      }),
     }),
     success: Schema.Struct({
       status: Schema.Literals(["ready", "needs"]),
@@ -309,6 +313,197 @@ const connectorSetup = metadata(
   }),
   "connector-setup",
   "Set up a local connector",
+);
+const connectorDependencies = [
+  ...common.dependencies,
+  McpInvocationContext,
+  WorkspaceBindingResolver,
+];
+const ConnectorName = TrimmedNonEmptyString.check(Schema.isMaxLength(120));
+const FolderPath = TrimmedNonEmptyString.check(Schema.isMaxLength(4096)).annotate({
+  description: "Full path, or relative to this chat's folder.",
+});
+const ConnectorStatus = Schema.Literals(AGENT_CONNECTOR_STATUSES);
+const connectorList = metadata(
+  Tool.make("scient_connector_list", {
+    failure: AccountsError,
+    dependencies: common.dependencies,
+    description:
+      "The user's connectors, hosted and local: on or off, status, last error, what is missing; host = who runs a hosted one and sees what passes through it. query: also connectors Scient can add (its picks and the MCP Registry). Add one that fits with scient_connector_add before making a new one.",
+    parameters: Schema.Struct({
+      query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
+        description: "e.g. gmail.",
+      }),
+    }),
+    success: Schema.Struct({
+      connectors: Schema.Array(
+        Schema.Struct({
+          connector: Schema.String,
+          name: Schema.String,
+          kind: Schema.Literals(["hosted", "local"]),
+          host: Schema.optional(Schema.String),
+          on: Schema.Boolean,
+          status: ConnectorStatus,
+          lastError: Schema.optional(Schema.String),
+          missing: Schema.optional(Schema.Array(Schema.String)),
+        }),
+      ),
+      found: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            title: Schema.optional(Schema.String),
+            description: Schema.optional(Schema.String),
+            host: Schema.optional(Schema.String),
+            addable: Schema.Boolean,
+            reason: Schema.optional(Schema.String),
+            added: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
+      message: Schema.optional(Schema.String),
+    }),
+  }),
+  "connector-list",
+  "List connectors",
+  true,
+);
+const connectorAdd = metadata(
+  Tool.make("scient_connector_add", {
+    failure: AccountsError,
+    dependencies: [...connectorDependencies, OrchestratorMcpService, SecretRequests],
+    description:
+      "Add a connector as the Extensions page does, on for every project: from = a name from scient_connector_list, an https MCP address, or a .mcpb/.zip file. A key or the user's own sign-in app is asked in a private card; never ask for one in chat. needs-setup: scient_connector_setup. needs-sign-in: scient_connector_control sign-in.",
+    parameters: Schema.Struct({
+      from: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+    }),
+    success: Schema.Struct({
+      connector: Schema.String,
+      status: ConnectorStatus,
+      tools: Schema.Array(Schema.String),
+      missing: Schema.Array(Schema.String),
+      message: Schema.String,
+    }),
+  }),
+  "connector-add",
+  "Add a connector",
+);
+const connectorControl = metadata(
+  Tool.make("scient_connector_control", {
+    failure: AccountsError,
+    dependencies: common.dependencies,
+    description:
+      "Turn a connector on or off, restart a local one, or sign in: a hosted connector's sign-in opens in this chat's browser as the user's own tab, which your preview tools don't see, for them to finish. Removing stays the user's.",
+    parameters: Schema.Struct({
+      connector: TrimmedNonEmptyString.check(Schema.isMaxLength(120)).annotate({
+        description: "Its MCP server name.",
+      }),
+      action: Schema.Literals(["on", "off", "restart", "sign-in"]),
+    }),
+    success: Schema.Struct({
+      connector: Schema.String,
+      status: ConnectorStatus,
+      message: Schema.String,
+      signInUrl: Schema.optional(Schema.String),
+    }),
+  }),
+  "connector-control",
+  "Control a connector",
+);
+const connectorCopy = metadata(
+  Tool.make("scient_connector_copy", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Make or fix a local connector (load the connector-authoring skill first). name: writes the template to connectors/<name>/ in this chat's folder. connector: copies that installed connector there, with its status, last error and error output; an npm or PyPI package's code comes too (source says where). Then scient_connector_check, then scient_connector_save.",
+    parameters: Schema.Struct({
+      connector: Schema.optional(ConnectorName).annotate({
+        description: "Its MCP server name.",
+      }),
+      name: Schema.optional(ConnectorName).annotate({
+        description: "e.g. HUJI Moodle.",
+      }),
+    }),
+    success: Schema.Struct({
+      folder: Schema.String,
+      connector: Schema.optional(Schema.String),
+      status: Schema.optional(ConnectorStatus),
+      lastError: Schema.optional(Schema.String),
+      problem: Schema.optional(Schema.String),
+      missing: Schema.optional(Schema.Array(Schema.String)),
+      log: Schema.optional(Schema.String),
+      source: Schema.optional(Schema.String),
+      manifest: Schema.optional(
+        Schema.Struct({
+          name: Schema.String,
+          version: Schema.String,
+          runtime: Schema.String,
+          entryPoint: Schema.String,
+          settings: Schema.Array(Schema.String),
+          signInSite: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  }),
+  "connector-copy",
+  "Copy a connector to change",
+);
+const connectorCheck = metadata(
+  Tool.make("scient_connector_check", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Start a connector folder as Scient would, list its tools, make each call, stop it; installs nothing. connector: use its settings, keys and sign-in. signIn: an Accounts sign-in for the manifest's site. Missing keys are listed in missing; a failure returns the error and error output. connector without folder: tests the installed one, hosted too, and makes calls; that is how to use one added in this chat.",
+    parameters: Schema.Struct({
+      folder: Schema.optional(FolderPath),
+      connector: Schema.optional(ConnectorName),
+      signIn: Schema.optional(ConnectorName),
+      calls: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            tool: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+            arguments: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
+        ).check(Schema.isMaxLength(10)),
+      ),
+    }),
+    success: Schema.Struct({
+      ok: Schema.Boolean,
+      tools: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          description: Schema.optional(Schema.String),
+          parameters: Schema.optional(Schema.Unknown),
+        }),
+      ),
+      calls: Schema.Array(
+        Schema.Struct({ tool: Schema.String, isError: Schema.Boolean, text: Schema.String }),
+      ),
+      missing: Schema.Array(Schema.String),
+      error: Schema.optional(Schema.String),
+      log: Schema.optional(Schema.String),
+    }),
+  }),
+  "connector-check",
+  "Check a connector folder",
+);
+const connectorSave = metadata(
+  Tool.make("scient_connector_save", {
+    failure: AccountsError,
+    dependencies: connectorDependencies,
+    description:
+      "Install a checked connector folder as the user's own, on for every project. connector: replace that one, keeping its settings, keys and sign-in (a vendor's bundle becomes their copy). The user can undo on its page. needs-setup: call scient_connector_setup.",
+    parameters: Schema.Struct({ folder: FolderPath, connector: Schema.optional(ConnectorName) }),
+    success: Schema.Struct({
+      connector: Schema.String,
+      status: ConnectorStatus,
+      tools: Schema.Array(Schema.String),
+      missing: Schema.Array(Schema.String),
+      message: Schema.String,
+    }),
+  }),
+  "connector-save",
+  "Save a connector",
 );
 const paperDependencies = [
   ...common.dependencies,
@@ -434,6 +629,12 @@ export const ScientAccountsToolkit = Toolkit.make(
   findProfile,
   add,
   connectorSetup,
+  connectorList,
+  connectorAdd,
+  connectorControl,
+  connectorCopy,
+  connectorCheck,
+  connectorSave,
   paperGet,
   paperQueue,
   paperStatus,

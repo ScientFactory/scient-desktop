@@ -11,6 +11,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import * as Sqlite from "./Sqlite.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
 
 it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
   "DatabaseMaintenance",
@@ -86,12 +87,25 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         yield* DatabaseMaintenance.runRequestedReclaim(dbPath);
         assert.equal(yield* autoVacuum, 0);
 
+        // A request no restart asked for (its repair was interrupted, or an ordinary quit
+        // found it) must not start a repair the quit would kill; it becomes a failure.
+        yield* fs.writeFileString(files.request, "");
+        yield* DatabaseMaintenance.runRequestedReclaim(dbPath);
+        assert.isFalse(yield* fs.exists(files.request));
+        assert.include(yield* fs.readFileString(files.failure), "did not finish");
+        assert.equal(yield* autoVacuum, 0);
+
         yield* fs.writeFileString(files.request, "");
         yield* fs.writeFileString(files.failure, "an earlier failure");
+        yield* DatabaseMaintenance.markReclaimRestartRequested;
         yield* DatabaseMaintenance.runRequestedReclaim(dbPath);
         assert.isFalse(yield* fs.exists(files.request));
         assert.isFalse(yield* fs.exists(files.failure));
         assert.equal(yield* autoVacuum, 2);
+        assert.isFalse(
+          yield* fs.exists(DatabaseMaintenance.searchRebuildMarker(path, dbPath)),
+          "a finished repair leaves no search rebuild pending",
+        );
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           assert.deepEqual(yield* sql`SELECT value FROM retained_data`, [{ value: "keep" }]);
@@ -102,6 +116,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         yield* fs.makeDirectory(path.dirname(brokenPath));
         yield* fs.writeFileString(brokenPath, "not a database");
         yield* fs.writeFileString(broken.request, "");
+        yield* DatabaseMaintenance.markReclaimRestartRequested;
         yield* DatabaseMaintenance.runRequestedReclaim(brokenPath);
         assert.isFalse(
           yield* fs.exists(broken.request),
@@ -111,6 +126,97 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* fs.readFileString(broken.failure),
           new DatabaseMaintenance.DatabaseCompactError({ path: brokenPath, cause: null }).message,
         );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("rebuilds message search when a repair stopped after its VACUUM", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-marker-" });
+        const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
+        const searchRows = Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ readonly count: number }>`
+            SELECT COUNT(*) AS count FROM orchestration_v2_message_search
+            WHERE orchestration_v2_message_search MATCH 'needle'`;
+        });
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO orchestration_v2_projection_messages (
+              message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json
+            ) VALUES ('message-1', 'thread-1', NULL, NULL, 'user', 0,
+              '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', '{"text":"needle"}')`;
+          // The state a repair leaves if it stops between VACUUM and the rebuild.
+          yield* sql`INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search)
+            VALUES ('delete-all')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        const marker = DatabaseMaintenance.searchRebuildMarker(path, dbPath);
+        yield* fs.writeFileString(marker, "");
+        // Opening the database through the server path recovers it before anything reads search.
+        const found = yield* Effect.gen(function* () {
+          yield* DatabaseMaintenance.recoverInterruptedRepair(dbPath);
+          return yield* searchRows;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        assert.equal(found[0]!.count, 1);
+        assert.isFalse(yield* fs.exists(marker));
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("serves an empty search, never a stale one, when the rebuild fails", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-failed-" });
+        const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
+        const marker = DatabaseMaintenance.searchRebuildMarker(path, dbPath);
+        const indexed = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          // A stale entry, as a renumbering VACUUM leaves it, and a rebuild that cannot read.
+          yield* sql`INSERT INTO orchestration_v2_message_search (rowid, text) VALUES (1, 'needle')`;
+          yield* sql`ALTER TABLE orchestration_v2_projection_messages RENAME TO unreadable_messages`;
+          yield* fs.writeFileString(marker, "");
+          yield* DatabaseMaintenance.recoverInterruptedRepair(dbPath);
+          return yield* sql<{ readonly count: number }>`
+            SELECT COUNT(*) AS count FROM orchestration_v2_message_search
+            WHERE orchestration_v2_message_search MATCH 'needle'`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        assert.equal(indexed[0]!.count, 0);
+        assert.isTrue(yield* fs.exists(marker), "the next start retries the rebuild");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("does not repair a database another server has started on meanwhile", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-reclaim-owner-" });
+        const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
+        const statePath = path.join(baseDir, "userdata", "server-runtime.json");
+        const files = DatabaseMaintenance.reclaimFiles(path, dbPath);
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA auto_vacuum = NONE`;
+          yield* sql`VACUUM`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        yield* fs.writeFileString(files.request, "");
+        yield* DatabaseMaintenance.markReclaimRestartRequested;
+        yield* Effect.gen(function* () {
+          // A successor server owns the home before the repair starts.
+          yield* ServerOwnership.holdServerOwnershipForMaintenance(statePath);
+          yield* DatabaseMaintenance.runRequestedReclaim(dbPath, statePath);
+        }).pipe(Effect.scoped);
+        assert.include(yield* fs.readFileString(files.failure), "started again");
+        assert.isFalse(yield* fs.exists(files.request));
+        const mode = yield* Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) => sql<{ readonly auto_vacuum: number }>`PRAGMA auto_vacuum`,
+        ).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
+        assert.equal(mode[0]?.auto_vacuum, 0);
       }).pipe(Effect.scoped),
     );
 
@@ -185,18 +291,22 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const clock = yield* Clock.Clock;
         const pauses: number[] = [];
         let activeNanos = 0n;
-        const result = yield* maintenance.compact(dbPath).pipe(
-          Effect.provideService(Clock.Clock, {
-            ...clock,
-            // Exceed the background budget whenever the compactor checks elapsed time.
-            monotonicTimeNanos: Effect.sync(() => (activeNanos += 30_000_000n)),
-            sleep: (duration) =>
-              Effect.sync(() => {
-                pauses.push(Duration.toMillis(duration));
-              }),
-          }),
-        );
+        const steps: string[] = [];
+        const result = yield* maintenance
+          .compact(dbPath, (step) => Effect.sync(() => steps.push(step)))
+          .pipe(
+            Effect.provideService(Clock.Clock, {
+              ...clock,
+              // Exceed the background budget whenever the compactor checks elapsed time.
+              monotonicTimeNanos: Effect.sync(() => (activeNanos += 30_000_000n)),
+              sleep: (duration) =>
+                Effect.sync(() => {
+                  pauses.push(Duration.toMillis(duration));
+                }),
+            }),
+          );
         assert.deepEqual(pauses, [], "offline doctor must not throttle compaction");
+        assert.deepEqual(steps, ["prune-events", "vacuum", "rebuild-search", "checkpoint"]);
         assert.equal(result.deletedReceiptCount, 51);
         assert.isBelow(result.afterBytes, result.beforeBytes - 3 * 1024 * 1024);
         yield* Effect.gen(function* () {

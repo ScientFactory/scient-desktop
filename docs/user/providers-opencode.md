@@ -41,6 +41,12 @@ With a server URL, Scient connects to that external server and uses only the pas
 provider settings. It does not send a local `OPENCODE_SERVER_PASSWORD` to an external server.
 OpenCode uses this password for HTTP Basic authentication.
 
+When **Server URL** points to a locally running server (such as `127.0.0.1`),
+the update button upgrades its installed CLI without terminating the running server.
+The server can still report the previous version until you restart it. Scient
+shows that restart requirement instead of treating the CLI update as a failure.
+Restart the server when active sessions can safely be interrupted.
+
 ## Stop a turn
 
 When you select **Stop**, Scient stops the main OpenCode session and all nested child sessions.

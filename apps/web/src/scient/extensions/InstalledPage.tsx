@@ -9,7 +9,7 @@ import { actOnProviderPlugin } from "./extensionsState";
 import { openAuthorizationPage } from "./openAuthorizationPage";
 import { Button } from "../../components/ui/button";
 import { NativeSelect } from "../../components/ui/select";
-import { AddYourOwn } from "./AddYourOwn";
+import { AddYourOwn, MakeConnector } from "./AddYourOwn";
 import {
   ConnectorItem,
   PluginItem,
@@ -166,6 +166,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
     <>
       <ExtensionsTopBar tab="installed" kind={kind}>
         <span className="flex items-center gap-2">
+          <MakeConnector kind={kind} />
           <AddYourOwn kind={kind} />
           <span className="w-56">
             <NativeSelect

@@ -136,6 +136,12 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
+// SCIENT-FORK:START — checkpoint repositories get server-owned Git upkeep.
+import * as CheckpointUpkeep from "./vcs/ScientCheckpointUpkeep.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — a minute-by-minute memory record that outlives a crash.
+import * as ResourceRecord from "./scient/observability/ResourceRecord.ts";
+// SCIENT-FORK:END
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -248,6 +254,9 @@ import {
   ScientSkillsLayerLive,
   WorkspaceBindingResolverLayerLive,
 } from "./scient/ScientServerLayers.ts";
+// SCIENT-FORK:START — Scient Cloud state shared with turn admission.
+import * as CloudSyncState from "./scient/cloud/CloudSyncState.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Accounts: encrypted store and shared account service.
 import { ScientAccountsLayerLive } from "./scient/accounts/AccountsLayers.ts";
 // SCIENT-FORK:END
@@ -740,6 +749,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(ScientAccountsLayerLive),
   // Account checks reach the browser from RPC; the broker is one instance by memoization.
   Layer.provideMerge(PreviewAutomationBroker.layer),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Cloud: turn admission and the copy worker share one state file.
+  Layer.provideMerge(CloudSyncState.layer),
   // SCIENT-FORK:END
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(ScientSkillsLayerLive),
@@ -1341,7 +1353,14 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provide(VcsProcess.layer),
+      // SCIENT-FORK:START — one checkpoint upkeep worker shared by every Git driver; its runs
+      // are noted in the resource record.
+      Layer.provide(
+        Layer.mergeAll(CheckpointUpkeep.layer, VcsProcess.layer).pipe(
+          Layer.provideMerge(ResourceRecord.layer),
+        ),
+      ),
+      // SCIENT-FORK:END
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
     );

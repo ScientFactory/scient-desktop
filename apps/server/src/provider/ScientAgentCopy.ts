@@ -42,8 +42,8 @@ export const SCIENT_AGENT_COPY_DIFFERENCES: ReadonlyArray<readonly [string, stri
   ["Asked how: call now.", "Asked how: ask now; API keys: `scient_account_add`."],
   // Scient chat renders chart and diagram fences inline.
   [
-    "show any visual the user asks for here: pass the path to an HTML file, or inline HTML to `html_preview`, then `html_render`.",
-    "show any visual the user asks for here: a fenced `mermaid`, `vega-lite` or `plotly` block when one fits, otherwise pass the path to an HTML file, or inline HTML to `html_preview`, then `html_render`.",
+    "show any visual the user asks for here: pass an HTML file path or inline HTML to `html_preview`, then `html_render`.",
+    "show any visual the user asks for here: a fenced `mermaid`, `vega-lite` or `plotly` block when one fits, otherwise pass an HTML file path or inline HTML to `html_preview`, then `html_render`.",
   ],
 ];
 

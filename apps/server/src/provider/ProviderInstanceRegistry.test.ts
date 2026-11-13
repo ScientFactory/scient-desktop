@@ -534,7 +534,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const codex = yield* registry.getInstance(codexId);
       expect(codex).toBeDefined();
       yield* codex!.snapshot.refresh;
-      expect(yield* codex!.consumeResetCredit!()).toBe("alreadyRedeemed");
+      expect(yield* codex!.consumeResetCredit!(undefined)).toBe("alreadyRedeemed");
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -640,6 +640,93 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         version: "2.1.219",
         auth: { status: "authenticated" },
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("applies the lowest maxEffortLevel across Claude's settings sources", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const claudeId = ProviderInstanceId.make("claude_source_effort_cap");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [
+              {
+                name: "T3_CLAUDE_SETTINGS_SOURCES",
+                // The merged `effective` settings read as exempting Opus 5; the flag tier's
+                // top-level cap still applies to it.
+                value: JSON.stringify([
+                  {
+                    source: "userSettings",
+                    settings: { modelSettings: { "claude-opus-5": { maxEffortLevel: "max" } } },
+                  },
+                  { source: "flagSettings", settings: { maxEffortLevel: "high" } },
+                ]),
+                sensitive: false,
+              },
+            ],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+
+      const snapshot = yield* claude!.snapshot.refresh;
+      const maxLabel = snapshot.models
+        .find((model) => model.slug === "claude-opus-5")
+        ?.capabilities?.optionDescriptors?.flatMap((descriptor) =>
+          descriptor.id === "effort" && descriptor.type === "select"
+            ? descriptor.options.filter((option) => option.id === "max")
+            : [],
+        )[0]?.label;
+      expect(maxLabel).toBe("Max (capped to High)");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps usage and uncapped efforts when the CLI rejects get_settings", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const claudeId = ProviderInstanceId.make("claude_settings_unsupported");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [{ name: "T3_CLAUDE_SETTINGS_UNSUPPORTED", value: "1", sensitive: false }],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+
+      const snapshot = yield* claude!.snapshot.refresh;
+      const effortLabels = snapshot.models.flatMap((model) =>
+        (model.capabilities?.optionDescriptors ?? []).flatMap((descriptor) =>
+          descriptor.id === "effort" && descriptor.type === "select"
+            ? descriptor.options.map((option) => option.label)
+            : [],
+        ),
+      );
+      expect(effortLabels).toContain("Max");
+      expect(effortLabels.some((label) => label.includes("capped"))).toBe(false);
+      expect(snapshot.auth).toMatchObject({ status: "authenticated", email: "test@example.com" });
+      expect(snapshot.usageLimits?.windows[0]?.usedPercent).toBe(100);
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -844,7 +931,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const before = yield* instance!.snapshot.refresh;
       expect(before.usageLimits?.windows[0]?.usedPercent).toBe(100);
       expect(before.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
-      const outcome = yield* instance!.consumeResetCredit!().pipe(Effect.result);
+      const outcome = yield* instance!.consumeResetCredit!(undefined).pipe(Effect.result);
       return { outcome, after: yield* instance!.snapshot.getSnapshot };
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.

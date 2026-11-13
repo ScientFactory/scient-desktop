@@ -412,10 +412,14 @@ The built-in shipping policy is:
 - `pdf-authoring`: active, with automatic selection;
 - `html-pdf-authoring`: active, with automatic selection;
 - `latex-authoring`: active, with automatic selection;
-- `overleaf-sync`: active, with automatic selection; and
+- `overleaf-sync`: active, with automatic selection;
 - `references`: active, with automatic selection. It drives reference reviews
   through `scient_references_check`, `scient_references_resolve` and the Library
   tools, and is listed under the `scient.sources` built-in plugin.
+- `connector-authoring`: active, with automatic selection. Its `references/` and
+  `templates/` are served by `scient_skill_read_resource`, and `scient_connector_copy` writes
+  the same embedded template; see
+  [agent-made connectors](scient-extensions.md#agent-made-connectors).
 
 Changing these catalog defaults affects only skills without an explicit user
 preference. Enabling or disabling a skill always creates a durable preference,

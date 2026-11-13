@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStreamPromises from "node:stream/promises";
 
@@ -10,10 +11,13 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import {
+  type AccountSummary,
   AccountsError,
   AccountId,
   type ConnectorId,
+  type DiscoverEntry,
   EnvironmentId,
+  ExtensionsError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -42,7 +46,15 @@ import { noKeychain } from "../../accounts/Accounts.testkit.ts";
 import * as AccountsConnectorCredentials from "../../accounts/AccountsConnectorCredentials.ts";
 import { AccountVault, makeAccountVault } from "../../accounts/AccountVault.ts";
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
-import { ConnectorRuntime } from "../ExtensionsServices.ts";
+import {
+  type AddAsks,
+  addConnector,
+  controlConnector,
+  listConnectors,
+  testConnector,
+  changeReport,
+} from "../ConnectorAgentControl.ts";
+import { ConnectorRuntime, ExtensionsDiscover } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
 import * as ConnectorCallbackRoute from "./ConnectorCallbackRoute.ts";
 import * as ConnectorCredentialStore from "./ConnectorCredentialStore.ts";
@@ -53,12 +65,20 @@ import {
   decodeOAuthMaterial,
   encodeOAuthMaterial,
 } from "./ConnectorOAuth.ts";
-import { controlFetch, egressPolicyFor, STRICT_EGRESS_POLICY } from "./ConnectorOutbound.ts";
+import {
+  type ConnectorFetch,
+  controlFetch,
+  egressPolicyFor,
+  STRICT_EGRESS_POLICY,
+} from "./ConnectorOutbound.ts";
 import { probeConnector } from "./ConnectorProbe.ts";
 import { GitHubSourceControlCredential } from "./GitHubSourceControlCredential.ts";
 import * as ConnectorProxyRoute from "./ConnectorProxyRoute.ts";
 import { makeConnectorRuntime, MAX_IN_FLIGHT_PER_CONNECTOR } from "./ConnectorRuntime.ts";
 import { CONNECTOR_STATE_FILE } from "./ConnectorStateStore.ts";
+import type { RunTool } from "./PackageSource.ts";
+import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
 
 /**
@@ -559,6 +579,14 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly onStreamClosed?: Effect.Effect<void>;
     /** Stands in for Source Control's GitHub credential. */
     readonly github?: GitHubSourceControlCredential["Service"];
+    /** Stands in for Accounts' sessions for signed-in connectors. */
+    readonly signInSessions?: ConnectorSessionsShape;
+    /** Stands in for the network when a registry bundle is downloaded. */
+    readonly bundleFetch?: ConnectorFetch;
+    /** Stands in for npm and uv when a copy brings in a package's code. */
+    readonly runTool?: RunTool;
+    /** Told when a change reaches a connector's lock. */
+    readonly onConnectorLock?: (connectorId: string) => void;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -572,7 +600,13 @@ const makeHarness = Effect.fn("makeHarness")(function* (
   }
   const credentialStore = yield* ConnectorCredentialStore.ConnectorCredentialStore;
   const eligibility = yield* PluginConnectorEligibility.PluginConnectorEligibility;
-  const runtime = yield* makeConnectorRuntime({ stateDir: config.stateDir }).pipe(
+  const runtime = yield* makeConnectorRuntime({
+    stateDir: config.stateDir,
+    ...(options.signInSessions === undefined ? {} : { signInSessions: options.signInSessions }),
+    ...(options.bundleFetch === undefined ? {} : { bundleFetch: options.bundleFetch }),
+    ...(options.runTool === undefined ? {} : { runTool: options.runTool }),
+    ...(options.onConnectorLock === undefined ? {} : { onConnectorLock: options.onConnectorLock }),
+  }).pipe(
     Effect.provideService(
       ConnectorCredentialStore.ConnectorCredentialStore,
       options.wrapCredentials?.(credentialStore) ?? credentialStore,
@@ -1025,7 +1059,7 @@ describe("connector credential isolation", () => {
           name: "query",
           type: "string",
           required: true,
-          description: "[redacted by Scient]",
+          description: "Query (debug: Bearer [redacted by Scient]",
         },
       ]);
       expect(JSON.stringify(tested)).not.toContain("vendor-access-token-");
@@ -2492,7 +2526,7 @@ const readEvents = (response: Response) =>
   });
 
 /** Accounts with API-key accounts kept in memory, as local connectors use them. */
-const fakeKeyAccounts = () => {
+const fakeKeyAccounts = (options: { readonly hosted?: boolean } = {}) => {
   const keys = new Map<string, { name: string; value: string; envName?: string }>();
   let next = 0;
   let revision = 0;
@@ -2532,7 +2566,10 @@ const fakeKeyAccounts = () => {
       Effect.suspend(() => {
         const accountId = ref.replace(/^account:/, "").replace(/:token$/, "");
         const key = keys.get(accountId);
-        return key === undefined || consumer.kind !== "local-connector"
+        const allowed =
+          consumer.kind === "local-connector" ||
+          (options.hosted === true && consumer.kind === "connector");
+        return key === undefined || !allowed
           ? Effect.fail(
               new AccountsError({ reason: "not-found", message: "Synthetic key unavailable." }),
             )
@@ -2634,6 +2671,43 @@ describe("local connectors", () => {
         // Its key stays in Accounts for the user.
         expect(accounts.keys.size).toBe(1);
       }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("adds a registry bundle only when its download matches the listed checksum", () =>
+    Effect.gen(function* () {
+      const accounts = fakeKeyAccounts();
+      const config = yield* ServerConfig.ServerConfig;
+      const archive = NodePath.join(config.stateDir, "..", "registry-echo.mcpb");
+      yield* writeBundle(archive);
+      const bytes = yield* Effect.promise(() => NodeFSP.readFile(archive));
+      const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+      const harness = yield* makeHarness({
+        bundleFetch: async (url) =>
+          String(url) === "https://example.com/echo.mcpb"
+            ? new Response(bytes)
+            : new Response("missing", { status: 404 }),
+      }).pipe(Effect.provide(accounts.layer));
+      const target = (hash: string) =>
+        ({
+          type: "registry-bundle",
+          name: "example/echo",
+          version: "1.2.0",
+          bundle: { url: "https://example.com/echo.mcpb", sha256: hash },
+        }) as const;
+      const refused = yield* Effect.flip(harness.runtime.add({ target: target("0".repeat(64)) }));
+      expect(refused.message).toContain("checksum");
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
+      const folders = yield* Effect.promise(() =>
+        NodeFSP.readdir(NodePath.join(config.stateDir, "connectors")),
+      );
+      expect(folders.filter((name) => !name.startsWith(".scient-setup"))).toEqual([]);
+
+      const added = yield* harness.runtime.add({ target: target(sha256) });
+      expect(added.connector).toMatchObject({
+        source: { type: "local", registry: { name: "example/echo", version: "1.2.0" } },
+        local: { kind: "bundle", owned: true, missing: ["API key"] },
+      });
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("is added without its key, says what it needs, and runs once the key is linked", () =>
@@ -2906,4 +2980,1224 @@ describe("local connectors", () => {
       expect(accounts.keys.size).toBe(0);
     }).pipe(Effect.provide(testLayer)),
   );
+
+  it.live(
+    "refuses a bundle whose program, installed elsewhere, isn't there, by its real path",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const home = NodePath.join(harness.config.stateDir, "..", "home");
+        const folder = NodePath.join(harness.config.stateDir, "..", "stub-bundle");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(folder, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(folder, "manifest.json"),
+            JSON.stringify({
+              name: "stub",
+              version: "1.0.0",
+              server: {
+                type: "binary",
+                entry_point: "server/stub",
+                mcp_config: { command: "${HOME}${/}stub-tool", args: ["mcp"] },
+              },
+            }),
+          );
+        });
+        const refused = yield* harness.runtime
+          .add({ target: { type: "local-bundle", path: folder, settings: {}, keys: {} } })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, home), Effect.flip);
+        // regression: the check ran on the unfilled command: "could not find ${HOME}/stub-tool".
+        expect(refused.message).toBe(
+          `The program ${NodePath.join(home, "stub-tool")} is not on this computer.`,
+        );
+      }).pipe(Effect.provide(testLayer)),
+  );
 });
+
+/** A connector an agent writes: logs a line, then answers `version` with its manifest version. */
+const AGENT_SERVER = `
+import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { createInterface } from "node:readline";
+const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+process.stderr.write("starting " + manifest.version + "\\n");
+if (process.env.MODE === "broken") { process.stderr.write("cannot find module ./lib.mjs\\n"); process.exit(1); }
+// MODE "gate:<file>": answers its first message only once <file> exists.
+const gate = process.env.MODE?.startsWith("gate:") ? process.env.MODE.slice(5) : undefined;
+const opened = gate === undefined ? Promise.resolve() : new Promise((resolve) => {
+  const check = () => { if (existsSync(gate)) { watcher.close(); resolve(); } };
+  const watcher = watch(dirname(gate), check);
+  writeFileSync(gate + ".started", "");
+  check();
+});
+const send = (message) => opened.then(() => process.stdout.write(JSON.stringify(message) + "\\n"));
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "agent-made", version: manifest.version } } });
+  else if (message.method === "tools/list")
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [
+      { name: "version", description: "Its version.", inputSchema: { type: "object" } }] } });
+  else if (message.method === "tools/call")
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [
+      { type: "text", text: "version " + manifest.version + (process.env.TOKEN ? " with key" : "") }] } });
+  else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;
+
+const writeConnectorFolder = (
+  folder: string,
+  options: {
+    readonly version: string;
+    readonly mode?: string;
+    readonly meta?: unknown;
+    readonly keyRequired?: boolean;
+    /** Adds a plain, optional "Region" setting. */
+    readonly region?: boolean;
+  },
+) =>
+  Effect.promise(async () => {
+    await NodeFSP.mkdir(folder, { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(folder, "manifest.json"),
+      JSON.stringify({
+        manifest_version: "0.3",
+        name: "agent-made",
+        display_name: "Agent Made",
+        version: options.version,
+        server: {
+          type: "node",
+          entry_point: "server.mjs",
+          mcp_config: {
+            command: "node",
+            args: ["${__dirname}/server.mjs"],
+            env: { TOKEN: "${user_config.api_key}", MODE: options.mode ?? "" },
+          },
+        },
+        user_config: {
+          api_key: {
+            type: "string",
+            title: "API key",
+            sensitive: true,
+            required: options.keyRequired ?? true,
+          },
+          ...(options.region === true ? { region: { type: "string", title: "Region" } } : {}),
+        },
+        ...(options.meta === undefined
+          ? {}
+          : { _meta: { "com.scientfactory.scient": options.meta } }),
+      }),
+    );
+    await NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), AGENT_SERVER);
+  });
+
+/** Plays npm: installs a tiny MCP server package whose code needs a dependency beside it. */
+const FAKE_NPM: RunTool = (_tool, args) =>
+  Effect.promise(async () => {
+    const modules = NodePath.join(args[args.indexOf("--prefix") + 1]!, "node_modules");
+    const files: Record<string, string> = {
+      "@acme/mcp/package.json": JSON.stringify({
+        name: "@acme/mcp",
+        version: "1.0.0",
+        type: "module",
+        bin: { mcp: "./bin/server.js" },
+      }),
+      "@acme/mcp/lib/tools.js": "export const description = 'Search mail';\n",
+      "@acme/mcp/bin/server.js": PACKAGE_SERVER,
+      "dep/package.json": JSON.stringify({ name: "dep", type: "module", main: "index.js" }),
+      "dep/index.js": "export const hi = () => 'dep says hi';\n",
+    };
+    for (const [path, text] of Object.entries(files)) {
+      await NodeFSP.mkdir(NodePath.dirname(NodePath.join(modules, path)), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(modules, path), text);
+    }
+  });
+
+const PACKAGE_SERVER = `
+import { createInterface } from "node:readline";
+import { hi } from "dep";
+import { description } from "../lib/tools.js";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "acme", version: "1.0.0" } } });
+  else if (message.method === "tools/list")
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [
+      { name: "search", description, inputSchema: { type: "object" } }] } });
+  else if (message.method === "tools/call")
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: hi() }] } });
+  else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;
+
+/** Succeeds once `path` exists, watching its folder rather than polling; the watch ends with it. */
+const appears = (path: string) =>
+  Effect.callback<void>((resume) => {
+    const watcher = NodeFS.watch(NodePath.dirname(path), () => {
+      if (NodeFS.existsSync(path)) resume(Effect.void);
+    });
+    if (NodeFS.existsSync(path)) resume(Effect.void);
+    return Effect.sync(() => watcher.close());
+  });
+
+/** Each change that reaches a connector's lock, and a wait for the n-th one to arrive. */
+const lockArrivals = () => {
+  let count = 0;
+  const waiting: Array<{ readonly at: number; readonly arrived: () => void }> = [];
+  return {
+    onConnectorLock: () => {
+      count += 1;
+      for (const waiter of waiting.filter((item) => item.at <= count)) waiter.arrived();
+    },
+    /** Counts from now. */
+    reset: () => {
+      count = 0;
+    },
+    reached: (at: number) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((arrived) => {
+            if (count >= at) arrived();
+            else waiting.push({ at, arrived });
+          }),
+      ),
+  };
+};
+
+/** Accounts stand-ins with one website sign-in per site, so a manifest's site picks its account. */
+const siteSignIns = (sites: Readonly<Record<string, string>>): ConnectorSessionsShape => {
+  const accounts = Object.entries(sites).map(
+    ([site, accountId]) =>
+      ({
+        accountId,
+        name: accountId,
+        details: { kind: "website", sites: [site] },
+      }) as unknown as AccountSummary,
+  );
+  const ready = Effect.succeed({ environment: {}, hide: [] });
+  return {
+    accountsFor: (site) =>
+      Effect.succeed(
+        accounts.filter((account) =>
+          (account.details as { readonly sites: ReadonlyArray<string> }).sites.includes(site),
+        ),
+      ),
+    account: (accountId) =>
+      Effect.succeed(accounts.find((account) => account.accountId === accountId)),
+    prepare: () => ready,
+    signInAgain: () => ready,
+    allowed: () => Effect.succeed(true),
+    remove: () => Effect.void,
+  };
+};
+
+const versionOf = (folder: string) =>
+  Effect.promise(
+    async () =>
+      (
+        JSON.parse(await NodeFSP.readFile(NodePath.join(folder, "manifest.json"), "utf8")) as {
+          version: string;
+        }
+      ).version,
+  );
+
+describe("connectors agents run", () => {
+  const noBrowser = () => Effect.succeed(false);
+
+  it.live("lists, adds from Discover and switches a connector as the page does", () =>
+    Effect.gen(function* () {
+      const accounts = fakeKeyAccounts();
+      const config = yield* ServerConfig.ServerConfig;
+      const archive = NodePath.join(config.stateDir, "..", "agent-echo.mcpb");
+      yield* writeBundle(archive);
+      const bytes = yield* Effect.promise(() => NodeFSP.readFile(archive));
+      const harness = yield* makeHarness({ bundleFetch: async () => new Response(bytes) }).pipe(
+        Effect.provide(accounts.layer),
+      );
+      const echo: DiscoverEntry = {
+        name: "io.example/echo",
+        version: "1.2.0",
+        title: "Echo",
+        remotes: [],
+        categories: [],
+        installable: true,
+        localBundle: {
+          url: "https://example.com/echo.mcpb",
+          sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+        },
+      };
+      const docker: DiscoverEntry = {
+        name: "io.example/docker",
+        version: "1.0.0",
+        remotes: [],
+        categories: [],
+        installable: false,
+        unsupportedReason: "Runs in Docker, which Scient doesn't start",
+      };
+      let installed: ConnectorId | undefined;
+      const known = () => [
+        installed === undefined ? echo : { ...echo, installedConnectorId: installed },
+        docker,
+      ];
+      const discover = Layer.mock(ExtensionsDiscover)({
+        entry: ({ name }) => {
+          const found = known().find((entry) => entry.name === name);
+          return found === undefined
+            ? Effect.fail(new ExtensionsError({ reason: "not-found", message: "Not listed." }))
+            : Effect.succeed(found);
+        },
+        search: ({ scope }) =>
+          Effect.succeed({
+            entries: scope === "registry" ? known() : [],
+            fetchedAt: "2026-11-11T00:00:00.000Z",
+          }),
+      });
+      const agent = <A, E>(effect: Effect.Effect<A, E>) =>
+        effect.pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provide(discover),
+        );
+
+      const added = yield* agent(addConnector({ from: echo.name }));
+      expect(added).toMatchObject({ status: "needs-setup", missing: ["API key"], tools: [] });
+      // regression: what an agent added was shown as the user's change.
+      expect((yield* harness.runtime.list()).connectors[0]?.local?.changedBy).toBe("agent");
+      expect(added.message).toContain("scient_connector_setup");
+      installed = (yield* harness.runtime.list()).connectors[0]!.connectorId;
+      expect((yield* agent(addConnector({ from: echo.name }))).message).toContain("already added");
+      const refused = yield* Effect.flip(agent(addConnector({ from: docker.name })));
+      expect(refused.message).toContain("Runs in Docker");
+
+      const row = {
+        connector: added.connector,
+        name: "Echo",
+        kind: "local",
+        on: true,
+        status: "needs-setup",
+        missing: ["API key"],
+      };
+      expect(yield* agent(listConnectors({ query: "echo" }))).toEqual({
+        connectors: [row],
+        found: [
+          { name: echo.name, title: "Echo", addable: false, added: added.connector },
+          { name: docker.name, addable: false, reason: docker.unsupportedReason },
+        ],
+      });
+
+      // A blank query lists as no query does.
+      expect(yield* agent(listConnectors({ query: " " }))).toEqual({ connectors: [row] });
+
+      yield* agent(controlConnector({ connector: added.connector, action: "off" }, noBrowser));
+      expect((yield* agent(listConnectors({}))).connectors).toEqual([
+        { ...row, on: false, status: "off" },
+      ]);
+      const on = yield* agent(
+        controlConnector({ connector: added.connector, action: "on" }, noBrowser),
+      );
+      expect(on).toMatchObject({ status: "needs-setup" });
+      expect(
+        (yield* agent(controlConnector({ connector: "Echo", action: "restart" }, noBrowser)))
+          .message,
+      ).toContain("restarted");
+      const local = yield* Effect.flip(
+        agent(controlConnector({ connector: "Echo", action: "sign-in" }, noBrowser)),
+      );
+      expect(local.message).toContain("scient_connector_setup");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "adds a hosted connector needing a key or the user's sign-in app, asked in the card",
+    () =>
+      Effect.gen(function* () {
+        const accounts = fakeKeyAccounts({ hosted: true });
+        const harness = yield* makeHarness().pipe(Effect.provide(accounts.layer));
+        const key = "vendor-key-0123456789abcdef";
+        vendor.validTokens.add(key);
+        const hosted = (
+          name: string,
+          path: string,
+          extra: Partial<DiscoverEntry>,
+        ): DiscoverEntry => ({
+          name: `scient.curated/${name}`,
+          version: "1.0.0",
+          title: name,
+          remotes: [
+            { type: "streamable-http", url: `${vendor.base}${path}`, requiresInput: false },
+          ],
+          categories: [],
+          installable: true,
+          ...extra,
+        });
+        const keyed = hosted("Vendor Key", "/secure/mcp", {
+          apiKey: {
+            strategy: "bearer",
+            fieldLabel: "API key",
+            helpUrl: "https://vendor.test/keys",
+          },
+        });
+        const ownApp = hosted("Vendor App", "/noprm/mcp", { oauthClientRequired: true });
+        const discover = Layer.mock(ExtensionsDiscover)({
+          entry: ({ name }) => Effect.succeed(name === keyed.name ? keyed : ownApp),
+          search: ({ scope }) =>
+            Effect.succeed({
+              entries: scope === "registry" ? [keyed] : [],
+              fetchedAt: "2026-11-11T00:00:00.000Z",
+            }),
+        });
+        const agent = <A, E>(effect: Effect.Effect<A, E>) =>
+          effect.pipe(
+            Effect.provideService(ConnectorRuntime, harness.runtime),
+            Effect.provide(discover),
+          );
+        const sites: string[] = [];
+        const asks: AddAsks = {
+          key: (request) =>
+            Effect.sync(() => {
+              sites.push(request.site);
+              const accountId = AccountId.make("acc_vendorkey01");
+              accounts.keys.set(accountId, { name: request.name, value: key });
+              return { secretRef: VaultSecretRef.make(`account:${accountId}:token`) };
+            }),
+          signInApp: () =>
+            Effect.succeed({
+              clientId: "vendor-client-id",
+              clientSecret: "vendor-client-secret-01",
+            }),
+        };
+
+        // regression: entries needing a key or the user's own sign-in app were page-only.
+        const added = yield* agent(addConnector({ from: keyed.name, asks }));
+        expect(added).toMatchObject({ status: "ready", tools: ["search"] });
+        expect(sites).toEqual([new URL(vendor.base).origin]);
+        expect(JSON.stringify(added)).not.toContain(key);
+        // regression: a hosted connector added in a chat could not be used in it, and the message
+        // promised tools by a name only some agents use.
+        expect(added.message).toContain(`scient_connector_check {"connector":"${added.connector}"`);
+        expect(added.message).not.toContain("mcp__");
+        // regression: agents couldn't tell who runs a hosted connector, so one offered to pass the
+        // user's mail through a third party.
+        const host = new URL(vendor.base).host;
+        expect(yield* agent(listConnectors({ query: "vendor" }))).toMatchObject({
+          connectors: [{ connector: added.connector, kind: "hosted", host }],
+          found: [{ name: keyed.name, host }],
+        });
+        const used = yield* agent(
+          testConnector(added.connector, undefined, [
+            { tool: "search", arguments: { query: "tp53" } },
+            { tool: "echo-auth" },
+          ]),
+        );
+        expect(used.calls).toMatchObject([
+          { tool: "search", isError: false, text: "found" },
+          { tool: "echo-auth", isError: false },
+        ]);
+        expect(JSON.stringify(used)).not.toContain(key);
+        expect(JSON.stringify(used)).not.toContain(Buffer.from(key).toString("base64"));
+        // regression: an agent's calls reached a connector that was off, or not in its project.
+        const addedId = (yield* harness.runtime.list()).connectors.find(
+          (item) => item.serverName === added.connector,
+        )!.connectorId;
+        const reached = vendor.upstream.length;
+        const callSearch = testConnector(added.connector, undefined, [{ tool: "search" }]);
+        yield* harness.runtime.update({ connectorId: addedId, enabled: false });
+        expect((yield* agent(callSearch)).error).toContain("off");
+        yield* harness.runtime.update({ connectorId: addedId, enabled: true });
+        yield* harness.runtime.update({
+          connectorId: addedId,
+          availability: { type: "projects", projectIds: [] },
+        });
+        expect((yield* agent(callSearch)).error).toContain("isn't available");
+        expect(vendor.upstream).toHaveLength(reached);
+        yield* harness.runtime.update({
+          connectorId: addedId,
+          availability: { type: "all-projects" },
+        });
+        const own = yield* agent(addConnector({ from: ownApp.name, asks }));
+        expect(own.status).toBe("needs-sign-in");
+        expect(
+          (yield* harness.runtime.list()).connectors.find(
+            (item) => item.displayName === "Vendor App",
+          )?.auth,
+        ).toMatchObject({ type: "oauth", usesOwnClient: true });
+        // A key the service turns down is named as the one entered, and where to fix it.
+        const first = (yield* harness.runtime.list()).connectors.find(
+          (item) => item.displayName === "Vendor Key",
+        )!;
+        yield* harness.runtime.remove({ connectorId: first.connectorId });
+        const wrongKey: AddAsks = {
+          ...asks,
+          key: () =>
+            Effect.sync(() => {
+              const accountId = AccountId.make("acc_vendorkey02");
+              accounts.keys.set(accountId, {
+                name: "Vendor Key",
+                value: "wrong-key-0123456789abc",
+              });
+              return { secretRef: VaultSecretRef.make(`account:${accountId}:token`) };
+            }),
+        };
+        const refused = yield* Effect.flip(
+          agent(addConnector({ from: keyed.name, asks: wrongKey })),
+        );
+        expect(refused.message).toContain("turned down the API key the user entered");
+        // regression: it said only "Settings", so the agent could not have the key replaced.
+        expect(refused.message).toContain('scient_account_add {"accountId":"acc_vendorkey02"');
+        // Where no one can answer a card, the agent hears where the user adds it.
+        const unasked = yield* Effect.flip(agent(addConnector({ from: keyed.name })));
+        expect(unasked.message).toContain("private card");
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("tests a hosted connector and opens its sign-in for the user", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const config = yield* ServerConfig.ServerConfig;
+      const added = yield* harness.addSecure();
+      const server = added.connector.serverName;
+      const agent = <A, E>(effect: Effect.Effect<A, E>) =>
+        effect.pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provideService(ServerConfig.ServerConfig, { ...config, port: 4777 }),
+        );
+
+      const checked = yield* agent(testConnector(server, undefined));
+      expect(checked).toMatchObject({ ok: false, tools: [] });
+      expect(checked.error).toContain('"action":"sign-in"');
+
+      const opened: string[] = [];
+      const signIn = yield* agent(
+        controlConnector({ connector: server, action: "sign-in" }, (url) =>
+          Effect.sync(() => opened.push(url) > 0),
+        ),
+      );
+      expect(signIn).toMatchObject({ status: "needs-sign-in" });
+      expect(signIn.message).toContain("Opened Vendor's sign-in as the user's own tab");
+      // regression: the agent looked for the tab with its preview tools, which can't see it.
+      expect(signIn.message).toContain("your preview tools don't see the user's tabs");
+      expect(signIn).not.toHaveProperty("signInUrl");
+      expect(new URL(opened[0]!).searchParams.get("redirect_uri")).toBe(
+        "http://127.0.0.1:4777/oauth/connectors/callback",
+      );
+      // Without a browser in the chat, the agent gets the link to give the user.
+      const linked = yield* agent(
+        controlConnector({ connector: server, action: "sign-in" }, noBrowser),
+      );
+      expect(linked.signInUrl).toContain(`${vendor.base}/as/authorize`);
+
+      const restart = yield* Effect.flip(
+        agent(controlConnector({ connector: server, action: "restart" }, noBrowser)),
+      );
+      expect(restart.message).toContain("runs online");
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+describe("connectors agents make and fix", () => {
+  it.live("checks a folder without its key, saves it with history, and Undo walks back", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
+      yield* writeConnectorFolder(work, { version: "1.0.0" });
+
+      const checked = yield* harness.runtime.checkFolder(
+        { folder: work, calls: [{ tool: "version" }] },
+        undefined,
+      );
+      // Templates must start and list tools without keys; what they ran without is reported.
+      expect(checked).toMatchObject({
+        ok: true,
+        tools: [{ name: "version", description: "Its version." }],
+        calls: [{ tool: "version", isError: false, text: "version 1.0.0" }],
+        missing: ["API key"],
+      });
+      expect(checked.log).toContain("starting 1.0.0");
+
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      expect(saved.tools).toEqual(["version"]);
+      const connectorId = saved.connector.connectorId;
+      expect(saved.connector.local).toMatchObject({
+        owned: true,
+        changedBy: "agent",
+        // Undoing a creation would delete it for good; Remove (with its own Undo) is offered.
+        canUndo: false,
+        missing: ["API key"],
+      });
+      const installed = saved.connector.local!.directory;
+      expect(NodePath.dirname(installed)).toBe(
+        NodePath.join(harness.config.stateDir, "connectors"),
+      );
+
+      // A fix replaces the folder in place, keeping the earlier one for Undo.
+      yield* writeConnectorFolder(work, { version: "1.1.0" });
+      const fixed = yield* harness.runtime.saveFolder(
+        { folder: work, connector: saved.connector.serverName },
+        undefined,
+      );
+      expect(fixed.connector.connectorId).toBe(connectorId);
+      expect(yield* versionOf(installed)).toBe("1.1.0");
+
+      yield* harness.runtime.undo({ connectorId });
+      expect(yield* versionOf(installed)).toBe("1.0.0");
+      const afterUndo = (yield* harness.runtime.list()).connectors.find(
+        (item) => item.connectorId === connectorId,
+      );
+      expect(afterUndo?.local?.changedBy).toBe("you");
+
+      // Remove keeps a copy; Undo brings the same connector back.
+      yield* harness.runtime.remove({ connectorId });
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
+      yield* harness.runtime.undo({ connectorId });
+      const back = (yield* harness.runtime.list()).connectors;
+      expect(back).toMatchObject([{ connectorId, local: { directory: installed } }]);
+      expect(yield* versionOf(installed)).toBe("1.0.0");
+
+      const exported = yield* harness.runtime.exportLocal({ connectorId });
+      expect(exported.fileName).toBe("agent-made.mcpb");
+      expect(Buffer.from(exported.base64, "base64").toString("latin1")).toContain("manifest.json");
+
+      // Undoing the creation removes it.
+      yield* harness.runtime.undo({ connectorId });
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
+      expect(
+        yield* Effect.promise(() =>
+          NodeFSP.stat(installed).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      ).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("copies a package connector with its code, which starts, saves and exports", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ runTool: FAKE_NPM });
+      const added = yield* harness.runtime.add({
+        target: {
+          type: "local-package",
+          name: "io.example/acme",
+          version: "1.0.0",
+          package: {
+            runner: "npx",
+            identifier: "@acme/mcp",
+            version: "1.0.0",
+            args: [],
+            environment: [],
+          },
+          environment: [],
+        },
+      });
+      const connectorId = added.connector.connectorId;
+      const chat = NodePath.join(harness.config.stateDir, "..", "chat");
+      const copied = yield* harness.runtime.copyForAgent({
+        workingFolder: chat,
+        connector: connectorId,
+      });
+      expect(copied).toMatchObject({
+        source: expect.stringContaining("@acme/mcp 1.0.0 is in package/"),
+      });
+      // The agent's edit, in the package's own code.
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(copied.folder, "package", "lib", "tools.js"),
+          "export const description = 'Search mail, edited';\n",
+        ),
+      );
+      // regression: package copies were checked only for their files, never started.
+      const checked = yield* harness.runtime.checkFolder(
+        { folder: copied.folder, connector: connectorId, calls: [{ tool: "search" }] },
+        undefined,
+      );
+      expect(checked).toMatchObject({
+        ok: true,
+        tools: [{ name: "search", description: "Search mail, edited" }],
+        calls: [{ tool: "search", isError: false, text: "dep says hi" }],
+      });
+      // regression: a folder check borrowed the keys and sign-in of a connector kept to another
+      // project; neither the check nor the save's own check may now.
+      yield* harness.runtime.update({
+        connectorId,
+        availability: { type: "projects", projectIds: [] },
+      });
+      const elsewhere = { folder: copied.folder, connector: connectorId };
+      const checkedElsewhere = yield* Effect.flip(
+        harness.runtime.checkFolder({ ...elsewhere, calls: [{ tool: "search" }] }, undefined),
+      );
+      expect(checkedElsewhere.message).toContain("isn't available");
+      const savedElsewhere = yield* Effect.flip(harness.runtime.saveFolder(elsewhere, undefined));
+      expect(savedElsewhere.message).toContain("isn't available");
+      yield* harness.runtime.update({ connectorId, availability: { type: "all-projects" } });
+      const saved = yield* harness.runtime.saveFolder(
+        { folder: copied.folder, connector: connectorId },
+        undefined,
+      );
+      expect(saved.tools).toEqual(["search"]);
+      const exported = yield* harness.runtime.exportLocal({ connectorId });
+      const zip = Buffer.from(exported.base64, "base64").toString("latin1");
+      expect(zip).toContain("package/lib/tools.js");
+      expect(zip).toContain("node_modules/dep/index.js");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("says a saved connector is off when the user turned it off", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
+      yield* writeConnectorFolder(work, { version: "1.0.0", keyRequired: false });
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const connectorId = saved.connector.connectorId;
+      expect(changeReport("Saved", saved.connector, saved.tools)).toMatchObject({
+        status: "ready",
+        message: expect.stringContaining("on for every project"),
+      });
+      yield* harness.runtime.update({ connectorId, enabled: false });
+      const fixed = yield* harness.runtime.saveFolder(
+        { folder: work, connector: connectorId },
+        undefined,
+      );
+      const report = changeReport("Saved", fixed.connector, fixed.tools);
+      // regression: a save always said ready and on for every project.
+      expect(report).toMatchObject({ status: "off", message: expect.stringContaining("is off") });
+      expect(report.message).not.toContain("on for every project");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("exports a connector whose program still runs once unpacked", () =>
+    Effect.gen(function* () {
+      // Windows runs no file by its mode bits, so there is nothing to keep there.
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "runner");
+      yield* writeConnectorFolder(work, { version: "1.0.0", keyRequired: false });
+      yield* Effect.promise(async () => {
+        const manifest = JSON.parse(
+          await NodeFSP.readFile(NodePath.join(work, "manifest.json"), "utf8"),
+        );
+        manifest.server = {
+          type: "binary",
+          entry_point: "run",
+          mcp_config: { command: "${__dirname}/run", args: [] },
+        };
+        await NodeFSP.writeFile(NodePath.join(work, "manifest.json"), JSON.stringify(manifest));
+        await NodeFSP.writeFile(NodePath.join(work, "run"), `#!/usr/bin/env node\n${AGENT_SERVER}`);
+        await NodeFSP.chmod(NodePath.join(work, "run"), 0o755);
+      });
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const exported = yield* harness.runtime.exportLocal({
+        connectorId: saved.connector.connectorId,
+      });
+      const bundle = NodePath.join(harness.config.stateDir, "..", "shared.mcpb");
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(bundle, Buffer.from(exported.base64, "base64")),
+      );
+      const added = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: bundle, settings: {}, keys: {} },
+      });
+      // regression: every file was exported 0644, so the unpacked program could not start.
+      expect(
+        yield* harness.runtime.test({ connectorId: added.connector.connectorId }),
+      ).toMatchObject({ outcome: "ok", tools: [{ name: "version" }] });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("lets a save finish before an Undo of the same connector starts", () =>
+    Effect.gen(function* () {
+      const locks = lockArrivals();
+      const harness = yield* makeHarness({ onConnectorLock: locks.onConnectorLock });
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
+      yield* writeConnectorFolder(work, { version: "1.0.0" });
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const connectorId = saved.connector.connectorId;
+      const installed = saved.connector.local!.directory;
+      yield* writeConnectorFolder(work, { version: "1.1.0" });
+      yield* harness.runtime.saveFolder({ folder: work, connector: connectorId }, undefined);
+
+      const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
+      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
+      yield* writeConnectorFolder(work, { version: "1.2.0", mode: `gate:${gate}` });
+      locks.reset();
+      const saving = yield* harness.runtime
+        .saveFolder({ folder: work, connector: connectorId }, undefined)
+        .pipe(Effect.forkScoped);
+      // The save is in its check; an Undo now must wait for it rather than run inside it.
+      yield* appears(`${gate}.started`);
+      const undoing = yield* harness.runtime.undo({ connectorId }).pipe(Effect.forkScoped);
+      // Receipt: the Undo has reached the connector's lock (or, unlocked, already ran).
+      yield* Effect.raceFirst(locks.reached(2), Fiber.await(undoing));
+      yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
+      yield* Fiber.join(saving);
+      yield* Fiber.join(undoing);
+      // regression: Undo ran during the save, which then wrote over what it restored.
+      expect(yield* versionOf(installed)).toBe("1.1.0");
+      yield* harness.runtime.undo({ connectorId });
+      expect(yield* versionOf(installed)).toBe("1.0.0");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps setup made while a save of the same connector runs", () =>
+    Effect.gen(function* () {
+      const locks = lockArrivals();
+      const harness = yield* makeHarness({ onConnectorLock: locks.onConnectorLock });
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
+      yield* writeConnectorFolder(work, { version: "1.0.0", keyRequired: false, region: true });
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const connectorId = saved.connector.connectorId;
+      const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
+      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
+      yield* writeConnectorFolder(work, {
+        version: "1.1.0",
+        keyRequired: false,
+        region: true,
+        mode: `gate:${gate}`,
+      });
+      locks.reset();
+      const saving = yield* harness.runtime
+        .saveFolder({ folder: work, connector: connectorId }, undefined)
+        .pipe(Effect.forkScoped);
+      yield* appears(`${gate}.started`);
+      const setting = yield* harness.runtime
+        .update({ connectorId, localSetup: { settings: { region: "eu" }, keys: {} } })
+        .pipe(Effect.forkScoped);
+      // Receipt: the setup has reached the connector's lock (or, unlocked, already ran).
+      yield* Effect.raceFirst(locks.reached(2), Fiber.await(setting));
+      yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
+      yield* Fiber.join(saving);
+      yield* Fiber.join(setting);
+      const after = (yield* harness.runtime.list()).connectors[0]!;
+      // regression: setup went in during the save, whose settings from before then replaced it.
+      expect(after.local?.setup.find((item) => item.field.key === "region")?.value).toBe("eu");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("brings back the earlier site's sign-in when Undo restores its manifest", () =>
+    Effect.gen(function* () {
+      const [siteA, siteB] = ["https://a.example.edu", "https://b.example.edu"];
+      const harness = yield* makeHarness({
+        signInSessions: siteSignIns({ [siteA]: "acc_site_a", [siteB]: "acc_site_b" }),
+      });
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "portal");
+      const write = (version: string, site: string) =>
+        writeConnectorFolder(work, { version, keyRequired: false, meta: { signIn: { site } } });
+      yield* write("1.0.0", siteA);
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const connectorId = saved.connector.connectorId;
+      expect(saved.connector.local?.signIn).toMatchObject({ site: siteA, accountId: "acc_site_a" });
+      yield* write("1.1.0", siteB);
+      const moved = yield* harness.runtime.saveFolder(
+        { folder: work, connector: connectorId },
+        undefined,
+      );
+      expect(moved.connector.local?.signIn).toMatchObject({ site: siteB, accountId: "acc_site_b" });
+
+      yield* harness.runtime.undo({ connectorId });
+      const undone = (yield* harness.runtime.list()).connectors[0]!;
+      // regression: Undo restored site A's manifest but kept site B's sign-in.
+      expect(undone.local?.signIn).toMatchObject({ site: siteA, accountId: "acc_site_a" });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("refuses to save what fails its check, with the program's error output", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "broken");
+      yield* writeConnectorFolder(work, { version: "1.0.0", mode: "broken" });
+      const checked = yield* harness.runtime.checkFolder({ folder: work }, undefined);
+      expect(checked.ok).toBe(false);
+      expect(checked.log).toContain("cannot find module ./lib.mjs");
+      const refused = yield* harness.runtime
+        .saveFolder({ folder: work }, undefined)
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("cannot find module ./lib.mjs");
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
+
+      // A malformed Scient block is a problem to fix, not silently ignored.
+      yield* writeConnectorFolder(work, { version: "1.0.0", meta: { signIn: "moodle.test" } });
+      const malformed = yield* harness.runtime.checkFolder({ folder: work }, undefined);
+      expect(malformed).toMatchObject({ ok: false });
+      expect(malformed.error).toContain("is not valid");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("fixes a bundle used in place as the user's own copy, and copies it for an agent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const vendor = NodePath.join(harness.config.stateDir, "..", "vendor-bundle");
+      yield* writeConnectorFolder(vendor, { version: "2.0.0" });
+      const added = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: vendor, settings: {}, keys: {} },
+      });
+      const connectorId = added.connector.connectorId;
+      expect(added.connector.local).toMatchObject({ owned: false, changedBy: "you" });
+
+      const chat = NodePath.join(harness.config.stateDir, "..", "chat");
+      const copied = yield* harness.runtime.copyForAgent({
+        workingFolder: chat,
+        connector: added.connector.serverName,
+      });
+      expect(copied).toMatchObject({
+        folder: NodePath.join(chat, "connectors", "agent-made"),
+        status: "needs-setup",
+        missing: ["API key"],
+        manifest: { name: "agent-made", version: "2.0.0", runtime: "node" },
+      });
+      // A later copy of the same connector replaces this one; other files are never touched.
+      yield* harness.runtime.copyForAgent({ workingFolder: chat, connector: connectorId });
+      const other = NodePath.join(chat, "connectors", "elsewhere");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(other, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(other, "notes.txt"), "mine");
+      });
+      const beside = yield* harness.runtime.copyForAgent({
+        workingFolder: chat,
+        name: "Elsewhere",
+      });
+      expect(beside.folder).toBe(NodePath.join(chat, "connectors", "elsewhere-2"));
+      expect(
+        yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(other, "notes.txt"), "utf8")),
+      ).toBe("mine");
+
+      yield* writeConnectorFolder(copied.folder, { version: "2.0.1" });
+      const forked = yield* harness.runtime.saveFolder(
+        { folder: copied.folder, connector: added.connector.serverName },
+        undefined,
+      );
+      expect(forked.connector.local).toMatchObject({
+        owned: true,
+        forkedFrom: "Agent Made",
+        changedBy: "agent",
+      });
+      expect(forked.connector.local!.directory).not.toBe(vendor);
+      // The vendor's bundle is never edited.
+      expect(yield* versionOf(vendor)).toBe("2.0.0");
+
+      yield* harness.runtime.undo({ connectorId });
+      const undone = (yield* harness.runtime.list()).connectors.find(
+        (item) => item.connectorId === connectorId,
+      );
+      expect(undone?.local).toMatchObject({ directory: vendor, owned: false });
+      expect(undone?.local?.forkedFrom).toBeUndefined();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps a connector's error output on disk and says when its sign-in is missing", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const plain = NodePath.join(harness.config.stateDir, "..", "plain-bundle");
+      yield* writeConnectorFolder(plain, { version: "3.0.0", keyRequired: false, mode: "broken" });
+      const added = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: plain, settings: {}, keys: {} },
+      });
+      const connectorId = added.connector.connectorId;
+      expect(yield* harness.runtime.test({ connectorId })).toMatchObject({
+        outcome: "error",
+        message: expect.stringContaining("cannot find module ./lib.mjs"),
+      });
+      const log = NodePath.join(harness.config.stateDir, "connector-logs", `${connectorId}.log`);
+      expect(yield* Effect.promise(() => NodeFSP.readFile(log, "utf8"))).toContain(
+        "starting 3.0.0",
+      );
+      const copied = yield* harness.runtime.copyForAgent({
+        workingFolder: NodePath.join(harness.config.stateDir, "..", "chat"),
+        connector: connectorId,
+      });
+      expect(copied).toMatchObject({ log: expect.stringContaining("starting 3.0.0") });
+      yield* harness.runtime.remove({ connectorId });
+      expect(
+        yield* Effect.promise(() =>
+          NodeFSP.stat(log).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      ).toBe(false);
+
+      const portal = NodePath.join(harness.config.stateDir, "..", "portal-bundle");
+      yield* writeConnectorFolder(portal, {
+        version: "1.0.0",
+        keyRequired: false,
+        meta: { signIn: { site: "https://moodle.example.edu/login" } },
+      });
+      const signedIn = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: portal, settings: {}, keys: {} },
+      });
+      expect(signedIn.connector.local).toMatchObject({
+        signIn: { site: "https://moodle.example.edu", state: "missing" },
+        missing: ["Sign-in to moodle.example.edu"],
+      });
+      expect(
+        yield* harness.runtime.test({ connectorId: signedIn.connector.connectorId }),
+      ).toMatchObject({ outcome: "needs-setup" });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("never copies through a link out of the chat's folder", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const outside = NodePath.join(harness.config.stateDir, "..", "elsewhere");
+      const chat = NodePath.join(harness.config.stateDir, "..", "chat-linked");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(outside, "open-works"), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(outside, "open-works", "keep.txt"), "mine");
+        await NodeFSP.mkdir(chat, { recursive: true });
+        await NodeFSP.symlink(outside, NodePath.join(chat, "connectors"));
+      });
+      // regression: copy wrote (and replaced) folders at the link's other end.
+      const refused = yield* harness.runtime
+        .copyForAgent({ workingFolder: chat, name: "Open Works" })
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("is a link to another folder");
+
+      // A linked folder in a real connectors folder is skipped, never removed or written.
+      const second = NodePath.join(harness.config.stateDir, "..", "chat-second");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(second, "connectors"), { recursive: true });
+        await NodeFSP.symlink(
+          NodePath.join(outside, "open-works"),
+          NodePath.join(second, "connectors", "open-works"),
+        );
+      });
+      const copied = yield* harness.runtime.copyForAgent({
+        workingFolder: second,
+        name: "Open Works",
+      });
+      expect(copied.folder).toBe(NodePath.join(second, "connectors", "open-works-2"));
+      expect(
+        yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(outside, "open-works"))),
+      ).toEqual(["keep.txt"]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "writes the connector-authoring template, which starts and lists its tools with no key",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const chat = NodePath.join(harness.config.stateDir, "..", "chat");
+        const copied = yield* harness.runtime.copyForAgent({
+          workingFolder: chat,
+          name: "Open Works",
+        });
+        expect(copied.folder).toBe(NodePath.join(chat, "connectors", "open-works"));
+        const manifest = yield* Effect.promise(async () =>
+          JSON.parse(await NodeFSP.readFile(NodePath.join(copied.folder, "manifest.json"), "utf8")),
+        );
+        expect(manifest).toMatchObject({ name: "open-works", display_name: "Open Works" });
+        const checked = yield* harness.runtime.checkFolder({ folder: copied.folder }, undefined);
+        expect(checked.ok).toBe(true);
+        expect(checked.tools.map((tool) => tool.name).sort()).toEqual(["get_work", "search_works"]);
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps a signed-in connector's short cookie from agents", () =>
+    Effect.gen(function* () {
+      const portal = yield* signedInPortal(["s6k9xq"]);
+      const called = yield* portal.call(2);
+      // regression: cookies used the 16-character key minimum, so a 6-character one got through.
+      expect(JSON.stringify(called)).not.toContain("s6k9xq");
+      expect(JSON.stringify(called)).toContain("[redacted by Scient]");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("hides the cookies of a new sign-in in the retried answer", () =>
+    Effect.gen(function* () {
+      const portal = yield* signedInPortal(["old-session-value-1"], ["fresh-session-value-2"]);
+      const called = yield* portal.call(2);
+      expect(portal.state.signIns).toBe(1);
+      // regression: the answer was checked against the cookies from before the new sign-in.
+      expect(JSON.stringify(called)).not.toContain("fresh-session-value-2");
+      expect(JSON.stringify(called)).toContain("[redacted by Scient]");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps a connector's session out of both checks, in any encoding and every field", () =>
+    Effect.gen(function* () {
+      const cookie = "portal-session-0123456789abcdef";
+      const leak = Buffer.from(cookie).toString("base64");
+      const portal = yield* signedInPortal([cookie], [cookie], LEAKY_SESSION_SERVER);
+      const installed = yield* portal.harness.runtime.test({
+        connectorId: portal.connectorId,
+        calls: [{ tool: "find" }],
+      });
+      const folder = yield* portal.harness.runtime.checkFolder(
+        { folder: portal.folder, connector: portal.connectorId, calls: [{ tool: "find" }] },
+        undefined,
+      );
+      // regression: checks hid only literal values, and the installed one never knew the cookies.
+      for (const checked of [installed, folder]) {
+        const shown = JSON.stringify(checked);
+        expect(shown).not.toContain(leak);
+        expect(shown).not.toContain(cookie);
+        expect(checked.tools.map((tool) => tool.name)).toEqual(["find", "[redacted by Scient]"]);
+      }
+      expect(folder.tools[0]).toMatchObject({
+        description: "Session [redacted by Scient] here.",
+        parameters: { properties: { q: { description: "[redacted by Scient]" } } },
+      });
+      expect(folder.calls[0]).toMatchObject({ isError: true });
+      expect(installed.calls?.[0]).toMatchObject({ isError: true });
+      expect(folder.log).toContain("using [redacted by Scient]");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("tests a connector for an agent with only the sign-ins its project may use", () =>
+    Effect.gen(function* () {
+      const cookie = "portal-session-0123456789abcdef";
+      const portal = yield* signedInPortal([cookie], [cookie], LEAKY_SESSION_SERVER);
+      portal.state.project = PROJECT;
+      const agent = <A, E>(effect: Effect.Effect<A, E>) =>
+        effect.pipe(Effect.provideService(ConnectorRuntime, portal.harness.runtime));
+      const server = (yield* portal.harness.runtime.list()).connectors[0]!.serverName;
+      // regression: an agent's test ran without its project, so Accounts' scope was skipped.
+      const elsewhere = yield* agent(
+        testConnector(server, { projectId: OTHER_PROJECT, worktreePath: null }),
+      );
+      expect(elsewhere.ok).toBe(false);
+      expect(elsewhere.error).toContain("not available in this project");
+      expect(
+        yield* agent(testConnector(server, { projectId: PROJECT, worktreePath: null })),
+      ).toMatchObject({ ok: true });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("stops a signed-in connector and drops its session when the sign-in is revoked", () =>
+    Effect.gen(function* () {
+      const portal = yield* signedInPortal(["portal-session-0123456789abcdef"]);
+      yield* portal.call(2);
+      portal.state.revoked = true;
+      const after = yield* portal.harness.proxy(portal.connectorId, toolCall(3), {
+        session: portal.session,
+      });
+      // regression: running copies kept using the revoked sign-in's cookies.
+      expect(after.status).toBe(404);
+      expect(portal.state.removed).toEqual([portal.connectorId]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+/**
+ * A signed-in local connector over Accounts stand-ins: its session holds `cookies`, and a new
+ * sign-in hands it `renewed`. Returns an open agent session.
+ */
+const signedInPortal = Effect.fn("signedInPortal")(function* (
+  cookies: ReadonlyArray<string>,
+  renewed: ReadonlyArray<string> = cookies,
+  server: string = ECHO_SESSION_SERVER,
+) {
+  const SITE = "https://portal.example.edu";
+  const state = {
+    cookies: [...cookies],
+    revoked: false,
+    /** The one project the sign-in is limited to, as Accounts' scope would. */
+    project: undefined as string | undefined,
+    removed: [] as string[],
+    signIns: 0,
+  };
+  const outOfScope = (projectId: string | undefined) =>
+    state.project !== undefined && projectId !== undefined && projectId !== state.project;
+  const files = yield* Effect.promise(() =>
+    NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-portal-session-")),
+  );
+  const write = Effect.promise(async () => {
+    const file = NodePath.join(files, "cookies.json");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify(state.cookies.map((value, index) => ({ name: `c${index}`, value }))),
+    );
+    return { environment: { SCIENT_SIGN_IN_COOKIES: file }, hide: [...state.cookies] };
+  });
+  const account = {
+    accountId: "acc_portal0001",
+    name: "Portal",
+    details: { kind: "website", sites: [SITE] },
+  } as unknown as AccountSummary;
+  const signInSessions: ConnectorSessionsShape = {
+    accountsFor: () => Effect.succeed([account]),
+    account: () => Effect.succeed(state.revoked ? undefined : account),
+    prepare: (target) =>
+      state.revoked
+        ? Effect.fail({ reason: "needs-user", message: "Portal is turned off." })
+        : outOfScope(target.projectId)
+          ? Effect.fail({
+              reason: "needs-user",
+              message: "Portal is not available in this project.",
+            })
+          : write,
+    signInAgain: () =>
+      Effect.suspend(() => {
+        state.signIns += 1;
+        state.cookies = [...renewed];
+        return write;
+      }),
+    allowed: (target) => Effect.succeed(!state.revoked && !outOfScope(target.projectId)),
+    remove: (connectorId) => Effect.sync(() => void state.removed.push(connectorId)),
+  };
+  const harness = yield* makeHarness({ signInSessions });
+  const folder = NodePath.join(harness.config.stateDir, "..", "portal-bundle");
+  yield* writeConnectorFolder(folder, {
+    version: "1.0.0",
+    keyRequired: false,
+    meta: { signIn: { site: SITE } },
+  });
+  yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), server));
+  const added = yield* harness.runtime.add({
+    target: { type: "local-bundle", path: folder, settings: {}, keys: {} },
+  });
+  const connectorId = added.connector.connectorId;
+  harness.delivered.add(connectorId);
+  const opened = yield* harness.proxy(connectorId, initialize(1));
+  const session = opened.headers.get("mcp-session-id")!;
+  yield* readEvents(opened);
+  const call = (id: number) =>
+    harness.proxy(connectorId, toolCall(id), { session }).pipe(Effect.flatMap(readEvents));
+  return { harness, connectorId, folder, session, state, call };
+});
+
+/** Puts its session cookie, base64-encoded, everywhere a check reports: a careless connector. */
+const LEAKY_SESSION_SERVER = `
+import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const cookie = JSON.parse(readFileSync(process.env.SCIENT_SIGN_IN_COOKIES, "utf8"))[0].value;
+const leak = Buffer.from(cookie).toString("base64");
+process.stderr.write("using " + leak + "\\n");
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "portal", version: "1" } } });
+  else if (message.method === "tools/list")
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [
+      { name: "find", description: "Session " + leak + " here.", inputSchema: { type: "object",
+        properties: { q: { type: "string", description: "Sent as " + leak } } } },
+      { name: "s_" + leak, inputSchema: { type: "object" } }] } });
+  else if (message.method === "tools/call")
+    send({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "denied for " + leak } });
+  else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;
+
+/**
+ * Echoes the session cookies it was handed, as a careless connector might; a session whose cookie
+ * starts with `old-` has ended, which it reports as the template does.
+ */
+const ECHO_SESSION_SERVER = `
+import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "portal", version: "1" } } });
+  else if (message.method === "tools/call") {
+    const values = JSON.parse(readFileSync(process.env.SCIENT_SIGN_IN_COOKIES, "utf8")).map((c) => c.value);
+    send({ jsonrpc: "2.0", id: message.id, result: values[0].startsWith("old-")
+      ? { isError: true, content: [{ type: "text", text: "SCIENT_SIGN_IN_EXPIRED: sent to the sign-in page" }] }
+      : { content: [{ type: "text", text: "session " + values.join(" ") }] } });
+  } else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;

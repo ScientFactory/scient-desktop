@@ -114,6 +114,19 @@ export const LocalConnectorSetupItem = Schema.Struct({
 });
 export type LocalConnectorSetupItem = typeof LocalConnectorSetupItem.Type;
 
+/**
+ * `missing`: no Accounts sign-in is linked. `linked`: Scient hands the program the site's session.
+ * `needs-user`: signing in again needs the person (a captcha, a text-message code).
+ */
+export const LocalConnectorSignIn = Schema.Struct({
+  site: TrimmedNonEmptyString,
+  state: Schema.Literals(["missing", "linked", "needs-user"]),
+  accountId: Schema.optional(TrimmedNonEmptyString),
+  /** The linked Accounts sign-in's name. */
+  account: Schema.optional(TrimmedNonEmptyString),
+});
+export type LocalConnectorSignIn = typeof LocalConnectorSignIn.Type;
+
 export const LocalConnectorSummary = Schema.Struct({
   kind: LocalConnectorKind,
   /** The folder holding the connector's `manifest.json`, on the environment's computer. */
@@ -129,6 +142,16 @@ export const LocalConnectorSummary = Schema.Struct({
   problem: Schema.optional(TrimmedNonEmptyString),
   /** Copies running now, one per agent session that uses it. */
   running: NonNegativeInt,
+  /** Scient keeps the folder (removed with the connector); false for a bundle used in place. */
+  owned: Schema.Boolean,
+  /** Who made the last change to its folder. */
+  changedBy: Schema.optional(Schema.Literals(["you", "agent"])),
+  /** The bundle this is the user's own copy of, by name, after an agent changed it. */
+  forkedFrom: Schema.optional(TrimmedNonEmptyString),
+  /** The last change to its folder can be undone. */
+  canUndo: Schema.Boolean,
+  /** The website it signs in to with the user's saved sign-in from Accounts. */
+  signIn: Schema.optional(LocalConnectorSignIn),
 });
 export type LocalConnectorSummary = typeof LocalConnectorSummary.Type;
 
@@ -354,6 +377,13 @@ export const LocalPackage = Schema.Struct({
 });
 export type LocalPackage = typeof LocalPackage.Type;
 
+/** An MCP Bundle (`.mcpb`) an MCP Registry entry publishes by https address and SHA-256. */
+export const LocalBundleDownload = Schema.Struct({
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048), Schema.isPattern(/^https:\/\//)),
+  sha256: TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+});
+export type LocalBundleDownload = typeof LocalBundleDownload.Type;
+
 /** Where a server set up in another app was found. */
 export const LocalImportSource = Schema.Union([
   Schema.Struct({
@@ -416,6 +446,13 @@ export const ConnectorAddInput = Schema.Struct({
       version: ConnectorNameInput,
       package: LocalPackage,
       environment: LocalEnvironmentListInput,
+    }),
+    /** A registry entry's `localBundle`: downloaded, checked against its hash, unpacked. */
+    Schema.Struct({
+      type: Schema.Literal("registry-bundle"),
+      name: ConnectorNameInput,
+      version: ConnectorNameInput,
+      bundle: LocalBundleDownload,
     }),
   ]),
   displayName: Schema.optional(ConnectorNameInput),
@@ -483,10 +520,29 @@ export const ConnectorUpdateInput = Schema.Struct({
   restart: Schema.optional(Schema.Literal(true)),
   /** Local connectors: change settings and keys; running copies restart. */
   localSetup: Schema.optional(
-    Schema.Struct({ settings: LocalBundleSettingsInput, keys: LocalKeysInput }),
+    Schema.Struct({
+      settings: LocalBundleSettingsInput,
+      keys: LocalKeysInput,
+      /** The Accounts website or university sign-in it uses for its `signIn` site. */
+      signIn: Schema.optional(TrimmedNonEmptyString),
+    }),
   ),
 });
 export type ConnectorUpdateInput = typeof ConnectorUpdateInput.Type;
+
+/** Undoes the last change to a local connector's folder, or brings a removed one back. */
+export const ConnectorUndoInput = Schema.Struct({ connectorId: ConnectorId });
+export type ConnectorUndoInput = typeof ConnectorUndoInput.Type;
+
+export const ConnectorExportInput = Schema.Struct({ connectorId: ConnectorId });
+export type ConnectorExportInput = typeof ConnectorExportInput.Type;
+
+/** A local connector as an MCP Bundle (`.mcpb`), to share. */
+export const ConnectorExport = Schema.Struct({
+  fileName: TrimmedNonEmptyString,
+  base64: Schema.String,
+});
+export type ConnectorExport = typeof ConnectorExport.Type;
 
 export const LocalBundleInspectInput = Schema.Struct({ path: LocalPathInput });
 export type LocalBundleInspectInput = typeof LocalBundleInspectInput.Type;
@@ -640,6 +696,8 @@ export const DiscoverEntry = Schema.Struct({
   remotes: Schema.Array(DiscoverRemote),
   /** A registry package Scient can run locally; offered only when no remote is installable. */
   localPackage: Schema.optional(LocalPackage),
+  /** A registry bundle Scient can download and run; offered when nothing above is. */
+  localBundle: Schema.optional(LocalBundleDownload),
   installable: Schema.Boolean,
   /** Why the entry cannot be installed as a connector (for example local packages only). */
   unsupportedReason: Schema.optional(TrimmedNonEmptyString),

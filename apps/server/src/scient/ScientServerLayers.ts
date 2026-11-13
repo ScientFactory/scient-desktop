@@ -64,6 +64,15 @@ import * as PandocManagedTool from "./pandoc/PandocManagedTool.ts";
 import * as PandocWordConverter from "./pandoc/PandocWordConverter.ts";
 import * as WordFileExport from "./pandoc/WordFileExport.ts";
 import { scientOverleafHttpApiLayer } from "./overleaf/http.ts";
+import { scientCloudHttpApiLayer } from "./cloud/http.ts";
+import * as CloudApi from "./cloud/CloudApi.ts";
+import * as CloudSync from "./cloud/CloudSync.ts";
+import * as CloudSyncSourceLive from "./cloud/CloudSyncSourceLive.ts";
+import * as CloudSyncState from "./cloud/CloudSyncState.ts";
+import * as ConversationExtras from "./cloud/ConversationExtras.ts";
+import * as ScientCloud from "./cloud/ScientCloud.ts";
+import * as ShareBuilder from "./cloud/ShareBuilder.ts";
+import * as TakeOverImport from "./cloud/TakeOverImport.ts";
 import * as OverleafEditorSave from "./overleaf/OverleafEditorSave.ts";
 import * as OverleafSync from "./overleaf/OverleafSync.ts";
 
@@ -131,6 +140,26 @@ export function makeScientRouteServices<
     ),
   );
   const RegistryContactLive = RegistryContact.layer.pipe(Layer.provide(ServerSettingsLayerLive));
+  // Scient Cloud: the copy worker, share building and take-over import over one state file. The
+  // state layer is the same instance turn admission reads (see server.ts), by memoization.
+  const ConversationSnapshotServiceLive = ConversationSnapshotService.layer.pipe(
+    Layer.provide(PersistenceLayerLive),
+  );
+  const ScientCloudLive = ScientCloud.layer.pipe(
+    Layer.provide(
+      TakeOverImport.layer.pipe(
+        Layer.provide(ConversationImportStagingLive),
+        Layer.provide(ConversationExportFiles.layer),
+      ),
+    ),
+    Layer.provide(ShareBuilder.layer),
+    Layer.provide(CloudSync.layer.pipe(Layer.provide(CloudSyncSourceLive.layer))),
+    Layer.provide(ConversationSnapshotServiceLive),
+    Layer.provide(ConversationExtras.layer),
+    Layer.provide(CloudApi.layer),
+    Layer.provide(CloudSyncState.layer),
+    Layer.provide(ServerSettingsLayerLive),
+  );
   const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
     Layer.provide(ServerSettingsLayerLive),
     Layer.provide(LocalAnalysisStore.layer),
@@ -193,6 +222,7 @@ export function makeScientRouteServices<
       Layer.provide(scientWordExportHttpApiLayer),
       Layer.provide(scientOverleafHttpApiLayer),
       Layer.provide(scientReferencesHttpApiLayer),
+      Layer.provide(scientCloudHttpApiLayer),
     );
 
   /** Scient services behind the routes, provided in order. */
@@ -201,6 +231,7 @@ export function makeScientRouteServices<
       Layer.provide(BrowserHistory.layer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(ConversationExportServiceLive),
       Layer.provide(ConversationImportStagingLive),
+      Layer.provide(ScientCloudLive),
       Layer.provide(WordFileExportLive),
       Layer.provide(ComputeMcpGatewayLive),
       Layer.provide(AnalysisServiceLive),

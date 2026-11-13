@@ -40,7 +40,9 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
     Effect.provideService(ServerConfig.ServerConfig, config),
     // Settings' Reclaim stops the server; repair once the database is closed, before the restart.
     Effect.ensuring(
-      DatabaseMaintenance.runRequestedReclaim(config.dbPath).pipe(
+      // SCIENT-FORK:START — the repair holds server ownership until it finishes.
+      DatabaseMaintenance.runRequestedReclaim(config.dbPath, config.serverRuntimeStatePath).pipe(
+        // SCIENT-FORK:END
         Effect.provide(DatabaseMaintenance.layer),
       ),
     ),
@@ -90,15 +92,21 @@ export const startCommand = Command.make("start", { ...sharedServerCommandFlags 
   Command.withHandler((flags) => runServerCommand(flags, { rejectRunningServer: true })),
 );
 
-export const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe(
+// Serve never bootstraps a project, so it does not offer the flag that asks for one.
+const { autoBootstrapProjectFromCwd: _, ...serveCommandFlags } = sharedServerCommandFlags;
+
+export const serveCommand = Command.make("serve", serveCommandFlags).pipe(
   Command.withShortDescription("Run Scient in this terminal, with no browser."),
   Command.withDescription(
     "Run Scient in this terminal without opening a browser, and print pairing details.",
   ),
   Command.withHandler((flags) =>
-    runServerCommand(flags, {
-      startupPresentation: "headless",
-      forceAutoBootstrapProjectFromCwd: false,
-    }),
+    runServerCommand(
+      { ...flags, autoBootstrapProjectFromCwd: Option.none() },
+      {
+        startupPresentation: "headless",
+        forceAutoBootstrapProjectFromCwd: false,
+      },
+    ),
   ),
 );

@@ -227,6 +227,19 @@ import {
   ScientReferenceResolveRequest,
   ScientReferenceResolveResult,
 } from "../scientReferences.ts";
+import {
+  ScientCloudEnrollmentCompleteRequest,
+  ScientCloudEnrollmentProof,
+  ScientCloudEnrollmentProofRequest,
+  ScientCloudError,
+  ScientCloudSetEnabledRequest,
+  ScientCloudShareBuild,
+  ScientCloudShareBuildRequest,
+  ScientCloudStatus,
+  ScientCloudStopRequest,
+  ScientCloudTakeOverRequest,
+  ScientCloudTakeOverResult,
+} from "../scientCloud.ts";
 
 /** Scient reasons inside environmentHttp's EnvironmentInternalErrorReason, in wire order. */
 export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
@@ -248,6 +261,7 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_overleaf_operation_failed",
   "scient_annotations_operation_failed",
   "scient_references_operation_failed",
+  "scient_cloud_operation_failed",
 ] as const;
 
 export class ScientThreadQueueOperationError extends Schema.TaggedError<ScientThreadQueueOperationError>()(
@@ -1195,6 +1209,65 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
+  // Scient Cloud group: this computer's enrollment, the conversation copy,
+  // share building and take-over import. The renderer calls the cloud itself.
+  class EnvironmentScientCloudHttpApi extends HttpApiGroup.make("scientCloud")
+    .add(
+      HttpApiEndpoint.post("status", "/api/scient/cloud/v1/status", {
+        headers: OptionalBearerHeaders,
+        success: ScientCloudStatus,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("enrollmentProof", "/api/scient/cloud/v1/enrollment/proof", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudEnrollmentProofRequest,
+        success: ScientCloudEnrollmentProof,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("enrollmentComplete", "/api/scient/cloud/v1/enrollment/complete", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudEnrollmentCompleteRequest,
+        success: ScientCloudStatus,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("setEnabled", "/api/scient/cloud/v1/enabled", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudSetEnabledRequest,
+        success: ScientCloudStatus,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("stop", "/api/scient/cloud/v1/stop", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudStopRequest,
+        success: ScientCloudStatus,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("shareBuild", "/api/scient/cloud/v1/share/build", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudShareBuildRequest,
+        success: ScientCloudShareBuild,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("takeOver", "/api/scient/cloud/v1/take-over", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCloudTakeOverRequest,
+        success: ScientCloudTakeOverResult,
+        error: [EnvironmentHttpCommonError, ScientCloudError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    ) {}
+
   return {
     EnvironmentScientKeepAwakeHttpApi,
     EnvironmentScientProjectHttpApi,
@@ -1209,5 +1282,6 @@ export function makeScientEnvironmentHttpGroups({
     EnvironmentScientWordExportHttpApi,
     EnvironmentScientOverleafHttpApi,
     EnvironmentScientReferencesHttpApi,
+    EnvironmentScientCloudHttpApi,
   };
 }

@@ -29,6 +29,7 @@ vi.mock("./mathFieldReadiness", async (importOriginal) => {
   };
 });
 
+import { advanceTestClock } from "../../../test/testClock";
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { readMountedLatexVisualTestEditor, useLatexVisualTestOwner } from "./latexVisualTestOwner";
 import { isMacKeyboard } from "../keyboard/keys";
@@ -460,7 +461,7 @@ it.each(["selection", "readonly", "source"])(
   },
 );
 
-it("leaves readable ink and Retry when an editor never becomes ready", async () => {
+it("leaves readable ink and Retry when an editor never becomes ready", async (context) => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -469,9 +470,12 @@ it("leaves readable ink and Retry when an editor never becomes ready", async () 
   const reading = readers(_fixture)[0]!;
   readiness.hold = true;
   await userEvent.click(reading.querySelector<HTMLElement>(".scient-latex-mathfield")!);
-  await vi.waitFor(async () => expect(reading.querySelector("button")?.textContent).toBe("Retry"), {
-    timeout: 6000,
-  });
+  await vi.waitFor(async () =>
+    expect(_fixture.host.querySelector("[data-math-editor-staging] math-field")).not.toBeNull(),
+  );
+  // The admission deadline is 3.5 s; the fake clock reaches it without waiting it out.
+  await advanceTestClock(context.signal, 3500);
+  await vi.waitFor(async () => expect(reading.querySelector("button")?.textContent).toBe("Retry"));
   expect(reading.querySelector("math-field")).toBeNull();
   expect(markup(reading)).toContain("x");
   expect(_fixture.source).toBe(original);

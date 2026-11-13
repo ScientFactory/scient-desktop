@@ -8,9 +8,10 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { describe, expect, it } from "@effect/vitest";
+import { afterAll, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
@@ -25,6 +26,10 @@ import { fixture } from "./WorkspaceApplier.testkit.ts";
 
 const hasPrivateFoldersAndIdentity = await privateFoldersAndIdentityHost();
 const child = NodePath.join(import.meta.dirname, "WorkspaceApplier.crash-child.ts");
+// Every case starts a child that loads the same modules; Node's compile cache, keyed by their
+// content, spares each child after the first most of that load.
+const compileCache = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-crash-compile-"));
+afterAll(() => NodeFSP.rm(compileCache, { recursive: true, force: true }));
 const revisions = (files: Record<string, string>) =>
   Object.fromEntries(
     Object.entries(files).map(([name, text]) => [name, bytesRevision(Buffer.from(text))]),
@@ -122,6 +127,7 @@ async function crashAt(
   const run = NodeChildProcess.spawnSync(process.execPath, [child, jobPath], {
     encoding: "utf8",
     timeout: 60_000,
+    env: { ...process.env, NODE_COMPILE_CACHE: compileCache },
   });
   if (HostProcess.Platform.defaultValue() === "win32") expect(run.status, run.stderr).toBe(73);
   else expect(run.signal, run.stderr).toBe("SIGKILL");
@@ -375,7 +381,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
     },
     {
       name: "a rename's destination",
-      create: true,
       occurrence: 1,
       captured: { "old.tex": "base", "guard.tex": "guard" },
       target: { "new.tex": "remote", "guard.tex": "guard" },
@@ -396,7 +401,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
     },
     {
       name: "a file in a folder replacing a file",
-      create: true,
       occurrence: 2,
       captured: { notes: "base", "guard.tex": "guard" },
       target: { "notes/a.tex": "remote", "notes/b.tex": "B", "guard.tex": "guard" },
@@ -408,14 +412,8 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
       target: { notes: "remote", "guard.tex": "guard" },
     },
     {
-      name: "a file replacing a folder",
-      create: true,
-      occurrence: 3,
-      captured: { "notes/a.tex": "base", "notes/b.tex": "B", "guard.tex": "guard" },
-      target: { notes: "remote", "guard.tex": "guard" },
-    },
-    {
-      name: "a folder's removal",
+      // Its third step removes the emptied folder, then writes the file in its place.
+      name: "a folder removed for a file",
       occurrence: 3,
       captured: { "notes/a.tex": "base", "notes/b.tex": "B", "guard.tex": "guard" },
       target: { notes: "remote", "guard.tex": "guard" },

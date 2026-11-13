@@ -290,10 +290,16 @@ jobs:
       # Xvfb is for the desktop launch check below.
       - name: Start installing browser secret helper build libraries
         run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
+          # which a slow mirror can stretch past the wait below.
+          sudo sed -i -e 's|http://|https://|g' -e 's/^Components: .*/Components: main universe/' \
+            /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
             set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config xvfb
+            sudo apt-get update -o Acquire::Languages=none \
+              -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false \
+              -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false &&
+              sudo apt-get install -y libsecret-1-dev pkg-config xvfb
             echo "$?" > "$RUNNER_TEMP/apt-status"
           ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
 
@@ -392,10 +398,16 @@ jobs:
       - name: Start installing browser secret helper build libraries
         if: ${{ matrix.part == 1 }}
         run: |
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
+          # which a slow mirror can stretch past the wait below.
+          sudo sed -i -e 's|http://|https://|g' -e 's/^Components: .*/Components: main universe/' \
+            /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
             set +e
-            sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+            sudo apt-get update -o Acquire::Languages=none \
+              -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false \
+              -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false &&
+              sudo apt-get install -y libsecret-1-dev pkg-config
             echo "$?" > "$RUNNER_TEMP/apt-status"
           ) > "$RUNNER_TEMP/apt.log" 2>&1 < /dev/null &
 
@@ -497,7 +509,9 @@ jobs:
 
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.
-  # release.yml mirrors this test, test_web, and test_server split.
+  # Browser tests are bound by the Vite server transforming modules for each
+  # file, not by Chromium, so a second runner (and Vite server) halves the job
+  # that gated every run. release.yml mirrors this test, test_web, and test_server split.
   # SCIENT-FORK:START — duration-balanced hosted shards, JSON reports and performance suites.
   test_web:
     needs: [queue_ci, release_notes, changes, shard_weights]
@@ -574,6 +588,7 @@ jobs:
 
       # Browser tests run source modules; this boots the production chunk graph.
       - name: Boot the built web client
+        if: matrix.shard == 1
         run: |
           vp run --filter @t3tools/web build
           node apps/web/scripts/verify-built-boot.ts
@@ -673,6 +688,17 @@ jobs:
         run: cp "$RUNNER_TEMP/shard-weights/server.json" apps/server/src/testUtils/shardWeights.json
       # SCIENT-FORK:END
 
+      # Each server test file runs in its own Vitest process, and a fresh install starts
+      # Vitest's content-keyed module cache empty, so every file re-transformed its imports.
+      # Only pushes to main save it, so pull requests never evict each other's entries.
+      # Scient has no per-job changes step here; a reused queue run skips these shards.
+      - name: Restore Vitest module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: node_modules/.vitest-cache
+          key: vitest-modules-server-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: vitest-modules-server-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
       - name: Test
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
@@ -704,6 +730,14 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
           retention-days: 14
+
+      - name: Save Vitest module cache
+        # Main pushes usually reuse the queue's result, so the nightly run saves too.
+        if: github.event_name == 'push' || github.event_name == 'schedule'
+        uses: actions/cache/save@v6
+        with:
+          path: node_modules/.vitest-cache
+          key: vitest-modules-server-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
 
       # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
       # produces these files. Gating the upload on their presence keeps a
@@ -948,12 +982,11 @@ jobs:
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
-      # Restoring setup-vp's 1.5 GB macOS cache took longer than installing without it.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: false
+          cache: true
           run-install: false
       - name: Install
         run: vp install

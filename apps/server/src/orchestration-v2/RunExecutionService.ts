@@ -655,6 +655,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
+  readonly hasWorkspaceMoved?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -709,6 +710,7 @@ export const layer: Layer.Layer<
         readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
         readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
+        readonly openRunOwnedSubagentsTerminal?: ProviderTerminalEvent;
         readonly terminal: RunTerminalOutcome;
         readonly preserveProviderThread?: boolean;
         readonly pendingStartOwner?: EventSink.PendingStartOwner;
@@ -723,6 +725,7 @@ export const layer: Layer.Layer<
         readonly writeIfRunCurrent?: {
           readonly activeAttemptId: RunAttemptId;
           readonly expectedStatus: OrchestrationV2Run["status"];
+          readonly unlessInterruptRequested?: boolean;
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
@@ -795,14 +798,15 @@ export const layer: Layer.Layer<
           open.turnItems.size > 0 ||
           open.childTurnItems.size > 0 ||
           open.nodes.size > 0;
+        const subagentTerminal = input.openRunOwnedSubagentsTerminal ?? input.terminal;
         const cascadedSubagentEvents =
-          isRunOwnedSubagentTerminalStatus(input.terminal.status) &&
-          !childTurnsContinue(input.terminal) &&
+          isRunOwnedSubagentTerminalStatus(subagentTerminal.status) &&
+          !childTurnsContinue(subagentTerminal) &&
           hasOpenSubagentProjection
             ? yield* cascadeTerminalizeRunOwnedSubagents({
                 run: input.run,
                 open,
-                status: input.terminal.status,
+                status: subagentTerminal.status,
                 completedAt,
                 allocateEventId,
               })
@@ -967,6 +971,20 @@ export const layer: Layer.Layer<
             runId: input.run.id,
             activeAttemptId: input.writeIfRunCurrent.activeAttemptId,
             expectedStatus: input.writeIfRunCurrent.expectedStatus,
+            ...(input.writeIfRunCurrent.unlessInterruptRequested === true
+              ? {
+                  unlessInterruptRequested: {
+                    requestId: idAllocator.derive.runSignalTurnItem({
+                      runId: input.run.id,
+                      signal: "interrupt-request",
+                    }),
+                    resultId: idAllocator.derive.runSignalTurnItem({
+                      runId: input.run.id,
+                      signal: "interrupt-result",
+                    }),
+                  },
+                }
+              : {}),
             events: finalization.events,
             ...(input.pendingStartOwner === undefined
               ? {}
@@ -1269,42 +1287,67 @@ export const layer: Layer.Layer<
             return;
           const providerThread = yield* Ref.get(latestProviderThread);
           const openSubagents = yield* Ref.get(openRunOwnedSubagents);
-          const committed = yield* writeOwnedFinalRunEvents({
-            run: input.run,
-            rootNode: input.rootNode,
-            checkpointScope: input.checkpointScope,
-            providerThread,
-            attempt: input.attempt,
-            ...(input.shouldFinalizeRun === undefined
-              ? {}
-              : {
-                  shouldFinalizeRun: input.shouldFinalizeRun,
-                  // Stop may commit between the ownership read and this
-                  // terminal write. Gate the events and checkpoint together.
-                  writeIfRunCurrent: {
-                    activeAttemptId: input.attempt.id,
-                    expectedStatus: "running" as const,
-                  },
-                }),
-            ...(input.hasUnpairedRunInterruptRequest === undefined
-              ? {}
-              : {
-                  hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
-                }),
-            ...(input.loadRunInterruptReason === undefined
-              ? {}
-              : { loadRunInterruptReason: input.loadRunInterruptReason }),
-            openRunOwnedSubagents: openSubagents,
-            terminal,
-            failureItemPersisted: terminal.status === "failed",
+          const writeTerminal = (
+            settledTerminal: ProviderTerminalEvent,
             // SCIENT-FORK:START — retire a superseded run without consuming held work.
-            onRunOwnerLost: Ref.set(rootFinalizationOwnerLost, true),
+            onRunOwnerLost?: Effect.Effect<void>,
             // SCIENT-FORK:END
-            refreshAfterTurn,
-          }).pipe(
-            Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
-          );
+          ) =>
+            writeOwnedFinalRunEvents({
+              run: input.run,
+              rootNode: input.rootNode,
+              checkpointScope: input.checkpointScope,
+              providerThread,
+              attempt: input.attempt,
+              ...(input.shouldFinalizeRun === undefined
+                ? {}
+                : {
+                    shouldFinalizeRun: input.shouldFinalizeRun,
+                    // Stop may commit between the ownership read and this
+                    // terminal write. Gate the events and checkpoint together.
+                    writeIfRunCurrent: {
+                      activeAttemptId: input.attempt.id,
+                      expectedStatus: "running" as const,
+                      unlessInterruptRequested: settledTerminal !== terminal,
+                    },
+                  }),
+              ...(input.hasUnpairedRunInterruptRequest === undefined
+                ? {}
+                : {
+                    hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
+                  }),
+              ...(input.loadRunInterruptReason === undefined
+                ? {}
+                : { loadRunInterruptReason: input.loadRunInterruptReason }),
+              openRunOwnedSubagents: openSubagents,
+              openRunOwnedSubagentsTerminal: terminal,
+              terminal: settledTerminal,
+              failureItemPersisted: settledTerminal.status === "failed",
+              // SCIENT-FORK:START — retire a superseded run without consuming held work.
+              ...(onRunOwnerLost === undefined ? {} : { onRunOwnerLost }),
+              // SCIENT-FORK:END
+              refreshAfterTurn,
+            }).pipe(
+              Effect.mapError(
+                (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
+              ),
+            );
+          // A workspace handoff detaches the session and stops the turn that asked
+          // for it: the run completes, while its native subagents still settle
+          // as interrupted. The completed write refuses in the same transaction
+          // as a stored Stop request, so a racing Stop stays authoritative.
+          const handedOff =
+            terminal.status === "interrupted" &&
+            input.shouldFinalizeRun !== undefined &&
+            input.hasWorkspaceMoved !== undefined &&
+            (yield* input.hasWorkspaceMoved());
+          // SCIENT-FORK:START — a refused handoff completion is not an owner loss; only the
+          // terminal write retires a superseded run, and an uncommitted write stays retryable.
+          const committed =
+            (handedOff && (yield* writeTerminal({ ...terminal, status: "completed" }))) ||
+            (yield* writeTerminal(terminal, Ref.set(rootFinalizationOwnerLost, true)));
           if (!committed) return;
+          // SCIENT-FORK:END
           if (isRunOwnedSubagentTerminalStatus(terminal.status) && !childTurnsContinue(terminal)) {
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
             idleFlushClosed = true;

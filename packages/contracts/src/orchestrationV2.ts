@@ -332,6 +332,8 @@ export const OrchestrationV2TurnCapabilities = Schema.Struct({
   activeSteeringInterruptsTools: Schema.optional(Schema.Boolean),
   // Some take text only, so a steer with attachments restarts the turn instead.
   activeSteeringAcceptsAttachments: Schema.optional(Schema.Boolean),
+  // Only where a steer leaves a running automatic compaction intact; otherwise clients queue.
+  activeSteeringDuringCompaction: Schema.optional(Schema.Boolean),
   supportsSteeringByInterruptRestart: Schema.Boolean,
   supportsQueuedMessages: Schema.Boolean,
   terminalStatusQuality: Schema.Literals(["strong", "weak", "none"]),
@@ -991,6 +993,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
+  // The run whose unfinished task was cancelled, committed with its Stop.
+  cancelledRunId: Schema.optional(RunId),
   status: Schema.Literals([
     "idle",
     "pending",
@@ -1414,7 +1418,18 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     Schema.Struct({ kind: Schema.Literal("background_command").transform("command") }),
     SubagentNotificationSource,
     CommandNotificationSource,
-    Schema.Struct({ kind: Schema.Literal("monitor") }),
+    Schema.Struct({
+      kind: Schema.Literal("monitor"),
+      pullRequest: Schema.optional(
+        Schema.Struct({
+          ...ThreadPullRequestKey.fields,
+          watchStartedAt: IsoDateTime,
+          /** Null when the wake is not about one head, so a newer push does not outdate it. */
+          headSha: Schema.NullOr(TrimmedNonEmptyString),
+          watchEnded: Schema.optional(Schema.Boolean),
+        }),
+      ),
+    }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
     /** The application itself, such as a restart continuing an interrupted turn. */
     Schema.Struct({ kind: Schema.Literal("system") }),
@@ -1665,6 +1680,8 @@ export const OrchestrationV2ModelSwitch = Schema.Struct({
 });
 export type OrchestrationV2ModelSwitch = typeof OrchestrationV2ModelSwitch.Type;
 
+const AssistantMessagePhase = Schema.Literals(["commentary", "partial_answer", "final_answer"]);
+
 // SCIENT-FORK:START — message-boundary fork items and the notice older clients decode.
 const OrchestrationV2TurnItemBaseFields = makeTurnItemBaseFields(
   OrchestrationV2TurnItemStatus,
@@ -1730,8 +1747,9 @@ const OrchestrationV2LinkRequestFields = {
   url: Schema.optional(TrimmedNonEmptyString),
   reason: Schema.String,
   /**
-   * The environment the agent named, or the one answering at `url`. Without
-   * either the user picks the machine in the card.
+   * The environment the agent named. Without it or `url` the user picks the
+   * machine in the card. Beside a `url`, this and `label` are what answered
+   * there on an older server: unauthenticated, so clients ignore both.
    */
   environmentId: Schema.optional(EnvironmentId),
   label: Schema.optional(Schema.String),
@@ -1776,6 +1794,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
+    phase: Schema.optional(AssistantMessagePhase),
     // SCIENT-FORK:START — carry syntax provenance without retaining native ownership.
     citationPresentation: Schema.optional(ProviderCitationPresentation),
     // SCIENT-FORK:END
@@ -2652,6 +2671,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
+    phase: Schema.optional(AssistantMessagePhase),
     // SCIENT-FORK:START — carry syntax provenance without retaining native ownership.
     citationPresentation: Schema.optional(ProviderCitationPresentation),
     // SCIENT-FORK:END
@@ -3640,6 +3660,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
         messageId: MessageId,
         text: Schema.String,
         notification: OrchestrationV2Notification,
+        /** Comments stay worth reading after a push, so the wake outlives a newer head. */
+        includesRemarks: Schema.optional(Schema.Boolean),
       }),
     ),
   }),

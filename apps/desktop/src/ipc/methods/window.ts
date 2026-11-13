@@ -486,10 +486,8 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
     if (environment.platform !== "darwin") return false;
     const owner = Electron.BrowserWindow.getFocusedWindow();
     // SCIENT-FORK:START — computer control panes: macOS lists Scient itself, so no drag helper.
-    if (isComputerControlPermission(pane)) {
-      const outcome = yield* Effect.promise(() => openComputerControlPermissionPane(pane));
-      return outcome === "opened" || outcome === "deferred";
-    }
+    if (isComputerControlPermission(pane))
+      return yield* Effect.promise(() => openComputerControlPermissionPane(pane));
     // SCIENT-FORK:END
     const opened = yield* shell.openSystemSettings(pane);
     if (opened && environment.isPackaged && pane === "full-disk-access") {
@@ -666,7 +664,8 @@ export const checkSystemPermission = DesktopIpc.makeIpcMethod({
       return Electron.systemPreferences.getMediaAccessStatus("microphone") === "granted";
     }
     // SCIENT-FORK:START — computer control panes.
-    if (isComputerControlPermission(pane)) return computerControlPermissionGranted(pane);
+    if (isComputerControlPermission(pane))
+      return yield* Effect.promise(() => computerControlPermissionGranted(pane));
     // SCIENT-FORK:END
     const check = yield* safariPermissionCheck;
     return yield* Effect.promise(check);

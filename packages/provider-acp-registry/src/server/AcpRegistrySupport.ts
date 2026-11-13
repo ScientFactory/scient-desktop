@@ -1457,6 +1457,27 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   });
   // SCIENT-FORK:END
 
+  const hasInstalledBinaryVersion = Effect.fn("AcpRegistryCatalog.hasInstalledBinaryVersion")(
+    function* (agentId: string) {
+      const agentRoot = path.join(installsDirectory, agentId);
+      const versions = yield* fileSystem
+        .readDirectory(agentRoot)
+        .pipe(Effect.orElseSucceed((): Array<string> => []));
+      for (const version of versions) {
+        for (const candidateTarget of resolveAcpRegistryPlatformTargetCandidates(platformTarget)) {
+          if (
+            yield* fileSystem
+              .exists(path.join(agentRoot, version, candidateTarget))
+              .pipe(Effect.orElseSucceed(() => false))
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
+    },
+  );
+
   const installBinary = Effect.fn("AcpRegistryCatalog.installBinary")(function* (
     agent: AcpRegistryAgent,
     target: typeof AcpRegistryBinaryTarget.Type,
@@ -1854,7 +1875,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             const exists = yield* fileSystem
               .exists(paths.executablePath)
               .pipe(Effect.orElseSucceed(() => false));
-            if (!exists) {
+            // Any prepared version keeps the agent ready; resolve installs the current one on demand.
+            if (!exists && !(yield* hasInstalledBinaryVersion(agent.id))) {
               return {
                 status: "unprepared",
                 agentId,
@@ -1862,18 +1884,21 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 distribution: "binary",
               } as const;
             }
-            yield* assertExecutableInRoot(paths.installRoot, paths.executablePath).pipe(
-              Effect.mapError((cause) =>
-                isAcpRegistryError(cause)
-                  ? cause
-                  : new AcpRegistryError({
-                      reason: "install_failed",
-                      detail: `Could not validate cached ACP Registry agent ${agent.id}.`,
-                      cause,
-                    }),
-              ),
-            );
-            yield* assertOwnedInstallRoot(paths.installRoot);
+            if (exists) {
+              yield* assertExecutableInRoot(paths.installRoot, paths.executablePath).pipe(
+                Effect.mapError((cause) =>
+                  isAcpRegistryError(cause)
+                    ? cause
+                    : new AcpRegistryError({
+                        reason: "install_failed",
+                        detail: `Could not validate cached ACP Registry agent ${agent.id}.`,
+                        cause,
+                      }),
+                ),
+              );
+              // SCIENT-FORK: only an app-owned install root may be reported ready.
+              yield* assertOwnedInstallRoot(paths.installRoot);
+            }
             return {
               status: "ready",
               agentId,

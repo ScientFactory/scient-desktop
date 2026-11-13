@@ -1,6 +1,6 @@
 import {
   browserActionPresentation,
-  foldedQuestionAnswerMessageIds,
+  foldedQuestionAnswerRunIdByMessageId,
 } from "./scient/threadTimeline/presentation";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
@@ -551,7 +551,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
-  const foldedAnswerMessageIds = foldedQuestionAnswerMessageIds(input.visibleTurnItems);
+  // An answer that started a later run stays a normal message at that run's position.
+  // SCIENT-FORK: imported answers name their own message (scient/threadTimeline/presentation.ts).
+  const foldedAnswerRunIdByMessageId = foldedQuestionAnswerRunIdByMessageId(input.visibleTurnItems);
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
@@ -562,7 +564,11 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       item.status === "pending"
     )
       continue;
-    if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
+    if (
+      item.type === "user_message" &&
+      foldedAnswerRunIdByMessageId.get(item.messageId) === item.runId
+    )
+      continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
@@ -702,7 +708,10 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     });
   }
 
-  const retainedMessageIds = new Set([...committedMessageIds, ...foldedAnswerMessageIds]);
+  const retainedMessageIds = new Set([
+    ...committedMessageIds,
+    ...foldedAnswerRunIdByMessageId.keys(),
+  ]);
   for (const message of input.anchoredMessages ?? []) {
     if (retainedMessageIds.has(message.id)) continue;
     retainedMessageIds.add(message.id);
@@ -904,7 +913,7 @@ function reuseTimelineEntries(
   if (appended) {
     const appendedItems = input.visibleTurnItems.slice(before.visibleTurnItems.length);
     const foldedAnswerIds = appendedItems.some(({ item }) => item.type === "user_message")
-      ? foldedQuestionAnswerMessageIds(input.visibleTurnItems)
+      ? foldedQuestionAnswerRunIdByMessageId(input.visibleTurnItems)
       : undefined;
     if (
       appendedItems.some(
@@ -1016,15 +1025,14 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
-  readonly threadStartCheckpointReady: boolean;
+  readonly threadStartCheckpointAvailable: boolean;
   readonly availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   readonly unsettledRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
-  const rewindTurnCountByRunId = new Map<RunId, number>();
+  const turnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
-    // SCIENT-FORK: a boundary without a file snapshot still rewinds the conversation.
-    if (checkpointSupportsRewind(checkpoint, false)) {
-      rewindTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
+    if (isRewindableCheckpoint(checkpoint)) {
+      turnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
   }
   const targetByRunId = new Map<RunId, number | undefined>();
@@ -1047,10 +1055,10 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       targetByRunId.set(
         runId,
         previousRunId === null
-          ? input.threadStartCheckpointReady
+          ? input.threadStartCheckpointAvailable
             ? 0
             : undefined
-          : rewindTurnCountByRunId.get(previousRunId),
+          : turnCountByRunId.get(previousRunId),
       );
       previousRunId = runId;
     }
@@ -1068,6 +1076,14 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
+// A missing snapshot (no git, or a side chat) still pins a conversation position; only
+// restoring files needs a ready one.
+function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "status">) {
+  // SCIENT-FORK: a failed snapshot (oversized workspace) also pins its position; only a
+  // rolled-back (stale) boundary does not.
+  return checkpointSupportsRewind(checkpoint, false);
+}
+
 export function findRevertCheckpoint(
   checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
   turnCount: number,
@@ -1081,9 +1097,7 @@ export function findRevertCheckpoint(
     checkpoints.findLast(
       (checkpoint) => checkpointSupportsRewind(checkpoint, true) && atTurn(checkpoint),
     ) ??
-    checkpoints.findLast(
-      (checkpoint) => checkpointSupportsRewind(checkpoint, false) && atTurn(checkpoint),
-    )
+    checkpoints.findLast((checkpoint) => isRewindableCheckpoint(checkpoint) && atTurn(checkpoint))
   );
 }
 

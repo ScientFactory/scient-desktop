@@ -34,7 +34,7 @@ it.live.each(
       const outbox = yield* EffectOutboxV2;
       const store = yield* EventStoreV2;
       const original = yield* f.seed;
-      const opening = yield* worker.runOnce.pipe(Effect.forkScoped);
+      const opening = yield* worker.runOnce().pipe(Effect.forkScoped);
       if (startup) {
         yield* Deferred.await(f.readyEntered).pipe(Effect.timeout("10 seconds"));
       } else {

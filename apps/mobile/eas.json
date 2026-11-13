@@ -59,7 +59,7 @@
     "testflight": {
       "extends": "production",
       "env": {
-        "T3CODE_MOBILE_VERSION": "3.0.0"
+        "T3CODE_MOBILE_VERSION": "1.0.0"
       }
     },
     "production": {
@@ -86,9 +86,6 @@
       "extends": "production"
     },
     "production": {
-      "ios": {
-        "ascAppId": "6787819824"
-      },
       "android": {
         "track": "internal"
       }

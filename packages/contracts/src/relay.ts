@@ -1157,6 +1157,24 @@ const RelayClientGroup = HttpApiGroup.make("client")
   .annotate(OpenApi.Description, "Cloud-user environment links and registered devices.")
   .middleware(RelayClientAuth);
 
+// SCIENT-FORK:START account-deletion — the signed-in user deletes their own account.
+const RelayAccountGroup = HttpApiGroup.make("account")
+  .add(
+    HttpApiEndpoint.delete("deleteAccount", "/v1/me", {
+      headers: RelayBearerRequestHeaders,
+      success: RelayOkResponse,
+      error: RelayAuthAndInternalErrors,
+    })
+      .annotate(OpenApi.Summary, "Delete the signed-in account")
+      .annotate(
+        OpenApi.Description,
+        "Removes the account's linked environments, managed tunnels, device registrations and agent activity, then deletes the Clerk user. Safe to retry after a failure.",
+      ),
+  )
+  .annotate(OpenApi.Description, "The signed-in cloud account.")
+  .middleware(RelayClientAuth);
+// SCIENT-FORK:END account-deletion
+
 export const RelayExchangeDpopAccessTokenEndpoint = HttpApiEndpoint.post(
   "exchangeDpopAccessToken",
   "/v1/client/dpop-token",
@@ -1317,6 +1335,9 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayMetadataGroup,
     RelayMobileGroup,
     RelayClientGroup,
+    // SCIENT-FORK:START account-deletion
+    RelayAccountGroup,
+    // SCIENT-FORK:END account-deletion
     RelayTokenGroup,
     RelayDpopClientGroup,
     RelayServerGroup,

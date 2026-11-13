@@ -527,6 +527,173 @@ The record keeps `url` as `scient-local:<connectorId>` (unique, never fetched). 
 Scient versions cannot decode `source.type: "local"`, so they preserve such records
 verbatim instead of treating them as remote connectors.
 
+### Agent-made connectors
+
+Agents build, fix and improve local connectors with three tools in the Accounts toolkit
+(`LocalConnectorAuthoring`), next to `scient_connector_setup` and the tools for any connector
+(below):
+
+- `scient_connector_copy` writes an installed connector's folder, or the template from the
+  built-in `connector-authoring` skill, into `connectors/<slug>/` of the calling thread's folder.
+  Scient does the writing, so sandboxed agents can edit the result. A taken name gets the next
+  free one (`name-2`). A `connectors` folder that is a link, or a target whose real path leaves
+  the thread's folder, is refused. For an installed connector it also returns the status,
+  `lastError` and the log tail.
+- `scient_connector_check` starts a folder's manifest outside any record, with the launcher
+  installed connectors use. It can borrow an installed connector's settings, keys and sign-in, or
+  use a named sign-in. It lists the tools, runs the sample `calls`, and stops the program. Missing
+  keys or a missing sign-in are reported, and the program still starts. A malformed Scient `_meta`
+  block is a problem, never a silent default.
+- `scient_connector_save` checks again, then either adds the folder as the user's own connector
+  (owned, on, all projects) or swaps it into an existing one. A vendor's bundle (`owned: false`)
+  becomes the user's own copy (`forkedFrom`). Settings, keys and the sign-in link are kept, and
+  the connector restarts.
+
+**Package code.** Copying an npm or PyPI package connector (a generated `npx -y pkg@v` or
+`uvx pkg==v` manifest) also brings its code in (`PackageSource`), with the tool that runs it:
+`npm install` puts the package in `package/` and its dependencies in `node_modules/`;
+`uv pip install --no-deps --target` puts a PyPI package (with its `.dist-info`) in `package/`,
+its `Requires-Dist` go to `pyproject.toml` (`package = false`), and `server.py` calls its console
+script. The manifest is rewritten to run from the folder with the same arguments and setup:
+`node` on Scient's own Node, or `uv run --project`. `.venv` and `__pycache__` are left out of
+copies, saves and exports, since uv makes them again and a moved `.venv` no longer runs. The
+copy's `source` says where to edit, or why the code isn't there (no npm or uv). Measured:
+`@mcp-z/mcp-gmail` 2.3.3 is 4,465 files and 49 MB with its dependencies, inside the
+20,000-file and 200 MB folder limits; `mcp-server-fetch` is 25 files. A copied command that runs
+a script outside its folder names that script in `source`.
+
+**Any connector.** Three more tools (`ConnectorAgentControl`) work on hosted and local
+connectors alike through the calls the Extensions page makes:
+
+- `scient_connector_list {query?}`: each connector's server name, kind (hosted or local), on or
+  off, status (`ready`, `needs-setup`, `needs-sign-in`, `error`, `off`), last error (one line)
+  and what is missing. With `query`, up to 10 Discover entries (Scient's picks, then the
+  Registry) with whether an agent can add each, or why not.
+- `scient_connector_add {from}`: a Discover or Registry name, an https MCP address, or a
+  `.mcpb`/`.zip` path, through `connectors.add` (on, all projects), then the connector test for
+  its tools, using what the chat's project may use. A hosted entry that needs an API key or the
+  user's own OAuth app asks for it in the private secret card, as `scient_connector_setup` does:
+  the key becomes an Accounts key bound to the connector, the app's client ID and secret go to
+  the connector; nothing passes through the chat. Entries that need an address or GitHub's
+  Source Control account are refused with that reason. A local add records `changedBy: agent`.
+- `scient_connector_control {connector, action}`: `on`/`off` and `restart` through
+  `connectors.update`; `sign-in` for a hosted OAuth connector starts `startSignIn` with Scient's
+  own loopback origin and opens the authorization page as the user's own tab in the chat's
+  browser (no agent holds it, so there is nothing to take over), or returns the link when the
+  chat has no browser. A local connector's sign-in points
+  at `scient_account_sign_in` with its linked account. Removing stays the user's.
+
+`scient_connector_check {connector, calls?}` without a folder runs `connectors.test` on the
+installed connector, hosted ones too, with the chat's project, so a sign-in or key scoped to another
+project counts as missing, and makes the `calls` through the same client. A connector reaches a
+provider session only when the session starts, so this is how an agent uses one it added or saved
+in the same chat; the add, save and `on` messages say so. Both checks pass every returned field (tool names, descriptions,
+parameter schemas, call results, errors, logs) through `ConnectorRedaction.redactText` with the
+program's keys (however short) and session cookies, in any encoding; a cut never shows part of
+a credential, because the word it splits is left out.
+
+**History.** `FolderHistory`, shared with personal skills, swaps a folder in one step, with
+rollback, and keeps 10 entries per connector, fewer when they pass 100 MB together (the newest
+always stays, never with a gap), in
+`<stateDir>/connector-history/<connectorId>/` (`created`, `replaced`, `removed`; a removal keeps
+the record so it can come back). `extensions.connectors.undo` restores the newest entry.
+Undoing a connector's creation is not offered, because Remove keeps a copy and has its own Undo.
+Undo links the sign-in again for the manifest it restores. Save, Undo, remove, copy and export
+of one connector, and setup through `connectors.update`, take a per-connector lock, so they
+never interleave.
+Summaries carry `changedBy`, `updatedAt`, `forkedFrom` and whether Undo is possible.
+`extensions.connectors.export` returns a local connector as `.mcpb`.
+
+**Logs.** `ConnectorLogs` keeps the last 16 KB of each local connector's stderr in
+`<stateDir>/connector-logs/<connectorId>.log`, across restarts, with keys and cookies removed.
+It is deleted with the connector.
+
+**Studying a site.** `preview_network` lists a tab's recent requests and shows one request's
+headers and bodies. Its masking is defence in depth, not the boundary, because an agent can
+already run `preview_evaluate` in the same tab. What it guarantees: no value Scient knows is
+secret for the tab, of 4 characters or more, appears in any URL, header or body it returns.
+Those values are the tab's cookies for the listed addresses, the Cookie, Authorization and
+Set-Cookie values of its kept requests, and its password fields. Each request keeps the values
+learned when it was recorded, and a listing covers exactly the requests it returns. Each value
+is searched for as written raw, percent- or form-encoded, JSON-escaped, as HTML references
+(decimal, hex or any named one), and as standard or URL-safe base64 at each alignment, with no
+minimum length. The output is searched for these forms and never decoded. Values of 1 to 3
+characters are not hidden: hiding "en" or "1" everywhere would garble pages and protect nothing.
+Best effort: values named like secrets, and unknown token-looking values, are hidden by parsing
+HTML and XML (with CDATA and `srcset`), multipart, forms, and JSON (and JSON inside JSON strings
+or `data-` attributes, one level deep). A format Scient cannot parse is left out.
+
+Bodies are read from the browser only through the tab's own CDP session, never with
+Playwright's `response.body()`, which may fetch the address again in full when a body comes back
+as no text. The session counts each request's decoded bytes (`Network.dataReceived`, final at
+`loadingFinished`); the page's own numbers are never used. Only the main frame's answers are
+matched: a subframe in its own process or a service worker is counted on another session.
+Playwright reports a dedicated worker's answers as the main frame's, and its bytes are counted on
+the worker's own session: once a page has had a dedicated worker, all its bodies are left out.
+Only requests the session saw from their start have a count, and a count still loading is never
+dropped to make room. As an answer arrives, the requests with its method, address and status are
+pinned; once they settle, those that failed before any answer (a page cancelling a request and
+asking again) are dropped, and exactly one must remain: it is then the answer's own. Its count is settled once the
+answer finishes and kept with the request, and the body is read by that request's id with
+`Network.getResponseBody`, which answers with exactly that body (empty is empty) or an error. Only documents and XHR/fetch answers are read: the browser keeps those as received, while a script, style or image comes from its cache, which a later load of the address can replace with a larger body.
+None, or more than one, and the body is left out. Text comes back as UTF-8, up to 3 bytes per
+counted byte, so every read reserves and is capped at 3 × its count, within 24 MB at once, the
+same for bodies read as they arrive and for an agent's request. A left-out GET body's note,
+masked like any other output, names the rule that left it out and tells the agent to fetch it in
+the page with `preview_evaluate`, streaming and stopping at 1 MiB; other methods are never
+repeated. Headers named like secrets are hidden, except the HTTP/2 pseudo-headers `:authority`,
+`:method`, `:scheme`, `:status` and `:protocol`; `:path` is masked as the URL is.
+
+The work is linear. Bodies are cut to their output limit before masking (32 KB shown, 1 MB saved
+to a file), the tokenizers use no recursion, and nesting past the limits leaves the body out with
+a note. Known values are found by one Aho-Corasick automaton per written form, so the work does
+not depend on how long the values are. Each masking call also has a fixed budget of 32 million
+character comparisons; past it the body is left out as too costly to mask, never shown unmasked.
+Reading the tab's cookies and password fields waits at most 300 ms and is reused for 3 seconds,
+and an empty list returns at once.
+
+### Signed-in connectors
+
+A manifest's `_meta["com.scientfactory.scient"].signIn: { site }` (https, or `http://localhost`
+and `http://127.0.0.1`) means the program needs the user signed in to that site. Setup and
+`scient_connector_setup` link an Accounts website sign-in for the site (`local.signIn`), or list
+it as missing. At each start, `connectorSessions` reads the site's current cookies from the
+sign-in's browser profile in a hidden tab, writes them as owner-only files under
+`<secretsDir>/connector-sessions/<connectorId>/`, and passes these environment variables:
+
+- `SCIENT_SIGN_IN_SITE`
+- `SCIENT_SIGN_IN_COOKIES` (JSON)
+- `SCIENT_SIGN_IN_COOKIES_TXT` (Netscape)
+- `SCIENT_SIGN_IN_USER_AGENT`
+
+The program never gets the password. Every response event is checked against the connector's
+current credentials, so cookies from a new sign-in during a call are covered too, and earlier
+values stay. Keys are redacted from 16 characters wherever they appear. Cookie values are
+redacted from 6 characters, but only as whole tokens, so ordinary output is never mangled. Base64 of
+either is redacted too, and for cookies the whole-token test is applied after decoding. Every exchange checks the sign-in again: whether it exists, covers the site,
+is on, has global agent access and is in the project's scope. If not, the running copies stop and
+the session files are deleted. A university's own sign-in service stays in the browser.
+
+**Expiry.** A tool result whose text starts with `SCIENT_SIGN_IN_EXPIRED` makes the process host:
+
+1. Let the session's other calls finish on the old process, for up to 30 s.
+2. Sign in again (`guardedSignIn` with the unattended `connector` caller: saved password and
+   authenticator code; at most once per 2 minutes per sign-in).
+3. Use a newer session the profile already holds, if there is one.
+4. Rewrite the files and start a fresh process inside the same agent session, replaying the
+   handshake.
+5. Retry only the calls that reported expiry, once.
+
+A call cut off by the swap returns an "outcome unknown" error and is never replayed. If the
+session ends while it waits (the agent closes it, the program exits, the sign-in is revoked), no
+new process starts. When the
+site needs the person, the agent is told to sign in, and the connector shows Needs sign-in with a
+Sign in button.
+
+**Development candidates** can trust a local test site's certificate: the desktop app reads SPKI
+hashes from `server-browser/dev-trusted-spki.txt` in its own state folder, only when
+`VITE_DEV_SERVER_URL` is set and the app is not packaged.
+
 ### Receipts
 
 ```ts
@@ -874,10 +1041,17 @@ unresolved templates whose scheme is not a literal non-https one; a remote
 `requiresInput` when it has a required header or an unresolved URL variable;
 `installable` = at least one such remote without required input, or else a
 `localPackage`: the first npm or PyPI stdio package whose arguments all have fixed
-values or defaults (runtime arguments are not supported), with its declared
-environment variables. Otherwise `unsupportedReason` explains why: other local
-packages (for example OCI images or remote `.mcpb` files), required configuration,
-non-https endpoints, or another transport (for example legacy SSE).
+values or defaults, with its declared environment variables, or a `localBundle`: an
+`mcpb` package with an https address and `fileSha256`. Runtime arguments are allowed
+only when Scient applies them already (`-y`/`--yes` for npx, passed once). A bundle is
+added through the `registry-bundle` target: downloaded under the connector egress rules (public
+https only, each redirect checked, 200 MB at most), kept only if
+its SHA-256 matches, then unpacked like a picked `.mcpb`. Otherwise `unsupportedReason`
+says why, from the first package when there is one: Docker (OCI), a registry Scient
+doesn't run (NuGet, Cargo), another transport, runner options it doesn't pass, or a
+required argument without a value; else required configuration, non-https endpoints,
+or another remote transport (for example legacy SSE). The entry's page offers "Make
+with an agent" for entries that can't be added.
 
 ## Secrets integration
 

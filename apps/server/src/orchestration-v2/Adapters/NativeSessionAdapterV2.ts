@@ -211,6 +211,7 @@ export type NativeSessionUpdate =
       readonly broken?: boolean;
       readonly stopReason?: string;
       readonly failureClass?: OrchestrationV2ProviderFailureClass;
+      readonly resetAt?: string;
     };
 
 export class NativeSessionOperationError extends Schema.TaggedError<NativeSessionOperationError>()(
@@ -809,6 +810,7 @@ export function makeNativeSessionAdapterV2(
                   failure: makeProviderFailure({
                     message: update.detail ?? "The native provider turn failed.",
                     class: update.failureClass ?? "provider_error",
+                    resetAt: update.resetAt ?? null,
                   }),
                 }
               : { ...terminal, type: "turn.terminal", status, failure: null },

@@ -18,6 +18,7 @@ import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as BootService from "./bootService.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
@@ -46,6 +47,19 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
+        if (input.command === "busctl") {
+          // No user bus: the unit directory falls back to XDG_CONFIG_HOME or ~/.config.
+          return {
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(1),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }
         if (input.command === "npm") {
           // SCIENT-FORK: block the retained installer fixture instead of an upstream archive.
           if (options.beforeDownload) yield* options.beforeDownload;
@@ -367,6 +381,8 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     readonly managed?: boolean;
     readonly symlinkedHome?: boolean;
     readonly ambiguousEntry?: boolean;
+    readonly servicePlistStarts?: string;
+    readonly servicePlistThroughLink?: boolean;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -386,6 +402,31 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
       yield* fs.utimes(sentinel, 0, 0);
     }
     if (input.symlinkedHome) yield* fs.symlink(realHome, baseDir);
+    const userHome = path.join(tempDir, "user");
+    if (input.servicePlistStarts !== undefined) {
+      const agentsDir = path.join(userHome, "Library", "LaunchAgents");
+      yield* fs.makeDirectory(agentsDir, { recursive: true });
+      const programHome = input.servicePlistThroughLink
+        ? path.join(tempDir, "alias-home")
+        : baseDir;
+      if (input.servicePlistThroughLink) yield* fs.symlink(realHome, programHome);
+      // SCIENT-FORK:START — Scient's launch agent starts the app's Node with the stable launcher
+      // copy, so it names no runtime version for pruning to keep.
+      yield* fs.writeFileString(
+        path.join(agentsDir, BootService.BOOT_SERVICE_PLIST_FILE),
+        BootService.renderBootServicePlist(
+          {
+            nodePath: "/usr/local/bin/node",
+            launcherPath: path.join(programHome, "runtime", "service-launcher.mjs"),
+            baseDir: programHome,
+            logPath: path.join(programHome, "userdata", "logs", "boot-service.log"),
+            unitPath: path.join(agentsDir, BootService.BOOT_SERVICE_PLIST_FILE),
+          },
+          { homeDir: userHome, environmentPath: "/usr/bin" },
+        ),
+      );
+      // SCIENT-FORK:END
+    }
     const runningEntry =
       input.executable === "own runtime"
         ? yield* fs.realPath(pinnedRuntimePaths(path, baseDir, packageJson.version).entryPath)
@@ -402,6 +443,7 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
       ]),
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(HostProcess.Environment, {}),
+      Effect.provideService(HostProcess.HomeDirectory, userHome),
       Effect.provideService(ProcessRunner.ProcessRunner, otherProcesses),
     );
     return { removed, remaining: (yield* fs.readDirectory(versionsDir)).toSorted() };
@@ -429,6 +471,24 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
       expect(removed).toEqual([staleVersion]);
     }),
   );
+
+  // SCIENT-FORK:START — T3's launch agent names a versioned runtime that pruning must keep.
+  // Scient's names the app's Node and the stable launcher, so the stale runtime still goes.
+  it.effect.each([
+    { name: "", throughLink: false },
+    { name: " through a symlinked Scient home", throughLink: true },
+  ])("prunes past a stopped service's launch agent$name", ({ throughLink }) =>
+    Effect.gen(function* () {
+      const { removed, remaining } = yield* pruneOnStart({
+        executable: "own runtime",
+        servicePlistStarts: staleVersion,
+        servicePlistThroughLink: throughLink,
+      });
+      expect(removed).toEqual([staleVersion]);
+      expect(remaining).toEqual([packageJson.version]);
+    }),
+  );
+  // SCIENT-FORK:END
 
   it.effect("leaves runtimes alone for an unmanaged server started elsewhere", () =>
     Effect.gen(function* () {

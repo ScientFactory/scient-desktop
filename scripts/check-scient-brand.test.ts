@@ -102,7 +102,6 @@ describe("Scient brand guard", () => {
     expect(
       findBrandViolations([
         { path: "apps/server/src/example.ts", contents: "// T3 Code compatibility seam" },
-        { path: "apps/mobile/src/example.ts", contents: 'const label = "T3 Code";' },
         { path: "apps/marketing/src/example.ts", contents: 'const label = "T3 Code";' },
       ]),
     ).toEqual([]);
@@ -151,9 +150,9 @@ describe("brand check scope", () => {
 
   it("keeps developer tooling and donor files to the inherited-brand rule", () => {
     expect(brandRulesFor("apps/server/scripts/cli.ts")).toEqual(["inherited-brand"]);
-    expect(brandRulesFor("apps/mobile/src/Stack.tsx")).toEqual(["inherited-brand"]);
     expect(brandRulesFor("scripts/build-desktop-artifact.ts")).toEqual(["inherited-brand"]);
-    expect(isProductSurface("apps/mobile/src/example.ts")).toBe(false);
+    expect(isProductSurface("apps/marketing/src/example.ts")).toBe(false);
+    expect(brandRulesFor("apps/mobile/src/Stack.tsx")).toContain("bare-t3");
   });
 });
 

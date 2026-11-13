@@ -378,16 +378,19 @@ it("does not replay a pending question the shell already showed once the thread 
     </RegistryContext.Provider>,
     { container },
   );
+  // The status region follows the messages-and-steps one.
+  const statusRegion = () =>
+    [...screen.container.querySelectorAll<HTMLElement>('div.sr-only[aria-live="polite"]')].at(-1);
   const region = await vi.waitFor(() => {
-    const found = screen.container.querySelector<HTMLElement>('div.sr-only[aria-live="polite"]');
-    if (found === null) throw new Error("The activity announcer has not mounted");
+    const found = statusRegion();
+    if (found === undefined) throw new Error("The activity announcer has not mounted");
     return found;
   });
   await act(() => deliver(Option.some(projection)));
   await vi.waitFor(() =>
     expect(screen.container.querySelector("[data-pending-user-input-toggle]")).not.toBeNull(),
   );
-  expect(screen.container.querySelector('div.sr-only[aria-live="polite"]')).toBe(region);
+  expect(statusRegion()).toBe(region);
   await expect.element(region).toBeEmptyDOMElement();
   await act(() => deliver(Option.some(questionProjection(RuntimeRequestId.make("next-request")))));
   await expect.element(region).toHaveTextContent("Needs your input");

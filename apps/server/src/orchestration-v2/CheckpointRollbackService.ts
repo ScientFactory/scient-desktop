@@ -156,11 +156,8 @@ export const layer: Layer.Layer<
         checkpoint === undefined ||
         scope === undefined ||
         checkpoint.scopeId !== scope.id ||
-        // SCIENT-FORK:START — a conversation-only rewind does not need the file snapshot,
-        // but a rolled-back run's boundary is gone whatever its snapshot status.
-        !checkpointSupportsRewind(checkpoint, input.restoreFiles !== false) ||
-        (targetAttempt !== undefined && context.rolledBackAttemptIds.includes(targetAttempt.id))
-        // SCIENT-FORK:END
+        // SCIENT-FORK: a conversation-only rewind does not need the file snapshot.
+        !checkpointSupportsRewind(checkpoint, input.restoreFiles !== false)
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "rollback-target-invalid",

@@ -552,6 +552,36 @@
       "path": "packages/contracts/src/scient/sourcesPermissions.ts",
       "anchor": "import { PaperQueueRequestInput } from \"./accounts.ts\";",
       "purpose": "Decode a paper request to decide whether it files or attaches a source, so those requests also need the Library permission; no credential is read."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/browserNetwork/handlers.ts",
+      "anchor": "AccountSessionFiles",
+      "purpose": "Save a large response body an agent studies to the thread's private files."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/browserNetwork/tools.ts",
+      "anchor": "AccountSessionFiles",
+      "purpose": "Declare preview_network, whose large bodies go to the thread's private files."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/LocalConnectorAuthoring.ts",
+      "anchor": "ConnectorSessionsShape",
+      "purpose": "Check a folder signed in with an Accounts sign-in, and drop a removed connector's session files."
+    },
+    {
+      "path": "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+      "anchor": "scient_account_add",
+      "purpose": "The connector-authoring skill tells agents to add a missing sign-in through Accounts."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ConnectorAgentControl.ts",
+      "anchor": "scient_account_sign_in",
+      "purpose": "Send an agent signing in a local connector to the user's linked Accounts sign-in."
+    },
+    {
+      "path": "apps/server/src/scient/cloud/ShareBuilder.ts",
+      "anchor": "import { AccountsService } from \"../accounts/AccountsService.ts\";",
+      "purpose": "Remove the values saved in Scient Accounts from a conversation before it is shared as a link; the values never leave the computer."
     }
   ]
 }

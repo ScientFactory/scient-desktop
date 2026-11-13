@@ -47,7 +47,7 @@ import { isScientDataFile } from "~/scient/dataTable/dataFiles";
 // SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
 import { editorCompositions } from "~/scient/editorFlush/editorComposition";
 // SCIENT-FORK:END
-import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
+import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import { LatexDocumentPreparation } from "~/scient/latex/latexOpeningPresentation";
@@ -97,7 +97,6 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 // SCIENT-FORK:START — FolderTree moved to the tab strip's Files button
 import { AlertTriangle, Download, Globe, WrapTextIcon } from "lucide-react";
 // SCIENT-FORK:END
-import { Code2, Eye, Table2 } from "lucide";
 import { MarkdownDownloadMenu } from "~/scient/documentExport/MarkdownDownloadMenu";
 import {
   DocumentDownloadMenu,
@@ -113,7 +112,6 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
-import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -123,6 +121,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
+import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type {
   HtmlFilePresentationRequest,
   LatexFilePresentationRequest,
@@ -143,6 +142,7 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
+import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
@@ -787,6 +787,7 @@ const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
   options,
   editStateKey,
 ) => new Editor(editorType, options, editStateKey);
+type FileEditor = Editor<"file", FileCommentAnnotationGroup, undefined>;
 
 function editableFileContents(
   environmentId: EnvironmentId,
@@ -862,6 +863,8 @@ interface EditableFileSurfaceProps {
   onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
   onSaveResolutionApplied: () => void;
   saveResolution: FileSaveResolution | null;
+  // SCIENT-FORK: optional, as Scient's other mounts of the editor (LaTeX, compute, Markdown source) pass none.
+  onEditorChange?: ((editor: FileEditor | null) => void) | undefined;
   onSelectionChange?: (range: SelectedLineRange | null) => void;
   activeLineRange?: SelectedLineRange | null;
   // SCIENT-FORK:START — what a clicked caret stands for when asking in chat.
@@ -945,6 +948,7 @@ export function EditableFileEditor({
   onRunShortcut,
   enableFileComments = true,
   gutterUtilityVisibility = "always",
+  onEditorChange,
 }: Omit<
   EditableFileSurfaceProps,
   | "onPendingChange"
@@ -1060,6 +1064,7 @@ export function EditableFileEditor({
     onAttach: (attachedEditor) => {
       editorRef.current = attachedEditor;
       setEditor(attachedEditor);
+      onEditorChange?.(attachedEditor);
       const persistence = externalBindings.current.externalPersistence;
       projectionReady.current = persistence === undefined;
       const snapshot = persistence?.getSnapshot();
@@ -1120,6 +1125,7 @@ export function EditableFileEditor({
       // SCIENT-FORK:START — a detached editor takes no in-place update.
       setEditor(null);
       // SCIENT-FORK:END
+      onEditorChange?.(null);
     },
     onFocus: () => queueMicrotask(() => reportEditorSelectionRef.current()),
   };
@@ -1479,6 +1485,7 @@ function RenderedMarkdownSurface({
   | "revealRequestId"
   | "wordWrap"
   | "onPostRender"
+  | "onEditorChange"
 > & {
   truncated: boolean;
   readOnly: boolean;
@@ -1587,6 +1594,7 @@ export default function FilePreviewPanel({
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const hostEnvironmentId = useAtomValue(hostEnvironmentIdAtom);
   const remoteOpenState = useRemoteOpenState(environmentId);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
@@ -1900,6 +1908,59 @@ export default function FilePreviewPanel({
       return;
     }
     runAfterPendingSave([relativePath], apply);
+  };
+  const contentFocusRef = useRef<HTMLDivElement>(null);
+  const fileEditorRef = useRef<FileEditor | null>(null);
+  const focusEditorFromContent = () => {
+    const editor = fileEditorRef.current;
+    if (!editor || document.activeElement !== contentFocusRef.current) return;
+    // Without a caret the editor focuses with no selection, so no caret shows and typing
+    // lands on whatever the browser selection held.
+    const hasCaret = Boolean(editor.getViewState().selections?.length);
+    editor.focus(
+      hasCaret
+        ? { preventScroll: true }
+        : { preventScroll: true, lineNumber: revealLine ?? "first-visible" },
+    );
+  };
+  const handleEditorChange = (editor: FileEditor | null) => {
+    fileEditorRef.current = editor;
+    focusEditorFromContent();
+  };
+  const handleEditorChangeStable = useStableCallback(handleEditorChange);
+  // SCIENT-FORK:START — rendered only beside the source editor, which Scient's surface chain picks.
+  // Panel focus lands here and passes to the editor once it attaches. sr-only keeps the
+  // 1px box workspace focus needs, and clips it so clicks in the file never reach it.
+  // The hand-off waits a microtask: workspace focus checks that focus stayed here.
+  const contentFocus = (
+    <div
+      ref={contentFocusRef}
+      tabIndex={-1}
+      data-workspace-focus-default
+      data-file-content-focus
+      aria-label="File contents"
+      className="sr-only"
+      onFocus={() => queueMicrotask(focusEditorFromContent)}
+    />
+  );
+  // SCIENT-FORK:END
+  const focusEditorOnTreeRowClickOrEnter = (event: {
+    nativeEvent: Event;
+    altKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+  }) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const row = event.nativeEvent
+      .composedPath()
+      .find(
+        (node): node is Element =>
+          node instanceof Element && node.matches('[role="treeitem"][data-item-path]'),
+      );
+    const path = row?.getAttribute("data-item-path");
+    if (!path || path.endsWith("/")) return;
+    requestWorkspaceFocus({ area: "panel", selector: "[data-file-content-focus]" });
   };
   const handleRenderedChange = (pressed: boolean) => {
     if (isMermaid) {
@@ -2381,7 +2442,9 @@ export default function FilePreviewPanel({
             {/* SCIENT-FORK:END */}
           </ScrollArea>
           {absolutePath &&
-          (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+          (environmentId === primaryEnvironmentId ||
+            environmentId === hostEnvironmentId ||
+            remoteOpenState.mode !== "local-exec") ? (
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}
@@ -2414,10 +2477,13 @@ export default function FilePreviewPanel({
               pressed={surfaceRendered}
               onPress={() => handleRenderedChange(!surfaceRendered)}
             >
-              <MorphIcon
-                className="size-3.5"
-                icon={surfaceRendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
-              />
+              {surfaceRendered ? (
+                <Code2Icon className="size-3.5" />
+              ) : renderedMode === "table" ? (
+                <Table2Icon className="size-3.5" />
+              ) : (
+                <EyeIcon className="size-3.5" />
+              )}
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (
@@ -2917,21 +2983,25 @@ export default function FilePreviewPanel({
                 />
               </ScientSurfaceSuspense>
             ) : markdownLease ? (
-              <MarkdownSourceSurface
-                threadRef={threadRef}
-                onCite={onCiteFile}
-                citationReveal={citationRevealActive ? fileCitation : undefined}
-                key={documentSurfaceKey}
-                persistence={markdownLease}
-                environmentId={environmentId}
-                cwd={cwd}
-                relativePath={relativePath}
-                composerDraftTarget={composerDraftTarget}
-                resolvedTheme={resolvedTheme}
-                revealRequestId={revealRequestId}
-                wordWrap={wordWrap}
-                onPostRender={onFilePostRender}
-              />
+              <>
+                {contentFocus}
+                <MarkdownSourceSurface
+                  threadRef={threadRef}
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  key={documentSurfaceKey}
+                  persistence={markdownLease}
+                  environmentId={environmentId}
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  composerDraftTarget={composerDraftTarget}
+                  resolvedTheme={resolvedTheme}
+                  revealRequestId={revealRequestId}
+                  wordWrap={wordWrap}
+                  onPostRender={onFilePostRender}
+                  onEditorChange={handleEditorChangeStable}
+                />
+              </>
             ) : isMarkdownDocument && renderMarkdown ? (
               <RenderedMarkdownSurface
                 key={relativePath}
@@ -2988,75 +3058,88 @@ export default function FilePreviewPanel({
                 onPostRender={onFilePostRender}
               />
             ) : (
-              <EditableFileSurface
-                threadRef={threadRef}
-                onCite={onCiteFile}
-                citationReveal={citationRevealActive ? fileCitation : undefined}
-                citationBaseline={file.authoritativeData?.contents}
-                key={`${relativePath}:${resolvedTheme}`}
-                environmentId={environmentId}
-                projectId={projectId}
-                cwd={cwd}
-                relativePath={relativePath}
-                composerDraftTarget={composerDraftTarget}
-                contents={file.data.contents}
-                initialSource={queriedFile.authoritativeData?.contents ?? ""}
-                revision={queriedFile.authoritativeData?.revision ?? ""}
-                {...(queriedFile.authoritativeData?.publicationAttention === undefined
-                  ? {}
-                  : { publicationAttention: queriedFile.authoritativeData.publicationAttention })}
-                resolvedTheme={resolvedTheme}
-                revealRequestId={revealRequestId}
-                wordWrap={wordWrap}
-                onPostRender={onFilePostRender}
-                onPendingChange={handlePendingChange}
-                onSaveFailure={handleSaveFailure}
-                onSaveConfirmed={handleSaveConfirmed}
-                onSaveResolutionApplied={handleSaveResolutionApplied}
-                saveResolution={saveResolution}
-              />
+              <>
+                {contentFocus}
+                <EditableFileSurface
+                  threadRef={threadRef}
+                  onCite={onCiteFile}
+                  citationReveal={citationRevealActive ? fileCitation : undefined}
+                  citationBaseline={file.authoritativeData?.contents}
+                  key={`${relativePath}:${resolvedTheme}`}
+                  environmentId={environmentId}
+                  projectId={projectId}
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  composerDraftTarget={composerDraftTarget}
+                  contents={file.data.contents}
+                  initialSource={queriedFile.authoritativeData?.contents ?? ""}
+                  revision={queriedFile.authoritativeData?.revision ?? ""}
+                  {...(queriedFile.authoritativeData?.publicationAttention === undefined
+                    ? {}
+                    : { publicationAttention: queriedFile.authoritativeData.publicationAttention })}
+                  resolvedTheme={resolvedTheme}
+                  revealRequestId={revealRequestId}
+                  wordWrap={wordWrap}
+                  onPostRender={onFilePostRender}
+                  onPendingChange={handlePendingChange}
+                  onSaveFailure={handleSaveFailure}
+                  onSaveConfirmed={handleSaveConfirmed}
+                  onSaveResolutionApplied={handleSaveResolutionApplied}
+                  saveResolution={saveResolution}
+                  onEditorChange={handleEditorChangeStable}
+                />
+              </>
             )
           ) : null}
         </ScientDocumentShelf>
         {showExplorer ? (
           <FileExplorerPane resizable={Boolean(previewPath)}>
-            <FileBrowserPanel
-              key={`${environmentId}:${hostFolderPath ?? cwd}`}
-              environmentId={environmentId}
-              cwd={hostFolderPath ?? cwd}
-              projectName={hostFolderPath ?? projectName}
-              hostFolder={hostFolderPath !== null}
-              selectedPath={
-                hostFolderPath === null
-                  ? relativePath
-                  : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
-              }
-              selectedPathRevealId={revealRequestId}
-              onOpenFile={onOpenFile}
-              onOpenFileSource={onOpenFileSource}
-              workspaceMutationId={workspaceMutationId}
-              // SCIENT-FORK:START — the Files tab's Back and Forward sit in its toolbar
-              {...(previewPath === null
-                ? {
-                    scientToolbarLeading: (
-                      <TabHistoryButtons
-                        threadRef={threadRef}
-                        surfaceId={scientSurfaceId}
-                        keybindings={keybindings}
-                      />
-                    ),
-                  }
-                : {})}
-              // SCIENT-FORK:END
-              {...(previewPath && !isMedia && !isPdf
-                ? {
-                    onRefreshSelectedFile: () => {
-                      if (!isDocument) file.refresh();
-                      setFileRefreshRevision((value) => value + 1);
-                    },
-                  }
-                : {})}
-            />
+            <div
+              className="contents"
+              onClick={focusEditorOnTreeRowClickOrEnter}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") focusEditorOnTreeRowClickOrEnter(event);
+              }}
+            >
+              <FileBrowserPanel
+                key={`${environmentId}:${hostFolderPath ?? cwd}`}
+                environmentId={environmentId}
+                cwd={hostFolderPath ?? cwd}
+                projectName={hostFolderPath ?? projectName}
+                hostFolder={hostFolderPath !== null}
+                selectedPath={
+                  hostFolderPath === null
+                    ? relativePath
+                    : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
+                }
+                selectedPathRevealId={revealRequestId}
+                onOpenFile={onOpenFile}
+                onOpenFileSource={onOpenFileSource}
+                answersPanelFind={!previewPath}
+                workspaceMutationId={workspaceMutationId}
+                // SCIENT-FORK:START — the Files tab's Back and Forward sit in its toolbar
+                {...(previewPath === null
+                  ? {
+                      scientToolbarLeading: (
+                        <TabHistoryButtons
+                          threadRef={threadRef}
+                          surfaceId={scientSurfaceId}
+                          keybindings={keybindings}
+                        />
+                      ),
+                    }
+                  : {})}
+                // SCIENT-FORK:END
+                {...(previewPath && !isMedia && !isPdf
+                  ? {
+                      onRefreshSelectedFile: () => {
+                        if (!isDocument) file.refresh();
+                        setFileRefreshRevision((value) => value + 1);
+                      },
+                    }
+                  : {})}
+              />
+            </div>
           </FileExplorerPane>
         ) : null}
       </div>

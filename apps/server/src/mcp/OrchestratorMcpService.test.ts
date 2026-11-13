@@ -678,6 +678,8 @@ describe("OrchestratorMcpService", () => {
             listAppOwnedChildThreadIds: () => Effect.succeed([]),
             delegatedTaskResultPending: () => Effect.succeed(false),
             stopDelegatedTasks: () => Effect.void,
+            cancelDelegatedTask: ({ command }) =>
+              Ref.update(dispatched, (commands) => [...commands, command]),
             // The orchestrator's subagent.stop repair is covered in ThreadStop.test.ts.
             dispatch: (command) =>
               Ref.update(dispatched, (commands) => [...commands, command]).pipe(
@@ -788,6 +790,12 @@ describe("OrchestratorMcpService", () => {
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
             ),
+          stopDelegatedTasks: () => Effect.void,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+              Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
+            ),
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -893,6 +901,10 @@ describe("OrchestratorMcpService", () => {
               ),
             ),
           stopDelegatedTasks: () => Effect.void,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+            ),
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -1081,6 +1093,10 @@ describe("OrchestratorMcpService", () => {
           dispatch: (command) =>
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.as({} as never),
+            ),
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
             ),
           stopDelegatedTasks: () =>
             Effect.gen(function* () {
@@ -2787,88 +2803,167 @@ describe("OrchestratorMcpService provider resolution", () => {
       ),
   );
 
-  it.effect("re-probes an unavailable target once before refusing it", () =>
-    Effect.gen(function* () {
-      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
-      const claudeDriver = ProviderDriverKind.make("claudeAgent");
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        runId: parentRunId,
-        parentNodeId,
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: claudeDriver,
-        providerInstanceId: claudeInstanceId,
-        providerThreadId: null,
-        childThreadId,
-        nativeTaskRef: null,
-        prompt: "Review the diff.",
-        title: null,
-        model: "claude-opus-5-5",
-        status: "running",
-        result: null,
-        startedAt: null,
-        completedAt: null,
-      };
-      const healthy = providerSnapshot({
-        instanceId: claudeInstanceId,
-        driver: claudeDriver,
-        model: "claude-opus-5-5",
-      });
-      const missingCli: ServerProvider = {
-        ...healthy,
-        installed: false,
-        status: "error",
-        message: "Claude Agent CLI (`claude`) was not found on PATH.",
-      };
-      const codex = providerSnapshot({
-        instanceId: codexInstanceId,
-        driver: ProviderDriverKind.make("codex"),
-        model: "gpt-5.4",
-      });
-      let cliInstalled = false;
-      const probes = yield* Ref.make(0);
-      const dispatched = yield* Ref.make(0);
-      Layer.mergeAll(
-        NodeServices.layer,
-        NodeCrypto.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          assertProviderInstanceEnabled: () => Effect.void,
-          getThreadRecords: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId ? parentProjection([task]) : childProjection,
+  it.effect.each(["local", "remote"] as const)(
+    "a blocking %s delegation cancelled mid-wait wakes its parent like an async task",
+    (placement) =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          {
+            instanceId: codexInstanceId,
+            driver,
+            getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+            planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+            openSession: () => Effect.die("The child never starts: the effect worker is off."),
+          },
+        ]);
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+          { name: "mcp-wait-cancelled" },
+          layerRegistry,
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        );
+        const layerSettings = ServerSettings.layerTest({
+          providerInstances: { [codexInstanceId]: { driver: "codex", enabled: true } },
+        });
+        const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layerOrchestrator),
+          Layer.provide(
+            LegacyV1ThreadImporter.layer.pipe(
+              Layer.provide(layerOrchestrator),
+              Layer.provide(layerDatabase),
             ),
-          dispatch: () =>
-            Ref.update(dispatched, (count) => count + 1).pipe(
-              Effect.as({
-                sequence: 1,
-                storedEvents: [
-                  {
-                    sequence: 1,
-                    commandId: null,
-                    event: { type: "subagent.updated", payload: task },
-                  },
-                ],
-              } as never),
+          ),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+          Layer.provideMerge(layerSettings),
+        );
+        const waiting = yield* Deferred.make<void>();
+        const layerWatchedThreads = Layer.effect(
+          ThreadManagementService.ThreadManagementService,
+          Effect.gen(function* () {
+            const threads = yield* ThreadManagementService.ThreadManagementService;
+            return {
+              ...threads,
+              streamStoredEventsFrom: (input) =>
+                Stream.unwrap(
+                  Deferred.succeed(waiting, undefined).pipe(
+                    Effect.as(threads.streamStoredEventsFrom(input)),
+                  ),
+                ),
+            } satisfies ThreadManagementService.ThreadManagementService["Service"];
+          }),
+        ).pipe(Layer.provideMerge(layerThreads));
+        const remoteChild = {
+          environmentId: EnvironmentId.make("environment:mcp-providers-box"),
+          threadId: ThreadId.make("thread:mcp-providers-on-the-box"),
+          label: "Box",
+        };
+        // Records the task as the real delegation does once the linked environment launched it.
+        const layerRemoteDelegation = Layer.unwrap(
+          Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            return Layer.mock(RemoteDelegation.RemoteDelegation)({
+              delegate: (_scope, input) =>
+                Effect.gen(function* () {
+                  const run = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+                  yield* orchestrator.dispatch({
+                    type: "delegated_task.remote.request",
+                    commandId: CommandId.make("command:remote-delegate:wait-cancelled"),
+                    parentThreadId,
+                    parentRunId: run.id,
+                    parentNodeId: run.rootNodeId!,
+                    task: input.task,
+                    driver: ProviderDriverKind.make("remote"),
+                    modelSelection: run.modelSelection,
+                    remoteChild,
+                    completionWake: "settled_only",
+                  });
+                  const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+                  return { taskId: parent.subagents[0]!.id };
+                }).pipe(Effect.orDie),
+            });
+          }),
+        ).pipe(Layer.provide(layerWatchedThreads));
+        const layerTest = layerOrchestratorService.pipe(
+          // SCIENT-FORK:START — Scient admits a delegation only from a live calling session;
+          // the effect worker is off here, so the parent's session policy is given directly.
+          Layer.provide(
+            Layer.mock(ProviderSessionManagerV2)({
+              resolveMcpInvocationPolicy: () =>
+                Effect.succeedSome({
+                  runtimeMode: "full-access" as const,
+                  interactionMode: "default" as const,
+                }),
+            }),
+          ),
+          // SCIENT-FORK:END
+          Layer.provideMerge(layerWatchedThreads),
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              layerRegistry,
+              layerSettings,
+              providerRegistryLayer([
+                providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+              ]),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              layerRemoteDelegation,
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
             ),
-        }),
-        ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([codex, missingCli]),
-          refreshInstance: () =>
-            Ref.update(probes, (count) => count + 1).pipe(
-              Effect.as([codex, cliInstalled ? healthy : missingCli]),
-            ),
-        }),
-        adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-      );
-    }),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("parent:create"),
+            threadId: parentThreadId,
+            projectId,
+            title: "MCP parent",
+            modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("parent:start"),
+            threadId: parentThreadId,
+            messageId: MessageId.make("parent:message"),
+            text: "Delegate a review and wait for it.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          const call = yield* service
+            .delegateTask(scope, {
+              task: "Review the change.",
+              ...(placement === "remote"
+                ? { target: { environmentId: remoteChild.environmentId } }
+                : {}),
+              mode: "wait",
+              clientRequestId: "delegate-wait-cancelled",
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(waiting);
+          // A steered Claude parent cancels the tools/call, which interrupts this fiber.
+          yield* Fiber.interrupt(call);
+          const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+          const task = parent.subagents.find((subagent) => subagent.origin === "app_owned");
+          assert.equal(task?.status, "running");
+          assert.equal(
+            task?.completionWake,
+            "always",
+            "a cancelled blocking delegation left the task settled_only, so its result never reaches the still-live parent run",
+          );
+        }).pipe(Effect.provide(layerTest));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -3820,7 +3915,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(
+            service(masterRepository, saved, {
+              ...existing,
+              threadId: ThreadId.make("thread:scheduled-base"),
+              threadMode: "continue",
+            }),
+          ),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
@@ -3829,6 +3930,20 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
+      }),
+    );
+
+    it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(masterRepository, saved)),
+        );
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: existing.id,
+          bindToCurrentThread: false,
+        });
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
       }),
     );
 
@@ -4055,6 +4170,17 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: { ...inherited, options: [] },
           },
           {
+            name: "same model by alias",
+            target: { model: "GPT" },
+            expected: { ...inherited, model: "GPT" },
+          },
+          {
+            name: "parent named the same model by alias",
+            parent: { ...inherited, model: "gpt" },
+            target: { model: inherited.model },
+            expected: inherited,
+          },
+          {
             name: "change model",
             target: { model: "other-model" },
             expected: { instanceId: codexInstanceId, model: "other-model" },
@@ -4098,7 +4224,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
-                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                    ? parentProjection(
+                        commands.length > 0 ? [task] : [],
+                        "parent" in testCase ? testCase.parent : inherited,
+                      )
                     : childProjection,
                 ),
               dispatch: (command) =>
@@ -4124,6 +4253,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     name: model,
                     isCustom: false,
                     capabilities: null,
+                    ...(model === inherited.model ? { aliases: ["gpt"] } : {}),
                   })),
                   {
                     slug: "ultracode-model",
@@ -4276,6 +4406,67 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
         ),
       );
+    }),
+  );
+
+  it.effect("validates options against the model a target names by alias", () =>
+    Effect.gen(function* () {
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection([]) : childProjection),
+          dispatch: () => Effect.die("an invalid target must not dispatch"),
+        }),
+        // SCIENT-FORK: Scient's delegation checks the calling session's policy first.
+        Layer.mock(ProviderSessionManagerV2)({
+          resolveMcpInvocationPolicy: () =>
+            Effect.succeedSome({
+              runtimeMode: "full-access" as const,
+              interactionMode: "default" as const,
+            }),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          {
+            ...providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+            }),
+            models: [
+              {
+                slug: "gpt-5.4",
+                name: "gpt-5.4",
+                aliases: ["gpt"],
+                isCustom: false,
+                capabilities: {
+                  optionDescriptors: [{ id: "fastMode", label: "Fast", type: "boolean" }],
+                },
+              },
+            ],
+          },
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const error = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service
+          .delegateTask(scope, {
+            task: "Review the change.",
+            target: yield* decodeTarget({ model: "GPT", options: { bogus: "x" } }),
+            mode: "async",
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      assert.equal(error.code, "invalid_request");
+      assert.include(error.message, "Unknown option bogus");
     }),
   );
 
@@ -4531,6 +4722,15 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:b-snoozed", "project:b"],
         ],
       );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("points a caller outside any thread at allProjects when it omits projectId", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const error = yield* mcp.listThreads(client, {}).pipe(Effect.flip);
+      assert.equal(error.code, "target_required");
+      assert.include(error.message, "allProjects");
     }).pipe(Effect.provide(service)),
   );
 });

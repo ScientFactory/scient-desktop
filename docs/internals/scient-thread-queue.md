@@ -192,8 +192,13 @@ submission packet, intent and identities before offering intake through
 retries that same packet; it never substitutes current settings, uploads or a newer draft.
 The server reconciles accepted command receipts before
 repeating upload claims or bootstrap side effects. A queued acknowledgment removes
-the optimistic message and releases local dispatch immediately. Acceptance clears
-only the submitted draft; typing during the request remains in the composer.
+the optimistic message and releases local dispatch immediately. An ordinary send
+clears its draft when its optimistic message appears, as upstream does. A failure
+removes that message and returns the draft to an empty composer; otherwise a
+persistent toast restores the whole snapshot once the composer is empty. A send carrying a queue edit or extracted
+intent keeps its draft until acceptance, because that draft binds its recovery
+journal, and then clears only the submitted draft. Typing during either request
+remains in the composer.
 
 Stashes reference full journals instead of placing file bytes in localStorage.
 Restoration saves a discoverable recovery journal for the target draft before

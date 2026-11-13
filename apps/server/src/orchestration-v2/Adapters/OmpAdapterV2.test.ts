@@ -1044,6 +1044,59 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       }),
     ),
   );
+  it.effect.each([
+    {
+      caseTitle: "carries the usage-limit reset time Scient Agent reports",
+      resetAt: Date.parse("2026-11-13T18:30:00.000Z"),
+      expected: "2026-11-13T18:30:00.000Z",
+    },
+    {
+      caseTitle: "reports no usage-limit reset time when Scient Agent sends none",
+      resetAt: undefined,
+      expected: undefined,
+    },
+  ])("$caseTitle", ({ resetAt, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const failed = {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorStatus: 429,
+          errorMessage: "429 Usage limit reached",
+        };
+        yield* peer.emit([
+          { type: "agent_start" },
+          { type: "message_end", messageId: "limited", message: failed },
+          { type: "agent_end", messages: [failed], isTerminal: true, yielded: true },
+          {
+            type: "prompt_result",
+            id: peer.state.frames.find((frame) => frame.type === "prompt")?.id,
+            agentInvoked: true,
+            status: "error",
+            sessionSettled: true,
+            error: {
+              message: "429 Usage limit reached",
+              httpStatus: 429,
+              retryable: true,
+              ...(resetAt === undefined ? {} : { resetAt }),
+            },
+          },
+        ]);
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        if (terminal.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+        assert.equal(terminal.failure?.class, "usage_limit");
+        assert.equal(terminal.failure?.resetAt, expected);
+      }),
+    ),
+  );
 
   it.effect("budgets several native OMP images together against one serialized frame", () =>
     Effect.scoped(

@@ -56,6 +56,7 @@ import {
   CloudSpeechModels,
   CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
+  EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
   EnvironmentSpeechModelUnloadTimeoutRequest,
@@ -921,6 +922,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("linkModels", "/api/voice/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("updateAcceleration", "/api/voice/acceleration", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechAccelerationRequest,
@@ -1033,6 +1042,7 @@ const {
   EnvironmentScientWordExportHttpApi,
   EnvironmentScientOverleafHttpApi,
   EnvironmentScientReferencesHttpApi,
+  EnvironmentScientCloudHttpApi,
 } = makeScientEnvironmentHttpGroups({
   OptionalBearerHeaders,
   EnvironmentHttpCommonError,
@@ -1085,6 +1095,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentScientWordExportHttpApi)
   .add(EnvironmentScientOverleafHttpApi)
   .add(EnvironmentScientReferencesHttpApi)
+  .add(EnvironmentScientCloudHttpApi)
   // SCIENT-FORK:END
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)

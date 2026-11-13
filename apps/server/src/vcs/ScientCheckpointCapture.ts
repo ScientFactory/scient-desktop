@@ -30,6 +30,17 @@ const isCheckpointUnavailable = Schema.is(VcsCheckpointUnavailableError);
 
 /** Fork admission persists its expected OID before the first external ref write.
  * Ordinary checkpoints have no pre-admission ownership record. */
+/**
+ * One pack thread and a bounded delta window, as for upkeep: a turn that adds large files packs
+ * them without Git's per-thread delta memory. They reduce memory use; they are not a hard ceiling.
+ */
+export const CHECKPOINT_PACK_MEMORY_CONFIG = [
+  "-c",
+  "pack.threads=1",
+  "-c",
+  "pack.windowMemory=256m",
+] as const;
+
 export class CheckpointPublicationWitness extends Context.Reference<
   (input: {
     readonly cwd: string;
@@ -258,6 +269,11 @@ export const prepareCheckpointStagingRepo = Effect.fnUntraced(function* (input: 
   return { stagingRepo, stagedEnv, objectFormat: objectFormat.stdout.trim() };
 });
 
+// A fetch's automatic maintenance runs detached, outside the server's process group, so a quit
+// cannot stop it; Git without the detached-lock fix (6e95b07e5f) runs several on one repository.
+// `--no-auto-gc` (Git 2.24+) leaves upkeep to ScientCheckpointUpkeep.
+const NO_AUTO_MAINTENANCE = ["--no-auto-gc"] as const;
+
 /** Moves the staged commit's object graph into the user's repository and
  * publishes the hidden checkpoint ref there. */
 export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
@@ -326,6 +342,7 @@ export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
       stagingRepo,
       "-c",
       "pack.packSizeLimit=0",
+      ...CHECKPOINT_PACK_MEMORY_CONFIG,
       "pack-objects",
       "--revs",
       "--local",
@@ -385,8 +402,7 @@ export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
       args: ["rev-list", "--objects", "--quiet", commitOid, "--not", "--all", "--alternate-refs"],
       env: cleanGitEnv,
     });
-    // Every object is local now, so fetch only checks connectivity, updates
-    // the ref and runs automatic maintenance, as any fetch would.
+    // Every object is local now, so fetch only checks connectivity and updates the ref.
     yield* execute({
       operation,
       cwd: input.cwd,
@@ -397,6 +413,7 @@ export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
         "--no-write-fetch-head",
         "--no-tags",
         "--no-recurse-submodules",
+        ...NO_AUTO_MAINTENANCE,
         gitCommonDir,
         `+${commitOid}:${input.checkpointRef}`,
       ],
@@ -425,6 +442,7 @@ export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
         "--no-write-fetch-head",
         "--no-tags",
         "--no-recurse-submodules",
+        ...NO_AUTO_MAINTENANCE,
         bundlePath,
         `+refs/t3/staging:${input.checkpointRef}`,
       ],

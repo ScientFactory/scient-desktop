@@ -1,0 +1,40 @@
+{
+  "name": "@scientfactory/scient-cloud",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api": {
+      "types": "./src/api.ts",
+      "import": "./src/api.ts"
+    },
+    "./computer-jws": {
+      "types": "./src/computerJws.ts",
+      "import": "./src/computerJws.ts"
+    },
+    "./content-frame": {
+      "types": "./src/contentFrame.ts",
+      "import": "./src/contentFrame.ts"
+    },
+    "./limits": {
+      "types": "./src/limits.ts",
+      "import": "./src/limits.ts"
+    },
+    "./share-crypto": {
+      "types": "./src/shareCrypto.ts",
+      "import": "./src/shareCrypto.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -75,6 +75,7 @@ const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`
 const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
 const gitProcesses = Semaphore.makeUnsafe(8);
 const backgroundGitProcesses = Semaphore.makeUnsafe(2);
+const WORKTREE_INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -86,6 +87,10 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
+// The listing walks the whole untracked tree before the cap applies, so a folder whose listing
+// failed (too many files, output limit, timeout) is not listed again on every status poll.
+const UNTRACKED_TOTALS_RETRY_MIN_MS = 60_000;
+const UNTRACKED_TOTALS_RETRY_MAX_MS = 30 * 60_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
@@ -198,7 +203,6 @@ interface GitRefsSnapshot {
 interface ExecuteGitOptions {
   stdin?: string | undefined;
   timeoutMs?: number | null | undefined;
-  forceKillAfterMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
   env?: NodeJS.ProcessEnv | undefined;
@@ -456,6 +460,8 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   [/would clobber existing tag/i, "tag_would_be_clobbered"],
   [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
   [/a branch named .+ already exists/i, "branch_already_exists"],
+  // A ref cannot nest under an existing ref, nor contain one.
+  [/'refs\/[^'\n]+' exists; cannot create 'refs\//i, "ref_name_conflict"],
   // The same prefix also reports permission errors, which retrying cannot fix.
   [/could not lock config file .+: File exists/i, "config_locked"],
   [
@@ -1023,7 +1029,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ChildProcess.make(executable, commandInput.args, {
               cwd: commandInput.cwd,
               env: spawnEnv,
-              forceKillAfter: input.forceKillAfterMs,
+              // SIGTERM first lets git remove its lock files; SIGKILL ends one that ignores it.
+              forceKillAfter: "1 second",
               ...(runsGitWithoutConsole(hostPlatform, executable, commandInput.args)
                 ? { detached: true, windowsHide: true }
                 : {}),
@@ -1192,9 +1199,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...(options.env !== undefined ? { env: options.env } : {}),
       allowNonZeroExit: true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.forceKillAfterMs !== undefined
-        ? { forceKillAfterMs: options.forceKillAfterMs }
-        : {}),
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
       ...(options.appendTruncationMarker !== undefined
         ? { appendTruncationMarker: options.appendTruncationMarker }
@@ -1409,7 +1413,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           env: STATUS_UPSTREAM_REFRESH_ENV,
           fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
           timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
-          forceKillAfterMs: 1_000,
         }).pipe(
           Effect.asVoid,
           Effect.tap(() =>
@@ -1655,6 +1658,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const statusRemoteRefreshFailures = new Map<string, { count: number; retryAt: number }>();
+  const untrackedTotalsFailures = new Map<
+    string,
+    {
+      readonly roots: string;
+      readonly count: number;
+      readonly retryAt: number;
+      readonly detail: string;
+      // SCIENT-FORK: the listing's GitCommandError stays the cause; also offered upstream.
+      readonly cause: GitCommandError | undefined;
+    }
+  >();
   const statusRemoteRefreshFailureKey = (cacheKey: StatusRemoteRefreshCacheKey) =>
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
   const recordStatusRemoteRefreshFailure = Effect.fn(
@@ -2553,7 +2567,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             prefix: "t3code-commit-index-",
           });
           const tempIndexPath = path.join(directory, "index");
-          const env = { GIT_INDEX_FILE: tempIndexPath } satisfies NodeJS.ProcessEnv;
+          // SCIENT-FORK:START — what preparation stages goes to a temporary object directory, read
+          // beside the repository's own, so a message drafted without a commit leaves nothing behind.
+          const objectsValue = yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.objectsPath",
+            cwd,
+            ["rev-parse", "--git-path", "objects"],
+          );
+          // Every object directory the repository reads, as Git resolved it (its own alternates,
+          // nested ones and the environment's), listed directly: one more level of nesting could
+          // pass Git's alternate depth limit.
+          const objectDirectories = yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.alternates",
+            cwd,
+            ["count-objects", "-v"],
+          );
+          // Git prints an entry C-quoted when it needs quoting; quote the rest the same way, so a
+          // path holding the list separator stays one entry (Git 2.11.1+).
+          const quoted = (entry: string) =>
+            entry.startsWith('"') ? entry : `"${entry.replace(/[\\"]/g, "\\$&")}"`;
+          const alternates = [
+            path.resolve(cwd, objectsValue.trim()),
+            ...objectDirectories
+              .split("\n")
+              .flatMap((line) =>
+                line.startsWith("alternate: ") ? [line.slice("alternate: ".length)] : [],
+              ),
+          ];
+          const tempObjectsPath = path.join(directory, "objects");
+          yield* fileSystem.makeDirectory(tempObjectsPath);
+          const env = {
+            GIT_INDEX_FILE: tempIndexPath,
+            GIT_OBJECT_DIRECTORY: tempObjectsPath,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates
+              .map(quoted)
+              .join(hostPlatform === "win32" ? ";" : ":"),
+          } satisfies NodeJS.ProcessEnv;
+          // SCIENT-FORK:END
           const config = [
             "-c",
             "core.splitIndex=false",
@@ -3181,25 +3231,48 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return stdout.trim();
   });
 
-  const prepareUntrackedReviewIndex = Effect.fn("prepareUntrackedReviewIndex")(function* (
+  // SCIENT-FORK:START — overlapping reads of the same paths share one untracked listing
+  // instead of each walking the tree; also offered upstream. The result is never kept, so a
+  // later read lists again.
+  const untrackedListings = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", ...pathArgs] = key.split("\0");
+      return executeGit(
+        "GitVcsDriver.review.listUntracked",
+        cwd,
+        ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathArgs],
+        { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+      );
+    },
+    { capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY, timeToLive: () => Duration.zero },
+  );
+  // SCIENT-FORK:END
+
+  const prepareUntrackedReviewIndexOrReason = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
     onlyPath?: string,
   ) {
-    const untracked = yield* executeGit(
-      "GitVcsDriver.review.listUntracked",
-      cwd,
-      ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathArgs],
-      { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
-    ).pipe(Effect.orElseSucceed(() => null));
-    if (untracked === null) return null;
+    // SCIENT-FORK:START — one shared listing per paths; its error stays the cause.
+    const untracked = yield* Cache.get(untrackedListings, [cwd, ...pathArgs].join("\0")).pipe(
+      Effect.catchTags({
+        GitCommandError: (error) =>
+          Effect.succeed({
+            unavailable: `Could not list untracked files: ${error.detail}`,
+            cause: error,
+          }),
+      }),
+    );
+    // SCIENT-FORK:END
+    if ("unavailable" in untracked) return untracked;
     // ls-files lists a nested repository with a trailing slash; its diff path has none.
     const paths = splitNullSeparatedGitStdoutPaths(untracked).filter(
       (candidate) =>
         onlyPath === undefined || candidate === onlyPath || candidate === `${onlyPath}/`,
     );
     if (paths.length === 0) return { env: undefined };
-    if (paths.length > REVIEW_UNTRACKED_MAX_FILES) return null;
+    if (paths.length > REVIEW_UNTRACKED_MAX_FILES)
+      return { unavailable: "Too many untracked files to count." };
     const env = yield* prepareReviewIndex(cwd, paths).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
@@ -3216,6 +3289,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     return { env };
   });
+  const prepareUntrackedReviewIndex = (
+    cwd: string,
+    pathArgs: ReadonlyArray<string>,
+    onlyPath?: string,
+  ) =>
+    prepareUntrackedReviewIndexOrReason(cwd, pathArgs, onlyPath).pipe(
+      Effect.map((result) => ("unavailable" in result ? null : result)),
+    );
 
   const resolveReviewMergeBase = Effect.fn("resolveReviewMergeBase")(function* (
     cwd: string,
@@ -3289,16 +3370,52 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       roots.length <= 128 && roots.reduce((length, root) => length + root.length + 16, 0) < 8_000
         ? roots.map((root) => `:(top,literal)${root}`)
         : [];
-    // Empty status can mean untracked files are hidden; retain the full scan.
-    const untracked = yield* prepareUntrackedReviewIndex(cwd, pathspecs);
-    if (untracked === null) {
+    // Changed untracked roots skip the backoff and scan again.
+    const rootsKey = roots.join("\0");
+    const remembered = untrackedTotalsFailures.get(cwd);
+    if (
+      remembered !== undefined &&
+      remembered.roots === rootsKey &&
+      (yield* Clock.currentTimeMillis) < remembered.retryAt
+    ) {
       return yield* new GitCommandError({
         operation: "GitVcsDriver.readBranchChangeTotals",
         command: "git ls-files",
         cwd,
-        detail: "Too many untracked files to count.",
+        detail: remembered.detail,
+        // SCIENT-FORK: keeps the listing error as cause; also offered upstream.
+        ...(remembered.cause === undefined ? {} : { cause: remembered.cause }),
       });
     }
+    // Empty status can mean untracked files are hidden; retain the full scan.
+    const untracked = yield* prepareUntrackedReviewIndexOrReason(cwd, pathspecs);
+    if ("unavailable" in untracked) {
+      const count = remembered?.roots === rootsKey ? remembered.count + 1 : 1;
+      untrackedTotalsFailures.delete(cwd);
+      untrackedTotalsFailures.set(cwd, {
+        roots: rootsKey,
+        count,
+        retryAt:
+          (yield* Clock.currentTimeMillis) +
+          Math.min(UNTRACKED_TOTALS_RETRY_MIN_MS * 2 ** (count - 1), UNTRACKED_TOTALS_RETRY_MAX_MS),
+        detail: untracked.unavailable,
+        // SCIENT-FORK: keeps the listing error as cause; also offered upstream.
+        cause: "cause" in untracked ? untracked.cause : undefined,
+      });
+      if (untrackedTotalsFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
+        const oldestKey = untrackedTotalsFailures.keys().next().value;
+        if (oldestKey !== undefined) untrackedTotalsFailures.delete(oldestKey);
+      }
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.readBranchChangeTotals",
+        command: "git ls-files",
+        cwd,
+        detail: untracked.unavailable,
+        // SCIENT-FORK: keeps the listing error as cause; also offered upstream.
+        ...("cause" in untracked ? { cause: untracked.cause } : {}),
+      });
+    }
+    untrackedTotalsFailures.delete(cwd);
     const readNumstat = (ref: string) =>
       executeGit(
         "GitVcsDriver.readBranchChangeTotals",
@@ -4276,6 +4393,52 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // A checkout stamps most files in the second it writes the index, and Git re-reads every file
+  // stamped in the index's own second or later ("racily clean") on each status, diff and add.
+  // T3's own git calls never rewrite a worktree's index, so refresh it once.
+  const refreshNewWorktreeIndex = Effect.fn("refreshNewWorktreeIndex")(function* (
+    worktreePath: string,
+  ) {
+    const indexPath = path.resolve(
+      worktreePath,
+      (yield* runGitStdout("GitVcsDriver.createWorktree.indexPath", worktreePath, [
+        "rev-parse",
+        "--git-path",
+        "index",
+      ])).trim(),
+    );
+    const indexSecond = fileSystem.stat(indexPath).pipe(
+      Effect.map(({ mtime }) => Option.map(mtime, (date) => Math.floor(date.getTime() / 1000))),
+      Effect.orElseSucceed(() => Option.none<number>()),
+    );
+    // Older Git (such as 2.30) skips the write when racy entries merely check out clean.
+    // A refresh re-reads every checked-out file, so allow five minutes outside shared permits.
+    const refresh = runGit(
+      "GitVcsDriver.createWorktree.refreshIndex",
+      worktreePath,
+      ["update-index", "-q", "--refresh", "--force-write-index"],
+      { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS },
+    );
+    const checkoutSecond = yield* indexSecond;
+    yield* refresh;
+    const refreshedSecond = yield* indexSecond;
+    if (
+      Option.isNone(checkoutSecond) ||
+      Option.isNone(refreshedSecond) ||
+      refreshedSecond.value > checkoutSecond.value
+    ) {
+      return;
+    }
+    // The refresh finished within the checkout's second, so its index is just as racy. Wait that
+    // second out (file timestamps can trail the clock by a kernel tick) and refresh again. Two
+    // seconds or more means this clock does not match the file timestamps, as on a share stamped
+    // by another machine, so it cannot say when that second ends.
+    const delay = (checkoutSecond.value + 1) * 1000 + 50 - (yield* Clock.currentTimeMillis);
+    if (delay >= 2_000) return;
+    if (delay > 0) yield* Effect.sleep(Duration.millis(delay));
+    yield* refresh;
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -4317,7 +4480,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* createBranchAt(
         "GitVcsDriver.createWorktree.createBranch",
         { cwd: input.cwd, branch: newRefName, startPoint: input.refName },
-        "git worktree add failed",
+        "git branch failed",
       );
     }
     const checkoutRef = newRefName ?? input.refName;
@@ -4473,6 +4636,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
+    // Before the worktree is returned: a refresh holds index.lock, so running it in the
+    // background would race the setup script's and the agent's own git commands.
+    yield* refreshNewWorktreeIndex(worktreePath).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning(
+          "worktree index refresh failed; Git keeps re-reading its files until the index is rewritten",
+          { worktreePath, cause },
+        ),
+      ),
+    );
+
     if (newRefName && base) {
       yield* Effect.gen(function* () {
         yield* writeConfigValue({
@@ -4609,7 +4783,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
 
   const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
-    const args = ["fetch", "--quiet", "--", input.remoteName];
+    // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+    const maintenanceArgs = input.skipAutoMaintenance === true ? ["--no-auto-gc"] : [];
+    const args = ["fetch", "--quiet", ...maintenanceArgs, "--", input.remoteName];
+    // SCIENT-FORK:END
     const options = {
       env: STATUS_UPSTREAM_REFRESH_ENV,
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
@@ -4662,6 +4839,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "fetch",
       "--quiet",
       "--no-tags",
+      // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+      ...maintenanceArgs,
+      // SCIENT-FORK:END
       "--",
       input.remoteName,
       `+refs/heads/${branch}:refs/remotes/${input.remoteName}/${branch}`,
@@ -4748,7 +4928,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const { remoteName, branchName } = target;
       const remoteRefName = `${remoteName}/${branchName}`;
       // A missing remote branch can leave a stale tracking ref; never resolve it.
-      if (!(yield* fetchRemote({ cwd: input.cwd, remoteName, refName: remoteRefName }))) {
+      // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+      // Runs for every worktree thread, including delegated agents, often several at once.
+      const fetched = yield* fetchRemote({
+        cwd: input.cwd,
+        remoteName,
+        refName: remoteRefName,
+        skipAutoMaintenance: true,
+      });
+      // SCIENT-FORK:END
+      if (!fetched) {
         return null;
       }
       const resolved = yield* executeGit(
@@ -4795,6 +4984,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "fetch",
         "--quiet",
         "--no-tags",
+        // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+        // Storage cleanup refreshes these refs hourly; nobody asked for this fetch.
+        "--no-auto-gc",
+        // SCIENT-FORK:END
         "--",
         input.remoteName,
         `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
@@ -5011,17 +5204,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ).pipe(Effect.map((result) => result.exitCode === 0))
           : false;
 
+      const newTrackingBranch =
+        !localInputExists && remoteExists && !localTrackingBranch && !localTrackedBranchTargetExists
+          ? localTrackedBranchCandidate
+          : null;
+
       const checkoutArgs = localInputExists
         ? ["checkout", input.refName]
         : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
           ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
+          : newTrackingBranch
+            ? ["checkout", newTrackingBranch]
+            : remoteExists && !localTrackingBranch
+              ? ["checkout", "--track", input.refName]
+              : remoteExists && localTrackingBranch
+                ? ["checkout", localTrackingBranch]
+                : ["checkout", input.refName];
 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
+
+      // Created before the checkout so the shared-config lock is not held while files are written.
+      // Not rolled back on failure: Git may already have switched HEAD to it (post-checkout hooks).
+      if (newTrackingBranch) {
+        yield* executeGit(
+          "GitVcsDriver.switchRef.createTrackingBranch",
+          input.cwd,
+          ["branch", "--track", "--", newTrackingBranch, input.refName],
+          {
+            timeoutMs: 10_000,
+            fallbackErrorDetail: "git branch create failed",
+            writesSharedConfig: true,
+          },
+        );
+      }
 
       // A stale ref must not turn into a path checkout that discards local edits.
       yield* executeGitWithStableDiagnostics(
@@ -5029,10 +5244,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.cwd,
         [...checkoutArgs, "--"],
         {
-          timeoutMs: 10_000,
+          // Killing a checkout midway (large or LFS repos) leaves a half-updated working tree.
+          timeoutMs: null,
           fallbackErrorDetail: "git checkout failed",
-          // Checking out a remote branch creates a local one that tracks it.
-          writesSharedConfig: !localInputExists,
+          // Creating a branch writes its upstream; Git also guesses a remote branch for a missing name.
+          writesSharedConfig: checkoutArgs[1] === "--track" || (!localInputExists && !remoteExists),
         },
       );
 

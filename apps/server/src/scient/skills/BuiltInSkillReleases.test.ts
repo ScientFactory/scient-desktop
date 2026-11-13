@@ -17,6 +17,7 @@ describe("Scient built-in skill releases", () => {
       "scient.workspace-readiness-review": true,
       "scient.improve-workspace-readiness": true,
       "scient.skill-authoring": true,
+      "scient.connector-authoring": true,
       "scient.pdf-authoring": true,
       "scient.html-pdf-authoring": true,
       "scient.latex-authoring": true,

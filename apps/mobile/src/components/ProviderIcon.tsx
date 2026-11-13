@@ -11,7 +11,10 @@ import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
 import { cn } from "../lib/cn";
-import { getProviderClient, openRouterIcon } from "@t3tools/client-runtime/provider-clients";
+import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
+// SCIENT-FORK:START — Scient provider marks
+import { getProviderIcon } from "@t3tools/client-runtime/scient-provider-clients";
+// SCIENT-FORK:END
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
@@ -99,8 +102,19 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  // SCIENT-FORK:START — Scient provider marks
+  if (props.provider === "scient") {
+    return (
+      <Image
+        source={require("../../../web/src/assets/scient-agent-symbol.svg")}
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
+    );
+  }
   const packageIcon =
-    props.provider === "openrouter" ? openRouterIcon : getProviderClient(props.provider)?.icon;
+    props.provider === "openrouter" ? openRouterIcon : getProviderIcon(props.provider);
+  // SCIENT-FORK:END
   if (packageIcon) {
     const themeFill = (fill: { readonly light: string; readonly dark: string }) =>
       isDarkMode ? fill.dark : fill.light;

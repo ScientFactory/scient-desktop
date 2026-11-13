@@ -13,6 +13,17 @@ import {
 
 async function _setupFixture0(_fixture: _Fixture) {}
 
+/** An item of the open menu, once the menu shows it. */
+function menuItem(label: string) {
+  return vi.waitFor(() => {
+    const item = [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
+      (candidate) => candidate.textContent === label,
+    );
+    expect(item?.checkVisibility()).toBe(true);
+    return item!;
+  });
+}
+
 function nativeImageUrl(token: string) {
   const url = new URL("/test/fixtures/assets/0001.png", window.location.href);
   url.hash = token;
@@ -107,12 +118,9 @@ describe("shared image controls", () => {
     expect(anchor.getBoundingClientRect().height).toBe(400);
     expect(handle.hidden).toBe(true);
     await userEvent.click(more);
-    await userEvent.click(
-      [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
-        (item) => item.textContent === "Move controls",
-      )!,
-    );
-    expect(handle.hidden).toBe(false);
+    await userEvent.click(await menuItem("Move controls"));
+    // The menu runs its action once it has finished closing.
+    await expect.poll(() => handle.hidden).toBe(false);
     await expect.poll(() => document.activeElement).toBe(handle);
     await expect.poll(() => document.querySelector('[role="menu"]')).toBeNull();
     await userEvent.keyboard("{ArrowLeft}");
@@ -122,12 +130,8 @@ describe("shared image controls", () => {
     await expect.poll(() => document.activeElement).toBe(more);
     expect(toolbar.style.translate).toBe("-10px");
     await userEvent.click(more);
-    await userEvent.click(
-      [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find(
-        (item) => item.textContent === "Reset controls position",
-      )!,
-    );
-    expect(toolbar.style.translate).toBe("");
+    await userEvent.click(await menuItem("Reset controls position"));
+    await expect.poll(() => toolbar.style.translate).toBe("");
     await expect.poll(() => document.activeElement).toBe(more);
   });
 
@@ -301,11 +305,7 @@ describe("shared image controls", () => {
           'button[aria-label="More image actions"]',
         )!,
       );
-      await userEvent.click(
-        Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-          (item) => item.textContent === "Edit caption",
-        )!,
-      );
+      await userEvent.click(await menuItem("Edit caption"));
       await vi.waitFor(() => expect(edit).toHaveBeenCalledOnce());
       await expect.poll(() => document.activeElement).toBe(caption);
       expect(caption.hidden).toBe(false);
@@ -314,6 +314,7 @@ describe("shared image controls", () => {
         'button[aria-label="More image actions"]',
       )!;
       await userEvent.click(more);
+      await expect.poll(() => document.querySelector('[role="menu"]')).not.toBeNull();
       await userEvent.keyboard("{Escape}");
       await expect.poll(() => document.activeElement).toBe(more);
     },

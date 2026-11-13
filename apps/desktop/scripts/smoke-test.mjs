@@ -118,6 +118,113 @@ export function runDesktopSmoke({
   });
 }
 
+// SCIENT-FORK:START — smoke with output captured to files.
+/**
+ * Like `runDesktopSmoke`, with output in files: a helper holding inherited handles past the exit
+ * (on Windows, Azure CLI's Python) keeps a pipe open, a file does not. Output written after the
+ * exit is still scanned once the settle period has passed.
+ */
+export function runDesktopSmokeWithOutputFiles({
+  executable,
+  args = [],
+  env = process.env,
+  cwd,
+  outputDirectory,
+  survivalMs = 8_000,
+  shutdownGraceMs = 8_000,
+  settleMs = 2_000,
+  // How to ask the app to stop; on Windows SIGTERM is a forced termination, not a quit.
+  requestShutdown = (child) => child.kill("SIGTERM"),
+  // Awaited after the settle period and before the scan, e.g. until the app's processes are gone.
+  beforeScan = async () => {},
+}) {
+  if (
+    ![survivalMs, shutdownGraceMs, settleMs].every((value) => Number.isFinite(value) && value >= 0)
+  ) {
+    throw new RangeError("Smoke deadlines must be finite and non-negative.");
+  }
+  NodeFS.mkdirSync(outputDirectory, { recursive: true });
+  const stdoutPath = NodePath.join(outputDirectory, "stdout.log");
+  const stderrPath = NodePath.join(outputDirectory, "stderr.log");
+  const stdoutFd = NodeFS.openSync(stdoutPath, "w");
+  const stderrFd = NodeFS.openSync(stderrPath, "w");
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = NodeChildProcess.spawn(executable, args, {
+        cwd,
+        stdio: ["ignore", stdoutFd, stderrFd],
+        env,
+      });
+    } finally {
+      // The child holds its own copies; ours would keep the files open for nothing.
+      NodeFS.closeSync(stdoutFd);
+      NodeFS.closeSync(stderrFd);
+    }
+    let childError;
+    let shutdownRequested = false;
+    let shutdownSignalSent = false;
+    let forcedKill = false;
+    let forceKillTimeout;
+    let finished = false;
+    child.on("error", (error) => {
+      childError = error;
+      // A child that never started emits no exit.
+      if (child.pid === undefined) finish(null, null);
+    });
+    const gracefulTimeout = setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      shutdownRequested = true;
+      shutdownSignalSent = requestShutdown(child);
+      forceKillTimeout = setTimeout(() => {
+        forcedKill = true;
+        child.kill("SIGKILL");
+      }, shutdownGraceMs);
+    }, survivalMs);
+    child.once("exit", (code, signal) => finish(code, signal));
+    function finish(code, signal) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(gracefulTimeout);
+      clearTimeout(forceKillTimeout);
+      setTimeout(() => {
+        Promise.resolve()
+          .then(beforeScan)
+          .then(() => {
+            const stdout = NodeFS.readFileSync(stdoutPath, "utf8");
+            const stderr = NodeFS.readFileSync(stderrPath, "utf8");
+            const output = stdout + stderr;
+            const failures = fatalPatterns.filter((pattern) => output.includes(pattern));
+            const intendedExit = code === 0 || signal === "SIGTERM";
+            resolve({
+              passed:
+                shutdownRequested &&
+                shutdownSignalSent &&
+                intendedExit &&
+                !forcedKill &&
+                childError === undefined &&
+                failures.length === 0,
+              pid: child.pid,
+              code,
+              signal,
+              shutdownRequested,
+              forcedKill,
+              drainageTimedOut: false,
+              error: childError?.message,
+              failures,
+              stdout,
+              stderr,
+              output,
+            });
+          })
+          // A failing wait (for example the process listing) fails the smoke instead of hanging it.
+          .catch(reject);
+      }, settleMs);
+    }
+  });
+}
+// SCIENT-FORK:END
+
 async function main() {
   const desktopDir = NodePath.resolve(
     NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
