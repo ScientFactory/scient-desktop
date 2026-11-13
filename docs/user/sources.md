@@ -27,7 +27,7 @@ opens existing papers so you can **Add to project**. Collections in **Filter**
 only narrow that scope. Rows show authors, year, unread status and real
 warnings; hover a row or open its details for when and how it was added.
 
-Source records and imported PDFs are stored in your personal Library on the
+Source details and imported PDFs are stored in your personal Library on the
 computer that runs the project, in the Scient data folder (`scient/library/`
 under `~/.scient-next/userdata/` for the installed app). The project keeps the
 list of sources it uses, with their citation keys and project notes, in
@@ -39,12 +39,12 @@ builds the same bibliography. When that computer's Library has the paper with
 fewer details, the project's details fill the gaps; a detail someone removed on
 purpose by editing the paper stays removed.
 
-**What a project folder holds.** Pins, project notes and their earlier versions
+**What a project folder holds.** Its citation list, project notes and their earlier versions
 (`.scient/library/note-history/`), systematic reviews with a copy of each named
-record (`.scient/library/reviews/`), the managed bibliography files, and, after
+source (`.scient/library/reviews/`), the managed bibliography files, and, after
 a move, a sealed copy of the sources from before it. Scient also keeps an empty
 lock file there, `.scient/library/pins.lock`, so two Scient windows or servers
-using the folder never save its pins at the same moment; when
+using the folder never save its citation list at the same moment; when
 `.scient/library/.gitignore` does not exist it writes one with the single line
 `/pins.lock`, so git leaves out that lock and nothing else. An ignore file that
 is already there is never changed. PDFs added later, their
@@ -151,7 +151,7 @@ was already put back. A restore puts each highlight file back only where no
 file is, by a method that cannot replace one; on a drive that does not support
 it (some network and older removable drives), the restore stops there and says
 so, keeping its progress: run it again from a folder on a drive that does, or
-abandon it. Restoring joins the old sources to what the project has now: current pins
+abandon it. Restoring joins the old sources to what the project has now: current citation keys
 and notes stay as they are, nothing is rolled back. The copy costs disk space (the PDFs are stored
 twice) and, if the folder is tracked in git, adds to the repository unless you
 leave it out. Scient adds no ignore rule and never deletes it; deleting the
@@ -176,8 +176,8 @@ pulled from git) changed a systematic review differently, the review shows
 "This review has another version from a copy of this project." Open it to see
 both versions side by side: who changed each one last, and their searches,
 records and decisions. Choose **Keep this version**, **Use the other**, or
-**Combine**. Combine keeps the searches and records of both versions and
-reopens any record the two decided differently, so you can decide it again. The
+**Combine**. Combine keeps the searches and sources of both versions and
+reopens any source the two decided differently, so you can decide it again. The
 version you do not keep is stored aside, not deleted. After Combine, a short
 report on the review lists what is left to decide until you dismiss it.
 
@@ -252,12 +252,12 @@ names on its own until the file is repaired. If not even their names can be
 read, it merges nothing on its own.
 
 **A project's paper and your Library copy.** When a project copied from
-someone else names a paper, as a citation or as a record in one of its reviews,
+someone else names a paper, as a citation or as a source in one of its reviews,
 and your Library has a copy that disagrees with it, for example the same DOI on
 a paper with another title, or more than one copy that matches, Scient does not
 link them on its own. The project shows the paper as the project recorded it,
 without your copy's PDF. Its details show **Library copy**: which copies Scient
-compared it with and why it did not link them. A review's record opens its
+compared it with and why it did not link them. A review's source opens its
 details from the review, and it does not become a citation. Choose **Link to
 this Library copy** when it is the same paper: the project then uses that copy
 and its PDF, and keeps the paper's citation key, its note for this project and
@@ -286,7 +286,7 @@ already has, from Zotero or Better BibTeX, is kept. Each source also joins a
 Library collection named after each Zotero collection it is in. The Library
 keeps one level of nesting, so **Chapter 2** inside **Thesis** stays inside it;
 a collection nested deeper joins its ancestor one level down, and the import
-result says which ones did. The original Zotero records and attachments are
+result says which ones did. The original Zotero references and attachments are
 never changed by an import.
 
 Zotero must be open in the same environment where the project runs. For a
@@ -347,16 +347,16 @@ Long imports can continue in the background. Completed items remain saved, and
 an interrupted import can resume when the Library reopens. An item that is
 already in your Library, by the rule in [Possible duplicates](#possible-duplicates),
 is skipped, and the preview says so before you import. When a title, creator,
-and year look similar but do not prove that two records are identical, Scient
+and year look similar but do not prove that two sources are identical, Scient
 asks whether to import the item separately.
 
 ## Import PDF files
 
 1. In the **Library**, choose **Import sources → Import PDF files**.
 2. Select one or more PDFs.
-3. Review the imported records and correct any incomplete metadata.
+3. Review the imported sources and correct any incomplete metadata.
 
-Scient copies each PDF into your Library and creates an editable source record;
+Scient copies each PDF into your Library and creates editable source details;
 when you import a single new PDF, its details open so you can check them.
 It first uses metadata embedded in the file. When the PDF contains one clear
 DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
@@ -408,7 +408,7 @@ Library without asking the registry, so this works offline too. An ISBN finds a
 whole book, never a chapter that shares it. When two or more copies carry the
 identifier, Scient does not pick one; it looks the identifier up and judges by
 the registry's title and type. If the registry cannot be reached and no catalogue
-record is available, nothing is added and no copy is selected. An agent that adds
+source is available, nothing is added and no copy is selected. An agent that adds
 a source by its identifier alone gets the same answer. Entries of the last kind stay in the box so
 **Add** tries them again. Up to 50 identifiers can be added at a time.
 
@@ -468,7 +468,7 @@ not both), a note after the export names what the file leaves out.
 
 A project package is a folder with everything this project uses from your
 Library, for a collaborator, a supervisor, another computer or a backup: the
-pins with their citation details, project notes and their earlier versions,
+citation keys with their source details, project notes and their earlier versions,
 the systematic reviews with every source they name (also sources only a review
 names), the exact PDFs with their highlights, a paper's retraction or
 withdrawal notices, and the collections those sources are in, with the
@@ -478,10 +478,11 @@ is plain files: JSON, the PDFs and a `manifest.json` with every file's checksum.
 
 Choose **⋯** > **Recover** > **Save a current package**. It saves to a new
 folder, "Scient project package" with the date, in the folder you pick
-(starting beside the project). Choose the project folder to save it inside
-instead. When the project is on another computer, it is saved inside the
-project by default. Git then commits it with the project, PDFs included, and
-it takes disk space there.
+(starting beside the project). **In this project** saves it inside the project
+instead. **Choose a folder…** is available in the desktop app when the
+project runs on this computer. In the web app, or for a project on another
+computer, use **In this project**: git then commits it with the project, PDFs
+included, and it takes disk space there.
 Scient says what was left out because this Library did not have it.
 
 People and agents can save or import a package at the requested path on the
@@ -491,7 +492,9 @@ folder, cannot overwrite an existing package, and cannot read payloads through
 links that lead outside its folder.
 
 To bring a package in, choose **⋯** > **Import a package**, then its folder
-with **Choose a folder…**, or pick one of the package folders in the project. Scient
+with **Choose a folder…** in the local desktop app, or pick one of the package
+folders at the top level of the project. In the web app, copy the package
+folder into the project first, then open **Import a package** to find it. Scient
 checks every file against the manifest first and refuses a package that
 changed. A PDF missing from the manifest is reported as unavailable and is
 never opened. Scient prepares each paper's PDF copies before joining it, so
@@ -517,11 +520,11 @@ What an import joins to a paper you already have:
   serious state shows. Its identifier check is taken only when this computer
   never checked it. An abstract is added when the paper has none.
 - A project note: one this project already has stays, and the package's text
-  and earlier versions join **Earlier versions**; a pin without a note takes
+  and earlier versions join **Earlier versions**; a project entry without a note takes
   the package's.
 - A review that differs from this project's becomes a review with another
   version, to keep, replace or combine; so does a review whose decisions are
-  the same but whose copy of the records differs, even a large review whose
+  the same but whose copy of the sources differs, even a large review whose
   copy is split into several files. Records only the package's copy describes
   stay available when you choose that version.
 
@@ -911,7 +914,7 @@ its own key. **Open** goes to the source or the line in the file, and a notice o
 published version opens in your browser. **Ignore** hides a finding from later
 checks of the same file; **Show ignored** lets you restore it.
 
-The check compares records only. It does not judge whether a cited work
+The check compares reference details only. It does not judge whether a cited work
 supports the sentence that cites it, and a reference without an identifier is
 counted but not looked up. When a registry does not answer, the results say the
 check is incomplete.
@@ -937,8 +940,8 @@ packages, lists this project’s imports with dates, counts and what stayed,
 and undoes an import by its receipt and restores the copy from
 before a move with `scient_sources_organize`. To change a note for this project
 it must say which note it read; if the note changed since, nothing is written
-and it gets the current note to reconcile. When two pins cite one paper (after
-a merge), it names the pin by its citation key to read or change that pin's
+and it gets the current note to reconcile. When this project cites one paper under two keys (after
+a merge), it names the citation key to read or change that key's
 note and its earlier versions. Everything an agent changes is credited to it
 and can be undone the same way as your own changes.
 
@@ -966,7 +969,7 @@ like any other.
 Agents check references with the same tool the dialog uses
 (`scient_references_check`), and apply fixes or ignore findings with
 `scient_references_resolve`. The built-in **references** skill guides an agent
-through a full reference review: records first, then whether each source
+through a full reference review: reference details first, then whether each source
 supports its sentence, missing citations, newer versions and contrary evidence.
 It applies only fixes you asked for and proposes the rest. When you ask only
 for a check, it leaves your draft, your bibliography and your Library as they
@@ -976,7 +979,7 @@ page of the file, unless it says "printed page".
 
 Results from the PubMed, Semantic Scholar and OpenAlex connectors become
 sources the same way: the agent passes the paper's PMID, Semantic Scholar ID or
-OpenAlex ID, and Scient fetches the record and checks it at the DOI's registry.
+OpenAlex ID, and Scient fetches the details and checks them at the DOI's registry.
 A paper whose DOI does not exist is refused; one that only the catalogue knows,
 with no DOI, PMID or arXiv ID, is added as unverified.
 You can paste those IDs or links when you add by identifier, too.
@@ -986,7 +989,7 @@ When you ask an agent to get papers for your library, it fetches them with
 source: the copy that shares its DOI or arXiv ID and does not disagree with
 what the paper lookup and the registry say about its title and type, by the
 rule in [Possible duplicates](#possible-duplicates). A paper that is not in the
-Library yet is added from its DOI's registry record, the same check as above. Scient prefers the published version and falls
+Library yet is added from its DOI's registry details, the same check as above. Scient prefers the published version and falls
 back to a free accepted manuscript or preprint; the source's details then say
 "PDF is a preprint" or "PDF is the accepted manuscript". Each PDF also records
 how it arrived: a free copy, the publisher, your university sign-in, or your

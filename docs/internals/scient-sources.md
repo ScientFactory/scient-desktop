@@ -1197,9 +1197,11 @@ server's environment. Outside paths need no remembered grants or prior panel
 action. An existing package cannot be overwritten. The import itself reads only the manifest and files it lists,
 and refuses (`package-changed`) any whose real path, links resolved, leaves the
 package folder; `organization.json` is read only when listed. The panel
-offers a chosen folder (desktop, local environment; the picker starts beside
-the project) or the project, and says that a package in the project is
-committed with it.
+offers a chosen folder only when `window.desktopBridge` is present and the
+selected environment is primary (`ProjectPackageMenu.tsx`; the picker starts
+beside the project). The web app and remote environments offer **In this
+project** and import from the package folders listed at its top level. The
+save message says that a package in the project is committed with it.
 
 ```text
 manifest.json      kind scient-project-package, counts, every file's size and SHA-256, unavailable
@@ -1477,8 +1479,8 @@ which replaces the server's own bulk-edit line. `moveStatus` carries no
 "dismissed" flag, so empty `lines` (dismissed, or a move with nothing to say)
 show no summary; `cleanup-pending` still shows its files-left sentence. Dismiss
 (organize `dismiss-move-summary`) is offered for a summary, and a failure offers
-"Check again", which only reads the status. "Review" in the merge line is plain
-text until the duplicates screen exists. A write refused with
+"Check again", which only reads the status. **Review** opens Possible
+duplicates at **Merged**, where each merge explains the values it kept. A write refused with
 `scient_sources_library_moving` shows "The Library is still moving. Try again
 when it has finished." (`scientSourcesErrorMessage`, and the reader's highlight
 toast).
@@ -3091,7 +3093,10 @@ hash and size; the Sources PDF reader carries them as the descriptor's
 hit opens through the reader's quote reveal: the panel files the hit, and the
 PDF preview turns it into a target with its own document identity once the
 authorized preview names the file. Server and web pdf.js versions can differ,
-so such targets are found again by their text rather than by offsets.
+but an extractor version difference alone does not force relocation: the
+reader accepts an exact target when its live page hash, geometry, quote,
+offsets and context agree. Otherwise it searches by text and reports that
+fallback without claiming the PDF changed.
 
 ## Saving browser pages
 
@@ -3136,11 +3141,13 @@ tool, or the input on an existing tool, in the same change as the button.
 
 ## Deliberate exclusions
 
-This slice does not implement two-way Zotero sync, Zotero group libraries,
-uploading PDFs to Zotero, attaching PDFs named in a reference file's `file`
-field, source merging, automatic possible-duplicate merging, multi-source
-bibliographies, per-document style pickers, LaTeX bibliography styles, evidence claims, OCR of
-scanned PDFs, fuzzy metadata search, mobile UI, or a separate Studio route.
+The current implementation does not provide automatic two-way Zotero sync,
+uploading PDFs to Zotero, automatic merging of possible duplicates,
+evidence grading, OCR of scanned PDFs, fuzzy metadata search, mobile Library
+UI, or a separate Studio route. Zotero group libraries, linked PDFs from
+reference-file imports, deliberate source merges and multi-source
+bibliographies are implemented in the sections above. LaTeX bibliography
+styles remain the document's own choice.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
 
