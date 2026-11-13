@@ -107,7 +107,7 @@ export function useRoomPost(
     const roomMessageId = attempt.current.id;
     inFlight.current = true;
     setPosting(true);
-    try {
+    const attemptPost = async () => {
       const prepared = await prepareTurnAttachments({
         environmentId: threadRef.environmentId,
         attachments: draft.attachments,
@@ -146,15 +146,15 @@ export function useRoomPost(
         if (readRoomComposerState(threadKey) === state) clearRoomReply(threadKey);
         attempt.current = null;
       }
-    } catch (error) {
+    };
+    await attemptPost().catch((error: unknown) => {
       Dialog.alert(
         "Could not post to people",
         error instanceof Error ? error.message : "Try again.",
       );
-    } finally {
-      inFlight.current = false;
-      setPosting(false);
-    }
+    });
+    inFlight.current = false;
+    setPosting(false);
   };
   return { hasRoom: room !== null, toPeople, posting, send };
 }

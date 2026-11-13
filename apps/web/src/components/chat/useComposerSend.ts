@@ -2023,8 +2023,8 @@ export function useComposerSend(input: ComposerSendInput) {
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
     // SCIENT-FORK: steering and direct prompts always go to the agent.
-    if (args[4]?.steer !== true && args[4]?.directPrompt === undefined && (await postToRoom()))
-      return;
+    if (args[4]?.steer !== true && args[4]?.directPrompt === undefined && postToRoom.applies())
+      return postToRoom.post();
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null

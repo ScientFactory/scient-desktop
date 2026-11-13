@@ -64,14 +64,11 @@ export function RoomMessageRow({ item }: { readonly item: RoomMessageItem }) {
     lastSend === undefined && item.deliveries?.some((delivery) => delivery.status === "cancelled");
   const author = roomAuthorLabel(item.author, viewer);
   const canDelete = actions !== null && !deleted && (actions.canDelete || mine);
-  const run = async (kind: "send" | "delete", action: () => Promise<void>) => {
+  const run = (kind: "send" | "delete", action: () => Promise<void>) => {
     setBusy(kind);
-    try {
-      await action();
-    } finally {
-      setBusy(null);
-    }
+    void action().finally(() => setBusy(null));
   };
+
   const postedAt = item.startedAt ?? item.updatedAt;
   const replyTarget: RoomReplyTarget = {
     itemId: item.id,
@@ -160,7 +157,7 @@ export function RoomMessageRow({ item }: { readonly item: RoomMessageItem }) {
               }
               disabled={busy !== null}
               aria-label={`Send ${mine ? "your" : `${author}'s`} message to the agent`}
-              onClick={() => void run("send", () => actions.onSend(item))}
+              onClick={() => run("send", () => actions.onSend(item))}
             >
               <SendIcon aria-hidden />
               {lastSend === undefined ? "Send to agent" : "Send again"}
@@ -172,7 +169,7 @@ export function RoomMessageRow({ item }: { readonly item: RoomMessageItem }) {
               variant="ghost-muted"
               disabled={busy !== null}
               aria-label="Delete message"
-              onClick={() => void run("delete", () => actions.onDelete(item))}
+              onClick={() => run("delete", () => actions.onDelete(item))}
             >
               <Trash2Icon aria-hidden />
             </Button>

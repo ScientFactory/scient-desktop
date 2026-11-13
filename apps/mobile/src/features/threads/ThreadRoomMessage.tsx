@@ -37,7 +37,7 @@ export function ThreadRoomMessage(props: {
     if (inFlight.current || !canOperate || deleted) return;
     inFlight.current = true;
     setBusy(true);
-    try {
+    const perform = async () => {
       const result =
         kind === "send"
           ? await send({
@@ -49,12 +49,12 @@ export function ThreadRoomMessage(props: {
               input: { threadId: threadRef.threadId, action: { type: "delete", itemId: item.id } },
             });
       roomCommandSucceeded(result);
-    } catch (error) {
+    };
+    await perform().catch((error: unknown) => {
       Dialog.alert("Room action failed", error instanceof Error ? error.message : "Try again.");
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
+    });
+    inFlight.current = false;
+    setBusy(false);
   };
   return (
     <View className="items-start gap-1 pb-5">

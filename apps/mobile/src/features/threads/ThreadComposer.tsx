@@ -727,11 +727,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       return;
     }
     if (toPeople) {
-      try {
-        await roomPost.send(stillSendable);
-      } finally {
-        inFlightThreadIdsRef.current.delete(threadKey);
-      }
+      await settlePromise(() => roomPost.send(stillSendable));
+      inFlightThreadIdsRef.current.delete(threadKey);
       return;
     }
     const sent = await settlePromise(() => onSendMessage(followUp, stillSendable));
