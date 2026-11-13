@@ -491,10 +491,10 @@ function countsTitle(review: ScientOverleafReview, sent: boolean, held: number):
   return parts.join(", ");
 }
 
-/** The lines every review adds: renames, older versions, earlier sends, sizes. */
-function warningLines(review: ScientOverleafReview): string[] {
+/** The lines every review adds: renames and older versions once sent, earlier sends, sizes. */
+function warningLines(review: ScientOverleafReview, sent: boolean): string[] {
   const lines: string[] = [];
-  const renames = review.warnings.filter((warning) => warning.kind === "rename");
+  const renames = sent ? review.warnings.filter((warning) => warning.kind === "rename") : [];
   if (renames.length > 0) {
     lines.push(
       renames.length === 1 && renames[0]?.from && renames[0].to
@@ -502,7 +502,9 @@ function warningLines(review: ScientOverleafReview): string[] {
         : `Renamed ${fileCount(renames.length)}. Overleaf drops comments and tracked changes on renamed files.`,
     );
   }
-  const older = review.warnings.filter((warning) => warning.kind === "restores-older-version");
+  const older = sent
+    ? review.warnings.filter((warning) => warning.kind === "restores-older-version")
+    : [];
   // Said with the files: an older version replaces collaborators' newer text on Overleaf.
   if (older.length === 1 && older[0]?.path)
     lines.push(`Sent a version of ${older[0].path} that Overleaf had before.`);
@@ -531,9 +533,24 @@ function warningLines(review: ScientOverleafReview): string[] {
   return lines;
 }
 
+type SyncedResult = Extract<ScientOverleafSyncResult, { _tag: "synced" }>;
+
+/**
+ * Whether all of Overleaf's changes are in the folder: the apply completed, or it stopped
+ * only at conflict marks in held files, which is the one unfinished apply the server still
+ * sends from. A replanned apply wrote nothing; any other may have stopped partway.
+ */
+export function overleafChangesCameIn(result: SyncedResult): boolean {
+  return (
+    result.outcome === "complete" ||
+    (result.outcome === "attention" &&
+      !(result.publication._tag === "blocked" && result.publication.reason === "attention"))
+  );
+}
+
 /** What the sync's send did, when it didn't simply arrive. */
 function publicationLine(
-  publication: Extract<ScientOverleafSyncResult, { _tag: "synced" }>["publication"],
+  publication: SyncedResult["publication"],
   held: ReadonlyArray<string>,
 ): { readonly line: string | null; readonly tone: OverleafResultView["tone"] } {
   switch (publication._tag) {
@@ -559,7 +576,7 @@ function publicationLine(
           };
         default:
           return {
-            line: "Nothing was sent: a file needs a decision first.",
+            line: "Nothing was sent: part of the folder needs attention first. Settle it, then sync again.",
             tone: "warning",
           };
       }
@@ -633,17 +650,57 @@ function progressLines(result: ScientOverleafSyncResult): string[] {
   ];
 }
 
+/** A sync whose apply didn't bring all of Overleaf's changes in; nothing was sent. */
+function unfinishedApplyView(result: SyncedResult, progress: string[]): OverleafResultView {
+  const context = contextLines(result.activity, result.linkedElsewhere);
+  if (result.outcome === "replan")
+    return {
+      title: "Nothing came in",
+      lines: [
+        ...progress,
+        "The folder changed while Overleaf's changes were being written, so nothing was written or sent. Sync again.",
+        ...context,
+      ],
+      tone: "warning",
+      hasChanges: false,
+      needsDecision: false,
+    };
+  return {
+    title:
+      result.review.incoming.length > 0
+        ? "Overleaf's changes were applied as far as the folder allowed"
+        : "Part of the folder needs attention",
+    lines: [
+      ...progress,
+      ...(result.interrupted > 0
+        ? [
+            `Writing stopped partway in ${fileCount(result.interrupted)}. The next sync shows them as conflicts to settle.`,
+          ]
+        : result.markerPaths.length === 0
+          ? ["A file or a kept copy changed while Overleaf's changes were written. Check it."]
+          : []),
+      ...reviewHeldLines(result.review, result.markerPaths),
+      "Nothing was sent. Sync again once the folder is settled.",
+      ...context,
+    ],
+    tone: "warning",
+    hasChanges: false,
+    needsDecision: false,
+  };
+}
+
 export function overleafResultView(result: ScientOverleafSyncResult): OverleafResultView {
   const progress = progressLines(result);
   switch (result._tag) {
     case "synced": {
+      if (!overleafChangesCameIn(result)) return unfinishedApplyView(result, progress);
       const sent = result.publication._tag === "accepted";
       const held = heldPaths(result.review, result.markerPaths);
       const publication = publicationLine(result.publication, held);
       const lines = [
         ...progress,
         ...(publication.line ? [publication.line] : []),
-        ...warningLines(result.review),
+        ...warningLines(result.review, sent),
         ...reviewHeldLines(result.review, result.markerPaths),
         ...(result.interrupted > 0
           ? [`An interrupted sync left ${fileCount(result.interrupted)} to settle.`]

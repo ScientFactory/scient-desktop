@@ -284,6 +284,44 @@ describe("overleafResultView", () => {
     ).toBe("Overleaf changed again while this sync was sending. Sync again.");
   });
 
+  it("says Overleaf's changes came in only when the apply wrote them all", () => {
+    const incoming = review({
+      incoming: [{ kind: "modified", path: "a.tex" }],
+      outgoing: [{ kind: "modified", path: "d.tex" }],
+      warnings: [{ kind: "rename", from: "x.tex", to: "y.tex" }],
+    });
+    const attention = { _tag: "blocked" as const, reason: "attention" };
+    const replanned = overleafResultView(
+      synced({ review: incoming, outcome: "replan", publication: attention }),
+    );
+    expect(replanned).toMatchObject({ title: "Nothing came in", hasChanges: false });
+    expect(replanned.lines).toEqual([
+      "The folder changed while Overleaf's changes were being written, so nothing was written or sent. Sync again.",
+    ]);
+    const partway = overleafResultView(
+      synced({ review: incoming, outcome: "attention", interrupted: 2, publication: attention }),
+    );
+    expect(partway.title).toBe("Overleaf's changes were applied as far as the folder allowed");
+    expect(partway.lines).toEqual([
+      "Writing stopped partway in 2 files. The next sync shows them as conflicts to settle.",
+      "Nothing was sent. Sync again once the folder is settled.",
+    ]);
+    expect(
+      overleafResultView(synced({ outcome: "attention", publication: attention })).lines[0],
+    ).toBe("A file or a kept copy changed while Overleaf's changes were written. Check it.");
+    // Stopped only at conflict marks in held files: everything else came in and went out.
+    const marksOnly = overleafResultView(
+      synced({ review: incoming, outcome: "attention", markerPaths: ["main.tex"] }),
+    );
+    expect(marksOnly.title).toBe("1 file came in, 1 was sent");
+    // A complete apply held back by a forced conflict sent nothing, renamed nothing.
+    const held = overleafResultView(synced({ review: incoming, publication: attention }));
+    expect(held.title).toBe("1 file came in");
+    expect(held.lines).toEqual([
+      "Nothing was sent: part of the folder needs attention first. Settle it, then sync again.",
+    ]);
+  });
+
   it("adds the lines of design section 4.1", () => {
     const view = overleafResultView(
       synced({

@@ -24,6 +24,7 @@ import {
   connectionForPath,
   decidableFiles,
   operationErrorText,
+  overleafChangesCameIn,
   reviewIdentity,
   type OverleafFileDecision,
 } from "./overleafModel";
@@ -599,7 +600,14 @@ export function recordOverleafSync(
   carried: ReadonlyMap<string, OverleafFileDecision> = NO_FILE_DECISIONS,
 ): void {
   const at = Date.now();
-  if (result._tag === "synced") remoteCheckedAt.set(reviewKeyOf(environmentId, connectionId), at);
+  const link = reviewKeyOf(environmentId, connectionId);
+  // Only a sync that brought everything in and left nothing unsent is the same as Overleaf;
+  // after any other, Overleaf is asked again.
+  const cameIn = result._tag === "synced" && overleafChangesCameIn(result);
+  const sameAsOverleaf =
+    cameIn && (result.publication._tag === "none" || result.publication._tag === "accepted");
+  if (sameAsOverleaf) remoteCheckedAt.set(link, at);
+  else if (result._tag === "synced") remoteCheckedAt.delete(link);
   updateLifecycle(environmentId, (current) => {
     const reviews = new Map(current.reviews);
     const syncedAt = new Map(current.syncedAt);
@@ -622,11 +630,14 @@ export function recordOverleafSync(
       const spentSubmitted = new Map(submittedDecisions);
       spentSubmitted.delete(connectionId);
       submittedDecisions = spentSubmitted;
-      reviews.set(connectionId, {
-        review: result.review,
-        applied: true,
-        sent: result.publication._tag === "accepted",
-      });
+      // A review only partly applied is neither what happened nor what the next sync does.
+      if (cameIn)
+        reviews.set(connectionId, {
+          review: result.review,
+          applied: true,
+          sent: result.publication._tag === "accepted",
+        });
+      else reviews.delete(connectionId);
       syncedAt.set(connectionId, at);
     } else if (result._tag === "needs-decision") {
       reviews.set(connectionId, { review: result.review, applied: false, sent: false });
@@ -641,10 +652,9 @@ export function recordOverleafSync(
     previewNotes.delete(connectionId);
     const outdated = new Set(current.outdated);
     outdated.delete(connectionId);
-    const remoteStates =
-      result._tag === "synced"
-        ? new Map(current.remoteStates).set(connectionId, "same" as const)
-        : current.remoteStates;
+    const remoteStates = new Map(current.remoteStates);
+    if (sameAsOverleaf) remoteStates.set(connectionId, "same");
+    else if (result._tag === "synced") remoteStates.delete(connectionId);
     const next = {
       ...current,
       remoteStates,
