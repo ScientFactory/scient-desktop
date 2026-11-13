@@ -105,6 +105,7 @@ async function writeSource(
     readonly abstract?: string | null;
     readonly hasPdf?: boolean;
     readonly identifiers?: ReadonlyArray<{ readonly scheme: string; readonly value: string }>;
+    readonly type?: "article" | "book" | "book-chapter";
   },
 ) {
   const identity = await readScientProjectIdentity(root);
@@ -113,7 +114,7 @@ async function writeSource(
     sourceId: input.sourceId,
     projectId: identity.projectId,
     revision: 1,
-    type: "article" as const,
+    type: input.type ?? ("article" as const),
     customType: null,
     title: input.title,
     creators: [
@@ -1023,6 +1024,56 @@ describe("Scient Sources MCP handlers", () => {
         context,
       );
       expect(mixed).toMatchObject({ outcome: "invalid", validationIssues: [{ field: "title" }] });
+    }),
+  );
+
+  it.effect("selects the one copy bare identifier fields name, offline and with no type", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-bare-"));
+      const projectId = ProjectId.make("project-agent-bare");
+      const threadId = ThreadId.make("thread-agent-bare");
+      const isbn = { scheme: "isbn", value: "9780306406157" };
+      yield* Effect.promise(async () => {
+        await writeSource(root, {
+          sourceId: "source_book",
+          title: "Atlas",
+          type: "book",
+          identifiers: [isbn],
+        });
+        await writeSource(root, {
+          sourceId: "source_chapter",
+          title: "Maps",
+          type: "book-chapter",
+          identifiers: [isbn],
+        });
+        await writeSource(root, { sourceId: "source_paper", title: "Paper" });
+      });
+      const asked: Array<unknown> = [];
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+        lookup: async (identifiers: Parameters<ResolveSourceIdentifier>[0]) => {
+          asked.push(identifiers);
+          return offlineLookup(identifiers);
+        },
+      };
+      const add = (identifier: { readonly scheme: string; readonly value: string }) =>
+        provideContext(addScientSourceForInvocation({ identifiers: [identifier] }), context);
+
+      // An ISBN-10 spelling names the whole book, never its chapter.
+      expect(yield* add({ scheme: "isbn", value: "0-306-40615-2" })).toMatchObject({
+        outcome: "duplicate",
+        sourceId: "source_book",
+        validationIssues: [],
+      });
+      expect(yield* add({ scheme: "doi", value: "10.1000/source_paper" })).toMatchObject({
+        outcome: "duplicate",
+        sourceId: "source_paper",
+      });
+      expect(asked).toEqual([]);
     }),
   );
 

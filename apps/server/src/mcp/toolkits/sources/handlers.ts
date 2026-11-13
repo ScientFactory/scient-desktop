@@ -47,6 +47,7 @@ import {
   unpinScientLibrarySource,
 } from "@scientfactory/scient-sources/project-pins";
 import {
+  readScientSourceIntakeAssessor,
   resolveScientSourceInputPdf,
   updateScientSourceMetadata,
 } from "@scientfactory/scient-sources/store";
@@ -103,6 +104,8 @@ import {
 } from "../../../scient/sources/CitationStyles.ts";
 import {
   addScientSourcesByIdentifier,
+  identifierOnlyCandidate,
+  selectIdentifierCopy,
   SourceIdentifierBatchLookup,
   summarizeIdentifierAdd,
 } from "../../../scient/sources/SourceIdentifierAdd.ts";
@@ -263,6 +266,38 @@ function candidateFromAgentInput(input: ScientSourceAddInputType): {
     ],
   };
   return { candidate, validationIssues: validateScientSourceEditableMetadata(normalized) };
+}
+
+const supplied = (value: unknown) =>
+  value !== undefined &&
+  value !== null &&
+  (typeof value !== "string" || value.trim() !== "") &&
+  !(Array.isArray(value) && value.length === 0);
+
+/** Identifiers and nothing else that describes the work; type `other` unnamed is no type. */
+function identifierOnlyInput(input: ScientSourceAddInputType): boolean {
+  return (
+    supplied(input.identifiers) &&
+    !supplied(input.pdfRelativePath) &&
+    (input.type === undefined || input.type === "other") &&
+    [
+      input.customType,
+      input.title,
+      input.creators,
+      input.issuedRaw,
+      input.issuedYear,
+      input.abstract,
+      input.abstractSections,
+      input.containerTitle,
+      input.publisher,
+      input.volume,
+      input.issue,
+      input.pages,
+      input.language,
+      input.url,
+      input.tags,
+    ].every((value) => !supplied(value))
+  );
 }
 
 function mergePreparedAgentPdfCandidate(
@@ -1492,8 +1527,18 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
   }
   const store = yield* resolveScientSourcesStore();
   const root = store.store;
-  const { candidate: initialCandidate, validationIssues: initialIssues } =
-    candidateFromAgentInput(input);
+  const fromFields = candidateFromAgentInput(input);
+  // Bare identifiers select and add as the identifier list does, with no type to invent.
+  const identifierOnly = identifierOnlyInput(input);
+  const bare = identifierOnly
+    ? identifierOnlyCandidate(fromFields.candidate.identifiers, "agent")
+    : null;
+  const initialCandidate = bare
+    ? { ...fromFields.candidate, sourceKey: bare.sourceKey, type: bare.type }
+    : fromFields.candidate;
+  const initialIssues = identifierOnly
+    ? fromFields.validationIssues.filter((issue) => issue.field !== "customType")
+    : fromFields.validationIssues;
   const pdfRelativePath = input.pdfRelativePath;
   const resolvedPdf = pdfRelativePath
     ? yield* attempt(() => resolveScientSourceInputPdf(store.root, pdfRelativePath))
@@ -1544,28 +1589,45 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
       validationIssues,
     };
   }
+  const selected = identifierOnly
+    ? selectIdentifierCopy(
+        yield* attempt(() => readScientSourceIntakeAssessor(root).catch(() => null)),
+        candidate.identifiers,
+        "agent",
+      )
+    : undefined;
   const resolveIdentifier = yield* keyedIdentifierLookup();
   const observeImport = yield* makeSourceImportAnalytics("agent");
-  const result = yield* attempt(() =>
-    addAgentSource(
-      {
-        root,
-        candidate,
-        enrich: input.enrich ?? false,
-        allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
-        resolveIdentifier,
-        claimedTitle: input.title ?? null,
-        ...(resolvedPdf
-          ? {
-              pdfPath: resolvedPdf.absolutePath,
-              pdfFileName: resolvedPdf.fileName,
-              ...(preparedPdf ? { expectedPdf: preparedPdf.expectedPdf } : {}),
-            }
-          : {}),
-      },
-      observeImport,
-    ),
-  );
+  const result = selected
+    ? {
+        outcome: "duplicate" as const,
+        record: null,
+        duplicate: {
+          kind: "same-identifier" as const,
+          matchingSourceIds: [selected.sourceId],
+          reason: "A source with the same persistent identifier already exists.",
+        },
+      }
+    : yield* attempt(() =>
+        addAgentSource(
+          {
+            root,
+            candidate,
+            enrich: input.enrich ?? false,
+            allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+            resolveIdentifier,
+            claimedTitle: input.title ?? null,
+            ...(resolvedPdf
+              ? {
+                  pdfPath: resolvedPdf.absolutePath,
+                  pdfFileName: resolvedPdf.fileName,
+                  ...(preparedPdf ? { expectedPdf: preparedPdf.expectedPdf } : {}),
+                }
+              : {}),
+          },
+          observeImport,
+        ),
+      );
   if (result.outcome === "identifier-not-found" || result.outcome === "identifier-mismatch") {
     return {
       outcome: result.outcome,

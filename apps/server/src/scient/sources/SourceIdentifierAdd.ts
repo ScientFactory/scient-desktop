@@ -43,19 +43,24 @@ function identifierKey(identifier: ScientSourceIdentifier): string {
   return normalizePersistentIdentifier(identifier.scheme, identifier.value);
 }
 
-function identifierOnlyCandidate(
-  identifier: ScientSourceIdentifier,
+const isIsbn = (identifier: ScientSourceIdentifier) =>
+  identifier.scheme.trim().toLowerCase() === "isbn";
+
+/** A source named by identifiers alone: a whole book for ISBNs, otherwise of unknown type. */
+export function identifierOnlyCandidate(
+  identifiers: ReadonlyArray<ScientSourceIdentifier>,
   actor: ScientSourceActor,
 ): ScientSourceCandidate {
+  const key = identifiers.map(identifierKey).toSorted().join("\0");
   return {
-    sourceKey: `identifier_${NodeCrypto.createHash("sha256").update(identifierKey(identifier)).digest("hex")}`,
-    type: identifier.scheme === "isbn" ? "book" : "other",
+    sourceKey: `identifier_${NodeCrypto.createHash("sha256").update(key).digest("hex")}`,
+    type: identifiers.length > 0 && identifiers.every(isIsbn) ? "book" : "other",
     customType: null,
     title: null,
     creators: [],
     issuedRaw: null,
     issuedYear: null,
-    identifiers: [identifier],
+    identifiers,
     abstract: null,
     containerTitle: null,
     publisher: null,
@@ -74,26 +79,33 @@ function identifierOnlyCandidate(
 }
 
 /**
- * The one Library copy a bare identifier selects, under the shared intake rule (a book's ISBN
+ * The one Library copy bare identifiers select, under the shared intake rule (a book's ISBN
  * selects a whole book, never a chapter): no registry call, so it works offline. Several copies
- * are not guessed between.
+ * are not guessed between. The identifier list and agent citation fields both select here.
  */
-function localCopy(
+export function selectIdentifierCopy(
   intake: Awaited<ReturnType<typeof readScientSourceIntakeAssessor>> | null,
-  identifier: ScientSourceIdentifier,
+  identifiers: ReadonlyArray<ScientSourceIdentifier>,
   actor: ScientSourceActor,
 ): ScientSourceRecord | undefined {
-  if (!intake) return undefined;
-  const keyOf = (scheme: string, value: string) =>
-    scheme.trim().toLowerCase() === "isbn" ? isbn13(value) : workLevelIdentifierKey(scheme, value);
-  const wanted = keyOf(identifier.scheme, identifier.value);
-  const carriers = intake.existing.filter(
-    (record) =>
-      (identifier.scheme !== "isbn" || record.type === "book") &&
-      record.identifiers.some((own) => keyOf(own.scheme, own.value) === wanted),
+  if (!intake || identifiers.length === 0) return undefined;
+  const keyOf = (identifier: ScientSourceIdentifier) =>
+    isIsbn(identifier)
+      ? isbn13(identifier.value)
+      : workLevelIdentifierKey(identifier.scheme, identifier.value);
+  const wanted = identifiers.map((identifier) => ({
+    isbn: isIsbn(identifier),
+    key: keyOf(identifier),
+  }));
+  if (wanted.some(({ key }) => key === null)) return undefined;
+  const carriers = intake.existing.filter((record) =>
+    wanted.some(
+      ({ isbn, key }) =>
+        (!isbn || record.type === "book") && record.identifiers.some((own) => keyOf(own) === key),
+    ),
   );
-  if (wanted === null || carriers.length !== 1) return undefined;
-  const duplicate = intake.assess(identifierOnlyCandidate(identifier, actor));
+  if (carriers.length !== 1) return undefined;
+  const duplicate = intake.assess(identifierOnlyCandidate(identifiers, actor));
   if (duplicate.kind !== "same-identifier" && duplicate.kind !== "same-origin") return undefined;
   return intake.existing.find((record) => record.sourceId === duplicate.matchingSourceIds[0]);
 }
@@ -170,7 +182,7 @@ export async function addScientSourcesByIdentifier(
       const first = firstByKey.get(key);
       if (first !== undefined) return { kind: "repeat", of: first, input: text };
       firstByKey.set(key, index);
-      const copy = localCopy(intake, identifier, input.actor);
+      const copy = selectIdentifierCopy(intake, [identifier], input.actor);
       if (copy) return { kind: "done", item: existingItem(text, identifier, copy, false) };
       return { kind: "resolve", input: text, identifier };
     },
@@ -191,7 +203,7 @@ export async function addScientSourcesByIdentifier(
           {
             step,
             candidate: applyResolvedSourceMetadata(
-              identifierOnlyCandidate(step.identifier, input.actor),
+              identifierOnlyCandidate([step.identifier], input.actor),
               resolution,
             ),
             resolution,
@@ -258,7 +270,7 @@ export async function addScientSourcesByIdentifier(
     const candidate =
       enriched.get(key) ??
       applyResolvedSourceMetadata(
-        identifierOnlyCandidate(step.identifier, input.actor),
+        identifierOnlyCandidate([step.identifier], input.actor),
         resolution,
       );
     const imported = await observeSourceImport(
