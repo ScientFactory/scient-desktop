@@ -642,6 +642,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`f313d0a6cb843551fb60e57a454a71e71a3a8c04` is recorded in
+[the 2026-11-13 f313d0a6cb receipt](docs/internals/t3-upstream-sync-20261113-f313d0a6cb.md).
+Literal merge `056b8ccc26884eb7c40f517fb3a302b595253bc0` has owned base
+`5067dcfb198bcf94ac6cb78838a1dbbaa9c0fae5` and the frozen official target as parents, retaining
+the 172 official commits after `f70e349eca`. Keep-awake now uses T3's server hold, deciding busy
+from Scient's work definition, and Scient's desktop switch is removed. A message sent after a
+stopped worktree setup waits for a worktree, as in T3. T3's three migrations are appended as 91
+to 93. Release remains separate.
+
+The previous committed alignment through
 `f70e349ecaef6560aecb889f77d6f03b9251edc9` is recorded in
 [the 2026-11-13 f70e349eca receipt](docs/internals/t3-upstream-sync-20261113-f70e349eca.md).
 Literal merge `96fa5a81ff02e5b97172362a3f2722ca9fe10eb9` has owned base
@@ -652,7 +662,7 @@ languages arrive with Scient's names. T3's four migrations are appended as 87 to
 keeps Scient's qualified ACP release while T3 moves to Google's native CLI. Release remains
 separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `eceeab4d5c5bb02b58906978ff9e50bbd595ec19` is recorded in
 [the 2026-11-12 eceeab4d5c receipt](docs/internals/t3-upstream-sync-20261112-eceeab4d5c.md).
 Literal merge `24bf8e8936698b61e604963c41cf9bd5f016140a` has owned base
