@@ -302,7 +302,8 @@ PMC. It does not use fuzzy title matching, OCR, or an AI model to invent
 missing facts. The date a PDF file was made is not taken as the publication
 date; only a publication date the publisher embedded counts. A PDF remains
 importable when metadata cannot be resolved; the unknown fields stay visible
-for correction.
+for correction. A PDF that names no title is titled by its file name, and its
+details say so until the paper's details are found or you edit the title.
 
 To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
 a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
@@ -457,11 +458,12 @@ it for good, with their saved versions and any PDF no other source uses.
 Removing a source never changes Zotero. Moving a paper to the Trash removes it
 from your Library, not only from this project. Projects that have it, this one
 included, keep its citation details and list it as "Not in this Library" until
-you restore it; the message says how many other projects have it. After
-**Empty trash**, a paper that a project still cites comes back into your
-Library from that project's citation details, without its PDF, abstract or
-My note, the next time that project changes the Library; remove it from those
-projects first if you want it gone. The Trash
+you restore it; the message says how many other projects have it. Before
+**Empty trash** deletes anything, it names the projects that still cite a paper
+in the trash: deleted for good, the paper stays out of your Library, and those
+projects keep citing it from their own copy of its citation details, listed as
+"Not in this Library". An agent that deletes a paper for good is told the same.
+Importing or adding the paper again puts it back on purpose. The Trash
 also holds the copies that merges took away: only the merge's **Undo** brings
 those back, and once the trash is emptied those merges can no longer be undone.
 
@@ -507,7 +509,7 @@ in your Library, so you can search inside the papers. Type at least three
 characters in the Library search: under the sources whose title, authors or
 other details match, **In full text** lists passages from the PDFs that match,
 with their page. While a filter is on, only the sources it keeps are searched.
-Choose a passage to open the PDF with it highlighted. Put a
+Choose a passage to open the PDF with the matching words highlighted. Put a
 phrase in quotes to require it; longer words also match words that start with
 them, so `randomis` finds "randomised".
 
@@ -749,8 +751,9 @@ file, never a source.
 
 Choose **Check references** in the Library's **⋯** menu, or in the menu of a Markdown
 or LaTeX document. Scient checks the Library, or the chosen `.md`, `.tex` or
-`.bib` file together with the bibliography files it names and the Library
-sources its citation keys name. Each DOI, PMID, arXiv ID and ISBN is looked up
+`.bib` file together with the bibliography files it names and the sources its
+citation keys name: this project's keys, including papers it only keeps as
+citation details. A fix to a Library source changes that source in your Library. Each DOI, PMID, arXiv ID and ISBN is looked up
 in its registry, the same way sources are checked when they are added.
 
 The results list what needs attention, most serious first:
