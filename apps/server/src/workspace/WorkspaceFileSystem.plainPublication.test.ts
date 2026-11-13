@@ -141,7 +141,7 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
       }),
   );
 
-  it.live("removes temporary files a killed save left, and nothing else", () =>
+  it.live("removes temporary files a killed save left, keeping their text, and nothing else", () =>
     plain(async (h) => {
       const long = "論".repeat(85);
       const uuid = "0f8fad5b-d9cb-469f-a165-70867728950e";
@@ -152,9 +152,11 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
         `.main.tex.not-a-uuid.scient-tmp`,
         `.main.tex.${other.toUpperCase()}.scient-tmp`,
       ];
-      const stale = [`.main.tex.${uuid}.scient-tmp`, plainTemporaryName(long)];
+      const unsaved = `.main.tex.${uuid.replace("0f8f", "3f8f")}.scient-tmp`;
+      const stale = [`.main.tex.${uuid}.scient-tmp`, plainTemporaryName(long), unsaved];
       for (const name of ["main.tex", long, ...kept, ...stale])
         await NodeFSP.writeFile(NodePath.join(h.cwd, name), "A");
+      await NodeFSP.writeFile(NodePath.join(h.cwd, unsaved), "text the save never placed");
       const folder = `.main.tex.${uuid.replace("0f8f", "2f8f")}.scient-tmp`;
       await NodeFSP.mkdir(NodePath.join(h.cwd, folder));
       for (const relativePath of ["main.tex", long])
@@ -168,6 +170,12 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
         );
       expect((await NodeFSP.readdir(h.cwd)).toSorted()).toEqual(
         ["main.tex", long, ...kept, folder].toSorted(),
+      );
+      const history = await h.run(
+        h.methods.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }),
+      );
+      expect(history.versions.map((version) => version.revision)).toContain(
+        revision("text the save never placed"),
       );
     }),
   );

@@ -1495,7 +1495,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const lastSaved = new Map<string, string>();
   /** Targets whose folder was swept; leftovers only come from an earlier run or a failed removal. */
   const swept = new Set<string>();
-  /** Removes temporary files a killed save left beside `target`, by this release or an earlier one. */
+  /**
+   * Removes temporary files a killed save left beside `target`, by this release or an earlier
+   * one. Bytes that differ from the file go to its history first: they may be the only copy of
+   * text that never reached it.
+   */
   const sweepTemporaries = async (target: string) => {
     if (swept.has(target)) return;
     swept.add(target);
@@ -1506,10 +1510,27 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       for (const name of await NodeFSP.readdir(directory)) {
         const path = NodePath.join(directory, name);
         if (!isPlainTemporaryOf(name, basename) || liveTemporaries.has(path)) continue;
-        if ((await NodeFSP.lstat(path)).isFile()) await NodeFSP.unlink(path);
+        const stat = await NodeFSP.lstat(path);
+        if (!stat.isFile()) continue;
+        const revision = stat.size === 0 ? null : await fileRevision(path);
+        if (
+          revision !== null &&
+          deps.fileHistoryDirectory !== undefined &&
+          revision !== (await fileRevision(target))
+        )
+          await keepFileVersion({
+            directory: deps.fileHistoryDirectory,
+            target,
+            source: path,
+            revision,
+            ownSave: false,
+            now: Math.floor(stat.mtimeMs),
+          });
+        await NodeFSP.unlink(path);
       }
-    } catch {
+    } catch (cause) {
       swept.delete(target);
+      await runPromise(Effect.logWarning("Could not tidy a save's leftover temporary file", cause));
     }
   };
   /**
