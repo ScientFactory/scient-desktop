@@ -7,7 +7,7 @@ import { runMigrations } from "./Migrations.ts";
 import { runScientMigrations } from "../orchestration-v2/scient-fork/schema.ts";
 
 for (const previousId of [49, 50, 52, 71] as const) {
-  it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))(
+  it.layer(Layer.fresh(NodeSqliteClient.layer({ filename: ":memory:" })))(
     `migration compatibility after ${previousId}`,
     (it) => {
       it.effect("runs every pending step without rewriting recorded history or session data", () =>
@@ -60,6 +60,9 @@ for (const previousId of [49, 50, 52, 71] as const) {
               [88, "LastExecutedRunIndex"],
               [89, "TurnItemCounts"],
               [90, "QueuedTurnInputIndex"],
+              [91, "ProjectionProjectsCustomTitle"],
+              [92, "TurnItemTypeStatusIndex"],
+              [93, "ShellThreadReadIndexes"],
             ]);
             assert.deepStrictEqual(
               yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`,
@@ -94,24 +97,27 @@ for (const previousId of [49, 50, 52, 71] as const) {
   );
 }
 
-it.layer(Layer.fresh(NodeSqliteClient.layerMemory()))("migration ledger collisions", (it) => {
-  it.effect(
-    "refuses a conflicting recorded migration without rewriting the ledger or applying later steps",
-    () =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 40 });
-        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ForeignBuildMigration')`;
-        const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
-        assert.equal((yield* Effect.exit(runMigrations()))._tag, "Failure");
-        assert.deepStrictEqual(
-          yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
-          original,
-        );
-        assert.deepStrictEqual(
-          yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orchestration_v2_projection_threads'`,
-          [],
-        );
-      }),
-  );
-});
+it.layer(Layer.fresh(NodeSqliteClient.layer({ filename: ":memory:" })))(
+  "migration ledger collisions",
+  (it) => {
+    it.effect(
+      "refuses a conflicting recorded migration without rewriting the ledger or applying later steps",
+      () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* runMigrations({ toMigrationInclusive: 40 });
+          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ForeignBuildMigration')`;
+          const original = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+          assert.equal((yield* Effect.exit(runMigrations()))._tag, "Failure");
+          assert.deepStrictEqual(
+            yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+            original,
+          );
+          assert.deepStrictEqual(
+            yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orchestration_v2_projection_threads'`,
+            [],
+          );
+        }),
+    );
+  },
+);

@@ -136,7 +136,7 @@ it("protects the server unit from agents under CPU and memory pressure", () => {
 });
 
 it.each([
-  ["a unit", '/home/theo/T3 "Data"/100%\\x', BootService.renderBootServiceUnit],
+  ["a unit", "/home/theo/T3 Data/100%$x", BootService.renderBootServiceUnit],
   [
     "a plist",
     "/Users/theo/a&b <c>",
@@ -183,6 +183,47 @@ const macPlan = {
   logPath: "/Users/theo/.t3/userdata/logs/boot-service.log",
   unitPath: "/Users/theo/Library/LaunchAgents/com.scientfactory.scient.service.plist",
 };
+
+// systemd rejects a unit whose executable has a control character, quote or backslash, even quoted.
+it.each([
+  ["a double quote", '/home/theo/T3 "Data"'],
+  ["a single quote", "/home/theo/Theo's T3"],
+  ["a backslash", "/home/theo/T3\\Data"],
+  ["a newline", "/home/theo/T3\nData"],
+])("renders a loadable unit, or refuses, for a T3 home with %s", (_, baseDir) => {
+  // SCIENT-FORK:START — Scient's unit runs Node, from the home or the system, with its launcher.
+  for (const nodePath of [`${baseDir}/runtime/node/bin/node`, "/usr/bin/node"]) {
+    let unit: string;
+    try {
+      unit = BootService.renderBootServiceUnit({
+        nodePath,
+        launcherPath: `${baseDir}/runtime/service-launcher.mjs`,
+        baseDir,
+        logPath: `${baseDir}/userdata/logs/boot-service.log`,
+        unitPath: "/home/theo/.config/systemd/user/scient.service",
+      });
+    } catch {
+      continue;
+    }
+    for (const line of unit.split("\n")) {
+      expect(line === "" || line.startsWith("[") || line.includes("=")).toBe(true);
+    }
+    const execStart = unit.split("\n").find((line) => line.startsWith("ExecStart="));
+    const executable = execStart
+      ?.slice("ExecStart=".length)
+      .match(/^"((?:\\.|[^"\\])*)"|^(\S+)/)
+      ?.slice(1)
+      .find((group) => group !== undefined)
+      ?.replace(/\\(.)/g, "$1");
+    expect(executable).toBeDefined();
+    const unsafe = [...(executable ?? "")].filter(
+      (char) => char.charCodeAt(0) < 0x20 || `"'\\`.includes(char),
+    );
+    expect(unsafe).toEqual([]);
+  }
+  // SCIENT-FORK:END
+});
+
 const macInstallerPath =
   "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
 const macRenderOptions = { homeDir: "/Users/theo", environmentPath: macInstallerPath };
@@ -738,7 +779,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     "preserves the custom install bin directory in the installed service on %s",
     (platform) =>
       Effect.gen(function* () {
-        const installBinDir = '/custom/T3 & <100%>/"quoted"\\bin';
+        const installBinDir = '/custom/T3\t& <100%>/"quoted"\\bin';
         // SCIENT-FORK: Scient's harness takes whether to use the pinned launcher second.
         const { service, makeService, fs } = yield* makeHarness(
           platform,
@@ -752,8 +793,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         const unit = yield* fs.readFileString(plan.unitPath);
         expect(unit).toContain(
           platform === "linux"
-            ? 'Environment=T3CODE_INSTALL_BIN_DIR="/custom/T3 & <100%%>/\\"quoted\\"\\\\bin"'
-            : '<key>T3CODE_INSTALL_BIN_DIR</key>\n    <string>/custom/T3 &amp; &lt;100%&gt;/"quoted"\\bin</string>',
+            ? 'Environment=T3CODE_INSTALL_BIN_DIR="/custom/T3\t& <100%%>/\\"quoted\\"\\\\bin"'
+            : '<key>T3CODE_INSTALL_BIN_DIR</key>\n    <string>/custom/T3\t&amp; &lt;100%&gt;/"quoted"\\bin</string>',
         );
         expect((yield* service.status).current).toBe(true);
 
@@ -1366,6 +1407,15 @@ process.disconnect();
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);
+
+      // SCIENT-FORK: Scient's unit runs system Node, so only a line break in the home is unloadable.
+      const quoted = yield* makeService(undefined, "1.2.3", path.join(otherHome, "T3\nData"));
+      commands.length = 0;
+      const unloadable = yield* quoted.install().pipe(Effect.flip);
+      expect(unloadable._tag).toBe("BootServiceBaseDirUnsupportedError");
+      expect(CliError.getUserMessage(unloadable)).toBe(unloadable.message);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect(commands).toEqual([]);
     }),
   );
 

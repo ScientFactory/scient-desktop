@@ -547,7 +547,10 @@ describe("t3 pair", () => {
           assert.isTrue(Exit.isFailure(exit));
           if (Exit.isFailure(exit)) {
             // SCIENT-FORK: Scient names its own CLI and version.
-            assert.include(String(Cause.squash(exit.cause)), "`scient pair` from Scient 0.0.45");
+            assert.include(
+              String(Cause.squash(exit.cause)),
+              `\`scient pair --base-dir ${baseDir}\` from Scient 0.0.45`,
+            );
           }
         }),
       "127.0.0.1",

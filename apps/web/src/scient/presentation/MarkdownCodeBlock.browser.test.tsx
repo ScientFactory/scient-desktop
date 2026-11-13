@@ -1,4 +1,7 @@
 import { render, act } from "../../../test/render";
+import "../../index.css";
+
+import { ensureClientSettingsHydrated, persistClientSettingsPatch } from "../../hooks/useSettings";
 
 import { expect, it, vi } from "vite-plus/test";
 
@@ -81,4 +84,29 @@ it("holds a loading block's code unseen but readable, for screen readers and Cop
   expect(highlighted.querySelector("code")?.textContent?.trimEnd()).toBe(code.trimEnd());
   expect(highlighted.querySelector('code span[style*="color"]')).not.toBeNull();
   expect(highlighted.closest("[aria-hidden]")).toBeNull();
+});
+
+// Open code blocks follow a changed word wrap default, as upstream's do.
+const setWordWrap = (wordWrap: boolean) =>
+  act(() => persistClientSettingsPatch({ wordWrap }, async () => {}));
+
+it("follows a changed word wrap default while mounted", async () => {
+  await ensureClientSettingsHydrated();
+  await setWordWrap(false);
+  await using screen = await render(
+    <MarkdownCodeBlock
+      code="a long line"
+      language="text"
+      fenceTitle={null}
+      theme="light"
+      isStreaming={false}
+    />,
+    { router: false }, // The code block reads no route state.
+  );
+  const block = () => screen.container.querySelector(".chat-markdown-codeblock");
+  expect(block()?.getAttribute("data-wrap")).toBe("false");
+
+  await setWordWrap(true);
+  await expect.element(screen.getByRole("button", { name: "Disable line wrap" })).toBeVisible();
+  expect(block()?.getAttribute("data-wrap")).toBe("true");
 });

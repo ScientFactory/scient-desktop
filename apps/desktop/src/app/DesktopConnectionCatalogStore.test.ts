@@ -110,7 +110,7 @@ const withStore = <A, E, R>(
         layerFor(baseDir, encryptionAvailable, null, NodeServices.layer, layerSafeStorage),
       ),
     );
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(NodeServices.layer));
 
 function layerObservedSafeStorageFor(calls: Ref.Ref<readonly string[]>, available: boolean | null) {
   const record = (operation: string) => Ref.update(calls, (current) => [...current, operation]);
@@ -433,6 +433,6 @@ describe("DesktopConnectionCatalogStore", () => {
       assert.notEqual(error.message, decryptError.message);
       yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

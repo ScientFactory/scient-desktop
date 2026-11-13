@@ -418,6 +418,7 @@ export function layerWithRegistry<Error>(
   | ProjectStore.ProjectStoreV2
   | McpProviderSessions.McpProviderSessions
   | CommandOutputRecorder.CommandOutputRecorder
+  | ThreadCommandExecutor.ThreadCommandExecutor
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService,
   | Error
@@ -628,7 +629,12 @@ export function layerWithRegistry<Error>(
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerStores, layerProviderSessionManagerProvided, layerServerConfig),
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        layerStores,
+        layerProviderSessionManagerProvided,
+        layerServerConfig,
+      ),
     ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
@@ -790,6 +796,7 @@ export function layerWithRegistry<Error>(
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
+    ThreadCommandExecutor.layer,
   ).pipe(
     Layer.provide(
       Layer.merge(

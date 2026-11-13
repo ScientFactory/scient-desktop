@@ -24,6 +24,7 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -68,2005 +69,1986 @@ const stopEarlierBackgroundWork = ({
   readonly nativeTerminalParent?: boolean;
   readonly nativeDriver?: "claudeAgent" | "scient";
 }) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const driver = ProviderDriverKind.make(nativeStop === undefined ? "codex" : nativeDriver);
-      const instanceId = ProviderInstanceId.make(nativeStop === undefined ? "codex" : nativeDriver);
-      const modelSelection = { instanceId, model: "test-model" };
-      const capabilities =
-        nativeStop === undefined ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2;
-      const cwd = yield* checkpointWorkspace("background-work-stop");
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
-      const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
-      const stoppedTasks: string[] = [];
-      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
-        instanceId,
-        driver,
-        getCapabilities: () => Effect.succeed(capabilities),
-        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-        openSession: (input) =>
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            return {
-              instanceId,
+  Effect.gen(function* () {
+    const driver = ProviderDriverKind.make(nativeStop === undefined ? "codex" : nativeDriver);
+    const instanceId = ProviderInstanceId.make(nativeStop === undefined ? "codex" : nativeDriver);
+    const modelSelection = { instanceId, model: "test-model" };
+    const capabilities =
+      nativeStop === undefined ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2;
+    const cwd = yield* checkpointWorkspace("background-work-stop");
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
+    const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
+    const interruptCalls = yield* Queue.unbounded<void>();
+    const stoppedTasks: string[] = [];
+    const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+      instanceId,
+      driver,
+      getCapabilities: () => Effect.succeed(capabilities),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+      openSession: (input) =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          return {
+            instanceId,
+            driver,
+            providerSessionId: input.providerSessionId,
+            providerSession: {
+              id: input.providerSessionId,
               driver,
-              providerSessionId: input.providerSessionId,
-              providerSession: {
-                id: input.providerSessionId,
+              providerInstanceId: instanceId,
+              status: "ready",
+              cwd,
+              model: modelSelection.model,
+              capabilities,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+            events: Stream.fromQueue(events),
+            ...(failedStart
+              ? {
+                  hasPendingBackgroundWorkForThread: (providerThread) =>
+                    Effect.gen(function* () {
+                      if (
+                        !interrupts.some((input) => input.providerThread.id === providerThread.id)
+                      ) {
+                        return false;
+                      }
+                      if (backgroundWorkAfterStop === "unknown") {
+                        return yield* Effect.die("Background work probe failed");
+                      }
+                      return backgroundWorkAfterStop === "running";
+                    }),
+                }
+              : {}),
+            ensureThread: ({ threadId }) =>
+              Effect.succeed({
+                id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
                 driver,
                 providerInstanceId: instanceId,
-                status: "ready",
-                cwd,
-                model: modelSelection.model,
-                capabilities,
+                providerSessionId: input.providerSessionId,
+                appThreadId: threadId,
+                ownerNodeId: null,
+                nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
+                nativeConversationHeadRef: null,
+                status: "idle",
+                firstRunOrdinal: null,
+                lastRunOrdinal: null,
+                handoffIds: [],
+                forkedFrom: null,
                 createdAt: now,
                 updatedAt: now,
-                lastError: null,
-              },
-              events: Stream.fromQueue(events),
-              ...(failedStart
-                ? {
-                    hasPendingBackgroundWorkForThread: (providerThread) =>
-                      Effect.gen(function* () {
-                        if (
-                          !interrupts.some((input) => input.providerThread.id === providerThread.id)
-                        ) {
-                          return false;
-                        }
-                        if (backgroundWorkAfterStop === "unknown") {
-                          return yield* Effect.die("Background work probe failed");
-                        }
-                        return backgroundWorkAfterStop === "running";
-                      }),
-                  }
-                : {}),
-              ensureThread: ({ threadId }) =>
-                Effect.succeed({
-                  id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
+              }),
+            resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+            startTurn: (turn) =>
+              Effect.gen(function* () {
+                started.push(turn);
+                yield* Queue.offer(events, {
+                  type: "provider_turn.updated",
                   driver,
-                  providerInstanceId: instanceId,
-                  providerSessionId: input.providerSessionId,
-                  appThreadId: threadId,
-                  ownerNodeId: null,
-                  nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
-                  nativeConversationHeadRef: null,
-                  status: "idle",
-                  firstRunOrdinal: null,
-                  lastRunOrdinal: null,
-                  handoffIds: [],
-                  forkedFrom: null,
-                  createdAt: now,
-                  updatedAt: now,
-                }),
-              resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-              startTurn: (turn) =>
-                Effect.gen(function* () {
-                  started.push(turn);
-                  yield* Queue.offer(events, {
-                    type: "provider_turn.updated",
-                    driver,
-                    providerTurn: {
-                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                      providerThreadId: turn.providerThread.id,
-                      nodeId: turn.rootNodeId,
-                      runAttemptId: turn.attemptId,
-                      nativeTurnRef: {
-                        driver,
-                        nativeId: `native:${turn.attemptId}`,
-                        strength: "strong",
-                      },
-                      ordinal: turn.providerTurnOrdinal,
-                      status: "running",
-                      startedAt: now,
-                      completedAt: null,
+                  providerTurn: {
+                    id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                    providerThreadId: turn.providerThread.id,
+                    nodeId: turn.rootNodeId,
+                    runAttemptId: turn.attemptId,
+                    nativeTurnRef: {
+                      driver,
+                      nativeId: `native:${turn.attemptId}`,
+                      strength: "strong",
                     },
-                  });
-                }),
-              steerTurn: () => Effect.die("unused"),
-              interruptTurn: (interrupt) =>
-                Effect.sync(() => {
-                  interrupts.push(interrupt);
-                }),
-              ...(nativeStop === undefined
-                ? {}
-                : {
-                    stopSubagent: ({ nativeTaskId }: { readonly nativeTaskId: string }) =>
-                      nativeStop === "nonretryable"
-                        ? Effect.fail(
-                            new ProviderAdapterProtocolError({
-                              driver,
-                              detail: "Native task is not active.",
-                            }),
-                          )
-                        : Effect.sync(() => {
-                            stoppedTasks.push(nativeTaskId);
+                    ordinal: turn.providerTurnOrdinal,
+                    status: "running",
+                    startedAt: now,
+                    completedAt: null,
+                  },
+                });
+              }),
+            steerTurn: () => Effect.die("unused"),
+            interruptTurn: (interrupt) =>
+              Effect.sync(() => {
+                interrupts.push(interrupt);
+              }).pipe(Effect.andThen(Queue.offer(interruptCalls, undefined))),
+            ...(nativeStop === undefined
+              ? {}
+              : {
+                  stopSubagent: ({ nativeTaskId }: { readonly nativeTaskId: string }) =>
+                    nativeStop === "nonretryable"
+                      ? Effect.fail(
+                          new ProviderAdapterProtocolError({
+                            driver,
+                            detail: "Native task is not active.",
                           }),
-                  }),
-              respondToRuntimeRequest: () => Effect.die("unused"),
-              readThreadSnapshot: () => Effect.die("unused"),
-              rollbackThread: () => Effect.die("unused"),
-              forkThread: () => Effect.die("unused"),
-            };
-          }),
-      };
-      let fixtureOrchestrator: Orchestrator.OrchestratorV2["Service"] | undefined;
-      const delegatedStops: Array<{ readonly threadId: ThreadId; readonly commandId: CommandId }> =
-        [];
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        fixtureOrchestrator = orchestrator;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make("thread:background-work-stop");
-        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-          orchestrator.streamDomainEvents.pipe(
-            Stream.filter(predicate),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("create"),
-          threadId,
-          projectId: ProjectId.make("project:background-work-stop"),
-          title: "Background work stop",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: cwd,
-          createdBy: "user",
-          creationSource: "web",
-        });
-        const launchRunId = RunId.make("run:native-coordinator-launch");
-        const launchRootId = NodeId.make("node:native-coordinator-launch-root");
-        if (nativeResume) {
-          const completedAt = yield* DateTime.now;
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("fixture:native-launch-run"),
-                type: "run.updated",
-                threadId,
-                runId: launchRunId,
-                occurredAt: completedAt,
-                payload: {
-                  id: launchRunId,
-                  threadId,
-                  ordinal: 1,
-                  providerInstanceId: instanceId,
-                  modelSelection,
-                  providerThreadId: null,
-                  userMessageId: MessageId.make("message:native-coordinator-launch"),
-                  rootNodeId: launchRootId,
-                  activeAttemptId: null,
-                  status: "completed",
-                  requestedAt: completedAt,
-                  startedAt: completedAt,
-                  completedAt,
-                  checkpointId: null,
-                  contextHandoffId: null,
-                },
-              },
-            ],
-          });
-        }
-        const running = yield* watch(
-          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
-        );
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("start-dev-server"),
-          threadId,
-          messageId: MessageId.make("message:start-dev-server"),
-          text: "Start the dev server",
-          attachments: [],
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        yield* worker.drain();
-        yield* Fiber.join(running);
-        if (wakeAfterStop) {
-          const send = (id: string, provider = false) =>
-            orchestrator.dispatch({
-              type: "message.dispatch",
-              commandId: CommandId.make(id),
-              threadId,
-              messageId: MessageId.make(`message:${id}`),
-              text: id,
-              attachments: [],
-              dispatchMode: { type: "queue_after_active" },
-              createdBy: provider ? "agent" : "user",
-              creationSource: provider ? "provider" : "web",
-            });
-          yield* send("follow-up");
-          yield* orchestrator.dispatch({
-            type: "thread.stop",
-            commandId: CommandId.make("stop"),
-            threadId,
-          });
-          // Stop is committed, but its provider interrupt has not run yet.
-          yield* send("Background task completed.", true);
-          const [stopped, followUp, wake] = (yield* orchestrator.getThreadProjection(threadId))
-            .runs;
-          assert.equal(stopped?.status, "running");
-          assert.isTrue(followUp?.queueHeld);
-          assert.isTrue(wake?.queueHeld);
-
-          yield* worker.drain();
-          yield* orchestrator.resumeQueuedRuns;
-          yield* worker.drain();
-          const after = yield* orchestrator.getThreadProjection(threadId);
-          assert.deepEqual(
-            after.runs.map((run) => run.status),
-            ["interrupted", "queued", "queued"],
-          );
-          assert.isTrue(after.runs.find((run) => run.id === followUp?.id)?.queueHeld);
-          assert.isTrue(after.runs.find((run) => run.id === wake?.id)?.queueHeld);
-          assert.lengthOf(started, 1);
-          return;
-        }
-        // SCIENT-FORK:START
-        const first = started.at(-1)!;
-        const codexTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
-          (turn) => turn.runAttemptId === first.attemptId,
-        )!;
-        // SCIENT-FORK:END
-        const devServerId = TurnItemId.make("turn-item:dev-server");
-        const now = yield* DateTime.now;
-        if (nativeStop !== undefined) {
-          const before = yield* orchestrator.getThreadProjection(threadId);
-          const run = before.runs.find((candidate) => candidate.id === first.runId)!;
-          const ownerRoot = before.nodes.find((node) => node.id === run.rootNodeId)!;
-          const launchRoot = nativeResume
-            ? {
-                ...ownerRoot,
-                id: launchRootId,
-                rootNodeId: launchRootId,
-                runId: launchRunId,
-                status: "completed" as const,
-                completedAt: now,
-              }
-            : ownerRoot;
-          const ownerThread = before.providerThreads.find(
-            (thread) => thread.id === first.providerThread.id,
-          )!;
-          const childThreadId = ThreadId.make("thread:released-native-child");
-          const siblingThreadId = ThreadId.make("thread:released-native-sibling");
-          const taskId = NodeId.make("node:released-native-child");
-          const siblingId = NodeId.make("node:released-native-sibling");
-          const childRootId = NodeId.make("node:released-native-child-root");
-          const siblingRootId = NodeId.make("node:released-native-sibling-root");
-          const richRoster = [
-            {
-              index: 1,
-              label: "Rich worker",
-              state: "running" as const,
-              childThreadId: ThreadId.make("thread:rich-workflow-member"),
-            },
-            {
-              index: 2,
-              label: "Settled rich worker",
-              state: "completed" as const,
-              childThreadId: ThreadId.make("thread:settled-rich-workflow-member"),
-            },
-          ];
-          const task: OrchestrationV2Subagent = {
-            id: taskId,
-            threadId,
-            runId: run.id,
-            parentNodeId: launchRoot.id,
-            origin: "provider_native",
-            createdBy: "agent",
-            driver,
-            providerInstanceId: instanceId,
-            providerThreadId: null,
-            childThreadId,
-            nativeTaskRef: { driver, nativeId: "released-native-task", strength: "strong" },
-            prompt: "Keep working",
-            title: null,
-            model: modelSelection.model,
-            status: "running",
-            result: null,
-            startedAt: now,
-            completedAt: null,
-            updatedAt: now,
-            presentation: { kind: "workflow" },
-            workflow: { phases: [], agents: richRoster },
+                        )
+                      : Effect.sync(() => {
+                          stoppedTasks.push(nativeTaskId);
+                        }),
+                }),
+            respondToRuntimeRequest: () => Effect.die("unused"),
+            readThreadSnapshot: () => Effect.die("unused"),
+            rollbackThread: () => Effect.die("unused"),
+            forkThread: () => Effect.die("unused"),
           };
-          const fixtureEvents: OrchestrationV2DomainEvent[] = [];
-          if (nativeResume) {
-            fixtureEvents.push({
-              id: EventId.make("fixture:native-launch-root"),
-              type: "node.updated",
-              threadId,
-              nodeId: launchRootId,
-              occurredAt: now,
-              payload: launchRoot,
-            });
-            fixtureEvents.push({
-              id: EventId.make("fixture:native-launch-owner"),
+        }),
+    };
+    let fixtureOrchestrator: Orchestrator.OrchestratorV2["Service"] | undefined;
+    const delegatedStops: Array<{ readonly threadId: ThreadId; readonly commandId: CommandId }> =
+      [];
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      fixtureOrchestrator = orchestrator;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("thread:background-work-stop");
+      // This provider never confirms Stop, so Stop gives up waiting at its bound.
+      const drainUnconfirmedStop = Effect.gen(function* () {
+        const drained = yield* Effect.forkChild(worker.drain());
+        yield* Queue.take(interruptCalls);
+        yield* TestClock.adjust("2 seconds");
+        yield* Fiber.join(drained);
+      });
+      const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+        orchestrator.streamDomainEvents.pipe(
+          Stream.filter(predicate),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create"),
+        threadId,
+        projectId: ProjectId.make("project:background-work-stop"),
+        title: "Background work stop",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const launchRunId = RunId.make("run:native-coordinator-launch");
+      const launchRootId = NodeId.make("node:native-coordinator-launch-root");
+      if (nativeResume) {
+        const completedAt = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("fixture:native-launch-run"),
               type: "run.updated",
               threadId,
               runId: launchRunId,
+              occurredAt: completedAt,
+              payload: {
+                id: launchRunId,
+                threadId,
+                ordinal: 1,
+                providerInstanceId: instanceId,
+                modelSelection,
+                providerThreadId: null,
+                userMessageId: MessageId.make("message:native-coordinator-launch"),
+                rootNodeId: launchRootId,
+                activeAttemptId: null,
+                status: "completed",
+                requestedAt: completedAt,
+                startedAt: completedAt,
+                completedAt,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            },
+          ],
+        });
+      }
+      const running = yield* watch(
+        (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+      );
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start-dev-server"),
+        threadId,
+        messageId: MessageId.make("message:start-dev-server"),
+        text: "Start the dev server",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+      yield* Fiber.join(running);
+      if (wakeAfterStop) {
+        const send = (id: string, provider = false) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(`message:${id}`),
+            text: id,
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: provider ? "agent" : "user",
+            creationSource: provider ? "provider" : "web",
+          });
+        yield* send("follow-up");
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop"),
+          threadId,
+        });
+        // Stop is committed, but its provider interrupt has not run yet.
+        yield* send("Background task completed.", true);
+        const [stopped, followUp, wake] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+        assert.equal(stopped?.status, "running");
+        assert.isTrue(followUp?.queueHeld);
+        assert.isTrue(wake?.queueHeld);
+
+        yield* drainUnconfirmedStop;
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          after.runs.map((run) => run.status),
+          ["interrupted", "queued", "queued"],
+        );
+        assert.isTrue(after.runs.find((run) => run.id === followUp?.id)?.queueHeld);
+        assert.isTrue(after.runs.find((run) => run.id === wake?.id)?.queueHeld);
+        assert.lengthOf(started, 1);
+        return;
+      }
+      // SCIENT-FORK:START
+      const first = started.at(-1)!;
+      const codexTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
+        (turn) => turn.runAttemptId === first.attemptId,
+      )!;
+      // SCIENT-FORK:END
+      const devServerId = TurnItemId.make("turn-item:dev-server");
+      const now = yield* DateTime.now;
+      if (nativeStop !== undefined) {
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run = before.runs.find((candidate) => candidate.id === first.runId)!;
+        const ownerRoot = before.nodes.find((node) => node.id === run.rootNodeId)!;
+        const launchRoot = nativeResume
+          ? {
+              ...ownerRoot,
+              id: launchRootId,
+              rootNodeId: launchRootId,
+              runId: launchRunId,
+              status: "completed" as const,
+              completedAt: now,
+            }
+          : ownerRoot;
+        const ownerThread = before.providerThreads.find(
+          (thread) => thread.id === first.providerThread.id,
+        )!;
+        const childThreadId = ThreadId.make("thread:released-native-child");
+        const siblingThreadId = ThreadId.make("thread:released-native-sibling");
+        const taskId = NodeId.make("node:released-native-child");
+        const siblingId = NodeId.make("node:released-native-sibling");
+        const childRootId = NodeId.make("node:released-native-child-root");
+        const siblingRootId = NodeId.make("node:released-native-sibling-root");
+        const richRoster = [
+          {
+            index: 1,
+            label: "Rich worker",
+            state: "running" as const,
+            childThreadId: ThreadId.make("thread:rich-workflow-member"),
+          },
+          {
+            index: 2,
+            label: "Settled rich worker",
+            state: "completed" as const,
+            childThreadId: ThreadId.make("thread:settled-rich-workflow-member"),
+          },
+        ];
+        const task: OrchestrationV2Subagent = {
+          id: taskId,
+          threadId,
+          runId: run.id,
+          parentNodeId: launchRoot.id,
+          origin: "provider_native",
+          createdBy: "agent",
+          driver,
+          providerInstanceId: instanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: { driver, nativeId: "released-native-task", strength: "strong" },
+          prompt: "Keep working",
+          title: null,
+          model: modelSelection.model,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          presentation: { kind: "workflow" },
+          workflow: { phases: [], agents: richRoster },
+        };
+        const fixtureEvents: OrchestrationV2DomainEvent[] = [];
+        if (nativeResume) {
+          fixtureEvents.push({
+            id: EventId.make("fixture:native-launch-root"),
+            type: "node.updated",
+            threadId,
+            nodeId: launchRootId,
+            occurredAt: now,
+            payload: launchRoot,
+          });
+          fixtureEvents.push({
+            id: EventId.make("fixture:native-launch-owner"),
+            type: "run.updated",
+            threadId,
+            runId: launchRunId,
+            occurredAt: now,
+            payload: {
+              ...before.runs.find((candidate) => candidate.id === launchRunId)!,
+              providerThreadId: ownerThread.id,
+            },
+          });
+        }
+        const appendNativeFixture = (
+          nativeTask: OrchestrationV2Subagent,
+          childRootId: NodeId,
+          parentThread: OrchestrationV2ThreadProjection["thread"],
+          parentRoot: OrchestrationV2ThreadProjection["nodes"][number],
+          nativeTurnId: ProviderTurnId | null,
+        ) => {
+          const childId = nativeTask.childThreadId!;
+          const nativeNode = {
+            ...parentRoot,
+            id: nativeTask.id,
+            threadId: nativeTask.threadId,
+            runId: nativeTask.runId,
+            kind: "subagent" as const,
+            countsForRun: false,
+            parentNodeId: nativeTask.parentNodeId,
+            providerTurnId: nativeTurnId,
+            nativeItemRef: nativeTask.nativeTaskRef,
+            status: nativeTask.status,
+            startedAt: nativeTask.startedAt,
+            completedAt: nativeTask.completedAt,
+          };
+          const nativeItem = {
+            id: TurnItemId.make(`item:${nativeTask.id}`),
+            type: "subagent" as const,
+            threadId: nativeTask.threadId,
+            runId: nativeTask.runId,
+            nodeId: nativeTask.id,
+            providerThreadId: nativeNode.providerThreadId,
+            providerTurnId: nativeTurnId,
+            nativeItemRef: nativeTask.nativeTaskRef,
+            parentItemId: null,
+            ordinal: fixtureEvents.length + 100,
+            status: nativeTask.status,
+            title: null,
+            startedAt: nativeTask.startedAt,
+            completedAt: nativeTask.completedAt,
+            updatedAt: now,
+            subagentId: nativeTask.id,
+            origin: "provider_native" as const,
+            driver,
+            providerInstanceId: instanceId,
+            childThreadId: childId,
+            prompt: nativeTask.prompt,
+            result: null,
+          };
+          const childThread = makeSubagentChildThread({
+            parentThread,
+            childThreadId: childId,
+            parentNodeId: nativeTask.id,
+            activeProviderThreadId: null,
+            providerInstanceId: instanceId,
+            modelSelection,
+            title: "Native child",
+            now,
+            createdBy: "agent",
+            creationSource: "provider",
+          });
+          const childRoot = {
+            ...nativeNode,
+            id: childRootId,
+            threadId: childId,
+            runId: null,
+            rootNodeId: childRootId,
+            parentNodeId: null,
+            kind: "root_turn" as const,
+            providerThreadId: null,
+            providerTurnId: null,
+          };
+          fixtureEvents.push(
+            {
+              id: EventId.make(`fixture:task:${nativeTask.id}`),
+              type: "subagent.updated",
+              threadId: nativeTask.threadId,
+              occurredAt: now,
+              payload: nativeTask,
+            },
+            {
+              id: EventId.make(`fixture:node:${nativeTask.id}`),
+              type: "node.updated",
+              threadId: nativeTask.threadId,
+              occurredAt: now,
+              payload: nativeNode,
+            },
+            {
+              id: EventId.make(`fixture:item:${nativeTask.id}`),
+              type: "turn-item.updated",
+              threadId: nativeTask.threadId,
+              occurredAt: now,
+              payload: nativeItem,
+            },
+            {
+              id: EventId.make(`fixture:thread:${childId}`),
+              type: "thread.created",
+              threadId: childId,
+              occurredAt: now,
+              payload: childThread,
+            },
+            {
+              id: EventId.make(`fixture:child-root:${childRootId}`),
+              type: "node.updated",
+              threadId: childId,
+              nodeId: childRootId,
+              occurredAt: now,
+              payload: childRoot,
+            },
+            {
+              id: EventId.make(`fixture:child-tool:${childRootId}`),
+              type: "turn-item.updated",
+              threadId: childId,
+              nodeId: childRootId,
               occurredAt: now,
               payload: {
-                ...before.runs.find((candidate) => candidate.id === launchRunId)!,
-                providerThreadId: ownerThread.id,
-              },
-            });
-          }
-          const appendNativeFixture = (
-            nativeTask: OrchestrationV2Subagent,
-            childRootId: NodeId,
-            parentThread: OrchestrationV2ThreadProjection["thread"],
-            parentRoot: OrchestrationV2ThreadProjection["nodes"][number],
-            nativeTurnId: ProviderTurnId | null,
-          ) => {
-            const childId = nativeTask.childThreadId!;
-            const nativeNode = {
-              ...parentRoot,
-              id: nativeTask.id,
-              threadId: nativeTask.threadId,
-              runId: nativeTask.runId,
-              kind: "subagent" as const,
-              countsForRun: false,
-              parentNodeId: nativeTask.parentNodeId,
-              providerTurnId: nativeTurnId,
-              nativeItemRef: nativeTask.nativeTaskRef,
-              status: nativeTask.status,
-              startedAt: nativeTask.startedAt,
-              completedAt: nativeTask.completedAt,
-            };
-            const nativeItem = {
-              id: TurnItemId.make(`item:${nativeTask.id}`),
-              type: "subagent" as const,
-              threadId: nativeTask.threadId,
-              runId: nativeTask.runId,
-              nodeId: nativeTask.id,
-              providerThreadId: nativeNode.providerThreadId,
-              providerTurnId: nativeTurnId,
-              nativeItemRef: nativeTask.nativeTaskRef,
-              parentItemId: null,
-              ordinal: fixtureEvents.length + 100,
-              status: nativeTask.status,
-              title: null,
-              startedAt: nativeTask.startedAt,
-              completedAt: nativeTask.completedAt,
-              updatedAt: now,
-              subagentId: nativeTask.id,
-              origin: "provider_native" as const,
-              driver,
-              providerInstanceId: instanceId,
-              childThreadId: childId,
-              prompt: nativeTask.prompt,
-              result: null,
-            };
-            const childThread = makeSubagentChildThread({
-              parentThread,
-              childThreadId: childId,
-              parentNodeId: nativeTask.id,
-              activeProviderThreadId: null,
-              providerInstanceId: instanceId,
-              modelSelection,
-              title: "Native child",
-              now,
-              createdBy: "agent",
-              creationSource: "provider",
-            });
-            const childRoot = {
-              ...nativeNode,
-              id: childRootId,
-              threadId: childId,
-              runId: null,
-              rootNodeId: childRootId,
-              parentNodeId: null,
-              kind: "root_turn" as const,
-              providerThreadId: null,
-              providerTurnId: null,
-            };
-            fixtureEvents.push(
-              {
-                id: EventId.make(`fixture:task:${nativeTask.id}`),
-                type: "subagent.updated",
-                threadId: nativeTask.threadId,
-                occurredAt: now,
-                payload: nativeTask,
-              },
-              {
-                id: EventId.make(`fixture:node:${nativeTask.id}`),
-                type: "node.updated",
-                threadId: nativeTask.threadId,
-                occurredAt: now,
-                payload: nativeNode,
-              },
-              {
-                id: EventId.make(`fixture:item:${nativeTask.id}`),
-                type: "turn-item.updated",
-                threadId: nativeTask.threadId,
-                occurredAt: now,
-                payload: nativeItem,
-              },
-              {
-                id: EventId.make(`fixture:thread:${childId}`),
-                type: "thread.created",
+                id: TurnItemId.make(`item:${childRootId}`),
+                type: "dynamic_tool",
                 threadId: childId,
-                occurredAt: now,
-                payload: childThread,
-              },
-              {
-                id: EventId.make(`fixture:child-root:${childRootId}`),
-                type: "node.updated",
-                threadId: childId,
+                runId: null,
                 nodeId: childRootId,
-                occurredAt: now,
-                payload: childRoot,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 100,
+                status: nativeTask.status,
+                title: null,
+                startedAt: nativeTask.startedAt,
+                completedAt: nativeTask.completedAt,
+                updatedAt: now,
+                toolName: "synthetic-work",
+                input: "Keep working",
               },
-              {
-                id: EventId.make(`fixture:child-tool:${childRootId}`),
-                type: "turn-item.updated",
-                threadId: childId,
-                nodeId: childRootId,
-                occurredAt: now,
-                payload: {
-                  id: TurnItemId.make(`item:${childRootId}`),
-                  type: "dynamic_tool",
-                  threadId: childId,
-                  runId: null,
-                  nodeId: childRootId,
-                  providerThreadId: null,
-                  providerTurnId: null,
-                  nativeItemRef: null,
-                  parentItemId: null,
-                  ordinal: 100,
-                  status: nativeTask.status,
-                  title: null,
-                  startedAt: nativeTask.startedAt,
-                  completedAt: nativeTask.completedAt,
-                  updatedAt: now,
-                  toolName: "synthetic-work",
-                  input: "Keep working",
-                },
-              },
-            );
-            return { task: nativeTask, nativeNode, nativeItem, childThread, childRoot };
-          };
-          const mainFixture = appendNativeFixture(
-            task,
-            childRootId,
-            before.thread,
-            launchRoot,
-            codexTurn.id,
-          );
-          appendNativeFixture(
-            {
-              ...task,
-              id: siblingId,
-              parentNodeId: ownerRoot.id,
-              childThreadId: siblingThreadId,
-              nativeTaskRef: { driver, nativeId: "sibling-native-task", strength: "strong" },
             },
-            siblingRootId,
-            before.thread,
-            ownerRoot,
-            codexTurn.id,
           );
-          const descendants = [];
-          const directFixture = appendNativeFixture(
-            {
-              ...task,
-              id: NodeId.make("node:direct-native-descendant"),
-              parentNodeId: task.id,
-              childThreadId: ThreadId.make("thread:direct-native-descendant"),
-              nativeTaskRef: { driver, nativeId: "direct-native-descendant", strength: "strong" },
-              status: nativeTerminalParent ? "completed" : "running",
-              completedAt: nativeTerminalParent ? now : null,
-            },
-            NodeId.make("node:direct-native-descendant-root"),
-            before.thread,
-            ownerRoot,
-            codexTurn.id,
-          );
-          descendants.push(directFixture);
-          if (nativeTerminalParent) {
-            descendants.push(
-              appendNativeFixture(
-                {
-                  ...task,
-                  id: NodeId.make("node:behind-settled-native-parent"),
-                  parentNodeId: directFixture.task.id,
-                  childThreadId: ThreadId.make("thread:behind-settled-native-parent"),
-                  nativeTaskRef: {
-                    driver,
-                    nativeId: "behind-settled-native-parent",
-                    strength: "strong",
-                  },
-                },
-                NodeId.make("node:behind-settled-native-parent-root"),
-                before.thread,
-                ownerRoot,
-                codexTurn.id,
-              ),
-            );
-          }
-          const nestedFixture = appendNativeFixture(
-            {
-              ...task,
-              id: NodeId.make("node:child-native-descendant"),
-              threadId: childThreadId,
-              runId: null,
-              parentNodeId: childRootId,
-              childThreadId: ThreadId.make("thread:child-native-descendant"),
-              nativeTaskRef: { driver, nativeId: "child-native-descendant", strength: "strong" },
-              status: nativeTerminalParent ? "completed" : "running",
-              completedAt: nativeTerminalParent ? now : null,
-            },
-            NodeId.make("node:child-native-descendant-root"),
-            mainFixture.childThread,
-            mainFixture.childRoot,
-            null,
-          );
-          descendants.push(nestedFixture);
+          return { task: nativeTask, nativeNode, nativeItem, childThread, childRoot };
+        };
+        const mainFixture = appendNativeFixture(
+          task,
+          childRootId,
+          before.thread,
+          launchRoot,
+          codexTurn.id,
+        );
+        appendNativeFixture(
+          {
+            ...task,
+            id: siblingId,
+            parentNodeId: ownerRoot.id,
+            childThreadId: siblingThreadId,
+            nativeTaskRef: { driver, nativeId: "sibling-native-task", strength: "strong" },
+          },
+          siblingRootId,
+          before.thread,
+          ownerRoot,
+          codexTurn.id,
+        );
+        const descendants = [];
+        const directFixture = appendNativeFixture(
+          {
+            ...task,
+            id: NodeId.make("node:direct-native-descendant"),
+            parentNodeId: task.id,
+            childThreadId: ThreadId.make("thread:direct-native-descendant"),
+            nativeTaskRef: { driver, nativeId: "direct-native-descendant", strength: "strong" },
+            status: nativeTerminalParent ? "completed" : "running",
+            completedAt: nativeTerminalParent ? now : null,
+          },
+          NodeId.make("node:direct-native-descendant-root"),
+          before.thread,
+          ownerRoot,
+          codexTurn.id,
+        );
+        descendants.push(directFixture);
+        if (nativeTerminalParent) {
           descendants.push(
             appendNativeFixture(
               {
                 ...task,
-                id: NodeId.make("node:grandchild-native-descendant"),
-                threadId: nestedFixture.childThread.id,
-                runId: null,
-                parentNodeId: nestedFixture.childRoot.id,
-                childThreadId: ThreadId.make("thread:grandchild-native-descendant"),
+                id: NodeId.make("node:behind-settled-native-parent"),
+                parentNodeId: directFixture.task.id,
+                childThreadId: ThreadId.make("thread:behind-settled-native-parent"),
                 nativeTaskRef: {
                   driver,
-                  nativeId: "grandchild-native-descendant",
+                  nativeId: "behind-settled-native-parent",
                   strength: "strong",
                 },
               },
-              NodeId.make("node:grandchild-native-descendant-root"),
-              nestedFixture.childThread,
-              nestedFixture.childRoot,
-              null,
+              NodeId.make("node:behind-settled-native-parent-root"),
+              before.thread,
+              ownerRoot,
+              codexTurn.id,
             ),
           );
-          const weakFixture = appendNativeFixture(
+        }
+        const nestedFixture = appendNativeFixture(
+          {
+            ...task,
+            id: NodeId.make("node:child-native-descendant"),
+            threadId: childThreadId,
+            runId: null,
+            parentNodeId: childRootId,
+            childThreadId: ThreadId.make("thread:child-native-descendant"),
+            nativeTaskRef: { driver, nativeId: "child-native-descendant", strength: "strong" },
+            status: nativeTerminalParent ? "completed" : "running",
+            completedAt: nativeTerminalParent ? now : null,
+          },
+          NodeId.make("node:child-native-descendant-root"),
+          mainFixture.childThread,
+          mainFixture.childRoot,
+          null,
+        );
+        descendants.push(nestedFixture);
+        descendants.push(
+          appendNativeFixture(
             {
               ...task,
-              id: NodeId.make("node:weak-native-descendant"),
-              threadId: childThreadId,
+              id: NodeId.make("node:grandchild-native-descendant"),
+              threadId: nestedFixture.childThread.id,
               runId: null,
-              parentNodeId: childRootId,
-              childThreadId: ThreadId.make("thread:weak-native-descendant"),
-              nativeTaskRef: { driver, nativeId: "weak-native-descendant", strength: "weak" },
+              parentNodeId: nestedFixture.childRoot.id,
+              childThreadId: ThreadId.make("thread:grandchild-native-descendant"),
+              nativeTaskRef: {
+                driver,
+                nativeId: "grandchild-native-descendant",
+                strength: "strong",
+              },
             },
-            NodeId.make("node:weak-native-descendant-root"),
+            NodeId.make("node:grandchild-native-descendant-root"),
+            nestedFixture.childThread,
+            nestedFixture.childRoot,
+            null,
+          ),
+        );
+        const weakFixture = appendNativeFixture(
+          {
+            ...task,
+            id: NodeId.make("node:weak-native-descendant"),
+            threadId: childThreadId,
+            runId: null,
+            parentNodeId: childRootId,
+            childThreadId: ThreadId.make("thread:weak-native-descendant"),
+            nativeTaskRef: { driver, nativeId: "weak-native-descendant", strength: "weak" },
+          },
+          NodeId.make("node:weak-native-descendant-root"),
+          mainFixture.childThread,
+          mainFixture.childRoot,
+          null,
+        );
+        const userRunId = RunId.make("run:native-child-user");
+        const userRootId = NodeId.make("node:native-child-user-root");
+        const userRoot = {
+          ...mainFixture.childRoot,
+          id: userRootId,
+          rootNodeId: userRootId,
+          runId: userRunId,
+          countsForRun: true,
+        };
+        fixtureEvents.push(
+          {
+            id: EventId.make("fixture:child-user-run"),
+            type: "run.updated",
+            threadId: childThreadId,
+            runId: userRunId,
+            occurredAt: now,
+            payload: {
+              ...run,
+              id: userRunId,
+              threadId: childThreadId,
+              rootNodeId: userRootId,
+              providerThreadId: null,
+              activeAttemptId: null,
+            },
+          },
+          {
+            id: EventId.make("fixture:child-user-root"),
+            type: "node.updated",
+            threadId: childThreadId,
+            runId: userRunId,
+            nodeId: userRootId,
+            occurredAt: now,
+            payload: userRoot,
+          },
+        );
+        const userFixture = appendNativeFixture(
+          {
+            ...task,
+            id: NodeId.make("node:user-run-native-descendant"),
+            threadId: childThreadId,
+            runId: userRunId,
+            parentNodeId: userRootId,
+            childThreadId: ThreadId.make("thread:user-run-native-descendant"),
+            nativeTaskRef: { driver, nativeId: "user-run-native-descendant", strength: "strong" },
+          },
+          NodeId.make("node:user-run-native-descendant-root"),
+          mainFixture.childThread,
+          userRoot,
+          null,
+        );
+        const workflowMember: OrchestrationV2Subagent = {
+          ...task,
+          id: NodeId.make("node:released-workflow-member"),
+          runId: null,
+          parentNodeId: task.id,
+          childThreadId: null,
+          nativeTaskRef: null,
+          presentation: { kind: "workflow_agent", workflowId: task.id, agentIndex: 0 },
+        };
+        const workflowNode = {
+          ...ownerRoot,
+          id: workflowMember.id,
+          runId: null,
+          parentNodeId: task.id,
+          rootNodeId: task.id,
+          kind: "subagent" as const,
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+        };
+        const wrongWorkflowMember: OrchestrationV2Subagent = {
+          ...workflowMember,
+          id: NodeId.make("node:wrong-workflow-member"),
+          presentation: { kind: "workflow_agent", workflowId: siblingId },
+        };
+        const frozenWorkflowMember: OrchestrationV2Subagent = {
+          ...workflowMember,
+          id: NodeId.make("node:frozen-workflow-member"),
+        };
+        for (const [member, memberNode] of [
+          [workflowMember, workflowNode],
+          [wrongWorkflowMember, { ...workflowNode, id: wrongWorkflowMember.id }],
+          [frozenWorkflowMember, { ...workflowNode, id: frozenWorkflowMember.id, runId: run.id }],
+        ] as const) {
+          fixtureEvents.push(
+            {
+              id: EventId.make(`fixture:workflow-member:${member.id}`),
+              type: "subagent.updated",
+              threadId,
+              occurredAt: now,
+              payload: member,
+            },
+            {
+              id: EventId.make(`fixture:workflow-member-node:${member.id}`),
+              type: "node.updated",
+              threadId,
+              occurredAt: now,
+              payload: memberNode,
+            },
+          );
+        }
+        const richFixtures = [];
+        const richExecutionFixtures = [];
+        for (const variant of [
+          "owned",
+          "settled",
+          "wrong-roster",
+          "frozen",
+          "user-run",
+          "wrong-child-lineage",
+        ] as const) {
+          const index =
+            variant === "settled"
+              ? 2
+              : variant === "frozen"
+                ? 3
+                : variant === "user-run"
+                  ? 4
+                  : variant === "wrong-child-lineage"
+                    ? 5
+                    : 1;
+          const childId = ThreadId.make(
+            variant === "owned"
+              ? "thread:rich-workflow-member"
+              : variant === "settled"
+                ? "thread:settled-rich-workflow-member"
+                : `thread:rich-workflow-${variant}`,
+          );
+          const richTask: OrchestrationV2Subagent = {
+            ...task,
+            id: NodeId.make(`node:rich-workflow-${variant}`),
+            threadId: mainFixture.childThread.id,
+            runId: variant === "user-run" ? run.id : null,
+            parentNodeId: mainFixture.childRoot.id,
+            childThreadId: childId,
+            nativeTaskRef: null,
+            providerThreadId: null,
+            status: variant === "settled" ? "completed" : "running",
+            completedAt: variant === "settled" ? now : null,
+            presentation: {
+              kind: "workflow_agent",
+              workflowId: task.id,
+              agentIndex: variant === "wrong-roster" ? 99 : index,
+            },
+          };
+          // Wrong/frozen fixtures are explicitly roster-bound so the deciding
+          // refusal is their execution row or child lineage, not a name miss.
+          if (variant === "frozen" || variant === "user-run" || variant === "wrong-child-lineage") {
+            richRoster.push({ index, label: variant, state: "running", childThreadId: childId });
+          }
+          const fixture = appendNativeFixture(
+            richTask,
+            NodeId.make(`root:rich-workflow-${variant}`),
             mainFixture.childThread,
             mainFixture.childRoot,
             null,
           );
-          const userRunId = RunId.make("run:native-child-user");
-          const userRootId = NodeId.make("node:native-child-user-root");
-          const userRoot = {
-            ...mainFixture.childRoot,
-            id: userRootId,
-            rootNodeId: userRootId,
-            runId: userRunId,
-            countsForRun: true,
-          };
+          for (let eventIndex = fixtureEvents.length - 1; eventIndex >= 0; eventIndex--) {
+            const event = fixtureEvents[eventIndex]!;
+            if (
+              event.type === "turn-item.updated" &&
+              event.payload.type === "subagent" &&
+              event.payload.subagentId === richTask.id
+            )
+              fixtureEvents.splice(eventIndex, 1);
+          }
+          for (const [eventIndex, event] of fixtureEvents.entries()) {
+            if (event.type === "node.updated" && event.payload.id === richTask.id)
+              fixtureEvents[eventIndex] = {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  runtimeRequestId: null,
+                  checkpointScopeId: null,
+                  ...(variant === "frozen" ? { runId: run.id } : {}),
+                },
+              };
+            if (
+              event.type === "thread.created" &&
+              event.payload.id === childId &&
+              variant === "wrong-child-lineage"
+            )
+              fixtureEvents[eventIndex] = {
+                ...event,
+                payload: { ...event.payload, forkedFrom: { type: "node", nodeId: siblingId } },
+              };
+            if (event.type === "node.updated" && event.payload.id === fixture.childRoot.id)
+              fixtureEvents[eventIndex] = {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  status: "running",
+                  completedAt: null,
+                  runtimeRequestId: null,
+                  checkpointScopeId: null,
+                },
+              };
+            if (event.type === "turn-item.updated" && event.payload.nodeId === fixture.childRoot.id)
+              fixtureEvents[eventIndex] = {
+                ...event,
+                payload: { ...event.payload, status: "running", completedAt: null },
+              };
+          }
+          richFixtures.push({ fixture, variant });
+          if (variant === "owned") {
+            // A display member's parent linkage cannot authorize native work
+            // beneath it, even when that nested row carries a strong ref.
+            richExecutionFixtures.push(
+              appendNativeFixture(
+                {
+                  ...task,
+                  id: NodeId.make("node:display-linked-native-work"),
+                  threadId: richTask.threadId,
+                  runId: null,
+                  parentNodeId: richTask.id,
+                  childThreadId: ThreadId.make("thread:display-linked-native-work"),
+                  nativeTaskRef: {
+                    driver,
+                    nativeId: "display-linked-native-work",
+                    strength: "strong",
+                  },
+                  presentation: { kind: "subagent" },
+                },
+                NodeId.make("root:display-linked-native-work"),
+                mainFixture.childThread,
+                fixture.nativeNode,
+                null,
+              ),
+            );
+          }
+        }
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        if (nativeStop === "released") {
+          const failed = yield* watch(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.threadId === threadId &&
+              event.payload.type === "error" &&
+              event.payload.runId === run.id,
+          );
+          yield* sessions.release({
+            providerSessionId: ownerThread.providerSessionId!,
+            reason: "runtime_error",
+          });
+          assert.isTrue(Option.isNone(yield* sessions.get(ownerThread.providerSessionId!)));
+          yield* Fiber.join(failed);
+          // Restore any missed terminal writes before testing targeted orphan repair.
           fixtureEvents.push(
             {
-              id: EventId.make("fixture:child-user-run"),
+              id: EventId.make("fixture:restore:run"),
               type: "run.updated",
-              threadId: childThreadId,
-              runId: userRunId,
+              threadId,
               occurredAt: now,
-              payload: {
-                ...run,
-                id: userRunId,
-                threadId: childThreadId,
-                rootNodeId: userRootId,
-                providerThreadId: null,
-                activeAttemptId: null,
-              },
+              payload: run,
             },
             {
-              id: EventId.make("fixture:child-user-root"),
+              id: EventId.make("fixture:restore:attempt"),
+              type: "run-attempt.updated",
+              threadId,
+              occurredAt: now,
+              payload: before.attempts[0]!,
+            },
+            {
+              id: EventId.make("fixture:restore:node"),
               type: "node.updated",
-              threadId: childThreadId,
-              runId: userRunId,
-              nodeId: userRootId,
+              threadId,
               occurredAt: now,
-              payload: userRoot,
+              payload: ownerRoot,
             },
-          );
-          const userFixture = appendNativeFixture(
             {
-              ...task,
-              id: NodeId.make("node:user-run-native-descendant"),
-              threadId: childThreadId,
-              runId: userRunId,
-              parentNodeId: userRootId,
-              childThreadId: ThreadId.make("thread:user-run-native-descendant"),
-              nativeTaskRef: { driver, nativeId: "user-run-native-descendant", strength: "strong" },
+              id: EventId.make("fixture:restore:turn"),
+              type: "provider-turn.updated",
+              threadId,
+              occurredAt: now,
+              payload: codexTurn,
             },
-            NodeId.make("node:user-run-native-descendant-root"),
-            mainFixture.childThread,
-            userRoot,
-            null,
+            {
+              id: EventId.make("fixture:restore:thread"),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: ownerThread,
+            },
           );
-          const workflowMember: OrchestrationV2Subagent = {
-            ...task,
-            id: NodeId.make("node:released-workflow-member"),
-            runId: null,
-            parentNodeId: task.id,
-            childThreadId: null,
-            nativeTaskRef: null,
-            presentation: { kind: "workflow_agent", workflowId: task.id, agentIndex: 0 },
-          };
-          const workflowNode = {
-            ...ownerRoot,
-            id: workflowMember.id,
-            runId: null,
-            parentNodeId: task.id,
-            rootNodeId: task.id,
-            kind: "subagent" as const,
-            countsForRun: false,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            runtimeRequestId: null,
-            checkpointScopeId: null,
-          };
-          const wrongWorkflowMember: OrchestrationV2Subagent = {
-            ...workflowMember,
-            id: NodeId.make("node:wrong-workflow-member"),
-            presentation: { kind: "workflow_agent", workflowId: siblingId },
-          };
-          const frozenWorkflowMember: OrchestrationV2Subagent = {
-            ...workflowMember,
-            id: NodeId.make("node:frozen-workflow-member"),
-          };
-          for (const [member, memberNode] of [
-            [workflowMember, workflowNode],
-            [wrongWorkflowMember, { ...workflowNode, id: wrongWorkflowMember.id }],
-            [frozenWorkflowMember, { ...workflowNode, id: frozenWorkflowMember.id, runId: run.id }],
-          ] as const) {
-            fixtureEvents.push(
-              {
-                id: EventId.make(`fixture:workflow-member:${member.id}`),
-                type: "subagent.updated",
-                threadId,
-                occurredAt: now,
-                payload: member,
-              },
-              {
-                id: EventId.make(`fixture:workflow-member-node:${member.id}`),
-                type: "node.updated",
-                threadId,
-                occurredAt: now,
-                payload: memberNode,
-              },
-            );
-          }
-          const richFixtures = [];
-          const richExecutionFixtures = [];
-          for (const variant of [
-            "owned",
-            "settled",
-            "wrong-roster",
-            "frozen",
-            "user-run",
-            "wrong-child-lineage",
-          ] as const) {
-            const index =
-              variant === "settled"
-                ? 2
-                : variant === "frozen"
-                  ? 3
-                  : variant === "user-run"
-                    ? 4
-                    : variant === "wrong-child-lineage"
-                      ? 5
-                      : 1;
-            const childId = ThreadId.make(
-              variant === "owned"
-                ? "thread:rich-workflow-member"
-                : variant === "settled"
-                  ? "thread:settled-rich-workflow-member"
-                  : `thread:rich-workflow-${variant}`,
-            );
-            const richTask: OrchestrationV2Subagent = {
-              ...task,
-              id: NodeId.make(`node:rich-workflow-${variant}`),
-              threadId: mainFixture.childThread.id,
-              runId: variant === "user-run" ? run.id : null,
-              parentNodeId: mainFixture.childRoot.id,
-              childThreadId: childId,
-              nativeTaskRef: null,
-              providerThreadId: null,
-              status: variant === "settled" ? "completed" : "running",
-              completedAt: variant === "settled" ? now : null,
-              presentation: {
-                kind: "workflow_agent",
-                workflowId: task.id,
-                agentIndex: variant === "wrong-roster" ? 99 : index,
-              },
-            };
-            // Wrong/frozen fixtures are explicitly roster-bound so the deciding
-            // refusal is their execution row or child lineage, not a name miss.
-            if (
-              variant === "frozen" ||
-              variant === "user-run" ||
-              variant === "wrong-child-lineage"
-            ) {
-              richRoster.push({ index, label: variant, state: "running", childThreadId: childId });
-            }
-            const fixture = appendNativeFixture(
-              richTask,
-              NodeId.make(`root:rich-workflow-${variant}`),
-              mainFixture.childThread,
-              mainFixture.childRoot,
-              null,
-            );
-            for (let eventIndex = fixtureEvents.length - 1; eventIndex >= 0; eventIndex--) {
-              const event = fixtureEvents[eventIndex]!;
-              if (
-                event.type === "turn-item.updated" &&
-                event.payload.type === "subagent" &&
-                event.payload.subagentId === richTask.id
-              )
-                fixtureEvents.splice(eventIndex, 1);
-            }
-            for (const [eventIndex, event] of fixtureEvents.entries()) {
-              if (event.type === "node.updated" && event.payload.id === richTask.id)
-                fixtureEvents[eventIndex] = {
-                  ...event,
-                  payload: {
-                    ...event.payload,
-                    runtimeRequestId: null,
-                    checkpointScopeId: null,
-                    ...(variant === "frozen" ? { runId: run.id } : {}),
-                  },
-                };
-              if (
-                event.type === "thread.created" &&
-                event.payload.id === childId &&
-                variant === "wrong-child-lineage"
-              )
-                fixtureEvents[eventIndex] = {
-                  ...event,
-                  payload: { ...event.payload, forkedFrom: { type: "node", nodeId: siblingId } },
-                };
-              if (event.type === "node.updated" && event.payload.id === fixture.childRoot.id)
-                fixtureEvents[eventIndex] = {
-                  ...event,
-                  payload: {
-                    ...event.payload,
-                    status: "running",
-                    completedAt: null,
-                    runtimeRequestId: null,
-                    checkpointScopeId: null,
-                  },
-                };
-              if (
-                event.type === "turn-item.updated" &&
-                event.payload.nodeId === fixture.childRoot.id
-              )
-                fixtureEvents[eventIndex] = {
-                  ...event,
-                  payload: { ...event.payload, status: "running", completedAt: null },
-                };
-            }
-            richFixtures.push({ fixture, variant });
-            if (variant === "owned") {
-              // A display member's parent linkage cannot authorize native work
-              // beneath it, even when that nested row carries a strong ref.
-              richExecutionFixtures.push(
-                appendNativeFixture(
-                  {
-                    ...task,
-                    id: NodeId.make("node:display-linked-native-work"),
-                    threadId: richTask.threadId,
-                    runId: null,
-                    parentNodeId: richTask.id,
-                    childThreadId: ThreadId.make("thread:display-linked-native-work"),
-                    nativeTaskRef: {
-                      driver,
-                      nativeId: "display-linked-native-work",
-                      strength: "strong",
-                    },
-                    presentation: { kind: "subagent" },
-                  },
-                  NodeId.make("root:display-linked-native-work"),
-                  mainFixture.childThread,
-                  fixture.nativeNode,
-                  null,
-                ),
-              );
-            }
-          }
-          const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-          if (nativeStop === "released") {
-            const failed = yield* watch(
-              (event) =>
-                event.type === "turn-item.updated" &&
-                event.threadId === threadId &&
-                event.payload.type === "error" &&
-                event.payload.runId === run.id,
-            );
-            yield* sessions.release({
-              providerSessionId: ownerThread.providerSessionId!,
-              reason: "runtime_error",
+        }
+        yield* sink.write({ events: fixtureEvents });
+        const original = yield* orchestrator.getThreadProjection(threadId);
+        const childOriginal = yield* orchestrator.getThreadProjection(childThreadId);
+        const siblingOriginal = yield* orchestrator.getThreadProjection(siblingThreadId);
+        const richOriginal = yield* Effect.forEach(richFixtures, ({ fixture }) =>
+          orchestrator.getThreadProjection(fixture.childThread.id),
+        );
+        const richRowsOriginal = yield* orchestrator.getThreadProjection(
+          mainFixture.childThread.id,
+        );
+        const protectedFixtures = [weakFixture, userFixture, ...richExecutionFixtures];
+        const protectedChildren = yield* Effect.forEach(protectedFixtures, (fixture) =>
+          orchestrator.getThreadProjection(fixture.childThread.id),
+        );
+        const settle = {
+          type: "thread.background-work.settle" as const,
+          threadId,
+          providerThreadId: ownerThread.id,
+          providerTurnId: codexTurn.id,
+          subagent: {
+            id: taskId,
+            nativeTaskId: "released-native-task",
+            providerSessionId: ownerThread.providerSessionId!,
+          },
+        };
+        for (const invalid of [
+          { ...settle, subagent: { ...settle.subagent, nativeTaskId: "sibling-native-task" } },
+          { ...settle, subagent: { ...settle.subagent, id: ownerRoot.id } },
+          {
+            ...settle,
+            subagent: {
+              ...settle.subagent,
+              providerSessionId: ProviderSessionId.make("session:wrong-native-owner"),
+            },
+          },
+        ]) {
+          yield* orchestrator.dispatch({
+            ...invalid,
+            commandId: CommandId.make(`invalid:${JSON.stringify(invalid.subagent)}`),
+          });
+          assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), original);
+          assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childOriginal);
+        }
+        if (nativeStop === "released") {
+          const nativeNode = original.nodes.find((node) => node.id === taskId)!;
+          const invalidNodes: OrchestrationV2ThreadProjection["nodes"] = [
+            { ...nativeNode, runId: null },
+            { ...nativeNode, rootNodeId: siblingId },
+            {
+              ...nativeNode,
+              nativeItemRef: { driver, nativeId: "released-native-task", strength: "weak" },
+            },
+            {
+              ...nativeNode,
+              nativeItemRef: { driver, nativeId: "sibling-native-task", strength: "strong" },
+            },
+            { ...nativeNode, providerTurnId: ProviderTurnId.make("turn:wrong-owner") },
+          ];
+          for (const [index, invalidNode] of invalidNodes.entries()) {
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`fixture:invalid-node:${index}`),
+                  type: "node.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: invalidNode,
+                },
+              ],
             });
-            assert.isTrue(Option.isNone(yield* sessions.get(ownerThread.providerSessionId!)));
-            yield* Fiber.join(failed);
-            // Restore any missed terminal writes before testing targeted orphan repair.
-            fixtureEvents.push(
+            const fenced = yield* orchestrator.getThreadProjection(threadId);
+            yield* orchestrator.dispatch({
+              ...settle,
+              commandId: CommandId.make(`frozen-or-wrong-native-owner:${index}`),
+            });
+            assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), fenced);
+            assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childOriginal);
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`fixture:restore-node:${index}`),
+                  type: "node.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: nativeNode,
+                },
+              ],
+            });
+          }
+        }
+        yield* orchestrator.dispatch({
+          type: "subagent.stop",
+          commandId: CommandId.make("stop-released-native-child"),
+          threadId,
+          runId: run.id,
+          subagentId: taskId,
+        });
+        yield* worker.drain();
+        const stopped = yield* orchestrator.getThreadProjection(threadId);
+        const childStopped = yield* orchestrator.getThreadProjection(childThreadId);
+        const expectedStatus = nativeStop === "released" ? "interrupted" : "running";
+        assert.equal(
+          stopped.subagents.find((entry) => entry.id === taskId)!.status,
+          expectedStatus,
+        );
+        assert.equal(stopped.nodes.find((entry) => entry.id === taskId)!.status, expectedStatus);
+        assert.equal(
+          stopped.turnItems.find((entry) => entry.nodeId === taskId)!.status,
+          expectedStatus,
+        );
+        assert.equal(
+          childStopped.nodes.find((entry) => entry.id === childRootId)!.status,
+          expectedStatus,
+        );
+        assert.equal(
+          childStopped.turnItems.find((entry) => entry.nodeId === childRootId)!.status,
+          expectedStatus,
+        );
+        const descendantStopped = [];
+        for (const fixture of descendants) {
+          const parentProjection = yield* orchestrator.getThreadProjection(fixture.task.threadId);
+          const childProjection = yield* orchestrator.getThreadProjection(fixture.childThread.id);
+          const descendantStatus =
+            fixture.task.status === "completed" ? "completed" : expectedStatus;
+          assert.equal(
+            parentProjection.subagents.find((entry) => entry.id === fixture.task.id)!.status,
+            descendantStatus,
+          );
+          assert.equal(
+            parentProjection.nodes.find((entry) => entry.id === fixture.task.id)!.status,
+            descendantStatus,
+          );
+          assert.equal(
+            parentProjection.turnItems.find((entry) => entry.nodeId === fixture.task.id)!.status,
+            descendantStatus,
+          );
+          assert.equal(
+            childProjection.nodes.find((entry) => entry.id === fixture.childRoot.id)!.status,
+            descendantStatus,
+          );
+          assert.equal(
+            childProjection.turnItems.find((entry) => entry.nodeId === fixture.childRoot.id)!
+              .status,
+            descendantStatus,
+          );
+          descendantStopped.push(childProjection);
+        }
+        for (const [index, fixture] of protectedFixtures.entries()) {
+          assert.deepEqual(
+            childStopped.subagents.find((entry) => entry.id === fixture.task.id),
+            childOriginal.subagents.find((entry) => entry.id === fixture.task.id),
+          );
+          assert.deepEqual(
+            childStopped.nodes.find((entry) => entry.id === fixture.task.id),
+            childOriginal.nodes.find((entry) => entry.id === fixture.task.id),
+          );
+          assert.deepEqual(
+            childStopped.turnItems.find((entry) => entry.nodeId === fixture.task.id),
+            childOriginal.turnItems.find((entry) => entry.nodeId === fixture.task.id),
+          );
+          assert.deepEqual(
+            yield* orchestrator.getThreadProjection(fixture.childThread.id),
+            protectedChildren[index],
+          );
+        }
+        assert.equal(
+          stopped.subagents.find((entry) => entry.id === workflowMember.id)!.status,
+          expectedStatus,
+        );
+        assert.equal(
+          stopped.nodes.find((entry) => entry.id === workflowMember.id)!.status,
+          expectedStatus,
+        );
+        for (const member of [wrongWorkflowMember, frozenWorkflowMember]) {
+          assert.deepEqual(
+            stopped.subagents.find((entry) => entry.id === member.id),
+            original.subagents.find((entry) => entry.id === member.id),
+          );
+          assert.deepEqual(
+            stopped.nodes.find((entry) => entry.id === member.id),
+            original.nodes.find((entry) => entry.id === member.id),
+          );
+        }
+        const richRowsStopped = yield* orchestrator.getThreadProjection(mainFixture.childThread.id);
+        for (const [index, { fixture, variant }] of richFixtures.entries()) {
+          const richStopped = yield* orchestrator.getThreadProjection(fixture.childThread.id);
+          const owned = variant === "owned" || variant === "settled";
+          if (nativeStop === "released" && owned) {
+            assert.equal(
+              richRowsStopped.subagents.find((row) => row.id === fixture.task.id)!.status,
+              variant === "settled" ? "completed" : "interrupted",
+            );
+            assert.equal(
+              richStopped.nodes.find((row) => row.id === fixture.childRoot.id)!.status,
+              "interrupted",
+            );
+            assert.equal(
+              richStopped.turnItems.find((row) => row.nodeId === fixture.childRoot.id)!.status,
+              "interrupted",
+            );
+          } else {
+            assert.deepEqual(richStopped, richOriginal[index]);
+            assert.deepEqual(
+              richRowsStopped.subagents.find((row) => row.id === fixture.task.id),
+              richRowsOriginal.subagents.find((row) => row.id === fixture.task.id),
+            );
+            assert.deepEqual(
+              richRowsStopped.nodes.find((row) => row.id === fixture.task.id),
+              richRowsOriginal.nodes.find((row) => row.id === fixture.task.id),
+            );
+          }
+        }
+        assert.deepEqual(stopped.runs, original.runs);
+        assert.deepEqual(childStopped.runs, childOriginal.runs);
+        assert.deepEqual(
+          childStopped.nodes.find((entry) => entry.id === userRootId),
+          childOriginal.nodes.find((entry) => entry.id === userRootId),
+        );
+        assert.deepEqual(stopped.attempts, original.attempts);
+        assert.deepEqual(stopped.providerTurns, original.providerTurns);
+        assert.deepEqual(stopped.providerThreads, original.providerThreads);
+        assert.deepEqual(
+          stopped.nodes.find((entry) => entry.id === ownerRoot.id),
+          original.nodes.find((entry) => entry.id === ownerRoot.id),
+        );
+        assert.deepEqual(
+          stopped.subagents.find((entry) => entry.id === siblingId),
+          original.subagents.find((entry) => entry.id === siblingId),
+        );
+        assert.deepEqual(
+          stopped.nodes.find((entry) => entry.id === siblingId),
+          original.nodes.find((entry) => entry.id === siblingId),
+        );
+        assert.deepEqual(
+          stopped.turnItems.find((entry) => entry.nodeId === siblingId),
+          original.turnItems.find((entry) => entry.nodeId === siblingId),
+        );
+        assert.deepEqual(yield* orchestrator.getThreadProjection(siblingThreadId), siblingOriginal);
+        assert.deepEqual(stoppedTasks, nativeStop === "live" ? ["released-native-task"] : []);
+        assert.deepEqual(interrupts, []);
+        if (nativeStop === "released") {
+          yield* orchestrator.dispatch({
+            ...settle,
+            commandId: CommandId.make("repeat-released-native-settle"),
+          });
+          yield* orchestrator.dispatch({
+            type: "subagent.stop",
+            commandId: CommandId.make("repeat-released-native-stop"),
+            threadId,
+            runId: run.id,
+            subagentId: taskId,
+          });
+          yield* worker.drain();
+          assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), stopped);
+          assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childStopped);
+          for (const [index, fixture] of descendants.entries()) {
+            assert.deepEqual(
+              yield* orchestrator.getThreadProjection(fixture.childThread.id),
+              descendantStopped[index],
+            );
+          }
+        }
+        return;
+      }
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("dev-server"),
+            type: "turn-item.updated",
+            threadId,
+            runId: first.runId,
+            occurredAt: now,
+            payload: {
+              id: devServerId,
+              threadId,
+              runId: first.runId,
+              nodeId: first.rootNodeId,
+              providerThreadId: codexTurn.providerThreadId,
+              providerTurnId: codexTurn.id,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 100,
+              status: "running",
+              title: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              type: "command_execution",
+              input: "vp run dev --share",
+            },
+          },
+        ],
+      });
+      if (stalledRun !== undefined) {
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run = before.runs[0]!;
+        const node = before.nodes.find((candidate) => candidate.id === run.rootNodeId)!;
+        const attempt = before.attempts[0]!;
+        if (stalledRun === "missing-session-terminal") {
+          const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const failed = yield* watch(
+            (event) => event.type === "run.updated" && event.payload.status === "failed",
+          );
+          yield* sessions.release({
+            providerSessionId: first.providerThread.providerSessionId!,
+            reason: "runtime_error",
+          });
+          yield* Fiber.join(failed);
+          yield* sink.write({
+            events: [
               {
-                id: EventId.make("fixture:restore:run"),
+                id: EventId.make("stale-run"),
                 type: "run.updated",
                 threadId,
                 occurredAt: now,
                 payload: run,
               },
               {
-                id: EventId.make("fixture:restore:attempt"),
-                type: "run-attempt.updated",
-                threadId,
-                occurredAt: now,
-                payload: before.attempts[0]!,
-              },
-              {
-                id: EventId.make("fixture:restore:node"),
-                type: "node.updated",
-                threadId,
-                occurredAt: now,
-                payload: ownerRoot,
-              },
-              {
-                id: EventId.make("fixture:restore:turn"),
+                id: EventId.make("stale-provider-turn"),
                 type: "provider-turn.updated",
                 threadId,
                 occurredAt: now,
                 payload: codexTurn,
               },
               {
-                id: EventId.make("fixture:restore:thread"),
-                type: "provider-thread.updated",
+                id: EventId.make("stale-node"),
+                type: "node.updated",
                 threadId,
                 occurredAt: now,
-                payload: ownerThread,
-              },
-            );
-          }
-          yield* sink.write({ events: fixtureEvents });
-          const original = yield* orchestrator.getThreadProjection(threadId);
-          const childOriginal = yield* orchestrator.getThreadProjection(childThreadId);
-          const siblingOriginal = yield* orchestrator.getThreadProjection(siblingThreadId);
-          const richOriginal = yield* Effect.forEach(richFixtures, ({ fixture }) =>
-            orchestrator.getThreadProjection(fixture.childThread.id),
-          );
-          const richRowsOriginal = yield* orchestrator.getThreadProjection(
-            mainFixture.childThread.id,
-          );
-          const protectedFixtures = [weakFixture, userFixture, ...richExecutionFixtures];
-          const protectedChildren = yield* Effect.forEach(protectedFixtures, (fixture) =>
-            orchestrator.getThreadProjection(fixture.childThread.id),
-          );
-          const settle = {
-            type: "thread.background-work.settle" as const,
-            threadId,
-            providerThreadId: ownerThread.id,
-            providerTurnId: codexTurn.id,
-            subagent: {
-              id: taskId,
-              nativeTaskId: "released-native-task",
-              providerSessionId: ownerThread.providerSessionId!,
-            },
-          };
-          for (const invalid of [
-            { ...settle, subagent: { ...settle.subagent, nativeTaskId: "sibling-native-task" } },
-            { ...settle, subagent: { ...settle.subagent, id: ownerRoot.id } },
-            {
-              ...settle,
-              subagent: {
-                ...settle.subagent,
-                providerSessionId: ProviderSessionId.make("session:wrong-native-owner"),
-              },
-            },
-          ]) {
-            yield* orchestrator.dispatch({
-              ...invalid,
-              commandId: CommandId.make(`invalid:${JSON.stringify(invalid.subagent)}`),
-            });
-            assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), original);
-            assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childOriginal);
-          }
-          if (nativeStop === "released") {
-            const nativeNode = original.nodes.find((node) => node.id === taskId)!;
-            const invalidNodes: OrchestrationV2ThreadProjection["nodes"] = [
-              { ...nativeNode, runId: null },
-              { ...nativeNode, rootNodeId: siblingId },
-              {
-                ...nativeNode,
-                nativeItemRef: { driver, nativeId: "released-native-task", strength: "weak" },
+                payload: node,
               },
               {
-                ...nativeNode,
-                nativeItemRef: { driver, nativeId: "sibling-native-task", strength: "strong" },
+                id: EventId.make("stale-attempt"),
+                type: "run-attempt.updated",
+                threadId,
+                occurredAt: now,
+                payload: attempt,
               },
-              { ...nativeNode, providerTurnId: ProviderTurnId.make("turn:wrong-owner") },
-            ];
-            for (const [index, invalidNode] of invalidNodes.entries()) {
-              yield* sink.write({
-                events: [
-                  {
-                    id: EventId.make(`fixture:invalid-node:${index}`),
-                    type: "node.updated",
-                    threadId,
-                    occurredAt: now,
-                    payload: invalidNode,
-                  },
-                ],
-              });
-              const fenced = yield* orchestrator.getThreadProjection(threadId);
-              yield* orchestrator.dispatch({
-                ...settle,
-                commandId: CommandId.make(`frozen-or-wrong-native-owner:${index}`),
-              });
-              assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), fenced);
-              assert.deepEqual(
-                yield* orchestrator.getThreadProjection(childThreadId),
-                childOriginal,
-              );
-              yield* sink.write({
-                events: [
-                  {
-                    id: EventId.make(`fixture:restore-node:${index}`),
-                    type: "node.updated",
-                    threadId,
-                    occurredAt: now,
-                    payload: nativeNode,
-                  },
-                ],
-              });
-            }
-          }
-          yield* orchestrator.dispatch({
-            type: "subagent.stop",
-            commandId: CommandId.make("stop-released-native-child"),
-            threadId,
-            runId: run.id,
-            subagentId: taskId,
+            ],
           });
-          yield* worker.drain();
-          const stopped = yield* orchestrator.getThreadProjection(threadId);
-          const childStopped = yield* orchestrator.getThreadProjection(childThreadId);
-          const expectedStatus = nativeStop === "released" ? "interrupted" : "running";
           assert.equal(
-            stopped.subagents.find((entry) => entry.id === taskId)!.status,
-            expectedStatus,
+            (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]?.status,
+            "running",
           );
-          assert.equal(stopped.nodes.find((entry) => entry.id === taskId)!.status, expectedStatus);
-          assert.equal(
-            stopped.turnItems.find((entry) => entry.nodeId === taskId)!.status,
-            expectedStatus,
+          assert.isTrue(
+            Option.isNone(yield* sessions.get(first.providerThread.providerSessionId!)),
           );
-          assert.equal(
-            childStopped.nodes.find((entry) => entry.id === childRootId)!.status,
-            expectedStatus,
-          );
-          assert.equal(
-            childStopped.turnItems.find((entry) => entry.nodeId === childRootId)!.status,
-            expectedStatus,
-          );
-          const descendantStopped = [];
-          for (const fixture of descendants) {
-            const parentProjection = yield* orchestrator.getThreadProjection(fixture.task.threadId);
-            const childProjection = yield* orchestrator.getThreadProjection(fixture.childThread.id);
-            const descendantStatus =
-              fixture.task.status === "completed" ? "completed" : expectedStatus;
-            assert.equal(
-              parentProjection.subagents.find((entry) => entry.id === fixture.task.id)!.status,
-              descendantStatus,
-            );
-            assert.equal(
-              parentProjection.nodes.find((entry) => entry.id === fixture.task.id)!.status,
-              descendantStatus,
-            );
-            assert.equal(
-              parentProjection.turnItems.find((entry) => entry.nodeId === fixture.task.id)!.status,
-              descendantStatus,
-            );
-            assert.equal(
-              childProjection.nodes.find((entry) => entry.id === fixture.childRoot.id)!.status,
-              descendantStatus,
-            );
-            assert.equal(
-              childProjection.turnItems.find((entry) => entry.nodeId === fixture.childRoot.id)!
-                .status,
-              descendantStatus,
-            );
-            descendantStopped.push(childProjection);
-          }
-          for (const [index, fixture] of protectedFixtures.entries()) {
-            assert.deepEqual(
-              childStopped.subagents.find((entry) => entry.id === fixture.task.id),
-              childOriginal.subagents.find((entry) => entry.id === fixture.task.id),
-            );
-            assert.deepEqual(
-              childStopped.nodes.find((entry) => entry.id === fixture.task.id),
-              childOriginal.nodes.find((entry) => entry.id === fixture.task.id),
-            );
-            assert.deepEqual(
-              childStopped.turnItems.find((entry) => entry.nodeId === fixture.task.id),
-              childOriginal.turnItems.find((entry) => entry.nodeId === fixture.task.id),
-            );
-            assert.deepEqual(
-              yield* orchestrator.getThreadProjection(fixture.childThread.id),
-              protectedChildren[index],
-            );
-          }
-          assert.equal(
-            stopped.subagents.find((entry) => entry.id === workflowMember.id)!.status,
-            expectedStatus,
-          );
-          assert.equal(
-            stopped.nodes.find((entry) => entry.id === workflowMember.id)!.status,
-            expectedStatus,
-          );
-          for (const member of [wrongWorkflowMember, frozenWorkflowMember]) {
-            assert.deepEqual(
-              stopped.subagents.find((entry) => entry.id === member.id),
-              original.subagents.find((entry) => entry.id === member.id),
-            );
-            assert.deepEqual(
-              stopped.nodes.find((entry) => entry.id === member.id),
-              original.nodes.find((entry) => entry.id === member.id),
-            );
-          }
-          const richRowsStopped = yield* orchestrator.getThreadProjection(
-            mainFixture.childThread.id,
-          );
-          for (const [index, { fixture, variant }] of richFixtures.entries()) {
-            const richStopped = yield* orchestrator.getThreadProjection(fixture.childThread.id);
-            const owned = variant === "owned" || variant === "settled";
-            if (nativeStop === "released" && owned) {
-              assert.equal(
-                richRowsStopped.subagents.find((row) => row.id === fixture.task.id)!.status,
-                variant === "settled" ? "completed" : "interrupted",
-              );
-              assert.equal(
-                richStopped.nodes.find((row) => row.id === fixture.childRoot.id)!.status,
-                "interrupted",
-              );
-              assert.equal(
-                richStopped.turnItems.find((row) => row.nodeId === fixture.childRoot.id)!.status,
-                "interrupted",
-              );
-            } else {
-              assert.deepEqual(richStopped, richOriginal[index]);
-              assert.deepEqual(
-                richRowsStopped.subagents.find((row) => row.id === fixture.task.id),
-                richRowsOriginal.subagents.find((row) => row.id === fixture.task.id),
-              );
-              assert.deepEqual(
-                richRowsStopped.nodes.find((row) => row.id === fixture.task.id),
-                richRowsOriginal.nodes.find((row) => row.id === fixture.task.id),
-              );
-            }
-          }
-          assert.deepEqual(stopped.runs, original.runs);
-          assert.deepEqual(childStopped.runs, childOriginal.runs);
-          assert.deepEqual(
-            childStopped.nodes.find((entry) => entry.id === userRootId),
-            childOriginal.nodes.find((entry) => entry.id === userRootId),
-          );
-          assert.deepEqual(stopped.attempts, original.attempts);
-          assert.deepEqual(stopped.providerTurns, original.providerTurns);
-          assert.deepEqual(stopped.providerThreads, original.providerThreads);
-          assert.deepEqual(
-            stopped.nodes.find((entry) => entry.id === ownerRoot.id),
-            original.nodes.find((entry) => entry.id === ownerRoot.id),
-          );
-          assert.deepEqual(
-            stopped.subagents.find((entry) => entry.id === siblingId),
-            original.subagents.find((entry) => entry.id === siblingId),
-          );
-          assert.deepEqual(
-            stopped.nodes.find((entry) => entry.id === siblingId),
-            original.nodes.find((entry) => entry.id === siblingId),
-          );
-          assert.deepEqual(
-            stopped.turnItems.find((entry) => entry.nodeId === siblingId),
-            original.turnItems.find((entry) => entry.nodeId === siblingId),
-          );
-          assert.deepEqual(
-            yield* orchestrator.getThreadProjection(siblingThreadId),
-            siblingOriginal,
-          );
-          assert.deepEqual(stoppedTasks, nativeStop === "live" ? ["released-native-task"] : []);
-          assert.deepEqual(interrupts, []);
-          if (nativeStop === "released") {
-            yield* orchestrator.dispatch({
-              ...settle,
-              commandId: CommandId.make("repeat-released-native-settle"),
-            });
-            yield* orchestrator.dispatch({
-              type: "subagent.stop",
-              commandId: CommandId.make("repeat-released-native-stop"),
-              threadId,
-              runId: run.id,
-              subagentId: taskId,
-            });
-            yield* worker.drain();
-            assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), stopped);
-            assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childStopped);
-            for (const [index, fixture] of descendants.entries()) {
-              assert.deepEqual(
-                yield* orchestrator.getThreadProjection(fixture.childThread.id),
-                descendantStopped[index],
-              );
-            }
-          }
-          return;
+        }
+        const messageId = MessageId.make("partial-output");
+        const item = before.turnItems.find((candidate) => candidate.id === devServerId)!;
+        assert.ok(item.type === "command_execution");
+        const terminalProviderTurn = stalledRun.endsWith("-terminal");
+        if (terminalProviderTurn) {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("terminal-provider-turn"),
+                type: "provider-turn.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...codexTurn, status: "completed", completedAt: now },
+              },
+              ...(stalledRun === "missing-session-terminal"
+                ? [
+                    {
+                      id: EventId.make("completed-dev-server"),
+                      type: "turn-item.updated" as const,
+                      threadId,
+                      occurredAt: now,
+                      payload: { ...item, status: "completed" as const, completedAt: now },
+                    },
+                  ]
+                : []),
+            ],
+          });
         }
         yield* sink.write({
           events: [
             {
-              id: EventId.make("dev-server"),
-              type: "turn-item.updated",
+              id: EventId.make("partial-message"),
+              type: "message.updated",
               threadId,
-              runId: first.runId,
+              runId: run.id,
               occurredAt: now,
               payload: {
-                id: devServerId,
+                id: messageId,
                 threadId,
-                runId: first.runId,
-                nodeId: first.rootNodeId,
+                runId: run.id,
+                nodeId: node.id,
+                role: "assistant",
+                text: "Partial output",
+                attachments: [],
+                streaming: true,
+                createdBy: "agent",
+                creationSource: "provider",
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make("partial-item"),
+              type: "turn-item.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: {
+                ...item,
                 providerThreadId: codexTurn.providerThreadId,
                 providerTurnId: codexTurn.id,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 100,
-                status: "running",
-                title: null,
-                startedAt: now,
-                completedAt: null,
-                updatedAt: now,
-                type: "command_execution",
-                input: "vp run dev --share",
+                id: TurnItemId.make("partial-output"),
+                type: "assistant_message",
+                messageId,
+                text: "Partial output",
+                streaming: true,
               },
             },
           ],
         });
-        if (stalledRun !== undefined) {
-          const before = yield* orchestrator.getThreadProjection(threadId);
-          const run = before.runs[0]!;
-          const node = before.nodes.find((candidate) => candidate.id === run.rootNodeId)!;
-          const attempt = before.attempts[0]!;
-          if (stalledRun === "missing-session-terminal") {
-            const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-            const failed = yield* watch(
-              (event) => event.type === "run.updated" && event.payload.status === "failed",
-            );
-            yield* sessions.release({
-              providerSessionId: first.providerThread.providerSessionId!,
-              reason: "runtime_error",
-            });
-            yield* Fiber.join(failed);
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make("stale-run"),
-                  type: "run.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: run,
-                },
-                {
-                  id: EventId.make("stale-provider-turn"),
-                  type: "provider-turn.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: codexTurn,
-                },
-                {
-                  id: EventId.make("stale-node"),
-                  type: "node.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: node,
-                },
-                {
-                  id: EventId.make("stale-attempt"),
-                  type: "run-attempt.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: attempt,
-                },
-              ],
-            });
-            assert.equal(
-              (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]?.status,
-              "running",
-            );
-            assert.isTrue(
-              Option.isNone(yield* sessions.get(first.providerThread.providerSessionId!)),
-            );
-          }
-          const messageId = MessageId.make("partial-output");
-          const item = before.turnItems.find((candidate) => candidate.id === devServerId)!;
-          assert.ok(item.type === "command_execution");
-          const terminalProviderTurn = stalledRun.endsWith("-terminal");
-          if (terminalProviderTurn) {
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make("terminal-provider-turn"),
-                  type: "provider-turn.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: { ...codexTurn, status: "completed", completedAt: now },
-                },
-                ...(stalledRun === "missing-session-terminal"
-                  ? [
-                      {
-                        id: EventId.make("completed-dev-server"),
-                        type: "turn-item.updated" as const,
-                        threadId,
-                        occurredAt: now,
-                        payload: { ...item, status: "completed" as const, completedAt: now },
-                      },
-                    ]
-                  : []),
-              ],
-            });
-          }
+        if (stalledRun === "superseded-attempt") {
           yield* sink.write({
             events: [
               {
-                id: EventId.make("partial-message"),
-                type: "message.updated",
+                id: EventId.make("new-attempt"),
+                type: "run.updated",
                 threadId,
-                runId: run.id,
                 occurredAt: now,
-                payload: {
-                  id: messageId,
-                  threadId,
-                  runId: run.id,
-                  nodeId: node.id,
-                  role: "assistant",
-                  text: "Partial output",
-                  attachments: [],
-                  streaming: true,
-                  createdBy: "agent",
-                  creationSource: "provider",
-                  createdAt: now,
-                  updatedAt: now,
-                },
+                payload: { ...run, activeAttemptId: RunAttemptId.make("new-attempt") },
               },
-              {
-                id: EventId.make("partial-item"),
-                type: "turn-item.updated",
+            ],
+          });
+        }
+        yield* orchestrator.dispatch(
+          stalledRun === "superseded-attempt"
+            ? {
+                type: "thread.background-work.settle",
+                commandId: CommandId.make("late-settle"),
                 threadId,
-                runId: run.id,
+                providerThreadId: codexTurn.providerThreadId,
+                providerTurnId: codexTurn.id,
+              }
+            : {
+                type: "thread.stop",
+                commandId: CommandId.make("stop-stalled-run"),
+                threadId,
+              },
+        );
+        yield* stalledRun === "returned-interrupt" ? drainUnconfirmedStop : worker.drain();
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        // Direct Orchestrator.thread.stop leaves child stopping to its sender;
+        // MCP cancelTask calls ThreadManagementService.stopDelegatedTasks separately.
+        assert.deepEqual(delegatedStops, []);
+        const stopEffects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+          CommandId.make(stalledRun === "superseded-attempt" ? "late-settle" : "stop-stalled-run"),
+        );
+        assert.isEmpty(
+          stopEffects.filter((effect) => effect.request.type === "delegated-tasks.stop"),
+        );
+        const interrupted = stalledRun !== "superseded-attempt";
+        assert.equal(after.runs[0]?.status, interrupted ? "interrupted" : "running");
+        assert.equal(after.attempts[0]?.status, interrupted ? "interrupted" : "running");
+        assert.equal(
+          after.providerTurns[0]?.status,
+          terminalProviderTurn ? "completed" : interrupted ? "interrupted" : "running",
+        );
+        assert.equal(
+          after.nodes.find((candidate) => candidate.id === node.id)?.status,
+          interrupted ? "interrupted" : "running",
+        );
+        const output = after.messages.find((message) => message.id === messageId)!;
+        assert.equal(output.streaming, !interrupted);
+        assert.equal(output.text, "Partial output");
+        assert.equal(
+          after.turnItems.find((candidate) => candidate.id === devServerId)?.status,
+          stalledRun === "missing-session-terminal"
+            ? "completed"
+            : interrupted
+              ? "interrupted"
+              : "running",
+        );
+        assert.equal(
+          after.turnItems.find((candidate) => candidate.type === "assistant_message")?.status,
+          interrupted ? "interrupted" : "running",
+        );
+        assert.equal(
+          after.turnItems.filter((candidate) => candidate.type === "run_interrupt_result").length,
+          interrupted ? 1 : 0,
+        );
+        assert.isEmpty(after.runs.filter((candidate) => candidate.status === "waiting"));
+        return;
+      }
+      const settled = yield* watch(
+        (event) =>
+          event.type === "run.updated" &&
+          event.payload.id === first.runId &&
+          event.payload.status === "waiting",
+      );
+      yield* Queue.offer(events, {
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: { ...codexTurn, status: "completed", completedAt: now },
+      });
+      yield* Queue.offer(events, {
+        type: "turn.terminal",
+        driver,
+        providerThreadId: codexTurn.providerThreadId,
+        providerTurnId: codexTurn.id,
+        runOrdinal: first.runOrdinal,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      });
+      yield* Fiber.join(settled);
+      yield* worker.drain();
+
+      const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
+        .providerThreads[0]!;
+      const backgroundTasks = [
+        { taskId: "sleep", description: "Wait before the recheck", kind: "command" as const },
+      ];
+      const otherBackgroundTasks = [{ ...backgroundTasks[0]!, taskId: "other-sleep" }];
+      const subagentThread = (name: string) =>
+        Effect.gen(function* () {
+          const subagentThreadId = ThreadId.make(`thread:${name}`);
+          const rootId = NodeId.make(`node:${name}-root`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create-${name}`),
+            threadId: subagentThreadId,
+            projectId: ProjectId.make("project:background-work-stop"),
+            title: name,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "agent",
+            creationSource: "provider",
+          });
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${name}-root`),
+                type: "node.updated",
+                threadId: subagentThreadId,
                 occurredAt: now,
                 payload: {
-                  ...item,
-                  providerThreadId: codexTurn.providerThreadId,
-                  providerTurnId: codexTurn.id,
-                  id: TurnItemId.make("partial-output"),
-                  type: "assistant_message",
-                  messageId,
-                  text: "Partial output",
-                  streaming: true,
+                  id: rootId,
+                  threadId: subagentThreadId,
+                  runId: null,
+                  parentNodeId: null,
+                  rootNodeId: rootId,
+                  kind: "root_turn",
+                  status: "running",
+                  countsForRun: false,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  runtimeRequestId: null,
+                  checkpointScopeId: null,
+                  startedAt: now,
+                  completedAt: null,
                 },
               },
             ],
           });
-          if (stalledRun === "superseded-attempt") {
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make("new-attempt"),
-                  type: "run.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: { ...run, activeAttemptId: RunAttemptId.make("new-attempt") },
-                },
-              ],
-            });
-          }
-          yield* orchestrator.dispatch(
-            stalledRun === "superseded-attempt"
-              ? {
-                  type: "thread.background-work.settle",
-                  commandId: CommandId.make("late-settle"),
-                  threadId,
-                  providerThreadId: codexTurn.providerThreadId,
-                  providerTurnId: codexTurn.id,
-                }
-              : {
-                  type: "thread.stop",
-                  commandId: CommandId.make("stop-stalled-run"),
-                  threadId,
-                },
-          );
-          yield* worker.drain();
-          const after = yield* orchestrator.getThreadProjection(threadId);
-          // Direct Orchestrator.thread.stop leaves child stopping to its sender;
-          // MCP cancelTask calls ThreadManagementService.stopDelegatedTasks separately.
-          assert.deepEqual(delegatedStops, []);
-          const stopEffects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
-            CommandId.make(
-              stalledRun === "superseded-attempt" ? "late-settle" : "stop-stalled-run",
-            ),
-          );
-          assert.isEmpty(
-            stopEffects.filter((effect) => effect.request.type === "delegated-tasks.stop"),
-          );
-          const interrupted = stalledRun !== "superseded-attempt";
-          assert.equal(after.runs[0]?.status, interrupted ? "interrupted" : "running");
-          assert.equal(after.attempts[0]?.status, interrupted ? "interrupted" : "running");
-          assert.equal(
-            after.providerTurns[0]?.status,
-            terminalProviderTurn ? "completed" : interrupted ? "interrupted" : "running",
-          );
-          assert.equal(
-            after.nodes.find((candidate) => candidate.id === node.id)?.status,
-            interrupted ? "interrupted" : "running",
-          );
-          const output = after.messages.find((message) => message.id === messageId)!;
-          assert.equal(output.streaming, !interrupted);
-          assert.equal(output.text, "Partial output");
-          assert.equal(
-            after.turnItems.find((candidate) => candidate.id === devServerId)?.status,
-            stalledRun === "missing-session-terminal"
-              ? "completed"
-              : interrupted
-                ? "interrupted"
-                : "running",
-          );
-          assert.equal(
-            after.turnItems.find((candidate) => candidate.type === "assistant_message")?.status,
-            interrupted ? "interrupted" : "running",
-          );
-          assert.equal(
-            after.turnItems.filter((candidate) => candidate.type === "run_interrupt_result").length,
-            interrupted ? 1 : 0,
-          );
-          assert.isEmpty(after.runs.filter((candidate) => candidate.status === "waiting"));
-          return;
-        }
-        const settled = yield* watch(
-          (event) =>
-            event.type === "run.updated" &&
-            event.payload.id === first.runId &&
-            event.payload.status === "waiting",
-        );
-        yield* Queue.offer(events, {
-          type: "provider_turn.updated",
-          driver,
-          providerTurn: { ...codexTurn, status: "completed", completedAt: now },
+          return { threadId: subagentThreadId, rootId };
         });
-        yield* Queue.offer(events, {
-          type: "turn.terminal",
-          driver,
-          providerThreadId: codexTurn.providerThreadId,
-          providerTurnId: codexTurn.id,
-          runOrdinal: first.runOrdinal,
-          status: "completed",
-          failure: null,
-          threadDisposition: "reusable",
-        });
-        yield* Fiber.join(settled);
-        yield* worker.drain();
-
-        const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
-          .providerThreads[0]!;
-        const backgroundTasks = [
-          { taskId: "sleep", description: "Wait before the recheck", kind: "command" as const },
-        ];
-        const otherBackgroundTasks = [{ ...backgroundTasks[0]!, taskId: "other-sleep" }];
-        const subagentThread = (name: string) =>
-          Effect.gen(function* () {
-            const subagentThreadId = ThreadId.make(`thread:${name}`);
-            const rootId = NodeId.make(`node:${name}-root`);
-            yield* orchestrator.dispatch({
-              type: "thread.create",
-              commandId: CommandId.make(`create-${name}`),
-              threadId: subagentThreadId,
-              projectId: ProjectId.make("project:background-work-stop"),
-              title: name,
-              modelSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: cwd,
-              createdBy: "agent",
-              creationSource: "provider",
-            });
-            yield* sink.write({
-              events: [
+      const { threadId: reviewerThreadId, rootId: reviewerRootId } =
+        yield* subagentThread("reviewer");
+      const tester = yield* subagentThread("tester");
+      const nestedSubagentId = NodeId.make("subagent:nested");
+      const nestedItemId = TurnItemId.make("turn-item:nested-subagent");
+      const nested = {
+        threadId: reviewerThreadId,
+        runId: null,
+        origin: "provider_native",
+        driver,
+        providerInstanceId: instanceId,
+        providerThreadId: null,
+        childThreadId: tester.threadId,
+        prompt: "Check the tests",
+        title: null,
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      } as const;
+      yield* sink.write({
+        events: [
+          ...(workflowMember
+            ? []
+            : [
                 {
-                  id: EventId.make(`${name}-root`),
-                  type: "node.updated",
-                  threadId: subagentThreadId,
+                  id: EventId.make("nested-subagent-item"),
+                  type: "turn-item.updated",
+                  threadId: reviewerThreadId,
                   occurredAt: now,
                   payload: {
-                    id: rootId,
-                    threadId: subagentThreadId,
-                    runId: null,
-                    parentNodeId: null,
-                    rootNodeId: rootId,
-                    kind: "root_turn",
-                    status: "running",
-                    countsForRun: false,
-                    providerThreadId: null,
+                    ...nested,
+                    id: nestedItemId,
+                    nodeId: nestedSubagentId,
                     providerTurnId: null,
                     nativeItemRef: null,
-                    runtimeRequestId: null,
-                    checkpointScopeId: null,
-                    startedAt: now,
-                    completedAt: null,
+                    parentItemId: null,
+                    ordinal: 1,
+                    type: "subagent",
+                    subagentId: nestedSubagentId,
                   },
-                },
-              ],
-            });
-            return { threadId: subagentThreadId, rootId };
-          });
-        const { threadId: reviewerThreadId, rootId: reviewerRootId } =
-          yield* subagentThread("reviewer");
-        const tester = yield* subagentThread("tester");
-        const nestedSubagentId = NodeId.make("subagent:nested");
-        const nestedItemId = TurnItemId.make("turn-item:nested-subagent");
-        const nested = {
-          threadId: reviewerThreadId,
-          runId: null,
-          origin: "provider_native",
-          driver,
-          providerInstanceId: instanceId,
-          providerThreadId: null,
-          childThreadId: tester.threadId,
-          prompt: "Check the tests",
-          title: null,
-          status: "running",
-          result: null,
-          startedAt: now,
-          completedAt: null,
-          updatedAt: now,
-        } as const;
+                } as const,
+              ]),
+          {
+            id: EventId.make("nested-subagent"),
+            type: "subagent.updated",
+            threadId: reviewerThreadId,
+            occurredAt: now,
+            payload: {
+              ...nested,
+              id: nestedSubagentId,
+              parentNodeId: reviewerRootId,
+              createdBy: "agent",
+              nativeTaskRef: workflowMember
+                ? { driver, nativeId: "workflow:member", strength: "strong" }
+                : null,
+              model: null,
+            },
+          },
+        ],
+      });
+      if (workflowMember) {
+        const memberRoot = (yield* orchestrator.getThreadProjection(tester.threadId)).nodes[0]!;
         yield* sink.write({
           events: [
-            ...(workflowMember
-              ? []
-              : [
-                  {
-                    id: EventId.make("nested-subagent-item"),
-                    type: "turn-item.updated",
-                    threadId: reviewerThreadId,
-                    occurredAt: now,
-                    payload: {
-                      ...nested,
-                      id: nestedItemId,
-                      nodeId: nestedSubagentId,
-                      providerTurnId: null,
-                      nativeItemRef: null,
-                      parentItemId: null,
-                      ordinal: 1,
-                      type: "subagent",
-                      subagentId: nestedSubagentId,
-                    },
-                  } as const,
-                ]),
             {
-              id: EventId.make("nested-subagent"),
-              type: "subagent.updated",
+              id: EventId.make("workflow-member-node"),
+              type: "node.updated",
               threadId: reviewerThreadId,
               occurredAt: now,
               payload: {
-                ...nested,
+                ...memberRoot,
                 id: nestedSubagentId,
+                threadId: reviewerThreadId,
                 parentNodeId: reviewerRootId,
-                createdBy: "agent",
-                nativeTaskRef: workflowMember
-                  ? { driver, nativeId: "workflow:member", strength: "strong" }
-                  : null,
-                model: null,
+                rootNodeId: reviewerRootId,
+                kind: "subagent",
               },
             },
           ],
         });
-        if (workflowMember) {
-          const memberRoot = (yield* orchestrator.getThreadProjection(tester.threadId)).nodes[0]!;
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("workflow-member-node"),
-                type: "node.updated",
-                threadId: reviewerThreadId,
-                occurredAt: now,
-                payload: {
-                  ...memberRoot,
-                  id: nestedSubagentId,
-                  threadId: reviewerThreadId,
-                  parentNodeId: reviewerRootId,
-                  rootNodeId: reviewerRootId,
-                  kind: "subagent",
-                },
-              },
-            ],
-          });
-        }
-        const settledRun = (input: {
-          readonly ordinal: number;
-          readonly providerThreadId: ProviderThreadId;
-          readonly runningItem?: {
-            readonly id: TurnItemId;
-            readonly kind: "command" | "subagent";
-          };
-        }) => {
-          const runId = RunId.make(`run:${input.ordinal}`);
-          const attemptId = RunAttemptId.make(`attempt:${input.ordinal}`);
-          const nodeId = NodeId.make(`node:${input.ordinal}`);
-          const providerTurnId = ProviderTurnId.make(`provider-turn:${input.ordinal}`);
-          const events: Array<OrchestrationV2DomainEvent> = [
-            {
-              id: EventId.make(`run:${input.ordinal}`),
-              type: "run.created",
+      }
+      const settledRun = (input: {
+        readonly ordinal: number;
+        readonly providerThreadId: ProviderThreadId;
+        readonly runningItem?: {
+          readonly id: TurnItemId;
+          readonly kind: "command" | "subagent";
+        };
+      }) => {
+        const runId = RunId.make(`run:${input.ordinal}`);
+        const attemptId = RunAttemptId.make(`attempt:${input.ordinal}`);
+        const nodeId = NodeId.make(`node:${input.ordinal}`);
+        const providerTurnId = ProviderTurnId.make(`provider-turn:${input.ordinal}`);
+        const events: Array<OrchestrationV2DomainEvent> = [
+          {
+            id: EventId.make(`run:${input.ordinal}`),
+            type: "run.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: runId,
               threadId,
-              occurredAt: now,
-              payload: {
-                id: runId,
-                threadId,
-                ordinal: input.ordinal,
-                providerInstanceId: instanceId,
-                modelSelection,
-                providerThreadId: input.providerThreadId,
-                userMessageId: MessageId.make(`message:${input.ordinal}`),
-                rootNodeId: nodeId,
-                activeAttemptId: attemptId,
-                status: "completed",
-                requestedAt: now,
-                startedAt: now,
-                completedAt: now,
-                checkpointId: null,
-                contextHandoffId: null,
-              },
+              ordinal: input.ordinal,
+              providerInstanceId: instanceId,
+              modelSelection,
+              providerThreadId: input.providerThreadId,
+              userMessageId: MessageId.make(`message:${input.ordinal}`),
+              rootNodeId: nodeId,
+              activeAttemptId: attemptId,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
             },
-            {
-              id: EventId.make(`node:${input.ordinal}`),
-              type: "node.updated",
+          },
+          {
+            id: EventId.make(`node:${input.ordinal}`),
+            type: "node.updated",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
               threadId,
               runId,
-              occurredAt: now,
-              payload: {
-                id: nodeId,
-                threadId,
-                runId,
-                parentNodeId: null,
-                rootNodeId: nodeId,
-                kind: "root_turn",
-                status: "completed",
-                countsForRun: true,
-                providerThreadId: input.providerThreadId,
-                providerTurnId,
-                nativeItemRef: null,
-                runtimeRequestId: null,
-                checkpointScopeId: null,
-                startedAt: now,
-                completedAt: now,
-              },
-            },
-            {
-              id: EventId.make(`attempt:${input.ordinal}`),
-              type: "run-attempt.created",
-              threadId,
-              occurredAt: now,
-              payload: {
-                id: attemptId,
-                runId,
-                attemptOrdinal: 1,
-                rootNodeId: nodeId,
-                providerInstanceId: instanceId,
-                providerThreadId: input.providerThreadId,
-                providerTurnId,
-                reason: "initial",
-                status: "completed",
-                startedAt: now,
-                completedAt: now,
-              },
-            },
-            {
-              id: EventId.make(`provider-turn:${input.ordinal}`),
-              type: "provider-turn.updated",
-              threadId,
-              occurredAt: now,
-              payload: {
-                id: providerTurnId,
-                providerThreadId: input.providerThreadId,
-                nodeId,
-                runAttemptId: attemptId,
-                nativeTurnRef: null,
-                ordinal: input.ordinal,
-                status: "completed",
-                startedAt: now,
-                completedAt: now,
-              },
-            },
-          ];
-          const item = input.runningItem;
-          if (item !== undefined) {
-            const base = {
-              id: item.id,
-              threadId,
-              runId,
-              nodeId,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: "root_turn",
+              status: "completed",
+              countsForRun: true,
               providerThreadId: input.providerThreadId,
               providerTurnId,
               nativeItemRef: null,
-              parentItemId: null,
-              ordinal: input.ordinal * 100,
-              status: "running",
-              title: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
               startedAt: now,
-              completedAt: null,
-              updatedAt: now,
-            } as const;
+              completedAt: now,
+            },
+          },
+          {
+            id: EventId.make(`attempt:${input.ordinal}`),
+            type: "run-attempt.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId: nodeId,
+              providerInstanceId: instanceId,
+              providerThreadId: input.providerThreadId,
+              providerTurnId,
+              reason: "initial",
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+          {
+            id: EventId.make(`provider-turn:${input.ordinal}`),
+            type: "provider-turn.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: providerTurnId,
+              providerThreadId: input.providerThreadId,
+              nodeId,
+              runAttemptId: attemptId,
+              nativeTurnRef: null,
+              ordinal: input.ordinal,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+        ];
+        const item = input.runningItem;
+        if (item !== undefined) {
+          const base = {
+            id: item.id,
+            threadId,
+            runId,
+            nodeId,
+            providerThreadId: input.providerThreadId,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: input.ordinal * 100,
+            status: "running",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          } as const;
+          events.push({
+            id: EventId.make(`item:${input.ordinal}`),
+            type: "turn-item.updated",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload:
+              item.kind === "command"
+                ? { ...base, type: "command_execution", input: "vp run test --watch" }
+                : {
+                    ...base,
+                    providerThreadId: ProviderThreadId.make("provider-thread:codex-subagent"),
+                    type: "subagent",
+                    subagentId: NodeId.make(`subagent:${input.ordinal}`),
+                    origin: "provider_native",
+                    driver,
+                    providerInstanceId: instanceId,
+                    childThreadId: reviewerThreadId,
+                    prompt: "Review the change",
+                    result: null,
+                  },
+          });
+          if (item.kind === "subagent") {
             events.push({
-              id: EventId.make(`item:${input.ordinal}`),
-              type: "turn-item.updated",
+              id: EventId.make(`subagent:${input.ordinal}`),
+              type: "subagent.updated",
               threadId,
               runId,
               occurredAt: now,
-              payload:
-                item.kind === "command"
-                  ? { ...base, type: "command_execution", input: "vp run test --watch" }
-                  : {
-                      ...base,
-                      providerThreadId: ProviderThreadId.make("provider-thread:codex-subagent"),
-                      type: "subagent",
-                      subagentId: NodeId.make(`subagent:${input.ordinal}`),
-                      origin: "provider_native",
-                      driver,
-                      providerInstanceId: instanceId,
-                      childThreadId: reviewerThreadId,
-                      prompt: "Review the change",
-                      result: null,
-                    },
+              payload: {
+                ...base,
+                id: NodeId.make(`subagent:${input.ordinal}`),
+                parentNodeId: nodeId,
+                origin: "provider_native",
+                createdBy: "agent",
+                driver,
+                providerInstanceId: instanceId,
+                providerThreadId: null,
+                childThreadId: reviewerThreadId,
+                nativeTaskRef: null,
+                prompt: "Review the change",
+                model: null,
+                result: null,
+              },
             });
-            if (item.kind === "subagent") {
-              events.push({
-                id: EventId.make(`subagent:${input.ordinal}`),
-                type: "subagent.updated",
-                threadId,
-                runId,
-                occurredAt: now,
-                payload: {
-                  ...base,
-                  id: NodeId.make(`subagent:${input.ordinal}`),
-                  parentNodeId: nodeId,
-                  origin: "provider_native",
-                  createdBy: "agent",
-                  driver,
-                  providerInstanceId: instanceId,
-                  providerThreadId: null,
-                  childThreadId: reviewerThreadId,
-                  nativeTaskRef: null,
-                  prompt: "Review the change",
-                  model: null,
-                  result: null,
-                },
-              });
-            }
           }
-          return { runId, providerTurnId, events };
-        };
+        }
+        return { runId, providerTurnId, events };
+      };
 
-        const watcherId = TurnItemId.make("turn-item:watcher");
-        const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
-        const watcherRun = settledRun({
-          ordinal: 2,
-          providerThreadId: olderStart ? otherProviderThreadId : codexProviderThread.id,
-          ...(olderStart ? {} : { runningItem: { id: watcherId, kind: "command" as const } }),
-        });
-        const reviewerId = TurnItemId.make("turn-item:reviewer");
-        const reviewerRun = settledRun({
-          ordinal: 3,
-          providerThreadId: codexProviderThread.id,
-          runningItem: { id: reviewerId, kind: "subagent" },
-        });
-        const latestRun = settledRun({ ordinal: 4, providerThreadId: otherProviderThreadId });
+      const watcherId = TurnItemId.make("turn-item:watcher");
+      const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
+      const watcherRun = settledRun({
+        ordinal: 2,
+        providerThreadId: olderStart ? otherProviderThreadId : codexProviderThread.id,
+        ...(olderStart ? {} : { runningItem: { id: watcherId, kind: "command" as const } }),
+      });
+      const reviewerId = TurnItemId.make("turn-item:reviewer");
+      const reviewerRun = settledRun({
+        ordinal: 3,
+        providerThreadId: codexProviderThread.id,
+        runningItem: { id: reviewerId, kind: "subagent" },
+      });
+      const latestRun = settledRun({ ordinal: 4, providerThreadId: otherProviderThreadId });
+      yield* sink.write({
+        events: [
+          ...watcherRun.events,
+          ...reviewerRun.events,
+          {
+            id: EventId.make("provider-thread:other"),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...codexProviderThread,
+              id: otherProviderThreadId,
+              firstRunOrdinal: 4,
+              lastRunOrdinal: 4,
+              ...(failedStart ? { pendingBackgroundTasks: otherBackgroundTasks } : {}),
+            },
+          },
+          ...latestRun.events,
+        ],
+      });
+
+      const failedRun = settledRun({ ordinal: 5, providerThreadId: codexProviderThread.id });
+      if (failedStart) {
         yield* sink.write({
           events: [
-            ...watcherRun.events,
-            ...reviewerRun.events,
             {
-              id: EventId.make("provider-thread:other"),
+              id: EventId.make("failed-start-roster"),
               type: "provider-thread.updated",
               threadId,
               occurredAt: now,
               payload: {
                 ...codexProviderThread,
-                id: otherProviderThreadId,
-                firstRunOrdinal: 4,
-                lastRunOrdinal: 4,
-                ...(failedStart ? { pendingBackgroundTasks: otherBackgroundTasks } : {}),
+                lastRunOrdinal: 5,
+                pendingBackgroundTasks: backgroundTasks,
               },
             },
-            ...latestRun.events,
+            ...failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
+              switch (event.type) {
+                case "provider-turn.updated":
+                  return [];
+                case "run.created":
+                  return [{ ...event, payload: { ...event.payload, status: "failed" } }];
+                case "node.updated":
+                  return [
+                    {
+                      ...event,
+                      payload: { ...event.payload, status: "failed", providerTurnId: null },
+                    },
+                  ];
+                case "run-attempt.created":
+                  return [
+                    {
+                      ...event,
+                      payload: { ...event.payload, status: "failed", providerTurnId: null },
+                    },
+                  ];
+                default:
+                  return [event];
+              }
+            }),
           ],
         });
-
-        const failedRun = settledRun({ ordinal: 5, providerThreadId: codexProviderThread.id });
-        if (failedStart) {
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("failed-start-roster"),
-                type: "provider-thread.updated",
-                threadId,
-                occurredAt: now,
-                payload: {
-                  ...codexProviderThread,
-                  lastRunOrdinal: 5,
-                  pendingBackgroundTasks: backgroundTasks,
-                },
-              },
-              ...failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
-                switch (event.type) {
-                  case "provider-turn.updated":
-                    return [];
-                  case "run.created":
-                    return [{ ...event, payload: { ...event.payload, status: "failed" } }];
-                  case "node.updated":
-                    return [
-                      {
-                        ...event,
-                        payload: { ...event.payload, status: "failed", providerTurnId: null },
-                      },
-                    ];
-                  case "run-attempt.created":
-                    return [
-                      {
-                        ...event,
-                        payload: { ...event.payload, status: "failed", providerTurnId: null },
-                      },
-                    ];
-                  default:
-                    return [event];
-                }
-              }),
-            ],
-          });
-          // The older turn reports an empty roster, but the refused run owns the row now.
-          const clear = yield* sink.writeIfProviderThreadOwner({
-            providerThreadId: codexProviderThread.id,
-            runId: reviewerRun.runId,
-            activeAttemptId: RunAttemptId.make("attempt:3"),
-            expectedLastRunOrdinal: 3,
-            events: [
-              {
-                id: EventId.make("dropped-roster-clear"),
-                type: "provider-thread.updated",
-                threadId,
-                occurredAt: now,
-                payload: { ...codexProviderThread, pendingBackgroundTasks: [] },
-              },
-            ],
-          });
-          assert.isFalse(clear.committed);
-          const beforeStop = (yield* orchestrator.getThreadProjection(
-            threadId,
-          )).providerThreads.find((thread) => thread.id === codexProviderThread.id)!;
-          assert.equal(beforeStop.lastRunOrdinal, 5);
-          assert.deepEqual(beforeStop.pendingBackgroundTasks, backgroundTasks);
-        }
-
-        if (stopWithQueue !== undefined) {
-          const owner = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-            (run) => run.id === latestRun.runId,
-          )!;
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("latest-run-waiting"),
-                type: "run.updated",
-                threadId,
-                runId: owner.id,
-                occurredAt: now,
-                payload: { ...owner, status: "waiting", completedAt: null },
-              },
-            ],
-          });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make("queue-follow-up"),
-            threadId,
-            messageId: MessageId.make("message:queue-follow-up"),
-            text: "Follow up after the background work",
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            createdBy: "user",
-            creationSource: "web",
-          });
-          const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
-          assert.equal(queued.status, "queued");
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("queue-held"),
-                type: "run.updated",
-                threadId,
-                runId: queued.id,
-                occurredAt: now,
-                payload: { ...queued, queueHeld: true },
-              },
-              {
-                id: EventId.make("latest-run-settled"),
-                type: "run.updated",
-                threadId,
-                runId: owner.id,
-                occurredAt: now,
-                payload: owner,
-              },
-            ],
-          });
-        }
-
-        if (olderStart) {
-          const older = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-            (run) => run.id === watcherRun.runId,
-          )!;
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("older-run-starting"),
-                type: "run.updated",
-                threadId,
-                runId: older.id,
-                occurredAt: now,
-                payload: { ...older, status: "starting", startedAt: null, completedAt: null },
-              },
-            ],
-          });
-        }
-
-        yield* orchestrator.dispatch(
-          stopWithQueue === "thread.stop"
-            ? {
-                type: "thread.stop",
-                commandId: CommandId.make("stop-background-work"),
-                threadId,
-              }
-            : {
-                type: "run.interrupt",
-                commandId: CommandId.make("stop-background-work"),
-                threadId,
-                runId: olderStart
-                  ? watcherRun.runId
-                  : failedStart
-                    ? failedRun.runId
-                    : latestRun.runId,
-                ...(stopWithQueue === undefined ? {} : { holdQueue: true }),
-              },
-        );
-        yield* worker.drain();
-
-        // Native run.interrupt(holdQueue:true) schedules child stopping in its
-        // outbox. Direct thread.stop delegates that responsibility to its sender.
-        assert.deepEqual(
-          delegatedStops,
-          stopWithQueue === "run.interrupt"
-            ? [{ threadId, commandId: CommandId.make("stop-background-work") }]
-            : [],
-        );
-        const stopEffects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
-          CommandId.make("stop-background-work"),
-        );
-        assert.equal(
-          stopEffects.filter((effect) => effect.request.type === "delegated-tasks.stop").length,
-          stopWithQueue === "run.interrupt" ? 1 : 0,
-        );
-        assert.sameDeepMembers(
-          interrupts.map((interrupt) => [interrupt.providerThread.id, interrupt.providerTurnId]),
-          [
-            ...(olderStart || failedStart
-              ? []
-              : [[otherProviderThreadId, latestRun.providerTurnId]]),
-            [codexProviderThread.id, reviewerRun.providerTurnId],
-          ],
-        );
-        const after = yield* orchestrator.getThreadProjection(threadId);
-        if (olderStart) {
-          assert.equal(
-            after.runs.find((run) => run.id === watcherRun.runId)?.status,
-            "interrupted",
-          );
-        }
-        if (stopWithQueue !== undefined) {
-          assert.equal(after.runs.at(-1)?.status, "queued");
-          assert.equal(after.runs.at(-1)?.queueHeld, true);
-          assert.lengthOf(started, 1);
-        }
-        assert.deepEqual(
-          [devServerId, ...(olderStart ? [] : [watcherId]), reviewerId].map(
-            (id) => after.turnItems.find((item) => item.id === id)?.status,
-          ),
-          olderStart
-            ? ["interrupted", "interrupted"]
-            : ["interrupted", "interrupted", "interrupted"],
-        );
-        assert.equal(after.subagents[0]?.status, "interrupted");
-        const reviewerThread = yield* orchestrator.getThreadProjection(reviewerThreadId);
-        assert.equal(reviewerThread.nodes[0]?.status, "interrupted");
-        assert.equal(reviewerThread.subagents[0]?.status, "interrupted");
-        if (workflowMember) {
-          assert.isUndefined(reviewerThread.turnItems.find((item) => item.id === nestedItemId));
-          assert.equal(
-            reviewerThread.nodes.find((node) => node.id === nestedSubagentId)?.status,
-            "interrupted",
-          );
-        } else {
-          assert.equal(
-            reviewerThread.turnItems.find((item) => item.id === nestedItemId)?.status,
-            "interrupted",
-          );
-        }
-        const testerThread = yield* orchestrator.getThreadProjection(tester.threadId);
-        assert.equal(testerThread.nodes[0]?.status, "interrupted");
-        if (failedStart) {
-          assert.deepEqual(
-            after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
-              ?.pendingBackgroundTasks,
-            backgroundWorkAfterStop === undefined ? [] : backgroundTasks,
-          );
-          assert.deepEqual(
-            after.providerThreads.find((candidate) => candidate.id === otherProviderThreadId)
-              ?.pendingBackgroundTasks,
-            otherBackgroundTasks,
-          );
-        }
-      }).pipe(
-        Effect.provide(
-          ProviderReplayHarness.layerWithRegistry(
-            { name: "background-work-stop" },
-            ProviderAdapterRegistry.layerSingle(adapter),
+        // The older turn reports an empty roster, but the refused run owns the row now.
+        const clear = yield* sink.writeIfProviderThreadOwner({
+          providerThreadId: codexProviderThread.id,
+          runId: reviewerRun.runId,
+          activeAttemptId: RunAttemptId.make("attempt:3"),
+          expectedLastRunOrdinal: 3,
+          events: [
             {
-              runEffectWorker: false,
-              threads: {
-                stopDelegatedTasks: (input) =>
-                  Effect.gen(function* () {
-                    assert.ok(fixtureOrchestrator);
-                    const { subagents } = yield* fixtureOrchestrator.getThreadRecords(
-                      input.threadId,
-                      ["subagents"],
-                    );
-                    // Provider-native background subagents have no app-owned child thread.
-                    assert.isEmpty(
-                      subagents.filter(
-                        (task) => task.origin === "app_owned" && task.childThreadId !== null,
-                      ),
-                    );
-                    assert.deepEqual(input, {
-                      threadId: ThreadId.make("thread:background-work-stop"),
-                      commandId: CommandId.make(
-                        stalledRun === undefined ? "stop-background-work" : "stop-stalled-run",
-                      ),
-                      reason: undefined,
-                    });
-                    delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
-                  }),
-              },
+              id: EventId.make("dropped-roster-clear"),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...codexProviderThread, pendingBackgroundTasks: [] },
             },
-          ),
-        ),
+          ],
+        });
+        assert.isFalse(clear.committed);
+        const beforeStop = (yield* orchestrator.getThreadProjection(threadId)).providerThreads.find(
+          (thread) => thread.id === codexProviderThread.id,
+        )!;
+        assert.equal(beforeStop.lastRunOrdinal, 5);
+        assert.deepEqual(beforeStop.pendingBackgroundTasks, backgroundTasks);
+      }
+
+      if (stopWithQueue !== undefined) {
+        const owner = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id === latestRun.runId,
+        )!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("latest-run-waiting"),
+              type: "run.updated",
+              threadId,
+              runId: owner.id,
+              occurredAt: now,
+              payload: { ...owner, status: "waiting", completedAt: null },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queue-follow-up"),
+          threadId,
+          messageId: MessageId.make("message:queue-follow-up"),
+          text: "Follow up after the background work",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+        assert.equal(queued.status, "queued");
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("queue-held"),
+              type: "run.updated",
+              threadId,
+              runId: queued.id,
+              occurredAt: now,
+              payload: { ...queued, queueHeld: true },
+            },
+            {
+              id: EventId.make("latest-run-settled"),
+              type: "run.updated",
+              threadId,
+              runId: owner.id,
+              occurredAt: now,
+              payload: owner,
+            },
+          ],
+        });
+      }
+
+      if (olderStart) {
+        const older = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id === watcherRun.runId,
+        )!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("older-run-starting"),
+              type: "run.updated",
+              threadId,
+              runId: older.id,
+              occurredAt: now,
+              payload: { ...older, status: "starting", startedAt: null, completedAt: null },
+            },
+          ],
+        });
+      }
+
+      yield* orchestrator.dispatch(
+        stopWithQueue === "thread.stop"
+          ? {
+              type: "thread.stop",
+              commandId: CommandId.make("stop-background-work"),
+              threadId,
+            }
+          : {
+              type: "run.interrupt",
+              commandId: CommandId.make("stop-background-work"),
+              threadId,
+              runId: olderStart
+                ? watcherRun.runId
+                : failedStart
+                  ? failedRun.runId
+                  : latestRun.runId,
+              ...(stopWithQueue === undefined ? {} : { holdQueue: true }),
+            },
       );
-    }),
-  );
+      yield* worker.drain();
+
+      // Native run.interrupt(holdQueue:true) schedules child stopping in its
+      // outbox. Direct thread.stop delegates that responsibility to its sender.
+      assert.deepEqual(
+        delegatedStops,
+        stopWithQueue === "run.interrupt"
+          ? [{ threadId, commandId: CommandId.make("stop-background-work") }]
+          : [],
+      );
+      const stopEffects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+        CommandId.make("stop-background-work"),
+      );
+      assert.equal(
+        stopEffects.filter((effect) => effect.request.type === "delegated-tasks.stop").length,
+        stopWithQueue === "run.interrupt" ? 1 : 0,
+      );
+      assert.sameDeepMembers(
+        interrupts.map((interrupt) => [interrupt.providerThread.id, interrupt.providerTurnId]),
+        [
+          ...(olderStart || failedStart ? [] : [[otherProviderThreadId, latestRun.providerTurnId]]),
+          [codexProviderThread.id, reviewerRun.providerTurnId],
+        ],
+      );
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      if (olderStart) {
+        assert.equal(after.runs.find((run) => run.id === watcherRun.runId)?.status, "interrupted");
+      }
+      if (stopWithQueue !== undefined) {
+        assert.equal(after.runs.at(-1)?.status, "queued");
+        assert.equal(after.runs.at(-1)?.queueHeld, true);
+        assert.lengthOf(started, 1);
+      }
+      assert.deepEqual(
+        [devServerId, ...(olderStart ? [] : [watcherId]), reviewerId].map(
+          (id) => after.turnItems.find((item) => item.id === id)?.status,
+        ),
+        olderStart ? ["interrupted", "interrupted"] : ["interrupted", "interrupted", "interrupted"],
+      );
+      assert.equal(after.subagents[0]?.status, "interrupted");
+      const reviewerThread = yield* orchestrator.getThreadProjection(reviewerThreadId);
+      assert.equal(reviewerThread.nodes[0]?.status, "interrupted");
+      assert.equal(reviewerThread.subagents[0]?.status, "interrupted");
+      if (workflowMember) {
+        assert.isUndefined(reviewerThread.turnItems.find((item) => item.id === nestedItemId));
+        assert.equal(
+          reviewerThread.nodes.find((node) => node.id === nestedSubagentId)?.status,
+          "interrupted",
+        );
+      } else {
+        assert.equal(
+          reviewerThread.turnItems.find((item) => item.id === nestedItemId)?.status,
+          "interrupted",
+        );
+      }
+      const testerThread = yield* orchestrator.getThreadProjection(tester.threadId);
+      assert.equal(testerThread.nodes[0]?.status, "interrupted");
+      if (failedStart) {
+        assert.deepEqual(
+          after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
+            ?.pendingBackgroundTasks,
+          backgroundWorkAfterStop === undefined ? [] : backgroundTasks,
+        );
+        assert.deepEqual(
+          after.providerThreads.find((candidate) => candidate.id === otherProviderThreadId)
+            ?.pendingBackgroundTasks,
+          otherBackgroundTasks,
+        );
+      }
+    }).pipe(
+      Effect.provide(
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "background-work-stop" },
+          ProviderAdapterRegistry.layerSingle(adapter),
+          {
+            runEffectWorker: false,
+            threads: {
+              stopDelegatedTasks: (input) =>
+                Effect.gen(function* () {
+                  assert.ok(fixtureOrchestrator);
+                  const { subagents } = yield* fixtureOrchestrator.getThreadRecords(
+                    input.threadId,
+                    ["subagents"],
+                  );
+                  // Provider-native background subagents have no app-owned child thread.
+                  assert.isEmpty(
+                    subagents.filter(
+                      (task) => task.origin === "app_owned" && task.childThreadId !== null,
+                    ),
+                  );
+                  assert.deepEqual(input, {
+                    threadId: ThreadId.make("thread:background-work-stop"),
+                    commandId: CommandId.make(
+                      stalledRun === undefined ? "stop-background-work" : "stop-stalled-run",
+                    ),
+                    reason: undefined,
+                  });
+                  delegatedStops.push({ threadId: input.threadId, commandId: input.commandId });
+                }),
+            },
+          },
+        ),
+      ),
+    );
+  });
 
 it.effect("Stop reaches background work an earlier provider thread still runs", () =>
   stopEarlierBackgroundWork({}),

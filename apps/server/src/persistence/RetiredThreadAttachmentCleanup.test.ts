@@ -15,7 +15,7 @@ import { runMigrations } from "./Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { cleanupRetiredThreadFilesystem } from "./RetiredThreadAttachmentCleanup.ts";
 
-const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 layer("RetiredThreadAttachmentCleanup", (it) => {
   it.effect("deletes exact retired-thread files and clears the retry tombstone", () =>

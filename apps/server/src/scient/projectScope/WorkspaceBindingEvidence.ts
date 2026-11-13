@@ -160,7 +160,7 @@ const make = Effect.gen(function* () {
       // Binding evidence reads only `git remote -v`, not the gh repo set-default marker.
       const remote = RepositoryIdentityResolver.pickPrimaryRemote(
         RepositoryIdentityResolver.parseRemoteFetchUrls(remotes.stdout),
-        null,
+        "",
       );
       const identity = remote
         ? RepositoryIdentityResolver.buildRepositoryIdentity({

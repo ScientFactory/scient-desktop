@@ -231,7 +231,6 @@ import {
   useScientRemoteImageReference,
 } from "../scient/images/scientMarkdownImage";
 import {
-  inlineWorkspaceImageMarkdownSource,
   inlineWorkspaceImageResource,
   resolveInlineWorkspaceImage,
 } from "../scient/images/inlineWorkspaceImage";
@@ -263,6 +262,7 @@ import {
   ChatMarkdownImageFallback,
   ChatMarkdownVideo,
   MarkdownLinkContext,
+  markdownImageCopy,
 } from "./chat/ChatMarkdownMedia";
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
@@ -1267,19 +1267,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
-    const alert =
-      GITHUB_ALERT_PRESENTATIONS[String((props as Record<string, unknown>)["data-alert"] ?? "")];
+    const alertKind = String((props as Record<string, unknown>)["data-alert"] ?? "");
+    const alert = GITHUB_ALERT_PRESENTATIONS[alertKind];
     if (!alert) {
       return <blockquote {...props}>{children}</blockquote>;
     }
     return (
       <div
         role="note"
+        data-markdown-alert={alertKind}
         dir={props.dir}
         className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}
       >
         <p
           data-thread-find-ignore="true"
+          data-markdown-alert-label=""
           className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}
         >
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
@@ -1744,9 +1746,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const classifiedSrc =
       typeof localSrc === "string" ? srcString.replaceAll("\\", "/") : srcString;
     const altText = alt ?? "";
-    // SCIENT-FORK:START — image copy Markdown wraps spaced destinations in <…> (scient/images).
-    const copyMarkdown = inlineWorkspaceImageMarkdownSource(altText, srcString, authoredTitle);
-    // SCIENT-FORK:END
+    const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
     const { className, style: _style, width, height, ...imageProps } = props;
     const authoredSizeStyle = authoredImageSizeStyle(width, height);
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);

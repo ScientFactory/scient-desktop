@@ -14,7 +14,7 @@ import {
   type SourceControlAppSignIn,
 } from "@t3tools/source-control-core/shared/definition";
 
-import { gitHubMediaUrl } from "./gitHubMedia.ts";
+import { gitHubMediaUrl, gitHubRawFileUrl } from "./gitHubMedia.ts";
 // SCIENT-FORK:START — Scient's own GitHub App.
 import { SCIENT_APP_SIGN_IN } from "./scientAppSignIn.ts";
 // SCIENT-FORK:END
@@ -156,5 +156,6 @@ export const definition = defineSourceControl({
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
   mediaUrl: gitHubMediaUrl,
+  rawFileUrl: gitHubRawFileUrl,
   settings,
 });
