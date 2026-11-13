@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type {
   EnvironmentId,
   ModelSelection,
+  ProviderConnectionAccount,
   ProviderOptionSelection,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -113,6 +114,8 @@ export function ProviderOnboardingPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly reconnectEntry?: ProviderInstanceEntry;
+  /** The model account Reconnect signs in again, for a provider that holds several. */
+  readonly reconnectAccount?: ProviderConnectionAccount;
   readonly compact?: boolean;
   readonly open?: boolean;
   readonly onOpenChange?: (open: boolean) => void;
@@ -400,6 +403,9 @@ export function ProviderOnboardingPicker(props: {
                   <ProviderLifecycleSetupSurface
                     entry={selectedEntry}
                     environmentId={props.environmentId}
+                    {...(props.reconnectAccount && selectedEntry === reconnectEntry
+                      ? { signedOutAccount: props.reconnectAccount }
+                      : {})}
                     onManageFallback={() => {
                       if (canManageProviderLifecycle(selectedEntry.snapshot)) {
                         setOpen(false);
@@ -455,6 +461,7 @@ export function ProviderLifecycleSetupSurface(props: {
   readonly environmentId: EnvironmentId;
   readonly entry: ProviderInstanceEntry;
   readonly onManageFallback?: (() => void) | undefined;
+  readonly signedOutAccount?: ProviderConnectionAccount | undefined;
 }) {
   const navigate = useNavigate();
   if (supportsAssistedProviderSetupSurface(props.entry.driverKind, "composer")) {
@@ -464,6 +471,7 @@ export function ProviderLifecycleSetupSurface(props: {
         environmentId={props.environmentId}
         key={props.entry.instanceId}
         provider={props.entry.snapshot}
+        signedOutAccount={props.signedOutAccount}
         surface="composer"
       />
     );

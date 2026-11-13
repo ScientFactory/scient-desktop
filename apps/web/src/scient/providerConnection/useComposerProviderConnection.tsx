@@ -12,6 +12,7 @@ import { useComposerDraftStore, type ComposerThreadTarget } from "../../composer
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { ComposerProviderUpdateFooter } from "./ComposerProviderUpdateFooter";
 import { ProviderLifecycleSetupSurface } from "./ProviderOnboardingPicker";
+import { scientAgentSignedOutAccount } from "./scientAgentAccountList";
 import {
   activeProviderRuntimeUpdateOperation,
   providerConnectionPresentation,
@@ -33,6 +34,7 @@ type ModelDisabledReason = (instanceId: ProviderInstanceId, model: string) => st
 export function useComposerProviderRuntimeUpdate(input: {
   readonly selectedProviderEntry: ProviderInstanceEntry | undefined;
   readonly selectedInstanceId: ProviderInstanceId;
+  readonly selectedModel: string;
   readonly lockedProvider: ProviderDriverKind | null;
   readonly getModelDisabledReason: ModelDisabledReason;
 }) {
@@ -62,12 +64,18 @@ export function useComposerProviderRuntimeUpdate(input: {
     instanceId === selectedInstanceId && providerRuntimeUpdateSendDisabledReason
       ? providerRuntimeUpdateSendDisabledReason
       : getModelDisabledReason(instanceId, model);
+  // One Scient Agent holds many model accounts; the selected model's own may have signed out.
+  const reconnectAccount = scientAgentSignedOutAccount(
+    selectedProviderEntry?.snapshot,
+    input.selectedModel,
+  );
   const selectedProviderNeedsConnection =
     selectedProviderEntry !== undefined &&
-    shouldShowProviderLifecycleSetupInComposer(
-      selectedProviderEntry.snapshot,
-      selectedProviderRuntime,
-    );
+    (reconnectAccount !== undefined ||
+      shouldShowProviderLifecycleSetupInComposer(
+        selectedProviderEntry.snapshot,
+        selectedProviderRuntime,
+      ));
   const selectedProviderConnectionKind = providerConnectionPresentation(
     selectedProviderEntry?.snapshot,
   ).kind;
@@ -75,7 +83,8 @@ export function useComposerProviderRuntimeUpdate(input: {
     lockedProvider !== null &&
     selectedProviderEntry !== undefined &&
     (selectedProviderConnectionKind === "not-connected" ||
-      selectedProviderConnectionKind === "connecting")
+      selectedProviderConnectionKind === "connecting" ||
+      reconnectAccount !== undefined)
       ? selectedProviderEntry
       : undefined;
   return {
@@ -86,6 +95,7 @@ export function useComposerProviderRuntimeUpdate(input: {
     getComposerModelDisabledReason,
     selectedProviderNeedsConnection,
     reconnectProviderEntry,
+    reconnectAccount,
     /** Model picker trigger props while the selected provider updates. */
     modelPickerUpdateStatusProps: selectedProviderIsUpdating
       ? {

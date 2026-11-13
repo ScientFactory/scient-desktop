@@ -971,6 +971,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const providerRuntimeUpdate = useComposerProviderRuntimeUpdate({
     selectedProviderEntry,
     selectedInstanceId,
+    selectedModel,
     lockedProvider,
     getModelDisabledReason,
   });
@@ -2673,6 +2674,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         modelPreferences={settings.providerModelPreferences}
         fallbackSelection={fallbackModelSelection}
         {...(reconnectProviderEntry ? { reconnectEntry: reconnectProviderEntry } : {})}
+        {...(providerRuntimeUpdate.reconnectAccount
+          ? { reconnectAccount: providerRuntimeUpdate.reconnectAccount }
+          : {})}
         onInstanceModelChange={onProviderModelSelect}
         onOpenProviderSetup={onOpenProviderSetup}
       />

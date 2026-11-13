@@ -121,6 +121,8 @@ import {
   retainedComputerPresentation,
 } from "../../provider/omp/OmpComputerPresentation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+// SCIENT-FORK: Scient's wording for an account the agent signed out.
+import { scientAgentSignedOutNotice } from "../../provider/scient/ScientAgentSignedOut.ts";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
@@ -151,6 +153,8 @@ export interface OmpAdapterV2Options extends Pick<
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly eventQueueByteLimit?: number;
   readonly eventQueueItemLimit?: number;
+  // SCIENT-FORK: a model account the agent signed out refreshes the provider's account list.
+  readonly onAccountSignedOut?: Effect.Effect<void>;
 }
 const JsonString = Schema.fromJsonString(Schema.String);
 const decodeSubagentCancellation = Schema.decodeUnknownEffect(
@@ -914,6 +918,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 return notice(
                   `${target.name} switched from ${event.from ?? "the requested model"} to ${event.to ?? "a fallback model"}${event.reason ? `: ${event.reason}` : "."}`,
                 );
+              // SCIENT-FORK: the agent's "Run /login" advice becomes Scient's, and the accounts refresh.
+              const signedOut =
+                event.type === "notice" ? scientAgentSignedOutNotice(event) : undefined;
+              if (signedOut !== undefined)
+                return Effect.andThen(options.onAccountSignedOut ?? Effect.void, notice(signedOut));
               if (event.type === "notice" || event.method === "notify")
                 return notice(
                   `${event.source ? `${event.source}: ` : ""}${event.message ?? `${target.name} notification.`}`,

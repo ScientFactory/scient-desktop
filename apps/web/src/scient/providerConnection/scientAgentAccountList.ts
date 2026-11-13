@@ -106,3 +106,23 @@ export function scientAgentAccountOperation(
 ): ProviderConnectionOperation | null {
   return provider.connection?.accountOperation ?? null;
 }
+
+/**
+ * The model account the selected model signs in with, when its sign-in has ended: the agent
+ * signed it out, or it was never renewed. A model's provider prefix is the account it uses; an
+ * entry that shares another's sign-in (`sameAccountAs`) answers for that account.
+ */
+export function scientAgentSignedOutAccount(
+  provider: ServerProvider | undefined,
+  model: string,
+): ProviderConnectionAccount | undefined {
+  if (provider?.driver !== "scient") return undefined;
+  const accounts = scientAgentAccounts(provider);
+  const prefix = model.split("/", 1)[0];
+  const entry = accounts?.find((account) => account.id === prefix);
+  const account =
+    entry?.sameAccountAs === undefined
+      ? entry
+      : (accounts?.find((candidate) => candidate.id === entry.sameAccountAs) ?? entry);
+  return account && !account.connected ? account : undefined;
+}

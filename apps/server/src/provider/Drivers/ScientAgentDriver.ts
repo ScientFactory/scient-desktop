@@ -8,6 +8,7 @@ import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -195,8 +196,15 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         },
       };
     };
+    // A model account the agent signs out leaves its account list; read the list again.
+    const refreshAccounts = yield* Ref.make<Effect.Effect<void>>(Effect.void);
     const orchestrationAdapter = yield* makeOmpAdapterV2({
       target: scientAgentTarget,
+      onAccountSignedOut: Ref.get(refreshAccounts).pipe(
+        Effect.flatten,
+        Effect.forkDetach,
+        Effect.asVoid,
+      ),
       instanceId,
       settings: launchConfig,
       homePath: root,
@@ -343,6 +351,7 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
+    yield* Ref.set(refreshAccounts, Effect.asVoid(snapshot.refresh));
     return {
       pluginActions: { ...native.actions, store },
       nativeInventoryChanges: native.reports,

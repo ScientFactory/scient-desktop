@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ProviderConnectionAccount,
   ProviderManagedRuntimeAction,
   ServerProvider,
 } from "@t3tools/contracts";
@@ -69,6 +70,8 @@ export function ManagedRuntimeComposerSetup(props: {
   readonly modelSetupHint: string;
   readonly renderModelSetupAction?: (appearance: "setup-action" | "setup-secondary") => ReactNode;
   readonly provider: ServerProvider;
+  /** The selected model's account, whose sign-in ended: Reconnect signs in to it again. */
+  readonly signedOutAccount?: ProviderConnectionAccount | undefined;
 }) {
   const overlay = useContext(ModelPickerOverlayContext);
   const ownsOverlay = overlay?.instanceId === props.provider.instanceId;
@@ -259,6 +262,21 @@ export function ManagedRuntimeComposerSetup(props: {
             )
           : null}
         {error ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
+      </AssistedSetupFrame>
+    );
+  }
+
+  if (props.signedOutAccount) {
+    const account = props.signedOutAccount.name;
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupStatus
+          body={`Sign in to ${account} again to keep using its models.`}
+          icon={<TriangleAlertIcon className="size-5 text-warning" />}
+          role="alert"
+          title={`${account} is signed out`}
+        />
+        {connectModels("setup-action")}
       </AssistedSetupFrame>
     );
   }
