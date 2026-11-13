@@ -587,6 +587,13 @@ sources in `<project>/.scient/library/pins.json`:
   its first-pinned `citationKey`, only `note`, `projectNote` and
   `projectNoteHistory` follow the key): its "Note for" picker loads and saves
   another key's note beside the cached detail, never into it.
+- Known panel limitation: the integrated web capture reproduced Keep mine
+  remaining at Saving after a real second writer changed the project note.
+  The project file retained the second writer's text while note-update HTTP
+  requests repeated. The draft stayed visible but was not saved. The root
+  cause is not yet isolated; the save/retry loop in `SourceNote.tsx` and the
+  checked base must be verified through the real panel before treating this
+  conflict choice as qualified.
 - Note history (`projectNoteHistory.ts`): `.scient/library/note-history/<pin
   source ID>.json`, oldest first: the first note kept (`original`, seeded
   from the pin when no history exists), then accepted versions (`edit`, with

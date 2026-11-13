@@ -77,7 +77,14 @@ that is not in this project has only My note.
 A note for this project is never overwritten by a change made elsewhere. If
 another window, another Scient on this computer or an agent changed it after
 you started typing, the note shows **Saved elsewhere** with that text next to
-yours: choose **Keep mine** or **Use saved**. **Earlier versions** next to the
+yours: choose **Keep mine** or **Use saved**.
+
+**Current limit:** after a conflict, **Keep mine** can stay at **Saving…**
+without saving your draft. Copy the draft before leaving the source; the
+other saved text remains in the project. A note still marked **Saving…** is
+not confirmed saved.
+
+**Earlier versions** next to the
 heading lists the first note the project kept (however it was written) and the
 last 20 versions, with who saved each and when (typing in one sitting counts as
 one version); choosing one restores it as a new change, never in place of the
