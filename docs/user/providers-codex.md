@@ -59,6 +59,27 @@ app-server provider status,” set `T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` in the
 Scient server's environment and restart it. See [Provider check timeouts](./install.md#provider-check-timeouts)
 for configuration and other providers.
 
+## Generate images
+
+Codex can generate images directly in a Scient thread when your Codex version,
+model, and account support native image generation.
+
+If Codex reports that its image tool is unavailable, image generation may be
+disabled in its configuration. In **Settings > Providers**, edit your existing
+Codex provider and add this to **Launch arguments**, keeping any other arguments:
+
+```text
+-c features.image_generation=true
+```
+
+This enables the feature for that provider in Scient without changing your shared
+Codex configuration. You do not need another provider instance or a separate image
+API key. The flag does not add image support to an unsupported model or account.
+
+Launch arguments apply to Codex sessions started after you save them. Start a new
+thread with the same Codex provider and ask it to generate an image. The completed
+image appears in the thread.
+
 ## Why Use More Than One Account?
 
 Common reasons:

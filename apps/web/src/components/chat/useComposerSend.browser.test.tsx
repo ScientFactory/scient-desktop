@@ -281,7 +281,13 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       openUsageLimits: () => false,
       clearUsageLimitsFor: noop,
       needsLoadBalancing: false,
-      loadBalancing: { pending: false, failed: false, environmentId, refresh: noop },
+      loadBalancing: {
+        pending: false,
+        failed: false,
+        environmentId,
+        refresh: noop,
+        refreshSelection: async () => null,
+      },
       readPendingEnvironmentChange: () => null,
       pendingApprovals: [],
       respondingRequestIds: [],
@@ -303,6 +309,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       handleNewThreadInActiveProject: noop,
       persistThreadSettingsForNextTurn: async () => AsyncResult.success(undefined),
       linkCheckoutPullRequest: noop,
+      refreshBeforeSend: () => null,
       ...overrides,
     };
     let send: ReturnType<typeof useComposerSend>["onSend"] | undefined;

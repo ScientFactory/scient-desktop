@@ -418,6 +418,7 @@ export function layerWithRegistry<Error>(
   | ProjectStore.ProjectStoreV2
   | McpProviderSessions.McpProviderSessions
   | CommandOutputRecorder.CommandOutputRecorder
+  | ThreadCommandExecutor.ThreadCommandExecutor
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService,
   | Error
@@ -628,7 +629,12 @@ export function layerWithRegistry<Error>(
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerStores, layerProviderSessionManagerProvided, layerServerConfig),
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        layerStores,
+        layerProviderSessionManagerProvided,
+        layerServerConfig,
+      ),
     ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
@@ -797,7 +803,8 @@ export function layerWithRegistry<Error>(
         (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(layerServerConfig)),
       ),
     ),
-    Layer.provide(layerThreadCommandExecutor),
+    // SCIENT-FORK: one step below the runtime, so its layers see the executor it also exports.
+    Layer.provideMerge(layerThreadCommandExecutor),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(options.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );

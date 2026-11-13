@@ -260,6 +260,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadHistoryPage: () => Effect.die("unused"),
     getTimelinePage: () => Effect.die("Unused timeline read"),
     getMessageCount: () => Effect.die("unused message count"),
+    getMessagesById: () => Effect.die("unused messages by id"),
     getTurnItem: () => Effect.die("unused turn item read"),
     getThreadRecords: () => Effect.die("unused record read"),
     getThreadProjection: unused,
@@ -523,7 +524,7 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 1);
       assert.isTrue(publications[0]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
       assert.equal(publications[0]?.state?.phase, "waiting_for_input");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -617,7 +618,7 @@ describe("AgentAwarenessRelay", () => {
         yield* relay.drain;
         assert.equal(publications.length, 2);
         assert.equal(publications[1]?.state?.phase, "completed");
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("republishes a completed parent for its waiting child after a relink", () =>
@@ -643,7 +644,7 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps a child's alert time when the parent's own request comes and goes", () =>
@@ -811,7 +812,7 @@ describe("AgentAwarenessRelay", () => {
         yield* relay.drain;
         assert.equal(publications.length, 3);
         assert.equal(publications[2]?.state, null);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("holds a completion through a continuation gap, then publishes it once", () =>
@@ -1259,5 +1260,5 @@ it.effect("catches up after startup without polling after success", () =>
     assert.equal(catchUp.activitySnapshotReads, 3);
     assert.equal(publications.length, 2);
     assert.equal(publications[1]?.state?.threadId, THREAD_ID);
-  }).pipe(Effect.scoped),
+  }),
 );

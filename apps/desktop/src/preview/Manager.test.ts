@@ -752,7 +752,7 @@ describe("PreviewManager", () => {
         if (existing) {
           expect(yield* fs.readFileString(`${downloads}/report.txt`)).toBe("existing download");
         }
-      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   effectIt.effect.each([
@@ -1063,7 +1063,7 @@ describe("PreviewManager", () => {
     ["linux", false],
     ["win32", false],
   ] as const)(
-    "lets the page and its iframes claim the find shortcut before the host opens find on %s",
+    "lets the page and its iframes claim the find and zoom shortcuts before the host acts on %s",
     ([platform, usesMeta]) =>
       withManager(
         (manager) =>
@@ -1081,8 +1081,23 @@ describe("PreviewManager", () => {
             yield* manager.registerWebview("tab_page_find", 42);
             yield* manager.setForwardedShortcuts([
               { command: "preview.find", shortcut: parseKeybindingShortcut("mod+f")! },
+              { command: "preview.zoomIn", shortcut: parseKeybindingShortcut("mod+=")! },
             ]);
             const beforeInput = preview.listeners.get("before-input-event")!;
+            const keepsZoom = vi.fn();
+            beforeInput(
+              { preventDefault: keepsZoom } as never,
+              {
+                type: "keyDown",
+                key: "=",
+                code: "Equal",
+                meta: usesMeta,
+                control: !usesMeta,
+                shift: false,
+                alt: false,
+              } as never,
+            );
+            expect(keepsZoom).not.toHaveBeenCalled();
             const findKey = {
               type: "keyDown",
               key: "f",
@@ -2299,7 +2314,7 @@ describe("PreviewManager", () => {
       expect(yield* nextType).toBe("attached");
       yield* manager.closeTab("tab_1");
       expect(yield* nextType).toBe("detached");
-    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+    }).pipe(Effect.provide(managerLayer())),
   );
 
   effectIt.effect(
@@ -2358,7 +2373,7 @@ describe("PreviewManager", () => {
         expect(yield* Queue.take(capturing)).toBe(true);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
-      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+      }).pipe(Effect.provide(managerLayer())),
   );
 
   effectIt.effect("reports early and subsequent load failures for the current guest", () =>
@@ -2449,7 +2464,7 @@ describe("PreviewManager", () => {
       expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "detached", ...serverTab });
       expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
       expect(statuses.at(-1)?.kind).toBe("Success");
-    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+    }).pipe(Effect.provide(managerLayer())),
   );
 
   effectIt.effect("discards a screenshot that resolves after its guest is replaced", () =>

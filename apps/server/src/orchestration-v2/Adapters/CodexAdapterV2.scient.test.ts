@@ -4696,7 +4696,6 @@ describe("Codex restored Protocol", () => {
               }),
             close: () => Effect.void,
           },
-          threadId: ThreadId.make("thread-1"),
           providerSessionId: ProviderSessionId.make("provider-session-1"),
         });
         assert.exists(protocolLogger);
@@ -4744,7 +4743,6 @@ describe("Codex restored Protocol", () => {
               }),
             close: () => Effect.void,
           },
-          threadId: ThreadId.make("thread-1"),
           providerSessionId: ProviderSessionId.make("provider-session-1"),
         });
         assert.exists(protocolLogger);

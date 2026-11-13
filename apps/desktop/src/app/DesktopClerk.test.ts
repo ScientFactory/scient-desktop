@@ -484,7 +484,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         ),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
       );
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("hands Scient app links to the renderer while browser activation stays held", () =>
@@ -543,6 +543,6 @@ it.effect("hands Scient app links to the renderer while browser activation stays
         }),
       ),
     );
-  }).pipe(Effect.scoped),
+  }),
 );
 // SCIENT-FORK:END scient-deferred-auth

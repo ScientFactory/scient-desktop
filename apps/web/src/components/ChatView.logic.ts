@@ -41,6 +41,7 @@ import {
   type PreviewAnnotationPayload,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderThreadId,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -1087,9 +1088,9 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 }
 
 // Window return puts the caret in the composer unless focus is deliberate: another text field,
-// a terminal, an open dialog, menu, or popup, a region or sidebar row reached from the keyboard,
-// or a region with its own keys (aria-keyshortcuts). A plain focused button or a clicked row
-// yields to the composer.
+// a terminal, an open dialog, menu, or popup, a region, timeline, or sidebar row reached from the
+// keyboard, or a region with its own keys (aria-keyshortcuts). A plain focused button or a clicked
+// row yields to the composer.
 export function shouldRefocusComposerOnWindowFocus(
   activeElement:
     | (Pick<Element, "tagName" | "closest" | "getAttribute"> & { isContentEditable?: boolean })
@@ -1557,4 +1558,13 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
     if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
   }
   return available;
+}
+
+/** An imported native session is bound before it has messages or runs, and its cwd is fixed. */
+export function isThreadEnvironmentLocked(input: {
+  readonly messageCount: number;
+  readonly hasRuntime: boolean;
+  readonly activeProviderThreadId: ProviderThreadId | null;
+}): boolean {
+  return input.messageCount > 0 || input.hasRuntime || input.activeProviderThreadId !== null;
 }

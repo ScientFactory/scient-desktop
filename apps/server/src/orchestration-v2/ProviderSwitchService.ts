@@ -135,11 +135,14 @@ export const layer: Layer.Layer<
             Option.isSome(targetAdapter) &&
             Option.isSome(currentInstance) &&
             (currentSession !== undefined || currentProviderThread !== undefined)
-              ? yield* targetAdapter.value.planSelectionTransition({
-                  current,
-                  target: targetModelSelection,
-                  sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
-                })
+              ? negotiatedCapabilities === undefined
+                ? // No session record left to switch in place; the next session starts with it.
+                  ({ type: "apply_on_next_turn" } as const)
+                : yield* targetAdapter.value.planSelectionTransition({
+                    current,
+                    target: targetModelSelection,
+                    sessionCapabilities: negotiatedCapabilities,
+                  })
               : undefined;
           // SCIENT-FORK:START — pooled processes do not own their threads' workspaces.
           const perThreadWorkspace =

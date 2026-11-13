@@ -41,6 +41,17 @@ const TRANSFER = {
   },
   providers: { codex: { observed, ceiling }, claudeAgent: { observed, ceiling } },
 };
+const SCENARIOS = {
+  schemaVersion: 1,
+  providers: {
+    codex: [{ phase: "startup", metric: "snapshot", unit: "bytes", observed: 1, ceiling: 2 }],
+    claudeAgent: [],
+  },
+};
+const RESULT_FILE = "thread-transfer-result.json";
+const SCENARIOS_FILE = "thread-transfer-scenarios.json";
+// A payload holding several archive members; any other payload is the single requested member.
+const MEMBERS = "archive members";
 const VITEST = {
   success: true,
   numFailedTests: 0,
@@ -119,7 +130,12 @@ function fixture(t, event = "push") {
     };
     const prefix = run.event === "merge_group" ? "queue" : "pr";
     add(`ci-${prefix}-qualification-attempt-${run.run_attempt}`, receipt);
-    add("thread-transfer-results", structuredClone(TRANSFER));
+    add("thread-transfer-results", {
+      [MEMBERS]: {
+        [RESULT_FILE]: structuredClone(TRANSFER),
+        [SCENARIOS_FILE]: structuredClone(SCENARIOS),
+      },
+    });
     for (const suite of ["web", "server"])
       for (let shard = 1; shard <= SHARDS[suite]; shard++)
         add(`vitest-${suite}-${shard}-attempt-${run.run_attempt}`, structuredClone(VITEST));
@@ -218,9 +234,19 @@ function fixture(t, event = "push") {
       return artifacts.get(input.run_id) ?? [];
     },
   };
-  const args = { github, context, core, env, archiveReader: (bytes) => bytes };
+  const archiveReader = (bytes, members) => {
+    const value = JSON.parse(bytes.toString());
+    const entries = value[MEMBERS] ? Object.entries(value[MEMBERS]) : [[members[0], value]];
+    assert.ok(
+      entries.every(([name]) => members.includes(name)),
+      "Unexpected archive members",
+    );
+    return new Map(entries.map(([name, member]) => [name, Buffer.from(JSON.stringify(member))]));
+  };
+  const args = { github, context, core, env, archiveReader };
   const report = (runId, name) =>
     payloads.get(artifacts.get(runId).find((artifact) => artifact.name === name).id);
+  const transfer = (runId) => report(runId, "thread-transfer-results")[MEMBERS];
   return {
     ...args,
     args,
@@ -243,6 +269,7 @@ function fixture(t, event = "push") {
     receiptFor,
     queueRun,
     report,
+    transfer,
   };
 }
 
@@ -261,11 +288,22 @@ test("a main push restores every report only after exact queue evidence", async 
   assert.equal(f.outputs.source_run_id, "10");
   assert.equal(f.outputs.source_url, `https://github.com/${REPO}/actions/runs/10`);
   const files = fs.readdirSync(path.join(f.temp, "ci-queue-reuse"));
+  assert.equal(files.length, SHARDS.web + SHARDS.server + 2);
+  const restored = (name) =>
+    JSON.parse(fs.readFileSync(path.join(f.temp, "ci-queue-reuse", name), "utf8"));
+  assert.deepEqual(restored(RESULT_FILE), TRANSFER);
+  assert.deepEqual(restored(SCENARIOS_FILE), SCENARIOS);
+});
+
+test("a source run from before the scenario report restores its result alone", async (t) => {
+  const f = fixture(t);
+  const id = f.artifacts.get(10).find((artifact) => artifact.name === "thread-transfer-results").id;
+  f.payloads.set(id, structuredClone(TRANSFER));
+  await restore(f.args);
+  reused(f);
+  const files = fs.readdirSync(path.join(f.temp, "ci-queue-reuse"));
   assert.equal(files.length, SHARDS.web + SHARDS.server + 1);
-  assert.deepEqual(
-    JSON.parse(fs.readFileSync(path.join(f.temp, "ci-queue-reuse/thread-transfer-result.json"))),
-    TRANSFER,
-  );
+  assert.ok(files.includes(RESULT_FILE) && !files.includes(SCENARIOS_FILE));
 });
 
 test("a push landing two queue entries reuses when each entry qualified from its parent", async (t) => {
@@ -392,7 +430,10 @@ const commonFailures = [
   ["missing proof", (f) => f.artifacts.get(10).shift()],
   ["ambiguous proof", (f) => f.artifacts.get(10).push({ ...f.artifacts.get(10)[0] })],
   ["missing shard", (f) => f.artifacts.get(10).pop()],
-  ["invalid transfer", (f) => (f.report(10, "thread-transfer-results").unexpected = "data")],
+  ["invalid transfer", (f) => (f.transfer(10)[RESULT_FILE].unexpected = "data")],
+  ["invalid scenarios", (f) => (f.transfer(10)[SCENARIOS_FILE].providers.codex[0].unit = "lines")],
+  ["scenarios without a result", (f) => delete f.transfer(10)[RESULT_FILE]],
+  ["an unknown transfer member", (f) => (f.transfer(10)["extra.json"] = {})],
   ["failed tests", (f) => (f.report(10, "vitest-web-1-attempt-1").numFailedTests = 1)],
   [
     "failed suite",
@@ -467,7 +508,7 @@ test("a queue entry reuses its PR run when that run tested this exact content an
   assert.equal(f.outputs.overleaf_windows, "true");
   assert.equal(
     fs.readdirSync(path.join(f.temp, "ci-queue-reuse")).length,
-    SHARDS.web + SHARDS.server + 1,
+    SHARDS.web + SHARDS.server + 2,
   );
 });
 
@@ -639,7 +680,7 @@ test("a PR whose tested merge does not join its base and head records nothing", 
   assert.equal(fs.existsSync(path.join(f.temp, "ci-queue-reuse")), false);
 });
 
-test("archive reader accepts one exact JSON member and refuses paths, duplicates and oversized output", (t) => {
+test("archive reader accepts only the listed JSON members and refuses paths, duplicates and oversized output", (t) => {
   const f = fixture(t);
   const zip = (names, value) =>
     execFileSync(
@@ -652,23 +693,28 @@ test("archive reader accepts one exact JSON member and refuses paths, duplicates
       ],
       { maxBuffer: 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
     );
-  assert.equal(
-    readArchive(zip(["receipt.json"], "{}"), "receipt.json", 100, f.env).toString(),
-    "{}",
-  );
-  for (const names of [
-    ["../receipt.json"],
-    ["receipt.json", "receipt.json"],
-    ["receipt.json", "extra.json"],
-  ])
-    assert.throws(
-      () => readArchive(zip(names, "{}"), "receipt.json", 100, f.env),
-      /archive members/,
+  const read = (names, members, value = "{}") =>
+    Object.fromEntries(
+      [...readArchive(zip(names, value), members, 100, f.env)].map(([name, raw]) => [
+        name,
+        raw.toString(),
+      ]),
     );
-  assert.throws(() =>
-    readArchive(zip(["receipt.json"], "x".repeat(100_000)), "receipt.json", 100, f.env),
-  );
-  assert.throws(() => readArchive(Buffer.from("not a zip"), "receipt.json", 100, f.env));
+  assert.deepEqual(read(["receipt.json"], ["receipt.json"]), { "receipt.json": "{}" });
+  const transfer = [RESULT_FILE, SCENARIOS_FILE];
+  assert.deepEqual(read([RESULT_FILE], transfer), { [RESULT_FILE]: "{}" });
+  assert.deepEqual(read(transfer, transfer), { [RESULT_FILE]: "{}", [SCENARIOS_FILE]: "{}" });
+  for (const [names, members] of [
+    [["../receipt.json"], ["receipt.json"]],
+    [["receipt.json", "receipt.json"], ["receipt.json"]],
+    [["receipt.json", "extra.json"], ["receipt.json"]],
+    [[SCENARIOS_FILE], transfer],
+    [[RESULT_FILE, SCENARIOS_FILE, SCENARIOS_FILE], transfer],
+    [[RESULT_FILE, "extra.json"], transfer],
+  ])
+    assert.throws(() => read(names, members), /archive members/);
+  assert.throws(() => read(["receipt.json"], ["receipt.json"], "x".repeat(100_000)));
+  assert.throws(() => readArchive(Buffer.from("not a zip"), ["receipt.json"], 100, f.env));
   assert.equal(fs.readdirSync(f.temp).length, 0);
 });
 
@@ -715,6 +761,10 @@ test("workflow preserves complete evidence before reuse and a single always-runn
   for (const [suite, count] of Object.entries(SHARDS))
     for (let shard = 1; shard <= count; shard++)
       assert.match(reporting, new RegExp(`name: vitest-${suite}-${shard}-attempt-`));
+  // The transfer upload republishes every member the PR comment's main baseline reads.
+  for (const file of [RESULT_FILE, SCENARIOS_FILE])
+    assert.ok(reporting.includes(`/ci-queue-reuse/${file}`), file);
+  assert.match(sections.get("test_server"), new RegExp(`/${SCENARIOS_FILE}`));
   for (const [job, suite] of [
     ["test_web", "web"],
     ["test_server", "server"],

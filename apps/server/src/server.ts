@@ -33,6 +33,10 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
+import * as KeepAwake from "./background/KeepAwake.ts";
+// SCIENT-FORK:START — keep-awake reads Scient's definition of work.
+import * as ScientKeepAwakeService from "./scient/keepAwake/KeepAwakeService.ts";
+// SCIENT-FORK:END
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
@@ -714,6 +718,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(layerServerRestart),
   ),
   layerThreadPullRequestWorker,
+  // SCIENT-FORK:START — keep-awake reads Scient's definition of work.
+  KeepAwake.layer.pipe(
+    Layer.provide(ScientKeepAwakeService.layer),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
+  // SCIENT-FORK:END
   DelegatedTaskAnalytics.layer,
   Layer.effectDiscard(
     Effect.gen(function* () {

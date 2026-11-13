@@ -3,7 +3,7 @@ const path = require("node:path");
 const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { validateResult } = require("./thread-transfer-report.cjs");
+const { validateResult, validateScenarios } = require("./thread-transfer-report.cjs");
 
 const WORKFLOW = ".github/workflows/ci.yml";
 const { jobFailures } = require("./ci-check.cjs");
@@ -29,6 +29,8 @@ const SHA = /^[a-f0-9]{40}$/;
 const MAX_REPORT = 64 * 1024 * 1024;
 // The test_web and test_server matrix sizes in ci.yml.
 const SHARDS = { web: 6, server: 12 };
+const TRANSFER_RESULT = "thread-transfer-result.json";
+const TRANSFER_SCENARIOS = "thread-transfer-scenarios.json";
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
@@ -151,8 +153,11 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
   return true;
 }
 
-/** Reads exactly one bounded JSON member without extracting archive paths. */
-function readArchive(bytes, filename, limit, env = process.env) {
+/**
+ * Reads bounded JSON members without extracting archive paths. The archive may hold only the
+ * listed names, each once, and must hold the first; returns each member's bytes by name.
+ */
+function readArchive(bytes, members, limit, env = process.env) {
   const scratch = fs.mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), "ci-reuse-archive-"));
   try {
     const archive = path.join(scratch, "artifact.zip");
@@ -165,12 +170,22 @@ function readArchive(bytes, filename, limit, env = process.env) {
     })
       .trim()
       .split("\n");
-    assert(names.length === 1 && names[0] === filename, "Unexpected archive members");
-    return execFileSync("unzip", ["-p", archive, filename], {
-      maxBuffer: limit,
-      timeout: 30_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    assert(
+      names.includes(members[0]) &&
+        new Set(names).size === names.length &&
+        names.every((name) => members.includes(name)),
+      "Unexpected archive members",
+    );
+    return new Map(
+      names.map((name) => [
+        name,
+        execFileSync("unzip", ["-p", archive, name], {
+          maxBuffer: limit,
+          timeout: 30_000,
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      ]),
+    );
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
@@ -291,7 +306,8 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
     }
     return run.run_attempt;
   };
-  const download = async (name, filename, limit) => {
+  // Returns each JSON member by name; `members` lists what the artifact may hold, first required.
+  const downloadMembers = async (name, members, limit) => {
     const matching = artifacts.filter((artifact) => artifact.name === name && !artifact.expired);
     assert(
       matching.length === 1 && positive(matching[0].id),
@@ -316,10 +332,16 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
         "Artifact digest differs",
       );
     }
-    const raw = await archiveReader(bytes, filename, limit, env);
-    assert(Buffer.byteLength(raw) <= limit, "Artifact member is too large");
-    return JSON.parse(raw.toString());
+    const read = await archiveReader(bytes, members, limit, env);
+    return new Map(
+      [...read].map(([member, raw]) => {
+        assert(Buffer.byteLength(raw) <= limit, "Artifact member is too large");
+        return [member, JSON.parse(raw.toString())];
+      }),
+    );
   };
+  const download = async (name, filename, limit) =>
+    (await downloadMembers(name, [filename], limit)).get(filename);
   // The receipt is written only when every qualifying job passed; `Check` then also requires the
   // native gates and transfer evidence.
   attemptOf("Check");
@@ -337,7 +359,7 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
         ? `Test ${suite === "web" ? "Web" : "Server"} ${shard}`
         : "Reuse exact CI",
     );
-  return { run, receipt, receiptAttempt, download, reportAttempt };
+  return { run, receipt, receiptAttempt, download, downloadMembers, reportAttempt };
 }
 
 /**
@@ -465,13 +487,18 @@ async function restore({ github, context, core, env = process.env, archiveReader
       assert(source.receipt.workflowSha === who.workflowSha, "Qualification receipt differs");
     const staged = new Map();
     if (source.receipt.reports.server) {
-      const transfer = await source.download(
+      // Runs since T3's per-scenario report also carry its rows; older runs hold only the result.
+      const transfer = await source.downloadMembers(
         "thread-transfer-results",
-        "thread-transfer-result.json",
+        [TRANSFER_RESULT, TRANSFER_SCENARIOS],
         64 * 1024,
       );
-      validateResult(transfer);
-      staged.set("thread-transfer-result.json", transfer);
+      validateResult(transfer.get(TRANSFER_RESULT));
+      staged.set(TRANSFER_RESULT, transfer.get(TRANSFER_RESULT));
+      if (transfer.has(TRANSFER_SCENARIOS)) {
+        validateScenarios(transfer.get(TRANSFER_SCENARIOS));
+        staged.set(TRANSFER_SCENARIOS, transfer.get(TRANSFER_SCENARIOS));
+      }
     }
     for (const [suite, count] of Object.entries(SHARDS)) {
       if (!source.receipt.reports[suite]) continue;

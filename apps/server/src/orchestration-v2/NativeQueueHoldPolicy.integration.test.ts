@@ -624,6 +624,7 @@ const withNativeQueue = <A, E, R>(
                             Effect.succeedSome({
                               projectId,
                               title: name,
+                              hasCustomTitle: false,
                               workspaceRoot: cwd,
                               defaultModelSelection: modelSelection,
                               defaultThreadEnvMode: null,
@@ -5113,42 +5114,17 @@ it.live.each(["failed", "interrupted"] as const)(
             assert.equal(next.input.runId, queued.id);
             assert.equal(next.input.runtimePolicy.cwd, preparedCwd);
           } else {
-            // An ordinary newly admitted user Send is a later release boundary.
-            // The older interrupted preparation must not rehold that new run.
-            yield* send(orchestrator, threadId, "explicit new checkout turn");
+            // A new Send after the interrupted setup waits behind it as well, rather than
+            // starting in the project checkout with no worktree, as upstream does.
+            yield* send(orchestrator, threadId, "sent after the interrupted setup");
             yield* worker.drain();
-            const direct = yield* takeOffer;
-            // Context handoff remains part of the production provider input.
-            // Decide the exact new user payload and identity beneath that context.
-            assert.match(direct.input.message.text, /^Context handoff \(/);
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(after.thread.worktreePath, null);
+            assert.deepEqual(offers, []);
+            assert.deepEqual(after.providerTurns, []);
             assert.isTrue(
-              direct.input.message.text.endsWith("User message:\nexplicit new checkout turn"),
+              after.runs.every((run) => run.id === preparing.id || run.status === "queued"),
             );
-            assert.equal(
-              direct.input.message.messageId,
-              MessageId.make(`${threadId}:message:explicit new checkout turn`),
-            );
-            assert.notEqual(direct.input.runId, preparing.id);
-            yield* direct.settle("completed");
-            yield* waitFor((projection) =>
-              projection.runs.some(
-                (run) => run.id === direct.input.runId && run.status === "waiting",
-              ),
-            );
-            yield* worker.drain();
-            // The terminal listener commits queue promotion after checkpoint
-            // finalization. Wait for that persisted start before draining its
-            // newly published effect; this fixture has no background daemon.
-            yield* waitFor((projection) =>
-              projection.runs.some(
-                (run) =>
-                  run.id === queued.id && (run.status === "starting" || run.status === "running"),
-              ),
-            );
-            yield* worker.drain();
-            const next = yield* takeOffer;
-            assert.equal(next.input.runId, queued.id);
-            assert.equal(next.input.runtimePolicy.cwd, direct.input.runtimePolicy.cwd);
           }
         }),
       { runEffectWorker: false, honorPreparedWorktree: true },

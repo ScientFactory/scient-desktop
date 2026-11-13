@@ -1,6 +1,11 @@
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import {
+  DATABASE_MIGRATION_PROGRESS_MESSAGE,
+  DATABASE_MIGRATIONS_FINISHED_MESSAGE,
+  DATABASE_MIGRATIONS_STARTED_MESSAGE,
+} from "@t3tools/shared/databaseMigrationLog";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -116,6 +121,10 @@ import Migration0087 from "./Migrations/087_CommandReadIndexes.ts";
 import Migration0088 from "./Migrations/088_LastExecutedRunIndex.ts";
 import Migration0089 from "./Migrations/089_TurnItemCounts.ts";
 import Migration0090 from "./Migrations/090_QueuedTurnInputIndex.ts";
+// T3's migrations 87-89 land at the next free IDs; Scient already recorded 087-090.
+import Migration0091 from "./Migrations/091_ProjectionProjectsCustomTitle.ts";
+import Migration0092 from "./Migrations/092_TurnItemTypeStatusIndex.ts";
+import Migration0093 from "./Migrations/093_ShellThreadReadIndexes.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -234,6 +243,10 @@ export const migrationEntries = [
   [88, "LastExecutedRunIndex", Migration0088],
   [89, "TurnItemCounts", Migration0089],
   [90, "QueuedTurnInputIndex", Migration0090],
+  // T3's migrations 87-89 follow Scient's immutable migration sequence.
+  [91, "ProjectionProjectsCustomTitle", Migration0091],
+  [92, "TurnItemTypeStatusIndex", Migration0092],
+  [93, "ShellThreadReadIndexes", Migration0093],
   // SCIENT-FORK:END
 ] as const;
 
@@ -281,6 +294,8 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  // The desktop waits past its readiness budget until the finished line follows this one.
+  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const previewMigrations =
     // Only worth attempting once the caller intends to migrate past the
     // orchestration schema. 59 is T3's migration 55 at Scient's next free id.
@@ -311,7 +326,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
   for (const [index, [id, name]] of pending.entries()) {
     if (latestRecordedId > 0) {
-      yield* Effect.log("Upgrading database").pipe(
+      yield* Effect.log(DATABASE_MIGRATION_PROGRESS_MESSAGE).pipe(
         Effect.annotateLogs({
           migration: `${id}_${name}`,
           progress: `${index + 1} of ${pending.length}`,
@@ -323,7 +338,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
-    : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
+    : Effect.log(DATABASE_MIGRATIONS_FINISHED_MESSAGE).pipe(Effect.annotateLogs({ migrations }));
 
   const recorded = yield* sql<{
     readonly migration_id: number;
