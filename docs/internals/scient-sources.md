@@ -830,8 +830,8 @@ comes only from the thread's workspace binding (`resolveScientSourcesProject`),
 so tools take no project argument. The same reference picks the advertised
 tool list (`ScientSourcesToolkit` or `ScientSourcesLibraryToolkit`); both
 share operations and handlers. `agentContextBudget.scient.json` measures the
-library list (115,007 bytes); `libraryToolList.test.ts` measures the project list
-at 110,979. These are generated from the registered tool definitions; package
+library list (118,899 bytes); `libraryToolList.test.ts` measures the project list
+at 114,721. These are generated from the registered tool definitions; package
 paths use the same environment authority for people and agents.
 
 - Write authority is the invocation's `sources:write`. With it a call creates

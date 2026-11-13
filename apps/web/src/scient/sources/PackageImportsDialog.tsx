@@ -12,6 +12,7 @@ import {
 } from "../../components/ui/dialog";
 import { organizeScientSources } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { settleAfter } from "./settleAfter";
 
 type Imports = NonNullable<ScientSourcesOrganizeResult["packageImports"]>;
 const evidenceLabel = (item: string) =>
@@ -51,24 +52,27 @@ export function PackageImportsDialog(props: {
   const undo = async (importId: string) => {
     setWorking(true);
     setError(null);
-    try {
-      const result = await organizeScientSources(environmentId, {
-        root,
-        change: { action: "undo-import", importId },
-      });
-      if (result.outcome === "not-found") setError("The import receipt was not found.");
-      await props.onImported();
-      const listed = await organizeScientSources(environmentId, {
-        root,
-        change: { action: "list-package-imports" },
-      });
-      setImports(listed.packageImports ?? []);
-      setDiagnostics(listed.packageImportDiagnostics ?? []);
-    } catch (cause) {
-      setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
-    } finally {
-      setWorking(false);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const result = await organizeScientSources(environmentId, {
+            root,
+            change: { action: "undo-import", importId },
+          });
+          if (result.outcome === "not-found") setError("The import receipt was not found.");
+          await props.onImported();
+          const listed = await organizeScientSources(environmentId, {
+            root,
+            change: { action: "list-package-imports" },
+          });
+          setImports(listed.packageImports ?? []);
+          setDiagnostics(listed.packageImportDiagnostics ?? []);
+        } catch (cause) {
+          setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+        }
+      },
+      () => setWorking(false),
+    );
   };
 
   return (
