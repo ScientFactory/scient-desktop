@@ -33,7 +33,8 @@ export type ScientOverleafFilesystemRefusalReason =
 const FILESYSTEM_REFUSAL_TEXT: Record<ScientOverleafFilesystemRefusalReason, string> = {
   "unsupported-windows-version":
     "Update this project's server to Windows 10 version 1809 or later, then sync again.",
-  "unsupported-filesystem": "Move the project to a supported local disk, then relink it.",
+  "unsupported-filesystem":
+    "Move the project to a local disk formatted as APFS on a Mac, NTFS on Windows, or ext4, XFS or Btrfs on Linux, then relink it.",
   "network-filesystem":
     "Move the project from the network drive to a supported local disk, then relink it.",
   "volatile-filesystem": "Move the project to a permanent local disk, then relink it.",

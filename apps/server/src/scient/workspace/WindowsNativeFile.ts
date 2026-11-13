@@ -86,7 +86,13 @@ export async function windowsPrivateDirectory(path: string, create: boolean, hel
     return;
   }
   if (info.code || info.syncManaged || info.identity?.type !== "directory") {
-    const error = new Error(info.syncManaged ? "sync-managed-folder" : "unsafe-directory");
+    const error = new Error(
+      info.syncManaged
+        ? "sync-managed-folder"
+        : info.code === 536870918
+          ? "unsupported-filesystem"
+          : "unsafe-directory",
+    );
     if (info.code === 2 || info.code === 3) Object.assign(error, { code: "ENOENT" });
     else if (info.code === 5) Object.assign(error, { code: "EACCES" });
     throw error;

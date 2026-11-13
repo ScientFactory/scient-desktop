@@ -147,6 +147,12 @@ export class OverleafRecordInvalidError extends Schema.TaggedError<OverleafRecor
   }
 }
 
+/** The disks retention accepts on this host. */
+const supportedFilesystems = () => {
+  const platform = HostProcess.Platform.defaultValue();
+  return platform === "win32" ? "NTFS" : platform === "linux" ? "ext4, XFS or Btrfs" : "APFS";
+};
+
 export class OverleafRetentionUnavailableError extends Schema.TaggedError<OverleafRetentionUnavailableError>()(
   "OverleafRetentionUnavailableError",
   {
@@ -179,7 +185,7 @@ export class OverleafRetentionUnavailableError extends Schema.TaggedError<Overle
       case "sync-managed-folder":
         return "Scient's state and kept files must be outside cloud-managed folders.";
       case "unsupported-filesystem":
-        return "This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as APFS.";
+        return `This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as ${supportedFilesystems()}.`;
       case "read-only-parent":
         return "Scient cannot create its folder for kept files beside this project, because that location is read-only.";
       case "shared-parent":

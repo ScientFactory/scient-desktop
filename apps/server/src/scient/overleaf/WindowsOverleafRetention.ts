@@ -29,7 +29,10 @@ export async function windowsPrivateRetention(
   await windowsPrivateDirectory(directory, create, helper);
 }
 
-/** Exercise capture and no-replace installation on the actual retention volume. */
+/**
+ * Exercise capture and no-replace installation on the actual retention volume: false when
+ * the volume does not do what retention needs.
+ */
 export async function probeWindowsRetention(directory: string, helper: string | null) {
   if (!helper) throw new Error("Windows retention requires the publication helper.");
   const scratch = await ensureNativePrivateRetentionDirectory(
@@ -57,8 +60,7 @@ export async function probeWindowsRetention(directory: string, helper: string | 
       },
       target,
     );
-    if (seeded.outcome !== "done")
-      throw new Error("Windows retention volume failed native creation qualification.");
+    if (seeded.outcome !== "done") return false;
     const identity = await fileIdentity(target, helper);
     const result = await mutateRetainedFile(
       {
@@ -78,7 +80,8 @@ export async function probeWindowsRetention(directory: string, helper: string | 
       (await NodeFSP.readFile(target, "utf8")) !== "installed" ||
       (await NodeFSP.readFile(result.retainedPath!, "utf8")) !== "original"
     )
-      throw new Error("Windows retention volume failed capture/install qualification.");
+      return false;
+    return true;
   } finally {
     const folders = [
       NodePath.join(records, "probe"),
