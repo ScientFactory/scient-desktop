@@ -13,6 +13,7 @@ import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import {
   bindNativeFilePublicationParent,
   HELPER_RECHECK_MS,
+  HELPER_REFUSAL_RECHECK_MS,
   ensureNativePrivateRetentionDirectory,
   checkNativePrivateRetentionDirectory,
   closeNativeHelperServers,
@@ -447,14 +448,16 @@ describe("a helper candidate's checks", () => {
 describe("which helpers are accepted", () => {
   const { helperAcceptance } = nativeFilePublicationInternals;
   const path = "/install/file-exchange/helper";
-  /** Checks that settle only when the test says, in the order they were asked. */
+  /** Checks that settle only when the test says, in the order they were asked; each refusal is the permission check's. */
   const controlled = () => {
     const asked: Array<PromiseWithResolvers<string | undefined>> = [];
-    const acceptance = helperAcceptance(() => {
-      const check = Promise.withResolvers<string | undefined>();
-      asked.push(check);
-      return check.promise;
-    });
+    const acceptance = helperAcceptance(
+      (): Promise<{ helper: string | undefined; holdRefusal: boolean }> => {
+        const check = Promise.withResolvers<string | undefined>();
+        asked.push(check);
+        return check.promise.then((helper) => ({ helper, holdRefusal: true }));
+      },
+    );
     const settle = async (index: number, passes: boolean) => {
       await expect.poll(() => asked.length).toBeGreaterThan(index);
       asked[index]!.resolve(passes ? path : undefined);
@@ -495,6 +498,11 @@ describe("which helpers are accepted", () => {
       await settle(1, false);
       await flush();
       expect(acceptance.accepted(path)).toBeUndefined();
+      // A refusal stands a minute: callers get no helper and wait for no check.
+      now += HELPER_REFUSAL_RECHECK_MS - 1;
+      expect(await acceptance.helper(path, false)).toBeUndefined();
+      expect(asked).toHaveLength(2);
+      now += 1;
       const again = acceptance.helper(path, false);
       await settle(2, true);
       expect(await again).toBe(path);
@@ -560,10 +568,9 @@ describe("which helpers are accepted", () => {
     expect(acceptance.accepted(path)).toBeUndefined();
     await settle(1, false);
     await flush();
-    // No longer accepted: the next caller waits for a check of its own.
-    const next = acceptance.helper(path, false);
-    await settle(2, false);
-    expect(await next).toBeUndefined();
+    // No longer accepted, and refused: the next caller gets no helper and starts no check.
+    expect(await acceptance.helper(path, false)).toBeUndefined();
+    expect(asked).toHaveLength(2);
   });
 });
 

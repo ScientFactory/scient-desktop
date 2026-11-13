@@ -4,6 +4,7 @@ import {
   armNativeCheckDeadline,
   NativeCheckDeadlineError,
   validatePublicationArtifact,
+  WindowsPermissionsRefusedError,
 } from "@t3tools/shared/scientPublicationArtifact";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
@@ -209,6 +210,11 @@ export async function resolveNativeFilePublicationHelperPath(
 
 /** How long a pass is used before it is checked again, in the background. */
 export const HELPER_RECHECK_MS = 10 * 60_000;
+/**
+ * How long a refusal stands before an ordinary ask checks again. On Windows a check launches
+ * PowerShell, so without it every save would wait for one before being refused.
+ */
+export const HELPER_REFUSAL_RECHECK_MS = 60_000;
 interface HelperCheck {
   readonly result: Promise<string | undefined>;
   /** Holds every caller until it settles. */
@@ -216,14 +222,19 @@ interface HelperCheck {
   started: boolean;
 }
 /**
- * Which helpers passed `check`, and when. A pass is used at once and checked again in the
- * background once old; a refusal is checked again on the next ask. A suspect check, asked
- * because something failed, starts after any check under way and gives the helper to nobody
- * until it settles. A helper that fails is given to no new use; holders finish with it.
+ * A pass is used at once and checked again in the background once old; a permission refusal
+ * stands a minute, any other refusal is asked again at once. A suspect check, asked after a
+ * failure, waits for any check under way and gives the helper to nobody until it settles.
  */
-function helperAcceptance(check: (candidate: string) => Promise<string | undefined>) {
+function helperAcceptance(
+  check: (
+    candidate: string,
+  ) => Promise<{ readonly helper: string | undefined; readonly holdRefusal: boolean }>,
+) {
   /** When each accepted helper's passing check began. */
   const accepted = new Map<string, number>();
+  /** When each refused helper's last check ended. */
+  const refused = new Map<string, number>();
   /** The check running, or waiting for the one before it, by helper. */
   const checks = new Map<string, HelperCheck>();
   const start = (candidate: string, suspect: boolean, after?: Promise<unknown>) => {
@@ -234,9 +245,15 @@ function helperAcceptance(check: (candidate: string) => Promise<string | undefin
         .then(async () => {
           entry.started = true;
           const startedAt = performance.now();
-          const helper = await check(candidate);
-          if (helper === undefined) accepted.delete(candidate);
-          else accepted.set(candidate, startedAt);
+          const { helper, holdRefusal } = await check(candidate);
+          if (helper === undefined) {
+            accepted.delete(candidate);
+            if (holdRefusal) refused.set(candidate, performance.now());
+            else refused.delete(candidate);
+          } else {
+            accepted.set(candidate, startedAt);
+            refused.delete(candidate);
+          }
           return helper;
         })
         .finally(() => {
@@ -262,7 +279,11 @@ function helperAcceptance(check: (candidate: string) => Promise<string | undefin
     if (running?.suspect) return running.result;
     const current = passed(candidate);
     if (current !== undefined) return Promise.resolve(current);
-    return running?.result ?? start(candidate, false);
+    if (running) return running.result;
+    const refusedAt = refused.get(candidate);
+    if (refusedAt !== undefined && performance.now() - refusedAt < HELPER_REFUSAL_RECHECK_MS)
+      return Promise.resolve(undefined);
+    return start(candidate, false);
   };
   return {
     helper,
@@ -274,9 +295,14 @@ function helperAcceptance(check: (candidate: string) => Promise<string | undefin
   };
 }
 export const nativeFilePublicationInternals = { checkHelperCandidate, helperAcceptance };
-const acceptance = helperAcceptance((candidate) =>
-  resolveNativeFilePublicationHelperPath(candidate),
-);
+const acceptance = helperAcceptance(async (candidate) => {
+  // Only a refusal PowerShell gave is held; a missing file or a deadline is asked again at once.
+  let holdRefusal = false;
+  const helper = await resolveNativeFilePublicationHelperPath(candidate, (failure) => {
+    holdRefusal = failure.error instanceof WindowsPermissionsRefusedError;
+  });
+  return { helper, holdRefusal };
+});
 /** The helper `resolveNativeFilePublicationHelperPath` finds, as `helperAcceptance` keeps it. */
 export function nativeFilePublicationHelper(
   configuredPath?: string,

@@ -223,7 +223,24 @@ export function windowsUserSid() {
   });
   return userSid;
 }
+/**
+ * The Windows permission check ran and refused: asking again soon costs another PowerShell
+ * launch for the same answer. A deadline is not a refusal.
+ */
+// @effect-diagnostics-next-line extendsNativeError:off -- Plain-Promise validation; callers test it with instanceof.
+export class WindowsPermissionsRefusedError extends Error {}
 async function checkWindowsPermissions(helper: string) {
+  try {
+    await checkWindowsPermissionsOnce(helper);
+  } catch (error) {
+    if (error instanceof NativeCheckDeadlineError) throw error;
+    throw new WindowsPermissionsRefusedError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+}
+async function checkWindowsPermissionsOnce(helper: string) {
   const targets = windowsPermissionTargets(helper);
   const [sid, output] = await Promise.all([
     windowsUserSid(),
