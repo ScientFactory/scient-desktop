@@ -384,8 +384,8 @@ function needleOccurrences(text: string, needle: string, prefix: boolean, index:
 
 /**
  * The occurrence to reveal inside a ranked window: the query's terms in order as a contiguous
- * phrase when the window holds one, else the shortest run of occurrences covering every matched
- * term, the earliest on a tie.
+ * phrase when the window holds one that covers every needle the window matched, else the
+ * shortest run of occurrences covering them all (terms and quoted phrases), the earliest on a tie.
  */
 function tightestReveal(
   folded: string,
@@ -394,14 +394,23 @@ function tightestReveal(
 ): { readonly start: number; readonly end: number } {
   const windowStart = window[0]!.at;
   const windowEnd = window.at(-1)!.end;
+  const needles = new Set(window.map((entry) => entry.needle));
   if (terms.length > 1) {
     const phrase = terms.join(" ");
     const at = needleOccurrences(folded, phrase, false, 0).find(
-      (entry) => entry.at >= windowStart && entry.end <= windowEnd,
+      (entry) =>
+        entry.at >= windowStart &&
+        entry.end <= windowEnd &&
+        [...needles].every((needle) =>
+          window.some(
+            (inside) =>
+              inside.needle === needle && inside.at >= entry.at && inside.end <= entry.end,
+          ),
+        ),
     );
     if (at) return { start: at.at, end: at.end };
   }
-  const wanted = new Set(window.map((entry) => entry.needle)).size;
+  const wanted = needles.size;
   const counts = new Map<number, number>();
   let best = { start: windowStart, end: windowEnd };
   let left = 0;

@@ -176,5 +176,10 @@ describe("full-text search", () => {
     expect(reveal("stratified layer", apart).quote).toBe(
       "layer was sampled. Later the column was stratified",
     );
+    // A quoted phrase is part of the match: the terms' own phrase alone would leave it out.
+    expect(
+      reveal('stratified layer "septic shock"', "The stratified layer was studied in septic shock.")
+        .quote,
+    ).toBe("stratified layer was studied in septic shock");
   });
 });
