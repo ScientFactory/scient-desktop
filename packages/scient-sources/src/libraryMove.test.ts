@@ -1511,6 +1511,51 @@ describe("the sealed copy from before the move", () => {
       ),
     );
 
+  it("archives and restores highlights whose deleted paper is excluded from the Library payload", async () => {
+    const { base, library, project, a, sha256 } = await seededMove();
+    const oldCopy = NodePath.join(base, "old-copy");
+    await NodeFSP.cp(project, oldCopy, { recursive: true });
+    const highlightPath = NodePath.join(".scient/annotations/v1", `${sha256}.json`);
+    const highlights = await NodeFSP.readFile(NodePath.join(oldCopy, highlightPath));
+    await move(library, project);
+    const record = (await readScientSourceRecord(library, a.sourceId))!;
+    await removeScientSource({
+      root: library,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+    });
+    await deleteTrashedScientSource({
+      root: library,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+    });
+    const { journal } = await move(library, oldCopy);
+    expect(journal!.annotations).not.toContain(sha256);
+    expect(journal!.pdfs).not.toContain(sha256);
+    const archive = NodePath.join(oldCopy, journal!.archive!.path);
+    expect(await NodeFSP.readFile(NodePath.join(archive, "annotations", `${sha256}.json`))).toEqual(
+      highlights,
+    );
+    expect(await exists(NodePath.join(oldCopy, highlightPath))).toBe(true);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(oldCopy, elsewhere, { recursive: true });
+    await NodeFSP.rm(NodePath.join(elsewhere, ".scient/annotations"), { recursive: true });
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
+      outcome: "restored",
+    });
+    expect(await NodeFSP.readFile(NodePath.join(elsewhere, highlightPath))).toEqual(highlights);
+    const theirs = await newLibrary(base, "other-computer");
+    expect(await move(theirs, elsewhere)).toMatchObject({ outcome: "moved" });
+    expect(
+      JSON.parse(
+        await NodeFSP.readFile(
+          NodePath.join(theirs.root, "annotations/v1", `${sha256}.json`),
+          "utf8",
+        ),
+      ),
+    ).toEqual(JSON.parse(highlights.toString("utf8")));
+  });
+
   it("keeps the evidence, is never read by the Library, and restores with no move journal", async () => {
     const { base, library, project, a, b, sha256 } = await seededMove();
     const pdfBytes = await NodeFSP.readFile(

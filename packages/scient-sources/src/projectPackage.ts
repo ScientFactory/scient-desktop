@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { createScientSourceCollection, readScientSourcesOrganization } from "./collections.ts";
 import { resolveScientLibraryAlias, readScientLibraryAliases } from "./libraryAliases.ts";
 import {
+  readScientProjectSourceRejectedTargets,
   recordScientProjectSourceMappings,
   resolveScientProjectSources,
 } from "./libraryInstanceMap.ts";
@@ -675,7 +676,13 @@ async function packageTarget(
   { readonly target: ScientSourceRecord; readonly created: boolean } | { readonly failure: string }
 > {
   const { library } = context;
-  const refused = new Set<string>();
+  const refused = new Set(
+    await readScientProjectSourceRejectedTargets({
+      library,
+      instanceId: context.instanceId,
+      projectSourceId,
+    }),
+  );
   for (const proposed of proposals) {
     if (proposed === null || refused.has(proposed)) continue;
     if (!(await readScientSourceRecord(library, proposed))) continue;
@@ -697,6 +704,7 @@ async function packageTarget(
       // Title likeness alone adds a new source; the shared rule decides any other match.
       allowPossibleMetadataMatch: true,
       incomingSourceId: record.sourceId,
+      hydratedFromProjectSourceId: projectSourceId,
       refusedSourceIds: [...refused],
       ...carried(record, context.importedAt),
     });
@@ -704,6 +712,7 @@ async function packageTarget(
     const reused =
       imported.duplicate.kind === "new" ? undefined : imported.duplicate.matchingSourceIds[0];
     if (!reused) return { failure: imported.duplicate.reason };
+    if (refused.has(reused)) return { failure: "This project keeps that paper separate." };
     const target = await packageTargetHolds(library, record, reused);
     if (target) return { target, created: false };
     refused.add(reused);

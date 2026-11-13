@@ -203,6 +203,24 @@ async function writeInstanceMap(
   );
 }
 
+/** Current project refusals, including alias survivors. Caller holds the Library lock. */
+export async function readScientProjectSourceRejectedTargets(input: {
+  readonly library: ScientLibraryLocation;
+  readonly instanceId: string;
+  readonly projectSourceId: string;
+}): Promise<ReadonlySet<string>> {
+  const [file, aliases] = await Promise.all([
+    readInstanceMapFile(input.library.root, input.instanceId),
+    readLibraryAliasesAt(input.library.root),
+  ]);
+  return new Set(
+    (file.keptSeparate.get(input.projectSourceId)?.sourceIds ?? []).flatMap((sourceId) => [
+      sourceId,
+      resolveScientLibraryAlias(aliases, sourceId),
+    ]),
+  );
+}
+
 function workLevelKeys(identifiers: ReadonlyArray<ScientSourceIdentifier>): Set<string> {
   return new Set(
     identifiers.flatMap((identifier) => {
@@ -221,10 +239,19 @@ function workLevelKeys(identifiers: ReadonlyArray<ScientSourceIdentifier>): Set<
 function matchWork(
   work: ScientProjectSourceWork,
   records: ReadonlyArray<ScientSourceRecord>,
+  projectSourceId?: string,
 ): {
-  readonly by: "identifier" | "metadata" | "contradicted";
+  readonly by: "same-id" | "identifier" | "metadata" | "contradicted";
   readonly ids: ReadonlyArray<string>;
 } | null {
+  const originated = records.filter(
+    (record) =>
+      projectSourceId !== undefined &&
+      record.hydratedFromProjectSourceId === projectSourceId &&
+      scientLibraryIdentityProblem(work, record) === null,
+  );
+  if (originated.length > 0)
+    return { by: "same-id", ids: originated.map((record) => record.sourceId) };
   const own = workLevelKeys(work.identifiers);
   // Two works that name different DOIs (or PMIDs, …) are never the same work by title alone.
   const compatible = records.filter((record) => {
@@ -316,7 +343,10 @@ export function scientProjectSourceRemovalCheck(
     removed ??= readRemovedSources(root, library, liveTarget);
     if (removedIdsFor(await removed, aliases, request).length === 0) return false;
     if (await liveTarget(request.projectSourceId)) return false;
-    const match = request.work === null ? null : matchWork(request.work, await records());
+    const match =
+      request.work === null
+        ? null
+        : matchWork(request.work, await records(), request.projectSourceId);
     return match === null || match.by === "contradicted";
   };
 }
@@ -447,13 +477,14 @@ async function resolveAt(
         resolveScientLibraryAlias(aliases, sourceId),
       ]),
     );
-    const found = request.work ? matchWork(request.work, records) : null;
+    const found = request.work ? matchWork(request.work, records, projectSourceId) : null;
     // Keep separate holds until withdrawn: a rejected source never resolves this ID again.
     const match =
       separate && request.work && found
         ? (matchWork(
             request.work,
             records.filter((candidate) => !rejected.has(candidate.sourceId)),
+            projectSourceId,
           ) ?? { by: "contradicted" as const, ids: found.ids })
         : found;
     if (match && match.by !== "contradicted" && match.ids.length === 1) {

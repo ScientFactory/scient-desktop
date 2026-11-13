@@ -123,7 +123,8 @@ them back with the paper. A paper deleted for good stays deleted.
 **The copy from before the move.** Before the move deletes anything from
 `.scient/sources`, it saves a sealed copy of the project's sources, with their
 earlier revisions, the trash, collections, reviews, the exact PDFs and their
-highlights, in
+highlights, including highlights on papers excluded from this Library because
+they were deleted for good, in
 `.scient/library/retained-before-library/<move>/`, with a `README.md` and a
 `manifest.json` listing every file and its checksum. Scient never reads it on
 its own. Ask an agent to restore the copy from before the move to bring it back
@@ -478,10 +479,11 @@ never opened. Scient prepares each paper's PDF copies before joining it, so
 other Library edits can finish while those copies are being made.
 A paper joins one your Library already has only when the two are
 clearly the same work (the same identifier, title and type) and you have not
-marked them as not duplicates; this holds even when the paper there has the
-same ID or was matched by an earlier import, so a paper corrected since to
-another work is not joined. One that only looks alike (the same title, first
-author and year), or that contradicts the paper there, is added as its own
+marked them as not duplicates or chosen **Keep separate** for this project.
+Keep separate still holds if the papers’ details later agree. These checks
+also apply when the paper there has the same ID or was matched by an earlier
+import, so a paper corrected since to another work is not joined. One that
+only looks alike (the same title, first author and year), or that contradicts the paper there, is added as its own
 paper, and nothing from it is attached to the other. A paper that changes here
 while the import is joining it is left as it is and named; import the package
 again to bring that one in.
@@ -507,7 +509,9 @@ What an import joins to a paper you already have:
 Anything that could not be imported is named, never counted as imported. This
 works with an empty Library and without the computer the package came from.
 Importing a package is a deliberate import, so a paper in it that you deleted
-for good comes back.
+for good comes back. A fresh checkout finds that imported copy even when its
+citation details are incomplete; deleting it for good also stays deleted in
+fresh checkouts until you deliberately import it again.
 
 The import's message has **Undo**. It removes only what the import created:
 new papers (to the trash, with the PDFs they came with), new pins, new

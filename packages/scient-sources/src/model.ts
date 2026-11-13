@@ -182,7 +182,7 @@ export const ScientSourceRecord = Schema.Struct({
   formatVersion: Schema.Literals([1, 2]),
   sourceId: NonEmptyString,
   projectId: Schema.optionalKey(NonEmptyString),
-  /** Stable snapshot identity even when hydration chose an alternate Library ID. */
+  /** Stable project origin for hydration or package import, including alternate Library IDs. */
   hydratedFromProjectSourceId: Schema.optionalKey(NonEmptyString),
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   citationKey: Schema.optionalKey(ScientSourceCitationKey),

@@ -1910,6 +1910,9 @@ async function cleanUp(
     const annotations = current.annotations.map(
       (sha256) => `${PROJECT_ANNOTATIONS_DIRECTORY}/${sha256}.json`,
     );
+    const archiveAnnotations = (
+      await listFiles(absolute(ctx.root, PROJECT_ANNOTATIONS_DIRECTORY))
+    ).map((name) => `${PROJECT_ANNOTATIONS_DIRECTORY}/${name}`);
     ctx.progress("archiving", 0, 1);
     // Sealed and checked before anything is deleted; a crash here leaves the journal committed.
     const archive = await sealScientPreMoveArchive({
@@ -1920,7 +1923,7 @@ async function cleanUp(
       run: current.run,
       instanceId: ctx.instanceId,
       libraryId: ctx.libraryId,
-      files: [...v1, ...annotations],
+      files: [...v1, ...archiveAnnotations],
       afterFirstFile: () => crash(ctx, "mid-archive"),
     });
     ctx.progress("archiving", 1, 1);

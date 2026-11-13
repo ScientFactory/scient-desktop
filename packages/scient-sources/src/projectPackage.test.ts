@@ -14,7 +14,11 @@ import {
   resolveScientReviewConflict,
 } from "./libraryReviewConflicts.ts";
 import { scientLibraryDistinctPairsPath } from "./libraryExclusions.ts";
-import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import {
+  keepScientProjectSourceSeparate,
+  resolveScientProjectSources,
+} from "./libraryInstanceMap.ts";
+import { writeLibraryAliasesAt } from "./libraryAliases.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   changeScientLibraryReview,
@@ -43,10 +47,12 @@ import {
 } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
+  deleteScientSourcesPermanently,
   importScientSource,
   listScientSourceRecords,
   listScientSourceTrash,
   readScientSourceRecord,
+  readScientSourceTombstones,
   recordScientSourceCheck,
   removeScientSource,
   updateScientSourceMetadata,
@@ -160,6 +166,132 @@ const importInto = (root: string, library: ScientLibraryLocation, folder: string
   importScientProjectPackage({ projectRoot: root, library, folder, actor: "user" });
 
 describe("importing a project package", () => {
+  it.each(["proposal", "doi-fallback"] as const)(
+    "honors project Keep separate after facts agree through the %s path",
+    async (path) => {
+      const { base, mine, source } = await setup();
+      const identifiers = [{ scheme: "doi", value: "10.1000/kept-separate" }];
+      const paper = await add(mine, "paper", { title: "Shared paper", identifiers });
+      await withPdf(mine, base, paper.sourceId);
+      await pinned(mine, source, paper.sourceId);
+      const handoff = NodePath.join(base, "handoff");
+      await exportTo(source, mine, handoff);
+      const theirs = await computer(base, "theirs");
+      const received = await project(base, "received");
+      const target = await add(theirs, "target", { title: "Other title", identifiers });
+      const rejectedId = "src_rejected_alias";
+      await keepScientProjectSourceSeparate({
+        library: theirs,
+        projectRoot: received,
+        projectSourceId: paper.sourceId,
+        sourceIds: [rejectedId],
+        separate: true,
+        actor: "user",
+      });
+      const alias = (sourceId: string) => ({
+        sourceId,
+        survivorId: target.sourceId,
+        mergeId: "merge_test",
+        mergedAt: "2026-11-13T00:00:00.000Z",
+      });
+      await withScientLibraryLock(theirs.root, () =>
+        writeLibraryAliasesAt(
+          theirs.root,
+          new Map([
+            [rejectedId, alias(rejectedId)],
+            ...(path === "proposal" ? [[paper.sourceId, alias(paper.sourceId)] as const] : []),
+          ]),
+        ),
+      );
+      await updateScientSourceMetadata({
+        root: theirs,
+        sourceId: target.sourceId,
+        expectedRevision: target.revision,
+        metadata: { ...editableMetadataFromRecord(target), title: paper.title },
+      });
+      expect(await importInto(received, theirs, handoff)).toMatchObject({
+        sources: { added: 1, matched: 0 },
+        pdfs: { added: 1 },
+        failed: [],
+      });
+      expect((await readScientSourceRecord(theirs, target.sourceId))?.attachments).toEqual([]);
+      const [resolution] = await resolveScientProjectSources({
+        library: theirs,
+        projectRoot: received,
+        mode: "read",
+        sources: [{ projectSourceId: paper.sourceId, work: paper }],
+      });
+      if (resolution?.kind !== "resolved") throw new Error("Expected the imported paper.");
+      expect(resolution.sourceId).not.toBe(target.sourceId);
+    },
+  );
+
+  it.each(["deleted", "reimported"] as const)(
+    "resolves a sparse package source as %s in a fresh checkout",
+    async (state) => {
+      const { base, mine, source } = await setup();
+      const sparse = {
+        title: "Sparse paper",
+        creators: [],
+        issuedRaw: null,
+        issuedYear: null,
+        containerTitle: null,
+      };
+      const paper = await add(mine, "sparse", sparse);
+      await pinned(mine, source, paper.sourceId);
+      const handoff = NodePath.join(base, "handoff");
+      await exportTo(source, mine, handoff);
+      const theirs = await computer(base, "theirs");
+      const received = await project(base, "received");
+      const collision =
+        state === "reimported"
+          ? await add(theirs, `project-package:${paper.sourceId}`, { title: "Different work" })
+          : null;
+      expect(await importInto(received, theirs, handoff)).toMatchObject({ sources: { added: 1 } });
+      const imported = (await listScientSourceRecords(theirs)).find(
+        (record) => record.sourceId !== collision?.sourceId,
+      )!;
+      await removeScientSource({
+        root: theirs,
+        sourceId: imported.sourceId,
+        expectedRevision: imported.revision,
+      });
+      await deleteScientSourcesPermanently({ root: theirs });
+      let liveId: string | undefined;
+      if (state === "reimported") {
+        expect(await importInto(received, theirs, handoff)).toMatchObject({
+          sources: { added: 1 },
+        });
+        liveId = (await listScientSourceRecords(theirs)).find(
+          (record) => record.sourceId !== collision?.sourceId,
+        )!.sourceId;
+      }
+      const before = (await listScientSourceRecords(theirs))
+        .map((record) => record.sourceId)
+        .toSorted();
+      const fresh = NodePath.join(base, "fresh");
+      await NodeFSP.cp(source, fresh, { recursive: true });
+      const [resolution] = await resolveScientProjectSources({
+        library: theirs,
+        projectRoot: fresh,
+        mode: "write",
+        hydrate: { actor: "user" },
+        sources: [{ projectSourceId: paper.sourceId, work: paper }],
+      });
+      expect(resolution).toMatchObject(
+        state === "deleted"
+          ? { kind: "unresolved", reason: "removed", candidateIds: [imported.sourceId] }
+          : { kind: "resolved", sourceId: liveId },
+      );
+      expect(
+        (await listScientSourceRecords(theirs)).map((record) => record.sourceId).toSorted(),
+      ).toEqual(before);
+      expect((await readScientSourceTombstones(theirs))[0]?.record).toMatchObject({
+        hydratedFromProjectSourceId: paper.sourceId,
+      });
+    },
+  );
+
   it("refuses a staged PDF replaced before its attachment reference is committed", async () => {
     const { base, mine, source } = await setup();
     const paper = await add(mine, "replaced-stage");

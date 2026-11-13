@@ -635,7 +635,9 @@ ID with its snapshot (a pin's `work`, later a review's record snapshot):
    gives the instance). The mapped ID is followed through `aliases.json`, so a
    merge's Undo puts the old target back.
 2. The same ID in this library, through `resolveScientLibraryAlias`.
-3. The snapshot: a shared work-level identifier, then title, lead author and
+3. A live record bound to the project source ID by hydration or package import,
+   checked against the snapshot with the same identity rule (`same-id`). Otherwise
+   the snapshot: a shared work-level identifier, then title, lead author and
    year (`assessSourceMetadataDuplicate`). Records whose work-level identifiers
    conflict with the snapshot's are skipped. A match counts only when it
    corroborates the snapshot by the merge engine's own check
@@ -658,9 +660,9 @@ the ID resolved to then, never the alias survivor.
 pin's key as preferred key), recorded as `hydrated` in the map. Its source ID
 is derived from the library ID and the project source ID; intake may choose an
 alternate ID when that ID is already taken by a contradicting record. New
-hydrations also keep `hydratedFromProjectSourceId` on the record and in its
-tombstone, so even a sparse snapshot in a fresh checkout finds the removal of
-an alternate ID. Records without that binding retain the existing fallback
+hydrations and package-created records keep `hydratedFromProjectSourceId` on
+the record and in its tombstone, so even a sparse snapshot in a fresh checkout
+finds the removal of an alternate ID. Records without that binding retain the existing fallback
 matching. `ambiguous` and `removed` pins are never
 hydrated, so hydration never adds a duplicate or brings back a record in the
 trash. A record deleted for good (Empty trash, `deletePermanently`, the agent's
@@ -1057,11 +1059,14 @@ deletes v1 files; a `pins.json` on its own never does.
    start of the staged bytes is a copy cut short; it is set aside as
    `<name>.broken-<time>` and published again.
 7. Archive (`libraryMoveArchive.ts`), before anything is deleted: the v1
-   files cleanup will delete, minus `text/` and `staging/`, and the moved
-   highlight files are copied to
+   files cleanup will delete, minus `text/` and `staging/`, plus all pre-move
+   highlight documents are copied to
    `.scient/library/retained-before-library/<runId>/` (`sources/…`,
    `annotations/…`, `manifest.json` with original paths, sizes, SHA-256,
-   counts and missing files, `README.md`). Each copy is checked against its
+   counts and missing files, `README.md`). Archive annotation discovery is
+   independent of the Library payload allowlist: a removed paper still keeps
+   its original highlights there. Cleanup still names only the highlights
+   verified in the Library. Each archive copy is checked against its
    original's hash; the folder is built as `.<runId>.partial`, checked again
    and published with one rename, and only then does the journal (`archive`:
    path and manifest hash) move to `cleanup`. A crash leaves `committed` and
@@ -1236,9 +1241,11 @@ are refused). Each is checked (`packageTargetHolds`) against current records:
 the pair apart. A stable ID or a mapping is never proof alone. Without a
 holding target, `importScientSource` decides with `incomingSourceId` (the
 package record's ID, whose exclusions apply as well as the derived ID's) and
-`refusedSourceIds` (targets refused so far, never reused); once one was
-refused the source key is made unique to the import. A record intake reuses is
-checked by `packageTargetHolds` too; a refusal adds it to the refused set and
+`refusedSourceIds` (targets refused so far, never reused). Under the same
+Library hold, the project’s Keep separate decisions seed that refused set,
+including their current alias targets, for proposals and intake alike. Once a
+target is refused, the source key is made unique to the import. A record
+intake reuses is checked by `packageTargetHolds` too; a refusal adds it to the refused set and
 intake runs again (at most four times). A title likeness adds a new record.
 Every write is conditioned on the revision just decided or written; a `stale`
 result stops that source (`failed`, nothing further attached, no mapping)
