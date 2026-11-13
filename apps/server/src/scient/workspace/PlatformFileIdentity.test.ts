@@ -10,6 +10,7 @@ import {
   platformFileIdentity,
   type PersistentFileIdentity,
 } from "./PlatformFileIdentity.ts";
+import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 
 const decode = Schema.decodeUnknownSync(StoredFileIdentity);
 it("reads legacy macOS records unchanged and refuses unknown platform or version tags", () => {
@@ -34,6 +35,49 @@ it("compares old macOS records with tagged identities without conflating platfor
   expect(platformFileIdentity.equal(legacy, { ...darwin, platform: "windows" })).toBe(false);
   const linux: PersistentFileIdentity = { ...darwin, platform: "linux", subvolumeId: "1" };
   expect(platformFileIdentity.equal(linux, { ...linux, subvolumeId: "2" })).toBe(false);
+});
+
+it("tells a Linux folder that reused an inode from the one it replaced, by generation", () => {
+  const linux = {
+    version: 1,
+    platform: "linux",
+    volume: "volume",
+    fileId: "42",
+    generation: "7",
+    subvolumeId: null,
+  } as const;
+  const { generation: _, ...legacy } = linux;
+  expect(decode(legacy)).toEqual(legacy);
+  expect(platformFileIdentity.equal(linux, { ...linux, generation: "8" })).toBe(false);
+  expect(platformFileIdentity.equal(linux, linux)).toBe(true);
+  expect(platformFileIdentity.equal(legacy, linux)).toBe(true);
+  expect(platformFileIdentity.lacksGeneration(legacy)).toBe(true);
+  expect(platformFileIdentity.lacksGeneration(linux)).toBe(false);
+});
+
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("Linux physical identity", () => {
+  it("gives a folder recreated at the same path a different identity", async () => {
+    const helper = await filePublicationTestHelper();
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-identity-"));
+    try {
+      const folder = NodePath.join(root, "paper");
+      await NodeFSP.mkdir(folder);
+      const before = await platformFileIdentity.directory(folder, undefined, helper);
+      expect(before).toMatchObject({ platform: "linux", generation: expect.any(String) });
+      expect(await platformFileIdentity.directory(folder, undefined, helper)).toEqual(before);
+      // ext4 and XFS usually hand the freed inode straight back; whether they do or not,
+      // the new folder must not pass for the old one.
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await NodeFSP.rmdir(folder);
+        await NodeFSP.mkdir(folder);
+        const after = await platformFileIdentity.directory(folder, undefined, helper);
+        expect(after).not.toBeNull();
+        expect(platformFileIdentity.equal(before!, after!)).toBe(false);
+      }
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("macOS physical identity", () => {

@@ -1146,6 +1146,7 @@ const LinuxFolderInquiry = Schema.Struct({
         Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u),
       ),
       fileId: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),
+      generation: Schema.String.check(Schema.isPattern(/^\d{1,10}$/u)),
       subvolumeId: Schema.NullOr(Schema.String.check(Schema.isPattern(/^\d{1,40}$/u))),
     }),
   ),

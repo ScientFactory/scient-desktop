@@ -1391,7 +1391,29 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     });
   });
 
+  /**
+   * Linux links recorded before the inode generation was read match their folder by inode
+   * alone, which a replacement folder can reuse; record each one's generation as early as
+   * the server can. A link in use now gets it at its next operation.
+   */
+  const recordGenerations = Effect.gen(function* () {
+    for (const document of yield* connections.documents) {
+      if (
+        document.state !== "active" ||
+        (!platformFileIdentity.lacksGeneration(document.checkout.identity) &&
+          !platformFileIdentity.lacksGeneration(document.folder.identity))
+      )
+        continue;
+      yield* OverleafCoordinator.reserveOverleafConnection(
+        reservations,
+        document.connectionId,
+        () => connections.followRestored(document.connectionId),
+      ).pipe(Effect.ignore);
+    }
+  }).pipe(Effect.ignore);
+
   return {
+    recordGenerations,
     tokenStatus,
     saveToken,
     removeToken,
@@ -1487,6 +1509,7 @@ export const layer = Layer.unwrap(
           publicationHelper: publicationHelper ?? null,
           activeThreads,
         });
+        yield* Effect.forkScoped(service.recordGenerations);
         const guard =
           <I, A, E, R>(operation: (input: I) => Effect.Effect<A, E, R>) =>
           (input: I) =>
