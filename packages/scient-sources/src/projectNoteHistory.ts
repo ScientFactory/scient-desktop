@@ -40,6 +40,8 @@ const NoteHistoryFile = Schema.Struct({
   versions: Schema.Array(ScientProjectNoteVersion),
 });
 
+const decodeNoteHistoryFile = Schema.decodeUnknownSync(NoteHistoryFile);
+
 function historyPath(root: string, sourceId: string): string {
   const name = SAFE_FILE_ID.test(sourceId)
     ? sourceId
@@ -170,4 +172,37 @@ export async function recordScientProjectNoteFromElsewhere(
     { formatVersion: 1, sourceId: input.sourceId, versions: pruned(versions) },
     MAX_HISTORY_BYTES,
   );
+}
+
+const versionKey = (version: ScientProjectNoteVersion) =>
+  JSON.stringify([version.note, version.at, version.kind, version.by ?? null]);
+
+/**
+ * Joins another copy's history of one pin (a package's file): every version either kept, once,
+ * oldest first, with its kind, actor and time; this copy's newest stays newest. The caller holds
+ * the project's pins lock. Answers how many versions were new here.
+ */
+export async function joinScientProjectNoteHistory(
+  root: string,
+  incoming: unknown,
+): Promise<number> {
+  const file = decodeNoteHistoryFile(incoming);
+  const local = await readScientProjectNoteHistory(root, file.sourceId);
+  const seen = new Set(local.map(versionKey));
+  const added = file.versions.filter((version) => !seen.has(versionKey(version)));
+  if (added.length === 0) return 0;
+  const newest = local.at(-1);
+  const joined = [...local.slice(0, -1), ...added].toSorted((left, right) =>
+    left.at < right.at ? -1 : left.at > right.at ? 1 : 0,
+  );
+  await atomicWriteJson(
+    historyPath(root, file.sourceId),
+    {
+      formatVersion: 1,
+      sourceId: file.sourceId,
+      versions: pruned(newest ? [...joined, newest] : joined),
+    },
+    MAX_HISTORY_BYTES,
+  );
+  return added.length;
 }

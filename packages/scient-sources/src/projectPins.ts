@@ -30,6 +30,7 @@ import {
   withKnownPinCitationValues,
 } from "./pinCitation.ts";
 import {
+  joinScientProjectNoteHistory,
   readScientProjectNoteHistory,
   recordScientProjectNoteChange,
   recordScientProjectNoteFromElsewhere,
@@ -972,29 +973,42 @@ export async function listScientProjectPinnedWorks(input: {
 
 export interface ScientProjectPinsJoin {
   readonly added: number;
+  /** The keys of the pins added, for the import's Undo. */
+  readonly addedKeys: ReadonlyArray<string>;
   /** Pins this project had without a note, which took the incoming one. */
   readonly notesAdded: number;
   /** Pins whose own note stays; the incoming note is kept in its note history. */
   readonly notesKept: number;
+  /** Earlier note versions from the other copy that this project's history lacked. */
+  readonly historyAdded: number;
   /** Incoming keys another source here already used, and the keys they got. */
   readonly renamedKeys: ReadonlyArray<{ readonly from: string; readonly to: string }>;
 }
 
 /**
- * Joins pins from another copy of a project (a package) into this one: a source pinned here
- * keeps its pin and note, an incoming note it lacks is added, a differing one goes into its note
- * history; a new source keeps its key unless another source here has it. Writes `pins.json` once.
+ * Joins another copy's pins and note histories in one hold of the pins lock, so a pin written
+ * meanwhile is joined, never skipped. A pin here keeps its note (a differing incoming one goes to
+ * its history); a new source keeps its key unless another source here has it.
  */
 export async function joinScientProjectPins(input: {
   readonly projectRoot: string;
   readonly pins: ReadonlyArray<ScientProjectPin>;
+  /** Note-history files from the other copy. */
+  readonly noteHistories?: ReadonlyArray<unknown>;
+  /** Test-only: runs once the lock is held, before anything is read. */
+  readonly afterLock?: () => Promise<void>;
 }): Promise<ScientProjectPinsJoin> {
   const root = await projectRootFor(input.projectRoot);
   return withPinsLock(root, async () => {
+    await input.afterLock?.();
+    let historyAdded = 0;
+    for (const history of input.noteHistories ?? []) {
+      historyAdded += await joinScientProjectNoteHistory(root, history);
+    }
     const document = await readPinsDocument(root);
     const pins = [...document.pins];
     const taken = new Set(pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
-    let added = 0;
+    const addedKeys: string[] = [];
     let notesAdded = 0;
     let notesKept = 0;
     const renamedKeys: Array<{ from: string; to: string }> = [];
@@ -1033,9 +1047,16 @@ export async function joinScientProjectPins(input: {
       if (clash) renamedKeys.push({ from: incoming.citationKey, to: citationKey });
       taken.add(citationKeyComparisonValue(citationKey));
       pins.push({ pin: { ...incoming, citationKey }, extra: {}, workExtra: {} });
-      added += 1;
+      addedKeys.push(citationKey);
     }
     await writePinsDocument(root, document, pins);
-    return { added, notesAdded, notesKept, renamedKeys };
+    return {
+      added: addedKeys.length,
+      addedKeys,
+      notesAdded,
+      notesKept,
+      historyAdded,
+      renamedKeys,
+    };
   });
 }
