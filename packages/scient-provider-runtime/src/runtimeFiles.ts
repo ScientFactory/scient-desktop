@@ -482,10 +482,10 @@ async function partialDownloadSize(path: string): Promise<number> {
 
 /** The server's strong ETag for the copy a kept download came from, sent back as `If-Range`. */
 async function readPartialValidator(partialPath: string, url: string): Promise<string | undefined> {
-  const saved: unknown = await NodeFSP.readFile(partialValidatorPath(partialPath), "utf8").then(
-    (text) => JSON.parse(text) as unknown,
-    () => undefined,
-  );
+  // A sidecar cut short by a crash is only a missing validator; the digest still guards the bytes.
+  const saved: unknown = await NodeFSP.readFile(partialValidatorPath(partialPath), "utf8")
+    .then((text) => JSON.parse(text) as unknown)
+    .catch(() => undefined);
   if (typeof saved !== "object" || saved === null) return undefined;
   const { url: savedUrl, etag } = saved as { url?: unknown; etag?: unknown };
   return savedUrl === url && typeof etag === "string" ? etag : undefined;

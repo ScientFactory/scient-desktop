@@ -454,6 +454,16 @@ describe("resumable downloads", () => {
     expect(await NodeFSP.readFile(whole.destination, "utf8")).toBe(body);
   });
 
+  it("continues past a validator file a crash cut short", async () => {
+    const request = await resumable();
+    await NodeFSP.mkdir(NodePath.dirname(request.partialPath), { recursive: true });
+    await NodeFSP.writeFile(request.partialPath, "he");
+    await NodeFSP.writeFile(`${request.partialPath}.json`, '{"url":"https://');
+    const fetch = vi.fn().mockResolvedValueOnce(partialContent(2, "llo"));
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadManagedRuntime(request)).resolves.toMatchObject({ resumedBytes: 2 });
+  });
+
   it.each([
     ["sends the whole file", () => new Response(body)],
     ["answers a different range", () => partialContent(1, "ello")],
