@@ -95,6 +95,7 @@ import {
   exportLibraryProjectPackage,
   importLibraryProjectPackage,
   listLibraryProjectPackages,
+  undoLibraryProjectPackageImport,
 } from "./LibraryProjectPackage.ts";
 import {
   alsoPinnedIn,
@@ -938,6 +939,7 @@ export const isLibraryOrganizeAction = (
   change.action === "export-package" ||
   change.action === "list-packages" ||
   change.action === "import-package" ||
+  change.action === "undo-import" ||
   isPinRepairAction(change);
 
 export const isPinRepairAction = (change: {
@@ -1070,6 +1072,8 @@ export async function organizeLibrarySources(
       return listLibraryProjectPackages(store);
     case "import-package":
       return importLibraryProjectPackage(store, change, ACTOR);
+    case "undo-import":
+      return undoLibraryProjectPackageImport(store, change, ACTOR);
   }
 }
 

@@ -1100,17 +1100,38 @@ describe("Sources tools on the library backend", () => {
         });
         return { ...fixture, root, stateDir: NodePath.join(fixture.base, "other-state") };
       });
-      expect(
-        yield* run(
-          organizeLibrarySourcesForInvocation({
-            change: { action: "import-package", relativePath: "handoff" },
-          }),
-          other,
-        ),
-      ).toMatchObject({ outcome: "imported", packageReport: { sources: 1, pins: 1 } });
+      const imported = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "import-package", relativePath: "handoff" },
+        }),
+        other,
+      );
+      expect(imported).toMatchObject({
+        outcome: "imported",
+        packageReport: { sources: 1, pins: 1, failed: [] },
+      });
       expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toMatchObject([
         { note: "Why we cite it." },
       ]);
+      expect(
+        yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "undo-import", importId: imported.packageReport!.importId! },
+          }),
+          other,
+        ),
+      ).toMatchObject({ outcome: "undone", packageReport: { kept: [] } });
+      expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toEqual([]);
+
+      // Saved outside the project: nothing for the project's Git to pick up.
+      const outside = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "export-package", inFolder: fixture.base },
+        }),
+        fixture,
+      );
+      expect(outside).toMatchObject({ packageReport: { insideProject: false } });
+      expect(NodePath.dirname(outside.packagePath!)).toBe(fixture.base);
     }),
   );
 

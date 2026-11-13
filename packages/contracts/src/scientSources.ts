@@ -452,17 +452,24 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     action: Schema.Literal("restore-pre-move"),
     archiveId: Schema.optionalKey(NonEmptyString),
   }),
-  /** Writes this project's package to a new project folder (a dated name when absent). */
+  /**
+   * Writes this project's package to a new folder: `relativePath` (in the project, or absolute),
+   * or a dated folder made in `inFolder` (absolute) or the project.
+   */
   Schema.Struct({
     action: Schema.Literal("export-package"),
     relativePath: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(4_096))),
+    inFolder: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(4_096))),
   }),
   /** The packages in the project's top-level folders. */
   Schema.Struct({ action: Schema.Literal("list-packages") }),
+  /** A package folder in the project, or an absolute path. */
   Schema.Struct({
     action: Schema.Literal("import-package"),
     relativePath: NonEmptyString.check(Schema.isMaxLength(4_096)),
   }),
+  /** Removes what that import added; what it joined stays. */
+  Schema.Struct({ action: Schema.Literal("undo-import"), importId: NonEmptyString }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -490,6 +497,22 @@ export const ScientProjectPackageReport = Schema.Struct({
   unavailable: Count,
   /** The files that no longer match the manifest. */
   changedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Export: whether the folder is inside the project (committed with it). */
+  insideProject: Schema.optionalKey(Schema.Boolean),
+  /** Import: undo-import takes it. */
+  importId: Schema.optionalKey(NonEmptyString),
+  /** Highlights changed apart on both computers: this one's stays, the other is history. */
+  annotationConflicts: Schema.optionalKey(Count),
+  /** Reviews whose decisions were equal and whose missing snapshot was added. */
+  snapshotsAdded: Schema.optionalKey(Count),
+  /** What could not be imported; never counted above. */
+  failed: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ part: Schema.String, item: Schema.String, message: Schema.String }),
+    ),
+  ),
+  /** Undo: files changed since the import, which stay. */
+  kept: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientProjectPackageReport = typeof ScientProjectPackageReport.Type;
 

@@ -1157,8 +1157,10 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({
     action: Schema.Literal("export-package"),
     relativePath: Schema.optionalKey(NonEmptyString),
+    inFolder: Schema.optionalKey(NonEmptyString),
   }),
   Schema.Struct({ action: Schema.Literal("import-package"), relativePath: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("undo-import"), importId: NonEmptyString }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -1225,7 +1227,7 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note, on the pin citationKey names when several cite it; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer; export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes), import-package brings one in. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note, on the pin citationKey names when several cite it; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer; export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes or saved searches; relativePath, or a dated folder in inFolder; outside the project unless the user wants it committed), import-package brings one in (relativePath may be absolute; undo-import with its importId removes what it added). A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

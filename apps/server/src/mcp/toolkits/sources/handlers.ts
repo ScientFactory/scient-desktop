@@ -145,6 +145,7 @@ import { syncPinnedBibliography } from "../../../scient/sources/ManagedBibliogra
 import {
   exportLibraryProjectPackage,
   importLibraryProjectPackage,
+  undoLibraryProjectPackageImport,
 } from "../../../scient/sources/LibraryProjectPackage.ts";
 import {
   moveProjectBackIntoProject,
@@ -787,6 +788,7 @@ const isLibraryOrganizeChange = (
   change.action === "restore-pre-move" ||
   change.action === "export-package" ||
   change.action === "import-package" ||
+  change.action === "undo-import" ||
   isPinRepairAction(change);
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
@@ -1013,6 +1015,8 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
       return yield* attempt(() => exportLibraryProjectPackage(store, change));
     case "import-package":
       return yield* attempt(() => importLibraryProjectPackage(store, change, "agent"));
+    case "undo-import":
+      return yield* attempt(() => undoLibraryProjectPackageImport(store, change, "agent"));
   }
 });
 
