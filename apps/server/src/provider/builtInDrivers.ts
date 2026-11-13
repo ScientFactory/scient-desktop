@@ -72,7 +72,10 @@ export type BuiltInUsageReadersEnv =
   | ProviderUsageReaderEnv<typeof AntigravityDriver>
   | ProviderUsageReaderEnv<typeof CursorDriver>
   | ProviderUsageReaderEnv<typeof PiDriver>
-  | ProviderUsageReaderEnv<typeof MuseDriver>;
+  | ProviderUsageReaderEnv<typeof MuseDriver>
+  // SCIENT-FORK:START Scient Agent token history
+  | ProviderUsageReaderEnv<typeof ScientAgentDriver>;
+// SCIENT-FORK:END Scient Agent token history
 
 /** Order matters: aggregation keeps the first duplicate record. */
 // Transcript readers must precede scan readers.
@@ -87,4 +90,7 @@ export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
   MuseDriver,
   AntigravityDriver,
   CursorDriver,
+  // SCIENT-FORK:START Scient Agent token history
+  ScientAgentDriver,
+  // SCIENT-FORK:END Scient Agent token history
 ];

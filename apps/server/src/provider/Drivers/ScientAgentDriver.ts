@@ -62,6 +62,7 @@ import { readScientAgentMcpServers } from "../../scient/extensions/ScientAgentMc
 import { makeSharedPluginStore } from "../../scient/extensions/SharedPluginStore.ts";
 import { readScientClaudePlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
 import { discoverScientAgentSkills } from "../scient/ScientAgentSkills.ts";
+import { readScientAgentUsageLimits, scientAgentUsageReader } from "../scient/ScientAgentUsage.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
@@ -86,11 +87,16 @@ export type ScientAgentDriverEnv =
  * Share transport/tool bridge behavior, not OMP homes. Managed installs use qualified Scient
  * releases; configured executables remain usable independently.
  */
-export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
+export const ScientAgentDriver: ScientProviderDriver<
+  ScientAgentSettings,
+  ScientAgentDriverEnv,
+  Path.Path | ServerConfig
+> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: scientAgentTarget.displayName, supportsMultipleInstances: false },
   configSchema: ScientAgentSettings,
   defaultConfig: () => decodeSettings({}),
+  usage: scientAgentUsageReader,
   create: Effect.fn("ScientAgentDriver.create")(function* ({
     instanceId,
     displayName,
@@ -252,8 +258,22 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         Effect.provideService(Path.Path, path),
         Effect.flatMap((snapshot) =>
           effectiveConfig.enabled && snapshot.installed
-            ? discoverScientAgentSkills((args) => runPluginCommand(cwd, args)).pipe(
-                Effect.map((skills) => stamp({ ...snapshot, skills })),
+            ? Effect.all(
+                [
+                  discoverScientAgentSkills((args) => runPluginCommand(cwd, args)),
+                  // Limits belong to the accounts, not a workspace: read them on the main check.
+                  cwd === undefined
+                    ? readScientAgentUsageLimits(
+                        (args) => runPluginCommand(cwd, args),
+                        snapshot.accounts,
+                      )
+                    : Effect.undefined,
+                ],
+                { concurrency: "unbounded" },
+              ).pipe(
+                Effect.map(([skills, usageLimits]) =>
+                  stamp({ ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) }),
+                ),
               )
             : Effect.succeed(stamp(snapshot)),
         ),
