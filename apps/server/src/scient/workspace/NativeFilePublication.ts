@@ -1,6 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Host-owned namespace adapter. Policy, records and recovery stay in the mutation service. */
-import { validatePublicationArtifact } from "@t3tools/shared/scientPublicationArtifact";
+import {
+  NATIVE_CHECK_DEADLINE_MS,
+  NativeCheckDeadlineError,
+  validatePublicationArtifact,
+} from "@t3tools/shared/scientPublicationArtifact";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -129,9 +133,54 @@ export const isPackagedServerDirectory = (moduleDirectory: string) =>
     moduleDirectory.toLowerCase().endsWith(NodePath.join("resources", archive, "apps/server/dist")),
   );
 
-/** Explicit host configuration never falls through to a different executable. */
+/** Why one check of a helper candidate failed; `elapsedMs` is that attempt's time. */
+export interface NativeHelperCheckFailure {
+  readonly attempt: number;
+  readonly stage: "artifact" | "capabilities";
+  readonly elapsedMs: number;
+  readonly error: unknown;
+}
+type NativeHelperFailureReport = (failure: NativeHelperCheckFailure) => void;
+
+/**
+ * Validates a candidate and asks its capabilities. A first launch after install can outlast a
+ * check's deadline, so a check stopped by its own deadline runs once more; a refusal is final.
+ */
+async function checkHelperCandidate(
+  candidate: string,
+  onFailure: NativeHelperFailureReport | undefined,
+  checks: Record<NativeHelperCheckFailure["stage"], (helper: string) => Promise<unknown>> = {
+    artifact: validatePublicationArtifact,
+    capabilities: (helper) => nativeFilePublicationCapabilities(helper),
+  },
+): Promise<boolean> {
+  for (let attempt = 1; ; attempt++) {
+    const startedAt = performance.now();
+    let stage: NativeHelperCheckFailure["stage"] = "artifact";
+    try {
+      await checks.artifact(candidate);
+      stage = "capabilities";
+      await checks.capabilities(candidate);
+      return true;
+    } catch (error) {
+      try {
+        onFailure?.({ attempt, stage, elapsedMs: performance.now() - startedAt, error });
+      } catch {
+        // A report never changes the answer.
+      }
+      if (attempt > 1 || !(error instanceof NativeCheckDeadlineError)) return false;
+    }
+  }
+}
+export const nativeFilePublicationInternals = { checkHelperCandidate };
+
+/**
+ * Explicit host configuration never falls through to a different executable. `onFailure`
+ * hears why a candidate was refused; the answer stays the same.
+ */
 export async function resolveNativeFilePublicationHelperPath(
   configuredPath?: string,
+  onFailure?: NativeHelperFailureReport,
 ): Promise<string | undefined> {
   const platform = HostProcess.Platform.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
@@ -150,14 +199,8 @@ export async function resolveNativeFilePublicationHelperPath(
         (source
           ? NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary)
           : NodePath.join(moduleDirectory, "file-exchange", binary))));
-  try {
-    await validatePublicationArtifact(candidate);
-    await nativeFilePublicationCapabilities(candidate);
-    return candidate;
-  } catch {
-    // Explicit configuration never falls through to another helper.
-    return undefined;
-  }
+  // Explicit configuration never falls through to another helper.
+  return (await checkHelperCandidate(candidate, onFailure)) ? candidate : undefined;
 }
 /** Helper commands the Windows helper's `--serve=1` process answers; they only read. */
 const servedQuery = (args: ReadonlyArray<string>) =>
@@ -319,11 +362,19 @@ export async function invokeNativeHelper(
   }
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const child = NodeChildProcess.spawn(helperPath, args, {
-    // Capability inquiries cannot mutate files, so a wrong protocol may be terminated.
-    ...(args[1] === "capabilities" ? { timeout: 10_000 } : {}),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
+  // Capability inquiries cannot mutate files, so a wrong protocol may be terminated.
+  let pastDeadline = false;
+  const deadline =
+    args[1] === "capabilities"
+      ? // @effect-diagnostics-next-line globalTimers:off -- The helper process owns this plain-Promise lifecycle.
+        setTimeout(() => {
+          pastDeadline = true;
+          child.kill();
+        }, NATIVE_CHECK_DEADLINE_MS)
+      : undefined;
   let stdout = "",
     stderr = "",
     overflow = false;
@@ -342,7 +393,9 @@ export async function invokeNativeHelper(
   });
   // No abort/timeout race: even an abandoned waiter leaves this owner awaiting real retirement.
   child.on("close", (code, signal) => {
-    if (spawnError || code !== 0 || signal !== null || overflow) {
+    clearTimeout(deadline);
+    if (pastDeadline) reject(new NativeCheckDeadlineError("capabilities"));
+    else if (spawnError || code !== 0 || signal !== null || overflow) {
       reject(
         new NativeFilePublicationError({
           message: `Native publication reply unknown: ${spawnError?.message ?? `exit=${code}, signal=${signal}, stderr=${stderr}`}`,

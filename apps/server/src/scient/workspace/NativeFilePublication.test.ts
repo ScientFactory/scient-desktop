@@ -5,6 +5,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it, vi } from "@effect/vitest";
+import {
+  NATIVE_CHECK_DEADLINE_MS,
+  NativeCheckDeadlineError,
+} from "@t3tools/shared/scientPublicationArtifact";
 import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import {
   bindNativeFilePublicationParent,
@@ -14,6 +18,7 @@ import {
   invokeNativeHelper,
   isPackagedServerDirectory,
   nativeFilePublicationCapabilities,
+  nativeFilePublicationInternals,
   observedDirectoryBinding,
   withNativeFilePublicationLease,
 } from "./NativeFilePublication.ts";
@@ -383,4 +388,84 @@ describe("the packaged server's own resources", () => {
       false,
     );
   });
+});
+
+describe("a helper candidate's checks", () => {
+  const { checkHelperCandidate } = nativeFilePublicationInternals;
+  const deadline = () => new NativeCheckDeadlineError("permissions");
+  const refusal = () => new Error("Native publication resource hash differs from its receipt.");
+  /** Checks that fail with `outcomes` in turn, then pass. */
+  const scripted = (...outcomes: Array<() => Error>) => {
+    const calls: string[] = [];
+    const step = (stage: string) => async () => {
+      calls.push(stage);
+      const next = outcomes.shift();
+      if (next) throw next();
+    };
+    return { calls, checks: { artifact: step("artifact"), capabilities: step("capabilities") } };
+  };
+
+  it("checks once more when a check's own deadline stopped it", async () => {
+    const { calls, checks } = scripted(deadline);
+    const failures: unknown[] = [];
+    expect(await checkHelperCandidate("/h", (failure) => failures.push(failure), checks)).toBe(
+      true,
+    );
+    expect(calls).toEqual(["artifact", "artifact", "capabilities"]);
+    expect(failures).toMatchObject([{ attempt: 1, stage: "artifact" }]);
+  });
+
+  it.each([
+    ["a refusal", [refusal]],
+    ["a second deadline", [deadline, deadline]],
+    ["a refusal after a deadline", [deadline, refusal]],
+  ])("is refused for good after %s", async (_name, outcomes) => {
+    const { calls, checks } = scripted(...outcomes);
+    const failures: unknown[] = [];
+    expect(await checkHelperCandidate("/h", (failure) => failures.push(failure), checks)).toBe(
+      false,
+    );
+    expect(calls).toHaveLength(outcomes.length);
+    expect(failures).toHaveLength(outcomes.length);
+  });
+
+  it("keeps its answer when the failure report throws", async () => {
+    const { checks } = scripted(refusal);
+    expect(
+      await checkHelperCandidate(
+        "/h",
+        () => {
+          throw new Error("report failed");
+        },
+        checks,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe.skipIf(!posix)("a capability inquiry's deadline", () => {
+  it("reports its own deadline, not a refusal, once the helper has exited", () =>
+    inScratch("scient-capabilities-deadline-", async (root) => {
+      const slow = NodePath.join(root, "helper-slow");
+      await NodeFSP.writeFile(slow, "#!/bin/sh\nexec sleep 30\n", { mode: 0o700 });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const asked = nativeFilePublicationCapabilities(slow);
+        // The inquiry looks at the helper's file before it launches it and starts the deadline.
+        await expect.poll(() => vi.getTimerCount()).toBeGreaterThan(0);
+        vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
+        await expect(asked).rejects.toBeInstanceOf(NativeCheckDeadlineError);
+      } finally {
+        vi.useRealTimers();
+      }
+    }));
+
+  it("does not take a helper that died on its own for a deadline", () =>
+    inScratch("scient-capabilities-killed-", async (root) => {
+      const killed = NodePath.join(root, "helper-killed");
+      await NodeFSP.writeFile(killed, "#!/bin/sh\nkill -TERM $$\n", { mode: 0o700 });
+      const error = await nativeFilePublicationCapabilities(killed).catch((cause) => cause);
+      expect(error).not.toBeInstanceOf(NativeCheckDeadlineError);
+      expect(String(error)).toMatch(/signal=SIGTERM/u);
+    }));
 });

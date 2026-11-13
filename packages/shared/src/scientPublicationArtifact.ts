@@ -6,6 +6,18 @@ import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import * as HostProcess from "./HostProcess.ts";
 
+/** How long one native check (PowerShell's permission check, a capability inquiry) may run. */
+export const NATIVE_CHECK_DEADLINE_MS = 10_000;
+/** A native check stopped by its own deadline: it neither passed nor refused. */
+// @effect-diagnostics-next-line extendsNativeError:off -- Plain-Promise validation; callers test it with instanceof.
+export class NativeCheckDeadlineError extends Error {
+  readonly check: "permissions" | "capabilities";
+  constructor(check: "permissions" | "capabilities") {
+    super(`The native ${check} check did not finish within ${NATIVE_CHECK_DEADLINE_MS / 1000} s.`);
+    this.check = check;
+  }
+}
+
 /** Windows permission checks that passed, by what they looked at and when. */
 const checkedWindowsPermissions = new Map<string, { readonly key: string; readonly at: number }>();
 // PowerShell takes a second or more to start, so a pass is trusted this long while the
@@ -155,21 +167,32 @@ const windowsPermissionsKey = async (helper: string, receiptPath: string) =>
       }),
     )
   ).join("|");
-const checkWindowsPermissions = (helper: string, command: string) =>
-  NodeUtil.promisify(NodeChildProcess.execFile)(
-    NodePath.join(
-      process.env.SystemRoot ?? "C:/Windows",
-      "System32/WindowsPowerShell/v1.0/powershell.exe",
-    ),
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-EncodedCommand",
-      Buffer.from(command, "utf16le").toString("base64"),
-    ],
-    {
-      env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper },
-      timeout: 10_000,
-      windowsHide: true,
-    },
-  );
+const checkWindowsPermissions = async (helper: string, command: string) => {
+  const deadline = new AbortController();
+  // @effect-diagnostics-next-line globalTimers:off -- The PowerShell child owns this plain-Promise lifecycle.
+  const timer = setTimeout(() => deadline.abort(), NATIVE_CHECK_DEADLINE_MS);
+  try {
+    return await NodeUtil.promisify(NodeChildProcess.execFile)(
+      NodePath.join(
+        process.env.SystemRoot ?? "C:/Windows",
+        "System32/WindowsPowerShell/v1.0/powershell.exe",
+      ),
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(command, "utf16le").toString("base64"),
+      ],
+      {
+        env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper },
+        signal: deadline.signal,
+        windowsHide: true,
+      },
+    );
+  } catch (error) {
+    if (deadline.signal.aborted) throw new NativeCheckDeadlineError("permissions");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+};
