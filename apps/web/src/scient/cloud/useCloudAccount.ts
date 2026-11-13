@@ -1,4 +1,5 @@
 import { useAuth } from "@clerk/react";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import { useT3ConnectAuthPrompt } from "~/components/clerk/useT3ConnectAuthPrompt";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "~/cloud/publicConfig";
@@ -14,9 +15,16 @@ const devCloudUserId: string | null = import.meta.env.DEV
   ? (import.meta.env.VITE_SCIENT_CLOUD_DEV_USER as string | undefined)?.trim() || null
   : null;
 
+/** A build pointed at a Scient Cloud (a staging or local service) shows it before launch. */
+const configuredCloudUrl = Boolean(
+  (import.meta.env.VITE_SCIENT_CLOUD_URL as string | undefined)?.trim(),
+);
+
 /** Whether the app can reach a Scient account for Scient Cloud. */
 export function hasCloudAccount(): boolean {
-  return devCloudUserId !== null || hasCloudPublicConfig();
+  if (devCloudUserId !== null) return true;
+  const live = SCIENT_DESKTOP_IDENTITY.scientCloudLive || configuredCloudUrl;
+  return live && hasCloudPublicConfig();
 }
 
 /**

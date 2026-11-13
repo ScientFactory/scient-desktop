@@ -36,6 +36,10 @@ Nothing deploys automatically: the workflow is `workflow_dispatch` only.
    `https://share.scientusercontent.com/frame` returns the frame with its sandbox CSP.
 6. Deploy the hosted app from a build that includes the cloud reader so `/cloud` and `/shared/<id>`
    exist there (see [Scient Connect operations](./scient-connect.md#deploying)).
+7. Turn the features on: set `scientCloudLive` to `true` in
+   `packages/shared/src/scientDesktopIdentity.ts` and release. Until then the app hides Sync, Share
+   link and Continue on this computer; a build with `VITE_SCIENT_CLOUD_URL` set shows them for
+   testing against a staging or local service.
 
 Before shipping to users, update the website's privacy and terms pages for cloud copies and public
 share links. Cloud copy stays off until each person turns it on.

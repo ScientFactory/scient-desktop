@@ -28,6 +28,8 @@ export const SCIENT_DESKTOP_IDENTITY = {
   cloudEnabled: true,
   // Scient Cloud API (conversation copies, share links); SCIENT_CLOUD_URL overrides it for local runs.
   cloudApiUrl: "https://cloud.scientfactory.com",
+  // Sync, share links and continuing elsewhere stay hidden until that service is deployed.
+  scientCloudLive: false as boolean,
   // The Scient phone app is not published yet; nothing offers it until it is.
   mobileAppEnabled: false as boolean,
   autoUpdateEnabled: true,

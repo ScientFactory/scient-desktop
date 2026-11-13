@@ -198,10 +198,8 @@ function ShareLinkDialog({
   const [publish, setPublish] = useState<PublishState>({ status: "idle" });
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "share link" });
 
-  const adoptShare = (
-    share: ShareRecord | null,
-    selection: ShareSelection | null = share === null ? null : readShareSelection(share.id),
-  ) => {
+  const adoptShare = (share: ShareRecord | null, published?: ShareSelection) => {
+    const selection = published ?? (share === null ? null : readShareSelection(share.id));
     setExisting(share);
     setLookupFailed(false);
     if (share === null) return;
