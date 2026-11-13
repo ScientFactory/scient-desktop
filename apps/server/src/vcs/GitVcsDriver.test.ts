@@ -33,6 +33,7 @@ import { gitCommandDuration, gitCommandsTotal } from "../observability/Metrics.t
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { CheckpointSizeScanTimeout } from "./ScientCheckpointCapture.ts";
 import type * as VcsDriver from "./VcsDriver.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -1872,7 +1873,11 @@ it.live("native checkpoint captures a complete changed-path listing above 16 MiB
         },
       });
       expect(listedBytes).toBeGreaterThan(16 * 1024 * 1024);
-      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      // This checks a complete listing, not speed: 24,000 stats can outlast the 2 s turn budget
+      // on a loaded runner, which would report the workspace as too large.
+      yield* driver.checkpoints
+        .captureCheckpoint({ cwd, checkpointRef })
+        .pipe(Effect.provideService(CheckpointSizeScanTimeout, 120_000));
       let capturedPaths = 0;
       yield* driver.execute({
         operation: "large-list.tree",
