@@ -1,7 +1,7 @@
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -28,6 +28,7 @@ import {
   firstPickState,
   make,
   parseMeteredOutput,
+  recordAfterUserChange,
 } from "./ScientAgentBackgroundRuntime.ts";
 
 const INSTANCE = ProviderInstanceId.make("scient");
@@ -107,6 +108,29 @@ describe("backgroundRuntimeAction", () => {
       backgroundRuntimeAction(scientAgent(), { failures: { version: "0.1.5", count: 5 } }).kind,
       "start",
     );
+  });
+});
+
+describe("recordAfterUserChange", () => {
+  it("keeps the user's Remove and Cancel, and lets their own install hand back", () => {
+    const apply = (action: "install" | "update" | "remove", status: "succeeded" | "cancelled") =>
+      recordAfterUserChange(
+        { action, status },
+        "0.1.6",
+      )?.({ failures: { version: "0.1.5", count: 2 } });
+    expect(apply("remove", "succeeded")).toMatchObject({ userStopped: true });
+    expect(apply("install", "cancelled")).toMatchObject({ userStopped: true });
+    expect(apply("update", "cancelled")).toMatchObject({ skippedVersion: "0.1.6" });
+    expect(
+      recordAfterUserChange(
+        { action: "update", status: "succeeded" },
+        null,
+      )?.({
+        userStopped: true,
+        skippedVersion: "0.1.6",
+      }),
+    ).toEqual({});
+    expect(recordAfterUserChange({ action: "repair", status: "failed" }, "0.1.6")).toBeUndefined();
   });
 });
 

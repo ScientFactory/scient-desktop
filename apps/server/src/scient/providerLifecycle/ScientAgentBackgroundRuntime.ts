@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderManagedRuntimeAction,
+  type ProviderRuntimeSummary,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -81,6 +82,28 @@ export function backgroundRuntimeAction(
   )
     return { kind: "wait", reason: "gave-up" };
   return { kind: "start", action, version };
+}
+
+/**
+ * How a finished change the user made moves the record: Remove, or Cancel of an install, stops
+ * background installs; Cancel of an update skips that release; their own install or update
+ * lets Scient take over again.
+ */
+export function recordAfterUserChange(
+  operation: Pick<NonNullable<ProviderRuntimeSummary["operation"]>, "action" | "status">,
+  offeredVersion: string | null,
+): ((record: BackgroundRecord) => BackgroundRecord) | undefined {
+  const { action, status } = operation;
+  if (
+    (action === "remove" && status === "succeeded") ||
+    (action === "install" && status === "cancelled")
+  )
+    return (record) => ({ ...record, userStopped: true });
+  if (action === "update" && status === "cancelled" && offeredVersion !== null)
+    return (record) => ({ ...record, skippedVersion: offeredVersion });
+  if (action !== "remove" && status === "succeeded")
+    return ({ userStopped: _stopped, skippedVersion: _skipped, ...rest }) => rest;
+  return undefined;
 }
 
 /** True when the OS says the connection is metered. Unknown counts as not metered. */
@@ -286,20 +309,14 @@ export const make = Effect.fn("ScientAgentBackgroundRuntime.make")(function* () 
   const followUserChanges = registry.streamChanges.pipe(
     Stream.runForEach((providers) =>
       Effect.gen(function* () {
-        const operation = providers.find((provider) => provider.driver === SCIENT_AGENT)?.connection
-          ?.runtime?.operation;
+        const runtime = providers.find((provider) => provider.driver === SCIENT_AGENT)?.connection
+          ?.runtime;
+        const operation = runtime?.operation;
         if (!operation || operation.background || operation.finishedAt === null) return;
         if ((yield* Ref.getAndSet(handled, operation.operationId)) === operation.operationId)
           return;
-        if (
-          (operation.action === "remove" && operation.status === "succeeded") ||
-          (operation.action === "install" && operation.status === "cancelled")
-        )
-          yield* changeRecord((current) => ({ ...current, userStopped: true }));
-        else if (operation.action !== "remove" && operation.status === "succeeded")
-          yield* changeRecord(
-            ({ userStopped: _stopped, skippedVersion: _skipped, ...rest }) => rest,
-          );
+        const change = recordAfterUserChange(operation, runtime.availableManagedVersion ?? null);
+        if (change) yield* changeRecord(change);
       }),
     ),
   );
