@@ -10,7 +10,10 @@ import type {
  * `libraryLabels.test.ts` keeps "pin" out of every one of them.
  */
 export const LIBRARY_LABELS = {
-  scopes: { project: "This project", library: "All" } satisfies Record<ScientSourcesScope, string>,
+  scopes: { project: "This project", library: "All Library" } satisfies Record<
+    ScientSourcesScope,
+    string
+  >,
   inThisProject: "In this project",
   notInThisLibrary: "Not in this Library",
   addToProject: "Add to project",

@@ -5,7 +5,7 @@ import {
   scientSourceTagKey,
   scientSourceTopicKey,
 } from "@scientfactory/scient-sources";
-import type { ScientSourcesOverviewResult, ScientSourcesScope } from "@t3tools/contracts";
+import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import {
   FileTextIcon,
   FlaskConicalIcon,
@@ -46,8 +46,6 @@ import type { SourcesOrganize } from "./useSourcesOrganize";
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
 const ALL = "all";
-const SCOPE_CHOICE = "scope:";
-const SCOPE_LABELS = LIBRARY_LABELS.scopes;
 
 function Count(props: { readonly value: number }) {
   return (
@@ -160,9 +158,8 @@ export function SourcesFilterMenu(props: {
   readonly records: ReadonlyArray<SourceSummary>;
   readonly query: string;
   readonly onRequestName: (request: SourcesNameRequest) => void;
-  /** A library server's scopes: this project's pins act as one more collection. */
+  /** Present when reading-state filters are available. */
   readonly scopes?: ScientSourcesOverviewResult["scopes"];
-  readonly onSelectScope?: (scope: ScientSourcesScope) => void;
 }) {
   const { organize, scopes } = props;
   const { filter, organization } = organize;
@@ -219,48 +216,23 @@ export function SourcesFilterMenu(props: {
           <MenuSubTrigger>
             <FolderIcon aria-hidden className="size-3.5" />
             <span className="flex-1">Collection</span>
-            <SubmenuValue>
-              {organize.collection?.name ?? (scopes ? SCOPE_LABELS[scopes.listed] : "All")}
-            </SubmenuValue>
+            <SubmenuValue>{organize.collection?.name ?? "All sources"}</SubmenuValue>
           </MenuSubTrigger>
           {/* A long name would stretch the submenu over its parent menu; it truncates instead. */}
           <MenuSubPopup className="max-w-64">
             <MenuRadioGroup
-              value={
-                organize.collection?.collectionId ??
-                (scopes ? `${SCOPE_CHOICE}${scopes.listed}` : ALL)
+              value={organize.collection?.collectionId ?? ALL}
+              onValueChange={(value) =>
+                organize.showCollection(value === ALL ? undefined : String(value))
               }
-              onValueChange={(value) => {
-                const scope = (["project", "library"] as const).find(
-                  (entry) => value === `${SCOPE_CHOICE}${entry}`,
-                );
-                if (scope) {
-                  organize.showCollection(undefined);
-                  if (scope !== scopes?.listed) props.onSelectScope?.(scope);
-                  return;
-                }
-                organize.showCollection(value === ALL ? undefined : String(value));
-              }}
             >
-              {scopes ? (
-                (["project", "library"] as const).map((scope) => (
-                  <MenuRadioItem key={scope} value={`${SCOPE_CHOICE}${scope}`}>
-                    <span className="flex min-w-0 items-center gap-2">
-                      <LayersIcon aria-hidden className="size-3.5" />
-                      {SCOPE_LABELS[scope]}
-                      <Count value={scopes[scope]} />
-                    </span>
-                  </MenuRadioItem>
-                ))
-              ) : (
-                <MenuRadioItem value={ALL}>
-                  <span className="flex min-w-0 items-center gap-2">
-                    <LayersIcon aria-hidden className="size-3.5" />
-                    All sources
-                    <Count value={props.records.length} />
-                  </span>
-                </MenuRadioItem>
-              )}
+              <MenuRadioItem value={ALL}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <LayersIcon aria-hidden className="size-3.5" />
+                  All sources
+                  <Count value={props.records.length} />
+                </span>
+              </MenuRadioItem>
               {orderedCollections(organization.collections).map(({ collection, child }) => (
                 // On the item, which keyboard navigation focuses, so the full name shows there too.
                 <ScientTooltip key={collection.collectionId} content={collection.name}>

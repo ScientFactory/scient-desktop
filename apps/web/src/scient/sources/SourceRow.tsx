@@ -130,8 +130,6 @@ export function SourceRow(props: {
   const { record, row } = props;
   const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
   const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
-  const hasPdf =
-    materialSelection._tag === "Selected" || materialSelection._tag === "SeveralMaterials";
   const metadataDiagnostics = row.diagnosticsBySourceId.get(record.sourceId);
   const justAdded = row.recentlyAddedSourceIds.has(record.sourceId) && !record.fromSnapshot;
   const onToggleStar = row.onToggleStar;
@@ -184,26 +182,18 @@ export function SourceRow(props: {
                 <span className="mt-0.5 block text-xs text-muted-foreground">
                   {creatorLabel(record)}
                   {record.issuedYear ? ` · ${record.issuedYear}` : ""}
-                  {hasPdf ? " · PDF" : " · Metadata only"}
-                  {" · "}
-                  <span
-                    className={justAdded ? "font-medium text-sky-600 dark:text-sky-400" : undefined}
-                  >
-                    {sourceAddedLabel(
-                      record.importedAt,
-                      justAdded,
-                      record.origin?.actor === "agent",
-                    )}
-                  </span>
-                  {agentVerificationLabel(record)}
                   {sourceTrustLabel(record)}
-                  {sourcePinLabel(record, row.listed)}
+                  {record.fromSnapshot ? sourcePinLabel(record, row.listed) : null}
                 </span>
               </span>
             </button>
           }
         />
-        <TooltipPopup side="top">View source details</TooltipPopup>
+        <TooltipPopup side="top">
+          {sourceAddedLabel(record.importedAt, justAdded, record.origin?.actor === "agent")}
+          {agentVerificationLabel(record)}
+          {sourcePinLabel(record, row.listed)}
+        </TooltipPopup>
       </Tooltip>
       <div className="mt-0.5 mr-1 flex shrink-0 items-center gap-1">
         {record.readingStatus !== undefined ? (

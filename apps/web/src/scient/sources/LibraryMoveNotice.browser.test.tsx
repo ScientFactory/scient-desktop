@@ -197,7 +197,10 @@ describe("the Library's move line", () => {
     await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Move back into this project" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Recover", exact: true }));
+    await userEvent.click(
+      page.getByRole("menuitem", { name: "Keep this project's sources in its folder" }),
+    );
     await userEvent.click(page.getByRole("button", { name: "Move back" }));
 
     await vi.waitFor(() =>
@@ -239,7 +242,10 @@ describe("the Library's move line", () => {
     mocks.readLibraryMoveStatus.mockRejectedValueOnce(new Error("offline"));
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Move back into this project" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Recover", exact: true }));
+    await userEvent.click(
+      page.getByRole("menuitem", { name: "Keep this project's sources in its folder" }),
+    );
     await userEvent.click(page.getByRole("button", { name: "Move back" }));
 
     await expect
@@ -264,7 +270,10 @@ describe("the Library's move line", () => {
     await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Move back into this project" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Recover", exact: true }));
+    await userEvent.click(
+      page.getByRole("menuitem", { name: "Keep this project's sources in its folder" }),
+    );
     await userEvent.click(page.getByRole("button", { name: "Move back" }));
     await vi.waitFor(() =>
       expect(mocks.toast.mock.calls.map(([toast]) => toast.title)).toEqual([
@@ -275,7 +284,7 @@ describe("the Library's move line", () => {
     // The server may still start it: no second Move back, and the line follows the status.
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
     await expect
-      .element(page.getByRole("menuitem", { name: "Move back into this project" }))
+      .element(page.getByRole("menuitem", { name: "Keep this project's sources in its folder" }))
       .not.toBeInTheDocument();
     await userEvent.keyboard("{Escape}");
     libraryWriteSettled(environmentId);

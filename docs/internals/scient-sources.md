@@ -830,8 +830,9 @@ comes only from the thread's workspace binding (`resolveScientSourcesProject`),
 so tools take no project argument. The same reference picks the advertised
 tool list (`ScientSourcesToolkit` or `ScientSourcesLibraryToolkit`); both
 share operations and handlers. `agentContextBudget.scient.json` measures the
-library list (112,832 bytes); `libraryToolList.test.ts` keeps the project list
-at 110,848.
+library list (115,007 bytes); `libraryToolList.test.ts` measures the project list
+at 110,979. These are generated from the registered tool definitions; package
+paths use the same environment authority for people and agents.
 
 - Write authority is the invocation's `sources:write`. With it a call creates
   the library once, resolves pins and review records in `write` mode
@@ -975,12 +976,14 @@ its state.
 - **Get PDF** goes through the papers queue, which resolves the library record
   from a library ID or a project source ID (see above).
 
-The web (`useScientSources.ts`) sends `scope` only after the person picks the
-Library view, which `SourcesFilterMenu` offers only when the overview has
-`scopes`: "This project" and "All" replace "All sources" at the top of the
-Collection submenu. In the "All" view rows pinned here say "In this project",
-and a pin this library lacks says "Not in this Library" in either view. The
-review screen uses the review's `records` when present.
+The web (`useScientSources.ts`) sends `scope` after the person picks the
+Library view. **This project / All Library** is always above the list when the
+overview has `scopes`, including empty projects and read-only sessions.
+**Choose from Library** in an empty project opens its nonempty Library.
+Collections only filter within the selected scope. A pin this Library lacks
+keeps its **Not in this Library** warning; routine membership and added-time
+labels live on hover or in details. The review screen uses the review's
+`records` when present.
 
 ### Moving a project into the library
 
@@ -1006,7 +1009,7 @@ library backend:
 
 **Journal.** `<library>/migrations/<instanceId>/journal.json`, written with an
 atomic replace. States: `copying`, `prepared`, `committed`, `cleanup`, `done`,
-`restoring` while "Move back into this project" runs, and `moved-back` after
+`restoring` while "Keep this project's sources in its folder" runs, and `moved-back` after
 it. It records the run
 number, each v1 source's library ID and identity outcome (`copied`, `same`,
 `older`, `newer`, `diverged`, `removed`), the PDFs and annotation files moved,
@@ -1159,7 +1162,7 @@ the working tree like any other and left for the person to commit;
 Commit the change to stop storing PDFs in git." and the merge line "Merged N
 duplicates. K kept different values: Review." for 5e to show.
 
-**Move back into this project** (`moveScientProjectBackIntoProject`; the
+**Keep this project's sources in its folder** (`moveScientProjectBackIntoProject`; the
 organize route and `scient_sources_organize` take `move-back`): finishes a
 pending cleanup, then builds the v1 store in a staging folder,
 `.scient/library/.restoring/sources`: every run's backup, each pinned record's
@@ -1188,13 +1191,10 @@ agents list folders themselves), `import-package` and `undo-import`, through
 project, or absolute), or "Scient project package <date>" made in `inFolder`
 (absolute) or the project. Before any folder is made the destination is
 resolved through links (`canonicalPath`) and refused inside the project's
-`.scient`. An agent (`caller: "agent"`) may write only inside the project or
-under a folder granted for this project: the person's own export (the route,
-`caller: "person"`) to an outside folder, or own import from one, records its
-parent in `package-destinations.json` in the Library, keyed by project ID. An
-agent's `import-package` is held to the same rule before the manifest is read
-(`checkedPackageSource`: links resolved, never `.scient`, the project or a
-granted folder). The import itself reads only the manifest and files it lists,
+`.scient`. Export and import share `checkedPackagePath` for people and agents:
+canonical paths, including the internal folder itself, are resolved on the
+server's environment. Outside paths need no remembered grants or prior panel
+action. An existing package cannot be overwritten. The import itself reads only the manifest and files it lists,
 and refuses (`package-changed`) any whose real path, links resolved, leaves the
 package folder; `organization.json` is read only when listed. The panel
 offers a chosen folder (desktop, local environment; the picker starts beside
@@ -1301,20 +1301,19 @@ attachment, each added pin's source and note and each note given to a pin
 without one from `joinScientProjectPins`'s `written`, each created
 collection's `updatedAt`); what it joined (`sourceIds`, `pinKeys`,
 `collectionIds`, `evidence` labels and counts); and what failed. `undo-import`
-removes only created objects: pins (`unpinScientProjectPinIfUnchanged`), notes
-(`clearScientProjectPinNoteIfUnchanged`), collections
-(`deleteScientSourceCollection` with `expectedUpdatedAt`) and records (trashed
-by `removeScientSource` at the recorded revision, so with the PDFs they came
-with), each compared under its own lock, and only when no other receipt not
-undone references it: `joined.sourceIds`, attachments and `collectionIds` in any
-project of the Library, `pinKeys` in this one. Nothing is detached from a
-record it joined. Highlight and review files stay (a trashed paper's
-highlights come back with it). The result's `kept` names created objects that
-stayed; `left` lists the joined evidence and the highlight and review files. A
-receipt without `added.created` (written before this rule) keeps everything,
-named in `kept`. A step that throws leaves the receipt not undone and the call
-fails, so a rerun finishes. An import running at the same moment as an Undo is
-seen only once its receipt is written.
+removes only unchanged project additions: pins
+(`unpinScientProjectPinIfUnchanged`), notes
+(`clearScientProjectPinNoteIfUnchanged`) and collections
+(`deleteScientSourceCollection` with `expectedUpdatedAt`), each compared under
+its own lock, and only when no other receipt not undone references it.
+Library records are never removed by import Undo. All PDFs, highlights, review
+files and joined evidence stay. `retainedSourceIds` names imported papers still
+live in the Library, following merge aliases and deduplicating survivors;
+`kept` names preserved project additions and `left` lists joined evidence.
+A receipt without `added.created` keeps everything. A failed step leaves the
+receipt available to retry. The panel reports the retained paper count and
+**Show them** selects All Library with an explicit source-ID filter and a
+**Show all** control; other list filters and selections are cleared first.
 
 #### Lock holds, progress and one move per project (5e-1)
 
@@ -1473,7 +1472,12 @@ text until the duplicates screen exists. A write refused with
 when it has finished." (`scientSourcesErrorMessage`, and the reader's highlight
 toast).
 
-**Move back** is a command in "More Library actions", offered on a `done` or
+**Recovery** lives in "More Library actions" > "Recover": "Recover sources
+from before the move" calls `restore-pre-move`, "Keep this project's sources
+in its folder" explains the archive and calls `move-back`, and "Save a current
+package" exports a current handoff. Package import has its own menu.
+
+**Move back** is offered on a `done` or
 `cleanup-pending` project to a session holding operate, after a confirmation.
 It calls organize `move-back`. A failed answer is not shown as an error when
 the status then reads `restoring` or `moved-back`, since the move back runs on

@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useSyncExternalStore, useRef, useState } from "react";
 
+import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { Button } from "../../components/ui/button";
 import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
 import { useManagedBibliography } from "./useManagedBibliography";
@@ -256,6 +257,7 @@ export function ScientSourcesPanel(props: {
   });
   const [query, setQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
+  const [packageSources, setPackageSources] = useState<ReadonlySet<string> | null>(null);
   const [sourceSort, setSourceSort] = useState<ScientSourceSort>("last-added");
   const organize = useSourcesOrganize({
     environmentId: props.environmentId,
@@ -370,6 +372,7 @@ export function ScientSourcesPanel(props: {
     setReferenceFileImport(null);
     setHistorySourceId(null);
     setSourceQuery("");
+    setPackageSources(null);
   }
 
   const expirySchedule = { context: panelContext, sourceIds: recentlyAddedSourceIds };
@@ -452,10 +455,33 @@ export function ScientSourcesPanel(props: {
       sourceQuery,
       organize.filter,
       organize.organization,
-    ).filter((record) => matchesReadingFilter(record, readingFilter)),
+    ).filter(
+      (record) =>
+        matchesReadingFilter(record, readingFilter) &&
+        (!packageSources || packageSources.has(record.sourceId)),
+    ),
     sourceSort,
   );
-  const listFilterActive = organize.filterActive || (scopes ? organize.readingFilterActive : false);
+  const listFilterActive =
+    packageSources !== null ||
+    organize.filterActive ||
+    (scopes ? organize.readingFilterActive : false);
+  const selectScope = (scope: "project" | "library") => {
+    setPackageSources(null);
+    organize.clearFilter();
+    organize.clearSelection();
+    void sources.selectScope(scope);
+  };
+  const showPackageSources = (sourceIds: ReadonlyArray<string>) => {
+    if (!panelMounted.current || panelContextRef.current !== panelContext) return;
+    setSelectedSourceId(null);
+    setShowingReviews(false);
+    setShowingDuplicates(null);
+    organize.clearFilter();
+    organize.clearSelection();
+    setPackageSources(new Set(sourceIds));
+    void sources.selectScope("library");
+  };
   const selectedSummary = selectedSourceId
     ? (sources.overview?.records.find((record) => record.sourceId === selectedSourceId) ?? null)
     : null;
@@ -1407,7 +1433,12 @@ export function ScientSourcesPanel(props: {
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
               {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
-              {...(scopes && canChange ? { onPackageImported: sources.refreshOverview } : {})}
+              {...(scopes && canChange
+                ? {
+                    onPackageImported: sources.refreshOverview,
+                    onShowPackageSources: showPackageSources,
+                  }
+                : {})}
             />
           </div>
         }
@@ -1543,6 +1574,29 @@ export function ScientSourcesPanel(props: {
           onDismiss={() => setReferenceFileImport(null)}
         />
       ) : null}
+      {scopes ? (
+        <div className="mx-3 mt-2 flex shrink-0 flex-wrap items-center gap-2">
+          <ToggleGroup
+            aria-label="Source scope"
+            value={[scopes.listed]}
+            onValueChange={(values) => {
+              const scope = values[0];
+              if (scope === "project" || scope === "library") selectScope(scope);
+            }}
+          >
+            <Toggle value="project">{LIBRARY_LABELS.scopes.project}</Toggle>
+            <Toggle value="library">{LIBRARY_LABELS.scopes.library}</Toggle>
+          </ToggleGroup>
+          {packageSources ? (
+            <>
+              <span className="text-xs text-muted-foreground">Papers kept after Undo</span>
+              <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
+                Show all
+              </Button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {sources.overview.records.length > 0 && (organize.selection.size > 0 || organize.progress) ? (
         <SourcesBulkBar
           organize={organize}
@@ -1596,7 +1650,9 @@ export function ScientSourcesPanel(props: {
               nativeInput
               unstyled
               type="search"
-              aria-label="Search project sources"
+              aria-label={
+                scopes?.listed === "library" ? "Search Library" : "Search project sources"
+              }
               placeholder="Search sources"
               value={sourceQuery}
               onChange={(event) => setSourceQuery(event.currentTarget.value)}
@@ -1624,7 +1680,6 @@ export function ScientSourcesPanel(props: {
             {...(sources.overview.scopes
               ? {
                   scopes: sources.overview.scopes,
-                  onSelectScope: (scope) => void sources.selectScope(scope),
                 }
               : {})}
           />
@@ -1672,8 +1727,22 @@ export function ScientSourcesPanel(props: {
           <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
           <CenteredState
             icon={<BookOpen />}
-            title="No sources yet"
-            description="Import PDFs, a reference file (.bib, RIS, CSL-JSON, EndNote XML) or Zotero. Scient keeps a portable project copy."
+            title={scopes?.listed === "project" ? "No sources in this project" : "No sources yet"}
+            {...(scopes?.listed === "project" && scopes.library > 0
+              ? {
+                  action: (
+                    <Button size="sm" variant="outline" onClick={() => selectScope("library")}>
+                      Choose from Library
+                    </Button>
+                  ),
+                }
+              : {})}
+            {...(scopes?.listed !== "project"
+              ? {
+                  description:
+                    "Import PDFs, a reference file (.bib, RIS, CSL-JSON, EndNote XML) or Zotero.",
+                }
+              : {})}
           />
         </>
       ) : (
@@ -1700,7 +1769,11 @@ export function ScientSourcesPanel(props: {
                       organize.filter,
                       organize.organization,
                     )
-                      .filter((record) => matchesReadingFilter(record, readingFilter))
+                      .filter(
+                        (record) =>
+                          matchesReadingFilter(record, readingFilter) &&
+                          (!packageSources || packageSources.has(record.sourceId)),
+                      )
                       .map((record) => record.sourceId)
                   : undefined
               }

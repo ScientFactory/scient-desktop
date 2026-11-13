@@ -20,6 +20,13 @@ Library beside the conversation or expand it when you need more room. If the
 folder is not yet set up as a Scient project, the Library offers the same optional
 project setup used by **Add project**.
 
+Use **This project / All Library** above the list to choose what to browse.
+The choice stays available in an empty project and when you can only read.
+An empty project says **No sources in this project**; **Choose from Library**
+opens existing papers so you can **Add to project**. Collections in **Filter**
+only narrow that scope. Rows show authors, year, unread status and real
+warnings; hover a row or open its details for when and how it was added.
+
 Source records and imported PDFs are stored in your personal Library on the
 computer that runs the project, in the Scient data folder (`scient/library/`
 under `~/.scient-next/userdata/` for the installed app). The project keeps the
@@ -45,14 +52,13 @@ highlights, personal notes and collections are in your Library, not in the
 folder. To give someone, or another computer, the project as it is now, save a
 [project package](#project-packages).
 
-### This project and All
+### This project and All Library
 
-The Library panel shows the sources in this project. Open the filter menu and
-choose **All** under Collection to see every paper in your Library, from every
-project. A paper that is in this project says "In this project" there. Use
+The Library panel starts with this project's sources. Choose **All Library**
+above the list to browse papers from every project. Use
 **Add to project** to bring a paper from your Library into this project, and
 **Remove from this project** to take it out; the paper stays in your Library
-and in other projects. Importing or adding by identifier while **All** is shown
+and in other projects. Importing or adding by identifier while **All Library** is shown
 adds the papers to your Library only; the import's summary offers **Add to
 project**.
 
@@ -127,8 +133,9 @@ highlights, including highlights on papers excluded from this Library because
 they were deleted for good, in
 `.scient/library/retained-before-library/<move>/`, with a `README.md` and a
 `manifest.json` listing every file and its checksum. Scient never reads it on
-its own. Ask an agent to restore the copy from before the move to bring it back
-into the project, on this computer or any other; the next change then moves it
+its own. Choose **⋯** > **Recover** > **Recover sources from before the move**,
+or ask an agent, to bring it back into the project, on this computer or any
+other; the next change then moves it
 into that computer's Library. Scient checks every file and path in the copy
 first and refuses one that was changed or names a place outside it. A restore
 that stops partway finishes the next time it is asked for, or before the next
@@ -146,8 +153,13 @@ leave it out. Scient adds no ignore rule and never deletes it; deleting the
 folder yourself is safe once you no longer need it. It shows the project as it
 was at the move, not later changes: for those, save a project package.
 
-**Moving back.** To undo the move, choose **Move back into this project** in
-the **⋯** menu at the top of the Library. The sources and their PDFs are copied
+**Recovery.** Open **⋯** > **Recover** for **Recover sources from before the
+move**, **Keep this project's sources in its folder**, or **Save a current
+package**. Recovering the pre-move copy joins current notes and pins rather
+than rolling them back; it works from a copied project without the original computer.
+
+**Moving back.** Choose **Keep this project's sources in its folder** under
+**Recover**. The sources and their PDFs are copied
 back into the project's folder. This project's notes and its reviews come back
 too. The papers also stay in your personal Library, because other projects may
 use them. For a large Library this can take a while; the Library shows its
@@ -459,20 +471,22 @@ collections around them. Personal notes, reading state, saved searches and the
 rest of your Library stay out; saved searches are yours, not the project's. It
 is plain files: JSON, the PDFs and a `manifest.json` with every file's checksum.
 
-Choose **⋯** > **Project package**. **Choose a folder…** saves it to a new
+Choose **⋯** > **Recover** > **Save a current package**. It saves to a new
 folder, "Scient project package" with the date, in the folder you pick
-(starting beside the project). **In this project** saves it inside the project
-instead, the only choice when the project is on another computer: git then
-commits it with the project, PDFs included, and it takes disk space there.
+(starting beside the project). Choose the project folder to save it inside
+instead. When the project is on another computer, it is saved inside the
+project by default. Git then commits it with the project, PDFs included, and
+it takes disk space there.
 Scient says what was left out because this Library did not have it.
 
-An agent saves or imports a package inside the project (never in its
-`.scient` folder), or outside it only in a folder where you have saved or
-imported one of this project's packages yourself. A package whose files lead
-outside its folder through a link is refused.
+People and agents can save or import a package at the requested path on the
+computer running the project, including outside the project. No earlier panel
+action is needed. A package cannot be saved or read in the project's `.scient`
+folder, cannot overwrite an existing package, and cannot read payloads through
+links that lead outside its folder.
 
-To bring a package in, choose its folder with **Choose a folder…** under
-**Import a package**, or pick one of the package folders in the project. Scient
+To bring a package in, choose **⋯** > **Import a package**, then its folder
+with **Choose a folder…**, or pick one of the package folders in the project. Scient
 checks every file against the manifest first and refuses a package that
 changed. A PDF missing from the manifest is reported as unavailable and is
 never opened. Scient prepares each paper's PDF copies before joining it, so
@@ -513,19 +527,18 @@ for good comes back. A fresh checkout finds that imported copy even when its
 citation details are incomplete; deleting it for good also stays deleted in
 fresh checkouts until you deliberately import it again.
 
-The import's message has **Undo**. It removes only what the import created:
-new papers (to the trash, with the PDFs they came with), new pins, new
-collections, and the note it gave a pin that had none. Each goes only if it is
-still exactly as the import left it and no other import that is not undone
-uses it, in this project or (for papers and collections) any other. Anything
-you changed since, even before the import finished (a paper you edited, a pin
-whose note you changed, a collection you added to), or that another import
-joined, stays, and Undo names it. Undo leaves, and lists, everything the
-import joined to what you had: PDFs, notices and an abstract it added to your
-papers, earlier note versions, highlights, papers it added to your
-collections, and the reviews and review versions it brought. An import made
-before Undo kept this record keeps everything. If a step fails, Undo says so
-and is not marked done; run it again to finish.
+The import's message has **Undo**. It removes only unchanged project additions:
+new pins, new collections, and a note it gave a pin that had none. Anything
+changed since or used by another import stays. Every paper and PDF stays in
+the Library, including papers used by other projects or by a pin whose note
+you changed. The result says how many imported papers remain; **Show them**
+opens the Library filtered to those papers. Use the ordinary **Move to Trash**
+action if you no longer need one, or **Show all** to clear the filter.
+
+Undo leaves, and lists, evidence the import joined: extra PDFs, notices,
+abstracts, earlier note versions, highlights, collection memberships, reviews
+and review versions. An old receipt without recorded versions keeps everything.
+If a step fails, Undo says so and stays available to run again.
 
 ## Review and manage a source
 

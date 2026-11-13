@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScientSourcesOrganizeResult } from "@t3tools/contracts";
-import { Package } from "lucide-react";
+import { Package, Undo2 } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -7,7 +7,6 @@ import {
   MenuGroupLabel,
   MenuItem,
   MenuItemDetail,
-  MenuSeparator,
   MenuSub,
   MenuSubPopup,
   MenuSubTrigger,
@@ -72,6 +71,9 @@ export function ProjectPackageSubmenu(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly onImported: () => Promise<unknown>;
+  readonly mode: "recover" | "import";
+  readonly onMoveBack?: () => void;
+  readonly onShowSources?: (sourceIds: ReadonlyArray<string>) => void;
 }) {
   const [packages, setPackages] = useState<PackageListing | null>(null);
   const [working, setWorking] = useState(false);
@@ -115,9 +117,21 @@ export function ProjectPackageSubmenu(props: {
     run(async () => {
       const result = await organize({ action: "undo-import", importId });
       await props.onImported();
+      if (result.outcome !== "undone") {
+        toastManager.add({
+          type: "info",
+          title:
+            result.outcome === "already-undone"
+              ? "That import was already undone"
+              : "The import receipt was not found",
+        });
+        return;
+      }
       const kept = result.packageReport?.kept ?? [];
       const left = result.packageReport?.left ?? [];
+      const retained = result.packageReport?.retainedSourceIds ?? [];
       const description = [
+        `${plural(retained.length, "paper stays", "papers stay")} in your Library, with their PDFs.`,
         kept.length > 0
           ? `Changed since or used by another import, so kept: ${kept.join(", ")}.`
           : "",
@@ -129,8 +143,16 @@ export function ProjectPackageSubmenu(props: {
         .join(" ");
       toastManager.add({
         type: "success",
-        title: result.outcome === "undone" ? "Import undone" : "That import was already undone",
+        title: "Import undone",
         ...(description ? { description } : {}),
+        ...(retained.length > 0 && props.onShowSources
+          ? {
+              actionProps: {
+                children: "Show them",
+                onClick: () => props.onShowSources?.(retained),
+              },
+            }
+          : {}),
       });
     }, "The import was not undone");
 
@@ -174,6 +196,47 @@ export function ProjectPackageSubmenu(props: {
     if (folder) await importPackage(folder);
   };
 
+  if (props.mode === "recover")
+    return (
+      <MenuSub>
+        <MenuSubTrigger disabled={working}>
+          <Undo2 />
+          Recover
+        </MenuSubTrigger>
+        <MenuSubPopup>
+          <MenuItem
+            onClick={() =>
+              void run(async () => {
+                const result = await organize({ action: "restore-pre-move" });
+                await props.onImported();
+                toastManager.add({
+                  type: result.outcome === "archive-changed" ? "error" : "info",
+                  title:
+                    result.outcome === "restored"
+                      ? "Recovered sources from before the move"
+                      : result.outcome === "no-archive"
+                        ? "No pre-move copy was found"
+                        : result.outcome === "project-store-present"
+                          ? "Sources are already in this project's folder"
+                          : "The pre-move copy changed and was not recovered",
+                });
+              }, "Sources could not be recovered")
+            }
+          >
+            Recover sources from before the move
+          </MenuItem>
+          <MenuItem disabled={!props.onMoveBack} onClick={props.onMoveBack}>
+            Keep this project's sources in its folder
+          </MenuItem>
+          <MenuItem
+            onClick={() => void (pickFolder ? exportElsewhere(pickFolder) : exportPackage())}
+          >
+            Save a current package
+          </MenuItem>
+        </MenuSubPopup>
+      </MenuSub>
+    );
+
   return (
     <MenuSub
       onOpenChange={(open) => {
@@ -185,20 +248,9 @@ export function ProjectPackageSubmenu(props: {
     >
       <MenuSubTrigger disabled={working}>
         <Package />
-        Project package
+        Import a package
       </MenuSubTrigger>
       <MenuSubPopup className="min-w-56">
-        <MenuGroup>
-          <MenuGroupLabel>Save a project package</MenuGroupLabel>
-          {pickFolder ? (
-            <MenuItem onClick={() => void exportElsewhere(pickFolder)}>Choose a folder…</MenuItem>
-          ) : null}
-          <MenuItem onClick={() => void exportPackage()}>
-            <span className="min-w-0 flex-1 truncate">In this project</span>
-            <MenuItemDetail>Committed with it</MenuItemDetail>
-          </MenuItem>
-        </MenuGroup>
-        <MenuSeparator />
         <MenuGroup>
           <MenuGroupLabel>Import a package</MenuGroupLabel>
           {pickFolder ? (

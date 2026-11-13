@@ -9,7 +9,6 @@ import {
   MoreHorizontal,
   PenLine,
   Trash2,
-  Undo2,
 } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -56,6 +55,7 @@ export function SourcesHeaderMenu(props: {
   readonly onMoveBack?: () => void;
   /** Present only on a personal Library for a session that may change it. */
   readonly onPackageImported?: () => Promise<unknown>;
+  readonly onShowPackageSources?: (sourceIds: ReadonlyArray<string>) => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [confirmingMoveBack, setConfirmingMoveBack] = useState(false);
@@ -161,18 +161,23 @@ export function SourcesHeaderMenu(props: {
               scope={props.exportScope}
             />
           ) : null}
+          {props.onPackageImported || props.onMoveBack ? (
+            <ProjectPackageSubmenu
+              mode="recover"
+              environmentId={props.environmentId}
+              root={props.root}
+              onImported={props.onPackageImported ?? props.onTrashChanged}
+              {...(props.onMoveBack ? { onMoveBack: () => setConfirmingMoveBack(true) } : {})}
+            />
+          ) : null}
           {props.onPackageImported ? (
             <ProjectPackageSubmenu
+              mode="import"
               environmentId={props.environmentId}
               root={props.root}
               onImported={props.onPackageImported}
+              {...(props.onShowPackageSources ? { onShowSources: props.onShowPackageSources } : {})}
             />
-          ) : null}
-          {props.onMoveBack ? (
-            <MenuItem onClick={() => setConfirmingMoveBack(true)}>
-              <Undo2 />
-              Move back into this project
-            </MenuItem>
           ) : null}
           {props.trashedCount > 0 ? (
             <>

@@ -52,11 +52,12 @@ export function MoveBackDialog(props: {
     <AlertDialog open={props.open} onOpenChange={(open) => (!open ? props.onClose() : undefined)}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Move the Library back into this project?</AlertDialogTitle>
+          <AlertDialogTitle>Keep this project's sources in its folder?</AlertDialogTitle>
           <AlertDialogDescription>
             The sources and their PDFs are copied back into this project’s folder. The papers also
             stay in your personal Library, because other projects may use them. This project’s notes
-            and its reviews come back too. For a large Library this can take a while.
+            and its reviews come back too. The sealed copy from before the move stays as a recovery
+            copy; it does not include later changes. For a large Library this can take a while.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
