@@ -42,6 +42,8 @@ export const DUPLICATE_LABELS = {
   keptSide: "Kept",
   mergedSide: "Merged away",
   none: "none",
+  showMore: "Show more",
+  restarted: "The list changed, so it starts again from the top.",
 } as const;
 
 /** How a merge's different-value fields read in a sentence. */
@@ -161,9 +163,7 @@ export function sectionCountLabel(label: string, count: number): string {
 }
 
 export function shownOfTotalLabel(shown: number, total: number): string | null {
-  return total > shown
-    ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()}. Settle these to see the rest.`
-    : null;
+  return total > shown ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()}.` : null;
 }
 
 const MATCH_WORDS: Readonly<Record<string, string>> = {

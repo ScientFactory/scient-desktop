@@ -881,7 +881,13 @@ export const ScientSourcesOverviewResult = Schema.Struct({
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;
 
 /** Library servers only; a project server refuses it. */
-export const ScientSourcesDuplicatesRequest = Schema.Struct({ root: NonEmptyString });
+export const ScientSourcesDuplicatesRequest = Schema.Struct({
+  root: NonEmptyString,
+  /** A later page of each list; with the `revision` the earlier page answered with. */
+  pairOffset: Schema.optionalKey(Count),
+  mergeOffset: Schema.optionalKey(Count),
+  revision: Schema.optionalKey(NonEmptyString),
+});
 export type ScientSourcesDuplicatesRequest = typeof ScientSourcesDuplicatesRequest.Type;
 
 /** An overview row, with the other checkouts on this computer that use it, by folder name. */
@@ -891,7 +897,7 @@ const ScientSourcesDuplicateSource = Schema.Struct({
 });
 export type ScientSourcesDuplicateSource = typeof ScientSourcesDuplicateSource.Type;
 
-/** At most this many pairs and merges are sent; the totals count them all. */
+/** At most this many pairs and merges are sent per page; the totals count them all. */
 export const SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT = 200;
 export const SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT = 100;
 
@@ -915,6 +921,17 @@ export const ScientSourcesDuplicateReason = Schema.Literals([
 ]);
 export type ScientSourcesDuplicateReason = typeof ScientSourcesDuplicateReason.Type;
 
+export const ScientSourcesMergeDifferences = Schema.Array(
+  Schema.Union([
+    Schema.Struct({
+      field: NonEmptyString,
+      kept: Schema.NullOr(Schema.String),
+      other: Schema.NullOr(Schema.String),
+    }),
+    Schema.Struct({ field: NonEmptyString }),
+  ]),
+);
+
 /** The possible duplicates of the whole Library, and the merges Undo can still reverse. */
 export const ScientSourcesDuplicatesResult = Schema.Struct({
   pairs: Schema.Array(
@@ -928,6 +945,11 @@ export const ScientSourcesDuplicatesResult = Schema.Struct({
     }),
   ).pipe(Schema.check(Schema.isMaxLength(SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT))),
   pairsTotal: Count,
+  /** Changes when either whole list does; a page asked under an older one starts both at 0. */
+  revision: NonEmptyString,
+  restarted: Schema.optionalKey(Schema.Literal(true)),
+  pairOffset: Count,
+  mergeOffset: Count,
   /** Newest first. */
   merges: Schema.Array(
     Schema.Struct({
@@ -950,16 +972,7 @@ export const ScientSourcesDuplicatesResult = Schema.Struct({
        * one's value before the merge and the other's as text, null where one had none. Identifiers
        * and PDFs come without values: the merge file records only what was added.
        */
-      differences: Schema.Array(
-        Schema.Union([
-          Schema.Struct({
-            field: NonEmptyString,
-            kept: Schema.NullOr(Schema.String),
-            other: Schema.NullOr(Schema.String),
-          }),
-          Schema.Struct({ field: NonEmptyString }),
-        ]),
-      ),
+      differences: ScientSourcesMergeDifferences,
     }),
   ).pipe(Schema.check(Schema.isMaxLength(SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT))),
   mergesTotal: Count,

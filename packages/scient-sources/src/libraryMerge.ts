@@ -1058,3 +1058,33 @@ export async function readScientLibraryDuplicates(input: {
     mergesTotal: undoable.length,
   };
 }
+
+export interface ScientLibraryMergeReceipt {
+  readonly merge: ScientLibraryMerge;
+  /** The merged-away source: live, in the trash, or null once the trash was emptied. */
+  readonly merged: ScientSourceRecord | null;
+  /** The kept source if it is still in the Library. */
+  readonly kept: ScientSourceRecord | null;
+  readonly undo: ScientLibraryMergeUndoState;
+}
+
+/**
+ * One merge's receipt by ID, also once undone or no longer undoable. Reads only; Undo checks
+ * again under its lock when it runs.
+ */
+export async function readScientLibraryMergeReceipt(input: {
+  readonly library: ScientLibraryLocation;
+  readonly mergeId: string;
+}): Promise<ScientLibraryMergeReceipt | null> {
+  const paths = await libraryPaths(input.library);
+  const filePath = mergePath(paths, input.mergeId);
+  if ((await snapshot(filePath)) !== "file") return null;
+  const merge = await readBoundedJson(filePath, MAX_MERGE_BYTES, ScientLibraryMerge);
+  const live = new Map<string, ScientSourceRecord>();
+  for (const sourceId of [merge.survivorId, merge.loserId]) {
+    const record = await readScientSourceRecordIfPresent(paths, sourceId);
+    if (record) live.set(sourceId, record);
+  }
+  const { undo, merged } = await mergeUndoState(paths, merge, live, await trashFileNames(paths));
+  return { merge, merged, kept: live.get(merge.survivorId) ?? null, undo };
+}

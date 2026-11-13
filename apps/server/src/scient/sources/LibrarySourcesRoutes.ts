@@ -25,6 +25,7 @@ import {
   markScientLibrarySourcesDistinct,
   mergeScientLibrarySources,
   readScientLibraryDuplicates,
+  readScientLibraryMergeReceipt,
   type ScientLibraryMerge,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
@@ -332,20 +333,43 @@ function mergeDifferences(merge: ScientLibraryMerge) {
   });
 }
 
+/** A page of each list; the limits default to what the screen is sent. */
+export interface LibraryDuplicatesPage {
+  readonly pairOffset?: number;
+  readonly mergeOffset?: number;
+  readonly revision?: string;
+  readonly pairLimit?: number;
+  readonly mergeLimit?: number;
+}
+
 /**
- * The possible duplicates of the whole library and the merges Undo can still reverse. Reading
- * never merges: the automatic merges run with the move, not here.
+ * A page of the whole library's possible duplicates and of the merges Undo can still reverse.
+ * Reading never merges: the automatic merges run with the move, not here.
  */
 export async function libraryDuplicates(
   store: Store,
   /** The projects the server knows, to name other projects by title rather than folder. */
   projects?: ReadonlyArray<KnownProject>,
+  page: LibraryDuplicatesPage = {},
 ): Promise<ScientSourcesDuplicatesResult> {
-  if (!store.exists) return { pairs: [], pairsTotal: 0, merges: [], mergesTotal: 0 };
+  if (!store.exists) {
+    return {
+      pairs: [],
+      pairsTotal: 0,
+      revision: "empty",
+      pairOffset: 0,
+      mergeOffset: 0,
+      merges: [],
+      mergesTotal: 0,
+    };
+  }
   const listing = await readScientLibraryDuplicates({
     library: store.library,
-    pairLimit: SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT,
-    mergeLimit: SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT,
+    pairLimit: Math.min(page.pairLimit ?? Infinity, SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT),
+    mergeLimit: Math.min(page.mergeLimit ?? Infinity, SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT),
+    ...(page.pairOffset === undefined ? {} : { pairOffset: page.pairOffset }),
+    ...(page.mergeOffset === undefined ? {} : { mergeOffset: page.mergeOffset }),
+    ...(page.revision === undefined ? {} : { revision: page.revision }),
   });
   const pairs = listing.possibleDuplicates;
   const byId = new Map(listing.records.map((record) => [record.sourceId, record]));
@@ -353,15 +377,7 @@ export async function libraryDuplicates(
     ...pairs.flatMap((pair) => pair.sourceIds),
     ...listing.merges.map(({ merge }) => merge.survivorId),
   ]);
-  const [pins, categories, others] = await Promise.all([
-    projectPinGroupsByLibraryId(store),
-    readScientSourceCategories(store.library).catch((): Categories => ({})),
-    otherProjectsUsing(store, shown, projects),
-  ]);
-  const row = (record: ScientSourceRecord) => ({
-    ...overviewRow(pinnedEntry(record, pins.get(record.sourceId)), categories),
-    otherProjects: others.get(record.sourceId) ?? [],
-  });
+  const row = await duplicateRows(store, shown, projects);
   return {
     pairs: pairs.map((pair) => {
       // The default kept source first, so the two read left to right as "keep, merge away".
@@ -377,22 +393,69 @@ export async function libraryDuplicates(
       };
     }),
     pairsTotal: listing.pairsTotal,
+    revision: listing.revision,
+    ...(listing.restarted ? { restarted: true as const } : {}),
+    pairOffset: listing.pairOffset,
+    mergeOffset: listing.mergeOffset,
     merges: listing.merges.map(({ merge, merged }) => {
       const kept = byId.get(merge.survivorId);
       return {
-        mergeId: merge.mergeId,
-        mergedAt: merge.mergedAt,
-        requested: merge.kind === "requested",
-        keptSourceId: merge.survivorId,
-        kept: kept ? row(kept) : null,
-        mergedSourceId: merge.loserId,
-        mergedTitle: merged.title,
+        ...mergeEntry(merge, merged, kept ? row(kept) : null),
         merged: scientSourceSummaryFromRecord(merged),
-        keptDifferent: merge.conflicts.map((conflict) => conflict.field),
-        differences: mergeDifferences(merge),
       };
     }),
     mergesTotal: listing.mergesTotal,
+  };
+}
+
+async function duplicateRows(
+  store: Store,
+  shown: ReadonlySet<string>,
+  projects: ReadonlyArray<KnownProject> | undefined,
+) {
+  const [pins, categories, others] = await Promise.all([
+    projectPinGroupsByLibraryId(store),
+    readScientSourceCategories(store.library).catch((): Categories => ({})),
+    otherProjectsUsing(store, shown, projects),
+  ]);
+  return (record: ScientSourceRecord) => ({
+    ...overviewRow(pinnedEntry(record, pins.get(record.sourceId)), categories),
+    otherProjects: others.get(record.sourceId) ?? [],
+  });
+}
+
+function mergeEntry(
+  merge: ScientLibraryMerge,
+  merged: ScientSourceRecord | null,
+  kept: ReturnType<Awaited<ReturnType<typeof duplicateRows>>> | null,
+) {
+  return {
+    mergeId: merge.mergeId,
+    mergedAt: merge.mergedAt,
+    requested: merge.kind === "requested",
+    keptSourceId: merge.survivorId,
+    kept,
+    mergedSourceId: merge.loserId,
+    mergedTitle: merged?.title ?? null,
+    keptDifferent: merge.conflicts.map((conflict) => conflict.field),
+    differences: mergeDifferences(merge),
+  };
+}
+
+/**
+ * One merge's receipt by ID, as the Merged list shows it, also once undone or no longer
+ * undoable, with whether Undo can run now. Undo checks again when it runs.
+ */
+export async function libraryMergeReceipt(store: Store, mergeId: string) {
+  if (!store.exists) return null;
+  const receipt = await readScientLibraryMergeReceipt({ library: store.library, mergeId });
+  if (!receipt) return null;
+  const row = receipt.kept
+    ? await duplicateRows(store, new Set([receipt.kept.sourceId]), undefined)
+    : null;
+  return {
+    ...mergeEntry(receipt.merge, receipt.merged, receipt.kept && row ? row(receipt.kept) : null),
+    undo: receipt.undo,
   };
 }
 

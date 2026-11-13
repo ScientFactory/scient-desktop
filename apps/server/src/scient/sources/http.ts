@@ -494,7 +494,8 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               args.payload.root,
               async (library) => {
                 if (!library) throw new Error("Possible duplicates need the personal Library.");
-                return libraryDuplicates(library, projects);
+                const { root: _root, ...page } = args.payload;
+                return libraryDuplicates(library, projects, page);
               },
             );
           }),

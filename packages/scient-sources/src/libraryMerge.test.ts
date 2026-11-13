@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Merge tests exercise the real library files.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
@@ -16,6 +17,7 @@ import {
   mergeScientLibraryDuplicates,
   mergeScientLibrarySources,
   readScientLibraryDuplicates,
+  readScientLibraryMergeReceipt,
   undoScientLibraryMerge,
 } from "./libraryMerge.ts";
 import { runScientLibraryMove } from "./libraryMove.ts";
@@ -647,6 +649,84 @@ describe("library merge engine", () => {
 
     expect(undone.outcome).toBe("undone");
     expect(await membership()).toEqual(["source_gone"]);
+  });
+
+  it("pages every pair and undoable merge past 200 and 100 without writing, and restarts on a change", async () => {
+    const { root, library } = await newLibrary();
+    const numbered = (count: number, make: (index: number) => ScientSourceRecord[]) =>
+      Array.from({ length: count }, (_, index) => make(index)).flat();
+    await seed(root, [
+      ...numbered(201, (index) => [
+        record(`source_pair${index}a`, { title: `Pair ${index}`, publisher: "North" }),
+        record(`source_pair${index}b`, { title: `Pair ${index}`, publisher: "South" }),
+      ]),
+      ...numbered(101, (index) =>
+        ["a", "b"].map((side) =>
+          record(`source_doi${index}${side}`, {
+            title: `Merged ${index}`,
+            identifiers: [{ scheme: "doi", value: `10.1000/merged.${index}` }],
+          }),
+        ),
+      ),
+    ]);
+    expect((await mergeScientLibraryDuplicates({ library })).mergedCount).toBe(101);
+    const tree = async () => {
+      const files = await NodeFSP.readdir(root, { recursive: true, withFileTypes: true });
+      return Promise.all(
+        files
+          .filter((entry) => entry.isFile())
+          .map((entry) => NodePath.join(entry.parentPath, entry.name))
+          .toSorted()
+          .map(async (path) =>
+            [
+              path,
+              NodeCrypto.createHash("sha256")
+                .update(await NodeFSP.readFile(path))
+                .digest("hex"),
+            ].join(" "),
+          ),
+      );
+    };
+    const before = await tree();
+
+    const pairs: string[] = [];
+    const merges: string[] = [];
+    let page = await readScientLibraryDuplicates({ library, pairLimit: 200, mergeLimit: 100 });
+    for (;;) {
+      pairs.push(...page.possibleDuplicates.map((pair) => pair.sourceIds.join("+")));
+      merges.push(...page.merges.map(({ merge }) => merge.mergeId));
+      if (pairs.length >= page.pairsTotal && merges.length >= page.mergesTotal) break;
+      page = await readScientLibraryDuplicates({
+        library,
+        pairLimit: 200,
+        mergeLimit: 100,
+        pairOffset: pairs.length,
+        mergeOffset: merges.length,
+        revision: page.revision,
+      });
+      expect(page.restarted).toBe(false);
+    }
+    expect([new Set(pairs).size, new Set(merges).size]).toEqual([201, 101]);
+    expect(await tree()).toEqual(before);
+    const [last] = merges.slice(-1);
+    expect(await readScientLibraryMergeReceipt({ library, mergeId: last! })).toMatchObject({
+      undo: "available",
+      merge: { mergeId: last },
+    });
+
+    const first = await readScientLibraryDuplicates({ library, pairLimit: 200, mergeLimit: 100 });
+    await markScientLibrarySourcesDistinct({
+      library,
+      sourceIds: ["source_pair0a", "source_pair0b"],
+    });
+    const changed = await readScientLibraryDuplicates({
+      library,
+      pairLimit: 200,
+      mergeLimit: 100,
+      pairOffset: 200,
+      revision: first.revision,
+    });
+    expect([changed.restarted, changed.pairOffset, changed.pairsTotal]).toEqual([true, 0, 200]);
   });
 
   it("reads possible pairs and undoable merges without merging anything", async () => {

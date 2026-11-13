@@ -16,6 +16,10 @@ import {
   scientLibraryRootFor,
 } from "@scientfactory/scient-sources/library-root";
 import {
+  markScientLibrarySourcesDistinct,
+  mergeScientLibrarySources,
+} from "@scientfactory/scient-sources/library-merge";
+import {
   pinScientLibrarySource,
   readScientProjectPins,
 } from "@scientfactory/scient-sources/project-pins";
@@ -578,6 +582,89 @@ describe("Sources tools on the library backend", () => {
       }).pipe(Effect.flip);
       expect(refused.message).toBe("Possible duplicates need the personal Library.");
     }),
+  );
+
+  it.effect(
+    "pages pairs and merges past 25 and 10, reads a receipt by ID, restarts on a change",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const pairs = yield* Effect.promise(async () => {
+          const made = [];
+          for (let index = 0; index < 37; index += 1) {
+            made.push([
+              await libraryRecord(fixture, `p${index}a`, { title: `Pair ${index}`, volume: "1" }),
+              await libraryRecord(fixture, `p${index}b`, { title: `Pair ${index}`, volume: "2" }),
+            ] as const);
+          }
+          return made;
+        });
+        const merged = yield* Effect.promise(async () => {
+          const ids = [];
+          for (const [kept, away] of pairs.slice(0, 11)) {
+            const result = await mergeScientLibrarySources({
+              library: fixture.library,
+              sourceIds: [kept.sourceId, away.sourceId],
+              survivorId: kept.sourceId,
+            });
+            if (result.outcome === "merged") ids.push(result.merge.mergeId);
+          }
+          return ids;
+        });
+
+        const seenPairs = new Set<string>();
+        const seenMerges = new Set<string>();
+        let page = yield* run(listScientSourcesForInvocation({ duplicates: true }), fixture);
+        for (;;) {
+          for (const pair of page.duplicates!.pairs) {
+            seenPairs.add(pair.sources.map((side) => side.sourceId).join("+"));
+          }
+          for (const merge of page.duplicates!.merges) seenMerges.add(merge.mergeId);
+          if (page.nextOffset === null && page.duplicates!.nextMergeOffset === null) break;
+          page = yield* run(
+            listScientSourcesForInvocation({
+              duplicates: true,
+              offset: page.nextOffset ?? seenPairs.size,
+              mergeOffset: page.duplicates!.nextMergeOffset ?? seenMerges.size,
+              revision: page.duplicates!.revision,
+            }),
+            fixture,
+          );
+          expect(page.duplicates?.restarted).toBeUndefined();
+        }
+        expect([seenPairs.size, [...seenMerges].toSorted()]).toEqual([26, merged.toSorted()]);
+
+        const receipt = yield* run(
+          listScientSourcesForInvocation({ mergeId: merged[0]! }),
+          fixture,
+        );
+        expect(receipt.mergeReceipt).toMatchObject({
+          mergeId: merged[0],
+          undo: "available",
+          differences: [{ field: "volume", kept: "1", other: "2" }],
+        });
+
+        const first = yield* run(listScientSourcesForInvocation({ duplicates: true }), fixture);
+        yield* Effect.promise(() =>
+          markScientLibrarySourcesDistinct({
+            library: fixture.library,
+            sourceIds: [pairs[20]![0].sourceId, pairs[20]![1].sourceId],
+          }),
+        );
+        const changed = yield* run(
+          listScientSourcesForInvocation({
+            duplicates: true,
+            offset: 25,
+            revision: first.duplicates!.revision,
+          }),
+          fixture,
+        );
+        expect([changed.duplicates?.restarted, changed.total, changed.nextOffset]).toEqual([
+          true,
+          25,
+          null,
+        ]);
+      }),
   );
 
   it.effect("an edit refreshes this project's pin and review snapshots once", () =>

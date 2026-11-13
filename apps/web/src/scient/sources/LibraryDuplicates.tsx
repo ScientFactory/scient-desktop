@@ -112,6 +112,42 @@ export function LibraryDuplicatesView(props: {
     };
   }, [props.environmentId, props.root, context, ask]);
 
+  const [loadingMore, setLoadingMore] = useState(false);
+  // The next page of one list under the revision the shown one came with. A list that changed
+  // meanwhile comes back from the top, and replaces what is shown rather than skip anything.
+  const showMore = async (list: DuplicatesSection) => {
+    const shown = current?.result;
+    if (!shown || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await readLibraryDuplicates(props.environmentId, props.root, {
+        revision: shown.revision,
+        pairOffset: shown.pairOffset + shown.pairs.length,
+        mergeOffset: shown.mergeOffset + shown.merges.length,
+      });
+      setReading((previous) => {
+        if (previous?.context !== context || previous.result !== shown) return previous;
+        if (next.restarted) return { ...previous, result: next };
+        return {
+          ...previous,
+          result:
+            list === "pairs"
+              ? { ...shown, pairs: [...shown.pairs, ...next.pairs] }
+              : { ...shown, merges: [...shown.merges, ...next.merges] },
+        };
+      });
+      if (next.restarted) toastManager.add({ type: "info", title: DUPLICATE_LABELS.restarted });
+    } catch (cause) {
+      toastManager.add({
+        type: "warning",
+        title: DUPLICATE_LABELS.loadFailed,
+        description: message(cause),
+      });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   const { organize, whenFree } = props.organize;
   const settle = (pair: Pair) => setSettled((previous) => new Set([...previous, pairKey(pair)]));
 
@@ -278,11 +314,12 @@ export function LibraryDuplicatesView(props: {
             drawDistance={PAIR_ESTIMATED_SIZE * 4}
             recycleItems={false}
             ListFooterComponent={
-              shownOfTotalLabel(result.pairs.length, result.pairsTotal) ? (
-                <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-                  {shownOfTotalLabel(result.pairs.length, result.pairsTotal)}
-                </p>
-              ) : null
+              <ShowMore
+                shown={result.pairOffset + result.pairs.length}
+                total={result.pairsTotal}
+                loading={loadingMore}
+                onShowMore={() => void showMore("pairs")}
+              />
             }
             className="mt-2 min-h-0 flex-1 overscroll-contain"
           />
@@ -304,13 +341,32 @@ export function LibraryDuplicatesView(props: {
               />
             ))}
           </ul>
-          {shownOfTotalLabel(result.merges.length, result.mergesTotal) ? (
-            <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-              {shownOfTotalLabel(result.merges.length, result.mergesTotal)}
-            </p>
-          ) : null}
+          <ShowMore
+            shown={result.mergeOffset + result.merges.length}
+            total={result.mergesTotal}
+            loading={loadingMore}
+            onShowMore={() => void showMore("merged")}
+          />
         </ScrollArea>
       )}
+    </div>
+  );
+}
+
+function ShowMore(props: {
+  readonly shown: number;
+  readonly total: number;
+  readonly loading: boolean;
+  readonly onShowMore: () => void;
+}) {
+  const label = shownOfTotalLabel(props.shown, props.total);
+  if (!label) return null;
+  return (
+    <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1">{label}</span>
+      <Button size="xs" variant="ghost" disabled={props.loading} onClick={props.onShowMore}>
+        {DUPLICATE_LABELS.showMore}
+      </Button>
     </div>
   );
 }

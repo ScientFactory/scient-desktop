@@ -38,6 +38,7 @@ import {
   ScientManagedBibliographyFileName,
   ScientManagedBibliographyStatus,
   ScientSourcesDuplicateReason,
+  ScientSourcesMergeDifferences,
   ScientSourcesPossibleDuplicateKind,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -172,6 +173,25 @@ export const ScientSourcesListResult = Schema.Struct({
         }),
       ),
       mergesTotal: Schema.Int,
+      nextMergeOffset: Schema.NullOr(Schema.Int),
+      /** Pass back with the next offsets; a changed list restarts both at 0 (restarted). */
+      revision: NonEmptyString,
+      restarted: Schema.optionalKey(Schema.Literal(true)),
+    }),
+  ),
+  /** Library mode, with mergeId: that merge as the Merged list shows it, and whether Undo can run. */
+  mergeReceipt: Schema.optionalKey(
+    Schema.Struct({
+      mergeId: NonEmptyString,
+      mergedAt: NonEmptyString,
+      requested: Schema.Boolean,
+      survivorId: NonEmptyString,
+      kept: Schema.NullOr(ScientSourceAgentSummary),
+      mergedSourceId: NonEmptyString,
+      mergedTitle: NullableText,
+      keptDifferent: Schema.Array(Schema.String),
+      differences: ScientSourcesMergeDifferences,
+      undo: Schema.Literals(["available", "undone", "kept-source-gone", "merged-source-gone"]),
     }),
   ),
 });
@@ -250,7 +270,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
     description:
       mode === "project"
         ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${listFilters(mode)}`
-        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${listFilters(mode)} duplicates: possible duplicate pairs and undoable merges instead.`,
+        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${listFilters(mode)} duplicates: possible duplicate pairs (offset) and undoable merges (mergeOffset) instead; pass revision back. mergeId: one merge's receipt.`,
     parameters:
       mode === "project"
         ? Schema.Struct(listParameters)
@@ -260,6 +280,9 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
             starred: Schema.optionalKey(Schema.Boolean),
             scope: Schema.optionalKey(Schema.Literals(["project", "library"])),
             duplicates: Schema.optionalKey(Schema.Boolean),
+            mergeOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+            revision: Schema.optionalKey(NonEmptyString),
+            mergeId: Schema.optionalKey(NonEmptyString),
           }),
     success: ScientSourcesListResult,
     failure: ScientSourcesToolError,
