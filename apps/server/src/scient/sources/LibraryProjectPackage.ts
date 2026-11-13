@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The package is a folder in the project.
 // @effect-diagnostics globalDate:off -- The default folder name carries the export date.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -29,20 +30,98 @@ function packageFolder(root: string, path: string): string {
   return NodePath.isAbsolute(path) ? NodePath.normalize(path) : NodePath.resolve(root, path);
 }
 
+/** A path with its existing part resolved through links, so a link cannot hide where it leads. */
+async function canonicalPath(path: string): Promise<string> {
+  const rest: string[] = [];
+  for (let current = path; ; current = NodePath.dirname(current)) {
+    const real = await NodeFSP.realpath(current).catch(() => null);
+    if (real !== null) return NodePath.join(real, ...rest.toReversed());
+    if (NodePath.dirname(current) === current) return path;
+    rest.push(NodePath.basename(current));
+  }
+}
+
+const within = (child: string, parent: string) => {
+  const relative = NodePath.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !NodePath.isAbsolute(relative));
+};
+
+const GRANTS_FILE = "package-destinations.json";
+const MAX_GRANTS = 20;
+type Grants = Record<string, ReadonlyArray<string>>;
+
+async function readGrants(store: ScientSourcesLibraryStore): Promise<Grants> {
+  try {
+    const value: unknown = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(store.library.root, GRANTS_FILE), "utf8"),
+    );
+    return value !== null && typeof value === "object" ? (value as Grants) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** A folder the person chose for this project's packages, which its agents may then use too. */
+async function grantDestination(store: ScientSourcesLibraryStore, folder: string): Promise<void> {
+  const { projectId } = await readScientProjectIdentity(store.root);
+  const grants = await readGrants(store);
+  const folders = [folder, ...(grants[projectId] ?? []).filter((entry) => entry !== folder)];
+  const path = NodePath.join(store.library.root, GRANTS_FILE);
+  const temporary = `${path}.${NodeCrypto.randomUUID()}.tmp`;
+  await NodeFSP.writeFile(
+    temporary,
+    `${JSON.stringify({ ...grants, [projectId]: folders.slice(0, MAX_GRANTS) }, null, 2)}\n`,
+  );
+  await NodeFSP.rename(temporary, path);
+}
+
+/**
+ * Where a package may be written, checked before any folder is made: never inside the project's
+ * `.scient`; for an agent, only inside the project or a folder the person chose for its packages
+ * (links resolved first). The person's own choice of an outside folder grants it.
+ */
+async function checkedDestination(
+  store: ScientSourcesLibraryStore,
+  destination: string,
+  caller: "person" | "agent",
+): Promise<void> {
+  const target = await canonicalPath(destination);
+  const root = await canonicalPath(store.root);
+  if (within(target, NodePath.join(root, ".scient"))) {
+    throw new Error("A package cannot be saved inside the project's .scient folder.");
+  }
+  if (within(target, root)) return;
+  const parent = NodePath.dirname(target);
+  if (caller === "person") {
+    await grantDestination(store, parent);
+    return;
+  }
+  const { projectId } = await readScientProjectIdentity(store.root);
+  const granted = (await readGrants(store))[projectId] ?? [];
+  if (!granted.some((folder) => typeof folder === "string" && within(parent, folder))) {
+    throw new Error(
+      "An agent saves a package inside this project, or in a folder the person chose for its packages in the Sources panel.",
+    );
+  }
+}
+
 export async function exportLibraryProjectPackage(
   store: ScientSourcesLibraryStore,
   input: { readonly relativePath?: string; readonly inFolder?: string },
+  caller: "person" | "agent",
 ) {
   if (input.inFolder !== undefined && !NodePath.isAbsolute(input.inFolder)) {
     throw new Error("inFolder must be an absolute path.");
   }
+  const destination =
+    input.relativePath !== undefined
+      ? packageFolder(store.root, input.relativePath)
+      : await freshPackageFolder(input.inFolder ?? store.root);
+  await checkedDestination(store, destination, caller);
   const exported = await exportScientProjectPackage({
     projectRoot: store.root,
     library: store.library,
-    relativePath:
-      input.relativePath !== undefined
-        ? packageFolder(store.root, input.relativePath)
-        : await freshPackageFolder(input.inFolder ?? store.root),
+    relativePath: destination,
   });
   const { counts } = exported;
   return {

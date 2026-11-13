@@ -34,6 +34,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { ServerConfig } from "../../../config.ts";
+import { exportLibraryProjectPackage } from "../../../scient/sources/LibraryProjectPackage.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
@@ -52,6 +53,7 @@ import {
   libraryReviewConflicts,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import {
+  resolveScientLibraryStoreAt,
   ScientSourcesBackend,
   type ScientSourcesBackendKind,
 } from "../../../scient/sources/SourcesBackend.ts";
@@ -1131,7 +1133,34 @@ describe("Sources tools on the library backend", () => {
       ).toMatchObject({ outcome: "undone", packageReport: { kept: [] } });
       expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toEqual([]);
 
-      // Saved outside the project: nothing for the project's Git to pick up.
+      // An agent writes only in the project, or where the person saved a package before.
+      const refused = (change: { relativePath?: string; inFolder?: string }) =>
+        run(
+          organizeLibrarySourcesForInvocation({ change: { action: "export-package", ...change } }),
+          fixture,
+        ).pipe(Effect.flip);
+      const elsewhere = NodePath.join(fixture.base, "elsewhere");
+      yield* Effect.promise(() => NodeFSP.mkdir(elsewhere));
+      yield* refused({ relativePath: "../elsewhere/handoff" });
+      yield* refused({ inFolder: elsewhere });
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(elsewhere, NodePath.join(fixture.root, "linked")),
+      );
+      yield* refused({ relativePath: "linked/handoff" });
+      yield* refused({ relativePath: ".scient/handoff" });
+      expect(yield* Effect.promise(() => NodeFSP.readdir(elsewhere))).toEqual([]);
+
+      // Saved outside the project by the person: nothing for Git; the agent may use it then.
+      const store = yield* resolveScientLibraryStoreAt(fixture.root, "write").pipe(
+        Effect.provideService(ServerConfig, {
+          stateDir: fixture.stateDir,
+        } as ServerConfig["Service"]),
+        Effect.provideService(ScientSourcesBackend, "library"),
+      );
+      if (!store) throw new Error("Expected the library backend.");
+      yield* Effect.promise(() =>
+        exportLibraryProjectPackage(store, { inFolder: fixture.base }, "person"),
+      );
       const outside = yield* run(
         organizeLibrarySourcesForInvocation({
           change: { action: "export-package", inFolder: fixture.base },
