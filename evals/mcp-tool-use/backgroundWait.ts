@@ -105,7 +105,7 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
       Layer.provide(Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({})),
       Layer.provide(Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({})),
       // SCIENT-FORK: Scient's caller tools also check the live owner's invocation policy.
-      Layer.provide(scientToolServicesLayer.pipe(Layer.provide(threads))),
+      Layer.provide(scientToolServicesLayer),
       Layer.provide(threads),
       Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),

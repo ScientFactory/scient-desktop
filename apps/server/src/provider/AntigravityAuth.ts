@@ -134,8 +134,11 @@ function safeAuthFailure(
   if (Option.isSome(error)) {
     const stageFailure = antigravityAuthStageFailure(error.value, beforeAuthorizationUrl);
     if (stageFailure !== undefined) return stageFailure;
-    if (isSetupError(error.value) && error.value.detail === UNREACHABLE_MESSAGE) {
-      return UNREACHABLE_MESSAGE;
+    if (
+      isSetupError(error.value) &&
+      (error.value.detail === UNREACHABLE_MESSAGE || error.value.detail === NOT_RESPONDING_MESSAGE)
+    ) {
+      return error.value.detail;
     }
     if (isAcpRequestError(error.value)) {
       if (error.value.errorMessage.includes("SUBSCRIPTION_REQUIRED")) {

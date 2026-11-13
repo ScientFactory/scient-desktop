@@ -478,12 +478,14 @@ export function resolveAppModelSelectionState(
       // SCIENT-FORK:END
       options.find((option) => option.isDefault)?.slug ??
       options[0]?.slug ??
-      entry.models.find(
-        (model) =>
-          model.supportsTextGeneration !== false &&
-          // SCIENT-FORK: an unavailable model is never picked.
-          !model.unavailableReason,
-      )?.slug ??
+      // SCIENT-FORK:START — an unavailable model is never picked, and a native agent picks only
+      // from the models it shows, so one its curated defaults hide is never chosen.
+      (entry.driverKind === "pi" || entry.driverKind === "omp" || entry.driverKind === "scient"
+        ? undefined
+        : entry.models.find(
+            (model) => model.supportsTextGeneration !== false && !model.unavailableReason,
+          )?.slug) ??
+      // SCIENT-FORK:END
       // SCIENT-FORK:START — Native agent automatic markers are resolved from a discovered
       // catalog. Do not render one as a selectable native model before discovery succeeds.
       (entry.driverKind === "pi" ||

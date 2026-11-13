@@ -34,6 +34,8 @@ const UNDONE_ACTION = {
   Snoozed: "snooze",
   Unpinned: "unpin",
   Archived: "archive",
+  // SCIENT-FORK: a thread-section move.
+  Moved: "move",
   Discarded: "discard",
 } satisfies Record<UndoOptions["action"], string>;
 
