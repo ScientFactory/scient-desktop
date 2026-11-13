@@ -25,8 +25,20 @@ computer that runs the project, in the Scient data folder (`scient/library/`
 under `~/.scient-next/userdata/` for the installed app). The project keeps the
 list of sources it uses, with their citation keys and project notes, in
 `.scient/library/pins.json`, so it travels with the project and with git. A
-copy of each source's citation details is kept there too, so a collaborator, or
-a computer without your Library, can still build the project's bibliography.
+copy of each source's citation details is kept there too (type, title, authors
+with their roles, full date, journal or book, publisher, volume, issue, pages,
+URL, language and tags), so a collaborator, or a computer without your Library,
+builds the same bibliography. When that computer's Library has the paper with
+fewer details, the project's details fill the gaps; a detail someone removed on
+purpose by editing the paper stays removed.
+
+**What a project folder holds.** Pins, project notes and their earlier versions
+(`.scient/library/note-history/`), systematic reviews with a copy of each named
+record (`.scient/library/reviews/`), the managed bibliography files, and, after
+a move, a sealed copy of the sources from before it. PDFs added later, their
+highlights, personal notes and collections are in your Library, not in the
+folder. To give someone, or another computer, the project as it is now, save a
+[project package](#project-packages).
 
 ### This project and All
 
@@ -45,6 +57,17 @@ the project, and **My note**, which follows the paper into every project and is
 not saved in any project folder. Agents read and write My note too. A paper
 that is not in this project has only My note.
 
+A note for this project is never overwritten by a change made elsewhere. If
+another window, another Scient on this computer or an agent changed it after
+you started typing, the note shows **Saved elsewhere** with that text next to
+yours: choose **Keep mine** or **Use saved**. **Earlier versions** next to the
+heading lists the note as it was first kept and the last 20 versions, with who
+saved each and when (typing in one sitting counts as one version); choosing
+one restores it as a new change. The versions travel with the project. Two
+copies of the folder synced by Dropbox or git are not coordinated: if both
+change a note, the sync tool decides, and the other text is kept as an earlier
+version the next time Scient saves the note.
+
 ### Reading and stars
 
 Unread papers have a small dot before the title. Mark a paper read or unread,
@@ -62,10 +85,25 @@ a few minutes after it starts. Until then the Library shows "The Library is
 waiting to move out of this project." While the move runs, the Library shows a
 line with its progress. A change you make during a large move may ask you to
 try again when it has finished. When the move is done, the line says how many
-duplicates were merged and whether any kept different values. Undo history of
+duplicates were merged and whether any kept different values, where your
+Library is, and where the copy from before the move is kept. Undo history of
 bulk edits from before the move is not carried over. Dismiss the line when you
 have read it. If the project's `.scient` folder is tracked in git, commit the
 change so PDFs stop being stored in git.
+
+**The copy from before the move.** Before the move deletes anything from
+`.scient/sources`, it saves a sealed copy of the project's sources, with their
+earlier revisions, the trash, collections, reviews, the exact PDFs and their
+highlights, in
+`.scient/library/retained-before-library/<move>/`, with a `README.md` and a
+`manifest.json` listing every file and its checksum. Scient never reads it on
+its own. Ask an agent to restore the copy from before the move to bring it back
+into the project, on this computer or any other; the next change then moves it
+into that computer's Library. The copy costs disk space (the PDFs are stored
+twice) and, if the folder is tracked in git, adds to the repository unless you
+leave it out. Scient adds no ignore rule and never deletes it; deleting the
+folder yourself is safe once you no longer need it. It shows the project as it
+was at the move, not later changes: for those, save a project package.
 
 **Moving back.** To undo the move, choose **Move back into this project** in
 the **⋯** menu at the top of the Library. The sources and their PDFs are copied
@@ -286,6 +324,29 @@ styles keep their case.
 Identifiers and the preprint type survive in every format. When a format has
 no place for something (for example EndNote XML holds an arXiv ID or a PMID,
 not both), a note after the export names what the file leaves out.
+
+## Project packages
+
+A project package is a folder with everything this project uses from your
+Library, for a collaborator, a supervisor, another computer or a backup: the
+pins with their citation details, project notes and their earlier versions,
+the systematic reviews with every source they name (also sources only a review
+names), the exact PDFs with their highlights, and the collections those sources
+are in. Personal notes, reading state and the rest of your Library stay out.
+It is plain files: JSON, the PDFs and a `manifest.json` with every file's
+checksum.
+
+Choose **⋯** > **Project package** > **Save a project package**. Scient writes
+the package to a new folder in the project, "Scient project package" with the
+date, and says what was left out because this Library did not have it. To bring
+a package in, copy its folder into the project, then choose it under **Import
+a package in this project**. Scient checks every file against the manifest
+first and refuses a package that changed. Papers your Library already has are
+matched, not copied twice; PDFs and highlights they lack are added. A note this
+project already has stays, and the package's version goes into **Earlier
+versions**. A review that differs from this project's becomes a review with
+another version, to keep, replace or combine. This works with an empty Library
+and without the computer the package came from.
 
 ## Review and manage a source
 
@@ -645,7 +706,11 @@ can import a reference file from the project (`scient_sources_import_file`),
 which attaches the same linked PDFs and reports the same unreadable entries and
 fields not kept, and write the
 Library to a project file in any of the four formats (`scient_sources_export`),
-never replacing an existing file unless asked to. Everything an agent changes is
+never replacing an existing file unless asked to. It saves and imports project
+packages and restores the copy from before a move with `scient_sources_organize`.
+To change a note for this project it must say which note it read; if the note
+changed since, nothing is written and it gets the current note to reconcile.
+Everything an agent changes is
 credited to it and can be undone the same way as your own changes.
 
 An agent cites sources with `scient_sources_cite`: it gets the citation to

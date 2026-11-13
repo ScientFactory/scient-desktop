@@ -414,9 +414,15 @@ sources in `<project>/.scient/library/pins.json`:
   Scient wrote at the file, pin or `work` level are kept on every rewrite,
   after the known fields in sorted order. Unknown fields inside creators and
   identifiers are not kept. The file may be 64 MiB: 20,000 pins with long
-  author lists are about 26 MiB. Writes go through the store's atomic write under a
-  process-local `<project>:pins-write` lock, the same kind of lock as the
-  project store's.
+  author lists are about 26 MiB. Writes go through the store's atomic write under
+  `withScientProjectPinsLock`: the process-local `<project>:pins-write` key, then
+  an OS file lock on `.scient/library/pins.lock` (the library lock's SQLite
+  technique, an empty file), so two servers with different state roots editing
+  one project folder take turns. Every writer holds it: pin, unpin,
+  change-pins, note, rename, refresh, package import, and the move and move back
+  for their whole run. Order: project pins lock, then the move lock, then the
+  library lock; nothing takes the pins lock inside a library-lock hold. It does
+  not coordinate two synced replicas of the folder or an older Scient.
 - `pinScientLibrarySource` copies the record's preferred `citationKey` (or a
   generated one) as the project key, with the usual suffix when the project
   already has it, compared case-insensitively. The key is frozen: changing the
@@ -424,18 +430,44 @@ sources in `<project>/.scient/library/pins.json`:
   under any ID that resolves to it returns the existing pin.
 - `note` is the project note, set and cleared with `setScientProjectPinNote`
   on the pin only; an empty note removes the field. The library record's
-  personal note is never touched.
-- `work` is a small snapshot (type, title, creators, issued year, identifiers,
-  container title; no abstract, note or PDF). `refreshScientProjectPinSnapshots`
-  updates it from the resolved library records and reports `changed`; it
-  writes nothing when no snapshot changed. A `type` this version does not know
-  is read as `other`.
+  personal note is never touched. Replacing or clearing a note needs `base`,
+  the note the writer saw on that pin (absent means "no note"); a mismatch
+  writes nothing and answers `stale` with the current pin. The same check
+  applies to a note sent with `pin` on an existing pin and per change in
+  `changeScientProjectPins` (`noteBase`). The panel sends `expectedNote` and an
+  editor `noteSession`; the agent sends `noteBase` on organize `pin`.
+- Note history (`projectNoteHistory.ts`): `.scient/library/note-history/<pin
+  source ID>.json`, oldest first: the first note kept (`original`, seeded
+  from the pin when no history exists), then accepted versions (`edit`, with
+  actor and time), keeping the original plus the latest 20. Saves of one
+  editor session within ten minutes replace the session's version. The history
+  is written before `pins.json`; when its newest version is not what
+  `pins.json` holds (an interrupted write, an outside edit, an older client),
+  the next change first records the file's note as `found`. Unpin records the
+  note it drops. The detail (`projectNoteHistory`) and the agent's
+  `scient_sources_get` return the versions; restoring is an ordinary checked
+  write of an earlier text.
+- `work` snapshots every citation input the formatter reads (type, title,
+  creators with roles, issued year, identifiers, container title, and the
+  optional `customType`, `issuedRaw`, `publisher`, `volume`, `issue`, `pages`,
+  `language`, `url`, `tags`); never an abstract, note or PDF. An older
+  snapshot lacks the optional keys: unknown, not empty (`pinCitation.ts`).
+  `refreshScientProjectPinSnapshots` and `listScientProjectPinnedWorks` take a
+  known snapshot value when the resolving record lacks it
+  (`withKnownPinCitationValues`; a bare year is less than a full date of that
+  year), unless the record's provenance shows a person or agent edit of that
+  field (a deliberate correction). A refresh from a record hydrated from an
+  older snapshot keeps the unknown keys absent. A `type` this version does not
+  know is read as `other`.
 - `listScientProjectPinnedWorks` returns the pins under the project's keys for
   the managed bibliography: the library record when this library resolves the
   pin, otherwise a record built from `work`. It accepts no library at all (a
   collaborator's checkout or CI). Personal notes are left out of the record;
-  the project note comes beside it. `ManagedBibliography.ts` does not use it
-  yet.
+  the project note comes beside it. `incompleteSnapshot` marks a work built only
+  from an older snapshot (the snapshot, or a record hydrated from it);
+  `syncPinnedBibliography` then writes the entry it wrote before (from its
+  written copy) instead of the poorer render and reports the key in
+  `keptEntries`.
 
 ### Instance map and resolving project source IDs
 
@@ -800,7 +832,25 @@ deletes v1 files; a `pins.json` on its own never does.
    staging restages the plan (up to four times). A destination that is the
    start of the staged bytes is a copy cut short; it is set aside as
    `<name>.broken-<time>` and published again.
-7. Cleanup: each v1 file is deleted once its counterpart verifies (library
+7. Archive (`libraryMoveArchive.ts`), before anything is deleted: the v1
+   files cleanup will delete, minus `text/` and `staging/`, and the moved
+   highlight files are copied to
+   `.scient/library/retained-before-library/<runId>/` (`sources/…`,
+   `annotations/…`, `manifest.json` with original paths, sizes, SHA-256,
+   counts and missing files, `README.md`). Each copy is checked against its
+   original's hash; the folder is built as `.<runId>.partial`, checked again
+   and published with one rename, and only then does the journal (`archive`:
+   path and manifest hash) move to `cleanup`. A crash leaves `committed` and
+   every v1 file; the rerun keeps matching copies. A sealed archive whose files
+   changed is refused, so the move keeps the originals. Nothing reads the
+   archive except `restoreScientProjectPreMoveArchive` (organize
+   `restore-pre-move`): it checks the manifest, refuses while `.scient/sources`
+   holds files, rebuilds it in `.scient/library/.restoring-archive/` and
+   renames it into place, and copies highlight files that are missing. It needs
+   no journal; the restored store is then an ordinary v1 store the next move
+   takes in. The archive is not a v1 store, so it never restarts a move. The
+   done summary names the Library folder and the archive path.
+8. Cleanup: each v1 file is deleted once its counterpart verifies (library
    record, PDF by hash, text by its own bytes in the library, annotation file
    by IDs, review or bibliography copy by journal hash, everything else, and
    text the library holds differently, by its backup copy). A file that
@@ -879,6 +929,38 @@ Scient wrote them, so the staging folder is dropped, the journal returns to
 the store is published, and nothing under `.scient/sources` is written again:
 changes made there since are kept. Until the move back finishes, the project
 counts as moved.
+
+#### Project packages (FP-1)
+
+`projectPackage.ts`, organize `export-package`, `list-packages` (panel only;
+agents list folders themselves) and `import-package`, through
+`LibraryProjectPackage.ts`. A package is a folder inside the project (default
+"Scient project package <date>", never inside `.scient`):
+
+```text
+manifest.json      kind scient-project-package, counts, every file's size and SHA-256, unavailable
+README.md
+project/           pins.json, note-history/, reviews/ (with snapshots), as the project keeps them
+sources/<project source ID>.json   the Library record (no personal note or reading state)
+pdfs/<sha256>.pdf  annotations/<sha256>.json   exact bytes and the Library's highlight files
+organization.json  collections holding these sources, by name and parent name
+```
+
+Export resolves every pin and every ID a live review names (review-only
+sources too) in read mode, writes the package hidden and renames it into
+place; PDFs or records the Library lacks are listed in `unavailable`. Import
+checks every file against the manifest (`package-changed` otherwise), then per
+source: the same library ID, else the resolver, else `importScientSource` with
+the record's details (a shared identifier, PDF or origin matches; a title
+likeness does not); the package's PDFs it lacks are attached, the instance map
+records each project source ID, highlight files join by annotation ID under the
+library lock. A project with no `pins.json` takes the package's pins; otherwise
+`joinScientProjectPins` adds missing pins (a taken key gets a suffix), adds an
+incoming note to a pin without one, and records a differing note as a `found`
+version before the current one. Note history files the project lacks are
+copied. A review the project lacks is added; one that differs goes to
+`.scient/library/conflicts/reviews/<reviewId>/`, the move's conflict layout.
+Collections are created by name. The managed bibliography is synced after.
 
 #### Lock holds, progress and one move per project (5e-1)
 
