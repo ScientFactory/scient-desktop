@@ -93,21 +93,11 @@ export function withKnownPinCitationValues(
 const fromProjectFile = (sourceField: string | null) =>
   sourceField?.startsWith("project-file:") ?? false;
 
-const CITATION_INPUTS: ReadonlyArray<string> = [
-  "type",
-  "title",
-  "creators",
-  "issuedYear",
-  "identifiers",
-  "containerTitle",
-  "tags",
-  ...SCIENT_PIN_CITATION_TEXT_FIELDS,
-];
-
 /**
  * Whether an older snapshot's managed entry must be kept for this record: it was hydrated from
- * that snapshot, a citation input the snapshot lacks is still unknown, and nobody corrected a
- * citation input since. Edits to anything else (an abstract, a note) change nothing here.
+ * that snapshot and a citation input the snapshot lacks is still unknown. A correction of another
+ * field (the title) waits in the kept entry's report: rendering now would drop pages or a date
+ * only that entry knows. Setting the unknown field itself makes it known.
  */
 export function scientPinCitationStillUnknown(
   work: ScientPinCitationWork,
@@ -116,13 +106,6 @@ export function scientPinCitationStillUnknown(
   if (scientPinWorkIsComplete(work)) return false;
   const provenance = record.fieldProvenance;
   if (!provenance.some((entry) => fromProjectFile(entry.sourceField))) return false;
-  const corrected = provenance.some(
-    (entry) =>
-      CITATION_INPUTS.includes(entry.field) &&
-      !fromProjectFile(entry.sourceField) &&
-      (entry.origin === "user" || entry.origin === "agent"),
-  );
-  if (corrected) return false;
   return [...SCIENT_PIN_CITATION_TEXT_FIELDS, "tags" as const].some(
     (field) =>
       !(field in work) &&

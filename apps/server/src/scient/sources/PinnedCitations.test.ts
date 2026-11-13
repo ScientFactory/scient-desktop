@@ -292,5 +292,25 @@ describe("pinned citations travel with the project", () => {
     });
     expect(await managedFiles(elsewhere)).toEqual(written);
     expect(afterEdit.keptEntries).toHaveLength(3);
+
+    // Correcting only the title never drops the pages and full date only the kept entry knows.
+    const current = (await listScientSourceRecords(collaborator)).find(
+      (record) => record.sourceId === hydrated!.sourceId,
+    )!;
+    await updateScientSourceMetadata({
+      root: collaborator,
+      sourceId: current.sourceId,
+      expectedRevision: current.revision,
+      metadata: { ...editableMetadataFromRecord(current), title: "A corrected title" },
+    });
+    await refreshScientProjectPinSnapshots({ projectRoot: elsewhere, library: collaborator });
+    const afterCorrection = await syncPinnedBibliography({
+      root: elsewhere,
+      library: collaborator,
+      access: "write",
+      actor: "user",
+    });
+    expect(await managedFiles(elsewhere)).toEqual(written);
+    expect(afterCorrection.keptEntries).toHaveLength(3);
   });
 });
