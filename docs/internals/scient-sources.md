@@ -1114,11 +1114,26 @@ Saved searches are personal and stay out. Export resolves every pin and every
 ID a live review names in read mode, writes the package hidden and renames it
 into place; PDFs or records the Library lacks are listed in `unavailable`.
 
-Import is evidence from another computer and overwrites nothing here. It checks
-every path and file against the manifest (`package-changed`), then places each
-source in one hold of the Library lock (`placePackagedSource`), so its decision
-and every write on it (notices, abstract, PDFs, its instance-map entry) happen
-together. Proposed targets are the same library ID, then a resolution by the
+Import is evidence from another computer and overwrites nothing here. Before
+any import effects, it checks every listed path and file against the manifest
+(`package-changed`) and decodes the source records. Every attachment it will
+read needs a manifest entry with its recorded hash and size and canonical
+containment in the package. An unlisted PDF is reported as unavailable without
+opening it, even through a linked parent. Containment is checked again at the
+PDF read boundary.
+
+For each paper, `preparePackagedPdfs` reads, hashes, verifies and copies its
+PDFs to private staging before taking the Library lock. The store publishes
+their immutable content-addressed blobs (including any fallback copy and
+existing-blob verification) outside the hold. Unreferenced blobs can remain
+after an interrupted or refused import; ordinary blob cleanup can remove them.
+Inside the hold, each prepared attachment rechecks the blob's regular-file
+identity, size and modification/change times against the verified staging
+result before publishing its reference; a removed or replaced blob fails
+that attachment. No PDF byte reads, copies or syncs run under this hold.
+`placePackagedSource` keeps the decision and every write on that source
+(notices, abstract, PDF references, its instance-map entry) together in one
+Library-lock hold. Proposed targets are the same library ID, then a resolution by the
 instance map, the same ID or a corroborated identifier (`metadata` resolutions
 are refused). Each is checked (`packageTargetHolds`) against current records:
 `scientLibraryIdentityProblem` must find nothing and the Library's exclusions

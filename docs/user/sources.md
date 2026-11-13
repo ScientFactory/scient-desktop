@@ -444,7 +444,10 @@ outside its folder through a link is refused.
 To bring a package in, choose its folder with **Choose a folder…** under
 **Import a package**, or pick one of the package folders in the project. Scient
 checks every file against the manifest first and refuses a package that
-changed. A paper joins one your Library already has only when the two are
+changed. A PDF missing from the manifest is reported as unavailable and is
+never opened. Scient prepares each paper's PDF copies before joining it, so
+other Library edits can finish while those copies are being made.
+A paper joins one your Library already has only when the two are
 clearly the same work (the same identifier, title and type) and you have not
 marked them as not duplicates; this holds even when the paper there has the
 same ID or was matched by an earlier import, so a paper corrected since to

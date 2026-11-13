@@ -37,7 +37,6 @@ import {
   type ScientProjectPinsJoin,
 } from "./projectPins.ts";
 import {
-  attachScientSourcePdf,
   decodePersistedScientSourceRecord,
   importScientSource,
   listScientSourceRecords,
@@ -662,6 +661,7 @@ interface ImportContext {
   readonly actor: ScientSourceActor;
   readonly state: ImportState;
   readonly mapped: Map<string, string>;
+  readonly pdfFiles: ReadonlySet<string>;
   readonly afterTargetCheck: ((sourceId: string) => Promise<void>) | undefined;
 }
 
@@ -714,6 +714,34 @@ async function packageTarget(
 const CHANGED_WHILE_IMPORTED =
   "It changed here while it was being imported, so it was left as it is; import the package again.";
 
+async function preparePackagedPdfs(context: ImportContext, record: ScientSourceRecord) {
+  const prepared = new Map<
+    string,
+    Awaited<ReturnType<typeof scientSourceStoreInternals.preparePdfAttachment>>
+  >();
+  for (const attachment of record.attachments) {
+    const item = `pdfs/${attachment.sha256}.pdf`;
+    if (!context.pdfFiles.has(item) || prepared.has(attachment.sha256)) continue;
+    try {
+      if (!(await insidePackage(context.state.folder, item)))
+        throw new Error(`${item} leaves the package.`);
+      prepared.set(
+        attachment.sha256,
+        await scientSourceStoreInternals.preparePdfAttachment({
+          root: context.library,
+          pdfPath: absolute(context.state.folder, item),
+          fileName: attachment.fileName,
+          expectedPdf: { sha256: attachment.sha256, byteLength: attachment.byteLength },
+          ...(attachment.retrieval ? { retrieval: attachment.retrieval } : {}),
+        }),
+      );
+    } catch (error) {
+      context.state.failed.push({ part: "pdf", item, message: message(error) });
+    }
+  }
+  return prepared;
+}
+
 /**
  * One packaged source, in one hold of the Library lock: its target decided, then every write
  * (notices, abstract, PDFs, the mapping) made on that decision's revision. A write that finds the
@@ -721,7 +749,7 @@ const CHANGED_WHILE_IMPORTED =
  */
 async function placePackagedSource(
   context: ImportContext,
-  folder: string,
+  prepared: Awaited<ReturnType<typeof preparePackagedPdfs>>,
   {
     projectSourceId,
     record,
@@ -780,17 +808,13 @@ async function placePackagedSource(
       state.counts.pdfsPresent += 1;
       continue;
     }
-    const pdf = absolute(folder, `pdfs/${attachment.sha256}.pdf`);
-    if ((await hashFile(pdf)) !== attachment.sha256) continue;
     const item = `pdfs/${attachment.sha256}.pdf`;
-    const attached = await attachScientSourcePdf({
-      root: library,
+    const attach = prepared.get(attachment.sha256);
+    if (!attach) continue;
+    const attached = await attach({
       sourceId,
       expectedRevision: target.revision,
-      pdfPath: pdf,
-      fileName: attachment.fileName,
       actor: context.actor,
-      ...(attachment.retrieval ? { retrieval: attachment.retrieval } : {}),
     }).catch((error: unknown) => {
       state.failed.push({ part: "pdf", item, message: message(error) });
       return null;
@@ -852,6 +876,49 @@ export async function importScientProjectPackage(input: {
     }
   }
   if (changed.length > 0) return { outcome: "package-changed", files: changed };
+  const sourceFiles = manifest.files.filter((file) => /^sources\/[^/]+\.json$/u.test(file.path));
+  const packaged = await Promise.all(
+    sourceFiles.map(async (file) => {
+      const entry = decodePackageSource(JSON.parse((await readText(absolute(folder, file.path)))!));
+      return {
+        projectSourceId: entry.projectSourceId,
+        record: decodePersistedScientSourceRecord(entry.record),
+      };
+    }),
+  );
+  const listed = new Map(manifest.files.map((file) => [file.path, file]));
+  const pdfFiles = new Set<string>();
+  const unavailable = [...manifest.unavailable];
+  for (const { projectSourceId, record } of packaged) {
+    for (const attachment of record.attachments) {
+      const item = `pdfs/${attachment.sha256}.pdf`;
+      const file = listed.get(item);
+      if (!file) {
+        if (
+          !unavailable.some(
+            (entry) =>
+              entry.projectSourceId === projectSourceId && entry.sha256 === attachment.sha256,
+          )
+        ) {
+          unavailable.push({
+            projectSourceId,
+            kind: "pdf",
+            sha256: attachment.sha256,
+            fileName: attachment.fileName,
+          });
+        }
+      } else if (
+        file.sha256 !== attachment.sha256 ||
+        file.bytes !== attachment.byteLength ||
+        !(await insidePackage(folder, item))
+      ) {
+        changed.push(item);
+      } else {
+        pdfFiles.add(item);
+      }
+    }
+  }
+  if (changed.length > 0) return { outcome: "package-changed", files: changed };
   const { library } = input;
   const { instanceId } = await registerScientLibraryInstance({
     library,
@@ -878,19 +945,10 @@ export async function importScientProjectPackage(input: {
     actor: input.actor,
     state,
     mapped: new Map(),
+    pdfFiles,
     afterTargetCheck: input.afterTargetCheck,
   };
 
-  const sourceFiles = manifest.files.filter((file) => /^sources\/[^/]+\.json$/u.test(file.path));
-  const packaged = await Promise.all(
-    sourceFiles.map(async (file) => {
-      const entry = decodePackageSource(JSON.parse((await readText(absolute(folder, file.path)))!));
-      return {
-        projectSourceId: entry.projectSourceId,
-        record: decodePersistedScientSourceRecord(entry.record),
-      };
-    }),
-  );
   const resolutions = await resolveScientProjectSources({
     library,
     projectRoot: root,
@@ -906,8 +964,9 @@ export async function importScientProjectPackage(input: {
       resolution.kind === "resolved" && resolution.by !== "metadata" ? resolution.sourceId : null,
     ];
     try {
+      const prepared = await preparePackagedPdfs(context, source.record);
       await withScientLibraryLock(library.root, () =>
-        placePackagedSource(context, folder, source, proposals),
+        placePackagedSource(context, prepared, source, proposals),
       );
     } catch (error) {
       state.failed.push({ part: "source", item: source.projectSourceId, message: message(error) });
@@ -971,7 +1030,7 @@ export async function importScientProjectPackage(input: {
     pins,
     reviews,
     collections,
-    unavailable: manifest.unavailable,
+    unavailable,
     failed: state.failed,
   };
 }

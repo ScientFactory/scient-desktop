@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { organizeScientSources, readScientSourcesOrganization } from "./collections.ts";
 import {
@@ -14,6 +15,7 @@ import {
 } from "./libraryReviewConflicts.ts";
 import { scientLibraryDistinctPairsPath } from "./libraryExclusions.ts";
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   changeScientLibraryReview,
   readScientLibraryReviewRecord,
@@ -29,6 +31,7 @@ import type { ScientSourceCandidate } from "./model.ts";
 import {
   exportScientProjectPackage,
   importScientProjectPackage,
+  ScientProjectPackageManifest,
   scientProjectPackageInternals,
   undoScientProjectPackageImport,
 } from "./projectPackage.ts";
@@ -49,6 +52,8 @@ import {
   updateScientSourceMetadata,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const fixtures: string[] = [];
 
@@ -155,6 +160,122 @@ const importInto = (root: string, library: ScientLibraryLocation, folder: string
   importScientProjectPackage({ projectRoot: root, library, folder, actor: "user" });
 
 describe("importing a project package", () => {
+  it("refuses a staged PDF replaced before its attachment reference is committed", async () => {
+    const { base, mine, source } = await setup();
+    const paper = await add(mine, "replaced-stage");
+    const pdf = await withPdf(mine, base, paper.sourceId);
+    const attachment = pdf.record.attachments[0]!;
+    await pinned(mine, source, paper.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+    const theirs = await computer(base, "theirs");
+    const result = await importScientProjectPackage({
+      projectRoot: await project(base, "received"),
+      library: theirs,
+      folder: handoff,
+      actor: "user",
+      afterTargetCheck: async () => {
+        const blob = NodePath.join(theirs.root, ...attachment.relativePath.split("/"));
+        const replacement = `${blob}.replacement`;
+        await NodeFSP.writeFile(replacement, Buffer.alloc(attachment.byteLength));
+        await NodeFSP.rename(replacement, blob);
+      },
+    });
+    expect(result).toMatchObject({
+      pdfs: { added: 0 },
+      failed: [
+        expect.objectContaining({
+          part: "pdf",
+          message: "The staged source PDF changed before it could be attached.",
+        }),
+      ],
+    });
+    expect((await listScientSourceRecords(theirs))[0]!.attachments).toHaveLength(0);
+  });
+
+  it("lets an unrelated Library writer finish while a PDF staging copy is blocked", async () => {
+    const { base, mine, source } = await setup();
+    const paper = await add(mine, "blocked-copy");
+    await withPdf(mine, base, paper.sourceId);
+    await pinned(mine, source, paper.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+    const theirs = await computer(base, "theirs");
+    const unrelated = await add(theirs, "unrelated");
+    const received = await project(base, "received");
+    const copying = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const { open } = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    using _blocked = vi.spyOn(NodeFSP, "open").mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]).startsWith(NodePath.join(theirs.root, "staging")) && args[1] === "wx") {
+        const write = handle.writeFile.bind(handle);
+        handle.writeFile = async (...writeArgs) => {
+          copying.resolve();
+          await release.promise;
+          return write(...writeArgs);
+        };
+      }
+      return handle;
+    });
+    const importing = importInto(received, theirs, handoff);
+    try {
+      await copying.promise;
+      await withScientLibraryLock(
+        theirs.root,
+        async () => {
+          expect(
+            await updateScientSourceMetadata({
+              root: theirs,
+              sourceId: unrelated.sourceId,
+              expectedRevision: unrelated.revision,
+              metadata: {
+                ...editableMetadataFromRecord(unrelated),
+                title: "Edited during staging",
+              },
+            }),
+          ).toMatchObject({ outcome: "updated" });
+        },
+        { timeoutMs: 0 },
+      );
+    } finally {
+      release.resolve();
+      expect(await importing).toMatchObject({ pdfs: { added: 1 }, failed: [] });
+    }
+  });
+
+  it("never opens an unlisted PDF through a linked parent outside the package", async () => {
+    const { base, mine, source } = await setup();
+    const paper = await add(mine, "unlisted");
+    await withPdf(mine, base, paper.sourceId);
+    await pinned(mine, source, paper.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+    const manifest: ScientProjectPackageManifest = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(handoff, "manifest.json"), "utf8"),
+    );
+    const pdf = manifest.files.find((file) => file.path.startsWith("pdfs/"))!;
+    await NodeFSP.writeFile(
+      NodePath.join(handoff, "manifest.json"),
+      JSON.stringify({ ...manifest, files: manifest.files.filter((file) => file !== pdf) }),
+    );
+    const outside = NodePath.join(base, "outside");
+    await NodeFSP.rename(NodePath.join(handoff, "pdfs"), outside);
+    await NodeFSP.symlink(outside, NodePath.join(handoff, "pdfs"), "junction");
+    const theirs = await computer(base, "theirs");
+    expect(await importInto(await project(base, "received"), theirs, handoff)).toMatchObject({
+      outcome: "imported",
+      pdfs: { added: 0 },
+      unavailable: [
+        expect.objectContaining({ kind: "pdf", sha256: NodePath.basename(pdf.path, ".pdf") }),
+      ],
+    });
+    expect((await listScientSourceRecords(theirs))[0]!.attachments).toHaveLength(0);
+    expect(
+      await NodeFSP.stat(NodePath.join(theirs.root, "files", "sha256")).catch(() => null),
+    ).toBeNull();
+  });
+
   it("checks a target found by its ID or an earlier mapping before joining it", async () => {
     const { base, mine, source } = await setup();
     const doi = { scheme: "doi", value: "10.1000/paper" };
