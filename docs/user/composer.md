@@ -200,8 +200,8 @@ instance:
 
 Fresh Scient Agent, Pi, and Oh My Pi model preferences include GPT-6.1 Terra among the visible
 OpenAI account models when the agent discovers it. Saved visibility choices take precedence.
-The reasoning column shows the model’s supported levels directly; other agent options appear
-below them when available.
+The reasoning column, headed **Reasoning** for every agent, shows the model’s supported levels
+directly; other agent options appear below them when available.
 
 On desktop and web, model choices show the company below the model name. Long names wrap
 so their distinguishing suffix stays readable. The picker keeps one bottom toolbar: **Fork to

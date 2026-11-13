@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { runtimeModeConfig } from "./runtimeModeConfig";
 import { expect, it, vi } from "vite-plus/test";
@@ -11,7 +12,7 @@ import { page } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
-import { ComposerPickerFooter } from "./ComposerModelEffort";
+import { ComposerEffortColumn, ComposerPickerFooter } from "./ComposerModelEffort";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
 const instanceId = ProviderInstanceId.make("scient-layout");
@@ -192,4 +193,98 @@ it("preserves speed and Ultracode when options move between the toolbar and over
   await page.viewport(1280, 800);
   await expect.element(page.getByRole("button", { name: "Speed: Standard" })).toBeVisible();
   await expect.element(ultracode).toHaveAttribute("aria-pressed", "false");
+});
+
+const agentInstanceId = ProviderInstanceId.make("antigravity-layout");
+const thinkingLevel = {
+  id: "thinking_level",
+  label: "Thinking Level",
+  type: "select" as const,
+  role: "reasoning" as const,
+  currentValue: "high",
+  options: ["low", "medium", "high", "extra"].map((id) => ({
+    id,
+    label: id[0]!.toUpperCase() + id.slice(1),
+  })),
+};
+const agentModels = [
+  "Gemini 4 Argon",
+  "Gemini 4 Hydrogen",
+  "Gemini 3.8 Flash",
+  "Claude Opus 5.5",
+].map((name) => ({
+  slug: name.toLowerCase().replaceAll(" ", "-"),
+  name,
+  isCustom: false,
+  capabilities: createModelCapabilities({ optionDescriptors: [thinkingLevel] }),
+}));
+const agentEntries = deriveProviderInstanceEntries([
+  {
+    instanceId: agentInstanceId,
+    driver: ProviderDriverKind.make("antigravity"),
+    displayName: "Antigravity",
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-11-13T00:00:00.000Z",
+    models: agentModels,
+    slashCommands: [],
+    skills: [],
+  },
+]);
+// The jump badges take room from each name, as they do in the app.
+const jumpKeys = compileResolvedKeybindingsConfig(
+  (["1", "2", "3", "4"] as const).map((index) => ({
+    key: `mod+${index}`,
+    command: `modelPicker.jump.${index}` as const,
+    when: "modelPickerOpen",
+  })),
+);
+function AgentPicker() {
+  const [options, setOptions] = useState<ReadonlyArray<ProviderOptionSelection>>([]);
+  const traits = {
+    provider: ProviderDriverKind.make("antigravity"),
+    instanceId: agentInstanceId,
+    models: agentModels,
+    model: agentModels[1]!.slug,
+    modelOptions: options,
+    onModelOptionsChange: (next: ReadonlyArray<ProviderOptionSelection> | undefined) =>
+      setOptions(next ?? []),
+  };
+  return (
+    <div className="fixed bottom-8 left-4">
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={agentInstanceId}
+        model={agentModels[1]!.slug}
+        lockedProvider={null}
+        instanceEntries={agentEntries}
+        modelOptionsByInstance={new Map([[agentInstanceId, agentModels]])}
+        onInstanceModelChange={() => {}}
+        triggerAriaLabel="Choose model"
+        keybindings={jumpKeys}
+        effortColumn={<ComposerEffortColumn traits={traits} />}
+      />
+    </div>
+  );
+}
+const singleLine = (element: HTMLElement) =>
+  element.getBoundingClientRect().height < parseFloat(getComputedStyle(element).lineHeight) * 1.5;
+
+it("keeps model names and the reasoning header on one line", async () => {
+  await page.viewport(1280, 800);
+  await using _screen = await render(<AgentPicker />);
+  await page.getByRole("button", { name: "Choose model" }).click();
+  await expect.element(page.getByText("⌘2")).toBeVisible();
+  const header = page.getByText("Reasoning", { exact: true });
+  await expect.element(header).toBeVisible();
+  await expect.element(page.getByText("Thinking Level", { exact: true })).not.toBeInTheDocument();
+  expect(singleLine(header.element() as HTMLElement)).toBe(true);
+  for (const model of agentModels) {
+    const name = page.getByText(model.name, { exact: false });
+    await expect.element(name).toBeVisible();
+    expect(singleLine(name.element() as HTMLElement), model.name).toBe(true);
+  }
 });

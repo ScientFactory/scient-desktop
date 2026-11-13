@@ -957,10 +957,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ref={pickerContentRef}
         className={cn(
           // SCIENT-FORK:START — 320 px fits the model names with their badges; the setup panel
-          // matches it, and the cap never passes the popup's available height.
+          // matches it, and the cap never passes the popup's available height. Docked beside the
+          // reasoning column the list keeps T3's 360 px, so names stay on one line.
           "relative flex w-screen max-w-80 flex-row overflow-hidden",
           props.docked
-            ? "sm:max-w-74 max-sm:h-56 max-sm:w-full max-sm:max-w-none"
+            ? "sm:max-w-90 max-sm:h-56 max-sm:w-full max-sm:max-w-none"
             : "max-h-[min(21.625rem,var(--available-height,85vh))]",
           // SCIENT-FORK:END
         )}
