@@ -18,6 +18,9 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
+// SCIENT-FORK:START — leaving Connect turns Cloud copy off.
+import { ServerSettingsService } from "../serverSettings.ts";
+// SCIENT-FORK:END
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import { canLinkHere } from "./linkChecks.ts";
@@ -153,6 +156,13 @@ export const layer = HttpApiBuilder.group(
 
     const cloudLink = yield* CloudLink.CloudLink;
     const reachability = yield* ConnectReachability.ConnectReachability;
+    // SCIENT-FORK:START — the computer left the account, so it stops copying to it; copies stay.
+    const settings = yield* Effect.serviceOption(ServerSettingsService);
+    const stopCloudCopy =
+      settings._tag === "Some"
+        ? settings.value.updateSettings({ scientCloudSyncEnabled: false }).pipe(Effect.ignore)
+        : Effect.void;
+    // SCIENT-FORK:END
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
@@ -182,6 +192,9 @@ export const layer = HttpApiBuilder.group(
       .handle("unlink", () =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpError(cloudLink.unlink())),
+          // SCIENT-FORK:START
+          Effect.tap(() => stopCloudCopy),
+          // SCIENT-FORK:END
         ),
       )
       .handle("preferences", ({ payload }) =>

@@ -53,6 +53,7 @@ import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
 import type { SectionCreateAnchor } from "../scient/sections/NewSectionPopover";
 import { useThreadSectionMenu } from "../scient/sections/useThreadSectionMenu";
 import { handleConversationExportMenuAction } from "../scient/conversationExport/menu";
+import { handleShareLinkMenuAction } from "../scient/cloud/menu";
 import {
   handleOpenInNewWindowMenuAction,
   openInNewWindowMenuItem,
@@ -216,6 +217,7 @@ export function useThreadActionMenu(input: {
       // SCIENT-FORK:START
       if (await handleSectionMenuAction(action, [threadRef], position)) return;
       if (handleConversationExportMenuAction(action, threadRef)) return;
+      if (handleShareLinkMenuAction(action, threadRef)) return;
       // SCIENT-FORK:END
       const reportFailure = async (
         title: string,

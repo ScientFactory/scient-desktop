@@ -150,6 +150,9 @@
         "latexPaging.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
         "src/scient/documentPage/main.tsx!",
+        // The public share page (infra/scient-cloud/share) builds from these.
+        "src/scient/cloud/share/main.tsx!",
+        "vite/sharePage.ts",
         // The Visual performance benchmark: its production build configuration,
         // page entry (latex-visual-benchmark.html) and Node runner.
         "latexVisualBenchmark.config.ts",
@@ -234,6 +237,11 @@
     "infra/relay": {
       // Alchemy loads src/worker.ts as the Worker entry and reads its default export.
       "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!", "src/worker.ts!"],
+    },
+    "infra/scient-cloud": {
+      // Alchemy loads src/worker.ts as the Worker entry; scripts/dev.ts serves it locally.
+      // share/vite.config.ts builds the share page from apps/web (apps/web/vite/sharePage.ts).
+      "entry": ["alchemy.run.ts!", "src/worker.ts!", "scripts/*.ts", "share/vite.config.ts"],
     },
     "packages/*": {
       // These workspace packages are private to this monorepo.

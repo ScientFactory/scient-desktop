@@ -800,6 +800,24 @@ export const layer = Layer.effect(
     });
 
     const service = AccountsService.of({
+      redactionValues: Effect.gen(function* () {
+        const values: Array<Redacted.Redacted<string>> = [];
+        for (const account of state.accounts) {
+          for (const [field, secret] of Object.entries(account.summary.secrets)) {
+            const source: AccountValueSource = secret.source;
+            const value =
+              source.type === "scient"
+                ? readValue(account.values[field])
+                : source.type === "custom-model"
+                  ? sources.customModel(source.connectionId)
+                  : undefined;
+            if (value === undefined) continue;
+            const read = yield* value.pipe(Effect.option);
+            if (Option.isSome(read)) values.push(read.value);
+          }
+        }
+        return values;
+      }).pipe(Effect.withSpan("AccountsService.redactionValues")),
       setHandoff: Effect.fn("AccountsService.setHandoff")((handoff, reveal) =>
         locked(
           Effect.gen(function* () {

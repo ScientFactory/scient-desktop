@@ -1467,6 +1467,8 @@ export const ServerSettings = Schema.Struct({
   threadSectionsDeleteEmptyAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  // Keep a cloud copy of this computer's conversations (Scient Cloud). Off until turned on.
+  scientCloudSyncEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // SCIENT-FORK:END
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1932,6 +1934,7 @@ export const ServerSettingsPatch = Schema.Struct({
   threadSectionsGeneralIndex: Schema.optionalKey(NonNegativeInt),
   threadSectionsExpected: Schema.optionalKey(ThreadSectionsPrecondition),
   threadSectionsDeleteEmptyAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  scientCloudSyncEnabled: Schema.optionalKey(Schema.Boolean),
   // SCIENT-FORK:END
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),

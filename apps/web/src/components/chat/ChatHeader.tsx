@@ -28,6 +28,7 @@ import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 // SCIENT-FORK:START
 import { useNewSectionForThreads } from "~/scient/sections/useNewSectionForThreads";
 import { ExtensionsReceiptIndicator } from "~/scient/extensions/ExtensionsReceiptIndicator";
+import { ShareThreadButton } from "~/scient/cloud/ShareThreadButton";
 // SCIENT-FORK:END
 import { readLocalApi } from "~/localApi";
 import { threadEnvironment } from "../../state/threads";
@@ -424,6 +425,9 @@ export const ChatHeader = memo(function ChatHeader({
           environmentId={activeThreadEnvironmentId}
           threadId={activeThreadId}
         />
+      ) : null}
+      {isServerThread && canOperateThread ? (
+        <ShareThreadButton threadRef={activeThreadRef} />
       ) : null}
       {/* SCIENT-FORK:END */}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}

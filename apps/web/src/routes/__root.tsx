@@ -32,6 +32,9 @@ import { OverleafNewProjectDialogHost } from "../scient/overleaf/OverleafNewProj
 import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
 // SCIENT-FORK:END
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+// SCIENT-FORK:START — the Share link dialog.
+import { ShareLinkDialogHost } from "../scient/cloud/ShareLinkDialog";
+// SCIENT-FORK:END
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -177,6 +180,9 @@ function RootRouteBranch() {
   // SCIENT-FORK:END hosted-landing
 
   if (pathname === GUEST_PAGE_PATH) return <Outlet />;
+  // SCIENT-FORK:START — a shared conversation opened while signed in reads like the public page.
+  if (pathname.startsWith("/shared/")) return <Outlet />;
+  // SCIENT-FORK:END
 
   if (
     pathname === "/pair" ||
@@ -222,6 +228,9 @@ function RootRouteBranch() {
       <ProviderSignInPageCoordinator />
       {/* SCIENT-FORK:END */}
       <GuestShareDialogHost />
+      {/* SCIENT-FORK:START — the Share link dialog. */}
+      <ShareLinkDialogHost />
+      {/* SCIENT-FORK:END */}
       <ProjectCloneToastCoordinator />
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
