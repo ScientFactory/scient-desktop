@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { serverUpdateStateAtom } from "@t3tools/client-runtime/state/server";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -67,6 +67,13 @@ export function settleUpdateRunMachine(
   );
 }
 
+function runsVersion(config: ServerConfig | null, targetVersion: string): boolean {
+  return (
+    config !== null &&
+    resolveVersionMismatch(config.environment.serverVersion, targetVersion) === null
+  );
+}
+
 // SCIENT-FORK:START — a retry rechecks eligibility, like a server step that starts.
 const qualifiedUpdateRunServersAtom = Atom.make<ReadonlyArray<ServerUpdateTarget>>([]).pipe(
   Atom.withEquality(Equal.equals),
@@ -99,17 +106,33 @@ export function retryFailedUpdateRunServers(
         ? [{ target: machine.server, providerFailure: machine.providerFailure }]
         : [],
   );
+  const pending: typeof confirmed = [];
+  for (const entry of confirmed) {
+    // The host rejects a same-version update; a server that came back on the target is done.
+    if (
+      runsVersion(
+        appAtomRegistry.get(serverEnvironment.configValueAtom(entry.target.environmentId)),
+        entry.target.targetVersion,
+      )
+    ) {
+      settleUpdateRunMachine(entry.target.environmentId, entry.providerFailure, {
+        serverUpdated: true,
+      });
+    } else {
+      pending.push(entry);
+    }
+  }
   // SCIENT-FORK:START — a retry keeps its confirmed version and mechanism, takes the current
   // flags, and never sends a target that is no longer qualified. A withdrawn target settles
   // as failed with its confirmed target, so Retry returns once it is eligible again.
   const eligible = new Map(
     currentConfirmedServerTargets(
-      confirmed.map(({ target }) => target),
+      pending.map(({ target }) => target),
       appAtomRegistry.get(qualifiedUpdateRunServersAtom),
     ).map((target) => [target.environmentId, target]),
   );
   const withdrawn = new Set(
-    confirmed.flatMap(({ target }) =>
+    pending.flatMap(({ target }) =>
       eligible.has(target.environmentId) ? [] : [target.environmentId],
     ),
   );
@@ -120,7 +143,7 @@ export function retryFailedUpdateRunServers(
         : machine,
     );
   }
-  const failed = confirmed.flatMap(({ target, providerFailure }) => {
+  const failed = pending.flatMap(({ target, providerFailure }) => {
     const current = eligible.get(target.environmentId);
     return current === undefined ? [] : [{ target: current, providerFailure }];
   });
@@ -133,7 +156,7 @@ export function retryFailedUpdateRunServers(
       ? { ...machine, result: null, failure: null, startedAt }
       : machine,
   );
-  for (const { target, providerFailure } of failed) {
+  for (const { target, providerFailure } of failed /* SCIENT-FORK: eligible targets */) {
     void update(target, { quiet: true }).then((outcome) =>
       settleUpdateRunMachine(
         target.environmentId,
@@ -365,12 +388,7 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
     const unsubscribe = appAtomRegistry.subscribe(
       serverEnvironment.configValueAtom(server.environmentId),
       (config) => {
-        if (
-          config !== null &&
-          resolveVersionMismatch(config.environment.serverVersion, server.targetVersion) === null
-        ) {
-          settle(null);
-        }
+        if (runsVersion(config, server.targetVersion)) settle(null);
       },
       { immediate: true },
     );

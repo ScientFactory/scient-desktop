@@ -244,6 +244,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
         }),
       forkSession: () => Effect.die("No fork in reading preservation"),
       subagentLaunchToolUseId: () => Effect.succeed(null),
+      subagentModel: () => Effect.succeed(null),
       assertComplete: Effect.void,
     },
   });

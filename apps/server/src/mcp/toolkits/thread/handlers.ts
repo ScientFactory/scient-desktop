@@ -150,6 +150,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         .searchThreads({ ...query, projectId })
         .pipe(Effect.mapError(unavailable));
       return {
+        currentThreadId: scope.thread?.threadId ?? null,
         matches: matches.map((match) => ({
           ...match,
           link: McpInvocationContext.threadLinkFor(scope, match.threadId, match.title),

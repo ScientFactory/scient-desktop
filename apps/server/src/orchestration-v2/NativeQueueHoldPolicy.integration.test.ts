@@ -251,7 +251,7 @@ const withNativeQueue = <A, E, R>(
     readonly controlStartupFailures?: boolean;
     readonly nativeSteering?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
-    readonly decorateProjectionStore?: (
+    readonly wrapProjectionStore?: (
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly providerEnabled?: (instanceId: ProviderInstanceId) => boolean;
@@ -643,9 +643,9 @@ const withNativeQueue = <A, E, R>(
                   ),
                 }
               : {}),
-          ...(options.decorateProjectionStore === undefined
+          ...(options.wrapProjectionStore === undefined
             ? {}
-            : { decorateProjectionStore: options.decorateProjectionStore }),
+            : { wrapProjectionStore: options.wrapProjectionStore }),
           ...(decorateEventSink === undefined ? {} : { decorateEventSink }),
         },
       ).pipe(
@@ -2987,7 +2987,7 @@ it.live(
       {
         // The stored workspace no longer matches the checkpoint scope's identity,
         // a precondition the capture checks before it touches Git.
-        decorateProjectionStore: (store) => ({
+        wrapProjectionStore: (store) => ({
           ...store,
           getCheckpointCaptureContext: (threadId, target) =>
             store.getCheckpointCaptureContext(threadId, target).pipe(
@@ -3069,7 +3069,7 @@ it.live.each(
         assert.deepEqual(offers, ["foreground", "first"]);
       }),
     {
-      decorateProjectionStore: (store) => ({
+      wrapProjectionStore: (store) => ({
         ...store,
         getCheckpointCaptureContext: (threadId, target) =>
           Effect.suspend(() => {

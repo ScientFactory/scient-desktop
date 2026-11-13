@@ -83,6 +83,7 @@ import { layer as resourceCleanupLayer } from "../../orchestration-v2/ResourceCl
 import { ScheduledTaskService } from "../../scheduledTasks/ScheduledTaskService.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
+import { DeviceService } from "../../device/DeviceService.ts";
 import {
   createAttachmentId,
   parseThreadSegmentFromAttachmentId,
@@ -3310,6 +3311,7 @@ it.live(
               Layer.mergeAll(
                 Layer.mock(TerminalManager)({ close: () => Effect.void }),
                 Layer.mock(PreviewManager)({ close: () => Effect.void }),
+                Layer.mock(DeviceService)({ sessionsForThread: () => Effect.succeed([]) }),
                 Layer.mock(ScheduledTaskService)({ deleteForThread: () => Effect.void }),
               ),
             ),

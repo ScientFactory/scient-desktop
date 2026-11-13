@@ -59,6 +59,7 @@ import {
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import { layerProviderRuntimeTestServices } from "./ProviderRuntimeTestServices.ts";
 import type { WorkspaceBindingResolver } from "../../scient/projectScope/WorkspaceBindingResolver.ts";
@@ -579,6 +580,7 @@ function makeTestLayer(input: {
           providerEventIngestorTestLayer,
           TestMcpRegistryLayer,
           TestStoresLayer,
+          ProviderInstallationGate.layer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
           ...(input.extensionsLayer === undefined ? [] : [input.extensionsLayer]),

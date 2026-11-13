@@ -683,9 +683,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("dev-runner", (it
         }),
       );
 
-      it.effect("--built --host localhost keeps the backend's hostname", () =>
+      // Node resolves localhost to ::1 first, so a 127.0.0.1 target can miss the backend.
+      it.effect("--built --host localhost keeps the backend's localhost name", () =>
         Effect.gen(function* () {
           const { env, tailscaleCalls } = yield* shareSpawned({ built: true, host: "localhost" });
+          // SCIENT-FORK: the backend itself keeps the localhost name.
           assert.equal(env?.T3CODE_HOST, "localhost");
           const serve = tailscaleCalls.find((args) => args.includes("--bg"));
           assert.equal(serve?.at(-1), `http://localhost:${env?.T3CODE_PORT}`);

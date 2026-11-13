@@ -487,4 +487,30 @@ describe("Files panel search", () => {
     dispatchPreviewAction("find");
     await expect.element(search).toHaveFocus();
   });
+
+  it("keeps expanded folders when the panel remounts", async () => {
+    const panel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    {
+      await using _first = await render(panel());
+      await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+      findTreeRow("src/")!.click();
+      await vi.waitFor(() =>
+        expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"),
+      );
+    }
+
+    await using _second = await render(panel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+  });
 });

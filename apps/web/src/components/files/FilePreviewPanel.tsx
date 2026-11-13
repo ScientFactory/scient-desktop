@@ -103,7 +103,15 @@ import {
   type DocumentDownloadActions,
 } from "~/scient/documentExport/DocumentDownloadMenu";
 import * as Schema from "effect/Schema";
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import type { FileCitation } from "@t3tools/contracts";
@@ -120,7 +128,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 // SCIENT-FORK:END
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type {
   HtmlFilePresentationRequest,
@@ -1459,6 +1467,25 @@ export function EditableFileEditor({
   );
 }
 
+function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
+  const mac = isMacPlatform(navigator.platform);
+  const selectAll =
+    event.key.toLowerCase() === "a" &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+    !event.shiftKey &&
+    !event.altKey;
+  // React bubbles keys from portaled children (the image dialog) through this surface.
+  if (
+    !selectAll ||
+    !(event.target instanceof Node) ||
+    !event.currentTarget.contains(event.target)
+  ) {
+    return;
+  }
+  event.preventDefault();
+  window.getSelection()?.selectAllChildren(event.currentTarget);
+}
+
 /** T3's ordinary rendered preview remains authoritative for MDX. */
 function RenderedMarkdownSurface({
   environmentId,
@@ -1509,7 +1536,7 @@ function RenderedMarkdownSurface({
   });
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}

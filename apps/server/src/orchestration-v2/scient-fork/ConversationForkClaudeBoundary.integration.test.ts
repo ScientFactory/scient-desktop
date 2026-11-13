@@ -177,6 +177,7 @@ it.live(
                 return { sessionId: targetSession };
               }),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, processSpawner));

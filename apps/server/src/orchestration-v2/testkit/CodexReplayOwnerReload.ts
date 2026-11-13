@@ -82,9 +82,17 @@ export function materializeCodexOwnerReload(
     !Predicate.isObject(start.frame.params)
   )
     throw new Error("Declared Codex owner reload has no recorded creation policy.");
+  // Codex reads its config inside the turn start, after the owner resume.
+  const configRead = transcript.entries[targetIndex - 2];
+  const turnStartIndex =
+    configRead?.type === "expect_outbound" &&
+    Predicate.isObject(configRead.frame) &&
+    configRead.frame.method === "config/read"
+      ? targetIndex - 2
+      : targetIndex;
   const insertionIndex =
     options === undefined
-      ? targetIndex
+      ? turnStartIndex
       : transcript.entries.findIndex(
           (entry, index) =>
             index > responseIndex &&

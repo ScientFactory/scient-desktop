@@ -10,7 +10,11 @@ import {
 import { toHtml } from "hast-util-to-html";
 import { RenderErrorBoundary } from "~/components/RenderErrorBoundary";
 import { HighlightedCodeLines } from "~/components/chat/HighlightedCodeLines";
-import { fnv1a32, resolveDiffThemeName, type DiffThemeName } from "~/lib/diffRendering";
+import {
+  createHighlightCacheKey,
+  estimateHighlightedSize,
+} from "~/components/chat/MarkdownCodeBlock.logic";
+import { resolveDiffThemeName, type DiffThemeName } from "~/lib/diffRendering";
 import {
   createIncrementalHighlightedDocument,
   highlightCodeToHast,
@@ -163,7 +167,7 @@ interface HighlightedCodeProps {
 function HighlightedCode({ code, language, themeName, isStreaming }: HighlightedCodeProps) {
   const [hasStreamed, setHasStreamed] = useState(isStreaming);
   if (isStreaming && !hasStreamed) setHasStreamed(true);
-  const cacheKey = `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
+  const cacheKey = createHighlightCacheKey(code, language, themeName);
   // Once lines are mounted individually, retain that renderer after streaming
   // finishes so replacing the whole pre cannot clear an active selection.
   const cached = !isStreaming && !hasStreamed ? highlightedCodeCache.get(cacheKey) : null;
@@ -219,7 +223,7 @@ function UncachedHighlightedCode({
       highlightedCodeCache.set(
         cacheKey,
         highlightedHtml,
-        Math.max(highlightedHtml.length * 2, code.length * 3),
+        estimateHighlightedSize(highlightedHtml, cacheKey),
       );
     }
     return result;

@@ -178,6 +178,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
           }),
         forkSession: () => Effect.die("No fork in captured Stop race"),
         subagentLaunchToolUseId: () => Effect.succeed(null),
+        subagentModel: () => Effect.succeed(null),
         assertComplete: Effect.void,
       },
     });

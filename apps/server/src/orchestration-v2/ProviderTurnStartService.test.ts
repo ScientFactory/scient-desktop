@@ -301,6 +301,7 @@ it.each([
 function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly nativeGoals?: boolean;
+  readonly goalDriver?: "opencode" | "antigravity";
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly workspaceRoot?: string;
@@ -318,7 +319,7 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   /** Startup succeeds, then every deciding recovery read fails. */
   readonly failReadsAfterRunning?: boolean;
-  readonly recoveryPreparationFailure?: unknown;
+  readonly recoveryReadFailure?: string;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -373,7 +374,9 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make(input.nativeGoals === undefined ? "codex" : "opencode"),
+    driver: ProviderDriverKind.make(
+      input.nativeGoals === undefined ? "codex" : (input.goalDriver ?? "opencode"),
+    ),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -1014,11 +1017,11 @@ function makeLocalCommandHarness(input: {
   const getRuntimeRecoveryProjection = vi.fn<
     ProjectionStore.ProjectionStoreV2Shape["getRuntimeRecoveryProjection"]
   >(() =>
-    "recoveryPreparationFailure" in input || recoveryReadsFailed
+    input.recoveryReadFailure !== undefined || recoveryReadsFailed
       ? Effect.fail(
           new ProjectionStore.ProjectionStoreReadError({
             threadId,
-            cause: input.recoveryPreparationFailure ?? "database unavailable after running commit",
+            cause: input.recoveryReadFailure ?? "database unavailable after running commit",
           }),
         )
       : Effect.succeed({
@@ -1536,12 +1539,18 @@ effectIt.effect("a parent Scient fork that turned busy still gives a side chat i
 );
 // SCIENT-FORK:END
 
-effectIt.effect.each([false, true])(
-  "OpenCode goal prompts defer switched-provider history only with native support: %s",
-  (nativeGoals) =>
+effectIt.effect.each([
+  { goalDriver: "opencode", nativeGoals: false },
+  { goalDriver: "opencode", nativeGoals: true },
+  { goalDriver: "antigravity", nativeGoals: false },
+  { goalDriver: "antigravity", nativeGoals: true },
+] as const)(
+  "$goalDriver goal prompts defer switched-provider history only with native support: $nativeGoals",
+  ({ goalDriver, nativeGoals }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "/goal all tests pass",
+        goalDriver,
         nativeGoals,
         sideChat: { contextRun: "failed", switchedProvider: true },
       });
@@ -1835,6 +1844,25 @@ effectIt.effect("starts another provider in the same checkout while a turn is pe
     expect(second.projection().runs.at(-1)?.status).toBe("running");
     yield* Deferred.succeed(releaseTurn, undefined);
     yield* Fiber.join(pending);
+  }),
+);
+
+effectIt.effect("fails a starting run when its recovery state cannot be read", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      recoveryReadFailure: "stored turn item no longer decodes",
+    });
+
+    yield* harness.start.pipe(Effect.ignore);
+
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    const projection = harness.projection();
+    expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.turnItems).toMatchObject([{ type: "error", status: "failed" }]);
   }),
 );
 
@@ -2192,7 +2220,7 @@ effectIt.effect(
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "Continue",
-        recoveryPreparationFailure: "simulated inherited-background projection failure",
+        recoveryReadFailure: "simulated inherited-background projection failure",
       });
 
       // A final failure is settled by the native startup owner. Retryable failures

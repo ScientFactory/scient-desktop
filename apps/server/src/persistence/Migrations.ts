@@ -111,6 +111,11 @@ import Migration0084 from "./Migrations/084_ScheduledTaskThreadMode.ts";
 // T3's migrations 81-82 land at the next free IDs; Scient already recorded 081-084.
 import Migration0085 from "./Migrations/085_ProjectionMessageSearchText.ts";
 import Migration0086 from "./Migrations/086_TurnItemConversationIndex.ts";
+// T3's migrations 83-86 land at the next free IDs; Scient already recorded 083-086.
+import Migration0087 from "./Migrations/087_CommandReadIndexes.ts";
+import Migration0088 from "./Migrations/088_LastExecutedRunIndex.ts";
+import Migration0089 from "./Migrations/089_TurnItemCounts.ts";
+import Migration0090 from "./Migrations/090_QueuedTurnInputIndex.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -224,6 +229,11 @@ export const migrationEntries = [
   // T3's migrations 81-82 follow Scient's immutable migration sequence.
   [85, "ProjectionMessageSearchText", Migration0085],
   [86, "TurnItemConversationIndex", Migration0086],
+  // T3's migrations 83-86 follow Scient's immutable migration sequence.
+  [87, "CommandReadIndexes", Migration0087],
+  [88, "LastExecutedRunIndex", Migration0088],
+  [89, "TurnItemCounts", Migration0089],
+  [90, "QueuedTurnInputIndex", Migration0090],
   // SCIENT-FORK:END
 ] as const;
 
@@ -281,16 +291,40 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   // SCIENT-FORK:START — validation stays before any migration can reinterpret shipped ids.
   yield* validateScientMigrationLedger(migrationManifest);
   // SCIENT-FORK:END
-  const executedMigrations = [
-    ...previewMigrations,
-    ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
-  ];
+  const sql = yield* SqlClient.SqlClient;
+  const ledger = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  const [latest] =
+    ledger.length === 0
+      ? []
+      : yield* sql<{
+          readonly id: number | null;
+        }>`SELECT MAX(migration_id) AS id FROM effect_sql_migrations`;
+  const latestRecordedId = latest?.id ?? 0;
+  const pending = migrationEntries.filter(
+    ([id]) =>
+      id > latestRecordedId && (toMigrationInclusive === undefined || id <= toMigrationInclusive),
+  );
+  // One transaction per migration: an index build on a large database can take minutes, and a
+  // restart then resumes after the last finished migration instead of rolling all of them back.
+  const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
+  for (const [index, [id, name]] of pending.entries()) {
+    if (latestRecordedId > 0) {
+      yield* Effect.log("Upgrading database").pipe(
+        Effect.annotateLogs({
+          migration: `${id}_${name}`,
+          progress: `${index + 1} of ${pending.length}`,
+        }),
+      );
+    }
+    executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
+  }
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
 
-  const sql = yield* SqlClient.SqlClient;
   const recorded = yield* sql<{
     readonly migration_id: number;
     readonly name: string;

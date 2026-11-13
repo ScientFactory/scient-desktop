@@ -13,14 +13,12 @@ import {
 import { resolveAutomaticModel } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
-import {
-  defaultTextGenerationModel,
-  fallbackTextGenerationModelSelection,
-} from "@t3tools/shared/serverSettings";
+import { fallbackTextGenerationModelSelection } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
 
 import type { ModelSelection, ProjectId } from "@t3tools/contracts";
 
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import {
@@ -86,6 +84,8 @@ const resolveGeneration = Effect.fn("TextGeneration.resolveGeneration")(function
   // launch another probe or silently replace an explicit model selection.
   const snapshot = yield* instance.snapshot.getSnapshot;
   const models = snapshot.models.filter((model) => {
+    // Extension-only models cannot run text generation.
+    if (model.supportsTextGeneration === false) return false;
     const decoded = splitAgentModelSlug(model.slug);
     return decoded && encodeAgentModelSlug(decoded.provider, decoded.modelId) === model.slug;
   });
@@ -122,6 +122,7 @@ export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
   const textGenerators = yield* TextGenerators.TextGenerators;
   const generate = Effect.fn("TextGeneration.generate")(function* <A>(
     operation: TextGenerationOp,
@@ -154,8 +155,11 @@ export const make = Effect.gen(function* () {
     const unusable =
       textGeneratorCannotRun ||
       (selected?.enabled === true &&
-        selected.status === "error" &&
-        (!selected.installed || selected.auth.status === "unauthenticated"));
+        (!isProviderTextGenerationCapable(selected) ||
+          selected.models.find((model) => model.slug === selection.model)
+            ?.supportsTextGeneration === false ||
+          (selected.status === "error" &&
+            (!selected.installed || selected.auth.status === "unauthenticated"))));
     if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
@@ -168,21 +172,25 @@ export const make = Effect.gen(function* () {
         ),
       );
       selection =
-        fallbackTextGenerationModelSelection(settings.providerInstances, (instanceId, driver) => {
-          const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
-          return (
-            instanceId !== selection.instanceId &&
-            provider?.enabled === true &&
-            resolveProjectProviderInstanceEnabled(settings, projectId ?? null, instanceId) &&
-            provider.installed &&
-            provider.auth.status !== "unauthenticated" &&
-            provider.status !== "error" &&
-            isProviderAvailable(provider) &&
-            isProviderTextGenerationCapable(provider) &&
-            (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
-            !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
-          );
-        }) ?? selection;
+        fallbackTextGenerationModelSelection(
+          settings.providerInstances,
+          (instanceId, driver, model) => {
+            const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
+            return (
+              instanceId !== selection.instanceId &&
+              provider?.enabled === true &&
+              resolveProjectProviderInstanceEnabled(settings, projectId ?? null, instanceId) &&
+              provider.installed &&
+              provider.auth.status !== "unauthenticated" &&
+              provider.status !== "error" &&
+              isProviderAvailable(provider) &&
+              isProviderTextGenerationCapable(provider) &&
+              (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+              !exhaustedUsageWindow(provider, now, model)
+            );
+          },
+          { defaultModelSelection: settings.defaultModelSelection },
+        ) ?? selection;
     }
     if (textGeneratorCannotRun && selection.instanceId === textGeneratorId) {
       return yield* new TextGenerationError({
@@ -191,10 +199,13 @@ export const make = Effect.gen(function* () {
           "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control.",
       });
     }
-    // SCIENT-FORK: resolve Pi/OMP/Scient automatic text-generation models after the fallback.
-    return yield* resolveGeneration(registry, operation, selection).pipe(
-      Effect.flatMap(({ textGeneration, modelSelection }) =>
-        invoke(textGeneration, modelSelection),
+    return yield* installationGate.execute(
+      selection.instanceId,
+      // SCIENT-FORK: resolve Pi/OMP/Scient automatic text-generation models after the fallback.
+      resolveGeneration(registry, operation, selection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
+          invoke(textGeneration, modelSelection),
+        ),
       ),
     );
   });

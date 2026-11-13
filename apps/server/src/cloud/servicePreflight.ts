@@ -1,12 +1,22 @@
 import packageJson from "../../package.json" with { type: "json" };
 import { BUILD_MIGRATION_HEAD, recordedMigrations } from "../persistence/databaseMigrationHead.ts";
-import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+// SCIENT-FORK:START — preflight applies the same ledger check as Scient's startup.
+import { migrationManifest } from "../persistence/Migrations.ts";
+import { scientMigrationLedgerProblem } from "../persistence/scientMigrationLedger.ts";
+// SCIENT-FORK:END
+import { reconciledV2PreviewHistory } from "../persistence/reconcileV2PreviewMigration.ts";
+import {
+  isSupportedLauncherProtocol,
+  SERVICE_LAUNCHER_PROTOCOL,
+  type SupportedLauncherProtocol,
+} from "./serviceProtocol.ts";
 
 export type ServicePreflightResult =
   | {
       readonly status: "ready";
       readonly version: string;
-      readonly launcherProtocol: typeof SERVICE_LAUNCHER_PROTOCOL;
+      /** The launcher protocol the server named; it accepts no other in reply. */
+      readonly launcherProtocol: SupportedLauncherProtocol;
     }
   | {
       readonly status: "blocked";
@@ -20,13 +30,14 @@ export function runServicePreflight(input: {
   readonly version?: string;
 }): ServicePreflightResult {
   const version = input.version ?? packageJson.version;
-  if (input.launcherProtocol !== SERVICE_LAUNCHER_PROTOCOL) {
+  const { launcherProtocol } = input;
+  if (!isSupportedLauncherProtocol(launcherProtocol)) {
     return {
       status: "blocked",
       version,
       reason: [
         // SCIENT-FORK:START — diagnostics identify the matching Scient installation.
-        `The installed Scient service launcher speaks protocol ${input.launcherProtocol}, but Scient ${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
+        `The installed Scient service launcher speaks protocol ${launcherProtocol}, but Scient ${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
         // SCIENT-FORK:END
         "On the server machine, use the matching Scient installation to update the launcher for this profile. Check that installation's version and absolute executable path before repairing the service.",
         "Updating the desktop app does not update this CLI; service repair uses the CLI and profile that run it.",
@@ -34,15 +45,18 @@ export function runServicePreflight(input: {
     };
   }
 
-  const newer = newerRecordedMigrations(input.databasePath);
+  const recorded = recordedMigrations(input.databasePath);
   // SCIENT-FORK:START — diagnostics name the Scient release.
-  if (newer === null) {
+  if (recorded === null) {
     return {
       status: "blocked",
       version,
       reason: `Could not read this database to confirm Scient ${version} supports it.`,
     };
   }
+  const newer = recorded
+    .filter(({ id }) => id > BUILD_MIGRATION_HEAD)
+    .map(({ id, name }) => `${id}_${name}`);
   if (newer.length > 0) {
     return {
       status: "blocked",
@@ -52,33 +66,38 @@ export function runServicePreflight(input: {
   }
   // SCIENT-FORK:END
 
-  return { status: "ready", version, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL };
+  // Startup reconciles V2 preview ids before it checks the history, so check what it will see.
+  const reconciled = reconciledV2PreviewHistory(recorded);
+  const incompatible =
+    reconciled === null
+      ? "an unexpected V2 preview history."
+      : // SCIENT-FORK: Scient's startup validates the whole ledger, not only T3's V2 ids.
+        scientMigrationLedgerProblem(reconciled, migrationManifest);
+  if (incompatible !== undefined) {
+    return {
+      status: "blocked",
+      version,
+      reason: `This database has incompatible migration history: ${incompatible} Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
+    };
+  }
+
+  return { status: "ready", version, launcherProtocol };
 }
 
-/** Migrations a newer build recorded, or null when the database exists but cannot be read.
- * Startup already handles renamed ids this build knows. */
-function newerRecordedMigrations(databasePath: string): ReadonlyArray<string> | null {
-  const recorded = recordedMigrations(databasePath);
-  return recorded === null
-    ? null
-    : recorded.filter(({ id }) => id > BUILD_MIGRATION_HEAD).map(({ id, name }) => `${id}_${name}`);
-}
-
-export function decodeServicePreflightResult(value: unknown): ServicePreflightResult | undefined {
+export function decodeServicePreflightResult(
+  value: unknown,
+  launcherProtocol: SupportedLauncherProtocol,
+): ServicePreflightResult | undefined {
   if (typeof value !== "object" || value === null) {
     return undefined;
   }
   const record = value as Record<string, unknown>;
   if (
     record.status === "ready" &&
-    record.launcherProtocol === SERVICE_LAUNCHER_PROTOCOL &&
+    record.launcherProtocol === launcherProtocol &&
     typeof record.version === "string"
   ) {
-    return {
-      status: "ready",
-      version: record.version,
-      launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-    };
+    return { status: "ready", version: record.version, launcherProtocol };
   }
   if (
     record.status === "blocked" &&

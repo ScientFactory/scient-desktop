@@ -1,4 +1,5 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
+import type { VectorBitmap, VectorRequest } from "./vector-pictures";
 import type { Method } from "./worker-rpc";
 import type { OfficeFindHit } from "~/scient/office/wordFind"; // SCIENT-FORK
 
@@ -73,7 +74,10 @@ export type WordMethods = {
   >;
   /** Lays out a short step more of the document. */
   readonly layout: Method<undefined, WordLayoutStep>;
-  /** Paints a page at `scale` page pixels per CSS pixel times `ratio` device pixels per CSS pixel. */
+  /**
+   * Paints a page at `scale` page pixels per CSS pixel times `ratio` device pixels per CSS pixel. `vectors` lists the
+   * SVG pictures it drew without, or too coarse: paint again once the worker has them.
+   */
   readonly paint: Method<
     {
       readonly index: number;
@@ -82,8 +86,10 @@ export type WordMethods = {
       // SCIENT-FORK: a thumbnail leaves the pages built around the reader's view in place.
       readonly thumbnail?: boolean;
     },
-    ImageBitmap | undefined
+    { readonly bitmap: ImageBitmap; readonly vectors: readonly VectorRequest[] } | undefined
   >;
+  /** Hands over SVG pictures rasterized for `VectorRequest`s. */
+  readonly vectors: Method<readonly VectorBitmap[], undefined>;
   /** Builds a page's content ahead of its paint. */
   readonly build: Method<{ readonly index: number }, undefined>;
   /** A page's text layer. */

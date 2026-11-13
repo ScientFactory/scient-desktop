@@ -267,6 +267,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       changes: Stream.empty,
       start: Effect.die("Installation must not start in driver tests"),
       startRelease: () => Effect.die("Installation must not start in driver tests"),
+      checkForUpdate: Effect.void,
       cancel: () => Effect.die("Installation must not cancel in driver tests"),
       remove: () => Effect.die("Installation must not remove in driver tests"),
     }),
@@ -1016,7 +1017,13 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
             modelSelection,
             runtimePolicy: cliPolicy,
           });
-          expect(h.launches.at(-1)?.args).toEqual(["acp"]);
+          expect(h.launches.at(-1)?.args).toEqual([
+            "acp",
+            "--gemini-dir",
+            h.profileDirectory,
+            "--app-data-dir",
+            "antigravity-acp",
+          ]);
           expect(
             (yield* h.readRequests)
               .slice(requestsBefore)

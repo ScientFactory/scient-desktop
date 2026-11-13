@@ -19,6 +19,17 @@ export function cliArchiveTarCommand(
 }
 
 /** `segments` added to `baseUrl`'s path, keeping its query, such as a signed mirror URL's token. */
+export function parseChecksums(text: string): ReadonlyMap<string, string> {
+  const checksums = new Map<string, string>();
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^([0-9a-fA-F]{64})\s+\*?(\S.*)$/.exec(line.trim());
+    if (match?.[1] !== undefined && match[2] !== undefined) {
+      checksums.set(match[2], match[1].toLowerCase());
+    }
+  }
+  return checksums;
+}
+
 export function releaseAssetUrl(baseUrl: string, ...segments: ReadonlyArray<string>): string {
   const url = new URL(baseUrl);
   url.pathname = [url.pathname.replace(/\/+$/, ""), ...segments.map(encodeURIComponent)].join("/");

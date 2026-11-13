@@ -1267,6 +1267,7 @@ export const layer: Layer.Layer<
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
         // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
         let rootSnapshotPendingWork = false;
+        let rootTurnOwnershipChecked = false;
         const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
         // Set when ingestion ends or finalization settles the run's open items, which a later
         // streaming snapshot must not reopen.
@@ -1804,7 +1805,47 @@ export const layer: Layer.Layer<
                 // SCIENT-FORK:START — live text never rewinds below a running fork's snapshot.
                 if (deliveredEvent) deliveredEvent = runningForkText.floor(deliveredEvent);
                 // SCIENT-FORK:END
-                if (deliveredEvent) {
+                const startedRootTurn =
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.runAttemptId === input.attempt.id &&
+                  event.providerTurn.providerThreadId === input.providerThread.id &&
+                  !isTerminalProviderTurnStatus(event.providerTurn.status) &&
+                  !rootTurnOwnershipChecked
+                    ? event.providerTurn
+                    : undefined;
+                const shouldStartProviderTurn = input.shouldStartProviderTurn;
+                if (deliveredEvent && startedRootTurn !== undefined && shouldStartProviderTurn) {
+                  rootTurnOwnershipChecked = true;
+                  // Stop plans under this lock from stored turns. Storing the first turn and rechecking
+                  // the attempt under it means Stop either saw the turn or already settled the run.
+                  const [stored, owned] = yield* threadDispatch.withLock(
+                    input.run.threadId,
+                    Effect.all([
+                      ingestDelivered(event, deliveredEvent),
+                      shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => true)),
+                    ]),
+                  );
+                  storedEventCount = stored;
+                  if (!owned) {
+                    yield* Ref.get(latestProviderThread).pipe(
+                      Effect.flatMap((providerThread) =>
+                        input.session.interruptTurn({
+                          providerThread,
+                          providerTurnId: startedRootTurn.id,
+                        }),
+                      ),
+                      Effect.catchCauseIf(
+                        (cause) => !Cause.hasInterruptsOnly(cause),
+                        (cause) =>
+                          Effect.logWarning(
+                            "orchestration V2 failed to interrupt a provider turn that started after Stop",
+                            { runId: input.run.id, cause },
+                          ),
+                      ),
+                      Effect.forkIn(scope),
+                    );
+                  }
+                } else if (deliveredEvent) {
                   storedEventCount = yield* ingestDelivered(event, deliveredEvent);
                 } else if (
                   event.type === "turn_item.updated" &&
@@ -2111,7 +2152,10 @@ export const layer: Layer.Layer<
                 threadId: input.run.threadId,
                 providerThreadId: input.providerThread.id,
                 runId: input.run.id,
-                cause: "This provider does not support context compaction.",
+                cause: new ProviderAdapter.ProviderCompactionUnsupportedError({
+                  driver: input.session.driver,
+                  providerThreadId: input.providerThread.id,
+                }),
               }),
             ))
           : input.session.startTurn(turnInput);

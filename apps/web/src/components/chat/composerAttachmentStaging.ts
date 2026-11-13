@@ -5,7 +5,8 @@ import {
 } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
-import { composerFileDedupKey, composerImageDedupKey } from "../../composerDraftStore";
+import { composerFileDedupKey } from "../../composerDraftStore";
+import { composerImageDedupKey, rememberComposerImageSource } from "./composerAttachmentFiles";
 import {
   inheritComposerImageThumbnail,
   isHeicImageFile,
@@ -104,7 +105,8 @@ export async function stageComposerAttachmentBatch(input: {
       );
       continue;
     }
-    inheritComposerImageThumbnail(file, prepared.file);
+    await inheritComposerImageThumbnail(file, prepared.file);
+    rememberComposerImageSource(file, prepared.file);
     images.push({ id, file: prepared.file });
   }
   if (!input.stillWanted()) return { inserted: false, error: null };

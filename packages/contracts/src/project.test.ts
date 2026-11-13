@@ -10,12 +10,16 @@ import {
   ReceivedProjectIcon,
   StoredProjectIcon,
   ProjectReadFileError,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectCreatePayload,
   ProjectUpdatePayload,
   ProjectMutation,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
 } from "./project.ts";
 
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
@@ -23,6 +27,51 @@ const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 
 describe("project RPC errors", () => {
+  it("keeps whitespace in file paths across the wire", () => {
+    const roundTrip = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: S["Type"]) =>
+      Schema.decodeUnknownSync(schema)(Schema.encodeSync(schema)(value));
+
+    // SCIENT-FORK: Scient rejects an all-blank path (see project.scient.test.ts), so " " is left out.
+    for (const relativePath of [" report.txt", "report.txt\t"]) {
+      const cwd = "/workspace";
+      const resolvedPath = `${cwd}/${relativePath}`;
+      expect(roundTrip(ProjectReadFileInput, { cwd, relativePath }).relativePath).toBe(
+        relativePath,
+      );
+      expect(
+        roundTrip(ProjectWriteFileInput, { cwd, relativePath, contents: "" }).relativePath,
+      ).toBe(relativePath);
+      expect(
+        roundTrip(ProjectReadFileResult, {
+          relativePath,
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+          // SCIENT-FORK: Scient's read result also carries the file revision.
+          revision: "sha256:abc",
+        }).relativePath,
+      ).toBe(relativePath);
+      expect(
+        // SCIENT-FORK: Scient's write result also carries the saved revision.
+        roundTrip(ProjectWriteFileResult, { relativePath, revision: "sha256:abc" }).relativePath,
+      ).toBe(relativePath);
+      for (const FileError of [ProjectReadFileError, ProjectWriteFileError]) {
+        const error = new FileError({
+          cwd,
+          relativePath,
+          failure: "operation_failed",
+          resolvedPath,
+          operationPath: resolvedPath,
+        });
+        expect(roundTrip(FileError, error)).toMatchObject({
+          relativePath,
+          resolvedPath,
+          operationPath: resolvedPath,
+        });
+      }
+    }
+  });
+
   it("derives stable messages from structured request context while retaining causes", () => {
     const cause = new Error("sensitive platform detail");
     const searchError = new ProjectSearchEntriesError({

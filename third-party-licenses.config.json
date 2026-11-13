@@ -801,15 +801,6 @@
       }
     },
     {
-      "name": "@betteroffice/docx",
-      "version": "0.4.3",
-      "license": "Apache-2.0",
-      "sourceUrl": "https://github.com/openooxml/betteroffice",
-      "generatedNotice": {
-        "licenseId": "Apache-2.0"
-      }
-    },
-    {
       "name": "character-entities",
       "version": "2.0.2",
       "license": "MIT",
@@ -860,7 +851,9 @@
       "version": "0.4.0",
       "license": "Apache-2.0 AND OFL-1.1",
       "generatedNotices": [
-        { "licenseId": "Apache-2.0" },
+        {
+          "licenseId": "Apache-2.0"
+        },
         {
           "licenseId": "OFL-1.1",
           "copyrights": [
@@ -884,6 +877,15 @@
       "name": "iobuffer",
       "license": "MIT",
       "sourceUrl": "https://github.com/image-js/iobuffer"
+    },
+    {
+      "name": "@betteroffice/docx",
+      "version": "0.5.1",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/openooxml/betteroffice",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
     }
   ],
   "customNotices": [

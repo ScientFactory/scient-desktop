@@ -58,6 +58,7 @@ import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegis
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
@@ -354,10 +355,6 @@ export function layerWithRegistry<Error>(
     readonly threads?: Partial<ThreadManagementService.ThreadManagementServiceShape>;
     /** Observe or gate the real canonical writer without replacing its SQL transaction. */
     readonly decorateEventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
-    /** Observe real projection reads without replacing their SQL implementation. */
-    readonly decorateProjectionStore?: (
-      store: ProjectionStore.ProjectionStoreV2Shape,
-    ) => ProjectionStore.ProjectionStoreV2Shape;
     /** Gate actual Git capture without replacing publication or admission. */
     readonly decorateForkCheckpointBaseline?: (
       baseline: ScientForkCheckpointBaselineShape,
@@ -398,6 +395,10 @@ export function layerWithRegistry<Error>(
     readonly continueThreadsAfterServerUpdate?: boolean;
     /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
     readonly contextHandoffPolicy?: "scient" | "byte";
+    /** Lets a test hold a projection read open to order concurrent dispatches. */
+    readonly wrapProjectionStore?: (
+      store: ProjectionStore.ProjectionStoreV2Shape,
+    ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly managedPolicy?: ManagedPolicyDocument;
   } = {},
 ): Layer.Layer<
@@ -474,19 +475,23 @@ export function layerWithRegistry<Error>(
       ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
       : Layer.empty,
   );
+  const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+  const wrapProjectionStore = options.wrapProjectionStore;
   const layerProjectionStore =
-    options.decorateProjectionStore === undefined
+    wrapProjectionStore === undefined
       ? ProjectionStore.layer
       : Layer.effect(
           ProjectionStore.ProjectionStoreV2,
-          Effect.map(ProjectionStore.ProjectionStoreV2, options.decorateProjectionStore),
+          Effect.gen(function* () {
+            return wrapProjectionStore(yield* ProjectionStore.ProjectionStoreV2);
+          }),
         ).pipe(Layer.provide(ProjectionStore.layer));
   const layerStores = Layer.mergeAll(
     EventStore.layer,
     layerProjectionStore,
     ProjectStore.layer,
     CommandReceiptStore.layer,
-    EffectOutbox.layer,
+    layerEffectOutboxProvided,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const actualEventSink = EventSink.layerFromStores.pipe(
@@ -581,6 +586,7 @@ export function layerWithRegistry<Error>(
         options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer,
         layerProviderEventIngestorProvided,
         layerStores,
+        ProviderInstallationGate.layer,
       ),
     ),
   );
@@ -598,7 +604,7 @@ export function layerWithRegistry<Error>(
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
-      ),
+      ).pipe(Layer.provideMerge(ThreadCommandExecutor.layer)),
     ),
   );
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
@@ -692,6 +698,7 @@ export function layerWithRegistry<Error>(
         recoverDelegatedTask: orchestrator.recoverDelegatedTask,
         cancelDelegatedTask: orchestrator.cancelDelegatedTask,
         delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
+        streamStoredEventsFrom: orchestrator.streamStoredEventsFrom,
         ...options.threads,
       });
     }),
@@ -775,6 +782,7 @@ export function layerWithRegistry<Error>(
     layerServerConfig,
     conversationForkProvided,
     layerStores,
+    layerEffectOutboxProvided,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerProviderTurnStartServiceProvided,

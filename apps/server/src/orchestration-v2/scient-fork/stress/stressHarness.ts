@@ -9,6 +9,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { layer as resourceCleanupLayer } from "../../ResourceCleanupService.ts";
 import { TerminalManager } from "../../../terminal/Manager.ts";
 import { PreviewManager } from "../../../preview/Manager.ts";
+import { DeviceService } from "../../../device/DeviceService.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { ServerConfig } from "../../../config.ts";
 import { ConversationImporter } from "../../../scient/conversationImport/ConversationImporter.ts";
@@ -46,6 +47,7 @@ export const runtimeOptions = {
       Layer.mergeAll(
         Layer.mock(TerminalManager, { close: () => Effect.void }),
         Layer.mock(PreviewManager, { close: () => Effect.void }),
+        Layer.mock(DeviceService, { sessionsForThread: () => Effect.succeed([]) }),
         Layer.mock(ScheduledTaskService, { deleteForThread: () => Effect.void }),
       ),
     ),

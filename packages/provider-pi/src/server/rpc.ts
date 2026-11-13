@@ -301,6 +301,13 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     yield* Queue.fail(outgoing, error);
     yield* Queue.fail(events, error);
   });
+  // SCIENT-FORK:START — a closed connection fails its in-flight requests; an interrupted
+  // reader never reaches failTransport, so a request awaiting a reply would wait forever.
+  yield* Scope.addFinalizer(
+    scope,
+    failTransport(new PiRpcError({ operation: "close", detail: "Pi connection closed" })),
+  );
+  // SCIENT-FORK:END
 
   const routeRecord =
     /* Protocol records and writes include streaming deltas; avoid a span per record. */

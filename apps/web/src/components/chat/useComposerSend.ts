@@ -67,6 +67,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type PreviewAnnotationPayload,
+  type ResponseContextRecord,
   type ScopedThreadRef,
   type ThreadId,
   ProviderInteractionMode,
@@ -111,10 +112,15 @@ import {
   DraftId,
 } from "../../composerDraftStore";
 import { filterTerminalContextsWithText } from "../../lib/terminalContext";
-import { ensureInlineContextReferences } from "../../lib/composerContextReferences";
+import {
+  collectInlineContextIds,
+  ensureInlineContextReferences,
+  formatInlineContextReference,
+} from "../../lib/composerContextReferences";
 import {
   buildMessageContext,
   previewAnnotationContextReference,
+  responseContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
@@ -409,6 +415,7 @@ export function useComposerSend(input: ComposerSendInput) {
     promptAtSend,
     promptForSend = promptAtSend,
     annotationImageId,
+    replyTo = null,
   }: {
     sendCtx: ReturnType<ChatComposerHandle["getSendContext"]>;
     pendingApprovalIdsAtSend: ReturnType<
@@ -417,6 +424,7 @@ export function useComposerSend(input: ComposerSendInput) {
     promptAtSend: string;
     promptForSend?: string;
     annotationImageId?: string | undefined;
+    replyTo?: ResponseContextRecord | null;
   }) => {
     const imageIds = sendCtx.images.map((image) => image.id);
     const fileIds = sendCtx.files.map((file) => file.id);
@@ -442,9 +450,13 @@ export function useComposerSend(input: ComposerSendInput) {
         const current = composerRef.current?.getSendContext();
         if (!current) return false;
         const currentIds = [...current.images, ...current.files].map((attachment) => attachment.id);
+        // The reply is not in the prompt, so cancelling or changing it is checked on its own.
+        const liveReply =
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
         return (
           (promptRef.current === promptAtSend || promptRef.current === promptForSend) &&
-          (sameIds(currentIds, attachmentIds) || sameIds(currentIds, annotationIds))
+          (sameIds(currentIds, attachmentIds) || sameIds(currentIds, annotationIds)) &&
+          liveReply === replyTo
         );
       },
       respond: onRespondToApprovalStable,
@@ -543,15 +555,27 @@ export function useComposerSend(input: ComposerSendInput) {
         !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
         !activeThread ||
         !queueEditsReady ||
-        (isSendBusy && !sendQueuesBehindSetup) ||
         isRevertingCheckpoint ||
         !clientSettingsHydrated ||
         threadDetailLoading ||
         readPendingEnvironmentChange() !== null ||
-        sendInFlightRef.current ||
         feedbackUploadsInFlightRef.current.has(routeThreadKey)
       ) {
         notifyDirectAnnotationAttached();
+        return;
+      }
+      if ((isSendBusy && !sendQueuesBehindSetup) || sendInFlightRef.current) {
+        if (directAnnotation) {
+          notifyDirectAnnotationAttached();
+        } else {
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "Still sending your previous message.",
+              description: "Send again once it goes through or fails.",
+            }),
+          );
+        }
         return;
       }
       if (!sendCtx || sendCtx.pendingAttachments) return;
@@ -574,7 +598,8 @@ export function useComposerSend(input: ComposerSendInput) {
           sendCtx.previewAnnotations.length > 0 ||
           sendCtx.reviewComments.length > 0 ||
           sendCtx.threadContexts.length > 0 ||
-          sendCtx.environmentContexts.length > 0
+          sendCtx.environmentContexts.length > 0 ||
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo
         ) {
           toastManager.add(
             stackedThreadToast({
@@ -784,13 +809,21 @@ export function useComposerSend(input: ComposerSendInput) {
             });
           // A direct "send annotation" writes the draft and sends in the same tick; the reference
           // must be in the text now, not after the next render.
-          const promptForSend =
+          const draftPrompt =
             directPrompt ??
             (directAnnotation
               ? ensureInlineContextReferences(sendCtx.prompt, [
                   previewAnnotationContextReference(directAnnotation.annotation),
                 ])
               : sendCtx.prompt);
+          // SCIENT-FORK: a direct prompt sends only its own text, so it carries no reply.
+          const replyTo = directPrompt === null ? (draftSnapshotForSend?.replyTo ?? null) : null;
+          // The reply leads the message, so its card sits above the text it is about. Text that
+          // already points at that response, from a pasted card, keeps its one reference.
+          const promptForSend =
+            replyTo && !collectInlineContextIds(draftPrompt).includes(replyTo.contextId)
+              ? `${formatInlineContextReference(responseContextReference(replyTo))} ${draftPrompt}`
+              : draftPrompt;
           const strandedThread = threadContextsOutsideEnvironment({
             text: promptForSend,
             records: composerThreadContexts,
@@ -852,6 +885,7 @@ export function useComposerSend(input: ComposerSendInput) {
             sendableComposerTerminalContexts.length === 0 &&
             composerPreviewAnnotations.length === 0 &&
             effectiveReviewComments.length === 0 &&
+            replyTo === null &&
             isClearComposerCommand(trimmed)
           ) {
             armFreshSession(routeThreadKey);
@@ -970,6 +1004,7 @@ export function useComposerSend(input: ComposerSendInput) {
             reviewComments: effectiveReviewComments,
             threadContexts: composerThreadContexts,
             environmentContexts: composerEnvironmentContexts,
+            replyTo,
           });
           const {
             files: composerFilesSnapshot,
@@ -1043,6 +1078,7 @@ export function useComposerSend(input: ComposerSendInput) {
               previewAnnotations: composerPreviewAnnotationsSnapshot,
               threadContexts: composerThreadContextsSnapshot,
               environmentContexts: composerEnvironmentContextsSnapshot,
+              replyTo,
               attachments: composerAttachmentsSnapshot.map((attachment, index) => ({
                 attachment,
                 attachmentId: attachmentIds[index] ?? attachment.id,
@@ -1296,6 +1332,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 promptAtSend,
                 promptForSend,
                 annotationImageId: directAnnotation?.image?.id,
+                replyTo,
               }))
             )
               return;

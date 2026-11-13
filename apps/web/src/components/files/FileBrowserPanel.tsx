@@ -66,7 +66,13 @@ import { pierreTreeStyle } from "~/pierre-tree-theme";
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { resolveFileBrowserSearchValue } from "./fileBrowserSearch";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import {
+  areAllDirectoriesExpanded,
+  coalesceReentrantCalls,
+  readExpandedDirectories,
+  setAllDirectoriesExpanded,
+  writeExpandedDirectories,
+} from "./fileTreeExpansion";
 // SCIENT-FORK:START — new documents are listed through useCreateNewDocument
 import { refreshProjectEntriesQuery, subscribeProjectFilesRefresh } from "./projectFilesQueryState";
 // SCIENT-FORK:END
@@ -375,6 +381,47 @@ export default function FileBrowserPanel({
     pathSearch,
     tree: { treeControllerRef, treeEntriesRef, ...lazyTree },
   });
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — upstream's remembered folders on Scient's lazy tree, whose
+  // controller loads each folder once it is expanded.
+  const expandedPathsRef = useRef(new Set<string>());
+  const expansionRoot = `${environmentId}:${cwd}`;
+  // Folders expanded when the panel last unmounted; each reopens once lazy loading lists it.
+  const [pendingExpandedPaths] = useState(() => new Set(readExpandedDirectories(expansionRoot)));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to reopen and remember expanded folders
+  useEffect(() => {
+    const currentPaths = new Set(loadedDirectoryPaths);
+    for (const path of expandedPathsRef.current) {
+      if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
+    }
+    // Restoring calls item.expand(), which notifies subscribers synchronously.
+    const rememberExpanded = coalesceReentrantCalls(() => {
+      if (model.isSearchOpen()) return;
+      let changed = false;
+      for (const path of loadedDirectoryPaths) {
+        const item = model.getItem(path);
+        if (item?.isDirectory() && pendingExpandedPaths.delete(path) && "expand" in item) {
+          item.expand();
+        }
+        if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
+          if (!expandedPathsRef.current.has(path)) {
+            expandedPathsRef.current.add(path);
+            changed = true;
+          }
+        } else if (expandedPathsRef.current.delete(path)) {
+          changed = true;
+        }
+      }
+      if (changed) {
+        writeExpandedDirectories(expansionRoot, [
+          ...expandedPathsRef.current,
+          ...pendingExpandedPaths,
+        ]);
+      }
+    });
+    rememberExpanded();
+    return model.subscribe(rememberExpanded);
+  }, [expansionRoot, loadedDirectoryPaths, model, pendingExpandedPaths]);
   // SCIENT-FORK:END
 
   const handleSearchValueChange = (value: string) => {

@@ -11,13 +11,22 @@ type ServerProviderEntry = ServerConfig["providers"][number];
  * The provider-wide fields a workspace snapshot builds on. A live session, a sign-out, or a
  * /usage-limits change shows up here, so a snapshot fetched before it no longer applies.
  */
-const snapshotBasis = (provider: ServerProviderEntry | undefined) =>
+// SCIENT-FORK:START — a reply's own machine fields decide its provenance. Replies leave out
+// the models and the catalog digest, so those come from the config's provider, as upstream.
+const snapshotBasis = (
+  provider: ServerProviderEntry | undefined,
+  configProvider: ServerProviderEntry | undefined = provider,
+) =>
   provider && {
     nativeInventoryGeneration: provider.nativeInventoryGeneration,
     enabled: provider.enabled,
-    slashCommands: provider.slashCommands,
-    skills: provider.skills,
+    models: configProvider?.models,
+    // The digest stands for the lists, which load with a snapshot and must not unseat it.
+    ...(configProvider?.catalogDigest === undefined
+      ? { slashCommands: provider.slashCommands, skills: provider.skills }
+      : { catalogDigest: configProvider.catalogDigest }),
   };
+// SCIENT-FORK:END
 
 export interface FetchedWorkspaceSnapshot {
   readonly instanceId: ProviderInstanceId;
@@ -68,7 +77,7 @@ export function recordFetchedWorkspaceSnapshot(
   if (provider?.nativeInventoryGeneration !== configProvider?.nativeInventoryGeneration) {
     return current;
   }
-  const basis = snapshotBasis(provider);
+  const basis = snapshotBasis(provider, configProvider);
   const snapshot = provider?.workspaceSnapshots?.find((candidate) => candidate.cwd === input.cwd);
   const stored = current.find(
     (entry) => entry.instanceId === input.instanceId && entry.snapshot.cwd === input.cwd,
@@ -119,7 +128,10 @@ export function recordFetchedWorkspaceInventory(
   }
   const next = providers
     .flatMap((provider) => {
-      const basis = snapshotBasis(provider);
+      const basis = snapshotBasis(
+        provider,
+        configProviders.find((candidate) => candidate.instanceId === provider.instanceId),
+      );
       return (provider.workspaceSnapshots ?? []).map((snapshot) => ({
         instanceId: provider.instanceId,
         snapshot,

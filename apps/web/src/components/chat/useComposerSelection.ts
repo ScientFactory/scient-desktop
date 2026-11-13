@@ -154,13 +154,31 @@ export function useComposerSelection(input: ComposerSelectionInput) {
         return;
       }
     }
+    // The picker lists an unavailable model only as the active selection, so re-picking keeps it.
     const resolvedModel = resolveAppModelSelectionForInstance(
       instanceId,
       settings,
       providerStatuses,
       model,
+      { preserveUnavailableSelection: true },
     );
-    if (!resolvedModel) {
+    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    const shownInstanceId =
+      draft?.activeProvider ??
+      activeRuntime?.providerInstanceId ??
+      activeThread.modelSelection.instanceId;
+    const shownSelection =
+      draft?.modelSelectionByProvider[shownInstanceId] ?? activeThread.modelSelection;
+    if (
+      !resolvedModel ||
+      // SCIENT-FORK: explicit options for the shown model still apply.
+      (!Array.isArray(options) &&
+        instanceId === shownInstanceId &&
+        shownSelection.instanceId === instanceId &&
+        shownSelection.model === resolvedModel)
+    ) {
+      // Re-picking the shown model keeps its options and saves it again if that save failed.
+      if (resolvedModel && !isLocalDraftThread) applyThreadModelPick(composerDraftTarget);
       if (focusComposer) scheduleComposerFocus();
       return;
     }

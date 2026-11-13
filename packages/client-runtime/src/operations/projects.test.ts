@@ -1,7 +1,6 @@
 // SCIENT-FORK:START
 import { SourceControlDiscoveryResult } from "@t3tools/contracts";
 import { buildAddProjectRemoteSourceReadiness } from "./projects.ts";
-import { sortAddProjectProviderSources } from "./projects.ts";
 // SCIENT-FORK:END
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -20,10 +19,19 @@ import {
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
+  sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
+  it("offers only GitHub until other hosts are turned on", () => {
+    const ready = () => ({ ready: true, hint: null });
+    expect(sortAddProjectProviderSources(ready, {})).toEqual(["github"]);
+    expect(sortAddProjectProviderSources(ready, { gitlab: true, github: false })).toEqual([
+      "gitlab",
+    ]);
+  });
+
   it("asks for a repository name when GitHub input is only an owner path", () => {
     const github = SourceControlProviderKind.make("github");
     expect(githubIncompleteOwnerRepositoryMessage(github, "pingdotgg/")).toBe(
@@ -223,7 +231,10 @@ describe("add project shared logic", () => {
       ready: false,
       hint: "Run glab auth login",
     });
-    expect(sortAddProjectProviderSources(readiness)[0]).toBe(providerKind);
+    // Upstream offers a host other than GitHub only once it is turned on.
+    expect(sortAddProjectProviderSources(readiness, { [providerKind]: true })[0]).toBe(
+      providerKind,
+    );
   });
 
   it("disables every remote clone source when Git is unavailable", () => {
@@ -244,7 +255,17 @@ describe("add project shared logic", () => {
     };
 
     const readiness = buildAddProjectRemoteSourceReadiness(discovery);
-    for (const source of ["url", ...sortAddProjectProviderSources(readiness)] as const) {
+    const everyHostOffered = {
+      github: true,
+      gitlab: true,
+      bitbucket: true,
+      "azure-devops": true,
+      forgejo: true,
+    };
+    for (const source of [
+      "url",
+      ...sortAddProjectProviderSources(readiness, everyHostOffered),
+    ] as const) {
       expect(readiness(source)).toEqual({
         ready: false,
         hint: "Git is unavailable in this environment.",

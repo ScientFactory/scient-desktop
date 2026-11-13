@@ -90,7 +90,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       .join("\n");
     if (historyCost([], coverage) > Math.min(4_000, budget / 2)) {
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
-      coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with scient_thread_inspect({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
+      coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover an omitted item only when the request needs it, with scient_thread_inspect({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",itemId:"<omitted item ID>",maxCharsPerItem:4000}); continue long text with textOffset=nextTextOffset until null. Follow fork/handoff source references in activity. Items included below need no read.`;
     }
     if (input.sourceOmissions !== undefined && input.sourceOmissions.length > 0) {
       coverage += `\nKnown source omissions (unverified): ${yield* encodeSourceOmissions(input.sourceOmissions).pipe(Effect.orDie)}. Do not assume missing source history was retained.`;
@@ -136,6 +136,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
               (sum, handoff) => sum + (handoff.history?.omittedItems ?? 0),
               0,
             ),
+            omittedItemIds: pending.flatMap((handoff) => handoff.history?.omittedItemIds ?? []),
             budget,
           })
         : yield* input.resolveHistory({

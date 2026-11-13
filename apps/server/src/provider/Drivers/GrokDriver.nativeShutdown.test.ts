@@ -58,6 +58,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
+import * as ProviderInstallationGate from "../ProviderInstallationGate.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { GrokDriver } from "../AppProviderDriverComposition.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -452,6 +453,7 @@ const managerLayer = Effect.fn("GrokShutdown.managerLayer")(function* (h: Harnes
         ),
       ),
     ),
+    ProviderInstallationGate.layer,
     NodeServices.layer,
     NodeCrypto.layer,
   );

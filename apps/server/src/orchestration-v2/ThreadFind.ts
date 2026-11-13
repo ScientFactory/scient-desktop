@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { searchableMessageSegments, searchablePlanSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -45,6 +46,7 @@ interface FindPayload extends FindRow {
   readonly entryId: string;
   readonly runId: OrchestrationV2TurnItem["runId"];
   readonly type: OrchestrationV2TurnItem["type"];
+  readonly emptyText: boolean;
 }
 interface FindDocument extends FindRow {
   readonly entryId: string;
@@ -229,6 +231,9 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       entryId: row.item.messageId ?? row.sourceItemId,
       runId: row.item.runId,
       type: row.item.type,
+      // A payload naming an empty text anywhere only widens which tool rows load; the
+      // decoded reply is checked again before its fallback is hidden.
+      emptyText: payloads[index]!.includes('"text":""'),
     }));
   });
   // SCIENT-FORK:END
@@ -302,11 +307,33 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             row.item.type,
           ),
         );
-      const payloads: FindPayload[] = [];
-      for (let start = 0; start < candidates.length; start += 128) {
-        payloads.push(...(yield* load(threadId, candidates.slice(start, start + 128))));
-      }
-      return { payloads, cwd, sequence, cacheKey, sourceThreadIds };
+      const loadAll = Effect.fnUntraced(function* (rows: readonly FindIndexRow[]) {
+        const loaded: FindPayload[] = [];
+        for (let start = 0; start < rows.length; start += 128) {
+          loaded.push(...(yield* load(threadId, rows.slice(start, start + 128))));
+        }
+        return loaded;
+      });
+      const payloads = yield* loadAll(candidates);
+      // Only runs with an empty reply can hide its fallback, so other tool payloads stay unread.
+      const emptyReplyRunIds = new Set(
+        payloads.flatMap((row) =>
+          row.type === "assistant_message" && row.emptyText && row.runId !== null
+            ? [row.runId]
+            : [],
+        ),
+      );
+      const toolPayloads = yield* loadAll(
+        index
+          .map((row, position) => ({ ...row, position }))
+          .filter(
+            (row) =>
+              row.item.type === "dynamic_tool" &&
+              row.item.runId !== null &&
+              emptyReplyRunIds.has(row.item.runId),
+          ),
+      );
+      return { payloads, toolPayloads, cwd, sequence, cacheKey, sourceThreadIds };
     },
     (effect) => sql.withTransaction(effect).pipe(NodeSqliteClient.readOnly),
     (effect, input) =>
@@ -325,7 +352,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         // Release SQLite before decoding and parsing. Both frames describe one snapshot.
         const data = yield* snapshot(input, scans);
         if (data.result) return Stream.succeed(data.result);
-        const { payloads, cwd, sequence, cacheKey, sourceThreadIds } = data;
+        const { payloads, toolPayloads, cwd, sequence, cacheKey, sourceThreadIds } = data;
         const decode = (row: FindPayload) =>
           decodeItem(row.payload).pipe(
             // SCIENT-FORK:START — inherited runs/native handles remain inert in Find navigation.
@@ -343,6 +370,17 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           if (item.type === "user_input_request" && item.questionAnswer)
             foldedAnswerRunIds.set(`async-answer:${item.questionAnswer.requestId}`, item.runId);
         }
+        // The timeline hides an empty reply's fallback when its run shows an HTML render or MCP app.
+        const embeddedResultRunIds = new Set<OrchestrationV2TurnItem["runId"]>();
+        for (const payload of toolPayloads) {
+          const { item } = yield* decode(payload);
+          if (
+            item.type === "dynamic_tool" &&
+            ((item.status === "completed" && htmlRenderFromToolItem(item)) ||
+              mcpAppFromToolItem(item))
+          )
+            embeddedResultRunIds.add(item.runId);
+        }
         const rows = payloads.filter(
           (row) =>
             row.type !== "user_input_request" &&
@@ -353,6 +391,15 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           const cached = documents.get(row.position);
           if (cached) return cached;
           const decoded = yield* decode(row);
+          if (
+            decoded.item.type === "assistant_message" &&
+            decoded.item.text === "" &&
+            embeddedResultRunIds.has(decoded.item.runId)
+          ) {
+            const document = documentFor(decoded, 0);
+            documents.set(row.position, document);
+            return document;
+          }
           const key = textKey(decoded.item, cwd, input.skills ?? []);
           const segments = yield* Cache.get(
             key.text.length <= 32_768 ? textCache.text : textCache.largeText,

@@ -29,6 +29,7 @@ import { layerProviderRuntimeTestServices } from "../orchestration-v2/testkit/Pr
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "../orchestration-v2/ProviderEventIngestor.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import { ProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import {
   configMap,
@@ -108,6 +109,7 @@ const managerLayer = Effect.fnUntraced(function* (h: NativeHarness) {
         ),
       ),
     ),
+    ProviderInstallationGate.layer,
     Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   );
   return {

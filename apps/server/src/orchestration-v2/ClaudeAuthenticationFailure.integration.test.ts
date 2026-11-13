@@ -173,6 +173,7 @@ it.effect.each(
               }),
             forkSession: () => Effect.die("Auth fixture never forks native history"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });

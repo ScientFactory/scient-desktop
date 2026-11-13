@@ -272,6 +272,7 @@ const layerBrowserSession = Layer.succeed(
     // SCIENT-FORK:END scient-preview
     getSession: () => Effect.succeed(previewSession as unknown as Electron.Session),
     clearCookies: () => Effect.void,
+    cookiesCleared: () => Effect.void,
     clearCache: () => Effect.void,
   }),
 );

@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import { deriveProviderInstanceConfigMap } from "../../provider/ProviderInstanceRegistryHydration.ts";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
@@ -94,6 +95,7 @@ export const makeNativeTextGeneration = (
           listInstances: Effect.succeed([instance]),
         }),
         ServerSettings.layerTest(),
+        ProviderInstallationGate.layer,
         Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
         Layer.mock(SourceControlProviderRegistry)({
           resolveLink: () => Effect.die("No source-control link expected"),

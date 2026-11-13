@@ -247,6 +247,10 @@ const runConjunction = () =>
                 reasoningEffort: "medium",
               };
               break;
+            // T3 12b29eb71d: Codex reads its configured reasoning summary before turn/start.
+            case "config/read":
+              result = { config: {}, origins: {} };
+              break;
             case "turn/start": {
               const params = yield* decodeTurnStart(frame.params);
               nativeOffers.push(params);
@@ -598,8 +602,10 @@ const runConjunction = () =>
           "initialize",
           "initialized",
           "thread/start",
+          "config/read",
           "turn/start",
           "thread/resume",
+          "config/read",
           "turn/start",
         ]);
         const textItem = params.input.find((item) => item.type === "text");

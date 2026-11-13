@@ -295,7 +295,11 @@ const LOADERS: ReadonlyArray<{
     expected: SHELL,
     load: (input: HttpInput) =>
       fetchEnvironmentShellSnapshot(input).pipe(
-        Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
+        Effect.map((answer) => {
+          if ("resumable" in answer) return answer;
+          const { loadPullRequests: _links, ...snapshot } = answer;
+          return snapshot;
+        }),
       ),
   },
   {
@@ -368,9 +372,12 @@ describe("authenticated environment HTTP requests", () => {
                 ],
               }),
         );
-        const rows = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        const answer = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
           Effect.provide(harness.httpLayer),
         );
+        // A request without `resumeFrom` always answers a full snapshot.
+        if ("resumable" in answer) throw new Error("expected a full shell snapshot");
+        const rows = answer;
         expect(rows.threads.map((thread) => thread.title)).toEqual([
           "Unreadable badge",
           "Valid badge",

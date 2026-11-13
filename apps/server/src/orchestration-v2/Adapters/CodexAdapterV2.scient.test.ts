@@ -26,6 +26,7 @@ import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/Provi
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
   makeCodexReplayTranscript,
+  withConfigReads,
   codexReplayPreamble,
   makeCodexReplayTurn,
   makeCodexReplayHarness,
@@ -208,7 +209,7 @@ describe("CodexAdapterV2 post-settle continuation (Background)", () => {
             },
           ],
         });
-        const driver = yield* CodexReplay.makeReplayDriver(transcript, {
+        const driver = yield* CodexReplay.makeReplayDriver(withConfigReads(transcript), {
           beforeEmitInbound: (entry) =>
             entry.label === "held captured interrupt response"
               ? Deferred.succeed(responseParked, undefined).pipe(
@@ -356,7 +357,7 @@ describe("CodexAdapterV2 post-settle continuation (Background)", () => {
         );
         assert.equal(sessionCloses, 0);
         assert.deepEqual(yield* Ref.get(driver.state), {
-          cursor: transcript.entries.length,
+          cursor: withConfigReads(transcript).entries.length,
           failure: null,
         });
       }).pipe(
@@ -5123,7 +5124,7 @@ describe("Codex restored ResumeReasoning", () => {
                       approvalPolicy: "never",
                       approvalsReviewer: "user",
                       sandboxPolicy: { type: "dangerFullAccess" },
-                      summary: "detailed",
+                      summary: "auto",
                       collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
                       additionalContext: {
                         t3_code_runtime: {
@@ -5391,7 +5392,7 @@ describe("Codex restored Sessions", () => {
         const withheld = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
-        const driver = yield* CodexReplay.makeReplayDriver(transcript, {
+        const driver = yield* CodexReplay.makeReplayDriver(withConfigReads(transcript), {
           beforeEmitInbound: (entry) =>
             entry.label === closed.label
               ? Deferred.succeed(withheld, undefined).pipe(Effect.andThen(Deferred.await(release)))

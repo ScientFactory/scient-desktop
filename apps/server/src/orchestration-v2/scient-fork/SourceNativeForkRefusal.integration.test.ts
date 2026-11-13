@@ -257,17 +257,21 @@ it.live(
           );
           const freshResult: unknown = decodeFrame(
             encodeFrame(sourceStart.frame)
-              .replace('"id":2', '"id":5')
+              .replace('"id":2', '"id":6')
               .replaceAll("native-source-thread", "native-portable-thread"),
           );
           const suffix = entries.slice(forkIndex + 2).map((entry) => {
             if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
             const frame: unknown = decodeFrame(
-              encodeFrame(entry.frame)
-                .replace('"id":5', '"id":7')
-                .replaceAll("native-fork-thread", "native-portable-thread"),
+              encodeFrame(entry.frame).replaceAll("native-fork-thread", "native-portable-thread"),
             );
-            return { ...entry, frame };
+            // The fallback's thread/start and inject_items take two request ids.
+            return typeof frame === "object" &&
+              frame !== null &&
+              "id" in frame &&
+              typeof frame.id === "number"
+              ? { ...entry, frame: { ...frame, id: frame.id + 2 } }
+              : { ...entry, frame };
           });
           entries.splice(
             forkIndex + 1,
@@ -286,7 +290,7 @@ it.live(
               type: "expect_outbound",
               label: "thread/start/fallback",
               frame: {
-                id: 5,
+                id: 6,
                 method: "thread/start",
                 params: { config: CODEX_THREAD_CONFIG },
               },
@@ -296,7 +300,7 @@ it.live(
               type: "expect_outbound",
               label: "thread/inject_items/fallback",
               frame: {
-                id: 6,
+                id: 7,
                 method: "thread/inject_items",
                 params: {
                   threadId: "native-portable-thread",
@@ -307,7 +311,7 @@ it.live(
             {
               type: "emit_inbound",
               label: "thread/inject_items/fallback",
-              frame: { id: 6, result: {} },
+              frame: { id: 7, result: {} },
             },
             ...suffix,
           );
