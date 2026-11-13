@@ -13,6 +13,7 @@ import {
   assessSourceDuplicate,
   assessSourceMetadataDuplicate,
   sourceMetadataMatchIndex,
+  type ScientSourceIntakeExclusions,
 } from "./duplicates.ts";
 import { readScientLibraryExclusions, type ScientLibraryExclusions } from "./libraryExclusions.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
@@ -2651,6 +2652,33 @@ interface ImportScientSourceInput {
   readonly verification?: ScientSourceVerification;
   readonly editorialStatus?: ScientSourceEditorialStatus;
   readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
+  /**
+   * The ID the candidate already has elsewhere (a package's record): the Library's exclusions of
+   * that ID apply too, so a pair kept apart is never joined through the newly derived ID.
+   */
+  readonly incomingSourceId?: string;
+  /** Records the caller found to be another work: never reused. */
+  readonly refusedSourceIds?: ReadonlyArray<string>;
+}
+
+/** The exclusions an intake assesses with, including those of the candidate's incoming identity. */
+function withIncomingIdentity(
+  exclusions: ScientLibraryExclusions | undefined,
+  input: ImportScientSourceInput,
+): ScientSourceIntakeExclusions | undefined {
+  const incoming = input.incomingSourceId;
+  const refused = new Set(input.refusedSourceIds ?? []);
+  if (incoming === undefined && refused.size === 0) return exclusions;
+  const asIncoming = (other: string) => incoming !== undefined && incoming !== other;
+  return {
+    isDistinct: (own, other) =>
+      refused.has(other) ||
+      (exclusions?.isDistinct(own, other) ?? false) ||
+      (asIncoming(other) && (exclusions?.isDistinct(incoming!, other) ?? false)),
+    keptApart: (own, other) =>
+      exclusions?.keptApart(own, other) ??
+      (asIncoming(other) ? (exclusions?.keptApart(incoming!, other) ?? null) : null),
+  };
 }
 
 async function intakeExclusions(
@@ -2726,6 +2754,7 @@ async function importScientSourceWithRecordLookup(
         ? await operationRecordSnapshot(paths, input.operationId)
         : await listScientSourceRecordsFromPaths(paths);
     const exclusions = await intakeExclusions(paths, existing);
+    const assessedExclusions = withIncomingIdentity(exclusions, input);
     const derivedId = scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey);
     const assess = (records: ReadonlyArray<ScientSourceRecord>, pdfSha256?: string) =>
       assessSourceDuplicate({
@@ -2733,7 +2762,7 @@ async function importScientSourceWithRecordLookup(
         existing: records,
         sourceId: derivedId,
         ...(pdfSha256 ? { pdfSha256 } : {}),
-        ...(exclusions ? { exclusions } : {}),
+        ...(assessedExclusions ? { exclusions: assessedExclusions } : {}),
       });
     const importedAt = new Date().toISOString();
     const preliminaryDuplicate = assess(existing, input.expectedPdf?.sha256);

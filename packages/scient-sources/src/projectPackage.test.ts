@@ -12,7 +12,13 @@ import {
   listScientReviewConflicts,
   resolveScientReviewConflict,
 } from "./libraryReviewConflicts.ts";
-import { changeScientLibraryReview, readScientLibraryReviewRecord } from "./libraryReviews.ts";
+import { scientLibraryDistinctPairsPath } from "./libraryExclusions.ts";
+import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import {
+  changeScientLibraryReview,
+  readScientLibraryReviewRecord,
+  scientReviewSnapshotLimits,
+} from "./libraryReviews.ts";
 import {
   ensureScientLibrary,
   scientLibraryLocation,
@@ -37,6 +43,7 @@ import {
   importScientSource,
   listScientSourceRecords,
   listScientSourceTrash,
+  readScientSourceRecord,
   recordScientSourceCheck,
   removeScientSource,
   updateScientSourceMetadata,
@@ -195,6 +202,77 @@ describe("importing a project package", () => {
       sources: { added: 1, matched: 0 },
     });
     expect(await listScientSourceRecords(theirs)).toHaveLength(2);
+  });
+
+  it("never joins a paper kept apart from it, nor one corrected before anything is written", async () => {
+    const { base, mine, source } = await setup();
+    const doi = { scheme: "doi", value: "10.1000/paper" };
+    const paper = await add(mine, "paper", { title: "Shared paper", identifiers: [doi] });
+    await withPdf(mine, base, paper.sourceId);
+    await pinned(mine, source, paper.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+
+    // Title, type and DOI agree, but this Library marked the two Not duplicates.
+    const theirs = await computer(base, "theirs");
+    const apart = await add(theirs, "apart", { title: "Shared paper", identifiers: [doi] });
+    await NodeFSP.writeFile(
+      scientLibraryDistinctPairsPath(theirs.root),
+      JSON.stringify({
+        formatVersion: 1,
+        pairs: [
+          {
+            sourceIds: [paper.sourceId, apart.sourceId],
+            reason: "marked-distinct",
+            markedAt: "2026-11-01T00:00:00.000Z",
+            markedBy: "user",
+          },
+        ],
+      }),
+    );
+    expect(await importInto(await project(base, "received"), theirs, handoff)).toMatchObject({
+      sources: { added: 1, matched: 0 },
+      pdfs: { added: 1 },
+    });
+    expect((await readScientSourceRecord(theirs, apart.sourceId))?.attachments).toEqual([]);
+
+    // A paper that agrees when checked is corrected to another work before anything is written.
+    const later = await computer(base, "later");
+    const target = await add(later, "target", { title: "Shared paper", identifiers: [doi] });
+    const corrected = await project(base, "corrected");
+    expect(
+      await importScientProjectPackage({
+        projectRoot: corrected,
+        library: later,
+        folder: handoff,
+        actor: "user",
+        afterTargetCheck: async (sourceId) => {
+          const record = (await readScientSourceRecord(later, sourceId))!;
+          await updateScientSourceMetadata({
+            root: later,
+            sourceId,
+            expectedRevision: record.revision,
+            metadata: {
+              ...editableMetadataFromRecord(record),
+              title: "Another work",
+              identifiers: [{ scheme: "doi", value: "10.1000/another" }],
+            },
+          });
+        },
+      }),
+    ).toMatchObject({
+      sources: { added: 0, matched: 0 },
+      pdfs: { added: 0 },
+      failed: [{ part: "source", item: paper.sourceId }],
+    });
+    expect((await readScientSourceRecord(later, target.sourceId))?.attachments).toEqual([]);
+    const [resolution] = await resolveScientProjectSources({
+      library: later,
+      projectRoot: corrected,
+      mode: "read",
+      sources: [{ projectSourceId: paper.sourceId, work: null }],
+    });
+    expect(resolution?.kind).toBe("unresolved");
   });
 
   it("never takes title likeness for identity, so a PDF lands on its own work", async () => {
@@ -421,6 +499,31 @@ describe("importing a project package", () => {
       checkedAt: "2026-11-01T00:00:00.000Z",
     });
     expect(record?.abstract).toBe("Why it matters.");
+
+    // Checked clear there, never checked here: that clear check comes along.
+    const clearDoi = { scheme: "doi", value: "10.1000/clear" };
+    const clear = await add(mine, "clear", { identifiers: [clearDoi] });
+    await recordScientSourceCheck({
+      root: mine,
+      sourceId: clear.sourceId,
+      expectedRevision: clear.revision,
+      verification: { state: "verified", checkedAt: "2026-11-05T00:00:00.000Z" },
+      editorialStatus: { state: "none", notices: [], checkedAt: "2026-11-05T00:00:00.000Z" },
+    });
+    const clearProject = await project(base, "clear-project");
+    await pinned(mine, clearProject, clear.sourceId);
+    const clearHandoff = NodePath.join(base, "clear-handoff");
+    await exportTo(clearProject, mine, clearHandoff);
+    const unchecked = await add(theirs, "unchecked", {
+      title: clear.title,
+      identifiers: [clearDoi],
+    });
+    expect(
+      await importInto(await project(base, "received-clear"), theirs, clearHandoff),
+    ).toMatchObject({ sources: { added: 0, matched: 1 }, failed: [] });
+    expect(
+      (await readScientSourceRecord(theirs, unchecked.sourceId))?.editorialStatus,
+    ).toMatchObject({ state: "none", carriedAt: expect.any(String) });
   });
 
   it("keeps collection ancestry, so two Methods folders stay apart", async () => {
@@ -525,7 +628,7 @@ describe("importing a project package", () => {
     expect(await NodeFSP.readdir(reviews(blocked))).toEqual([`${reviewId}.works.json`]);
   });
 
-  it("keeps a sharded snapshot's version readable, and choosing it loses no record", async () => {
+  it("keeps a sharded snapshot's version sharded and readable, and choosing it loses no record", async () => {
     const { base, mine, source } = await setup();
     const paper = await add(mine, "paper", { title: "Snapshot-only study" });
     await pinned(mine, source, paper.sourceId);
@@ -538,59 +641,70 @@ describe("importing a project package", () => {
     // Another copy of the project, from before the search was logged.
     const copy = NodePath.join(base, "copy");
     await NodeFSP.cp(source, copy, { recursive: true });
-    await changeScientLibraryReview({
-      projectRoot: source,
-      library: mine,
-      change: {
-        action: "log-search",
-        reviewId: reviewId!,
-        database: "PubMed",
-        query: "q",
-        searchedOn: "2026-11-01",
-        sourceIds: [paper.sourceId],
-      },
-      actor: "user",
-    });
-    // The snapshot in its sharded layout, as a large review keeps it.
-    const reviews = NodePath.join(source, ".scient/library/reviews");
-    await NodeFSP.mkdir(NodePath.join(reviews, `${reviewId}.works`));
-    await NodeFSP.rename(
-      NodePath.join(reviews, `${reviewId}.works.json`),
-      NodePath.join(reviews, `${reviewId}.works`, "0.json"),
-    );
-    const handoff = NodePath.join(base, "handoff");
-    await exportTo(source, mine, handoff);
-
-    const theirs = await computer(base, "theirs");
-    expect(await importInto(copy, theirs, handoff)).toMatchObject({ reviews: { conflicts: 1 } });
-    // The source is not in this Library: only the kept snapshot knows it.
-    for (const record of await listScientSourceRecords(theirs)) {
-      await removeScientSource({
-        root: theirs,
-        sourceId: record.sourceId,
-        expectedRevision: record.revision,
-      });
-    }
-    const [conflict] = await listScientReviewConflicts({ projectRoot: copy, reviewId: reviewId! });
-    expect(
-      await resolveScientReviewConflict({
-        projectRoot: copy,
-        library: theirs,
-        reviewId: reviewId!,
-        conflictId: conflict!.conflictId,
-        pick: "use-other",
+    // Every snapshot from here on is past the size where one file becomes shards.
+    const threshold = scientReviewSnapshotLimits.shardThresholdBytes;
+    scientReviewSnapshotLimits.shardThresholdBytes = 64;
+    try {
+      await changeScientLibraryReview({
+        projectRoot: source,
+        library: mine,
+        change: {
+          action: "log-search",
+          reviewId: reviewId!,
+          database: "PubMed",
+          query: "q",
+          searchedOn: "2026-11-01",
+          sourceIds: [paper.sourceId],
+        },
         actor: "user",
-      }),
-    ).toMatchObject({ outcome: "resolved" });
-    expect(
-      await readScientLibraryReviewRecord({
+      });
+      const handoff = NodePath.join(base, "handoff");
+      await exportTo(source, mine, handoff);
+
+      const theirs = await computer(base, "theirs");
+      expect(await importInto(copy, theirs, handoff)).toMatchObject({ reviews: { conflicts: 1 } });
+      const kept = NodePath.join(copy, ".scient/library/conflicts/reviews", reviewId!);
+      expect((await NodeFSP.readdir(kept)).filter((name) => name.includes(".works"))).toEqual([
+        expect.stringMatching(/^[0-9a-f]{12}\.works$/u),
+      ]);
+      // The source is not in this Library: only the kept snapshot knows it.
+      for (const record of await listScientSourceRecords(theirs)) {
+        await removeScientSource({
+          root: theirs,
+          sourceId: record.sourceId,
+          expectedRevision: record.revision,
+        });
+      }
+      const [conflict] = await listScientReviewConflicts({
         projectRoot: copy,
-        library: theirs,
-        mode: "read",
         reviewId: reviewId!,
-        sourceId: paper.sourceId,
-      }),
-    ).toMatchObject({ from: "snapshot", record: { title: "Snapshot-only study" } });
+      });
+      expect(
+        await resolveScientReviewConflict({
+          projectRoot: copy,
+          library: theirs,
+          reviewId: reviewId!,
+          conflictId: conflict!.conflictId,
+          pick: "use-other",
+          actor: "user",
+        }),
+      ).toMatchObject({ outcome: "resolved" });
+      const reviews = await NodeFSP.readdir(NodePath.join(copy, ".scient/library/reviews"));
+      expect(reviews.filter((name) => name.startsWith(`${reviewId}.works`))).toEqual([
+        `${reviewId}.works`,
+      ]);
+      expect(
+        await readScientLibraryReviewRecord({
+          projectRoot: copy,
+          library: theirs,
+          mode: "read",
+          reviewId: reviewId!,
+          sourceId: paper.sourceId,
+        }),
+      ).toMatchObject({ from: "snapshot", record: { title: "Snapshot-only study" } });
+    } finally {
+      scientReviewSnapshotLimits.shardThresholdBytes = threshold;
+    }
   });
 
   it("keeps a receipt, and Undo removes what the import added", async () => {
@@ -625,7 +739,7 @@ describe("importing a project package", () => {
         importId: imported.importId,
         actor: "user",
       });
-    expect(await undo()).toEqual({ outcome: "undone", kept: [] });
+    expect(await undo()).toEqual({ outcome: "undone", kept: [], left: [] });
     expect(await readScientProjectPins(received)).toEqual([]);
     expect((await listScientSourceRecords(theirs)).map((record) => record.sourceId)).toEqual([
       kept.sourceId,
@@ -635,41 +749,68 @@ describe("importing a project package", () => {
     expect(await undo()).toEqual({ outcome: "already-undone" });
   });
 
-  it("Undo keeps what was changed since, and what a later import also uses", async () => {
+  it("Undo removes only what the import created, as its own writes left it", async () => {
     const { base, mine, source } = await setup();
     const edited = await add(mine, "edited");
     const noted = await add(mine, "noted");
-    for (const record of [edited, noted]) await pinned(mine, source, record.sourceId);
+    const doi = { scheme: "doi", value: "10.1000/shared" };
+    const shared = await add(mine, "shared", { identifiers: [doi] });
+    await withPdf(mine, base, shared.sourceId);
+    const second = NodePath.join(base, "second.pdf");
+    await NodeFSP.writeFile(second, "%PDF-1.7\nsecond\n");
+    await attachScientSourcePdf({
+      root: mine,
+      sourceId: shared.sourceId,
+      expectedRevision: shared.revision + 1,
+      pdfPath: second,
+    });
+    for (const record of [edited, noted, shared]) await pinned(mine, source, record.sourceId);
     const handoff = NodePath.join(base, "handoff");
     await exportTo(source, mine, handoff);
-    const imports = async (received: string, library: ScientLibraryLocation) => {
-      const imported = await importInto(received, library, handoff);
+    const projectIdOf = async (root: string) =>
+      JSON.parse(await NodeFSP.readFile(NodePath.join(root, ".scient/project.json"), "utf8"))
+        .projectId as string;
+    const undoOf = async (
+      root: string,
+      library: ScientLibraryLocation,
+      imported: Awaited<ReturnType<typeof importInto>>,
+    ) => {
       if (imported.outcome !== "imported") throw new Error("Expected an import.");
-      const { projectId } = JSON.parse(
-        await NodeFSP.readFile(NodePath.join(received, ".scient/project.json"), "utf8"),
-      );
-      return () =>
-        undoScientProjectPackageImport({
-          projectRoot: received,
-          projectId,
-          library,
-          importId: imported.importId,
-          actor: "user",
-        });
+      return undoScientProjectPackageImport({
+        projectRoot: root,
+        projectId: await projectIdOf(root),
+        library,
+        importId: imported.importId,
+        actor: "user",
+      });
     };
 
-    // A source edited and a pin's note changed after the import stay; the rest goes.
+    // A paper here gets both PDFs; a created paper is edited before the receipt is written, and a
+    // created pin's note changes after.
     const theirs = await computer(base, "theirs");
+    const local = await add(theirs, "local", { title: shared.title, identifiers: [doi] });
     const received = await project(base, "received");
-    const undo = await imports(received, theirs);
-    const records = await listScientSourceRecords(theirs);
-    const editedHere = records.find((record) => record.title === edited.title)!;
-    await updateScientSourceMetadata({
-      root: theirs,
-      sourceId: editedHere.sourceId,
-      expectedRevision: editedHere.revision,
-      metadata: { ...editableMetadataFromRecord(editedHere), pages: "1-9" },
+    const imported = await importScientProjectPackage({
+      projectRoot: received,
+      library: theirs,
+      folder: handoff,
+      actor: "user",
+      afterPinsLock: async () => {
+        const record = (await listScientSourceRecords(theirs)).find(
+          (entry) => entry.title === edited.title,
+        )!;
+        await updateScientSourceMetadata({
+          root: theirs,
+          sourceId: record.sourceId,
+          expectedRevision: record.revision,
+          metadata: { ...editableMetadataFromRecord(record), pages: "1-9" },
+        });
+      },
     });
+    expect(imported).toMatchObject({ sources: { added: 2, matched: 1 }, pdfs: { added: 2 } });
+    const editedHere = (await listScientSourceRecords(theirs)).find(
+      (record) => record.title === edited.title,
+    )!;
     const notedPin = (await readScientProjectPins(received)).find(
       (pin) => pin.work.title === noted.title,
     )!;
@@ -679,25 +820,31 @@ describe("importing a project package", () => {
       note: "Mine now",
       actor: "user",
     });
-    const result = await undo();
-    expect(result).toMatchObject({ outcome: "undone" });
-    expect(result.outcome === "undone" && result.kept.toSorted()).toEqual(
+    const result = await undoOf(received, theirs, imported);
+    if (result.outcome !== "undone") throw new Error("Expected Undo.");
+    expect(result.kept.toSorted()).toEqual(
       [`pin ${notedPin.citationKey}`, `source ${editedHere.sourceId}`].toSorted(),
     );
-    expect((await listScientSourceRecords(theirs)).map((record) => record.sourceId)).toEqual([
-      editedHere.sourceId,
-    ]);
+    expect(result.left.filter((entry) => entry.startsWith("PDF "))).toHaveLength(2);
+    const after = await listScientSourceRecords(theirs);
+    expect(after.map((record) => record.sourceId).toSorted()).toEqual(
+      [editedHere.sourceId, local.sourceId].toSorted(),
+    );
+    expect(after.find((record) => record.sourceId === local.sourceId)?.attachments).toHaveLength(2);
     expect((await readScientProjectPins(received)).map((pin) => pin.citationKey)).toEqual([
       notedPin.citationKey,
     ]);
 
-    // A second import of the same package joins what the first added: undoing the first keeps it.
+    // Another project's later import reuses what this one created: Undo keeps those papers.
     const other = await computer(base, "other");
-    const again = await project(base, "again");
-    const undoFirst = await imports(again, other);
-    await imports(again, other);
-    expect(await undoFirst()).toMatchObject({ outcome: "undone" });
-    expect(await listScientSourceRecords(other)).toHaveLength(2);
-    expect(await readScientProjectPins(again)).toHaveLength(2);
+    const first = await project(base, "first");
+    const firstImport = await importInto(first, other, handoff);
+    expect(await importInto(await project(base, "second"), other, handoff)).toMatchObject({
+      sources: { added: 0, matched: 3 },
+    });
+    const undone = await undoOf(first, other, firstImport);
+    expect(undone.outcome === "undone" && undone.kept).toHaveLength(3);
+    expect(await listScientSourceRecords(other)).toHaveLength(3);
+    expect(await readScientProjectPins(first)).toEqual([]);
   });
 });

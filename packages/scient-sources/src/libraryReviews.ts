@@ -41,7 +41,8 @@ import {
 const LIBRARY_REVIEWS_DIRECTORY = ".scient/library/reviews";
 const SNAPSHOT_SUFFIX = ".works.json";
 const SHARD_DIRECTORY_SUFFIX = ".works";
-const SHARD_THRESHOLD_BYTES = 32 * 1024 * 1024;
+/** Test-only: lowered by a test to shard small snapshots. */
+export const scientReviewSnapshotLimits = { shardThresholdBytes: 32 * 1024 * 1024 };
 const MAX_REVIEW_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const NonEmptyString = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
 const NullableText = Schema.NullOr(Schema.String);
@@ -164,14 +165,15 @@ function libraryFolder(root: string): ScientReviewFolder {
   return { root, directory: LIBRARY_REVIEWS_DIRECTORY, siblingSuffix: SNAPSHOT_SUFFIX };
 }
 
-function snapshotPath(folder: ScientReviewFolder, reviewId: string): string {
-  assertSafeIdentifier(reviewId, "Review ID");
-  return NodePath.join(reviewsDirectory(folder), `${reviewId}${SNAPSHOT_SUFFIX}`);
+/** `name` is the review's ID, or a kept version's tag beside it. */
+function snapshotPath(folder: ScientReviewFolder, name: string): string {
+  assertSafeIdentifier(name, "Review ID");
+  return NodePath.join(reviewsDirectory(folder), `${name}${SNAPSHOT_SUFFIX}`);
 }
 
-function shardDirectory(folder: ScientReviewFolder, reviewId: string): string {
-  assertSafeIdentifier(reviewId, "Review ID");
-  return NodePath.join(reviewsDirectory(folder), `${reviewId}${SHARD_DIRECTORY_SUFFIX}`);
+function shardDirectory(folder: ScientReviewFolder, name: string): string {
+  assertSafeIdentifier(name, "Review ID");
+  return NodePath.join(reviewsDirectory(folder), `${name}${SHARD_DIRECTORY_SUFFIX}`);
 }
 
 /** One hex digit of the ID's SHA-256: sixteen shards whatever form the project's IDs take. */
@@ -239,6 +241,7 @@ async function readSnapshotState(
   folder: ScientReviewFolder,
   reviewId: string,
   mode: Mode,
+  name = reviewId,
 ): Promise<SnapshotState> {
   if (!(await reviewsDirectoryExists(folder))) return EMPTY_STATE;
   const readOrSetAside = async (filePath: string) => {
@@ -250,8 +253,8 @@ async function readSnapshotState(
     }
     return EMPTY_DOCUMENT;
   };
-  const single = await readOrSetAside(snapshotPath(folder, reviewId));
-  const directory = shardDirectory(folder, reviewId);
+  const single = await readOrSetAside(snapshotPath(folder, name));
+  const directory = shardDirectory(folder, name);
   const directoryState = await snapshot(directory);
   if (directoryState === "missing") return { single, shards: null, entries: single.entries };
   if (directoryState !== "directory") {
@@ -297,13 +300,14 @@ async function publishSnapshot(
   current: SnapshotState,
   entries: ReadonlyMap<string, StoredWork>,
   required: ReadonlyArray<string>,
+  name = reviewId,
 ): Promise<SnapshotState> {
   if (current.shards === null) {
     const encoded = encodeSnapshot(reviewId, { entries, extra: current.single.extra });
     const text = formatJson(encoded);
-    if (Buffer.byteLength(text, "utf8") <= SHARD_THRESHOLD_BYTES) {
+    if (Buffer.byteLength(text, "utf8") <= scientReviewSnapshotLimits.shardThresholdBytes) {
       if (current.single.text === text) return current;
-      const single = await writeSnapshotDocument(snapshotPath(folder, reviewId), reviewId, encoded);
+      const single = await writeSnapshotDocument(snapshotPath(folder, name), reviewId, encoded);
       assertPublished(single.entries, required);
       return { single, shards: null, entries: single.entries };
     }
@@ -315,7 +319,7 @@ async function publishSnapshot(
     group.set(sourceId, stored);
     groups.set(shard, group);
   }
-  const directory = shardDirectory(folder, reviewId);
+  const directory = shardDirectory(folder, name);
   await assertScientProjectDirectory(folder.root, directory, { create: true });
   const shards = new Map(current.shards ?? []);
   let changed = false;
@@ -334,7 +338,7 @@ async function publishSnapshot(
   const merged = mergedEntries(shards.values());
   assertPublished(merged, required);
   if (current.single.text !== null) {
-    await NodeFSP.rm(snapshotPath(folder, reviewId), { force: true });
+    await NodeFSP.rm(snapshotPath(folder, name), { force: true });
     changed = true;
   }
   return changed ? { single: EMPTY_DOCUMENT, shards, entries: merged } : current;
@@ -438,9 +442,68 @@ export async function readScientReviewSnapshotEntries(
   return new Map([...state.entries].map(([sourceId, stored]) => [sourceId, stored.work]));
 }
 
-/** The shard folder of a review's snapshot in this project, used once one file would be too big. */
-export function scientReviewSnapshotShardFolder(projectRoot: string, reviewId: string): string {
-  return shardDirectory(libraryFolder(projectRoot), reviewId);
+/**
+ * A review snapshot in a project folder, under the review's ID or a kept version's tag: one file
+ * `<name>.works.json`, or shards in `<name>.works/` once one file would be too big.
+ */
+export interface ScientReviewSnapshotPlace {
+  readonly projectRoot: string;
+  /** Project-relative folder. */
+  readonly directory: string;
+  readonly name: string;
+  readonly reviewId: string;
+}
+
+const placeFolder = (place: ScientReviewSnapshotPlace): ScientReviewFolder => ({
+  root: place.projectRoot,
+  directory: place.directory,
+  siblingSuffix: SNAPSHOT_SUFFIX,
+});
+
+/** The entries of the snapshot at `place`, single file and shards, shard entries winning. */
+export async function readScientReviewSnapshotAt(
+  place: ScientReviewSnapshotPlace,
+): Promise<ReadonlyMap<string, ScientReviewWork>> {
+  const state = await readSnapshotState(placeFolder(place), place.reviewId, "read", place.name);
+  return new Map([...state.entries].map(([sourceId, stored]) => [sourceId, stored.work]));
+}
+
+/**
+ * Adds `entries` to the snapshot at `place` (theirs win; none it holds is dropped) through the
+ * publisher every review uses: one file, or shards within the per-file limit. False when nothing
+ * changed.
+ */
+export async function publishScientReviewSnapshotAt(
+  place: ScientReviewSnapshotPlace,
+  entries: ReadonlyMap<string, ScientReviewWork>,
+): Promise<boolean> {
+  const folder = placeFolder(place);
+  await assertScientProjectDirectory(place.projectRoot, reviewsDirectory(folder), { create: true });
+  const current = await readSnapshotState(folder, place.reviewId, "write", place.name);
+  const union = new Map(current.entries);
+  for (const [sourceId, work] of entries) {
+    const known = current.entries.get(sourceId);
+    if (known && scientReviewWorksEqual(known.work, work)) continue;
+    union.set(sourceId, { work, extra: known?.extra ?? {} });
+  }
+  const published = await publishSnapshot(
+    folder,
+    place.reviewId,
+    current,
+    union,
+    [...entries.keys()],
+    place.name,
+  );
+  return published !== current;
+}
+
+/** Removes the snapshot at `place`, file and shards. */
+export async function removeScientReviewSnapshotAt(
+  place: ScientReviewSnapshotPlace,
+): Promise<void> {
+  const folder = placeFolder(place);
+  await NodeFSP.rm(snapshotPath(folder, place.name), { force: true });
+  await NodeFSP.rm(shardDirectory(folder, place.name), { recursive: true, force: true });
 }
 
 /** Two entries say the same about a work, whenever they were captured. */

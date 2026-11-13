@@ -105,6 +105,31 @@ async function checkedDestination(
   }
 }
 
+/**
+ * Where an agent may read a package from, checked before the manifest is read: inside the project
+ * (never its `.scient`) or a folder the person chose for this project's packages, links resolved
+ * first. The package's own files are checked against it as they are read.
+ */
+async function checkedPackageSource(
+  store: ScientSourcesLibraryStore,
+  folder: string,
+): Promise<string> {
+  const target = await canonicalPath(folder);
+  const root = await canonicalPath(store.root);
+  if (within(target, NodePath.join(root, ".scient"))) {
+    throw new Error("A package is not read from inside the project's .scient folder.");
+  }
+  if (within(target, root)) return target;
+  const { projectId } = await readScientProjectIdentity(store.root);
+  const granted = (await readGrants(store))[projectId] ?? [];
+  if (!granted.some((entry) => typeof entry === "string" && within(target, entry))) {
+    throw new Error(
+      "An agent imports a package from inside this project, or from a folder the person chose for its packages in the Sources panel.",
+    );
+  }
+  return target;
+}
+
 export async function exportLibraryProjectPackage(
   store: ScientSourcesLibraryStore,
   input: { readonly relativePath?: string; readonly inFolder?: string },
@@ -149,10 +174,15 @@ export async function importLibraryProjectPackage(
   input: { readonly relativePath: string },
   actor: ScientSourceActor,
 ) {
+  const requested = packageFolder(store.root, input.relativePath);
+  const folder =
+    actor === "agent"
+      ? await checkedPackageSource(store, requested)
+      : await canonicalPath(requested);
   const imported = await importScientProjectPackage({
     projectRoot: store.root,
     library: store.library,
-    folder: packageFolder(store.root, input.relativePath),
+    folder,
     actor,
   });
   if (imported.outcome === "not-a-package") return { outcome: imported.outcome };
@@ -170,6 +200,10 @@ export async function importLibraryProjectPackage(
         changedFiles: imported.files,
       },
     };
+  }
+  // The person's own choice of an outside package lets this project's agents read there too.
+  if (actor !== "agent" && !within(folder, await canonicalPath(store.root))) {
+    await grantDestination(store, NodePath.dirname(folder));
   }
   await syncProjectBibliography(store, actor);
   return {
@@ -219,6 +253,7 @@ export async function undoLibraryProjectPackageImport(
       collections: 0,
       unavailable: 0,
       kept: undone.kept,
+      left: undone.left,
     },
   };
 }

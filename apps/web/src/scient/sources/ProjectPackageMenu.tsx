@@ -116,10 +116,21 @@ export function ProjectPackageSubmenu(props: {
       const result = await organize({ action: "undo-import", importId });
       await props.onImported();
       const kept = result.packageReport?.kept ?? [];
+      const left = result.packageReport?.left ?? [];
+      const description = [
+        kept.length > 0
+          ? `Changed since or used by another import, so kept: ${kept.join(", ")}.`
+          : "",
+        left.length > 0
+          ? `Left as evidence: ${left.length} things it added to what was already here (PDFs, highlights, notices, reviews).`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
       toastManager.add({
         type: "success",
         title: result.outcome === "undone" ? "Import undone" : "That import was already undone",
-        ...(kept.length > 0 ? { description: `Changed since, so kept: ${kept.join(", ")}.` } : {}),
+        ...(description ? { description } : {}),
       });
     }, "The import was not undone");
 

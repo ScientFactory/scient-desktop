@@ -519,8 +519,10 @@ export const ScientProjectPackageReport = Schema.Struct({
       Schema.Struct({ part: Schema.String, item: Schema.String, message: Schema.String }),
     ),
   ),
-  /** Undo: files changed since the import, which stay. */
+  /** Undo: what the import created that changed since, or that another import uses; it stays. */
   kept: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Undo: what the import joined into what was here, and the highlights and reviews it brought. */
+  left: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientProjectPackageReport = typeof ScientProjectPackageReport.Type;
 

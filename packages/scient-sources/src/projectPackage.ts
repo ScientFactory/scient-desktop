@@ -18,9 +18,10 @@ import { withScientLibraryLock } from "./libraryLock.ts";
 import { scientLibraryMoveInternals } from "./libraryMove.ts";
 import {
   decodeScientReviewSnapshotText,
+  publishScientReviewSnapshotAt,
   readScientReviewSnapshotEntries,
   scientReviewNamedIds,
-  scientReviewSnapshotText,
+  type ScientReviewSnapshotPlace,
   type ScientReviewWork,
 } from "./libraryReviews.ts";
 import { registerScientLibraryInstance, type ScientLibraryLocation } from "./libraryRoot.ts";
@@ -33,7 +34,6 @@ import {
 import {
   decodeScientProjectPinsText,
   joinScientProjectPins,
-  readScientProjectPins,
   type ScientProjectPinsJoin,
 } from "./projectPins.ts";
 import {
@@ -590,7 +590,10 @@ function scientPackageCheckJoin(
   const editorialStatus = takeEditorial
     ? {
         ...(local.editorialStatus ?? incoming.editorialStatus!),
-        state: graver ? incoming.editorialStatus!.state : local.editorialStatus!.state,
+        state:
+          graver || local.editorialStatus === undefined
+            ? incoming.editorialStatus!.state
+            : local.editorialStatus.state,
         notices: [...localNotices, ...added].slice(0, 64),
         carriedAt: at,
       }
@@ -599,32 +602,6 @@ function scientPackageCheckJoin(
     verification: verification ?? { state: "unchecked" },
     editorialStatus,
   };
-}
-
-/** What the import left, so its Undo removes only what nobody changed since. */
-async function importedVersions(
-  library: ScientLibraryLocation,
-  root: string,
-  state: ImportState,
-  addedKeys: ReadonlyArray<string>,
-) {
-  const touched = new Set([
-    ...state.receipt.sources,
-    ...state.receipt.pdfs.map((pdf) => pdf.sourceId),
-  ]);
-  const sources = [];
-  for (const sourceId of touched) {
-    const record = await readScientSourceRecord(library, sourceId);
-    if (record) sources.push({ sourceId, revision: record.revision });
-  }
-  const pinned = new Map(
-    (await readScientProjectPins(root)).map((pin) => [pin.citationKey, pin] as const),
-  );
-  const pins = addedKeys.flatMap((citationKey) => {
-    const pin = pinned.get(citationKey);
-    return pin ? [{ citationKey, sourceId: pin.sourceId, note: pin.note ?? null }] : [];
-  });
-  return { sources, pins, collections: state.collectionVersions };
 }
 
 /** Another computer's check, marked as brought here, never as a check made here. */
@@ -663,17 +640,190 @@ interface ImportState {
     reviewFiles: Array<{ path: string; sha256: string }>;
     collections: string[];
   };
-  /** Each created collection's version as this import left it. */
-  readonly collectionVersions: Array<{ collectionId: string; updatedAt: string }>;
-  /** Existing records the import joined, which an earlier import's Undo then keeps. */
+  /** Each created record's revision and collection's version, from the import's own writes. */
+  readonly created: {
+    readonly sources: Map<string, number>;
+    readonly collections: Array<{ collectionId: string; updatedAt: string }>;
+  };
+  /** Existing records and collections the import joined, which another import's Undo keeps. */
   readonly joinedSourceIds: Set<string>;
+  readonly joinedCollectionIds: Set<string>;
+  /** What the import put into what was already here; its Undo leaves it. */
+  readonly evidence: string[];
+  readonly counts: { matched: number; pdfsPresent: number };
   readonly failed: ScientProjectPackageFailure[];
+}
+
+interface ImportContext {
+  readonly library: ScientLibraryLocation;
+  readonly instanceId: string;
+  readonly importId: string;
+  readonly importedAt: string;
+  readonly actor: ScientSourceActor;
+  readonly state: ImportState;
+  readonly mapped: Map<string, string>;
+  readonly afterTargetCheck: ((sourceId: string) => Promise<void>) | undefined;
+}
+
+/** The record a packaged source joins, or a new one; never one that rule or a decision refuses. */
+async function packageTarget(
+  context: ImportContext,
+  projectSourceId: string,
+  record: ScientSourceRecord,
+  proposals: ReadonlyArray<string | null>,
+): Promise<
+  { readonly target: ScientSourceRecord; readonly created: boolean } | { readonly failure: string }
+> {
+  const { library } = context;
+  const refused = new Set<string>();
+  for (const proposed of proposals) {
+    if (proposed === null || refused.has(proposed)) continue;
+    if (!(await readScientSourceRecord(library, proposed))) continue;
+    const target = await packageTargetHolds(library, record, proposed);
+    if (target) return { target, created: false };
+    refused.add(proposed);
+  }
+  // Intake judges with the package record's own ID and never offers a refused record again.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const imported = await importScientSource({
+      root: library,
+      operationId: `package_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+      candidate: candidateFrom(
+        record,
+        refused.size > 0 ? `${projectSourceId}:${context.importId}` : projectSourceId,
+      ),
+      actor: context.actor,
+      intake: "file",
+      // Title likeness alone adds a new source; the shared rule decides any other match.
+      allowPossibleMetadataMatch: true,
+      incomingSourceId: record.sourceId,
+      refusedSourceIds: [...refused],
+      ...carried(record, context.importedAt),
+    });
+    if (imported.record) return { target: imported.record, created: true };
+    const reused =
+      imported.duplicate.kind === "new" ? undefined : imported.duplicate.matchingSourceIds[0];
+    if (!reused) return { failure: imported.duplicate.reason };
+    const target = await packageTargetHolds(library, record, reused);
+    if (target) return { target, created: false };
+    refused.add(reused);
+  }
+  return { failure: "Several papers here match it but are other works; it was not imported." };
+}
+
+const CHANGED_WHILE_IMPORTED =
+  "It changed here while it was being imported, so it was left as it is; import the package again.";
+
+/**
+ * One packaged source, in one hold of the Library lock: its target decided, then every write
+ * (notices, abstract, PDFs, the mapping) made on that decision's revision. A write that finds the
+ * target changed stops this source; nothing is mapped or attached on an unchecked revision.
+ */
+async function placePackagedSource(
+  context: ImportContext,
+  folder: string,
+  {
+    projectSourceId,
+    record,
+  }: { readonly projectSourceId: string; readonly record: ScientSourceRecord },
+  proposals: ReadonlyArray<string | null>,
+): Promise<void> {
+  const { library, state, importedAt } = context;
+  const fail = (message: string) => {
+    state.failed.push({ part: "source", item: projectSourceId, message });
+  };
+  const decided = await packageTarget(context, projectSourceId, record, proposals);
+  if ("failure" in decided) return fail(decided.failure);
+  let target = decided.target;
+  const { created } = decided;
+  const sourceId = target.sourceId;
+  if (created) {
+    state.receipt.sources.push(sourceId);
+    state.created.sources.set(sourceId, target.revision);
+  }
+  await context.afterTargetCheck?.(sourceId);
+  if (!created) {
+    const checked = scientPackageCheckJoin(target, record, importedAt);
+    if (checked) {
+      const result = await recordScientSourceCheck({
+        root: library,
+        sourceId,
+        expectedRevision: target.revision,
+        verification: checked.verification,
+        editorialStatus: checked.editorialStatus,
+        actor: context.actor,
+      });
+      if (result.outcome === "stale") return fail(CHANGED_WHILE_IMPORTED);
+      if (result.outcome === "updated") state.evidence.push(`notices on source ${sourceId}`);
+      target = result.record;
+    }
+    // An abstract only the package knows comes along, with where it came from.
+    if (target.abstract === null && record.abstract !== null) {
+      const provenance = record.fieldProvenance.filter((entry) => entry.field === "abstract");
+      const edited = await updateScientSourceMetadata({
+        root: library,
+        sourceId,
+        expectedRevision: target.revision,
+        metadata: { ...editableMetadataFromRecord(target), abstract: record.abstract },
+        ...(provenance.length > 0 ? { fieldProvenance: provenance } : {}),
+        actor: context.actor,
+      }).catch(() => null);
+      if (edited?.outcome === "stale") return fail(CHANGED_WHILE_IMPORTED);
+      if (edited?.outcome === "updated") {
+        target = edited.record;
+        state.evidence.push(`abstract on source ${sourceId}`);
+      }
+    }
+  }
+  for (const attachment of record.attachments) {
+    if (target.attachments.some((entry) => entry.sha256 === attachment.sha256)) {
+      state.counts.pdfsPresent += 1;
+      continue;
+    }
+    const pdf = absolute(folder, `pdfs/${attachment.sha256}.pdf`);
+    if ((await hashFile(pdf)) !== attachment.sha256) continue;
+    const item = `pdfs/${attachment.sha256}.pdf`;
+    const attached = await attachScientSourcePdf({
+      root: library,
+      sourceId,
+      expectedRevision: target.revision,
+      pdfPath: pdf,
+      fileName: attachment.fileName,
+      actor: context.actor,
+      ...(attachment.retrieval ? { retrieval: attachment.retrieval } : {}),
+    }).catch((error: unknown) => {
+      state.failed.push({ part: "pdf", item, message: message(error) });
+      return null;
+    });
+    if (!attached) continue;
+    if (attached.outcome === "stale") return fail(CHANGED_WHILE_IMPORTED);
+    target = attached.record;
+    const added = target.attachments.find((entry) => entry.sha256 === attachment.sha256);
+    if (!added) {
+      state.failed.push({ part: "pdf", item, message: attached.outcome });
+    } else if (attached.outcome === "attached") {
+      state.receipt.pdfs.push({ sourceId, attachmentId: added.attachmentId });
+      if (created) state.created.sources.set(sourceId, target.revision);
+      else state.evidence.push(`PDF ${added.attachmentId} on source ${sourceId}`);
+    }
+  }
+  await recordScientProjectSourceMappings({
+    library,
+    instanceId: context.instanceId,
+    mappings: [{ projectSourceId, sourceId }],
+  });
+  context.mapped.set(projectSourceId, sourceId);
+  if (!created) {
+    state.counts.matched += 1;
+    state.joinedSourceIds.add(sourceId);
+  }
 }
 
 /**
  * Brings a checked package in as evidence from another computer: a source joins a record only by
  * the shared identity rule (never title likeness), else it is added; highlights, note histories
- * and reviews join without overwriting anything. A receipt lists what was added, for Undo.
+ * and reviews join without overwriting anything. A receipt lists what was created, for Undo, and
+ * what was joined, which stays.
  */
 export async function importScientProjectPackage(input: {
   readonly projectRoot: string;
@@ -682,16 +832,20 @@ export async function importScientProjectPackage(input: {
   readonly actor: ScientSourceActor;
   /** Test-only: runs once the project's pins lock is held. */
   readonly afterPinsLock?: () => Promise<void>;
+  /** Test-only: runs once a source's target is decided, before anything is written to it. */
+  readonly afterTargetCheck?: (sourceId: string) => Promise<void>;
 }): Promise<ScientProjectPackageImport> {
   const root = await NodeFSP.realpath(input.projectRoot);
   const { projectId } = await readScientProjectIdentity(root);
   const folder = await NodeFSP.realpath(input.folder).catch(() => input.folder);
+  if (!(await insidePackage(folder, MANIFEST_FILE))) return { outcome: "not-a-package" };
   const manifest = await readScientProjectPackageManifest(folder);
   if (!manifest) return { outcome: "not-a-package" };
   const changed: string[] = [];
   for (const file of manifest.files) {
     if (
       !safePackagePath(file.path) ||
+      !(await insidePackage(folder, file.path)) ||
       (await hashFile(absolute(folder, file.path))) !== file.sha256
     ) {
       changed.push(file.path);
@@ -709,9 +863,22 @@ export async function importScientProjectPackage(input: {
   const state: ImportState = {
     folder,
     receipt: { sources: [], pdfs: [], annotationFiles: [], reviewFiles: [], collections: [] },
-    collectionVersions: [],
+    created: { sources: new Map(), collections: [] },
     joinedSourceIds: new Set(),
+    joinedCollectionIds: new Set(),
+    evidence: [],
+    counts: { matched: 0, pdfsPresent: 0 },
     failed: [],
+  };
+  const context: ImportContext = {
+    library,
+    instanceId,
+    importId,
+    importedAt,
+    actor: input.actor,
+    state,
+    mapped: new Map(),
+    afterTargetCheck: input.afterTargetCheck,
   };
 
   const sourceFiles = manifest.files.filter((file) => /^sources\/[^/]+\.json$/u.test(file.path));
@@ -731,147 +898,35 @@ export async function importScientProjectPackage(input: {
     sources: packaged.map(({ projectSourceId, record }) => ({ projectSourceId, work: record })),
   });
   const aliases = await readScientLibraryAliases(library);
-  const mapped = new Map<string, string>();
-  let matched = 0;
-  let pdfsPresent = 0;
-  for (const [index, { projectSourceId, record }] of packaged.entries()) {
+  for (const [index, source] of packaged.entries()) {
+    const resolution = resolutions[index]!;
+    // Title likeness is no identity here; every proposed target is checked again under the lock.
+    const proposals = [
+      resolveScientLibraryAlias(aliases, source.record.sourceId),
+      resolution.kind === "resolved" && resolution.by !== "metadata" ? resolution.sourceId : null,
+    ];
     try {
-      const resolution = resolutions[index]!;
-      const sameId = resolveScientLibraryAlias(aliases, record.sourceId);
-      // Title likeness is no identity here; every other proposed target is checked again.
-      const resolvedId =
-        resolution.kind === "resolved" && resolution.by !== "metadata" ? resolution.sourceId : null;
-      const proposed = (await readScientSourceRecord(library, sameId)) ? sameId : resolvedId;
-      let target = proposed ? await packageTargetHolds(library, record, proposed) : null;
-      // A contradicted target: the paper becomes its own record, never that one by its key.
-      const contradicted = proposed !== null && target === null;
-      if (target) {
-        matched += 1;
-        state.joinedSourceIds.add(target.sourceId);
-        const checked = scientPackageCheckJoin(target, record, importedAt);
-        if (checked) {
-          const result = await recordScientSourceCheck({
-            root: library,
-            sourceId: target.sourceId,
-            expectedRevision: target.revision,
-            verification: checked.verification,
-            editorialStatus: checked.editorialStatus,
-            actor: input.actor,
-          });
-          if (result.outcome === "stale") {
-            state.failed.push({
-              part: "source",
-              item: projectSourceId,
-              message: "It changed while its notices were brought in; import the package again.",
-            });
-          }
-          target = result.record;
-        }
-        // An abstract only the package knows comes along, with where it came from.
-        if (target.abstract === null && record.abstract !== null) {
-          const provenance = record.fieldProvenance.filter((entry) => entry.field === "abstract");
-          const edited = await updateScientSourceMetadata({
-            root: library,
-            sourceId: target.sourceId,
-            expectedRevision: target.revision,
-            metadata: { ...editableMetadataFromRecord(target), abstract: record.abstract },
-            ...(provenance.length > 0 ? { fieldProvenance: provenance } : {}),
-            actor: input.actor,
-          }).catch(() => null);
-          if (edited?.outcome === "updated") target = edited.record;
-        }
-      } else {
-        const imported = await importScientSource({
-          root: library,
-          operationId: `package_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
-          candidate: candidateFrom(
-            record,
-            contradicted ? `${projectSourceId}:${importId}` : projectSourceId,
-          ),
-          actor: input.actor,
-          intake: "file",
-          // Title likeness alone adds a new source; the shared rule decides any other match.
-          allowPossibleMetadataMatch: true,
-          ...carried(record, importedAt),
-        });
-        const reused =
-          imported.record === null && imported.duplicate.kind !== "new"
-            ? imported.duplicate.matchingSourceIds[0]
-            : undefined;
-        target = imported.record ?? (reused ? await readScientSourceRecord(library, reused) : null);
-        if (!target) {
-          state.failed.push({
-            part: "source",
-            item: projectSourceId,
-            message: imported.duplicate.reason,
-          });
-          continue;
-        }
-        if (imported.record) state.receipt.sources.push(imported.record.sourceId);
-        else {
-          matched += 1;
-          state.joinedSourceIds.add(target.sourceId);
-        }
-      }
-      mapped.set(projectSourceId, target.sourceId);
-      for (const attachment of record.attachments) {
-        if (target.attachments.some((entry) => entry.sha256 === attachment.sha256)) {
-          pdfsPresent += 1;
-          continue;
-        }
-        const pdf = absolute(folder, `pdfs/${attachment.sha256}.pdf`);
-        if ((await hashFile(pdf)) !== attachment.sha256) continue;
-        try {
-          const attached = await attachScientSourcePdf({
-            root: library,
-            sourceId: target.sourceId,
-            expectedRevision: target.revision,
-            pdfPath: pdf,
-            fileName: attachment.fileName,
-            actor: input.actor,
-            ...(attachment.retrieval ? { retrieval: attachment.retrieval } : {}),
-          });
-          target = attached.record;
-          const added = attached.record.attachments.find(
-            (entry) => entry.sha256 === attachment.sha256,
-          );
-          if (attached.outcome === "attached" && added) {
-            state.receipt.pdfs.push({
-              sourceId: target.sourceId,
-              attachmentId: added.attachmentId,
-            });
-          } else if (!added) {
-            state.failed.push({
-              part: "pdf",
-              item: `pdfs/${attachment.sha256}.pdf`,
-              message: attached.outcome,
-            });
-          }
-        } catch (error) {
-          state.failed.push({
-            part: "pdf",
-            item: `pdfs/${attachment.sha256}.pdf`,
-            message: message(error),
-          });
-        }
-      }
+      await withScientLibraryLock(library.root, () =>
+        placePackagedSource(context, folder, source, proposals),
+      );
     } catch (error) {
-      state.failed.push({ part: "source", item: projectSourceId, message: message(error) });
+      state.failed.push({ part: "source", item: source.projectSourceId, message: message(error) });
     }
   }
-  await withScientLibraryLock(library.root, () =>
-    recordScientProjectSourceMappings({
-      library,
-      instanceId,
-      mappings: [...mapped].map(([projectSourceId, sourceId]) => ({ projectSourceId, sourceId })),
-    }),
-  );
 
   const annotations = await importAnnotations(library, manifest, state, importedAt);
   const pins = await importProjectFiles(root, manifest, state, input.afterPinsLock);
   const reviews = await importReviews(root, manifest, state);
-  const collections = await importCollections(library, mapped, input.actor, state);
-  const pdfsAdded = state.receipt.pdfs.length;
+  const collections = manifest.files.some((file) => file.path === "organization.json")
+    ? await importCollections(library, context.mapped, input.actor, state)
+    : 0;
+  if (pins.historyAdded > 0) {
+    state.evidence.push(`${pins.historyAdded} earlier project-note versions in the note history`);
+  }
+  if (pins.notesKept > 0) {
+    state.evidence.push(`${pins.notesKept} other project notes in the note history`);
+  }
+  const { matched, pdfsPresent } = state.counts;
   await writeScientProjectPackageReceipt(library, {
     formatVersion: 1,
     importId,
@@ -882,11 +937,21 @@ export async function importScientProjectPackage(input: {
     added: {
       ...state.receipt,
       pins: pins.addedKeys,
-      versions: await importedVersions(library, root, state, pins.addedKeys),
+      created: {
+        sources: [...state.created.sources].map(([sourceId, revision]) => ({
+          sourceId,
+          revision,
+        })),
+        pins: pins.written.pins,
+        notes: pins.written.notes,
+        collections: state.created.collections,
+      },
     },
     joined: {
       sourceIds: [...state.joinedSourceIds],
       pinKeys: [...pins.joinedKeys],
+      collectionIds: [...state.joinedCollectionIds],
+      evidence: state.evidence,
       sources: matched,
       pdfs: pdfsPresent,
       annotationConflicts: annotations.conflicts,
@@ -900,7 +965,7 @@ export async function importScientProjectPackage(input: {
     outcome: "imported",
     importId,
     sources: { added: state.receipt.sources.length, matched },
-    pdfs: { added: pdfsAdded, present: pdfsPresent },
+    pdfs: { added: state.receipt.pdfs.length, present: pdfsPresent },
     annotations: annotations.joined,
     annotationConflicts: annotations.conflicts,
     pins,
@@ -909,6 +974,14 @@ export async function importScientProjectPackage(input: {
     unavailable: manifest.unavailable,
     failed: state.failed,
   };
+}
+
+/** Whether a package file, links resolved, stays inside the package folder (or is missing). */
+async function insidePackage(folder: string, path: string): Promise<boolean> {
+  const real = await NodeFSP.realpath(absolute(folder, path)).catch(() => null);
+  if (real === null) return true;
+  const relative = NodePath.relative(folder, real);
+  return relative !== "" && !relative.startsWith("..") && !NodePath.isAbsolute(relative);
 }
 
 /** Slash-separated, inside the package: no root, drive, backslash or `..` segment. */
@@ -1056,6 +1129,8 @@ async function importAnnotations(
         conflicts += next.conflicts;
         if (!existing) {
           state.receipt.annotationFiles.push({ path: relative, sha256: (await hashFile(target))! });
+        } else {
+          state.evidence.push(`highlights ${relative}`);
         }
       });
       joined += 1;
@@ -1098,6 +1173,7 @@ async function importProjectFiles(
       notesKept: 0,
       historyAdded: 0,
       renamedKeys: [],
+      written: { pins: [], notes: [] },
     };
   }
 }
@@ -1159,13 +1235,22 @@ async function importReviews(
         };
         const review = files.find((file) => file.path === reviewPath)!;
         if (keepAside) {
-          // One file in the layout the version picker reads, whether the package's was sharded.
-          const target = `${REVIEW_CONFLICTS}/${reviewId}/${tag}.works.json`;
-          const text = await keptSnapshotText(root, state.folder, reviewId, theirs, snapshots);
-          const sha256 = NodeCrypto.createHash("sha256").update(text).digest("hex");
-          if ((await hashFile(absolute(root, target))) !== sha256) {
-            await publishText(text, absolute(root, target));
-            published.push({ path: target, sha256 });
+          // Published as every snapshot is: one file, or shards once one would be too big.
+          const place = {
+            projectRoot: root,
+            directory: `${REVIEW_CONFLICTS}/${reviewId}`,
+            name: tag,
+            reviewId,
+          };
+          const entries = await keptSnapshotEntries(
+            root,
+            state.folder,
+            reviewId,
+            theirs,
+            snapshots,
+          );
+          if (await publishScientReviewSnapshotAt(place, entries)) {
+            published.push(...(await snapshotFiles(place)));
           }
         }
         const order =
@@ -1192,17 +1277,17 @@ async function importReviews(
 }
 
 /**
- * The package's snapshot of a review as one single-file snapshot: its file and its shards (shard
- * entries win, as readers do), plus this project's entries for records the package's review
- * names that its snapshot lacks, so choosing that version loses none.
+ * The package's snapshot of a review: its file and its shards (shard entries win, as readers do),
+ * plus this project's entries for records the package's review names that its snapshot lacks, so
+ * choosing that version loses none.
  */
-async function keptSnapshotText(
+async function keptSnapshotEntries(
   root: string,
   folder: string,
   reviewId: string,
   reviewText: string,
   snapshots: ReadonlyArray<{ readonly path: string }>,
-): Promise<string> {
+): Promise<ReadonlyMap<string, ScientReviewWork>> {
   const entries = new Map<string, ScientReviewWork>();
   const ordered = snapshots.toSorted(
     (left, right) => Number(left.path.includes(".works/")) - Number(right.path.includes(".works/")),
@@ -1220,20 +1305,22 @@ async function keptSnapshotText(
     const work = local.get(sourceId);
     if (!entries.has(sourceId) && work) entries.set(sourceId, work);
   }
-  return scientReviewSnapshotText(reviewId, entries);
+  return entries;
 }
 
-/** Writes text to a hidden name, then renames it into place; never over an existing file. */
-async function publishText(text: string, to: string): Promise<void> {
-  await ensureDirectory(NodePath.dirname(to));
-  const temporary = `${to}.${NodeCrypto.randomUUID()}.tmp`;
-  try {
-    await NodeFSP.writeFile(temporary, text, { encoding: "utf8", flag: "wx" });
-    if (await NodeFSP.lstat(to).catch(() => null)) throw new Error(`${to} already exists.`);
-    await NodeFSP.rename(temporary, to);
-  } finally {
-    await NodeFSP.rm(temporary, { force: true });
+/** The files a snapshot at `place` is now, project-relative, with their bytes' hashes. */
+async function snapshotFiles(
+  place: ScientReviewSnapshotPlace,
+): Promise<Array<{ path: string; sha256: string }>> {
+  const single = `${place.directory}/${place.name}.works.json`;
+  const shards = `${place.directory}/${place.name}.works`;
+  const names = await NodeFSP.readdir(absolute(place.projectRoot, shards)).catch(() => []);
+  const files = [];
+  for (const path of [single, ...names.toSorted().map((name) => `${shards}/${name}`)]) {
+    const sha256 = await hashFile(absolute(place.projectRoot, path));
+    if (sha256 !== null) files.push({ path, sha256 });
   }
+  return files;
 }
 
 /** Collections with their ancestry, parents before children; a same-named sibling here is joined. */
@@ -1296,10 +1383,17 @@ async function importCollections(
       if (entry.parentKey === undefined) byName.set(entry.name, change.collection.collectionId);
       if (change.outcome === "created") {
         state.receipt.collections.push(change.collection.collectionId);
-        state.collectionVersions.push({
+        state.created.collections.push({
           collectionId: change.collection.collectionId,
           updatedAt: change.collection.updatedAt,
         });
+      } else {
+        state.joinedCollectionIds.add(change.collection.collectionId);
+        if ("addedSourceIds" in change && change.addedSourceIds.length > 0) {
+          state.evidence.push(
+            `${change.addedSourceIds.length} papers in collection ${change.collection.collectionId}`,
+          );
+        }
       }
       count += 1;
     } catch (error) {

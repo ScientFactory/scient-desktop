@@ -507,6 +507,34 @@ export async function unpinScientProjectPinIfUnchanged(input: {
   });
 }
 
+/** Clears a pin's note only while it is still `note` on that source; a note-history checkpoint stays. */
+export async function clearScientProjectPinNoteIfUnchanged(input: {
+  readonly projectRoot: string;
+  readonly citationKey: string;
+  readonly sourceId: string;
+  readonly note: string;
+  readonly actor: ScientSourceActor;
+}): Promise<"cleared" | "not-pinned" | "changed"> {
+  const root = await projectRootFor(input.projectRoot);
+  return withPinsLock(root, async () => {
+    const document = await readPinsDocument(root);
+    const found = findPin(document.pins, input.citationKey);
+    if (!found) return "not-pinned";
+    if (found.pin.sourceId !== input.sourceId || found.pin.note !== input.note) return "changed";
+    const { note: _cleared, ...pin } = found.pin;
+    await recordScientProjectNoteChange(
+      root,
+      noteChange(found.pin, undefined, input.actor, undefined),
+    );
+    await writePinsDocument(
+      root,
+      document,
+      document.pins.map((stored) => (stored === found ? { ...stored, pin } : stored)),
+    );
+    return "cleared";
+  });
+}
+
 const PIN_READ_AHEAD = 64;
 
 export type ScientPinChangeResult =
@@ -1017,6 +1045,18 @@ export interface ScientProjectPinsJoin {
   readonly historyAdded: number;
   /** Incoming keys another source here already used, and the keys they got. */
   readonly renamedKeys: ReadonlyArray<{ readonly from: string; readonly to: string }>;
+  /** Each pin added and each note given to a pin without one, as written: Undo compares them. */
+  readonly written: {
+    readonly pins: ReadonlyArray<ScientProjectPinVersion>;
+    readonly notes: ReadonlyArray<ScientProjectPinVersion & { readonly note: string }>;
+  };
+}
+
+/** A pin as one writer left it. */
+export interface ScientProjectPinVersion {
+  readonly citationKey: string;
+  readonly sourceId: string;
+  readonly note: string | null;
 }
 
 /**
@@ -1047,6 +1087,8 @@ export async function joinScientProjectPins(input: {
     let notesAdded = 0;
     let notesKept = 0;
     const renamedKeys: Array<{ from: string; to: string }> = [];
+    const writtenPins: ScientProjectPinVersion[] = [];
+    const writtenNotes: Array<ScientProjectPinVersion & { note: string }> = [];
     for (const incoming of input.pins) {
       const index = pins.findIndex(({ pin }) => pin.sourceId === incoming.sourceId);
       const existing = index >= 0 ? pins[index]! : undefined;
@@ -1058,6 +1100,11 @@ export async function joinScientProjectPins(input: {
             ...noteChange(existing.pin, incoming.note, incoming.pinnedBy, undefined),
           });
           pins[index] = { ...existing, pin: { ...existing.pin, note: incoming.note } };
+          writtenNotes.push({
+            citationKey: existing.pin.citationKey,
+            sourceId: existing.pin.sourceId,
+            note: incoming.note,
+          });
           notesAdded += 1;
         } else {
           await recordScientProjectNoteFromElsewhere(root, {
@@ -1084,6 +1131,7 @@ export async function joinScientProjectPins(input: {
       taken.add(citationKeyComparisonValue(citationKey));
       pins.push({ pin: { ...incoming, citationKey }, extra: {}, workExtra: {} });
       addedKeys.push(citationKey);
+      writtenPins.push({ citationKey, sourceId: incoming.sourceId, note: incoming.note ?? null });
     }
     await writePinsDocument(root, document, pins);
     return {
@@ -1094,6 +1142,7 @@ export async function joinScientProjectPins(input: {
       notesKept,
       historyAdded,
       renamedKeys,
+      written: { pins: writtenPins, notes: writtenNotes },
     };
   });
 }
