@@ -463,6 +463,7 @@ export function decideRoomMessageSend(input: {
         author: item.author,
         sentBy,
         postedAt: DateTime.formatIso(startedAt),
+        text: item.text,
       },
     },
   });
@@ -493,7 +494,12 @@ export function guestDirectSend(input: {
         text: input.text,
         shareId: GuestShareId.make(input.room.id),
       },
-      room: { author, sentBy: author, postedAt: DateTime.formatIso(input.now) },
+      room: {
+        author,
+        sentBy: author,
+        postedAt: DateTime.formatIso(input.now),
+        text: input.text,
+      },
     },
   };
 }

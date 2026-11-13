@@ -293,6 +293,8 @@ export const RoomMessageAttribution = Schema.Struct({
   author: RoomAuthor,
   sentBy: RoomAuthor,
   postedAt: IsoDateTime,
+  /** The words as people saw them; the message text is what the agent got. */
+  text: Schema.optional(Schema.String.check(Schema.isMaxLength(ROOM_MESSAGE_MAX_LENGTH))),
 });
 export type RoomMessageAttribution = typeof RoomMessageAttribution.Type;
 
