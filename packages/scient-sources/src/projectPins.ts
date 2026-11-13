@@ -25,8 +25,8 @@ import {
 import {
   SCIENT_PIN_CITATION_TEXT_FIELDS,
   scientPinWorkIsComplete,
+  scientPinCitationStillUnknown,
   scientPinWorkKeepingUnknown,
-  scientRecordOnlyFromProjectFile,
   withKnownPinCitationValues,
 } from "./pinCitation.ts";
 import {
@@ -240,9 +240,23 @@ export function withScientProjectPinsLock<A>(
   return scientSourceStoreInternals.withOperationLock(`${projectRoot}:pins-write`, async () => {
     const directory = NodePath.join(projectRoot, ...SCIENT_PROJECT_LIBRARY_PATH);
     await NodeFSP.mkdir(directory, { recursive: true });
+    await ignoreRuntimeLock(directory);
     const lockPath = NodePath.join(await NodeFSP.realpath(directory), SCIENT_PROJECT_PINS_LOCK);
     return withScientFileLock(lockPath, run, options);
   });
+}
+
+/** The lock is this computer's runtime state, never project content: Git leaves it out. */
+async function ignoreRuntimeLock(directory: string): Promise<void> {
+  try {
+    await NodeFSP.writeFile(
+      NodePath.join(directory, ".gitignore"),
+      `${SCIENT_PROJECT_PINS_LOCK}\n`,
+      { flag: "wx" },
+    );
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+  }
 }
 
 const withPinsLock = <A>(root: string, run: () => Promise<A>) =>
@@ -951,7 +965,7 @@ export async function listScientProjectPinnedWorks(input: {
       record: { ...record, citationKey: pin.citationKey },
       projectNote,
       pinnedAt: pin.pinnedAt,
-      incompleteSnapshot: incomplete && scientRecordOnlyFromProjectFile(found),
+      incompleteSnapshot: scientPinCitationStillUnknown(pin.work, found),
     };
   });
 }

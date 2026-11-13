@@ -236,6 +236,59 @@ describe("project notes", () => {
     expect(history?.at(-1)).toMatchObject({ note: null, kind: "found" });
   });
 
+  it("keeps the first note however it was written, past every later checkpoint", async () => {
+    const { library, projectRoot, add } = await setup();
+    const pinned = await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: (await add("A")).sourceId,
+      actor: "user",
+      note: "First on pinning",
+    });
+    await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: (await add("B")).sourceId,
+      actor: "agent",
+    });
+    const keys = (await readScientProjectPins(projectRoot)).map((pin) => pin.citationKey);
+    const firstKey = pinned.outcome === "pinned" ? pinned.pin.citationKey : "";
+    const otherKey = keys.find((key) => key !== firstKey)!;
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey: otherKey,
+      note: "First added later",
+      actor: "agent",
+    });
+    for (const [key, first] of [
+      [firstKey, "First on pinning"],
+      [otherKey, "First added later"],
+    ] as const) {
+      let base = first;
+      for (let index = 0; index < SCIENT_PROJECT_NOTE_CHECKPOINTS + 3; index += 1) {
+        const next = `${key} ${index}`;
+        await setScientProjectPinNote({
+          projectRoot,
+          citationKey: key,
+          note: next,
+          base,
+          actor: "user",
+        });
+        base = next;
+      }
+      const history = await readScientProjectPinNoteHistory({ projectRoot, citationKey: key });
+      expect(history?.[0]).toMatchObject({ note: first });
+      expect(history).toHaveLength(SCIENT_PROJECT_NOTE_CHECKPOINTS + 1);
+    }
+    // The lock is runtime state: Git leaves it out, and nothing else.
+    expect(
+      await NodeFSP.readFile(
+        NodePath.join(projectRoot, ".scient", "library", ".gitignore"),
+        "utf8",
+      ),
+    ).toBe("pins.lock\n");
+  });
+
   it("waits for another process holding the project's pins lock, then sees its note", async () => {
     const { library, projectRoot, add } = await setup();
     const record = await add("A");

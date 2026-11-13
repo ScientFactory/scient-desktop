@@ -73,15 +73,15 @@ export function scientProjectNoteVersionsWithCurrent(
     : [...versions, { note: current, at: now, kind: "found" }];
 }
 
+/** The first note ever accepted (however it was written) and the latest checkpoints. */
 function pruned(
   versions: ReadonlyArray<ScientProjectNoteVersion>,
 ): ReadonlyArray<ScientProjectNoteVersion> {
-  const [first, ...rest] = versions;
-  if (!first) return versions;
-  if (first.kind === "original") {
-    return [first, ...rest.slice(-SCIENT_PROJECT_NOTE_CHECKPOINTS)];
-  }
-  return versions.slice(-SCIENT_PROJECT_NOTE_CHECKPOINTS);
+  const tail = Math.max(0, versions.length - SCIENT_PROJECT_NOTE_CHECKPOINTS);
+  const first = versions.findIndex((version) => (version.note ?? "").trim() !== "");
+  return first >= 0 && first < tail
+    ? [versions[first]!, ...versions.slice(tail)]
+    : versions.slice(tail);
 }
 
 export interface ScientProjectNoteChange {

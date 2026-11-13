@@ -130,3 +130,56 @@ it("keeps both texts when this project's note changed elsewhere, and saves mine 
   );
   await expect.element(page.getByText("Saved elsewhere")).not.toBeInTheDocument();
 });
+
+it("saves a restored earlier version as its own checkpoint, apart from this editor's autosave", async () => {
+  const saveProjectNote = vi.fn(
+    async (
+      note: string | null,
+      _expectedRevision: number,
+      _context: { readonly base: string | null; readonly session: string },
+    ) => ({
+      outcome: "updated" as const,
+      record: { ...record, ...(note ? { note } : {}), projectNote: note },
+    }),
+  );
+  await using _screen = await render(
+    <SourceDetails
+      record={{
+        ...record,
+        projectNoteHistory: [
+          { note: "The first reason", at: "2026-11-01T00:00:00.000Z", kind: "edit", by: "user" },
+          {
+            note: "Why I cite this here",
+            at: "2026-11-12T00:00:00.000Z",
+            kind: "edit",
+            by: "user",
+          },
+        ],
+      }}
+      diagnostics={[]}
+      library={{
+        canSavePersonalNote: false,
+        onSavePersonalNote: async () => ({ outcome: "unchanged", record }),
+      }}
+      onBack={() => undefined}
+      onEdit={() => undefined}
+      onSaveNote={saveProjectNote}
+      onRefreshMetadata={async () => undefined}
+      onRemove={async () => undefined}
+      onOpenPdf={() => undefined}
+    />,
+  );
+
+  await userEvent.click(page.getByRole("button", { name: "Edit note for this project" }));
+  await userEvent.keyboard(", typed");
+  await userEvent.tab();
+  await vi.waitFor(() => expect(saveProjectNote).toHaveBeenCalledTimes(1));
+
+  await userEvent.click(page.getByRole("button", { name: "Earlier versions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: /The first reason/ }));
+  await vi.waitFor(() => expect(saveProjectNote).toHaveBeenCalledTimes(2));
+  const [typed, restored] = saveProjectNote.mock.calls;
+  expect(restored?.[0]).toBe("The first reason");
+  // The same session within ten minutes would replace the typed checkpoint on the server.
+  expect(restored?.[2].session).not.toBe(typed?.[2].session);
+});
