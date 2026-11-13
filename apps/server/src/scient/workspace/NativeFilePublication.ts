@@ -1055,6 +1055,7 @@ export async function withNativeFilePublicationLease<T>(
     }
   });
   child.on("error", (error) => {
+    if (child.pid === undefined) helperLaunchFailed(helperPath);
     failProtocol(`Native lease process failed: ${error.message}`);
   });
   child.stdin.on("error", (error) => {

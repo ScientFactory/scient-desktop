@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as HostProcess from "./HostProcess.ts";
-import { securityDescriptorRefusal } from "./windowsSecurityDescriptor.ts";
+import { securityDescriptorRefusal, type WindowsUser } from "./windowsSecurityDescriptor.ts";
 
 /** How long one native check (PowerShell's permission check, a capability inquiry) may run. */
 export const NATIVE_CHECK_DEADLINE_MS = 10_000;
@@ -166,13 +166,13 @@ foreach ($path in $env:SCIENT_PUBLICATION_ACL_PATHS -split '\\n') { (Get-Acl -Li
 export function windowsPermissionsRefusal(
   targets: ReadonlyArray<{ readonly path: string; readonly mask: number }>,
   output: string,
-  userSid: string,
+  user: WindowsUser,
 ) {
   const descriptors = output.split(/\r?\n/u).filter((line) => line.trim() !== "");
   if (descriptors.length !== targets.length)
     return "Native resource permissions were not read for every folder.";
   for (const [index, { path, mask }] of targets.entries()) {
-    const refusal = securityDescriptorRefusal(descriptors[index]!.trim(), mask, userSid);
+    const refusal = securityDescriptorRefusal(descriptors[index]!.trim(), mask, user);
     if (refusal !== undefined) return `${refusal} (${path})`;
   }
   return undefined;
@@ -210,39 +210,35 @@ const runPermissionsProgram = (
     );
     const pastDeadline = armNativeCheckDeadline(child);
   });
-let userSid: Promise<string> | undefined;
-/** The user's SID, which `whoami` gives without .NET. */
+let currentUser: Promise<WindowsUser> | undefined;
+/** The user's SID, which `whoami` gives without .NET, and whether it is a local account. */
 export function windowsUserSid() {
-  userSid ??= runPermissionsProgram("whoami.exe", ["/user", "/fo", "csv", "/nh"]).then((output) => {
-    const sid = /"(S-1-\d+(?:-\d+)+)"\s*$/u.exec(output)?.[1];
-    if (sid === undefined) throw new Error("whoami did not report the user's SID.");
-    return sid;
+  currentUser ??= runPermissionsProgram("whoami.exe", ["/user", "/fo", "csv", "/nh"]).then(
+    (output) => {
+      const found = /^"([^"\\]*)\\[^"]*","(S-1-\d+(?:-\d+)+)"\s*$/u.exec(output.trim());
+      if (found === undefined || found === null)
+        throw new Error("whoami did not report the user's SID.");
+      const computer = process.env.COMPUTERNAME;
+      return {
+        sid: found[2]!,
+        local: computer !== undefined && found[1]!.toUpperCase() === computer.toUpperCase(),
+      };
+    },
+  );
+  currentUser.catch(() => {
+    currentUser = undefined;
   });
-  userSid.catch(() => {
-    userSid = undefined;
-  });
-  return userSid;
+  return currentUser;
 }
 /**
- * The Windows permission check ran and refused: asking again soon costs another PowerShell
- * launch for the same answer. A deadline is not a refusal.
+ * The permissions were read and refuse the helper: asking again soon costs another PowerShell
+ * launch for the same answer. A failed launch, a failed read or a deadline is not one.
  */
 // @effect-diagnostics-next-line extendsNativeError:off -- Plain-Promise validation; callers test it with instanceof.
 export class WindowsPermissionsRefusedError extends Error {}
 async function checkWindowsPermissions(helper: string) {
-  try {
-    await checkWindowsPermissionsOnce(helper);
-  } catch (error) {
-    if (error instanceof NativeCheckDeadlineError) throw error;
-    throw new WindowsPermissionsRefusedError(
-      error instanceof Error ? error.message : String(error),
-      { cause: error },
-    );
-  }
-}
-async function checkWindowsPermissionsOnce(helper: string) {
   const targets = windowsPermissionTargets(helper);
-  const [sid, output] = await Promise.all([
+  const [user, output] = await Promise.all([
     windowsUserSid(),
     runPermissionsProgram(
       "WindowsPowerShell/v1.0/powershell.exe",
@@ -255,6 +251,6 @@ async function checkWindowsPermissionsOnce(helper: string) {
       { SCIENT_PUBLICATION_ACL_PATHS: targets.map(({ path }) => path).join("\n") },
     ),
   ]);
-  const refusal = windowsPermissionsRefusal(targets, output, sid);
-  if (refusal !== undefined) throw new Error(refusal);
+  const refusal = windowsPermissionsRefusal(targets, output, user);
+  if (refusal !== undefined) throw new WindowsPermissionsRefusedError(refusal);
 }

@@ -8,7 +8,8 @@ import {
 
 const HELPER = 0xd0156;
 const ANCESTOR = 0xd0040;
-const USER = "S-1-5-21-1004336348-1177238915-682003330-1001";
+const USER_SID = "S-1-5-21-1004336348-1177238915-682003330-1001";
+const USER = { sid: USER_SID, local: true };
 const TI = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 const owned = (owner: string, dacl: string) => `O:${owner}G:${owner}D:${dacl}`;
 const writable = "Native resource is writable by another principal.";
@@ -17,11 +18,11 @@ const writable = "Native resource is writable by another principal.";
 const PROGRAM_FILES = `O:${TI}G:${TI}D:PAI(A;;FA;;;${TI})(A;CIIO;GA;;;${TI})(A;;0x1301bf;;;SY)(A;OICIIO;GA;;;SY)(A;;0x1301bf;;;BA)(A;OICIIO;GA;;;BA)(A;;0x1200a9;;;BU)(A;OICIIO;GXGR;;;BU)(A;OICIIO;GA;;;CO)(A;;0x1200a9;;;AC)(A;OICIIO;GXGR;;;AC)(A;;0x1200a9;;;S-1-15-2-2)(A;OICIIO;GXGR;;;S-1-15-2-2)`;
 const INSTALLED = `O:BAG:SYD:AI(A;ID;FA;;;${TI})(A;CIIOID;GA;;;${TI})(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)`;
 const USERS = `O:SYG:SYD:PAI(A;OICIIO;GA;;;CO)(A;OICIIO;GA;;;SY)(A;;0x1301bf;;;SY)(A;OICIIO;GA;;;BA)(A;;0x1301bf;;;BA)(A;OICIIO;GXGR;;;BU)(A;;0x1200a9;;;BU)(A;CIIO;GXGR;;;WD)(A;;0x1200a9;;;WD)`;
-const PROFILE = `O:${USER}G:${USER}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${USER})`;
-const LOCAL_PROGRAMS = `O:${USER}G:S-1-5-21-1004336348-1177238915-682003330-513D:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;${USER})`;
+const PROFILE = `O:${USER_SID}G:${USER_SID}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${USER_SID})`;
+const LOCAL_PROGRAMS = `O:${USER_SID}G:S-1-5-21-1004336348-1177238915-682003330-513D:AI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;${USER_SID})`;
 const DRIVE = `O:${TI}G:${TI}D:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;BU)(A;OICIIO;SDGXGWGR;;;AU)(A;;LC;;;AU)`;
 // A folder made directly under C:\ inherits Authenticated Users: Modify.
-const UNDER_DRIVE = `O:${USER}G:${USER}D:AI(A;ID;FA;;;BA)(A;OICIIOID;FA;;;BA)(A;ID;FA;;;SY)(A;OICIIOID;FA;;;SY)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;ID;0x1301bf;;;AU)(A;OICIIOID;SDGXGWGR;;;AU)`;
+const UNDER_DRIVE = `O:${USER_SID}G:${USER_SID}D:AI(A;ID;FA;;;BA)(A;OICIIOID;FA;;;BA)(A;ID;FA;;;SY)(A;OICIIOID;FA;;;SY)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;ID;0x1301bf;;;AU)(A;OICIIOID;SDGXGWGR;;;AU)`;
 // `icacls <folder> /grant Everyone:(OI)(CI)M` on the helper's folder.
 const WEAKENED = `${LOCAL_PROGRAMS}(A;OICI;0x1301bf;;;WD)`;
 
@@ -109,7 +110,7 @@ describe("a Windows security descriptor", () => {
   });
 
   it.each([
-    ["the user", USER, true],
+    ["the user", USER_SID, true],
     ["SYSTEM", "SY", true],
     ["Administrators", "BA", true],
     ["TrustedInstaller", TI, true],
@@ -125,11 +126,17 @@ describe("a Windows security descriptor", () => {
     );
   });
 
-  it("treats the machine's Administrator as the user only when the user is that account", () => {
-    const administrator = "S-1-5-21-1004336348-1177238915-682003330-500";
+  it("treats the machine's Administrator or Guest as the user only when the user is that local account", () => {
+    const administrator = { sid: "S-1-5-21-1004336348-1177238915-682003330-500", local: true };
     const profile = owned("BA", "(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)");
     expect(securityDescriptorRefusal(profile, HELPER, administrator)).toBeUndefined();
     expect(securityDescriptorRefusal(profile, HELPER, USER)).toBe(writable);
+    // A domain account with the same RID is someone else: LA and LG are the machine's own.
+    expect(securityDescriptorRefusal(profile, HELPER, { ...administrator, local: false })).toBe(
+      writable,
+    );
+    const domainGuest = { sid: "S-1-5-21-111-222-333-501", local: false };
+    expect(securityDescriptorRefusal("O:SYD:(A;;FA;;;LG)", HELPER, domainGuest)).toBe(writable);
   });
 
   it("never counts a grant to Creator Owner or Owner Rights as the user's", () => {

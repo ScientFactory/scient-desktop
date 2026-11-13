@@ -249,15 +249,23 @@ export function parseSecurityDescriptor(sddl: string): SecurityDescriptor {
 
 const TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
+/** The account the server runs as. A local account's SID starts with the machine's own. */
+export interface WindowsUser {
+  readonly sid: string;
+  readonly local: boolean;
+}
+
 /**
- * The user, SYSTEM, Administrators or TrustedInstaller. `whoami` gives no machine SID, so
- * the machine's own LA and LG count as the user exactly when the user's RID is theirs.
+ * The user, SYSTEM, Administrators or TrustedInstaller. The machine's LA and LG are the user
+ * only when the user is that local account; for any other user they name someone else.
  */
-function trusted(who: Principal, userSid: string) {
+function trusted(who: Principal, user: WindowsUser) {
   if ("sid" in who)
-    return [userSid, "S-1-5-18", "S-1-5-32-544", TRUSTED_INSTALLER].includes(who.sid);
+    return [user.sid, "S-1-5-18", "S-1-5-32-544", TRUSTED_INSTALLER].includes(who.sid);
   return (
-    who.domain === "local" && new RegExp(`^S-1-5-21-\\d+-\\d+-\\d+-${who.rid}$`, "u").test(userSid)
+    who.domain === "local" &&
+    user.local &&
+    new RegExp(`^S-1-5-21-\\d+-\\d+-\\d+-${who.rid}$`, "u").test(user.sid)
   );
 }
 
@@ -266,21 +274,21 @@ function trusted(who: Principal, userSid: string) {
  * own the object or hold any of `mask`'s rights on it; undefined when none can. Deny ACEs
  * only take rights away and conditions may hold, so neither ever counts in its favor.
  */
-export function securityDescriptorRefusal(sddl: string, mask: number, userSid: string) {
+export function securityDescriptorRefusal(sddl: string, mask: number, user: WindowsUser) {
   let descriptor: SecurityDescriptor;
   try {
     descriptor = parseSecurityDescriptor(sddl);
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
-  if (descriptor.owner === undefined || !trusted(descriptor.owner, userSid))
+  if (descriptor.owner === undefined || !trusted(descriptor.owner, user))
     return "Unexpected native resource owner.";
   if (descriptor.dacl == null) return "Native resource has no access control list.";
   for (const entry of descriptor.dacl)
     if (
       ALLOWING.has(entry.type) &&
       !entry.inheritOnly &&
-      !trusted(entry.principal, userSid) &&
+      !trusted(entry.principal, user) &&
       (fileRights(entry.rights) & mask) !== 0
     )
       return "Native resource is writable by another principal.";
