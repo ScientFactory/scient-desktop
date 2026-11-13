@@ -356,6 +356,7 @@ const PLATFORM_VALUES = new Set(["macos", "windows", "linux", "other"]);
 const ARCHITECTURE_VALUES = new Set(["arm64", "x64", "other"]);
 const SHUTDOWN_CLASSES = new Set(["graceful", "forced", "crash", "unknown"]);
 const TURN_FAILURE_CLASSES = new Set([
+  "usage_limit",
   "provider_error",
   "transport_error",
   "permission_error",
@@ -533,6 +534,7 @@ const TOOL_MODES = new Set(["async", "wait"]);
 const TOOL_WORKSPACES = new Set(["scratch", "root", "worktree", "existing_worktree"]);
 const DELEGATED_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const DELEGATED_TASK_WAKES = new Set(["always", "settled_only"]);
+const DELEGATED_TASK_FAILURE_PHASES = ["before_provider", "provider", "unknown"];
 const SURFACES = new Set([
   "files",
   "preview",
@@ -685,6 +687,14 @@ function optionalProperties(
       properties[key] = value as string;
   }
   return properties;
+}
+
+/** A provider's HTTP status, kept only as a real status code. */
+function httpStatusProperty(input: Readonly<Record<string, unknown>>): { httpStatus?: number } {
+  const value = property(input, "httpStatus");
+  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599
+    ? { httpStatus: value }
+    : {};
 }
 
 function clientProperties(input: Readonly<Record<string, unknown>>) {
@@ -1147,7 +1157,18 @@ function normalizeEvent(
             crossProvider: "boolean",
             completionWake: DELEGATED_TASK_WAKES,
             durationSeconds: "count",
+            failureClass: TURN_FAILURE_CLASSES,
+            failureCode: "identifier",
           }),
+          ...(property(input, "failurePhase") === undefined
+            ? {}
+            : {
+                failurePhase: closedCategory(
+                  property(input, "failurePhase"),
+                  DELEGATED_TASK_FAILURE_PHASES,
+                ),
+              }),
+          ...httpStatusProperty(input),
         },
       };
     case "provider.session.started":
@@ -1314,6 +1335,7 @@ function normalizeEvent(
           ...optionalProperties(input, {
             browserToolCalls: "count",
             browserToolFailures: "count",
+            retryAttempts: "count",
           }),
         },
       };
@@ -1325,7 +1347,13 @@ function normalizeEvent(
         properties: {
           provider,
           modelKey: modelKey(property(input, "model")),
-          ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
+          ...optionalProperties(input, {
+            browserToolCalls: "count",
+            browserToolFailures: "count",
+            retryAttempts: "count",
+            failureCode: "identifier",
+          }),
+          ...httpStatusProperty(input),
           failureClass: normalizedEnum(property(input, "failureClass"), TURN_FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
         },

@@ -28,6 +28,8 @@ import {
 } from "./scient-provider/ProviderTextSnapshots.ts";
 // SCIENT-FORK:END
 import { makePiSessionFileLeases } from "./scient-provider/PiSessionFileLeases.ts";
+// SCIENT-FORK: a stalled retry keeps its provider code, or names the stall.
+import { stalledRetryFailure } from "./scient-provider/StalledRetryFailure.ts";
 import { makeSessionAuthority, POLICY_RUN_STATUSES } from "./scient-provider/SessionAuthority.ts";
 import {
   makeStartupSessionReservations,
@@ -3038,7 +3040,8 @@ export const layerWithOptions = (
               runOrdinal: event.runOrdinal,
               failureItemOrdinal: stalled.ordinal,
               status: "failed",
-              failure: { ...stalled.failure, retryable: false },
+              // SCIENT-FORK: a stalled retry keeps its provider code, or names the stall.
+              failure: stalledRetryFailure(stalled.failure),
               retry: stalled.retry,
               ...(stalled.startedAt === null ? {} : { retryStartedAt: stalled.startedAt }),
               threadDisposition: event.threadDisposition,

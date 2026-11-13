@@ -1122,6 +1122,10 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                       ? {}
                       : { failureClass: update.failureClass }),
                     ...(update.resetAt === undefined ? {} : { resetAt: update.resetAt }),
+                    ...(update.failureCode === undefined
+                      ? {}
+                      : { failureCode: update.failureCode }),
+                    ...(update.httpStatus === undefined ? {} : { httpStatus: update.httpStatus }),
                     ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
                     broken,
                   }),
@@ -1147,6 +1151,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     status: "failed",
                     detail: `${processLossDescription} Its turn outcome is unknown.`,
                     failureClass: "unknown",
+                    failureCode: "process_exit",
                     broken: true,
                   }),
                 ),
@@ -2008,8 +2013,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                             ? client.redaction.text(cause.message)
                             : `${client.redaction.text(cause.message)} ${target.name} did not confirm this turn; its outcome is unknown.`,
                         ...(cause._tag === "OmpRpcCommandError"
-                          ? {}
-                          : { failureClass: "unknown" as const }),
+                          ? {
+                              failureCode:
+                                cause.code === "timeout" ? "command_timeout" : "command_rejected",
+                            }
+                          : { failureClass: "unknown" as const, failureCode: "rpc_failed" }),
                         broken: cause._tag !== "OmpRpcCommandError",
                       }),
                     ),

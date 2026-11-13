@@ -122,6 +122,10 @@ const representativeProperties = {
   commandCount: 3,
   failedCount: 1,
   stoppedCount: 1,
+  failureCode: "context-overflow",
+  httpStatus: 400,
+  retryAttempts: 2,
+  failurePhase: "provider",
 };
 // Content sentinels must not reach the wire; account email is the explicit exception.
 const privateProperties = {
@@ -281,6 +285,23 @@ export function buildAnalyticsConformanceFixture() {
       failureCategory: "PrivatePatientStudyError",
       actor: "someone@example.invalid",
       entry: "/private/fixture.py",
+    }),
+    // A failure code is an identifier and a status is a real HTTP status, or neither is sent.
+    fixtureCase("failure-cause-hostile", "provider.turn.failed", {
+      provider: "scient",
+      model: "gpt-5.6-sol",
+      failureClass: "provider_error",
+      failureCode: "PRIVATE CONTENT /private/fixture",
+      httpStatus: 4040,
+      retryAttempts: -1,
+    }),
+    fixtureCase("delegated-failure-hostile", "mcp.delegated_task.finished", {
+      status: "failed",
+      callerProvider: "claudeAgent",
+      targetProvider: "scient",
+      failurePhase: "PRIVATE-CONTENT",
+      failureCode: "someone@example.invalid",
+      httpStatus: 99.5,
     }),
     fixtureCase("command-hostile", "provider.commands.observed", {
       provider: "codex",
