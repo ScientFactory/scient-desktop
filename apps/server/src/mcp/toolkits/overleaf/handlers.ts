@@ -157,7 +157,12 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
             ? toolError("connection-changed", error.message)
             : field("reason") === "folder-changed"
               ? toolError("connection-not-ready", error.message)
-              : toolError("connection-not-ready", `${error.message} ${LIST_LINKS}`),
+              : field("reason") === "corrupt" || field("reason") === "unsupported"
+                ? toolError(
+                    "connection-not-ready",
+                    `${error.message} Ask the user to check Settings ▸ Synced folders ▸ Overleaf; it can't be settled from a tool.`,
+                  )
+                : toolError("connection-not-ready", `${error.message} ${LIST_LINKS}`),
       );
     case "CheckoutRecoveryRequiredError":
       return Effect.succeed(
@@ -358,8 +363,9 @@ const MANAGE_REFUSALS: Record<OverleafConnectionRefusal, string> = {
     "That is not an Overleaf project link or ID. Use the project's link (https://www.overleaf.com/project/<id>) or its 24-character ID.",
 };
 
-const manageRefusalLine = (reason: string) =>
-  `Nothing changed: ${overleafFilesystemRefusalText(reason) ?? MANAGE_REFUSALS[reason as OverleafConnectionRefusal] ?? reason}`;
+/** `afterProgress`: an interrupted sync was finished first, so something did change. */
+const manageRefusalLine = (reason: string, afterProgress = false) =>
+  `${afterProgress ? "The interrupted sync was finished first, then this stopped" : "Nothing changed"}: ${overleafFilesystemRefusalText(reason) ?? MANAGE_REFUSALS[reason as OverleafConnectionRefusal] ?? reason}`;
 
 /** File kinds that suggest a folder holds more than a paper. */
 const CODE_OR_DATA =
@@ -756,7 +762,7 @@ export const overleafManageForInvocation = Effect.fn("ScientOverleafToolkit.mana
           lines: [
             result._tag === "done"
               ? `Disconnected ${result.connection.folder === "" ? "the project's top folder" : `${result.connection.folder}/`} from Overleaf.${result.finishedInterruptedSync ? " The interrupted sync was finished first." : ""} Nothing was deleted on either side; connecting the same folder to the same project again keeps its history.`
-              : manageRefusalLine(result.reason),
+              : manageRefusalLine(result.reason, result.finishedInterruptedSync === true),
           ],
           result,
         };

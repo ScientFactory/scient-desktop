@@ -11,7 +11,7 @@ import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { ThreadId } from "@t3tools/contracts";
+import { overleafFilesystemRefusalText, ThreadId } from "@t3tools/contracts";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -88,6 +88,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       "workspace-not-authorized",
       /** No Overleaf token is saved. */
       "token-missing",
+      /** A token to save is empty, too long, or has spaces inside it. */
+      "token-invalid",
       "project-invalid",
       /** Overleaf refused the token or this account's access to the project. */
       "access-denied",
@@ -111,6 +113,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
         return "This Overleaf link does not belong to this project.";
       case "token-missing":
         return "No Overleaf Git token is saved. Save one first.";
+      case "token-invalid":
+        return "That isn't an Overleaf Git token. Copy it again from Overleaf.";
       case "project-invalid":
         return "That is not an Overleaf project link or ID.";
       case "access-denied":
@@ -280,6 +284,12 @@ export const overleafRefusalReason = (error: { readonly _tag: string }): string 
         );
 };
 
+/** The files an editor-save failure names, as a refusal carries them. */
+const editorUnsavedPaths = (error: OverleafEditorUnsavedError) => {
+  const paths = error.failures.map((failure) => failure.path);
+  return paths.length === 0 ? {} : { path: paths[0]!, ...(paths.length > 1 ? { paths } : {}) };
+};
+
 const isActionable = (error: unknown): error is { readonly _tag: string } =>
   typeof error === "object" &&
   error !== null &&
@@ -303,7 +313,15 @@ const refusedAfterProgress =
         (error) =>
           Effect.succeed({
             _tag: "refused" as const,
-            refusal: { reason: overleafRefusalReason(error) },
+            refusal: {
+              reason: overleafRefusalReason(error),
+              message:
+                overleafFilesystemRefusalText(overleafRefusalReason(error)) ??
+                (error as unknown as { readonly message: string }).message,
+              ...(error._tag === "OverleafEditorUnsavedError"
+                ? editorUnsavedPaths(error as unknown as OverleafEditorUnsavedError)
+                : {}),
+            },
             retried: progress.retried,
             settled: progress.settled,
           }),
@@ -331,7 +349,12 @@ export type OverleafSyncOutcome =
   | ({
       readonly _tag: "refused";
       /** The review's refusal, or an actionable refusal raised after progress. */
-      readonly refusal: { readonly reason: string; readonly path?: string };
+      readonly refusal: {
+        readonly reason: string;
+        readonly path?: string;
+        readonly paths?: ReadonlyArray<string>;
+        readonly message?: string;
+      };
     } & OverleafSyncProgress)
   /** A repeated request: its receipt, never a second sync. */
   | {
@@ -732,7 +755,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const saveToken = Effect.fn("OverleafSync.saveToken")(function* (token: string) {
     const trimmed = token.trim();
     if (trimmed.length === 0 || /\s/u.test(trimmed) || trimmed.length > 512)
-      return yield* new OverleafSyncRefusedError({ reason: "token-missing" });
+      return yield* new OverleafSyncRefusedError({ reason: "token-invalid" });
     yield* credentialLock.withPermits(CREDENTIAL_PERMITS)(
       Effect.gen(function* () {
         yield* secrets.set(TOKEN_SECRET, new TextEncoder().encode(trimmed));
@@ -1343,12 +1366,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       callerBindingId,
       stillAuthorized: stillOwner,
     });
-    if (result._tag !== "done") return result;
-    return {
-      ...result,
-      finishedInterruptedSync:
-        recovered !== null && Exit.isSuccess(recovered) && recovered.value._tag === "recovered",
-    };
+    const finishedInterruptedSync =
+      recovered !== null && Exit.isSuccess(recovered) && recovered.value._tag === "recovered";
+    return { ...result, finishedInterruptedSync };
   });
 
   /**

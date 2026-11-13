@@ -300,6 +300,9 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
           reason: "token-missing",
         });
         expect(yield* w.service.tokenStatus).toEqual({ saved: false });
+        expect(yield* Effect.flip(w.service.saveToken("olp_first half"))).toMatchObject({
+          reason: "token-invalid",
+        });
         yield* w.service.saveToken(` ${TOKEN} `);
         expect(yield* w.service.tokenStatus).toEqual({ saved: true });
         expect(
@@ -1343,7 +1346,10 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
           yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
         ).toMatchObject({
           _tag: "refused",
-          refusal: { reason: "authority-changed" },
+          refusal: {
+            reason: "authority-changed",
+            message: "This project's workspace changed during the Overleaf operation. Try again.",
+          },
           settled: { outcome: "complete" },
         });
         expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");

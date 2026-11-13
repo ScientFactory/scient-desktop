@@ -683,6 +683,28 @@ describe("Overleaf tool handlers", () => {
     }),
   );
 
+  it.effect("a refused disconnect says when it finished an interrupted sync first", () =>
+    Effect.gen(function* () {
+      const disconnect = (finishedInterruptedSync: boolean) =>
+        overleafManageForInvocation({ connectionId: "c-1", action: "disconnect" }).pipe(
+          provide(
+            fakeOverleaf({
+              disconnect: () =>
+                Effect.succeed({
+                  _tag: "refused",
+                  reason: "records-unreadable",
+                  finishedInterruptedSync,
+                }) as never,
+            }),
+          ),
+        );
+      expect((yield* disconnect(true)).lines[0]).toMatch(
+        /^The interrupted sync was finished first, then this stopped: /u,
+      );
+      expect((yield* disconnect(false)).lines[0]).toMatch(/^Nothing changed: /u);
+    }),
+  );
+
   it.effect("says when Overleaf moved under the choices, so they don't answer the new review", () =>
     Effect.gen(function* () {
       const review = {

@@ -12,6 +12,7 @@ import type {
   ScientOverleafSyncResult,
   ScientOverleafDiffFile,
   ScientOverleafUndoResult,
+  ScientOverleafUnreadableRecord,
 } from "@t3tools/contracts";
 
 /** Overleaf's own page for a project. */
@@ -155,7 +156,11 @@ export function overleafChipView(
       detail: "A conflict with Overleaf needs a choice.",
     };
   if (last?._tag === "refused")
-    return { state: "problem", label: "Couldn't sync", detail: refusalText(last.refusal) };
+    return {
+      state: "problem",
+      label: "Couldn't sync",
+      detail: refusalText(last.refusal, "sync", last.settled !== null || last.retried),
+    };
   if (status === null) return { state: "up-to-date", label: "Overleaf", detail: "" };
   if (status.availability === "unavailable" || status.availability === "disconnected") {
     return {
@@ -224,19 +229,40 @@ export function overleafChipView(
   };
 }
 
-/** Plain words for a refusal or failure reason, from the engine's fixed categories. */
+/**
+ * Plain words for a refusal or failure reason, from the engine's fixed categories; for a
+ * reason this release doesn't know, the server's own sentence when the refusal carries one.
+ */
 export function refusalText(
   refusal: ScientOverleafRefusal,
   action: "sync" | "connect" = "sync",
+  /** The sync had already changed the folder, so the refusal can't say nothing changed. */
+  afterProgress = false,
 ): string {
+  return (
+    knownRefusalText(refusal, action, afterProgress) ??
+    refusal.message ??
+    `Sync stopped (${refusal.reason}).`
+  );
+}
+
+function knownRefusalText(
+  refusal: ScientOverleafRefusal,
+  action: "sync" | "connect",
+  afterProgress: boolean,
+): string | null {
+  const unchanged = afterProgress ? "so the sync stopped there" : "so nothing was changed";
   const filesystem = overleafFilesystemRefusalText(refusal.reason);
   if (filesystem !== null) return filesystem;
-  const at = refusal.path ? ` (${refusal.path})` : "";
+  const names = refusal.paths ?? (refusal.path ? [refusal.path] : []);
+  const at = names.length > 0 ? ` (${names.join(", ")})` : "";
   switch (refusal.reason) {
     case "volume-unavailable":
       return "The disk holding this project is not connected.";
     case "no-volume-identity":
       return "This disk does not report a stable identity, so Scient cannot keep replaced files safely on it.";
+    case "sync-managed-folder":
+      return "Scient can't keep copies of replaced files in a folder a cloud service syncs. Move the project out of the cloud folder, then link it again.";
     case "read-only-parent":
       return "Scient cannot create its folder for kept files beside this project, because that location is read-only.";
     case "shared-parent":
@@ -251,6 +277,8 @@ export function refusalText(
       return "The folder for kept files is not the one this connection recorded.";
     case "token-missing":
       return "No Overleaf token is saved. Add one in Settings ▸ Synced folders ▸ Overleaf.";
+    case "token-invalid":
+      return "That isn't an Overleaf Git token. Copy it again from Overleaf.";
     case "access-denied":
       return "Overleaf refused this project. Check the link, that the project is shared with your account, and your Overleaf token in Settings ▸ Synced folders.";
     case "project-not-found":
@@ -280,6 +308,13 @@ export function refusalText(
     case "folder-changed":
     case "folder-unavailable":
       return "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.";
+    case "archived":
+      return "This folder was unlinked from Overleaf. Link it again to sync.";
+    case "missing":
+      return "This folder's Overleaf link is gone. Link the folder again.";
+    case "corrupt":
+    case "unsupported":
+      return "Scient can't read this folder's Overleaf link record. See Settings › Synced folders › Overleaf.";
     case "folder-not-empty":
       return "A folder with that name already has files. Pick another name, or link it instead.";
     case "folder-outside-checkout":
@@ -300,6 +335,10 @@ export function refusalText(
     case "checkout-recovery-required":
     case "recovery-required":
       return "An earlier sync didn't finish. Sync again to finish it.";
+    case "unreadable-record":
+      return "Scient can't read one of its Overleaf link records. See Settings › Synced folders › Overleaf.";
+    case "newer-unfinished-record":
+      return "A newer version of Scient left an Overleaf sync unfinished. Finish it in that version, then try again.";
     case "state-locked":
       return "Another Scient process holds the Overleaf state. Close it and sync again.";
     case "walk-limit":
@@ -334,6 +373,11 @@ export function refusalText(
     case "path-alias":
     case "alias-rename":
       return `Two names differ only by letter case or accents${at}. Rename one and sync again.`;
+    case "held-file-clash":
+      return `A file waiting for its conflict marks keeps its place on Overleaf, where this sync puts another file or folder${at}. Settle its marks, or move the other one.`;
+    case "not-selectable":
+    case "not-local-only":
+      return `A file chosen for this sync changed or is gone${at}. Check the changes again, then sync.`;
     case "remote-forbidden":
       return `Overleaf sent something Scient won't write: a link, a repository or a Git LFS pointer${at}.`;
     case "unreviewed-path":
@@ -342,21 +386,21 @@ export function refusalText(
     case "git-folder":
       return "The folder is inside Git's own folders.";
     case "retained-limit":
+      return "This would record more than Scient can track for one link. Settle conflict marks, kept copies or earlier sends first.";
     case "retention-unavailable":
       return "Scient can't keep copies of replaced files on this disk right now.";
     case "connection-unavailable":
-    case "connection-not-ready":
       return "This folder's link isn't ready. Sync again.";
     case "request-reused":
       return "This request was already used. Try again.";
     case "request-incomplete":
       return "An earlier attempt stopped before it finished, so it isn't run again. Try again.";
     case "records-unreadable":
-      return "Scient can't read one of its Overleaf link records, so nothing was linked or changed. Set it aside in Settings › Synced folders › Overleaf.";
+      return `Scient can't read one of its Overleaf link records, ${afterProgress ? "so the sync stopped there" : "so nothing was linked or changed"}. See Settings › Synced folders › Overleaf.`;
     case "editor-unsaved":
       return refusal.path
-        ? `${refusal.path} has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.`
-        : "An open Scient window didn't answer the request to save its editors, so nothing was changed. Try again.";
+        ? `${refusal.path} has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again.${afterProgress ? "" : " Nothing was changed."}`
+        : `An open Scient window didn't answer the request to save its editors, ${unchanged}. Try again.`;
     case "overleaf-moved":
       return "Overleaf kept changing while the conflicts were shown. Sync again.";
     case "folder-kept-changing":
@@ -364,38 +408,47 @@ export function refusalText(
     case "recovery-repeated":
       return "An interrupted sync couldn't be finished. Sync again.";
     default:
-      return `Sync stopped (${refusal.reason}).`;
+      return null;
   }
 }
 
-/** What an operation's thrown error says: the server's fixed reason when it gave one. */
 /** What any other failure says: no address, status or serialized error reaches the screen. */
 export const OVERLEAF_REQUEST_FAILED = "The Overleaf request didn't go through. Try again.";
 
 const REASON = /^[a-z][a-z-]{0,63}$/u;
 
+/** Reasons whose server sentence says more than the app's line: which files, which limit. */
+const SERVER_EXPLAINS: ReadonlySet<string> = new Set(["editor-unsaved", "retained-limit"]);
+
 /**
- * What an operation's thrown error says. The server's typed refusal
- * (`ScientOverleafOperationError`) and the app's own reasoned errors carry a
- * fixed reason, mapped to its words. Typed editor-save failures preserve the server's
- * explanation; anything else gets one fixed line.
+ * What an operation's thrown error says: its fixed reason in the app's words, or the
+ * server's fixed sentence for a reason this release doesn't know. Anything else gets one
+ * fixed line, so no address, status or serialized error reaches the screen.
  */
 export function operationErrorText(error: unknown, action: "sync" | "connect" = "sync"): string {
   if (typeof error === "object" && error !== null && "reason" in error) {
     const { reason, paths } = error as { readonly reason: unknown; readonly paths?: unknown };
-    if (
-      reason === "editor-unsaved" &&
+    const message =
       "_tag" in error &&
       error._tag === "ScientOverleafOperationError" &&
       "message" in error &&
       typeof error.message === "string" &&
       error.message.trim().length > 0
-    )
-      return error.message;
-    // An editor that couldn't save is named by the first of the files the server lists.
-    const path = Array.isArray(paths) && typeof paths[0] === "string" ? paths[0] : undefined;
-    if (typeof reason === "string" && REASON.test(reason))
-      return refusalText({ reason, ...(path === undefined ? {} : { path }) }, action);
+        ? error.message
+        : undefined;
+    if (typeof reason === "string" && REASON.test(reason)) {
+      if (message !== undefined && SERVER_EXPLAINS.has(reason)) return message;
+      // An editor that couldn't save is named by the first of the files the server lists.
+      const path = Array.isArray(paths) && typeof paths[0] === "string" ? paths[0] : undefined;
+      return refusalText(
+        {
+          reason,
+          ...(path === undefined ? {} : { path }),
+          ...(message === undefined ? {} : { message }),
+        },
+        action,
+      );
+    }
   }
   return OVERLEAF_REQUEST_FAILED;
 }
@@ -489,10 +542,10 @@ function countsTitle(review: ScientOverleafReview, sent: boolean, held: number):
   return parts.join(", ");
 }
 
-/** The lines every review adds: renames, older versions, earlier sends, sizes. */
-function warningLines(review: ScientOverleafReview): string[] {
+/** The lines every review adds: renames and older versions once sent, earlier sends, sizes. */
+function warningLines(review: ScientOverleafReview, sent: boolean): string[] {
   const lines: string[] = [];
-  const renames = review.warnings.filter((warning) => warning.kind === "rename");
+  const renames = sent ? review.warnings.filter((warning) => warning.kind === "rename") : [];
   if (renames.length > 0) {
     lines.push(
       renames.length === 1 && renames[0]?.from && renames[0].to
@@ -500,7 +553,9 @@ function warningLines(review: ScientOverleafReview): string[] {
         : `Renamed ${fileCount(renames.length)}. Overleaf drops comments and tracked changes on renamed files.`,
     );
   }
-  const older = review.warnings.filter((warning) => warning.kind === "restores-older-version");
+  const older = sent
+    ? review.warnings.filter((warning) => warning.kind === "restores-older-version")
+    : [];
   // Said with the files: an older version replaces collaborators' newer text on Overleaf.
   if (older.length === 1 && older[0]?.path)
     lines.push(`Sent a version of ${older[0].path} that Overleaf had before.`);
@@ -529,9 +584,24 @@ function warningLines(review: ScientOverleafReview): string[] {
   return lines;
 }
 
+type SyncedResult = Extract<ScientOverleafSyncResult, { _tag: "synced" }>;
+
+/**
+ * Whether all of Overleaf's changes are in the folder: the apply completed, or it stopped
+ * only at conflict marks in held files, which is the one unfinished apply the server still
+ * sends from. A replanned apply wrote nothing; any other may have stopped partway.
+ */
+export function overleafChangesCameIn(result: SyncedResult): boolean {
+  return (
+    result.outcome === "complete" ||
+    (result.outcome === "attention" &&
+      !(result.publication._tag === "blocked" && result.publication.reason === "attention"))
+  );
+}
+
 /** What the sync's send did, when it didn't simply arrive. */
 function publicationLine(
-  publication: Extract<ScientOverleafSyncResult, { _tag: "synced" }>["publication"],
+  publication: SyncedResult["publication"],
   held: ReadonlyArray<string>,
 ): { readonly line: string | null; readonly tone: OverleafResultView["tone"] } {
   switch (publication._tag) {
@@ -557,7 +627,7 @@ function publicationLine(
           };
         default:
           return {
-            line: "Nothing was sent: a file needs a decision first.",
+            line: "Nothing was sent: part of the folder needs attention first. Settle it, then sync again.",
             tone: "warning",
           };
       }
@@ -631,17 +701,57 @@ function progressLines(result: ScientOverleafSyncResult): string[] {
   ];
 }
 
+/** A sync whose apply didn't bring all of Overleaf's changes in; nothing was sent. */
+function unfinishedApplyView(result: SyncedResult, progress: string[]): OverleafResultView {
+  const context = contextLines(result.activity, result.linkedElsewhere);
+  if (result.outcome === "replan")
+    return {
+      title: "Nothing came in",
+      lines: [
+        ...progress,
+        "The folder changed while Overleaf's changes were being written, so nothing was written or sent. Sync again.",
+        ...context,
+      ],
+      tone: "warning",
+      hasChanges: false,
+      needsDecision: false,
+    };
+  return {
+    title:
+      result.review.incoming.length > 0
+        ? "Overleaf's changes were applied as far as the folder allowed"
+        : "Part of the folder needs attention",
+    lines: [
+      ...progress,
+      ...(result.interrupted > 0
+        ? [
+            `Writing stopped partway in ${fileCount(result.interrupted)}. The next sync shows them as conflicts to settle.`,
+          ]
+        : result.markerPaths.length === 0
+          ? ["A file or a kept copy changed while Overleaf's changes were written. Check it."]
+          : []),
+      ...reviewHeldLines(result.review, result.markerPaths),
+      "Nothing was sent. Sync again once the folder is settled.",
+      ...context,
+    ],
+    tone: "warning",
+    hasChanges: false,
+    needsDecision: false,
+  };
+}
+
 export function overleafResultView(result: ScientOverleafSyncResult): OverleafResultView {
   const progress = progressLines(result);
   switch (result._tag) {
     case "synced": {
+      if (!overleafChangesCameIn(result)) return unfinishedApplyView(result, progress);
       const sent = result.publication._tag === "accepted";
       const held = heldPaths(result.review, result.markerPaths);
       const publication = publicationLine(result.publication, held);
       const lines = [
         ...progress,
         ...(publication.line ? [publication.line] : []),
-        ...warningLines(result.review),
+        ...warningLines(result.review, sent),
         ...reviewHeldLines(result.review, result.markerPaths),
         ...(result.interrupted > 0
           ? [`An interrupted sync left ${fileCount(result.interrupted)} to settle.`]
@@ -676,7 +786,7 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
     case "refused":
       return {
         title: "Couldn't sync with Overleaf",
-        lines: [...progress, refusalText(result.refusal)],
+        lines: [...progress, refusalText(result.refusal, "sync", progress.length > 0)],
         tone: "error",
         hasChanges: false,
         needsDecision: false,
@@ -684,7 +794,7 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
     case "unsettled":
       return {
         title: "Couldn't sync with Overleaf",
-        lines: [...progress, refusalText({ reason: result.reason })],
+        lines: [...progress, refusalText({ reason: result.reason }, "sync", progress.length > 0)],
         tone: "error",
         hasChanges: false,
         needsDecision: false,
@@ -705,6 +815,45 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
         hasChanges: false,
         needsDecision: false,
       };
+  }
+}
+
+/** What one unreadable record holds back, and what the user can do about it. */
+export function unreadableRecordLines(record: ScientOverleafUnreadableRecord): {
+  readonly state: string;
+  readonly holds: string;
+} {
+  const state =
+    record.kind === "newer"
+      ? record.unfinished === true
+        ? "A newer version of Scient made this link, and its last sync didn't finish. Open that version to finish it; Scient keeps the record until then."
+        : record.unfinished === null
+          ? "A newer version of Scient made this link, and this version can't tell whether its last sync finished. Open that version to check; Scient keeps the record until then."
+          : "A newer version of Scient made this link. As far as this version can tell, its last sync finished."
+      : record.setAside === "confirm"
+        ? "This record is damaged, and its last sync stopped part-way. Setting it aside stops Scient guarding the files that sync left in the folder."
+        : record.unfinished === false
+          ? "This record is damaged. No sync is waiting on it."
+          : "This record is damaged, and it doesn't say whether a sync stopped part-way.";
+  const until = record.setAside === "held" ? "Until then" : "Until it's set aside";
+  const holds =
+    record.holds === "linking"
+      ? `${until}, Scient won't link folders.`
+      : `${until}, Scient won't link folders or change ${record.holds === "every-checkout" ? "any" : "this"} project's files in bulk, for example when switching branches.`;
+  return { state, holds };
+}
+
+/** The button that sets an unreadable record aside, if it can be: knowingly, when its unfinished sync loses its protection. */
+export function setAsideAction(
+  record: Pick<ScientOverleafUnreadableRecord, "setAside">,
+): { readonly label: string; readonly acceptUnfinished: boolean } | null {
+  switch (record.setAside) {
+    case "held":
+      return null;
+    case "confirm":
+      return { label: "Set aside anyway", acceptUnfinished: true };
+    case "allowed":
+      return { label: "Set aside", acceptUnfinished: false };
   }
 }
 

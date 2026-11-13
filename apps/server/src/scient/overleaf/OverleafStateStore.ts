@@ -183,7 +183,7 @@ export class OverleafRetentionUnavailableError extends Schema.TaggedError<Overle
       case "volatile-filesystem":
         return "Scient cannot keep recovery files on temporary memory storage.";
       case "sync-managed-folder":
-        return "Scient's state and kept files must be outside cloud-managed folders.";
+        return "Scient can't keep copies of replaced files in a folder a cloud service syncs. Move the project out of the cloud folder, then link it again.";
       case "unsupported-filesystem":
         return `This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as ${supportedFilesystems()}.`;
       case "read-only-parent":

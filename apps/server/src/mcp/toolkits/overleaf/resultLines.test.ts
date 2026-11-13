@@ -1,7 +1,7 @@
 import type { ScientOverleafUndoResult } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { undoLines } from "./resultLines.ts";
+import { syncLines, undoLines } from "./resultLines.ts";
 
 const undone: Extract<ScientOverleafUndoResult, { _tag: "undone" }> = {
   _tag: "undone",
@@ -44,4 +44,30 @@ describe("Undo tool results", () => {
       );
     },
   );
+});
+
+describe("Refusal lines", () => {
+  it("say what the server said for a refusal raised after the folder was written", () => {
+    expect(
+      syncLines({
+        _tag: "refused",
+        refusal: { reason: "archived", message: "This Overleaf connection was disconnected." },
+        retried: false,
+        settled: null,
+      }),
+    ).toEqual(["This sync stopped: This Overleaf connection was disconnected."]);
+  });
+
+  it("name both spellings of a name that differs only by letter case", () => {
+    expect(
+      syncLines({
+        _tag: "refused",
+        refusal: { reason: "path-alias", paths: ["Figure.png", "figure.png"] },
+        retried: false,
+        settled: null,
+      }),
+    ).toEqual([
+      "This sync stopped: two names differ only by letter case or Unicode spelling (Figure.png, figure.png), so they cannot be synced as separate files. Rename one.",
+    ]);
+  });
 });

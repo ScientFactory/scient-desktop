@@ -75,12 +75,30 @@ const mapErrors = <A, E extends TaggedFailure, R>(effect: Effect.Effect<A, E, R>
     ),
   );
 
+/** The fields that name a refusal's files, in the order a sentence names them. */
+const REFUSAL_NAMES = ["path", "onDisk", "other", "first", "second", "from", "to"] as const;
+
 export const refusalView = (
   refusal: { readonly reason: string } & object,
-): ScientOverleafRefusal => ({
-  reason: refusal.reason,
-  ...("path" in refusal && typeof refusal.path === "string" ? { path: refusal.path } : {}),
-});
+): ScientOverleafRefusal => {
+  const fields = refusal as Record<string, unknown>;
+  const names = [
+    ...new Set([
+      ...REFUSAL_NAMES.flatMap((name) =>
+        typeof fields[name] === "string" ? [fields[name] as string] : [],
+      ),
+      ...(Array.isArray(fields.paths)
+        ? fields.paths.filter((path): path is string => typeof path === "string")
+        : []),
+    ]),
+  ];
+  return {
+    reason: refusal.reason,
+    ...(typeof fields.path === "string" ? { path: fields.path } : {}),
+    ...(names.length > 1 ? { paths: names } : {}),
+    ...(typeof fields.message === "string" ? { message: fields.message } : {}),
+  };
+};
 
 const publicationView = (publication: OverleafPublication): ScientOverleafPublication => ({
   _tag: publication._tag,
