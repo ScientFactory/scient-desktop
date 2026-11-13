@@ -344,6 +344,17 @@ const OPERATION_KINDS = new Set([
 ]);
 const TRIGGERS = new Set(["user", "agent", "automation", "other"]);
 const PROVIDER_STATES = new Set(["ready", "warning", "error", "disabled"]);
+const STATUS_CHECK_FAILURES = new Set([
+  "version_timeout",
+  "version_failed",
+  "start_failed",
+  "busy",
+  "command_timeout",
+  "command_failed",
+  "exit",
+  "parse",
+  "other",
+]);
 const DELIVERY_CLASSES = new Set([
   "idle",
   "delivered",
@@ -914,6 +925,14 @@ function normalizeEvent(
           provider,
           from: normalizedEnum(property(input, "from"), PROVIDER_STATES),
           to: normalizedEnum(property(input, "to"), PROVIDER_STATES),
+          ...(property(input, "checkFailure") === undefined
+            ? {}
+            : {
+                checkFailure: normalizedEnum(
+                  property(input, "checkFailure"),
+                  STATUS_CHECK_FAILURES,
+                ),
+              }),
         },
       };
     case "provider.runtime.source.changed":

@@ -227,6 +227,31 @@ describe("Provider lifecycle analytics", () => {
     ]);
   });
 
+  it("says which step of a failed status check took the provider to error", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    const failed = provider();
+    expect(
+      mapper.observe([
+        {
+          ...failed,
+          status: "error",
+          connection: { ...failed.connection!, checkFailure: "version_timeout" },
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "provider.readiness.changed",
+        properties: {
+          provider: "droid",
+          from: "ready",
+          to: "error",
+          checkFailure: "version_timeout",
+        },
+      },
+    ]);
+  });
+
   it("aggregates multiple instances without exposing instance identifiers", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     const installed = provider();

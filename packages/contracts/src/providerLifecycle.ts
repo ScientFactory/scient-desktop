@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleOptional,
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 /**
@@ -262,6 +268,20 @@ export const ProviderRuntimeCatalogFreshness = Schema.Struct({
 });
 export type ProviderRuntimeCatalogFreshness = typeof ProviderRuntimeCatalogFreshness.Type;
 
+/** Why a provider's status check failed, from its error types; never its message. */
+export const ProviderStatusCheckFailure = Schema.Literals([
+  "version_timeout",
+  "version_failed",
+  "start_failed",
+  "busy",
+  "command_timeout",
+  "command_failed",
+  "exit",
+  "parse",
+  "other",
+]);
+export type ProviderStatusCheckFailure = typeof ProviderStatusCheckFailure.Type;
+
 export const ProviderRuntimeSummary = Schema.Struct({
   source: ProviderRuntimeSource,
   supportTier: ProviderRuntimeSupportTier,
@@ -311,6 +331,8 @@ export const ProviderConnectionSummary = Schema.Struct({
    * unknown scient_agent_account method. Publish account sign-in separately from operation.
    */
   accountOperation: Schema.optionalKey(Schema.NullOr(ProviderConnectionOperation)),
+  /** Why the provider's latest status check failed, for a provider that names it. */
+  checkFailure: ForwardCompatibleOptional(ProviderStatusCheckFailure),
 });
 
 /** The sign-in a provider is in or last ended, whichever field carries it. */
