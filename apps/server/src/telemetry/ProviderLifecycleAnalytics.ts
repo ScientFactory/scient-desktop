@@ -17,6 +17,7 @@ interface Snapshot {
   readonly installed: boolean;
   readonly source: string;
   readonly state: string;
+  readonly checkFailure: string | undefined;
   readonly runtime: Operation | null;
   readonly connection: Operation | null;
   readonly update: Operation | null;
@@ -36,6 +37,7 @@ function snapshot(provider: ServerProvider): Snapshot {
     installed: provider.installed,
     source: provider.installed ? (runtime?.source ?? "unknown") : "missing",
     state: provider.status,
+    checkFailure: provider.connection?.checkFailure,
     runtime: operation
       ? {
           key: operation.operationId,
@@ -182,7 +184,14 @@ export function createProviderLifecycleAnalyticsMapper() {
         if (before.state !== next.state)
           events.push({
             name: "provider.readiness.changed",
-            properties: { provider: driver, from: before.state, to: next.state },
+            properties: {
+              provider: driver,
+              from: before.state,
+              to: next.state,
+              ...(next.state === "error" && next.checkFailure !== undefined
+                ? { checkFailure: next.checkFailure }
+                : {}),
+            },
           });
         if (before.source !== next.source)
           events.push({

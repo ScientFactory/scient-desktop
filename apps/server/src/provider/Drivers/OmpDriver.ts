@@ -28,7 +28,11 @@ import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { checkOmpProviderStatus, makePendingOmpProvider } from "../OmpProvider.ts";
+import {
+  checkOmpProviderStatus,
+  makePendingOmpProvider,
+  type OmpProviderStatus,
+} from "../OmpProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { defaultProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
@@ -153,13 +157,17 @@ export const OmpDriver: ScientProviderDriver<OmpSettings, OmpDriverEnv> = {
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    const stamp = (snapshot: ServerProviderDraft): ServerProvider => ({
+    const stamp = ({
+      checkFailure,
+      ...snapshot
+    }: ServerProviderDraft & Pick<OmpProviderStatus, "checkFailure">): ServerProvider => ({
       ...stampIdentity(snapshot),
       connection: {
         methods: [],
         canDisconnect: false,
         operation: null,
         runtime: managedRuntime.summary,
+        ...(checkFailure ? { checkFailure } : {}),
       },
     });
     const orchestrationAdapter = yield* makeOmpAdapterV2({

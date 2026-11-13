@@ -13,16 +13,23 @@ import {
 } from "effect-omp-rpc/errors";
 import { ChildProcessSpawner } from "effect/process";
 
-import type { ProviderConnectionAccount, ServerProviderSlashCommand } from "@t3tools/contracts";
+import type {
+  ProviderConnectionAccount,
+  ProviderStatusCheckFailure,
+  ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import { compileOmpCommandCatalog } from "./omp/OmpCommandPolicy.ts";
+import { OmpExecutableBusyError } from "./omp/OmpExecutableGate.ts";
 import { ompModelToServerModel } from "./omp/OmpModel.ts";
 import {
   OMP_ISOLATED_ARGS,
   ompNotInstalledDetail,
+  ompStartFailedDetail,
   ompUserDetail,
+  ompVersionCheckFailedDetail,
   type OmpRpcProcess,
   type OmpRpcProcessOptions,
 } from "./omp/OmpRpcProcess.ts";
@@ -64,6 +71,7 @@ const isProtocolViolation = Schema.is(OmpRpcProtocolViolationError);
 const isCommandError = Schema.is(OmpRpcCommandError);
 const isFrameTooLarge = Schema.is(OmpRpcFrameTooLargeError);
 const isProcessExited = Schema.is(OmpRpcProcessExitedError);
+const isExecutableBusy = Schema.is(OmpExecutableBusyError);
 
 const checkedAt = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -87,6 +95,27 @@ const discoveryMessage = (target: OmpTarget, error: unknown): string => {
   if (isFrameTooLarge(error)) return ompUserDetail(target, error.message);
   if (isProtocolError(error) || isCommandError(error)) return ompUserDetail(target, error.detail);
   return `${target.name} could not be checked. Confirm the executable path and that version ${target.minimumVersion} or newer is installed.`;
+};
+
+/** Which step of the check failed, from error types and the details this module's process sets. */
+const ompStatusCheckFailure = (target: OmpTarget, error: unknown): ProviderStatusCheckFailure => {
+  if (isCommandError(error)) return error.code === "timeout" ? "command_timeout" : "command_failed";
+  if (isProcessExited(error)) return "exit";
+  if (isProtocolViolation(error) || isFrameTooLarge(error)) return "parse";
+  if (!isProtocolError(error)) return isCommandMissingCause(error) ? "start_failed" : "other";
+  if (Cause.isTimeoutError(error.cause)) return "version_timeout";
+  if (Schema.isSchemaError(error.cause)) return "parse";
+  if (isExecutableBusy(error.cause)) return "busy";
+  switch (error.detail) {
+    case ompVersionCheckFailedDetail(target):
+    case target.unsupportedDetail:
+      return "version_failed";
+    case ompNotInstalledDetail(target):
+    case ompStartFailedDetail(target):
+      return "start_failed";
+    default:
+      return "other";
+  }
 };
 
 export const makePendingOmpProvider = (
@@ -118,6 +147,7 @@ export type OmpProviderStatus = ServerProviderDraft & {
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   /** The product's own sign-in list, when the check was asked to read it. */
   readonly accounts?: ReadonlyArray<ProviderConnectionAccount>;
+  readonly checkFailure?: ProviderStatusCheckFailure;
 };
 
 export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(function* (
@@ -199,19 +229,22 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
     const commandMissing =
       isCommandMissingCause(error) ||
       (isProtocolError(error) && error.detail === ompNotInstalledDetail(target));
-    return buildServerProvider({
-      presentation: presentation(target),
-      enabled: true,
-      checkedAt: at,
-      models: [],
-      probe: {
-        installed: !commandMissing,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: discoveryMessage(target, error),
-      },
-    });
+    return {
+      ...buildServerProvider({
+        presentation: presentation(target),
+        enabled: true,
+        checkedAt: at,
+        models: [],
+        probe: {
+          installed: !commandMissing,
+          version: null,
+          status: "error",
+          auth: { status: "unknown" },
+          message: discoveryMessage(target, error),
+        },
+      }),
+      checkFailure: ompStatusCheckFailure(target, error),
+    };
   }
   const models = discovery.value.models.flatMap((model) => {
     const mapped = ompModelToServerModel(

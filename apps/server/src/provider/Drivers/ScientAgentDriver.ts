@@ -186,9 +186,9 @@ export const ScientAgentDriver: ScientProviderDriver<
     // The list itself says sign-in is available: `methods` stays empty, so a
     // client that predates the account method still decodes this provider.
     const stamp = (
-      snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts">,
+      snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts" | "checkFailure">,
     ): ServerProvider => {
-      const { accounts, ...draft } = snapshot;
+      const { accounts, checkFailure, ...draft } = snapshot;
       return {
         ...stampIdentity(draft),
         usesClaudePlugins: supportsScientClaudePlugins(draft.version),
@@ -197,6 +197,7 @@ export const ScientAgentDriver: ScientProviderDriver<
           canDisconnect: false,
           operation: null,
           runtime: managedRuntime.summary,
+          ...(checkFailure ? { checkFailure } : {}),
           ...(accounts ? { accounts } : {}),
         },
       };

@@ -41,6 +41,15 @@ export const ompUserDetail = (target: OmpTarget, detail: string): string =>
 /** What the version probe reports when the executable itself is absent. */
 export const ompNotInstalledDetail = (target: OmpTarget): string =>
   `${target.name} is not installed or its executable could not be found.`;
+export const ompVersionCheckFailedDetail = (target: OmpTarget): string =>
+  `${target.name} version verification failed.`;
+export const ompStartFailedDetail = (target: OmpTarget): string =>
+  `Failed to start ${target.name}.`;
+/**
+ * A cold start of the agent's single large executable can take several seconds on Windows while
+ * antivirus scans it, and the periodic status check runs this probe again whenever its cache expires.
+ */
+const OMP_VERSION_PROBE_TIMEOUT = "20 seconds";
 // rpc-ui, not rpc: only it gives the agent its `ask` tool, and the UI requests it sends are the same.
 export const OMP_RPC_ARGS = ["--mode", "rpc-ui", "--approval-mode", "yolo"] as const;
 
@@ -491,7 +500,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
       }),
     )
     .pipe(
-      Effect.timeout("4 seconds"),
+      Effect.timeout(OMP_VERSION_PROBE_TIMEOUT),
       Effect.mapError((cause) =>
         isProtocolError(cause)
           ? cause
@@ -501,7 +510,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
               detail:
                 Option.isNone(binaryInfo) && isCommandMissingCause(cause)
                   ? ompNotInstalledDetail(target)
-                  : `${target.name} version verification failed.`,
+                  : ompVersionCheckFailedDetail(target),
               cause,
             }),
       ),
@@ -538,7 +547,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     .pipe(
       Effect.provideService(Scope.Scope, scope),
       Effect.mapError(
-        (cause) => new OmpRpcProtocolError({ detail: `Failed to start ${target.name}.`, cause }),
+        (cause) => new OmpRpcProtocolError({ detail: ompStartFailedDetail(target), cause }),
       ),
     );
   // Stopping signals the agent's process group; tools it started in groups of their own

@@ -22,7 +22,8 @@ import type { OmpTarget } from "./OmpTarget.ts";
 export const OMP_PROCESS_WAIT_TIMEOUT = Duration.seconds(30);
 /** How long an activation waits for one-shot OMP work to finish. */
 export const OMP_ACTIVATION_DRAIN_TIMEOUT = Duration.seconds(30);
-const VERSION_CACHE_TTL_MS = 5 * 60 * 1000;
+// Longer than the 5-minute status refresh, so each periodic check doesn't spawn the version probe again.
+const VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
 const MAX_VERSION_CACHE_ENTRIES = 128;
 
 export type OmpProcessKind = "session" | "one-shot";
