@@ -79,12 +79,13 @@ export function useComposerProviderRuntimeUpdate(input: {
   const selectedProviderConnectionKind = providerConnectionPresentation(
     selectedProviderEntry?.snapshot,
   ).kind;
+  // A signed-out model account is named in a new chat too, before its first send fails.
   const reconnectProviderEntry =
-    lockedProvider !== null &&
     selectedProviderEntry !== undefined &&
-    (selectedProviderConnectionKind === "not-connected" ||
-      selectedProviderConnectionKind === "connecting" ||
-      reconnectAccount !== undefined)
+    (reconnectAccount !== undefined ||
+      (lockedProvider !== null &&
+        (selectedProviderConnectionKind === "not-connected" ||
+          selectedProviderConnectionKind === "connecting")))
       ? selectedProviderEntry
       : undefined;
   return {
