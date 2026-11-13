@@ -65,7 +65,7 @@ import {
   libraryCopyProblemLabel,
   type ReadingStateChange,
 } from "./libraryLabels";
-import { agentVerificationLabel } from "./sourceLabels";
+import { agentVerificationLabel, fileNameTitleLabel } from "./sourceLabels";
 import { pdfVersionLabel } from "./sourcePdfVersion";
 import { SourceEditorialStatus } from "./SourceEditorialStatus";
 import { verificationProblemLabel } from "./sourceLifecycleLabels";
@@ -810,6 +810,7 @@ export function SourceDetails(props: {
   // A session without the Library write grant never gets the key, so it never sees "My note".
   const showsPersonalNote = library !== undefined && "personalNote" in record;
   const publication = publicationLocation(record);
+  const fileNameTitle = fileNameTitleLabel(record);
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
   );
@@ -1005,6 +1006,9 @@ export function SourceDetails(props: {
               {record.title ?? "Untitled source"}
             </h2>
             <p className="text-sm text-muted-foreground">{creatorsLabel(record)}</p>
+            {fileNameTitle ? (
+              <p className="text-xs text-muted-foreground">{fileNameTitle}</p>
+            ) : null}
             <SourceEditorialStatus status={record.editorialStatus} />
             {library ? (
               <ReadingControls record={record} onSetReadingState={library.onSetReadingState} />

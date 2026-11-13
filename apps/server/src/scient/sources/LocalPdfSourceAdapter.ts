@@ -428,10 +428,15 @@ function uniquePmid(textValue: string): string | null {
   return values.size === 1 ? [...values][0]! : null;
 }
 
+/** The provenance a PDF's title has when it is only the file name. */
+const SCIENT_PDF_FILE_NAME_TITLE = "file-name";
+
 function candidateFromEmbeddedPdf(input: {
   readonly sourceKey: string;
   readonly fileName: string;
   readonly title: string | null;
+  /** The PDF names no title, so `title` is its file name until its details are found. */
+  readonly titleFromFileName?: boolean;
   readonly authors: ReadonlyArray<ScientSourceCreator>;
   readonly issuedRaw: string | null;
   readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
@@ -462,7 +467,11 @@ function candidateFromEmbeddedPdf(input: {
     tags: input.keywords,
     externalReferences: [],
     fieldProvenance: provenance("local-pdf", [
-      ["title", "document-info/title", input.title !== null],
+      [
+        "title",
+        input.titleFromFileName ? SCIENT_PDF_FILE_NAME_TITLE : "document-info/title",
+        input.title !== null,
+      ],
       ["creators", "document-info/author", input.authors.length > 0],
       ["issuedRaw", "xmp/prism-date", input.issuedRaw !== null],
       ["tags", "document-info/keywords", input.keywords.length > 0],
@@ -570,6 +579,7 @@ async function extractPdfMetadata(input: {
     sourceKey: input.sourceKey,
     fileName: input.fileName,
     title,
+    titleFromFileName: title !== null && title === fallbackTitle,
     authors,
     issuedRaw,
     identifiers,
@@ -760,6 +770,7 @@ export const localPdfSourceInternals = {
   doiCandidates,
   embeddedCreators,
   embeddedPublicationDate,
+  extractPdfMetadata,
   normalizeEmbeddedPdfDate,
   selectEmbeddedPdfTitle,
   uniqueDoi,
