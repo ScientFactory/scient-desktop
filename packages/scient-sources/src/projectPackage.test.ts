@@ -8,7 +8,11 @@ import { initializeScientProject } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { organizeScientSources, readScientSourcesOrganization } from "./collections.ts";
-import { changeScientLibraryReview } from "./libraryReviews.ts";
+import {
+  listScientReviewConflicts,
+  resolveScientReviewConflict,
+} from "./libraryReviewConflicts.ts";
+import { changeScientLibraryReview, readScientLibraryReviewRecord } from "./libraryReviews.ts";
 import {
   ensureScientLibrary,
   scientLibraryLocation,
@@ -34,6 +38,7 @@ import {
   listScientSourceRecords,
   listScientSourceTrash,
   recordScientSourceCheck,
+  removeScientSource,
   updateScientSourceMetadata,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
@@ -518,6 +523,74 @@ describe("importing a project package", () => {
       failed: [{ part: "review", item: reviewId }],
     });
     expect(await NodeFSP.readdir(reviews(blocked))).toEqual([`${reviewId}.works.json`]);
+  });
+
+  it("keeps a sharded snapshot's version readable, and choosing it loses no record", async () => {
+    const { base, mine, source } = await setup();
+    const paper = await add(mine, "paper", { title: "Snapshot-only study" });
+    await pinned(mine, source, paper.sourceId);
+    const { reviewId } = await changeScientLibraryReview({
+      projectRoot: source,
+      library: mine,
+      change: { action: "create-review", title: "Screening" },
+      actor: "user",
+    });
+    // Another copy of the project, from before the search was logged.
+    const copy = NodePath.join(base, "copy");
+    await NodeFSP.cp(source, copy, { recursive: true });
+    await changeScientLibraryReview({
+      projectRoot: source,
+      library: mine,
+      change: {
+        action: "log-search",
+        reviewId: reviewId!,
+        database: "PubMed",
+        query: "q",
+        searchedOn: "2026-11-01",
+        sourceIds: [paper.sourceId],
+      },
+      actor: "user",
+    });
+    // The snapshot in its sharded layout, as a large review keeps it.
+    const reviews = NodePath.join(source, ".scient/library/reviews");
+    await NodeFSP.mkdir(NodePath.join(reviews, `${reviewId}.works`));
+    await NodeFSP.rename(
+      NodePath.join(reviews, `${reviewId}.works.json`),
+      NodePath.join(reviews, `${reviewId}.works`, "0.json"),
+    );
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+
+    const theirs = await computer(base, "theirs");
+    expect(await importInto(copy, theirs, handoff)).toMatchObject({ reviews: { conflicts: 1 } });
+    // The source is not in this Library: only the kept snapshot knows it.
+    for (const record of await listScientSourceRecords(theirs)) {
+      await removeScientSource({
+        root: theirs,
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+      });
+    }
+    const [conflict] = await listScientReviewConflicts({ projectRoot: copy, reviewId: reviewId! });
+    expect(
+      await resolveScientReviewConflict({
+        projectRoot: copy,
+        library: theirs,
+        reviewId: reviewId!,
+        conflictId: conflict!.conflictId,
+        pick: "use-other",
+        actor: "user",
+      }),
+    ).toMatchObject({ outcome: "resolved" });
+    expect(
+      await readScientLibraryReviewRecord({
+        projectRoot: copy,
+        library: theirs,
+        mode: "read",
+        reviewId: reviewId!,
+        sourceId: paper.sourceId,
+      }),
+    ).toMatchObject({ from: "snapshot", record: { title: "Snapshot-only study" } });
   });
 
   it("keeps a receipt, and Undo removes what the import added", async () => {

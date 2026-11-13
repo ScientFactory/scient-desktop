@@ -10,7 +10,9 @@ import * as Schema from "effect/Schema";
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
 import {
   decodeScientReviewSnapshotText,
+  readScientReviewSnapshotEntries,
   scientReviewNamedIds,
+  scientReviewSnapshotShardFolder,
   scientReviewSnapshotText,
   scientReviewWorkFromRecord,
   type ScientReviewWork,
@@ -306,7 +308,9 @@ export async function resolveScientReviewConflict(input: {
     const incoming = decodeReview(JSON.parse(incomingText));
     const existing = decodeReview(JSON.parse(existingText));
     const incomingSnapshotText = await readText(conflictSnapshotPath);
-    const existingSnapshotText = await readText(snapshotFile(root, input.reviewId));
+    // The version in force may be sharded: read it as every reader does, single file and shards.
+    const existingEntries = await readScientReviewSnapshotEntries(root, input.reviewId);
+    const existingSnapshotText = scientReviewSnapshotText(input.reviewId, existingEntries);
     const snapshotOf = (text: string | null) =>
       (text && decodeScientReviewSnapshotText(text, input.reviewId)) || new Map();
 
@@ -336,16 +340,10 @@ export async function resolveScientReviewConflict(input: {
         ]);
         next = combined.review;
         report = combined.report;
-        entries = new Map([
-          ...snapshotOf(incomingSnapshotText),
-          ...snapshotOf(existingSnapshotText),
-        ]);
+        entries = new Map([...snapshotOf(incomingSnapshotText), ...existingEntries]);
       } else {
         next = incoming;
-        entries = new Map([
-          ...snapshotOf(existingSnapshotText),
-          ...snapshotOf(incomingSnapshotText),
-        ]);
+        entries = new Map([...existingEntries, ...snapshotOf(incomingSnapshotText)]);
       }
     }
     if (next && entries) {
@@ -381,6 +379,11 @@ export async function resolveScientReviewConflict(input: {
         scientReviewSnapshotText(input.reviewId, kept),
         MAX_SNAPSHOT_BYTES,
       );
+      // Shards would win over the file just written; it holds every entry they had.
+      await NodeFSP.rm(scientReviewSnapshotShardFolder(root, input.reviewId), {
+        recursive: true,
+        force: true,
+      });
       await publishChecked(
         reviewFile(root, input.reviewId),
         `${JSON.stringify(next, null, 2)}\n`,

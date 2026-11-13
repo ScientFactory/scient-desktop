@@ -16,7 +16,13 @@ import {
 } from "./libraryInstanceMap.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import { scientLibraryMoveInternals } from "./libraryMove.ts";
-import { scientReviewNamedIds } from "./libraryReviews.ts";
+import {
+  decodeScientReviewSnapshotText,
+  readScientReviewSnapshotEntries,
+  scientReviewNamedIds,
+  scientReviewSnapshotText,
+  type ScientReviewWork,
+} from "./libraryReviews.ts";
 import { registerScientLibraryInstance, type ScientLibraryLocation } from "./libraryRoot.ts";
 import type { ScientSourceActor, ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
 import {
@@ -1152,7 +1158,18 @@ async function importReviews(
             : `${REVIEWS}/${name}`;
         };
         const review = files.find((file) => file.path === reviewPath)!;
-        const order = own === theirs && !keepAside ? snapshots : [...snapshots, review];
+        if (keepAside) {
+          // One file in the layout the version picker reads, whether the package's was sharded.
+          const target = `${REVIEW_CONFLICTS}/${reviewId}/${tag}.works.json`;
+          const text = await keptSnapshotText(root, state.folder, reviewId, theirs, snapshots);
+          const sha256 = NodeCrypto.createHash("sha256").update(text).digest("hex");
+          if ((await hashFile(absolute(root, target))) !== sha256) {
+            await publishText(text, absolute(root, target));
+            published.push({ path: target, sha256 });
+          }
+        }
+        const order =
+          own === theirs && !keepAside ? snapshots : keepAside ? [review] : [...snapshots, review];
         for (const file of order) {
           const target = targetOf(file.path);
           if ((await hashFile(absolute(root, target))) === file.sha256) continue;
@@ -1172,6 +1189,51 @@ async function importReviews(
     }
   });
   return { added, conflicts, snapshotsAdded };
+}
+
+/**
+ * The package's snapshot of a review as one single-file snapshot: its file and its shards (shard
+ * entries win, as readers do), plus this project's entries for records the package's review
+ * names that its snapshot lacks, so choosing that version loses none.
+ */
+async function keptSnapshotText(
+  root: string,
+  folder: string,
+  reviewId: string,
+  reviewText: string,
+  snapshots: ReadonlyArray<{ readonly path: string }>,
+): Promise<string> {
+  const entries = new Map<string, ScientReviewWork>();
+  const ordered = snapshots.toSorted(
+    (left, right) => Number(left.path.includes(".works/")) - Number(right.path.includes(".works/")),
+  );
+  for (const file of ordered) {
+    const decoded = decodeScientReviewSnapshotText(
+      (await readText(absolute(folder, file.path)))!,
+      reviewId,
+    );
+    if (!decoded) throw new Error(`${file.path} is not this review's snapshot.`);
+    for (const [sourceId, work] of decoded) entries.set(sourceId, work);
+  }
+  const local = await readScientReviewSnapshotEntries(root, reviewId);
+  for (const sourceId of scientReviewNamedIds(decodeReview(JSON.parse(reviewText)))) {
+    const work = local.get(sourceId);
+    if (!entries.has(sourceId) && work) entries.set(sourceId, work);
+  }
+  return scientReviewSnapshotText(reviewId, entries);
+}
+
+/** Writes text to a hidden name, then renames it into place; never over an existing file. */
+async function publishText(text: string, to: string): Promise<void> {
+  await ensureDirectory(NodePath.dirname(to));
+  const temporary = `${to}.${NodeCrypto.randomUUID()}.tmp`;
+  try {
+    await NodeFSP.writeFile(temporary, text, { encoding: "utf8", flag: "wx" });
+    if (await NodeFSP.lstat(to).catch(() => null)) throw new Error(`${to} already exists.`);
+    await NodeFSP.rename(temporary, to);
+  } finally {
+    await NodeFSP.rm(temporary, { force: true });
+  }
 }
 
 /** Collections with their ancestry, parents before children; a same-named sibling here is joined. */

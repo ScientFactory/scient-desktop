@@ -426,6 +426,23 @@ export function decodeScientReviewSnapshotText(
   }
 }
 
+/**
+ * Every entry of a review's snapshot in this project as readers see it: the single file and its
+ * shards, shard entries winning. Reads only.
+ */
+export async function readScientReviewSnapshotEntries(
+  projectRoot: string,
+  reviewId: string,
+): Promise<ReadonlyMap<string, ScientReviewWork>> {
+  const state = await readSnapshotState(libraryFolder(projectRoot), reviewId, "read");
+  return new Map([...state.entries].map(([sourceId, stored]) => [sourceId, stored.work]));
+}
+
+/** The shard folder of a review's snapshot in this project, used once one file would be too big. */
+export function scientReviewSnapshotShardFolder(projectRoot: string, reviewId: string): string {
+  return shardDirectory(libraryFolder(projectRoot), reviewId);
+}
+
 /** Two entries say the same about a work, whenever they were captured. */
 export function scientReviewWorksEqual(left: ScientReviewWork, right: ScientReviewWork): boolean {
   return workContent(left) === workContent(right);
