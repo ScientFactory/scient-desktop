@@ -562,7 +562,7 @@ if ! t3_runtime_ready; then
     elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
     else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
     fi || {
-      # SCIENT-FORK: upstream's advice installs T3 Code from t3.codes; Scient has no such installer.
+      # SCIENT-FORK: upstream's advice names its own installer; Scient has no such installer.
       printf 'Could not download the Scient server %s from %s. Check that this host can reach it, then try again.\\n' "$T3_ARCHIVE_VERSION" "$1" >&2
       exit 1
     }

@@ -97,10 +97,8 @@ export function attachmentTokenAllowance(
   );
 }
 
-// Stored history is mostly prose and tool output, about four UTF-8 bytes per token.
-export function estimateTextTokens(text: string): number {
-  return Math.ceil(Buffer.byteLength(text) / 4);
-}
+// SCIENT-FORK: upstream's estimateTextTokens is unused; Scient measures stored history from its
+// recorded byte counts in ProviderTurnStartService, at the same four bytes per token.
 
 // One UTF-8 byte per token keeps the new turn and imported history pessimistic.
 export function handoffBudget(input: {

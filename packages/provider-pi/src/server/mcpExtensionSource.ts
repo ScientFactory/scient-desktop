@@ -80,7 +80,7 @@ function runtimeMode(): RuntimeMode {
     : "full-access";
 }
 
-// T3 keys "Always allow this session" on this text, so a cut summary ends with the
+// The app keys "Always allow this session" on this text, so a cut summary ends with the
 // full input's hash: calls that differ only past the cut get separate grants.
 function toolInputSummary(input: unknown): string {
   let text: string;
