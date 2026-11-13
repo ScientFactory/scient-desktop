@@ -28,7 +28,13 @@ const FRESH_CHECK = [
   'ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]);',
   '[$.CGPreflightScreenCaptureAccess(), $.AXIsProcessTrusted()].map(Number).join(" ")',
 ].join("");
-const FRESH_CHECK_TIMEOUT_MS = 3_000;
+/** Asks for Screen Recording the official way, which lists Scient in the top list and prompts once. */
+const SCREEN_REQUEST = [
+  'ObjC.import("CoreGraphics");',
+  'ObjC.bindFunction("CGRequestScreenCaptureAccess", ["bool", []]);',
+  "$.CGRequestScreenCaptureAccess()",
+].join("");
+const HELPER_TIMEOUT_MS = 3_000;
 /** The status row polls; a refusal is reused this long so it starts at most one child per interval. */
 const RECHECK_AFTER_MS = 2_000;
 
@@ -38,17 +44,21 @@ const seenGranted = new Set<ComputerControlPermission>();
 /** A check still running is shared; a finished one is reused until `RECHECK_AFTER_MS` passes. */
 let freshCheck: { readonly grants: Promise<Grants>; settledAt?: number } | undefined;
 
-const runFreshCheck = (): Promise<Grants> =>
+/** Runs `script` in a short-lived child, which macOS charges to Scient; its output, or "" on failure. */
+const runHelper = (script: string): Promise<string> =>
   new Promise((resolve) => {
     NodeChildProcess.execFile(
       "/usr/bin/osascript",
-      ["-l", "JavaScript", "-e", FRESH_CHECK],
-      { timeout: FRESH_CHECK_TIMEOUT_MS },
-      (error, stdout) => {
-        const [screen, accessibility] = error ? [] : stdout.trim().split(" ");
-        resolve({ "screen-recording": screen === "1", accessibility: accessibility === "1" });
-      },
+      ["-l", "JavaScript", "-e", script],
+      { timeout: HELPER_TIMEOUT_MS },
+      (error, stdout) => resolve(error ? "" : stdout.trim()),
     );
+  });
+
+const runFreshCheck = (): Promise<Grants> =>
+  runHelper(FRESH_CHECK).then((output) => {
+    const [screen, accessibility] = output.split(" ");
+    return { "screen-recording": screen === "1", accessibility: accessibility === "1" };
   });
 
 /** Whether macOS lets Scient use `permission` now, including a grant made since Scient started. */
@@ -73,8 +83,8 @@ export async function computerControlPermissionGranted(
 /**
  * Asking is what lists Scient in the pane, in the right list (macOS 15+ splits the pane into
  * screen and audio-only lists), so the user only has to turn it on. macOS shows its own prompt
- * the first time and answers silently after that. Electron reports screen access only as
- * granted or denied, so it asks whenever access is missing.
+ * the first time and answers silently after that. Electron's screen capture request does not
+ * list the app (seen on macOS 26.7), so Screen Recording is requested from a helper.
  */
 async function requestComputerControlPermission(
   permission: ComputerControlPermission,
@@ -84,9 +94,7 @@ async function requestComputerControlPermission(
     Electron.systemPreferences.isTrustedAccessibilityClient(true);
     return;
   }
-  await Electron.desktopCapturer
-    .getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
-    .catch(() => undefined);
+  await runHelper(SCREEN_REQUEST);
 }
 
 /** Asks macOS, which lists Scient in the pane, then opens the pane. */

@@ -5,14 +5,12 @@ const mocks = vi.hoisted(() => ({
   trusted: false,
   /** What the fresh osascript child prints: Screen Recording, then Accessibility. */
   fresh: "0 0",
-  getSources: vi.fn(async () => []),
   isTrusted: vi.fn(),
   openExternal: vi.fn(async () => undefined),
   execFile: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
-  desktopCapturer: { getSources: mocks.getSources },
   shell: { openExternal: mocks.openExternal },
   systemPreferences: {
     getMediaAccessStatus: () => mocks.screen,
@@ -40,6 +38,14 @@ const SCREEN_PANE = "x-apple.systempreferences:com.apple.preference.security?Pri
 /** A fresh module per test: what it has seen granted lasts for the life of the process. */
 const load = () => import("./computerControlPermissions.ts");
 
+/** The order of the helper call that asks for Screen Recording, if one ran. */
+const screenRequestOrder = () => {
+  const index = mocks.execFile.mock.calls.findIndex(([, args]) =>
+    String(args).includes("CGRequestScreenCaptureAccess"),
+  );
+  return index < 0 ? undefined : mocks.execFile.mock.invocationCallOrder[index];
+};
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -55,11 +61,8 @@ beforeEach(() => {
 it("asks macOS for screen capture before opening the pane, so Scient is listed there", async () => {
   const { openComputerControlPermissionPane } = await load();
   expect(await openComputerControlPermissionPane("screen-recording")).toBe(true);
-  expect(mocks.getSources).toHaveBeenCalledOnce();
   expect(mocks.openExternal).toHaveBeenCalledWith(SCREEN_PANE);
-  expect(mocks.getSources.mock.invocationCallOrder[0]).toBeLessThan(
-    mocks.openExternal.mock.invocationCallOrder[0]!,
-  );
+  expect(screenRequestOrder()).toBeLessThan(mocks.openExternal.mock.invocationCallOrder[0]!);
 });
 
 it("asks with the accessibility prompt", async () => {
@@ -76,7 +79,7 @@ it("sees a grant made since Scient started, which Electron still reports as deni
   expect(mocks.execFile).toHaveBeenCalledOnce();
   expect(mocks.execFile.mock.calls[0]?.[0]).toBe("/usr/bin/osascript");
   await openComputerControlPermissionPane("screen-recording");
-  expect(mocks.getSources).not.toHaveBeenCalled();
+  expect(screenRequestOrder()).toBeUndefined();
 });
 
 it("starts no child while Electron reports the grant", async () => {
