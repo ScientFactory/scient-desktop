@@ -242,13 +242,15 @@ const jumpKeys = compileResolvedKeybindingsConfig(
     when: "modelPickerOpen",
   })),
 );
+// The selected row is a shorter name: that row also holds a check and a star, and in Linux CI's
+// wider font a selected "Gemini 4 Hydrogen" wraps by about 5 px.
 function AgentPicker() {
   const [options, setOptions] = useState<ReadonlyArray<ProviderOptionSelection>>([]);
   const traits = {
     provider: ProviderDriverKind.make("antigravity"),
     instanceId: agentInstanceId,
     models: agentModels,
-    model: agentModels[1]!.slug,
+    model: agentModels[2]!.slug,
     modelOptions: options,
     onModelOptionsChange: (next: ReadonlyArray<ProviderOptionSelection> | undefined) =>
       setOptions(next ?? []),
@@ -258,7 +260,7 @@ function AgentPicker() {
       <ProviderModelPicker
         environmentId={null}
         activeInstanceId={agentInstanceId}
-        model={agentModels[1]!.slug}
+        model={agentModels[2]!.slug}
         lockedProvider={null}
         instanceEntries={agentEntries}
         modelOptionsByInstance={new Map([[agentInstanceId, agentModels]])}
