@@ -263,9 +263,19 @@ C "Editorial" with PMID Y. Both links disagree on the title, so nothing
 merges; A–B and B–C are listed `titles-differ`, A–C only as a metadata match.
 A record that agrees with two copies that disagree (A has DOI X and arXiv Y,
 B only arXiv Y, C arXiv Y and DOI Z) puts all three in one set that fails, so
-a bridge never joins A and C and B is not guessed into either. Each merged
-record's receipt names the strongest corroborated link that joined it; there
-is no default kind.
+a bridge never joins A and C and B is not guessed into either. A set merges
+outward from its survivor (`outwardFrom`, `libraryDuplicates.ts`): the next
+loser is the most preferred member with a corroborated link to one already
+merged, and its receipt names the strongest such link. The survivor holds by
+then every identifier, item and PDF of the records merged into it, so the
+receipt's kind is evidence the two sides of that merge share; there is no
+default kind. Example: A with DOI X, B with DOI X and PMID Y, C with PMID Y,
+all agreeing, survivor A: B merges first, then C on the PMID A now holds. Each
+loser carries its corroborated links to the records ahead of it, and the pass
+uses the strongest link to one whose merge succeeded in this pass; a loser with
+none (its bridge failed) is not merged and is reported as a failure, so a
+receipt never names evidence the survivor did not gain. The next pass plans
+again.
 
 Every linked pair not merged is listed as `possible-item-match`,
 `possible-identifier-match` or `possible-pdf-match` with a `reason`:
@@ -280,28 +290,71 @@ by kind (item, identifier, PDF, metadata, container), then by source IDs. Pair
 problems are computed per shared key and for the members of each merge set,
 never for every two records of a large linked cluster.
 
-**Intake uses the same rule.** `assessSourceDuplicate` (`duplicates.ts`),
-behind the store's locked import, the coordinator's check before asking a
-registry, the reference-file plan, Zotero and PDF intake and the agent add
-paths, collects the records that share the candidate's external item,
-work-level identifier or PDF (not a book's PDF on its parts) and reuses one
-only when it corroborates the candidate and no Library decision keeps the two
-apart (`ScientSourceIntakeExclusions`: a distinct pair, an undone merge, or a
+**Intake: the shared identity assessment.** `assessSourceDuplicate`
+(`duplicates.ts`) is the one rule every intake uses: the store's locked import
+(both checks and the concurrent-create path), the pre-import assessor
+(`readScientSourceIntakeAssessor` / `assessScientSourceIntake` in `store.ts`,
+bound to the store's records, its owner ID and the Library's current
+exclusions) behind the coordinator's check before asking a registry, Zotero and
+local-PDF preflight, a bare identifier add and a paper download, the
+reference-file plan and the agent add paths. It collects the
+records that share the candidate's external item, work-level identifier, PDF
+(not a book's PDF on its parts) or, between two whole books, an ISBN (ISBN-10
+and ISBN-13 compare equal), and reuses one only when nothing the candidate
+supplies contradicts it (`scientSourceIntakeProblem`, `sourceIdentity.ts`) and
+no Library decision keeps the two apart (a distinct pair, an undone merge, or a
 record an unreadable receipt names, judged against the ID the candidate's own
-source key derives). Exactly one such record is reused; the record that ID
-names is the import itself and is always reused. Several corroborated records,
-or only disagreeing ones, leave the candidate `new`: it is stored as its own
-record, `matchingSourceIds` names the others and `reason` says why ("Kept as a
-separate source: it shares an identifier with an existing source, but the
-titles differ."), and the Library's duplicates read lists the pair. A new
-record never takes an ID that names a merged-away record or that a live alias
-forwards; it takes one derived from its source key and operation instead. Two
-entries of one reference file repeat each other only when they corroborate.
-Adding a bare identifier always asks its registry first, because the
-identifier alone has no title to corroborate; a paper download attaches its
-PDF to the record naming its identifier only when the paper lookup's title
-corroborates it. An identifier add that only resembles a stored record
-(`possibleMatch`) is not added to the project.
+source key derives). Intake differs from the merge rule in one way: a fact one
+side lacks (no title, type `other`) is no contradiction, so a bare DOI selects
+the copy carrying it; two titles that differ, two known types that differ,
+different explicit arXiv versions or conflicting identifiers are. The record
+the candidate's own key derives gets the same check: a derived ID (an
+identifier hash, an agent key without the type, a Zotero item key) is no proof
+of one work. Of several passing records, the locked import first takes the one
+this same operation already wrote (the ID derived from source key and
+operation, or the derived ID with `origin.operationId` equal): that durable
+record is how a genuine retry is recognised, and exclusions are judged against
+it. Otherwise the own-key record is preferred only when no two passing records
+disagree with each other (intake rule, distinct pair or kept-apart pair):
+missing facts that make disagreeing copies look alike choose none of them.
+Otherwise exactly one passing record is reused. Several, or only disagreeing
+ones, leave the candidate `new`: it is stored as its own record, `matchingSourceIds` names the others
+and `reason` says why ("Kept as a separate source: it shares an identifier
+with an existing source, but the titles differ."), and the Library's
+duplicates read lists the pair. A new record never takes an ID that names an
+existing or merged-away record or that a live alias forwards; it takes one
+derived from its source key and operation instead. Two entries of one
+reference file repeat each other only when they do not contradict.
+
+Preflight equals the final import: Zotero preflight assesses the candidate
+under the source key the import will give it (`zotero-group-<id>-<key>` and the
+group's library ID for a group item, `zoteroImportCandidate`), and local-PDF
+preflight under its staged key, both through the assessor, so an undone or
+held-back pair is offered as `new` rather than hidden as an exact duplicate.
+The locked import checks again.
+
+A bare identifier (`SourceIdentifierAdd.ts` `selectIdentifierCopy`) that
+exactly one stored record carries (for an ISBN, one whole book) and that the
+assessment reuses is reported as that record without a registry call, offline
+too. The identifier list and an agent add whose citation fields are identifiers
+alone (`identifierOnlyInput` in the sources handlers; type `other` without a
+name counts as no type) select the same way; when nothing is selected, the
+latter goes through the agent add with type `book` for ISBNs only and `other`
+otherwise, never a type it has to invent to pass validation. Two or
+more carriers are not chosen between: the identifier is resolved and the
+registry's title and type are judged. The identifier-only agent fallback resolves
+before the coordinator's preliminary assessment and passes that answer into the
+agent add; the locked import judges those facts. Without a reachable registry or
+a catalogue record, it returns `unavailable`, naming no copy and pinning nothing.
+A paper download (`paperIntake.ts`)
+builds the paper's own candidate (type `article`, or `preprint` for an arXiv
+ID alone; the lookup's title), goes through the agent add (assessment, registry
+when not reused, locked import) and attaches its PDF to the record the import
+named, through `attachScientSourcePaperPdf`, which judges again under the
+store lock with the candidate the import judged (registry facts applied) and
+the Library's current exclusions; it never takes the target's type. An
+identifier add that only resembles a stored record (`possibleMatch`) is not
+added to the project.
 
 Two kinds of match are only listed as `possibleDuplicates`, never merged:
 title, lead author and year (`possible-metadata-match`), and a shared ISBN or
@@ -366,7 +419,10 @@ person's or an agent's choice; Undo does not claim the two are different works.
 **Receipts are kept for good.** Nothing prunes `merges/*.json`; emptying the
 Trash deletes trash entries and history, not receipts. A receipt this Scient
 cannot read (bad JSON, another format version, not a regular file) is
-reported, never skipped: the bulk pass returns `damagedReceipts`, the
+reported, never skipped: one schema (`ScientLibraryMerge`,
+`libraryMergeReceipt.ts`) decodes receipts for the merge engine and for intake,
+so a valid JSON file missing part of the body is damaged for both. The bulk
+pass returns `damagedReceipts`, the
 duplicates read and route send them, the screen says how many, and the agent
 list tool returns them with the source IDs still legible in the file
 (`survivorId`/`loserId` read from the raw text). Those records, and what their
@@ -598,15 +654,29 @@ settles a `contradicted` or `ambiguous` pin on purpose. The snapshot's detail
 (and its row in the agent list) carries `libraryMatch`: the reason, the
 candidate records with title, year, journal and what disagrees
 (`scientLibraryIdentityProblem` against the pin's `work`), and whether it was
-kept separate (`libraryPinMatches` in `LibrarySourcesRoutes.ts`).
+kept separate (`libraryMatchOf` in `LibrarySourcesRoutes.ts`). A review record
+no pin names gets the same: the review record carries its resolution
+(`unresolved` on a snapshot entry), its detail from the review and the agent's
+review read (`libraryReviewRecordMatches`) carry `libraryMatch`, and the repair
+actions take its project source ID; Keep separate looks for the match among
+pins, then the project's reviews. It never becomes a pin.
 `link-pin` (`linkScientProjectSource`) writes a `linked` map entry with
 `linkedBy` and the entry it replaced, under the library lock; the pin's key,
 project note and review membership hang on the project source ID, so they all
 stay, and the managed bibliography is rebuilt. `unlink-pin` puts the replaced
 entry back (or none). `keep-pin-separate` records the decision in the map's
 `keptSeparate` list with actor and time; the resolution then carries
-`keptSeparate: true`, and `clear-pin-separate` withdraws it. A later link
-clears it. Older map files without these fields read as before.
+`keptSeparate: true`, and `clear-pin-separate` withdraws it. The decision
+holds: resolution leaves the rejected IDs (and what their aliases resolve to)
+out of matching for that project source ID, so a rejected copy whose metadata
+later agrees still does not resolve it, and nothing is hydrated meanwhile.
+When nothing matches any more (the rejected copy's identifier was corrected),
+the source stays unresolved as `contradicted` with `keptSeparate` and the
+rejected IDs as candidates, so its detail, the review read and Ask again still
+show it; only after Ask again can a write-mode resolution hydrate it. A
+later link withdraws it and keeps it on the `linked` entry
+(`replacedSeparate`); `unlink-pin` puts it back. Older map files without these
+fields read as before.
 
 **Two pins, one source.** A project that pinned both sides of a pair keeps
 both pins after they are merged: its documents may cite either key, and the
@@ -1799,9 +1869,10 @@ From a client connection, `accounts.papers.getForSource` and an
 Library changes (`scientPaperRequestScopes`, shared by the client command check
 and the server's RPC authorization); a request that only saves PDFs needs
 `settings:write` alone.
-Once the queue has saved the PDF, the intake attaches it to the source whose DOI
-or arXiv ID matches, at that source's current revision, or creates a source
-through the same resolver as an agent add (`origin.intake: "paper"`, credited to
+Once the queue has saved the PDF, the intake attaches it to the source the
+shared identity assessment takes the paper for (see the merge engine's intake
+rule), rechecked under the store lock, at that source's current revision, or
+creates a source through the same resolver as an agent add (`origin.intake: "paper"`, credited to
 the agent, or to the user for their own queue). Its candidate holds only the
 asked identifier; OpenAlex's title and year are kept, with `openalex`
 provenance, only when no registry answers. The DOI in the PDF's own text is not
@@ -1822,8 +1893,9 @@ identifier makes the registry's bibliographic fields authoritative, with `doi`
 or `pubmed` field provenance carrying the identifier and retrieval time, and
 stores verification `verified`. A CSL title is read as plain text: Crossref
 passes on the inline markup (`<i>`, `<sub>`, MathML) and line breaks of the
-deposited XML, and Library titles are plain text. An unreachable or unusable registry adds the
-source as given with `unchecked`; a source without a DOI, PMID, arXiv ID or ISBN
+deposited XML, and Library titles are plain text. An unreachable or unusable registry adds
+supplied citation fields as given with `unchecked`; identifiers alone return
+`unavailable` when no catalogue record is available. A source without a DOI, PMID, arXiv ID or ISBN
 is `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. The same add path serves a person
 adding by identifier (actor `user`), with the same refusals and states.

@@ -1,15 +1,13 @@
-import {
-  normalizePersistentIdentifier,
-  scientLibraryIdentityProblem,
-  type ScientSourceActor,
-  type ScientSourceAttachmentRetrieval,
-  type ScientSourceCandidate,
-  type ScientSourceIdentifier,
-  type ScientSourceRecord,
+import type {
+  ScientSourceActor,
+  ScientSourceAttachmentRetrieval,
+  ScientSourceCandidate,
+  ScientSourceIdentifier,
+  ScientSourceRecord,
 } from "@scientfactory/scient-sources";
 import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import {
-  attachScientSourcePdf,
+  attachScientSourcePaperPdf,
   inspectScientSourcePdf,
   listScientSourceRecords,
   resolveScientSourceInputPdf,
@@ -27,15 +25,17 @@ export type PaperIntakeResult =
     }
   | { readonly outcome: "not-added"; readonly message: string };
 
-const identifierKey = (identifier: ScientSourceIdentifier) =>
-  normalizePersistentIdentifier(identifier.scheme, identifier.value);
-
 const ATTACH_ATTEMPTS = 3;
 
-/** Attaches to whatever revision the source has now: adding a PDF changes nothing else. */
+/**
+ * Attaches to whatever revision the source has now (adding a PDF changes nothing else), once the
+ * shared identity rule, rechecked under the store lock, still takes the paper for that source.
+ */
 async function attachToSource(input: {
   readonly root: ScientSourceStoreLocation;
   readonly record: ScientSourceRecord;
+  readonly paper: ScientSourceCandidate;
+  readonly pdfSha256: string;
   readonly pdfPath: string;
   readonly fileName: string;
   readonly actor: ScientSourceActor;
@@ -43,15 +43,23 @@ async function attachToSource(input: {
 }): Promise<PaperIntakeResult> {
   let record = input.record;
   for (let attempt = 0; attempt < ATTACH_ATTEMPTS; attempt += 1) {
-    const result = await attachScientSourcePdf({
+    const result = await attachScientSourcePaperPdf({
       root: input.root,
       sourceId: record.sourceId,
       expectedRevision: record.revision,
+      paper: input.paper,
+      pdfSha256: input.pdfSha256,
       pdfPath: input.pdfPath,
       fileName: input.fileName,
       actor: input.actor,
       ...(input.retrieval ? { retrieval: input.retrieval } : {}),
     });
+    if (result.outcome === "not-same-work") {
+      return {
+        outcome: "not-added",
+        message: `The paper was not attached to the source ${record.sourceId}: ${result.duplicate.reason}`,
+      };
+    }
     if (result.outcome !== "stale")
       return {
         outcome: result.outcome === "attached" ? "attached" : "already-attached",
@@ -67,8 +75,9 @@ async function attachToSource(input: {
 }
 
 /**
- * A downloaded paper goes into the Library: onto the source that already names its DOI or arXiv
- * ID, or as a new source whose metadata comes from the identifier's registry, never from a guess.
+ * A downloaded paper goes into the Library: onto the source the shared identity rule takes it for
+ * (judged on the paper's own identity and the Library's decisions, never on the target's type),
+ * or as a new source whose metadata comes from the identifier's registry, never from a guess.
  */
 export async function addPaperToLibrary(
   input: {
@@ -95,39 +104,13 @@ export async function addPaperToLibrary(
     ...(input.doi ? [{ scheme: "doi", value: input.doi }] : []),
     ...(input.arxiv ? [{ scheme: "arxiv", value: input.arxiv }] : []),
   ];
-  const keys = new Set(named.map(identifierKey));
   if (named.length === 0)
     return {
       outcome: "not-added",
       message: "The paper has no DOI or arXiv ID, so add it with scient_sources_add.",
     };
-  const records = await listScientSourceRecords(store);
-  const naming = records.filter((record) =>
-    record.identifiers.some((identifier) => keys.has(identifierKey(identifier))),
-  );
-  // Without the paper's own title one record naming the identifier is not proof it is this paper.
-  const existing =
-    naming.length === 1 &&
-    input.fallback?.title &&
-    scientLibraryIdentityProblem(
-      { type: naming[0]!.type, title: input.fallback.title, identifiers: named },
-      naming[0]!,
-    ) === null
-      ? naming[0]
-      : undefined;
-  const attach = (record: ScientSourceRecord) =>
-    attachToSource({
-      root: store,
-      record,
-      pdfPath: pdf.absolutePath,
-      fileName: pdf.fileName,
-      actor: input.actor,
-      ...(input.retrieval ? { retrieval: input.retrieval } : {}),
-    });
-  if (existing) return attach(existing);
-
   const expectedPdf = await inspectScientSourcePdf(pdf.absolutePath);
-  // Registry metadata replaces these; they only name the paper if no registry answers.
+  // The paper's own identity; registry metadata replaces these only when it is added as new.
   const candidate: ScientSourceCandidate = {
     sourceKey: `paper_${expectedPdf.sha256}`,
     type: input.arxiv && !input.doi ? "preprint" : "article",
@@ -167,6 +150,18 @@ export async function addPaperToLibrary(
     pdfFileName: pdf.fileName,
     pdfAttachmentCount: 1,
   };
+  const records = await listScientSourceRecords(store);
+  const attach = (record: ScientSourceRecord, paper: ScientSourceCandidate) =>
+    attachToSource({
+      root: store,
+      record,
+      paper,
+      pdfSha256: expectedPdf.sha256,
+      pdfPath: pdf.absolutePath,
+      fileName: pdf.fileName,
+      actor: input.actor,
+      ...(input.retrieval ? { retrieval: input.retrieval } : {}),
+    });
   const result = await addAgentSource(
     {
       root: store,
@@ -191,7 +186,9 @@ export async function addPaperToLibrary(
     result.outcome === "duplicate"
       ? records.find((record) => record.sourceId === result.duplicate.matchingSourceIds[0])
       : undefined;
-  if (match && result.duplicate.kind !== "possible-metadata-match") return attach(match);
+  if (match && result.duplicate.kind !== "possible-metadata-match") {
+    return attach(match, result.judged);
+  }
   return {
     outcome: "not-added",
     message: match

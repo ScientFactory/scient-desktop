@@ -5,11 +5,21 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
-import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
+import { assessSourceDuplicate, type ScientSourceCandidate } from "@scientfactory/scient-sources";
+import {
+  mergeScientLibrarySources,
+  undoScientLibraryMerge,
+} from "@scientfactory/scient-sources/library-merge";
+import {
+  ensureScientLibrary,
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
 import {
   attachScientSourcePdf,
   importScientSource,
   listScientSourceRecords,
+  removeScientSource,
   readScientSourceStagedMaterial,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
   stagedScientSourcePdfAbsolutePath,
@@ -26,14 +36,26 @@ import {
   getScientSourcesOverview,
   getScientSourceDetail,
   getScientSourceAttachmentPreviewMaterial,
+  preflightZoteroImport,
   refreshScientSourceMetadata,
   removeSource,
   uploadLocalPdfSource,
   updateScientSource,
   updateSourceNote,
 } from "./ScientSourcesCoordinator.ts";
+import { fakeZoteroAccess, fakeZoteroTransport, zoteroItem } from "./Zotero.testkit.ts";
 
 const fixtures: string[] = [];
+
+async function libraryFixture() {
+  const base = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-preflight-")),
+  );
+  fixtures.push(base);
+  const libraryRoot = scientLibraryRootFor(NodePath.join(base, "state"));
+  await ensureScientLibrary(libraryRoot);
+  return { base, libraryRoot, library: scientLibraryLocation(libraryRoot) };
+}
 
 const candidate: ScientSourceCandidate = {
   sourceKey: "PREVIEW1",
@@ -439,10 +461,100 @@ describe("ScientSourcesCoordinator", () => {
           identifiers: [],
           externalReferences: [{ ...candidate.externalReferences[0]!, itemKey: "PREVIEW2" }],
         },
-        existing: [imported.record],
+        assess: (preview, pdfSha256) =>
+          assessSourceDuplicate({
+            candidate: preview,
+            existing: [imported.record!],
+            ...(pdfSha256 ? { pdfSha256 } : {}),
+          }),
         pdfPath,
       }),
     ).resolves.toMatchObject({ kind: "new", matchingSourceIds: [imported.record.sourceId] });
+  });
+
+  it("judges Zotero preflight as the import does: an undone, removed copy is offered again", async () => {
+    const { libraryRoot, library } = await libraryFixture();
+    const item = zoteroItem("UNDN2345", { title: "Undone pair", DOI: "10.1000/undone" });
+    const zotero = fakeZoteroAccess(
+      fakeZoteroTransport({ items: new Map([["UNDN2345", { item, children: [] }]]) }),
+    );
+    const zoteroImport = async (operationId: string) => {
+      await beginZoteroImport({
+        root: library,
+        operationId,
+        itemKeys: ["UNDN2345"],
+        possibleMetadataMatchOverrides: [],
+      });
+      return advanceSourceImport({ root: library, operationId, zotero });
+    };
+    await zoteroImport("first");
+    const [zoteroCopy] = await listScientSourceRecords(library);
+    // A second copy of the same work, merged with the Zotero copy, then the merge undone and the
+    // Zotero copy removed.
+    const kept = { ...zoteroCopy!, sourceId: "source_kept", externalReferences: [] };
+    await NodeFSP.writeFile(
+      NodePath.join(libraryRoot, "records", "source_kept.json"),
+      JSON.stringify(kept),
+    );
+    const merged = await mergeScientLibrarySources({
+      library,
+      sourceIds: ["source_kept", zoteroCopy!.sourceId],
+      survivorId: "source_kept",
+    });
+    await undoScientLibraryMerge({
+      library,
+      mergeId: merged.outcome === "merged" ? merged.merge.mergeId : "",
+    });
+    const restored = (await listScientSourceRecords(library)).find(
+      (record) => record.sourceId === zoteroCopy!.sourceId,
+    );
+    await removeScientSource({
+      root: library,
+      sourceId: restored!.sourceId,
+      expectedRevision: restored!.revision,
+    });
+
+    const preflight = await preflightZoteroImport({
+      root: library,
+      itemKeys: ["UNDN2345"],
+      zotero,
+    });
+    expect(preflight.items).toMatchObject([
+      { duplicate: { kind: "new", matchingSourceIds: ["source_kept"] } },
+    ]);
+    expect((await zoteroImport("again")).items).toMatchObject([{ state: "imported" }]);
+  });
+
+  it("judges PDF preflight as the import does: a source a damaged receipt names is held back", async () => {
+    const { base, libraryRoot, library } = await libraryFixture();
+    const pdfPath = NodePath.join(base, "A_held-study.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nheld study\n", "utf8");
+    const upload = () =>
+      uploadLocalPdfSource({ root: library, sourcePath: pdfPath, fileName: "A_held-study.pdf" });
+    const first = await upload();
+    await beginLocalPdfImport({
+      root: library,
+      operationId: "pdf",
+      itemKeys: [first.item.candidate.sourceKey],
+      possibleMetadataMatchOverrides: [],
+    });
+    await advanceSourceImport({ root: library, operationId: "pdf" });
+    const target = (await listScientSourceRecords(library)).find(
+      (record) => record.title === "A held study",
+    );
+    expect((await upload()).item.duplicate).toMatchObject({
+      kind: "same-pdf",
+      matchingSourceIds: [target!.sourceId],
+    });
+    await NodeFSP.mkdir(NodePath.join(libraryRoot, "merges"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(libraryRoot, "merges", "merge_damaged.json"),
+      `{"formatVersion":1,"survivorId":"${target!.sourceId}","loserId":"source_gone","sta`,
+    );
+    expect((await upload()).item.duplicate).toMatchObject({
+      kind: "new",
+      matchingSourceIds: [target!.sourceId],
+    });
   });
 
   it("updates canonical source metadata through the environment coordinator", async () => {

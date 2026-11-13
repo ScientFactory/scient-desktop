@@ -1011,6 +1011,89 @@ describe("Library routes on the library backend", () => {
       }),
   );
 
+  it.effect(
+    "offers repair of a review record no pin names, in its detail and by Keep separate",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const doi = [{ scheme: "doi", value: "10.1000/screened" }];
+        const { screened, reviewId, near } = yield* Effect.promise(async () => {
+          // The review was built on another computer; this Library holds a near-match by mistake.
+          const theirs = scientLibraryLocation(
+            scientLibraryRootFor(NodePath.join(fixture.base, "theirs")),
+          );
+          await ensureScientLibrary(theirs.root);
+          const screened = (
+            await importScientSource({
+              root: theirs,
+              operationId: NodeCrypto.randomUUID(),
+              candidate: {
+                sourceKey: "screened",
+                type: "article",
+                customType: null,
+                title: "Early therapy in sepsis",
+                creators: [ada],
+                issuedRaw: "2026",
+                issuedYear: 2026,
+                identifiers: doi,
+                abstract: null,
+                containerTitle: null,
+                publisher: null,
+                volume: null,
+                issue: null,
+                pages: null,
+                language: null,
+                url: null,
+                tags: [],
+                externalReferences: [],
+                fieldProvenance: [],
+                pdfAvailable: false,
+                pdfFileName: null,
+                pdfAttachmentCount: 0,
+              },
+            })
+          ).record!;
+          const { reviewId } = await changeScientLibraryReview({
+            projectRoot: fixture.root,
+            library: theirs,
+            change: { action: "create-review", title: "Sepsis" },
+            actor: "user",
+          });
+          await changeScientLibraryReview({
+            projectRoot: fixture.root,
+            library: theirs,
+            change: { action: "add-sources", reviewId: reviewId!, sourceIds: [screened.sourceId] },
+            actor: "user",
+          });
+          const near = await libraryRecord(fixture, "near", {
+            title: "Soil carbon under drought",
+            identifiers: doi,
+          });
+          return { screened, reviewId: reviewId!, near };
+        });
+        const store = yield* storeFor(fixture, "write");
+        yield* Effect.promise(async () => {
+          const detail = () =>
+            librarySourceDetail(store, { sourceId: screened.sourceId, reviewId });
+          expect(await detail()).toMatchObject({
+            label: "From this review's snapshot",
+            libraryMatch: {
+              reason: "contradicted",
+              keptSeparate: false,
+              candidates: [{ sourceId: near.sourceId, problem: "titles-differ" }],
+            },
+          });
+          expect(
+            await organizeLibrarySources(store, {
+              change: { action: "keep-pin-separate", sourceId: screened.sourceId },
+            }),
+          ).toMatchObject({ outcome: "kept-separate" });
+          expect(await detail()).toMatchObject({ libraryMatch: { keptSeparate: true } });
+          expect(await readScientProjectPins(fixture.root)).toEqual([]);
+        });
+      }),
+  );
+
   it("counts both distinct actions as Library-only, which a project server refuses", () => {
     const sourceIds = ["source_a", "source_b"] as const;
     expect(isLibraryOrganizeAction({ action: "mark-distinct", sourceIds })).toBe(true);

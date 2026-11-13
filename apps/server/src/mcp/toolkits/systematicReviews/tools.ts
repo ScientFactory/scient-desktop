@@ -9,6 +9,7 @@ import {
   ScientSystematicReviewChangeResult,
   ScientSystematicReviewSummary,
 } from "@scientfactory/scient-sources";
+import { ScientSourceLibraryMatch } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -33,6 +34,8 @@ const ReviewRecord = Schema.Struct({
   abstract: NullableText,
   /** Library mode: a record this library lacks, served from the review's snapshot or missing. */
   label: Schema.optionalKey(Schema.Literals(["From this review's snapshot", "Details missing"])),
+  /** A snapshot record with Library near-matches; repaired with the organize tool's link-pin. */
+  libraryMatch: Schema.optionalKey(ScientSourceLibraryMatch),
 });
 
 export const ScientSystematicReviewsReadResult = Schema.Struct({

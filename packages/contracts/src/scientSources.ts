@@ -160,7 +160,7 @@ export type ScientSourceLibraryMatch = typeof ScientSourceLibraryMatch.Type;
 
 export const ScientSourceDetailResult = Schema.Struct({
   ...ScientSourceProjectRecord.fields,
-  /** A pin's snapshot only: the Library sources it was compared with and why it was not linked. */
+  /** A pin's or review record's snapshot: the Library sources it was compared with, and why. */
   libraryMatch: Schema.optionalKey(ScientSourceLibraryMatch),
   /**
    * The person's own note on the library record, which follows the paper. Only in the detail,

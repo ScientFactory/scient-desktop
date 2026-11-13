@@ -4,8 +4,6 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import * as Schema from "effect/Schema";
-
 import { scientSourceCollectionsInternals } from "./collections.ts";
 import {
   readLibraryAliasesAt,
@@ -16,6 +14,7 @@ import {
   assessScientLibraryDuplicates,
   compareScientLibrarySurvivors,
   pairKey,
+  scientLibraryJoiningLink,
   type ScientLibraryPossibleDuplicate,
 } from "./libraryDuplicates.ts";
 import {
@@ -29,11 +28,11 @@ import {
   type ScientLibraryDamagedReceipt,
   type ScientLibraryDistinctPair,
 } from "./libraryExclusions.ts";
+import { ScientLibraryMerge } from "./libraryMergeReceipt.ts";
 import type { ScientLibraryLocation } from "./libraryRoot.ts";
 import {
   ScientSourceActor,
   ScientSourceExternalReference,
-  ScientSourceFieldProvenance,
   ScientSourceIdentifier,
   ScientSourceZoteroSync,
   scientSourceReadingState,
@@ -67,48 +66,8 @@ type StorePaths = Awaited<ReturnType<typeof sourceStorePaths>>;
 const MERGES_DIRECTORY = SCIENT_LIBRARY_MERGES_DIRECTORY;
 const PENDING_MERGES_DIRECTORY = "pending";
 const MAX_MERGE_BYTES = SCIENT_LIBRARY_MAX_MERGE_BYTES;
-const NonEmptyString = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
 
-const MergeFieldChange = Schema.Struct({
-  field: NonEmptyString,
-  /** Absent when the survivor had no such key. */
-  before: Schema.optionalKey(Schema.Unknown),
-  after: Schema.optionalKey(Schema.Unknown),
-});
-
-export const ScientLibraryMerge = Schema.Struct({
-  formatVersion: Schema.Literal(1),
-  mergeId: NonEmptyString,
-  survivorId: NonEmptyString,
-  loserId: NonEmptyString,
-  kind: Schema.Literals(["same-zotero-item", "same-identifier", "same-pdf", "requested"]),
-  state: Schema.Literals(["pending", "done", "undone"]),
-  mergedAt: NonEmptyString,
-  mergedBy: ScientSourceActor,
-  /** The survivor revision the merge wrote, or its unchanged revision when it gained nothing. */
-  survivorRevision: Schema.Int,
-  loserRevision: Schema.Int,
-  /** Fields the merge set on the survivor, so Undo can revert them and keep later edits. */
-  changes: Schema.Array(MergeFieldChange),
-  added: Schema.Struct({
-    tags: Schema.Array(Schema.String),
-    identifiers: Schema.Array(ScientSourceIdentifier),
-    attachmentSha256: Schema.Array(NonEmptyString),
-    externalReferences: Schema.Array(ScientSourceExternalReference),
-    fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
-  }),
-  /** The merge report: values the survivor kept over different ones the loser had. */
-  conflicts: Schema.Array(
-    Schema.Struct({ field: NonEmptyString, kept: Schema.Unknown, other: Schema.Unknown }),
-  ),
-  zoteroBaseCopied: Schema.Boolean,
-  /** Collections the loser was moved out of, and those the survivor joined by it. */
-  collectionIds: Schema.Array(NonEmptyString),
-  addedToCollectionIds: Schema.Array(NonEmptyString),
-  undoneAt: Schema.optionalKey(NonEmptyString),
-  undoneBy: Schema.optionalKey(ScientSourceActor),
-});
-export type ScientLibraryMerge = typeof ScientLibraryMerge.Type;
+export { ScientLibraryMerge };
 type MergeKind = ScientLibraryMerge["kind"];
 
 export type { ScientLibraryDistinctPair };
@@ -502,7 +461,7 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
 async function readExclusions(paths: StorePaths, live: ReadonlySet<string>) {
   const [distinctPairs, { receipts, damaged }, aliases] = await Promise.all([
     readScientLibraryDistinctPairs(paths.root),
-    readScientLibraryMergeReceipts(paths.root, ScientLibraryMerge),
+    readScientLibraryMergeReceipts(paths.root),
     readLibraryAliasesAt(paths.root),
   ]);
   return {
@@ -699,7 +658,18 @@ export async function mergeScientLibraryDuplicates(input: {
     const failures: Array<ScientLibraryDuplicateMergeResult["failures"][number]> = [];
     for (const group of assessment.groups) {
       let survivor = byId.get(group.survivorId)!;
-      for (const { sourceId, kind } of group.losers) {
+      const joined = new Set([group.survivorId]);
+      for (const { sourceId, links } of group.losers) {
+        // Only evidence a successful merge moved to the survivor can join the next loser.
+        const kind = scientLibraryJoiningLink(links, joined);
+        if (!kind) {
+          failures.push({
+            survivorId: survivor.sourceId,
+            loserId: sourceId,
+            message: "Not merged: the source linking it to this one could not be merged.",
+          });
+          continue;
+        }
         try {
           const merged = await mergeRecords({
             paths,
@@ -711,6 +681,7 @@ export async function mergeScientLibraryDuplicates(input: {
           });
           pending.push(merged.merge);
           survivor = merged.survivor;
+          joined.add(sourceId);
         } catch (cause) {
           // The survivor's revision may have landed before the failure.
           survivor = (await readScientSourceRecordIfPresent(paths, survivor.sourceId)) ?? survivor;

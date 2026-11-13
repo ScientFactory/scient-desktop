@@ -44,10 +44,16 @@ const LISTING_ORDER: ReadonlyArray<ScientLibraryPossibleDuplicateKind> = [
 
 interface ScientLibraryDuplicateGroup {
   readonly survivorId: string;
-  /** Merged into the survivor in this order, each with the strongest match that joined it. */
+  /**
+   * Merged into the survivor in this order, each with its corroborated links to the survivor and
+   * earlier losers; a merge uses the strongest link to a record whose merge succeeded.
+   */
   readonly losers: ReadonlyArray<{
     readonly sourceId: string;
-    readonly kind: ScientLibraryDuplicateKind;
+    readonly links: ReadonlyArray<{
+      readonly sourceId: string;
+      readonly kind: ScientLibraryDuplicateKind;
+    }>;
   }>;
 }
 
@@ -127,6 +133,52 @@ interface StrongPair {
   readonly left: ScientSourceRecord;
   readonly right: ScientSourceRecord;
   kind: ScientLibraryDuplicateKind;
+}
+
+/** The strongest of a loser's links to records already merged; none when every such merge failed. */
+export function scientLibraryJoiningLink(
+  links: ScientLibraryDuplicateGroup["losers"][number]["links"],
+  merged: ReadonlySet<string>,
+): ScientLibraryDuplicateKind | null {
+  let kind: ScientLibraryDuplicateKind | null = null;
+  for (const link of links) {
+    if (merged.has(link.sourceId) && (!kind || KIND_STRENGTH[link.kind] < KIND_STRENGTH[kind])) {
+      kind = link.kind;
+    }
+  }
+  return kind;
+}
+
+/**
+ * The merge order of a set, outward from its survivor: each next loser is the most preferred one
+ * linked to a record already merged, so its receipt names evidence the survivor holds by then (it
+ * gains each loser's identifiers, items and PDFs).
+ */
+function outwardFrom(
+  ordered: ReadonlyArray<ScientSourceRecord>,
+  corroborated: ReadonlyMap<string, ReadonlyArray<StrongPair>>,
+): ScientLibraryDuplicateGroup["losers"] {
+  const merged = new Set([ordered[0]!.sourceId]);
+  const losers: Array<ScientLibraryDuplicateGroup["losers"][number]> = [];
+  while (merged.size < ordered.length) {
+    let next: ScientLibraryDuplicateGroup["losers"][number] | undefined;
+    for (const record of ordered) {
+      if (merged.has(record.sourceId)) continue;
+      const links = (corroborated.get(record.sourceId) ?? []).flatMap((edge) => {
+        const other = edge.left.sourceId === record.sourceId ? edge.right : edge.left;
+        return merged.has(other.sourceId) ? [{ sourceId: other.sourceId, kind: edge.kind }] : [];
+      });
+      if (links.length > 0) {
+        next = { sourceId: record.sourceId, links };
+        break;
+      }
+    }
+    // A set is connected by its corroborated links, so some loser always touches the merged part.
+    if (!next) break;
+    merged.add(next.sourceId);
+    losers.push(next);
+  }
+  return losers;
 }
 
 /**
@@ -243,18 +295,7 @@ export function assessScientLibraryDuplicates(input: {
     const ordered = members.toSorted(compareScientLibrarySurvivors);
     const survivor = ordered[0]!;
     for (const member of ordered) survivorOf.set(member.sourceId, survivor.sourceId);
-    groups.push({
-      survivorId: survivor.sourceId,
-      losers: ordered.slice(1).map((loser) => ({
-        sourceId: loser.sourceId,
-        kind: corroborated
-          .get(loser.sourceId)!
-          .map((edge) => edge.kind)
-          .reduce((strongest, kind) =>
-            KIND_STRENGTH[kind] < KIND_STRENGTH[strongest] ? kind : strongest,
-          ),
-      })),
-    });
+    groups.push({ survivorId: survivor.sourceId, losers: outwardFrom(ordered, corroborated) });
   }
 
   const strongPairs: Array<{

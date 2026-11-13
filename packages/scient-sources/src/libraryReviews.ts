@@ -601,6 +601,8 @@ export interface ScientLibraryReviewRecord {
   readonly abstractFrom: "library" | "snapshot" | null;
   /** Removed from this computer's library: shown, but not screened or counted. */
   readonly removed: boolean;
+  /** For a snapshot record, why this Library did not serve it (`contradicted`, `ambiguous`, …). */
+  readonly unresolved?: Extract<ScientProjectSourceResolution, { readonly kind: "unresolved" }>;
 }
 
 function recordFromWork(projectSourceId: string, work: ScientReviewWork): ScientSourceRecord {
@@ -662,12 +664,14 @@ function reviewRecord(
     };
   }
   if (work) {
+    const resolution = resolved.resolutions.get(projectSourceId);
     return {
       projectSourceId,
       from: "snapshot",
       record: recordFromWork(projectSourceId, work),
       abstractFrom: work.abstract === null ? null : "snapshot",
       removed,
+      ...(resolution?.kind === "unresolved" ? { unresolved: resolution } : {}),
     };
   }
   return { projectSourceId, from: "missing", record: null, abstractFrom: null, removed };

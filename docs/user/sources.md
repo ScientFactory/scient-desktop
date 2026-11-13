@@ -141,7 +141,9 @@ report on the review lists what is left to decide until you dismiss it.
 ### Possible duplicates
 
 When the same paper reaches your Library twice, for example from two projects,
-Scient merges the copies on its own only when it is sure. They must share a
+Scient merges the copies on its own only when it is sure. If one merge in a
+group fails, copies that were joined to the group only through that one wait
+for the next pass. They must share a
 DOI, PubMed, PMC, arXiv, OpenAlex or Semantic Scholar ID, the same Zotero
 item, or the same PDF, and also have the same title (ignoring case, spacing
 and punctuation) and the same known type. Every copy in a merge must be joined
@@ -150,12 +152,21 @@ disagree are never merged on their own, and neither is a copy that matches two
 others that disagree with each other, nor two copies joined only through a
 third that disagrees with both.
 
-The same rule applies when you add a paper, import from Zotero or a reference
-file, add a PDF, or an agent adds one. A paper that shares an identifier, a
-Zotero item or a PDF with a copy already in your Library is taken for that copy
-only when the title and type agree too. Otherwise it is added as its own copy
+When you add a paper, import from Zotero or a reference file, add a PDF, or an
+agent adds one, Scient checks it against the copies already in your Library.
+Here, what the new paper does not say counts neither way. It is taken for a
+copy that shares its identifier, Zotero item or PDF (for a book, its ISBN)
+unless something it does say disagrees: another title, another known type (a
+chapter is not its book, an article is not a dataset), another arXiv version,
+or another identifier. A paper added again the same way gets the same check,
+so a registry that has since corrected its title gives a new copy. When it
+says too little to tell two copies that disagree with each other apart (a bare
+DOI that two copies with different titles carry), Scient does not pick one. If
+it disagrees, matches more than one copy, or the copy is one whose merge with it
+you undid or whose merge details cannot be read, it is added as its own copy
 and the pair is listed below with the reason, so a wrong DOI on one paper never
-makes another paper stand in for it.
+makes another paper stand in for it. The preview before a Zotero or PDF import
+gives the same answer the import will.
 
 Scient lists a pair for you to decide instead when:
 
@@ -198,16 +209,23 @@ names on its own until the file is repaired. If not even their names can be
 read, it merges nothing on its own.
 
 **A project's paper and your Library copy.** When a project copied from
-someone else names a paper and your Library has a copy that disagrees with it,
-for example the same DOI on a paper with another title, or more than one copy
-that matches, Scient does not link them on its own. The project shows the
-paper as the project recorded it, without your copy's PDF. Its details show
-**Library copy**: which copies Scient compared it with and why it did not link
-them. Choose **Link to this Library copy** when it is the same paper: the
-project then uses that copy and its PDF, and keeps the paper's citation key,
-its note for this project and its place in reviews. **Undo** in the
-confirmation goes back. Choose **Keep separate** when it is not; Scient stops
-asking, and **Ask again** withdraws that.
+someone else names a paper, as a citation or as a record in one of its reviews,
+and your Library has a copy that disagrees with it, for example the same DOI on
+a paper with another title, or more than one copy that matches, Scient does not
+link them on its own. The project shows the paper as the project recorded it,
+without your copy's PDF. Its details show **Library copy**: which copies Scient
+compared it with and why it did not link them. A review's record opens its
+details from the review, and it does not become a citation. Choose **Link to
+this Library copy** when it is the same paper: the project then uses that copy
+and its PDF, and keeps the paper's citation key, its note for this project and
+its place in reviews. **Undo** in the confirmation goes back. Choose **Keep
+separate** when it is not: Scient never links the paper to those copies on its
+own, even if their details change later to agree, until you choose **Ask
+again** or link it yourself. If those copies change so that they no longer
+match at all, the paper still shows as kept separate, with **Ask again**, and
+Scient does not add a copy of its own for it to your Library until you ask
+again. Undoing a link brings back a **Keep separate** you
+had chosen before it.
 
 ## Import from Zotero
 
@@ -283,9 +301,11 @@ linked to it from then on. Scient refuses to send to a group the key can only
 read.
 
 Long imports can continue in the background. Completed items remain saved, and
-an interrupted import can resume when the Library reopens. Exact duplicates are
-skipped. When a title, creator, and year look similar but do not prove that two
-records are identical, Scient asks whether to import the item separately.
+an interrupted import can resume when the Library reopens. An item that is
+already in your Library, by the rule in [Possible duplicates](#possible-duplicates),
+is skipped, and the preview says so before you import. When a title, creator,
+and year look similar but do not prove that two records are identical, Scient
+asks whether to import the item separately.
 
 ## Import PDF files
 
@@ -338,11 +358,15 @@ PMIDs, arXiv for arXiv IDs, and Open Library, then Google Books, for ISBNs.
 Each one that is found becomes its own source with the registry's title,
 authors and date, marked as checked. The input then lists anything it did not
 add and why: already in the Library (with **View**), not found, not an
-identifier, or a registry that could not be reached. An identifier already in
-your Library is still looked up, because Scient only takes it for the copy you
-have when the registry's title and type agree with it. Entries of the last kind
-stay in the box so **Add** tries them again. Up to 50 identifiers can be added
-at a time.
+identifier, or a registry that could not be reached. An identifier that exactly
+one copy in your Library carries is that copy: it is reported as already in the
+Library without asking the registry, so this works offline too. An ISBN finds a
+whole book, never a chapter that shares it. When two or more copies carry the
+identifier, Scient does not pick one; it looks the identifier up and judges by
+the registry's title and type. If the registry cannot be reached and no catalogue
+record is available, nothing is added and no copy is selected. An agent that adds
+a source by its identifier alone gets the same answer. Entries of the last kind stay in the box so
+**Add** tries them again. Up to 50 identifiers can be added at a time.
 
 Open Library is edited by its readers, so a listing there without any author
 is not trusted; Scient asks Google Books instead.
@@ -839,8 +863,10 @@ You can paste those IDs or links when you add by identifier, too.
 
 When you ask an agent to get papers for your library, it fetches them with
 `scient_paper_get` or `scient_papers_queue` and files each PDF on the paper's
-source. A paper that is not in the Library yet is added from its DOI's registry
-record, the same check as above. Scient prefers the published version and falls
+source: the copy that shares its DOI or arXiv ID and does not disagree with
+what the paper lookup and the registry say about its title and type, by the
+rule in [Possible duplicates](#possible-duplicates). A paper that is not in the
+Library yet is added from its DOI's registry record, the same check as above. Scient prefers the published version and falls
 back to a free accepted manuscript or preprint; the source's details then say
 "PDF is a preprint" or "PDF is the accepted manuscript". Each PDF also records
 how it arrived: a free copy, the publisher, your university sign-in, or your

@@ -6,6 +6,7 @@ import {
   type ScientSystematicReviewAction,
 } from "@scientfactory/scient-sources";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import type { ScientSourceLibraryMatch } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import {
@@ -23,6 +24,7 @@ import {
 import {
   changeLibraryReviewConflict,
   libraryReviewConflicts,
+  libraryReviewRecordMatches,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import type { ScientSourcesLibraryStore } from "../../../scient/sources/SourcesBackend.ts";
 import { resolveScientSourcesStore } from "../sources/handlers.ts";
@@ -50,6 +52,7 @@ function reviewRecord(
   sourceId: string,
   record: ScientSourceRecord | undefined | null,
   from?: ScientLibraryReviewRecord["from"],
+  libraryMatch?: ScientSourceLibraryMatch,
 ) {
   const creator = record?.creators[0];
   const abstract = record?.abstract ?? null;
@@ -68,6 +71,7 @@ function reviewRecord(
       : from === "missing"
         ? { label: "Details missing" as const }
         : {}),
+    ...(libraryMatch ? { libraryMatch } : {}),
   };
 }
 
@@ -91,6 +95,10 @@ const libraryReviewView = Effect.fn("ScientSystematicReviewsToolkit.libraryView"
   const conflicts = detail
     ? yield* attempt(() => libraryReviewConflicts(store, { reviewId }))
     : null;
+  const matches =
+    store.exists && records
+      ? yield* attempt(() => libraryReviewRecordMatches(store, records))
+      : new Map<string, ScientSourceLibraryMatch>();
   return {
     detail,
     conflicts,
@@ -100,7 +108,7 @@ const libraryReviewView = Effect.fn("ScientSystematicReviewsToolkit.libraryView"
     // Review screens show bibliographic fields only; the personal note stays off them.
     record: (sourceId: string) => {
       const entry = records?.find((candidate) => candidate.projectSourceId === sourceId);
-      return reviewRecord(sourceId, entry?.record, entry?.from ?? "missing");
+      return reviewRecord(sourceId, entry?.record, entry?.from ?? "missing", matches.get(sourceId));
     },
   };
 });

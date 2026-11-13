@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   detectSourceIdentifier,
+  isbn13,
   normalizePersistentIdentifier,
   type ScientSourceActor,
   type ScientSourceCandidate,
@@ -11,9 +12,14 @@ import {
   type ScientSourceRecord,
   sourceIdentifierLabel,
   sourceIdentifierRegistryName,
+  workLevelIdentifierKey,
 } from "@scientfactory/scient-sources";
 import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
-import { importScientSource, listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import {
+  importScientSource,
+  listScientSourceRecords,
+  readScientSourceIntakeAssessor,
+} from "@scientfactory/scient-sources/store";
 import * as Context from "effect/Context";
 
 import { observeSourceImport, type SourceImportObserver } from "./SourceImportObservation.ts";
@@ -37,19 +43,24 @@ function identifierKey(identifier: ScientSourceIdentifier): string {
   return normalizePersistentIdentifier(identifier.scheme, identifier.value);
 }
 
-function identifierOnlyCandidate(
-  identifier: ScientSourceIdentifier,
+const isIsbn = (identifier: ScientSourceIdentifier) =>
+  identifier.scheme.trim().toLowerCase() === "isbn";
+
+/** A source named by identifiers alone: a whole book for ISBNs, otherwise of unknown type. */
+export function identifierOnlyCandidate(
+  identifiers: ReadonlyArray<ScientSourceIdentifier>,
   actor: ScientSourceActor,
 ): ScientSourceCandidate {
+  const key = identifiers.map(identifierKey).toSorted().join("\0");
   return {
-    sourceKey: `identifier_${NodeCrypto.createHash("sha256").update(identifierKey(identifier)).digest("hex")}`,
-    type: identifier.scheme === "isbn" ? "book" : "other",
+    sourceKey: `identifier_${NodeCrypto.createHash("sha256").update(key).digest("hex")}`,
+    type: identifiers.length > 0 && identifiers.every(isIsbn) ? "book" : "other",
     customType: null,
     title: null,
     creators: [],
     issuedRaw: null,
     issuedYear: null,
-    identifiers: [identifier],
+    identifiers,
     abstract: null,
     containerTitle: null,
     publisher: null,
@@ -65,6 +76,38 @@ function identifierOnlyCandidate(
     pdfFileName: null,
     pdfAttachmentCount: 0,
   };
+}
+
+/**
+ * The one Library copy bare identifiers select, under the shared intake rule (a book's ISBN
+ * selects a whole book, never a chapter): no registry call, so it works offline. Several copies
+ * are not guessed between. The identifier list and agent citation fields both select here.
+ */
+export function selectIdentifierCopy(
+  intake: Awaited<ReturnType<typeof readScientSourceIntakeAssessor>> | null,
+  identifiers: ReadonlyArray<ScientSourceIdentifier>,
+  actor: ScientSourceActor,
+): ScientSourceRecord | undefined {
+  if (!intake || identifiers.length === 0) return undefined;
+  const keyOf = (identifier: ScientSourceIdentifier) =>
+    isIsbn(identifier)
+      ? isbn13(identifier.value)
+      : workLevelIdentifierKey(identifier.scheme, identifier.value);
+  const wanted = identifiers.map((identifier) => ({
+    isbn: isIsbn(identifier),
+    key: keyOf(identifier),
+  }));
+  if (wanted.some(({ key }) => key === null)) return undefined;
+  const carriers = intake.existing.filter((record) =>
+    wanted.some(
+      ({ isbn, key }) =>
+        (!isbn || record.type === "book") && record.identifiers.some((own) => keyOf(own) === key),
+    ),
+  );
+  if (carriers.length !== 1) return undefined;
+  const duplicate = intake.assess(identifierOnlyCandidate(identifiers, actor));
+  if (duplicate.kind !== "same-identifier" && duplicate.kind !== "same-origin") return undefined;
+  return intake.existing.find((record) => record.sourceId === duplicate.matchingSourceIds[0]);
 }
 
 type Step =
@@ -96,8 +139,9 @@ function existingItem(
 }
 
 /**
- * Adds one source per DOI, PMID, arXiv ID or ISBN. Each identifier is resolved first; only
- * a found identifier is added, with its registry metadata, as verified. Entries that are
+ * Adds one source per DOI, PMID, arXiv ID or ISBN. One the Library already holds once is that
+ * copy, offline too; any other is resolved first, and only a found identifier is added, with its
+ * registry metadata, as verified. Entries that are
  * not identifiers, do not exist, or cannot be checked right now are reported, not added.
  */
 export async function addScientSourcesByIdentifier(
@@ -111,6 +155,8 @@ export async function addScientSourcesByIdentifier(
   },
   observer?: SourceImportObserver,
 ): Promise<ReadonlyArray<ScientSourceIdentifierAddItem>> {
+  // A Library not created yet has no copies to select.
+  const intake = await readScientSourceIntakeAssessor(input.root).catch(() => null);
   const firstByKey = new Map<string, number>();
   const steps = input.entries.map(
     (
@@ -136,7 +182,8 @@ export async function addScientSourcesByIdentifier(
       const first = firstByKey.get(key);
       if (first !== undefined) return { kind: "repeat", of: first, input: text };
       firstByKey.set(key, index);
-      // A bare identifier has no title to corroborate a stored record, so its registry answers first.
+      const copy = selectIdentifierCopy(intake, [identifier], input.actor);
+      if (copy) return { kind: "done", item: existingItem(text, identifier, copy, false) };
       return { kind: "resolve", input: text, identifier };
     },
   );
@@ -156,7 +203,7 @@ export async function addScientSourcesByIdentifier(
           {
             step,
             candidate: applyResolvedSourceMetadata(
-              identifierOnlyCandidate(step.identifier, input.actor),
+              identifierOnlyCandidate([step.identifier], input.actor),
               resolution,
             ),
             resolution,
@@ -223,7 +270,7 @@ export async function addScientSourcesByIdentifier(
     const candidate =
       enriched.get(key) ??
       applyResolvedSourceMetadata(
-        identifierOnlyCandidate(step.identifier, input.actor),
+        identifierOnlyCandidate([step.identifier], input.actor),
         resolution,
       );
     const imported = await observeSourceImport(
