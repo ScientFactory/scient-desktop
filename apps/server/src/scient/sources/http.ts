@@ -19,6 +19,7 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
+import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
 import { sourceAttachmentPreview } from "./SourceAttachmentPreview.ts";
 import { searchSourceFullText } from "./SourceFullText.ts";

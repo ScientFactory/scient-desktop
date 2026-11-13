@@ -17,6 +17,8 @@ import * as Layer from "effect/Layer";
 import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import { readerAnchor, textPdf } from "../annotations/annotationTestUtils.ts";
 import { layer as annotationsLayer, ScientAnnotations } from "../annotations/ScientAnnotations.ts";
@@ -53,10 +55,13 @@ const candidate: ScientSourceCandidate = {
 const config = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-source-preview-",
 });
+// A Source preview issues a workspace file: no favicon or tool-output lookup.
 const testLayer = Layer.mergeAll(
   annotationsLayer,
   config,
   WorkspacePaths.layer,
+  Layer.mock(Orchestrator.OrchestratorV2)({}),
+  Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
   AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(config)))),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer)));
 
