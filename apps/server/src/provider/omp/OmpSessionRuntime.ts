@@ -80,6 +80,8 @@ export type OmpSessionUpdate =
       readonly stopReason?: "length" | "error" | "abort";
       /** A failure the user has to act on, such as a spending cap or a usage limit. */
       readonly failureClass?: "usage_limit";
+      /** ISO time at which the provider said the usage limit resets. */
+      readonly resetAt?: string;
       readonly requestId?: string;
       /**
        * `command`: the prompt command itself was rejected, which the sender
@@ -394,6 +396,7 @@ interface TurnEvidence {
   promptError?: string | undefined;
   promptErrorCode?: string | undefined;
   promptHttpStatus?: number | undefined;
+  promptResetAt?: number | undefined;
   retryExhausted?: boolean;
   retryFinalError?: string | undefined;
 }
@@ -620,6 +623,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         detail: verdict.errorMessage,
         stopReason: verdict.stopReason,
         ...(verdict.failureClass ? { failureClass: verdict.failureClass } : {}),
+        ...(verdict.resetAt ? { resetAt: verdict.resetAt } : {}),
       };
     }
     if (verdict.outcome === "completed" && verdict.stopReason) {
@@ -1073,6 +1077,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       evidence.promptError = event.promptError?.message;
       evidence.promptErrorCode = event.promptError?.code;
       evidence.promptHttpStatus = event.promptError?.httpStatus;
+      evidence.promptResetAt = event.promptError?.resetAt;
       if (typeof event.agentInvoked === "boolean") {
         yield* applySignal({
           type: "prompt-result",
