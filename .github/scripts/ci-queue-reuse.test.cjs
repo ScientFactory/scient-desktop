@@ -300,6 +300,23 @@ for (const [name, change] of [
   });
 }
 
+test("a HEADGREEN batch whose earlier entry failed its own run runs full CI and says why", async (t) => {
+  // The queue merged MID on HEAD's green group; MID's own group failed, so its lanes are unproven.
+  const f = fixture(t);
+  f.commit(HEAD, TREE, [MID, PR_HEAD]);
+  f.receipt.baseSha = MID;
+  f.commit(MID, OTHER, [BASE, OTHER]);
+  const first = f.queueRun(11, MID);
+  f.addRun(first, f.receiptFor(first, { treeSha: OTHER }));
+  f.jobs.get(11).find((job) => job.name === "Check").conclusion = "failure";
+  await refused(f);
+  assert.ok(
+    f.messages.includes(
+      "Running full CI: Earlier queue entry lacks successful qualification; HEADGREEN may have merged it on a later group's green Check: No single successful Check job",
+    ),
+  );
+});
+
 // Lands `entries` queue entries in one push: BASE -> ... -> HEAD, each qualified from its parent.
 function chainFixture(t, entries) {
   const f = fixture(t);

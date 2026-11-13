@@ -340,13 +340,20 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
  * exact commit from its first parent, back to the commit main held before the push.
  */
 async function pushSegments(probe) {
-  // The queue merges only after `Check`, which follows the receipt, so each entry's evidence
-  // already exists when its push runs.
+  // HEADGREEN may merge earlier entries on a later group's green Check, whose gates skip lanes
+  // only those entries changed; this push run is then their only qualification against main.
   const { github, repo, who, before } = probe;
   const segments = [];
   for (let head = who.headSha; head !== before;) {
     assert(segments.length < MAX_QUEUE_SEGMENTS, "Push is not covered by queue qualification");
-    const segment = await qualifiedRun({ ...probe, event: "merge_group", headSha: head });
+    const segment = await qualifiedRun({ ...probe, event: "merge_group", headSha: head }).catch(
+      (error) => {
+        if (segments.length === 0) throw error;
+        throw new Error(
+          `Earlier queue entry lacks successful qualification; HEADGREEN may have merged it on a later group's green Check: ${error.message}`,
+        );
+      },
+    );
     checkReceipt(segment.receipt, {
       schemaVersion: SCHEMA,
       event: "merge_group",
