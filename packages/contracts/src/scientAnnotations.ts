@@ -83,6 +83,9 @@ export const ScientAnnotationCommand = Schema.Union([
     annotationId: ScientAnnotationId,
     expectedRevision: PositiveInt,
     toRevision: PositiveInt,
+    /** The version's text and highlight, when two kept versions share its revision. */
+    toNote: Schema.optionalKey(ScientAnnotationNote),
+    toHighlighted: Schema.optionalKey(Schema.Boolean),
   }),
 ]);
 export type ScientAnnotationCommand = typeof ScientAnnotationCommand.Type;
@@ -107,6 +110,17 @@ export const ScientAnnotationMutationResult = Schema.Struct({
 });
 export type ScientAnnotationMutationResult = typeof ScientAnnotationMutationResult.Type;
 
+/** Another computer's version of a live annotation, brought by a project package. */
+export const ScientAnnotationAlternative = Schema.Struct({
+  annotationId: ScientAnnotationId,
+  revision: PositiveInt,
+  highlighted: Schema.Boolean,
+  note: ScientAnnotationNote,
+  updatedAt: Timestamp,
+  importedAt: Timestamp,
+});
+export type ScientAnnotationAlternative = typeof ScientAnnotationAlternative.Type;
+
 export const ScientAnnotationsDocumentRequest = Schema.Struct({
   root: NonEmptyString,
   relativePath: NonEmptyString,
@@ -118,6 +132,8 @@ export const ScientAnnotationsDocumentResult = Schema.Union([
     status: Schema.Literal("available"),
     material: PdfMaterial,
     annotations: Schema.Array(ScientPdfAnnotation),
+    /** Versions another computer kept of these annotations; "Use this version" reverts to one. */
+    alternatives: Schema.optionalKey(Schema.Array(ScientAnnotationAlternative)),
     /** Library sources with these bytes attached, for citing a quote. */
     sources: Schema.optionalKey(
       Schema.Array(

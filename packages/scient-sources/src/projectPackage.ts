@@ -861,7 +861,7 @@ export async function importScientProjectPackage(input: {
     }),
   );
 
-  const annotations = await importAnnotations(library, manifest, state);
+  const annotations = await importAnnotations(library, manifest, state, importedAt);
   const pins = await importProjectFiles(root, manifest, state, input.afterPinsLock);
   const reviews = await importReviews(root, manifest, state);
   const collections = await importCollections(library, mapped, input.actor, state);
@@ -931,7 +931,8 @@ const continues = (file: JsonObject, annotation: JsonObject) =>
       sameMark(entry, annotation),
   );
 
-function historyEntry(annotation: JsonObject, revision: unknown): JsonObject {
+/** The other computer's version, marked as brought so the reader offers it. */
+function historyEntry(annotation: JsonObject, revision: unknown, importedAt: string): JsonObject {
   return {
     annotationId: annotation["annotationId"],
     revision,
@@ -939,6 +940,7 @@ function historyEntry(annotation: JsonObject, revision: unknown): JsonObject {
     note: annotation["note"],
     updatedAt: annotation["updatedAt"],
     updatedBy: annotation["updatedBy"],
+    importedAt,
   };
 }
 
@@ -950,6 +952,7 @@ function historyEntry(annotation: JsonObject, revision: unknown): JsonObject {
 function joinAnnotationFiles(
   local: JsonObject,
   incoming: JsonObject,
+  importedAt: string,
 ): { readonly file: JsonObject; readonly conflicts: number } {
   const annotations = new Map<string, JsonObject>();
   for (const entry of local["annotations"] as unknown[]) {
@@ -976,7 +979,7 @@ function joinAnnotationFiles(
       continue;
     } else {
       const revision = Math.max(theirs, ours) + 1;
-      extraHistory.push(historyEntry(entry, revision - 1));
+      extraHistory.push(historyEntry(entry, revision - 1, importedAt));
       annotations.set(id, { ...kept, revision });
       conflicts += 1;
     }
@@ -1017,6 +1020,7 @@ async function importAnnotations(
   library: ScientLibraryLocation,
   manifest: ScientProjectPackageManifest,
   state: ImportState,
+  importedAt: string,
 ): Promise<{ readonly joined: number; readonly conflicts: number }> {
   const { annotationFile } = scientLibraryMoveInternals;
   let joined = 0;
@@ -1040,7 +1044,7 @@ async function importAnnotations(
           throw new Error("This Library's highlights file for that PDF does not read.");
         }
         const next = existing
-          ? joinAnnotationFiles(existing, incoming)
+          ? joinAnnotationFiles(existing, incoming, importedAt)
           : { file: incoming, conflicts: 0 };
         await atomicWriteJson(target, next.file, MAX_JSON_BYTES);
         conflicts += next.conflicts;

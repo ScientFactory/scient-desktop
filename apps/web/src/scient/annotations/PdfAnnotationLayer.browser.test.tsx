@@ -1,6 +1,7 @@
 import { PDF_TEXT_PROFILE } from "@scientfactory/document-artifacts";
 import {
   EnvironmentId,
+  type ScientAnnotationAlternative,
   type ScientAnnotationMutationRequest,
   type ScientAnnotationMutationResult,
   type ScientPdfAnnotation,
@@ -78,11 +79,17 @@ function savedNote(note: string): ScientPdfAnnotation {
 }
 
 /** Answers each command as the server would for a single known annotation. */
-function serve(initial: ReadonlyArray<ScientPdfAnnotation>) {
+function serve(
+  initial: ReadonlyArray<ScientPdfAnnotation>,
+  alternatives: ReadonlyArray<ScientAnnotationAlternative> = [],
+) {
   let current = [...initial];
-  client.read
-    .mockReset()
-    .mockResolvedValue({ status: "available", material, annotations: initial });
+  client.read.mockReset().mockResolvedValue({
+    status: "available",
+    material,
+    annotations: initial,
+    ...(alternatives.length > 0 ? { alternatives } : {}),
+  });
   client.mutate
     .mockReset()
     .mockImplementation(async (_env: EnvironmentId, request: ScientAnnotationMutationRequest) => {
@@ -93,7 +100,7 @@ function serve(initial: ReadonlyArray<ScientPdfAnnotation>) {
         current = [...current.filter((a) => a !== existing), next];
         return {
           outcome:
-            command.action === "update"
+            command.action === "update" || command.action === "revert"
               ? "updated"
               : command.action === "remove"
                 ? "removed"
@@ -120,8 +127,16 @@ function serve(initial: ReadonlyArray<ScientPdfAnnotation>) {
           return revise({ deletedAt: "2026-11-10T12:01:00.000Z" });
         case "restore":
           return revise({ deletedAt: null });
-        case "revert":
-          return { outcome: "not-found", annotation: null };
+        case "revert": {
+          const version = alternatives.find(
+            (entry) =>
+              entry.revision === command.toRevision &&
+              entry.note === command.toNote &&
+              entry.highlighted === command.toHighlighted,
+          );
+          if (!version) return { outcome: "not-found", annotation: null };
+          return revise({ note: version.note, highlighted: version.highlighted });
+        }
       }
     });
 }
@@ -136,8 +151,11 @@ function paintedText(kind: "highlight" | "note"): string {
   return texts.join("");
 }
 
-async function setup(initial: ReadonlyArray<ScientPdfAnnotation>) {
-  serve(initial);
+async function setup(
+  initial: ReadonlyArray<ScientPdfAnnotation>,
+  alternatives: ReadonlyArray<ScientAnnotationAlternative> = [],
+) {
+  serve(initial, alternatives);
   const stack = new AsyncDisposableStack();
   const savedStorage = localStorage.getItem(PDF_READER_SESSION_STORAGE_KEY);
   stack.defer(() => {
@@ -246,5 +264,60 @@ describe("PDF annotations in the reader", () => {
       expectedRevision: 3,
     });
     await vi.waitFor(() => expect(paintedText("highlight")).toBe(QUOTE));
+  });
+
+  it("shows another computer's version of a note and makes it current when chosen", async () => {
+    const theirs = {
+      annotationId: "ann_savednote1",
+      revision: 1,
+      highlighted: true,
+      note: "Their reading",
+      updatedAt: "2026-11-09T12:00:00.000Z",
+      importedAt: "2026-11-12T12:00:00.000Z",
+    };
+    await using fixture = await setup([{ ...savedNote("My reading"), revision: 2 }], [theirs]);
+    await vi.waitFor(() => expect(paintedText("note")).toBe(QUOTE));
+    const range = document.createRange();
+    const node = textNode(fixture.container, QUOTE);
+    range.setStart(node, node.data.indexOf(QUOTE));
+    range.setEnd(node, node.data.indexOf(QUOTE) + QUOTE.length);
+    const box = range.getBoundingClientRect();
+    await act(async () =>
+      node.parentElement!.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          button: 0,
+          clientX: box.left + box.width / 2,
+          clientY: box.top + box.height / 2,
+        }),
+      ),
+    );
+    await expect.element(page.getByText("Their reading")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Use this version" }));
+    await vi.waitFor(() =>
+      expect(client.mutate.mock.calls.at(-1)![1].command).toEqual({
+        action: "revert",
+        annotationId: "ann_savednote1",
+        expectedRevision: 2,
+        toRevision: 1,
+        toNote: "Their reading",
+        toHighlighted: true,
+      }),
+    );
+    // Reopened, the note is theirs and nothing else is offered.
+    await act(async () =>
+      node.parentElement!.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          button: 0,
+          clientX: box.left + box.width / 2,
+          clientY: box.top + box.height / 2,
+        }),
+      ),
+    );
+    await expect.element(page.getByRole("textbox", { name: "Note" })).toHaveValue("Their reading");
+    await expect
+      .element(page.getByRole("button", { name: "Use this version" }))
+      .not.toBeInTheDocument();
   });
 });

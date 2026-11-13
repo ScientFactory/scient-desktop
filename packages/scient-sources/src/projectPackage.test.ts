@@ -301,15 +301,23 @@ describe("importing a project package", () => {
     const equal = scientProjectPackageInternals.joinAnnotationFiles(
       file(mark(2, "here"), [entry(1, "a")]),
       file(mark(2, "there"), [entry(1, "a")]),
+      "2026-11-13T00:00:00.000Z",
     );
     expect(equal.conflicts).toBe(1);
     expect(notesOf(equal)).toMatchObject({ current: { note: "here", revision: 3 } });
     expect(notesOf(equal).history).toEqual(expect.arrayContaining(["a", "there"]));
+    // Marked as brought, so the reader offers it.
+    expect(
+      (equal.file["history"] as Array<{ note: string; importedAt?: string }>).find(
+        (version) => version.note === "there",
+      )?.importedAt,
+    ).toBe("2026-11-13T00:00:00.000Z");
 
     // The other went further, but not from this Library's note.
     const higher = joinAnnotationFiles(
       file(mark(2, "here"), [entry(1, "a")]),
       file(mark(3, "there"), [entry(1, "a"), entry(2, "b")]),
+      "2026-11-13T00:00:00.000Z",
     );
     expect(notesOf(higher)).toMatchObject({ current: { note: "here", revision: 4 } });
     expect(notesOf(higher).history).toEqual(expect.arrayContaining(["a", "b", "there"]));
@@ -318,6 +326,7 @@ describe("importing a project package", () => {
     const ahead = joinAnnotationFiles(
       file(mark(2, "here"), [entry(1, "a")]),
       file(mark(3, "there"), [entry(1, "a"), entry(2, "here")]),
+      "2026-11-13T00:00:00.000Z",
     );
     expect(ahead.conflicts).toBe(0);
     expect(notesOf(ahead).current).toMatchObject({ note: "there", revision: 3 });
