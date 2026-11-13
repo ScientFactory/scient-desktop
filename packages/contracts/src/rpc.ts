@@ -624,6 +624,13 @@ import {
   WsDocumentsReleaseDocumentPdfRpc,
 } from "./scient/documentPdfRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Agent live voice RPCs.
+import {
+  SCIENT_LIVE_VOICE_WS_METHODS,
+  WsLiveVoiceCallRpc,
+  WsLiveVoiceMuteRpc,
+} from "./scient/liveVoiceRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient editor flush RPCs.
 import {
   SCIENT_EDITOR_FLUSH_WS_METHODS,
@@ -695,6 +702,9 @@ export const WS_METHODS = {
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush methods.
   ...SCIENT_EDITOR_FLUSH_WS_METHODS,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Agent live voice methods.
+  ...SCIENT_LIVE_VOICE_WS_METHODS,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   ...SCIENT_WORKSPACE_ENTRY_WS_METHODS,
@@ -2673,6 +2683,10 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsDocumentsPrepareConversationPdfRpc,
   WsDocumentsPublishDocumentPdfRpc,
   WsDocumentsReleaseDocumentPdfRpc,
+  // SCIENT-FORK:START — Scient Agent live voice RPCs.
+  WsLiveVoiceCallRpc,
+  WsLiveVoiceMuteRpc,
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush RPCs.
   WsEditorsFlushConnectRpc,
   WsEditorsFlushLeaveRpc,

@@ -415,6 +415,10 @@ const RPC_AGGREGATES = {
   [WS_METHODS.editorsFlushRespond]: "editors",
   [WS_METHODS.editorsFlushLeave]: "editors",
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Agent live voice RPCs.
+  [WS_METHODS.liveVoiceCall]: "liveVoice",
+  [WS_METHODS.liveVoiceMute]: "liveVoice",
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   [WS_METHODS.projectsChangeEntries]: "projects",
   [WS_METHODS.projectsOpenWithApps]: "projects",

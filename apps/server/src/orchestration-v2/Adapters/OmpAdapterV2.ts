@@ -48,6 +48,7 @@ import {
 } from "../../provider/omp/OmpDashboardPage.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
+import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
 import {
   assertReadableOmpSessionFile,
   ompSessionFilesEqual,
@@ -1337,10 +1338,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               return update.model ? onUpdate({ type: "model", model: update.model }) : Effect.void;
           }
         };
+        // SCIENT-FORK: live voice frames bypass the turn machine.
+        const liveVoice = makeOmpLiveVoice(client);
         const runtime = yield* makeOmpSessionRuntime({
           target,
           client,
           scope,
+          liveVoice,
           continuationIdPrefix: yield* options.random.uuidV4(),
           onUpdate: applyUpdate,
           ...(options.nativeEventLogger
@@ -2077,6 +2081,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 ),
               }
             : {}),
+          // SCIENT-FORK: a spoken conversation through Scient Agent's ChatGPT sign-in.
+          ...(target.driverKind === "scient" ? { liveVoice: liveVoice.runtime } : {}),
           interrupt: interrupt().pipe(Effect.mapError(safeFailure)),
           resume,
           respond: Effect.fn("OmpAdapterV2.respond")(

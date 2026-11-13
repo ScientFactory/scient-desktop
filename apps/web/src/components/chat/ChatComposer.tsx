@@ -5,6 +5,13 @@ import type {
 } from "@t3tools/contracts";
 import { useSideChatCitationInbox } from "../../scient/chat/sideChatCitation";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
+// SCIENT-FORK: voice calls with a thread's Scient Agent.
+import {
+  ScientLiveVoiceButton,
+  ScientLiveVoiceCard,
+} from "../../scient/liveVoice/ScientLiveVoiceControls.tsx";
+import { liveVoiceUnavailableReason } from "../../scient/liveVoice/liveVoiceAvailability.ts";
+import { useScientLiveVoiceCall } from "../../scient/liveVoice/useScientLiveVoiceCall.ts";
 import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
 // SCIENT-FORK:START — skill cards and the composer share invocation and document helpers.
 import {
@@ -1010,6 +1017,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hasStartedModelSession = activeThread
     ? threadShellHasStarted(props.activeThreadShell)
     : routeKind !== "draft";
+  // SCIENT-FORK:START — voice calls with a thread's Scient Agent.
+  const liveVoiceCall = useScientLiveVoiceCall({ environmentId, threadId: activeThreadId });
+  const showLiveVoice = selectedProvider === "scient" && typeof RTCPeerConnection !== "undefined";
+  const liveVoiceUnavailable = liveVoiceUnavailableReason({
+    provider: selectedProviderEntry?.snapshot,
+    threadStarted: hasStartedModelSession && activeThreadId !== null,
+  });
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — map historical Antigravity selections to live variants
   useReconcileAntigravityComposerSelection({
     composerDraftTarget,
@@ -3690,6 +3705,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         />
       </ComposerBanner.Dock>
       <div className="relative">
+        {/* SCIENT-FORK:START — a voice call in progress, as a card of its own. */}
+        <ScientLiveVoiceCard call={liveVoiceCall} />
+        {/* SCIENT-FORK:END */}
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           data-inline-resting-controls="true"
@@ -4037,6 +4055,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : {})}
                     disabled={projectSelectionRequired}
                   />
+                  {showLiveVoice && !voiceBusy ? (
+                    <ScientLiveVoiceButton
+                      call={liveVoiceCall}
+                      unavailableReason={liveVoiceUnavailable}
+                    />
+                  ) : null}
                   <div
                     className={voiceBusy ? "hidden" : "contents"}
                     inert={voiceBusy || undefined}

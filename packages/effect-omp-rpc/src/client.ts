@@ -210,6 +210,8 @@ const LONG_RUNNING_COMMANDS: ReadonlySet<string> = new Set([
   "new_session",
   "open_session",
   "handoff",
+  // Signaling the call and opening its sideband retries for over a minute on a slow network.
+  "live_connect",
 ]);
 const LONG_RUNNING_COMMAND_TIMEOUT_MS = 10 * 60_000;
 

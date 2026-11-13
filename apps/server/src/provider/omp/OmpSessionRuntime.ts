@@ -9,6 +9,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import type { OmpRpcClient, OmpRpcNotification } from "effect-omp-rpc/client";
+import { isOmpLiveFrame, type OmpLiveVoice } from "./OmpLiveVoice.ts";
 import type { OmpRpcEvent, OmpRpcState } from "effect-omp-rpc/schema";
 import { isRecord } from "effect-omp-rpc/schema";
 import { encodeOmpModelSlug } from "./OmpModel.ts";
@@ -437,6 +438,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
    * the shared native provider event log; failures must never affect the turn.
    */
   readonly onNativeNotification?: (notification: OmpRpcNotification) => Effect.Effect<void>;
+  /** Takes the agent's `live_*` frames before the inbox, so a call never waits behind a turn. */
+  readonly liveVoice?: Pick<OmpLiveVoice, "onFrame" | "onProcessEnded">;
 }): Effect.fn.Return<OmpSessionRuntime, never, Scope.Scope> {
   const inbox = yield* Queue.bounded<InboxItem>(OMP_INBOX_CAPACITY);
   /** Local commands waiting for the event queue, each with the drain marker that ends its wait. */
@@ -1648,10 +1651,16 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     }
   });
 
+  const liveVoice = input.liveVoice;
   yield* input.client.events.pipe(
     Stream.runForEach((notification) =>
-      Queue.offer(inbox, { type: "event", notification }).pipe(Effect.asVoid),
+      liveVoice !== undefined &&
+      notification._tag === "Event" &&
+      isOmpLiveFrame(notification.event.type)
+        ? liveVoice.onFrame(notification.event.raw)
+        : Queue.offer(inbox, { type: "event", notification }).pipe(Effect.asVoid),
     ),
+    Effect.ensuring(liveVoice?.onProcessEnded ?? Effect.void),
     Effect.andThen(Queue.offer(inbox, { type: "process-exit" })),
     Effect.forkIn(input.scope),
   );
