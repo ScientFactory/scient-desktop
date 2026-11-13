@@ -1,4 +1,5 @@
 import { canonicalConnectorIdentifier } from "./connectorIdentifiers.ts";
+import { isbn13 } from "./identifierInput.ts";
 import type { ScientSourceIdentifier } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
 
@@ -34,7 +35,11 @@ export type ScientLibraryIdentityProblem =
   | "identifiers-conflict";
 
 function identifierKey(identifier: ScientSourceIdentifier): string {
+  const scheme = identifier.scheme.trim().toLowerCase();
+  // ISBN-10 and ISBN-13 spellings of one book are not two ISBNs.
+  const isbn = scheme === "isbn" ? isbn13(identifier.value) : null;
   return (
+    (isbn ? `isbn:${isbn}` : null) ??
     workLevelIdentifierKey(identifier.scheme, identifier.value) ??
     normalizePersistentIdentifier(identifier.scheme, identifier.value)
   );
@@ -162,6 +167,35 @@ export function scientLibraryIdentityProblem(
   return scientLibraryFactsProblem(
     scientLibraryIdentityFacts(left),
     scientLibraryIdentityFacts(right),
+  );
+}
+
+/**
+ * Null when nothing supplied about an incoming source contradicts a stored one: intake's rule.
+ * A missing title or an unknown type is no contradiction there (a bare DOI selects the copy that
+ * carries it); two titles that differ, two known types that differ, different explicit arXiv
+ * versions or a scheme both name without a shared value are.
+ */
+export function scientSourceIntakeProblem(
+  incoming: ScientLibraryIdentityFields,
+  stored: ScientLibraryIdentityFields,
+): ScientLibraryIdentityProblem | null {
+  const left = scientLibraryIdentityFacts(incoming);
+  const right = scientLibraryIdentityFacts(stored);
+  // Only facts both sides supply are compared; the rest of the rule is the merge rule's.
+  const known = (value: string, other: string, unknown: string) =>
+    value === unknown || other === unknown ? null : value;
+  return scientLibraryFactsProblem(
+    {
+      ...left,
+      title: known(left.title, right.title, "") ?? "?",
+      type: known(left.type, right.type, "other") ?? "?",
+    },
+    {
+      ...right,
+      title: known(right.title, left.title, "") ?? "?",
+      type: known(right.type, left.type, "other") ?? "?",
+    },
   );
 }
 

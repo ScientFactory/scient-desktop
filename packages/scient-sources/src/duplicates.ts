@@ -4,8 +4,9 @@ import type {
   ScientSourceRecord,
 } from "./model.ts";
 import { sourceMetadataKey } from "./normalize.ts";
+import { isbn13 } from "./identifierInput.ts";
 import {
-  scientLibraryIdentityProblem,
+  scientSourceIntakeProblem,
   scientSourcePdfIsEvidence,
   workLevelIdentifierKey,
   type ScientLibraryIdentityProblem,
@@ -84,10 +85,22 @@ const MATCH_PHRASE: Record<StrongMatchKind, string> = {
   "same-pdf": "has the same PDF as",
 };
 
+/** A book's ISBNs, as ISBN-13; only a whole book is one work by its ISBN. */
+function bookIsbns(source: Pick<ScientSourceRecord, "type" | "identifiers">): Set<string> {
+  if (source.type !== "book") return new Set();
+  return new Set(
+    source.identifiers.flatMap((identifier) => {
+      const isbn =
+        identifier.scheme.trim().toLowerCase() === "isbn" ? isbn13(identifier.value) : null;
+      return isbn ? [isbn] : [];
+    }),
+  );
+}
+
 /**
- * Whether an incoming source is one already stored: a shared item, import, identifier or PDF
- * reuses a record only when the two corroborate and no Library decision keeps them apart. Several
- * such records, or only disagreeing ones, leave it new, naming them. Its own key's record is it.
+ * Intake's shared identity assessment: a shared item, import, identifier (a book's ISBN) or PDF
+ * reuses a record only if nothing supplied contradicts it and no Library decision keeps them
+ * apart; its own key's record too. Several such records, or only disagreeing ones, leave it new.
  */
 export function assessSourceDuplicate(input: {
   readonly candidate: ScientSourceCandidate;
@@ -104,6 +117,7 @@ export function assessSourceDuplicate(input: {
       return key ? [key] : [];
     }),
   );
+  const isbns = bookIsbns(candidate);
   const matches: Array<{ readonly record: ScientSourceRecord; readonly kind: StrongMatchKind }> =
     [];
   for (const record of input.existing) {
@@ -119,7 +133,7 @@ export function assessSourceDuplicate(input: {
       : record.identifiers.some((identifier) => {
             const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
             return key !== null && ownKeys.has(key);
-          })
+          }) || [...bookIsbns(record)].some((isbn) => isbns.has(isbn))
         ? "same-identifier"
         : input.pdfSha256 &&
             record.attachments.some((attachment) => attachment.sha256 === input.pdfSha256) &&
@@ -131,15 +145,13 @@ export function assessSourceDuplicate(input: {
     if (kind) matches.push({ record, kind });
   }
   const problemOf = (record: ScientSourceRecord) => {
-    // The record this import's own key names is the import itself, not evidence about it.
-    if (record.sourceId === input.sourceId) return null;
     if (input.exclusions) {
       const own = input.sourceId ?? "";
       if (input.exclusions.isDistinct(own, record.sourceId)) return "distinct" as const;
       const apart = input.exclusions.keptApart(own, record.sourceId);
       if (apart) return apart;
     }
-    return scientLibraryIdentityProblem(candidate, record);
+    return scientSourceIntakeProblem(candidate, record);
   };
   const assessed = matches.map((match) => ({ ...match, problem: problemOf(match.record) }));
   const corroborated = assessed.filter((match) => match.problem === null);

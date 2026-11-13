@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { readLibraryAliasesAt, resolveScientLibraryAlias } from "./libraryAliases.ts";
 import type { ScientLibraryAliases } from "./libraryAliases.ts";
+import { ScientLibraryMerge } from "./libraryMergeReceipt.ts";
 import { pairKey } from "./libraryDuplicates.ts";
 import { ScientSourceActor } from "./model.ts";
 import type { ScientLibraryIdentityProblem } from "./sourceIdentity.ts";
@@ -29,16 +30,6 @@ const DistinctPairsFile = Schema.Struct({
   formatVersion: Schema.Literal(1),
   pairs: Schema.Array(ScientLibraryDistinctPair),
 });
-
-/** What exclusions need of a merge receipt; the merge engine decodes the whole receipt. */
-const MergeReceiptIdentity = Schema.Struct({
-  formatVersion: Schema.Literal(1),
-  mergeId: NonEmptyString,
-  survivorId: NonEmptyString,
-  loserId: NonEmptyString,
-  state: Schema.Literals(["pending", "done", "undone"]),
-});
-type MergeReceiptIdentity = typeof MergeReceiptIdentity.Type;
 
 /** A receipt this Scient cannot read, with the source IDs still legible in it. */
 export interface ScientLibraryDamagedReceipt {
@@ -83,21 +74,16 @@ async function legibleSourceIds(filePath: string): Promise<ReadonlyArray<string>
 }
 
 /**
- * Every merge receipt in `merges/`, decoded with `schema`. Receipts are never pruned: they hold
+ * Every merge receipt in `merges/`, decoded whole (the engine's own schema). Receipts are never pruned: they hold
  * the Undo decisions. One that cannot be read is returned as damaged, never skipped silently.
  */
-export async function readScientLibraryMergeReceipts<
-  S extends Schema.ConstraintDecoder<unknown> & { readonly Type: MergeReceiptIdentity },
->(
-  root: string,
-  schema: S,
-): Promise<{
-  readonly receipts: ReadonlyArray<S["Type"]>;
+export async function readScientLibraryMergeReceipts(root: string): Promise<{
+  readonly receipts: ReadonlyArray<ScientLibraryMerge>;
   readonly damaged: ReadonlyArray<ScientLibraryDamagedReceipt>;
 }> {
   const directory = NodePath.join(root, SCIENT_LIBRARY_MERGES_DIRECTORY);
   if ((await snapshot(directory)) !== "directory") return { receipts: [], damaged: [] };
-  const receipts: Array<S["Type"]> = [];
+  const receipts: Array<ScientLibraryMerge> = [];
   const damaged: ScientLibraryDamagedReceipt[] = [];
   const entries = (await NodeFSP.readdir(directory, { withFileTypes: true })).toSorted((a, b) =>
     a.name < b.name ? -1 : 1,
@@ -106,7 +92,9 @@ export async function readScientLibraryMergeReceipts<
     if (entry.isDirectory() || !entry.name.endsWith(".json")) continue;
     const filePath = NodePath.join(directory, entry.name);
     try {
-      receipts.push(await readBoundedJson(filePath, SCIENT_LIBRARY_MAX_MERGE_BYTES, schema));
+      receipts.push(
+        await readBoundedJson(filePath, SCIENT_LIBRARY_MAX_MERGE_BYTES, ScientLibraryMerge),
+      );
     } catch {
       damaged.push({
         mergeId: entry.name.slice(0, -".json".length),
@@ -134,7 +122,7 @@ export interface ScientLibraryExclusions {
  */
 export function scientLibraryExclusionsFrom(input: {
   readonly distinctPairs: ReadonlyArray<ScientLibraryDistinctPair>;
-  readonly receipts: ReadonlyArray<MergeReceiptIdentity>;
+  readonly receipts: ReadonlyArray<Pick<ScientLibraryMerge, "survivorId" | "loserId" | "state">>;
   readonly damaged: ReadonlyArray<ScientLibraryDamagedReceipt>;
   readonly aliases: ScientLibraryAliases;
   readonly live: ReadonlySet<string>;
@@ -186,7 +174,7 @@ export async function readScientLibraryExclusions(
 ): Promise<ScientLibraryExclusions> {
   const [distinctPairs, { receipts, damaged }, aliases] = await Promise.all([
     readScientLibraryDistinctPairs(root),
-    readScientLibraryMergeReceipts(root, MergeReceiptIdentity),
+    readScientLibraryMergeReceipts(root),
     readLibraryAliasesAt(root),
   ]);
   return scientLibraryExclusionsFrom({ distinctPairs, receipts, damaged, aliases, live });

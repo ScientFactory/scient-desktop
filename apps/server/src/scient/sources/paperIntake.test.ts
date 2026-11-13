@@ -5,6 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
+import {
+  ensureScientLibrary,
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
+import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import { importScientSource, listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
@@ -182,6 +188,87 @@ describe("addPaperToLibrary", () => {
       updatedBy: "agent",
       attachments: [{ retrieval: { route: "university", version: "published" } }],
     });
+  });
+
+  it("attaches only where the shared rule takes the paper, with the Library's decisions", async () => {
+    const root = await project();
+    const libraryRoot = scientLibraryRootFor(NodePath.join(root, "state"));
+    await ensureScientLibrary(libraryRoot);
+    const library = scientLibraryLocation(libraryRoot);
+    const stored = async (fields: Partial<ScientSourceCandidate>) =>
+      (await importScientSource({
+        root: library,
+        operationId: NodeCrypto.randomUUID(),
+        candidate: {
+          sourceKey: NodeCrypto.randomUUID(),
+          type: "article",
+          customType: null,
+          title: null,
+          creators: [],
+          issuedRaw: null,
+          issuedYear: null,
+          identifiers: [],
+          abstract: null,
+          containerTitle: null,
+          publisher: null,
+          volume: null,
+          issue: null,
+          pages: null,
+          language: null,
+          url: null,
+          tags: [],
+          externalReferences: [],
+          fieldProvenance: [],
+          pdfAvailable: false,
+          pdfFileName: null,
+          pdfAttachmentCount: 0,
+          ...fields,
+        },
+      }))!.record!;
+    // A dataset sharing the article's DOI and title, and an article a damaged receipt holds back.
+    const dataset = await stored({
+      type: "dataset",
+      title: registryRecord.title,
+      identifiers: [{ scheme: "doi", value: doi }],
+    });
+    const held = await stored({
+      title: "Held back",
+      identifiers: [{ scheme: "doi", value: "10.1000/held" }],
+    });
+    await NodeFSP.mkdir(NodePath.join(libraryRoot, "merges"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(libraryRoot, "merges", "merge_damaged.json"),
+      `{"formatVersion":1,"survivorId":"${held.sourceId}","loserId":"source_gone","sta`,
+    );
+    const download = async (
+      name: string,
+      paperDoi: string,
+      title: string,
+      answer: "found" | "unavailable",
+    ) =>
+      addPaperToLibrary({
+        root,
+        store: library,
+        pdfRelativePath: await savedPaper(root, name, name),
+        doi: paperDoi,
+        actor: "agent",
+        resolveIdentifier: registry(answer),
+        fallback: { title },
+        enrich: false,
+      });
+
+    expect(await download("article.pdf", doi, registryRecord.title!, "found")).toMatchObject({
+      outcome: "added",
+    });
+    expect(await download("held.pdf", "10.1000/held", "Held back", "unavailable")).toMatchObject({
+      outcome: "added",
+    });
+    const records = new Map(
+      (await listScientSourceRecords(library)).map((record) => [record.sourceId, record]),
+    );
+    expect(records.get(dataset.sourceId)?.attachments).toEqual([]);
+    expect(records.get(held.sourceId)?.attachments).toEqual([]);
+    expect(records.size).toBe(4);
   });
 
   it("adds nothing when the DOI does not exist, and says why", async () => {

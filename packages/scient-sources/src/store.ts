@@ -2521,7 +2521,12 @@ export interface ScientSourcePdfAttachmentResult {
   readonly duplicate: ScientSourceDuplicateAssessment;
 }
 
-export async function attachScientSourcePdf(input: {
+/** `attachScientSourcePdf` for a PDF of `paper`, when the shared rule, under the lock, still takes `paper` for that source. */
+export type ScientSourcePaperAttachmentResult =
+  | ScientSourcePdfAttachmentResult
+  | { readonly outcome: "not-same-work"; readonly duplicate: ScientSourceDuplicateAssessment };
+
+interface AttachPdfInput {
   readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
@@ -2529,43 +2534,80 @@ export async function attachScientSourcePdf(input: {
   readonly fileName?: string;
   readonly actor?: ScientSourceActor;
   readonly retrieval?: ScientSourceAttachmentRetrieval;
-}): Promise<ScientSourcePdfAttachmentResult> {
+}
+
+export async function attachScientSourcePdf(
+  input: AttachPdfInput,
+): Promise<ScientSourcePdfAttachmentResult> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  return withStoreLock(paths, "source-write", () => attachPdfLocked(paths, input));
+}
+
+/**
+ * Attaches a downloaded paper's PDF to the source the shared identity rule took it for, after
+ * judging again under the store lock with the Library's current decisions (an Undo, a damaged
+ * receipt) and the paper's own identity.
+ */
+export async function attachScientSourcePaperPdf(
+  input: AttachPdfInput & {
+    readonly paper: ScientSourceCandidate;
+    readonly pdfSha256: string;
+  },
+): Promise<ScientSourcePaperAttachmentResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
   return withStoreLock(paths, "source-write", async () => {
-    const current = await readSourceRecordFromPaths(paths, input.sourceId);
-    const emptyDuplicate: ScientSourceDuplicateAssessment = {
-      kind: "new",
-      matchingSourceIds: [],
-      reason: "No duplicate source was found.",
-    };
-    if (current.revision !== input.expectedRevision) {
-      return { outcome: "stale", record: current, duplicate: emptyDuplicate };
+    const existing = await listScientSourceRecordsFromPaths(paths);
+    const exclusions = await intakeExclusions(paths, existing);
+    const duplicate = intakeAssessor(paths, existing, exclusions)(input.paper, input.pdfSha256);
+    if (
+      duplicate.kind === "new" ||
+      duplicate.kind === "possible-metadata-match" ||
+      duplicate.matchingSourceIds[0] !== input.sourceId
+    ) {
+      return { outcome: "not-same-work" as const, duplicate };
     }
-    const attachment = await stagePdf({
-      paths,
-      operationId: `attach_${NodeCrypto.randomUUID()}`,
-      sourcePath: input.pdfPath,
-      ...(input.fileName ? { fileName: input.fileName } : {}),
-      ...(input.retrieval ? { retrieval: input.retrieval } : {}),
-      importedAt: new Date().toISOString(),
-    });
-    const currentAttachment = current.attachments.some(
-      (existingAttachment) => existingAttachment.sha256 === attachment.sha256,
-    );
-    if (currentAttachment) {
-      return { outcome: "unchanged", record: current, duplicate: emptyDuplicate };
-    }
-    const next: ScientSourceRecord = {
-      ...current,
-      revision: current.revision + 1,
-      attachments: [...current.attachments, attachment],
-      updatedAt: new Date().toISOString(),
-      updatedBy: input.actor ?? "user",
-    };
-    await persistSourceRevision(paths, current, next);
-    return { outcome: "attached", record: next, duplicate: emptyDuplicate };
+    return attachPdfLocked(paths, input);
   });
+}
+
+async function attachPdfLocked(
+  paths: SourceStorePaths,
+  input: AttachPdfInput,
+): Promise<ScientSourcePdfAttachmentResult> {
+  const current = await readSourceRecordFromPaths(paths, input.sourceId);
+  const emptyDuplicate: ScientSourceDuplicateAssessment = {
+    kind: "new",
+    matchingSourceIds: [],
+    reason: "No duplicate source was found.",
+  };
+  if (current.revision !== input.expectedRevision) {
+    return { outcome: "stale", record: current, duplicate: emptyDuplicate };
+  }
+  const attachment = await stagePdf({
+    paths,
+    operationId: `attach_${NodeCrypto.randomUUID()}`,
+    sourcePath: input.pdfPath,
+    ...(input.fileName ? { fileName: input.fileName } : {}),
+    ...(input.retrieval ? { retrieval: input.retrieval } : {}),
+    importedAt: new Date().toISOString(),
+  });
+  const currentAttachment = current.attachments.some(
+    (existingAttachment) => existingAttachment.sha256 === attachment.sha256,
+  );
+  if (currentAttachment) {
+    return { outcome: "unchanged", record: current, duplicate: emptyDuplicate };
+  }
+  const next: ScientSourceRecord = {
+    ...current,
+    revision: current.revision + 1,
+    attachments: [...current.attachments, attachment],
+    updatedAt: new Date().toISOString(),
+    updatedBy: input.actor ?? "user",
+  };
+  await persistSourceRevision(paths, current, next);
+  return { outcome: "attached", record: next, duplicate: emptyDuplicate };
 }
 
 export interface ScientSourcePdfDetachmentResult {
@@ -2692,25 +2734,52 @@ export async function readScientSourceIntakeExclusions(
   return intakeExclusions(await sourceStorePaths(root), existing);
 }
 
+/** The shared identity rule bound to a store's records and Library decisions. */
+function intakeAssessor(
+  paths: SourceStorePaths,
+  existing: ReadonlyArray<ScientSourceRecord>,
+  exclusions: ScientLibraryExclusions | undefined,
+) {
+  const owner = storeOwnerId(paths);
+  return (candidate: ScientSourceCandidate, pdfSha256?: string) =>
+    assessSourceDuplicate({
+      candidate,
+      existing,
+      sourceId: scientSourceIdFor(owner, candidate.sourceKey),
+      ...(pdfSha256 ? { pdfSha256 } : {}),
+      ...(exclusions ? { exclusions } : {}),
+    });
+}
+
 /**
- * How the shared identity rule judges a candidate against a store as it is now, outside the
- * import's lock: for checks before an import, such as whether a registry needs asking.
+ * The shared identity rule against a store as it is now, outside any import's lock: for checks
+ * before an import (preflight, whether a registry needs asking). The final import checks again.
  */
+export async function readScientSourceIntakeAssessor(root: ScientSourceStoreLocation): Promise<{
+  readonly existing: ReadonlyArray<ScientSourceRecord>;
+  readonly assess: (
+    candidate: ScientSourceCandidate,
+    pdfSha256?: string,
+  ) => ScientSourceDuplicateAssessment;
+}> {
+  const paths = await sourceStorePaths(root);
+  const existing = await listScientSourceRecordsFromPaths(paths);
+  return {
+    existing,
+    assess: intakeAssessor(paths, existing, await intakeExclusions(paths, existing)),
+  };
+}
+
+/** `readScientSourceIntakeAssessor` for one candidate. */
 export async function assessScientSourceIntake(input: {
   readonly root: ScientSourceStoreLocation;
   readonly candidate: ScientSourceCandidate;
   readonly pdfSha256?: string;
 }): Promise<ScientSourceDuplicateAssessment> {
-  const paths = await sourceStorePaths(input.root);
-  const existing = await listScientSourceRecordsFromPaths(paths);
-  const exclusions = await intakeExclusions(paths, existing);
-  return assessSourceDuplicate({
-    candidate: input.candidate,
-    existing,
-    sourceId: scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey),
-    ...(input.pdfSha256 ? { pdfSha256: input.pdfSha256 } : {}),
-    ...(exclusions ? { exclusions } : {}),
-  });
+  return (await readScientSourceIntakeAssessor(input.root)).assess(
+    input.candidate,
+    input.pdfSha256,
+  );
 }
 
 async function importScientSourceWithRecordLookup(
@@ -2726,15 +2795,8 @@ async function importScientSourceWithRecordLookup(
         ? await operationRecordSnapshot(paths, input.operationId)
         : await listScientSourceRecordsFromPaths(paths);
     const exclusions = await intakeExclusions(paths, existing);
-    const derivedId = scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey);
     const assess = (records: ReadonlyArray<ScientSourceRecord>, pdfSha256?: string) =>
-      assessSourceDuplicate({
-        candidate: input.candidate,
-        existing: records,
-        sourceId: derivedId,
-        ...(pdfSha256 ? { pdfSha256 } : {}),
-        ...(exclusions ? { exclusions } : {}),
-      });
+      intakeAssessor(paths, records, exclusions)(input.candidate, pdfSha256);
     const importedAt = new Date().toISOString();
     const preliminaryDuplicate = assess(existing, input.expectedPdf?.sha256);
     if (duplicateBlocksImport(preliminaryDuplicate, input.allowPossibleMetadataMatch ?? false)) {

@@ -119,7 +119,51 @@ describe("addScientSourcesByIdentifier", () => {
     expect(results[4]?.sourceId).toBe(records[0]?.sourceId);
   });
 
-  it("reports an identifier already in the Library once its registry names the same work", async () => {
+  it("selects the one copy a bare identifier names without a registry, never one of two", async () => {
+    const root = await project();
+    const doi = { scheme: "doi", value: "10.1000/abc.123" };
+    const [first] = await addScientSourcesByIdentifier({
+      root,
+      actor: "user",
+      entries: ["10.1000/abc.123"],
+      resolveIdentifiers: registry({ "doi:10.1000/abc.123": metadata("Measured outcomes", [doi]) }),
+    });
+    const asked: string[] = [];
+    const offline: ResolveSourceIdentifierBatch = async (identifiers) => {
+      asked.push(...identifiers.map((identifier) => identifier.value));
+      return registry({})(identifiers);
+    };
+    const add = () =>
+      addScientSourcesByIdentifier({
+        root,
+        actor: "agent",
+        entries: ["DOI: 10.1000/ABC.123"],
+        resolveIdentifiers: offline,
+      });
+
+    expect(await add()).toMatchObject([
+      { outcome: "duplicate", sourceId: first?.sourceId, title: "Measured outcomes" },
+    ]);
+    expect(asked).toEqual([]);
+
+    await importScientSource({
+      root,
+      operationId: "user_second",
+      candidate: {
+        ...(await listScientSourceRecords(root))[0]!,
+        sourceKey: "second-copy",
+        customType: null,
+        title: "Measured outcomes: a reanalysis",
+        pdfAvailable: false,
+        pdfFileName: null,
+        pdfAttachmentCount: 0,
+      },
+    });
+    expect(await add()).toMatchObject([{ outcome: "unavailable" }]);
+    expect(asked).toEqual(["10.1000/abc.123"]);
+  });
+
+  it("reports an identifier already in the Library, and adds one whose registry names another work", async () => {
     const root = await project();
     const resolveIdentifiers = registry({
       "doi:10.1000/abc.123": metadata("Measured outcomes", [

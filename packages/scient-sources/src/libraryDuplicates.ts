@@ -130,6 +130,38 @@ interface StrongPair {
 }
 
 /**
+ * The merge order of a set, outward from its survivor: each next loser is the most preferred one
+ * linked to a record already merged, with the strongest such link, so its receipt names evidence
+ * the survivor holds by then (it gains each loser's identifiers, items and PDFs).
+ */
+function outwardFrom(
+  ordered: ReadonlyArray<ScientSourceRecord>,
+  corroborated: ReadonlyMap<string, ReadonlyArray<StrongPair>>,
+): ScientLibraryDuplicateGroup["losers"] {
+  const merged = new Set([ordered[0]!.sourceId]);
+  const losers: Array<ScientLibraryDuplicateGroup["losers"][number]> = [];
+  while (merged.size < ordered.length) {
+    let next: ScientLibraryDuplicateGroup["losers"][number] | undefined;
+    for (const record of ordered) {
+      if (merged.has(record.sourceId)) continue;
+      for (const edge of corroborated.get(record.sourceId) ?? []) {
+        const other = edge.left.sourceId === record.sourceId ? edge.right : edge.left;
+        if (!merged.has(other.sourceId)) continue;
+        if (!next || KIND_STRENGTH[edge.kind] < KIND_STRENGTH[next.kind]) {
+          next = { sourceId: record.sourceId, kind: edge.kind };
+        }
+      }
+      if (next) break;
+    }
+    // A set is connected by its corroborated links, so some loser always touches the merged part.
+    if (!next) break;
+    merged.add(next.sourceId);
+    losers.push(next);
+  }
+  return losers;
+}
+
+/**
  * A merge set is connected by links (shared item, identifier or PDF) whose records corroborate
  * and are not kept apart, and every two members must corroborate too; a failing set merges
  * nothing. Every other linked pair is listed with its reason; distinct pairs never are.
@@ -243,18 +275,7 @@ export function assessScientLibraryDuplicates(input: {
     const ordered = members.toSorted(compareScientLibrarySurvivors);
     const survivor = ordered[0]!;
     for (const member of ordered) survivorOf.set(member.sourceId, survivor.sourceId);
-    groups.push({
-      survivorId: survivor.sourceId,
-      losers: ordered.slice(1).map((loser) => ({
-        sourceId: loser.sourceId,
-        kind: corroborated
-          .get(loser.sourceId)!
-          .map((edge) => edge.kind)
-          .reduce((strongest, kind) =>
-            KIND_STRENGTH[kind] < KIND_STRENGTH[strongest] ? kind : strongest,
-          ),
-      })),
-    });
+    groups.push({ survivorId: survivor.sourceId, losers: outwardFrom(ordered, corroborated) });
   }
 
   const strongPairs: Array<{

@@ -86,6 +86,7 @@ import {
   inspectScientSourcePdf,
   inspectScientSources,
   assessScientSourceIntake,
+  readScientSourceIntakeAssessor,
   listScientSourceRecords,
   readScientSourceRecord,
   readSourceImportOperation,
@@ -385,7 +386,10 @@ export interface ResolvedSourceSummary {
 }
 
 export type AgentSourceAddResult =
-  | Awaited<ReturnType<typeof importScientSource>>
+  | (Awaited<ReturnType<typeof importScientSource>> & {
+      /** The source as the import judged it: the caller's, with any registry facts applied. */
+      readonly judged: ScientSourceCandidate;
+    })
   | {
       readonly outcome: "identifier-not-found";
       readonly identifier: ScientSourceIdentifier;
@@ -516,7 +520,7 @@ export async function addAgentSource(
         seedSourceCategories(input.root, imported.record.sourceId, record?.metadata.topics);
         void scheduleSourceCategorization(input.root);
       }
-      return imported;
+      return { ...imported, judged: candidateWithPdfName };
     },
     (result) => (result.outcome === "imported" ? "imported" : "skipped"),
   );
@@ -1016,15 +1020,19 @@ export async function revertSource(input: Parameters<typeof revertScientSource>[
   return revertScientSource(input);
 }
 
+/**
+ * Preflight judges as the final import does: the shared rule with the store's identity and current
+ * Library decisions (`assess`), so an undone or held-back pair is never shown as already imported.
+ */
 export async function assessSourcePreflightDuplicate(input: {
   readonly candidate: ScientSourceCandidate;
-  readonly existing: ReadonlyArray<ScientSourceRecord>;
+  readonly assess: (
+    candidate: ScientSourceCandidate,
+    pdfSha256?: string,
+  ) => ScientSourceDuplicateAssessment;
   readonly pdfPath: string | null;
 }): Promise<ScientSourceDuplicateAssessment> {
-  const preliminary = assessSourceDuplicate({
-    candidate: input.candidate,
-    existing: input.existing,
-  });
+  const preliminary = input.assess(input.candidate);
   if (
     !input.pdfPath ||
     (preliminary.kind !== "new" && preliminary.kind !== "possible-metadata-match")
@@ -1032,11 +1040,26 @@ export async function assessSourcePreflightDuplicate(input: {
     return preliminary;
   }
   const pdf = await inspectScientSourcePdf(input.pdfPath);
-  return assessSourceDuplicate({
-    candidate: input.candidate,
-    existing: input.existing,
-    pdfSha256: pdf.sha256,
-  });
+  return input.assess(input.candidate, pdf.sha256);
+}
+
+/** A group item's source ID and link must differ from a My Library item with the same key. */
+function zoteroImportCandidate(
+  candidate: ScientSourceCandidate,
+  groupId: string | undefined,
+  itemKey: string,
+): ScientSourceCandidate {
+  return groupId
+    ? {
+        ...candidate,
+        sourceKey: `zotero-group-${groupId}-${itemKey}`,
+        externalReferences: candidate.externalReferences.map((reference) =>
+          reference.system === "zotero"
+            ? { ...reference, libraryId: zoteroGroupLibraryId(groupId) }
+            : reference,
+        ),
+      }
+    : candidate;
 }
 
 export async function preflightZoteroImport(input: {
@@ -1048,7 +1071,18 @@ export async function preflightZoteroImport(input: {
   /** The records to compare with, when the store cannot be read yet (a library not created). */
   readonly existing?: ReadonlyArray<ScientSourceRecord>;
 }) {
-  const records = input.existing ?? (await listScientSourceRecords(input.root));
+  const intake = input.existing
+    ? {
+        existing: input.existing,
+        assess: (candidate: ScientSourceCandidate, pdfSha256?: string) =>
+          assessSourceDuplicate({
+            candidate,
+            existing: input.existing ?? [],
+            ...(pdfSha256 ? { pdfSha256 } : {}),
+          }),
+      }
+    : await readScientSourceIntakeAssessor(input.root);
+  const records = intake.existing;
   const transport = await zoteroTransport(
     input.zotero ?? localOnlyZoteroAccess,
     input.connection,
@@ -1063,8 +1097,8 @@ export async function preflightZoteroImport(input: {
     const material = hasImportedPdf ? await zoteroImportMaterial(transport, itemKey) : null;
     const candidate = material?.candidate ?? (await getZoteroItemWith(transport, itemKey));
     const duplicate = await assessSourcePreflightDuplicate({
-      candidate,
-      existing: records,
+      candidate: zoteroImportCandidate(candidate, input.groupId, itemKey),
+      assess: intake.assess,
       pdfPath: material?.files[0]?.path ?? null,
     }).finally(() =>
       Promise.all(material?.files.map((file) => file.release().catch(() => undefined)) ?? []),
@@ -1340,18 +1374,7 @@ async function importZoteroOperationItem(input: {
   );
   const imported = await zoteroImportMaterial(transport, input.itemKey);
   const { material, files } = imported;
-  // A group item's source ID and link must differ from a My Library item with the same key.
-  const candidate = groupId
-    ? {
-        ...imported.candidate,
-        sourceKey: `zotero-group-${groupId}-${input.itemKey}`,
-        externalReferences: imported.candidate.externalReferences.map((reference) =>
-          reference.system === "zotero"
-            ? { ...reference, libraryId: zoteroGroupLibraryId(groupId) }
-            : reference,
-        ),
-      }
-    : imported.candidate;
+  const candidate = zoteroImportCandidate(imported.candidate, groupId, input.itemKey);
   try {
     const [primary, ...extra] = files;
     const result = await importScientSourceOperationItem({

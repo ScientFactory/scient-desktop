@@ -4,7 +4,6 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import {
-  assessSourceDuplicate,
   normalizePersistentIdentifier,
   normalizeScientSourceAbstractDocument,
   sourceMetadataDiagnostics,
@@ -19,7 +18,7 @@ import {
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import {
-  listScientSourceRecords,
+  assessScientSourceIntake,
   inspectScientSourcePdf,
   readScientSourceStagedMaterial,
   removeScientSourceStagedMaterial,
@@ -705,12 +704,12 @@ export async function prepareLocalPdfSource(input: {
       byteLength: staged.byteLength,
       createdAt: new Date().toISOString(),
     });
-    const existing = await listScientSourceRecords(input.root);
+    // Judged as the final import judges it, with the Library's current decisions.
     return {
       candidate,
-      duplicate: assessSourceDuplicate({
+      duplicate: await assessScientSourceIntake({
+        root: input.root,
         candidate,
-        existing,
         pdfSha256: staged.pdfSha256,
       }),
       metadataDiagnostics: sourceMetadataDiagnostics(candidate),
