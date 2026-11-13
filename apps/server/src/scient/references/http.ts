@@ -19,7 +19,9 @@ import {
   listReferenceDocuments,
   ReferenceIdentifierLookup,
 } from "./ReferenceCheck.ts";
+import { resolveScientLibraryStoreAt } from "../sources/SourcesBackend.ts";
 import { resolveReferenceFindings } from "./ReferenceResolution.ts";
+import { referenceCheckSources } from "./ReferenceStores.ts";
 
 class ScientReferencesOperationError extends Schema.TaggedError<ScientReferencesOperationError>()(
   "ScientReferencesOperationError",
@@ -47,6 +49,19 @@ const handle = Effect.fn("ScientReferencesHttp.handle")(function* <A>(
   );
 });
 
+/**
+ * The Library a moved project's check reads and its fixes change; null keeps the project's own
+ * store (project backend, a project not moved, or a folder that is not a Scient project).
+ */
+const libraryAt = (root: string, access: "read" | "write") =>
+  resolveScientLibraryStoreAt(root, access).pipe(
+    Effect.catchTags({
+      ScientLibraryProjectError: () => Effect.succeed(null),
+      ScientLibraryMoveBusyError: (cause) =>
+        failEnvironmentInternal("scient_references_operation_failed", cause),
+    }),
+  );
+
 export const scientReferencesHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "scientReferences",
@@ -60,14 +75,25 @@ export const scientReferencesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("check", (args) =>
-          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
-            checkReferences(args.payload, { resolveIdentifiers }),
-          ),
+          Effect.gen(function* () {
+            yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            const library = yield* libraryAt(args.payload.root, "read");
+            return yield* handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+              checkReferences(
+                { ...args.payload, ...referenceCheckSources(library) },
+                { resolveIdentifiers },
+              ),
+            );
+          }),
         )
         .handle("resolve", (args) =>
-          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            resolveReferenceFindings({ ...args.payload, actor: "user" }),
-          ),
+          Effect.gen(function* () {
+            yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+            const library = yield* libraryAt(args.payload.root, "write");
+            return yield* handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+              resolveReferenceFindings({ ...args.payload, library, actor: "user" }),
+            );
+          }),
         ),
     );
   }),

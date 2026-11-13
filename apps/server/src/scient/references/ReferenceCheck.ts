@@ -453,11 +453,11 @@ interface Collected {
 }
 
 async function collectLibrary(
-  root: ScientSourceStoreLocation,
+  store: ScientSourceStoreLocation | null,
   sourceIds: ReadonlyArray<string> | undefined,
 ): Promise<Collected> {
   const wanted = sourceIds ? new Set(sourceIds) : null;
-  const records = (await listScientSourceRecords(root)).filter(
+  const records = (store === null ? [] : await listScientSourceRecords(store)).filter(
     (record) => wanted === null || wanted.has(record.sourceId),
   );
   return {
@@ -479,7 +479,11 @@ function libraryKey(key: string, byKey: ReadonlyMap<string, ReadonlyArray<Subjec
   return key;
 }
 
-async function collectDocument(root: string, path: string): Promise<Collected> {
+async function collectDocument(
+  root: string,
+  path: string,
+  citable: () => Promise<ReadonlyArray<ScientSourceRecord>>,
+): Promise<Collected> {
   const document = await readProjectText(root, path, "document");
   const kind = referenceDocumentKind(document.relativePath);
   if (kind === null) {
@@ -538,7 +542,7 @@ async function collectDocument(root: string, path: string): Promise<Collected> {
   if (kind !== "bibtex" && unlisted.length > 0) {
     // Citations can name Library sources by citation key, as Markdown [@key] inserts them.
     const wanted = new Set(unlisted.map((key) => key.toLowerCase()));
-    const library = await listScientSourceRecords(root).catch(() => []);
+    const library = await citable().catch(() => []);
     subjects.push(
       ...library
         .filter((record) => record.citationKey && wanted.has(record.citationKey.toLowerCase()))
@@ -685,18 +689,29 @@ export async function checkReferences(
   input: {
     readonly root: string;
     readonly target: ScientReferenceCheckTarget;
-    /** Where library targets read records; the project's own store when absent. */
-    readonly store?: ScientSourceStoreLocation;
+    /**
+     * Where library targets read records: the project's own store when absent, nothing when null
+     * (a Library this computer has not created yet).
+     */
+    readonly store?: ScientSourceStoreLocation | null;
+    /** The sources a document can cite by key, under this project's keys; the store's otherwise. */
+    readonly citable?: () => Promise<ReadonlyArray<ScientSourceRecord>>;
   },
   options: ReferenceCheckOptions,
 ): Promise<ScientReferenceCheckReport> {
   const root = await canonicalRoot(input.root);
   const now = options.now ?? (() => new Date());
   const startedAt = now().getTime();
+  const store = input.store === undefined ? root : input.store;
   const collected =
     input.target.kind === "library"
-      ? await collectLibrary(input.store ?? root, input.target.sourceIds)
-      : await collectDocument(root, input.target.path);
+      ? await collectLibrary(store, input.target.sourceIds)
+      : await collectDocument(
+          root,
+          input.target.path,
+          input.citable ??
+            (() => (store === null ? Promise.resolve([]) : listScientSourceRecords(store))),
+        );
   const scope = input.target.kind === "library" ? "library" : collected.files[0]!;
   const notes = [...collected.notes];
   let complete = collected.complete;
