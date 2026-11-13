@@ -340,7 +340,8 @@ appear in provider input; full instructions are loaded separately.
 
 `scient_skills_list` accepts `{}` to browse one page. Optional `query` matches all supplied
 terms against name and description; `offset` and `limit` browse deterministic
-pages (20 entries by default, at most 50). `total` counts entries in the returned view and
+pages (20 entries by default, at most 50; a larger `limit` returns a 50-entry page rather than
+an error). `total` counts entries in the returned view and
 `nextOffset: null` means the last page. Search is within the current authorized
 turn, not a global catalog, installer, native-provider search or new grant.
 On a keyword miss, the tool returns a bounded browse page with an explicit hint,

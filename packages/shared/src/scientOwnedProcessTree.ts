@@ -99,6 +99,8 @@ export interface OwnedProcessTreeOptions {
   readonly parentPid?: number;
   /** Wait between attempts when stopping finds the table unreadable; defaults to one second. */
   readonly readRetrySpacing?: Duration.Input;
+  /** Wait before a sample's second read when the first fails; defaults to 250 ms. */
+  readonly sampleRetrySpacing?: Duration.Input;
 }
 
 export interface ReapResult {
@@ -112,8 +114,8 @@ export interface ReapResult {
 
 export interface OwnedProcessTree {
   /**
-   * Records the root's living descendants and forgets recorded ones that have exited. An unreadable
-   * table changes nothing.
+   * Records the root's living descendants and forgets recorded ones that have exited. A failed read
+   * is tried once more; a table still unreadable changes nothing.
    */
   readonly sample: Effect.Effect<void>;
   /** Stops recorded processes still running and their descendants: SIGTERM, then SIGKILL. */
@@ -146,8 +148,18 @@ export function makeOwnedProcessTree(
   const signallable = (entry: OwnedProcess) =>
     entry.pid > 1 && entry.pid !== process.pid && entry.pgid !== process.pid;
 
+  // `ps` can fail once while processes come and go; a quick second read keeps one failure from
+  // leaving a whole sampling interval unseen.
+  const readForSample = readTable.pipe(
+    Effect.retry({
+      times: 1,
+      schedule: Schedule.spaced(options.sampleRetrySpacing ?? "250 millis"),
+    }),
+    Effect.option,
+  );
+
   const sample = Effect.gen(function* () {
-    const read = yield* Effect.option(readTable);
+    const read = yield* readForSample;
     if (Option.isNone(read)) return;
     const table = read.value;
     const byPid = indexByPid(table);

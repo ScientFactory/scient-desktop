@@ -624,6 +624,8 @@ error is the code's own, unless its error class names a missing package, memory 
 missing package in Scient-managed Python stays `unknown`, since its Toolkits are Scient's promise.
 A run that never reached the kernel, an app restart or a broken bridge connection is Scient's. A
 runtime that exits mid-run stays `unknown`. Error names and messages never leave the computer.
+A tool call that ends with no result is `exception` and Scient's, except arguments the tool refused
+(`invalid_params`, `input`) and a cancelled call (`interrupted`, `cancelled`).
 Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`, `selection`,
 `cell`, `run-file`) and `runtimeSource`.
 
