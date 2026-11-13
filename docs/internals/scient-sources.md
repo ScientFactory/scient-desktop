@@ -142,13 +142,16 @@ the current folder are rejected. All durable record reads enter through one
 explicit format-version decoder; future migrations extend that boundary rather
 than scattering version checks through adapters and UI code.
 
-## Personal library store (built, not active)
+## Personal library store
 
 The personal library is the same store over a library root instead of a
-project root. It is code only until the switch (build step 5e): no request,
-agent tool or UI routes to it, and the project store above stays the only
-active backend. The agent tools can already run on it behind a code constant
-(below); the move of existing projects and the HTTP routes come in later steps.
+project root, and it is the Sources backend: `SCIENT_SOURCES_BACKEND` in
+`apps/server/src/scient/sources/SourcesBackend.ts` is `"library"` (the switch,
+M3). Requests, agent tools, the papers queue and annotations reach it through
+the resolvers below. The project store above still serves a project before its
+move (reads only), a project moved back into its own folder, and the
+`"project"` backend, which stays in the code for the move back and for tests;
+no setting reaches the constant.
 
 The library lives under the server's resolved state directory for the launch
 mode, `scientLibraryRootFor(stateDir)` = `<stateDir>/scient/library/`, so dev
@@ -326,6 +329,36 @@ load):
 
 The in-memory index is enough for 5a. If a library grows far past this, the
 same index can move into a SQLite file in the library, rebuilt from records.
+
+**Built at start for a large Library.** `libraryIndexWarmLayer`
+(`apps/server/src/scient/sources/LibraryIndexWarm.ts`) forks once the server
+is activated and, five seconds later, calls `warmScientLibraryRecordIndex`: it
+counts the `.json` names in `records/` from one folder listing, and only at
+`LIBRARY_WARM_MINIMUM_RECORDS` (3,000) or more builds the index with the same
+scan a list uses. A smaller Library holds nothing until it is opened. Nothing
+waits for it: start goes on, and a list asked for while the first build runs
+(the warming or another list) awaits that build and then checks it as any
+later list does, so it never reads every record a second time and never waits
+longer than the build it would have run itself. Shutdown interrupts the fiber;
+its abort signal stops the scan between groups of 32 files and leaves no index.
+A failure is logged and the first list builds the index as before.
+
+Measured with `measure:sources-scale --only start-cold,start-warmed,start-during-warming`
+(fresh process per call, the OS file cache warm; Apple M5 Pro, Node 24.19.0,
+load 4.6 to 7.5; median of three, first list through `libraryOverview`):
+
+| Records | First list, cold | Warming | First list after it | Opened 250 ms into it | Heap held |
+| ------- | ---------------- | ------- | ------------------- | --------------------- | --------- |
+| 2,000   | 0.12 s           | 0.09 s  | 0.03 s              | 0.03 s                | 12 MiB    |
+| 5,000   | 0.27 s           | 0.22 s  | 0.07 s              | 0.07 s                | 30 MiB    |
+| 10,000  | 0.49 s           | 0.39 s  | 0.11 s              | 0.25 s                | 60 MiB    |
+| 20,000  | 1.35 s           | 0.93 s  | 0.23 s              | 0.86 s                | 119 MiB   |
+
+The event loop's p99 delay during the warming was at most 24 ms (max 40 ms) at
+20,000. The threshold follows from the cold cost, about 60 µs a record here,
+and the scale gate's slowest machine, the Intel Mac runner, whose first list
+took 6.4 times this Mac's: there a first open passes 1 s at about 2,700
+records.
 
 ### Reading status
 
@@ -529,18 +562,20 @@ without the author's library can still list, screen and count:
   readers merge both layouts (shard entries win) and the next write removes
   the single file.
 
-### Agent tools on the library (built, switched off)
+### Agent tools on the library
 
 `apps/server/src/scient/sources/SourcesBackend.ts` holds the backend constant,
-`"project"` until the switch. It is not a setting or an environment variable;
-tests select `"library"` through the `ScientSourcesBackend` reference, whose
-default is the constant. `resolveScientSourcesStoreFor` gives every Sources
+`"library"`. It is not a setting or an environment variable; tests choose
+their backend through the `ScientSourcesBackend` reference, whose default is
+the constant (tests written for the project store provide `"project"`). `resolveScientSourcesStoreFor` gives every Sources
 call its store: the project root, or the project root plus
 `scientLibraryLocation(scientLibraryRootFor(stateDir))`. The project still
 comes only from the thread's workspace binding (`resolveScientSourcesProject`),
 so tools take no project argument. The same reference picks the advertised
 tool list (`ScientSourcesToolkit` or `ScientSourcesLibraryToolkit`); both
-share operations and handlers.
+share operations and handlers. `agentContextBudget.scient.json` measures the
+library list (112,832 bytes); `libraryToolList.test.ts` keeps the project list
+at 110,848.
 
 - Write authority is the invocation's `sources:write`. With it a call creates
   the library once, resolves pins and review records in `write` mode
@@ -628,7 +663,7 @@ share operations and handlers.
   snapshot and nothing is created. A `write` call needs a library and creates
   it.
 
-### Library routes and the scope filter (built, switched off)
+### Library routes and the scope filter
 
 The HTTP routes in `apps/server/src/scient/sources/http.ts` resolve their store
 the way agent tools do, through `resolveScientLibraryStoreAt(root, access)`:
@@ -689,12 +724,11 @@ Collection submenu. In the "All" view rows pinned here say "In this project",
 and a pin this library lacks says "Not in this Library" in either view. The
 review screen uses the review's `records` when present.
 
-### Moving a project into the library (built, switched off)
+### Moving a project into the library
 
 The one-time move of design section 5 lives in
 `packages/scient-sources/src/libraryMove.ts`; the server reaches it only
-through the library backend. With the constant on `"project"`, nothing calls
-it, no journal is written and every route reads the v1 store as before.
+through the library backend. On the `"project"` backend nothing calls it, no journal is written and every route reads the v1 store as before.
 
 **When it runs.** `resolveScientSourcesStoreFor` (`SourcesBackend.ts`) on the
 library backend:
@@ -967,7 +1001,7 @@ becomes optional; reading state alone is not checked against the revision).
 The library tool list is 112,563 bytes; the project list is unchanged. Project
 servers refuse both new routes.
 
-#### The move in the Library panel (5e-3, switched off)
+#### The move in the Library panel (5e-3)
 
 **Which server.** A library server marks every overview with
 `libraryBackend: true`, also for a project it still serves from the project
@@ -978,9 +1012,12 @@ The panel asks `moveStatus` only when the overview carries the mark
 
 **When the panel asks.** Once when the panel opens, after every Library change
 on that environment settles, landed or failed (`runSourcesCommand` notifies
-`libraryWrites.ts`; highlight writes go the same way), and about once a second
-after each answer while the state is `waiting`, `moving` or `restoring`, or
-while this panel's own move back is running. A read that fails is tried again
+`libraryWrites.ts`; highlight writes go the same way), about once a second
+after each answer while the state is `moving` or `restoring`, or while this
+panel's own move back is running, and every ten seconds while it is
+`waiting`: every project not moved yet reports `waiting` until its first
+change or the background pass (two minutes after start), and a change from
+this panel asks at once anyway. A read that fails is tried again
 every five seconds, so a panel whose first read failed still finds a running
 move. Nothing is asked while the panel
 is closed, and nothing animates: only the numbers change. When a move or a move
@@ -1031,7 +1068,7 @@ dismissed. After a choice the review and the list are read again; nothing is
 patched locally. A read-only session sees the line and both versions, with the
 choices disabled and no Dismiss.
 
-#### The Library in daily use (5e-4, switched off)
+#### The Library in daily use (5e-4)
 
 Everything here depends on the overview's `scopes`, not on `libraryBackend`: a
 project the library server still serves from its own folder renders as on the
@@ -1202,7 +1239,7 @@ gate below); Trash and its Undo go one source per request; Zotero send and refre
 from the panel name one source or none; Empty Trash names none; a systematic
 review adds a selection in parts of 500.
 
-#### Possible duplicates and merges (5f, switched off)
+#### Possible duplicates and merges (5f)
 
 The Library panel's "More" menu offers **Possible duplicates** on a personal
 Library (only when the overview has `scopes`). It opens a full-panel view, as
@@ -1360,9 +1397,10 @@ while memory is free. The proposed bound at
 
 **Still open:**
 
-- The Library list's first call after the server starts reads and decodes
-  every record (0.7 to 1.0 s on the M5 Pro, 2.2 to 6.6 s on the runners).
-  Warm, the server answers in 0.15 to 0.74 s, but the answer is 26.6 MB for
+- The Library list's first call after the server starts read and decoded
+  every record (0.7 to 1.0 s on the M5 Pro, 2.2 to 6.6 s on the runners); a
+  Library of 3,000 records or more now builds its index at start (Derived
+  record index, above). Warm, the server answers in 0.15 to 0.74 s, but the answer is 26.6 MB for
   20,000 rows (creators 6.8 MB, collection membership 4.2 MB, `origin`
   2.1 MB, diagnostics 1.5 MB), which costs another 0.23 s (M5 Pro) to 0.67 to
   1.47 s (runners) to encode, parse and decode.
