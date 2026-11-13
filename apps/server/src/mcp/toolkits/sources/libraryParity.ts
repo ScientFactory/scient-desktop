@@ -136,6 +136,7 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "clear-distinct": ["clear-distinct"],
   "move-back": ["move-back"],
   "dismiss-move-summary": ["dismiss-move-summary"],
+  "restore-pre-move": ["restore-pre-move"],
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */

@@ -835,6 +835,29 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
+  it.effect("an agent puts the sealed copy from before the move back into the project", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      yield* Effect.promise(() =>
+        importScientSource({
+          root: fixture.root,
+          operationId: NodeCrypto.randomUUID(),
+          candidate: candidate("v1"),
+        }),
+      );
+      yield* run(listScientSourcesForInvocation({}), fixture);
+      const records = NodePath.join(fixture.root, ".scient/sources/records");
+      expect(yield* Effect.promise(() => exists(records))).toBe(false);
+      expect(
+        yield* run(
+          organizeLibrarySourcesForInvocation({ change: { action: "restore-pre-move" } }),
+          fixture,
+        ),
+      ).toEqual({ outcome: "restored", restoredSources: 1, restoredPdfs: 0 });
+      expect(yield* Effect.promise(() => NodeFSP.readdir(records))).toHaveLength(1);
+    }),
+  );
+
   it.effect("the list carries the move's summary until an agent dismisses it", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);
@@ -855,7 +878,9 @@ describe("Sources tools on the library backend", () => {
       const moved = yield* run(listScientSourcesForInvocation({}), fixture);
       expect(moveOf(moved)).toEqual({
         state: "done",
-        message: "Undo for bulk edits made before the move was not kept.",
+        message: expect.stringMatching(
+          /^Your Library is in .+\. A copy of this project's sources from before the move is kept in \.scient\/library\/retained-before-library\/move_[0-9a-f]+\. Undo for bulk edits made before the move was not kept\.$/u,
+        ),
       });
       expect(
         yield* run(

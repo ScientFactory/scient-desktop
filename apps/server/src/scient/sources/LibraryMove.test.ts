@@ -50,6 +50,12 @@ import { runLibraryMovePass } from "./LibraryMovePass.ts";
 import { organizeLibrarySources } from "./LibrarySourcesRoutes.ts";
 import { ScientSourcesBackend, resolveScientSourcesStoreFor } from "./SourcesBackend.ts";
 
+const KEPT_COPY_LINE = expect.stringMatching(
+  /^A copy of this project's sources from before the move is kept in \.scient\/library\/retained-before-library\/move_[0-9a-f]+\.$/u,
+);
+/** Every finished move says where the Library is and that the copy from before it is kept. */
+const SUMMARY_LINES = [expect.stringMatching(/^Your Library is in .+\.$/u), KEPT_COPY_LINE];
+
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 const fixtures: string[] = [];
 
@@ -202,12 +208,15 @@ describe("the lazy move on the library backend", () => {
       expect(status).toMatch(/^ D \.scient\/sources\/records\//mu);
       expect(yield* Effect.promise(() => git(fixture.root, "rev-parse", "HEAD"))).toBe(head);
       expect(scientLibraryMoveStatusLines(yield* Effect.promise(() => journalOf(fixture)))).toEqual(
-        ["The Library moved out of this project. Commit the change to stop storing PDFs in git."],
+        [
+          KEPT_COPY_LINE,
+          "The Library moved out of this project. Commit the change to stop storing PDFs in git.",
+        ],
       );
     }),
   );
 
-  it.effect("an untracked project moves silently", () =>
+  it.effect("an untracked project's summary names only the copy it keeps", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(() => setup());
       yield* Effect.promise(async () => {
@@ -217,7 +226,7 @@ describe("the lazy move on the library backend", () => {
       yield* writeStore(fixture);
       const journal = yield* Effect.promise(() => journalOf(fixture));
       expect(journal?.state).toBe("done");
-      expect(scientLibraryMoveStatusLines(journal)).toEqual([]);
+      expect(scientLibraryMoveStatusLines(journal)).toEqual([KEPT_COPY_LINE]);
     }),
   );
 
@@ -403,7 +412,7 @@ const STATUS_ROWS: ReadonlyArray<StatusRow> = [
       }),
     expected: {
       state: "done",
-      lines: ["Undo for bulk edits made before the move was not kept."],
+      lines: [...SUMMARY_LINES, "Undo for bulk edits made before the move was not kept."],
     },
   },
   {
@@ -413,7 +422,7 @@ const STATUS_ROWS: ReadonlyArray<StatusRow> = [
         yield* Effect.promise(() => addV1SourceWithPdf(fixture, "open"));
         yield* writeStore(fixture, { faults: { undeletable: (path) => path.endsWith(".pdf") } });
       }),
-    expected: { state: "cleanup-pending", filesLeft: 1, lines: [] },
+    expected: { state: "cleanup-pending", filesLeft: 1, lines: SUMMARY_LINES },
   },
   {
     name: "restoring (a move back that stopped)",
@@ -512,7 +521,7 @@ describe("the move status, one row per state", () => {
       yield* writeStore(fixture);
       expect(yield* statusOf(fixture)).toEqual({
         state: "done",
-        lines: ["Undo for bulk edits made before the move was not kept."],
+        lines: [...SUMMARY_LINES, "Undo for bulk edits made before the move was not kept."],
       });
     }),
   );

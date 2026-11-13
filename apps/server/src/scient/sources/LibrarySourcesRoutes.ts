@@ -80,7 +80,7 @@ import {
 import { exportBibliography } from "./BibliographyFileAdapter.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
-import { moveProjectBackIntoProject } from "./LibraryMove.ts";
+import { moveProjectBackIntoProject, restoreProjectPreMoveArchive } from "./LibraryMove.ts";
 import {
   alsoPinnedIn,
   distinctPinnedWorks,
@@ -747,7 +747,8 @@ export const isLibraryOrganizeAction = (
   change.action === "mark-distinct" ||
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
-  change.action === "dismiss-move-summary";
+  change.action === "dismiss-move-summary" ||
+  change.action === "restore-pre-move";
 
 const pinSummary = (pin: ScientProjectPin) => ({
   citationKey: pin.citationKey,
@@ -855,6 +856,11 @@ export async function organizeLibrarySources(
           projectRoot: store.root,
         }),
       };
+    case "restore-pre-move":
+      return restoreProjectPreMoveArchive({
+        root: store.root,
+        ...(change.archiveId ? { archiveId: change.archiveId } : {}),
+      });
   }
 }
 

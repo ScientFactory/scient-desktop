@@ -1102,6 +1102,10 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("clear-distinct"), sourceIds: DistinctPair }),
   Schema.Struct({ action: Schema.Literal("move-back") }),
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
+  Schema.Struct({
+    action: Schema.Literal("restore-pre-move"),
+    archiveId: Schema.optionalKey(NonEmptyString),
+  }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -1126,6 +1130,9 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "marked",
     "cleared",
     "stale",
+    "restored",
+    "no-archive",
+    "archive-changed",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -1151,10 +1158,11 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
   alsoPinnedIn: AlsoPinnedIn,
   restoredSources: Schema.optionalKey(Schema.Int),
+  restoredPdfs: Schema.optionalKey(Schema.Int),
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list.`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer.`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

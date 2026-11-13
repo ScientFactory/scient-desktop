@@ -391,6 +391,11 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("move-back") }),
   /** Hides the move's summary lines in this checkout's status, until a later run. */
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
+  /** Puts the sealed copy from before a move (the newest, or archiveId) back in the project. */
+  Schema.Struct({
+    action: Schema.Literal("restore-pre-move"),
+    archiveId: Schema.optionalKey(NonEmptyString),
+  }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -430,6 +435,9 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "marked",
     "cleared",
     "stale",
+    "restored",
+    "no-archive",
+    "archive-changed",
   ]),
   pin: Schema.optionalKey(PinSummary),
   pinChanges: Schema.optionalKey(
@@ -464,6 +472,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
   alsoPinnedIn: AlsoPinnedIn,
   restoredSources: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  restoredPdfs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ScientSourcesOrganizeResult = typeof ScientSourcesOrganizeResult.Type;
 
@@ -571,6 +580,7 @@ export const ScientSourcesMoveProgress = Schema.Struct({
     "verifying",
     "merging",
     "switching",
+    "archiving",
     "cleaning-up",
     "restoring",
   ]),

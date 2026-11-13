@@ -143,6 +143,7 @@ import {
 import { syncPinnedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
 import {
   moveProjectBackIntoProject,
+  restoreProjectPreMoveArchive,
   readLibraryMoveStatus,
   scientLibraryMoveNotice,
 } from "../../../scient/sources/LibraryMove.ts";
@@ -728,7 +729,8 @@ const isLibraryOrganizeChange = (
   change.action === "mark-distinct" ||
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
-  change.action === "dismiss-move-summary";
+  change.action === "dismiss-move-summary" ||
+  change.action === "restore-pre-move";
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
 export const organizeLibrarySourcesForInvocation = Effect.fn(
@@ -742,10 +744,22 @@ export const organizeLibrarySourcesForInvocation = Effect.fn(
   if (store.kind !== "library") {
     // Served from its own folder: not moved yet or already moved back, so nothing to move back.
     if (change.action === "move-back") return { outcome: "not-moved" as const };
+    if (change.action === "restore-pre-move") return yield* restorePreMove(store.root, change);
     return yield* toolError("operation-failed", "Pins and merges need the personal Library.");
   }
   return yield* changeLibraryPinsOrMerges(store, change);
 });
+
+const restorePreMove = (
+  root: string,
+  change: Extract<LibraryOrganizeChange, { readonly action: "restore-pre-move" }>,
+) =>
+  attempt(() =>
+    restoreProjectPreMoveArchive({
+      root,
+      ...(change.archiveId ? { archiveId: change.archiveId } : {}),
+    }),
+  );
 
 const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges")(function* (
   store: ScientSourcesLibraryStore,
@@ -898,6 +912,8 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
           dismissScientLibraryMoveSummary({ library: store.library, projectRoot: store.root }),
         ),
       };
+    case "restore-pre-move":
+      return yield* restorePreMove(store.root, change);
   }
 });
 

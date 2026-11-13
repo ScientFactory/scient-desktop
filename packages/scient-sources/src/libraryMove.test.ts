@@ -19,6 +19,7 @@ import { listScientLibraryReviewRecords, readScientLibraryReview } from "./libra
 import {
   moveScientProjectBackIntoProject,
   readScientLibraryMoveState,
+  restoreScientProjectPreMoveArchive,
   runScientLibraryMove,
   scientLibraryMoveInternals,
   scientLibraryMoveStatusLines,
@@ -384,7 +385,10 @@ describe("the move", () => {
     );
     const other = await seededMove();
     const untracked = await move(other.library, other.project);
-    expect(scientLibraryMoveStatusLines(untracked.journal)).toEqual([]);
+    expect(scientLibraryMoveStatusLines(untracked.journal, other.library.root)).toEqual([
+      `Your Library is in ${other.library.root}.`,
+      `A copy of this project's sources from before the move is kept in .scient/library/retained-before-library/${untracked.journal!.runId}.`,
+    ]);
   });
 
   it("does nothing on a project with no v1 store, and writes no journal", async () => {
@@ -1376,5 +1380,103 @@ describe("the library lock during a move", () => {
         NodePath.join(project, ".scient/sources/files/sha256", sha256.slice(0, 2), `${sha256}.pdf`),
       ),
     ).toBe(true);
+  });
+});
+
+describe("the sealed copy from before the move", () => {
+  const manifestOf = async (project: string, journal: ScientLibraryMoveJournal) =>
+    JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(project, journal.archive!.path, "manifest.json"),
+        "utf8",
+      ),
+    );
+
+  it("keeps the evidence, is never read by the Library, and restores with no move journal", async () => {
+    const { base, library, project, a, b, sha256 } = await seededMove();
+    const pdfBytes = await NodeFSP.readFile(
+      NodePath.join(NodePath.dirname(project), `${NodePath.basename(project)}-a.pdf`),
+    );
+    const { journal } = await move(library, project);
+    const archive = NodePath.join(project, journal!.archive!.path);
+    const manifest = await manifestOf(project, journal!);
+    expect(manifest.counts).toMatchObject({
+      records: 2,
+      trash: 1,
+      pdfs: 1,
+      annotations: 1,
+      reviews: 1,
+    });
+    expect(manifest.missing).toEqual([]);
+    const pdf = manifest.files.find((file: { path: string }) => file.path.endsWith(".pdf"));
+    expect(await NodeFSP.readFile(NodePath.join(archive, pdf.path))).toEqual(pdfBytes);
+    expect(await exists(NodePath.join(archive, "annotations", `${sha256}.json`))).toBe(true);
+    expect(await NodeFSP.readFile(NodePath.join(archive, "README.md"), "utf8")).toContain(
+      "Scient never reads this folder on its own.",
+    );
+
+    // Not a v1 store: a later open neither moves it again nor reads it.
+    const records = (await listScientSourceRecords(library)).length;
+    expect(await move(library, project)).toMatchObject({ outcome: "moved", journal: { run: 1 } });
+    expect((await readScientLibraryMoveState({ library, projectRoot: project })).v1Present).toBe(
+      false,
+    );
+    expect(await listScientSourceRecords(library)).toHaveLength(records);
+
+    // A collaborator's copy on a computer with its own, empty Library and no journal.
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const theirs = await newLibrary(base, "other-computer");
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
+      outcome: "restored",
+      restoredSources: 2,
+      restoredPdfs: 1,
+    });
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toEqual({
+      outcome: "project-store-present",
+    });
+    expect(await move(theirs, elsewhere)).toMatchObject({ outcome: "moved" });
+    expect(
+      (await listScientSourceRecords(theirs)).map((record) => record.title).toSorted(),
+    ).toEqual(["Plain study, revised", "Study a"]);
+    expect(
+      await exists(NodePath.join(theirs.root, "files/sha256", sha256.slice(0, 2), `${sha256}.pdf`)),
+    ).toBe(true);
+    expect(await exists(NodePath.join(theirs.root, "annotations/v1", `${sha256}.json`))).toBe(true);
+    expect(
+      (await readScientProjectPins(elsewhere)).find((pin) => pin.sourceId === a.sourceId)?.note,
+    ).toBe("Why this project cites A.");
+    expect((await readScientProjectPins(elsewhere)).map((pin) => pin.sourceId)).toContain(
+      b.sourceId,
+    );
+  });
+
+  it("deletes nothing until the copy is sealed, and an interrupted copy finishes on the rerun", async () => {
+    const { library, project } = await seededMove();
+    const before = await NodeFSP.readdir(NodePath.join(project, ".scient/sources"), {
+      recursive: true,
+    });
+    const crashed = await crashAt(library, project, { crashAt: "mid-archive" });
+    expect(crashed.state).toBe("committed");
+    expect(crashed.archive).toBeUndefined();
+    expect(
+      await NodeFSP.readdir(NodePath.join(project, ".scient/sources"), { recursive: true }),
+    ).toEqual(before);
+    expect(
+      await NodeFSP.readdir(NodePath.join(project, ".scient/library/retained-before-library")),
+    ).toEqual([`.${crashed.runId}.partial`]);
+
+    const { journal } = await move(library, project);
+    expect(journal).toMatchObject({ state: "done", archive: { path: expect.any(String) } });
+    expect(
+      await NodeFSP.readdir(NodePath.join(project, ".scient/library/retained-before-library")),
+    ).toEqual([crashed.runId]);
+    const manifest = await manifestOf(project, journal!);
+    for (const file of manifest.files) {
+      const bytes = await NodeFSP.readFile(
+        NodePath.join(project, journal!.archive!.path, file.path),
+      );
+      expect(sha(bytes), file.path).toBe(file.sha256);
+    }
   });
 });
