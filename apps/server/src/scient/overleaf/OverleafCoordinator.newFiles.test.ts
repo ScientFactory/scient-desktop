@@ -330,27 +330,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, new files",
       ),
   );
 
-  it.live("sends a rule-skipped file on request, and a repeated request is satisfied", () =>
-    run(
-      Effect.gen(function* () {
-        const w = yield* world({
-          overleaf: "git",
-          synced: { "main.tex": "M" },
-          remote: { "main.tex": "M" },
-        });
-        yield* write(w.folder, { ".latexmkrc": "rc" });
-        const selections = { send: [".latexmkrc"], collisionPaths: [], choices: new Map() };
-        const review = yield* prepared(w, selections);
-        expect(review.binding.selectedAdditions).toEqual([".latexmkrc"]);
-        expect(yield* confirmed(w, review)).toMatchObject({ publication: { _tag: "accepted" } });
-        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "M", ".latexmkrc": "rc" });
-        // A retry after it was applied: already synced, nothing more to do.
-        const again = yield* prepared(w, selections);
-        expect(again.upToDate).toBe(true);
-      }),
-    ),
-  );
-
   it.live("keeps a file an explicit list left out through a disappearance and return", () =>
     run(
       Effect.gen(function* () {

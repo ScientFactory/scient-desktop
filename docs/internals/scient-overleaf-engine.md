@@ -299,7 +299,17 @@ server defaults to its own installed resources and may explicitly set the
 absolute host-owned `SCIENT_FILE_PUBLICATION_HELPER`. Both paths require the
 production receipt, SHA-256 digest, matching host architecture, native executable
 format, executable permissions and protocol capabilities. Symlinks and resources
-writable by another user are refused; Windows checks owner and write ACLs. The
+writable by another user are refused. On Windows, for every helper, PowerShell
+prints the security descriptor (`Get-Acl`, SDDL) of the helper, its receipt, its
+folder and each folder above; the server reads them and refuses an owner, or a
+write or delete right, held by anyone but the user, SYSTEM, Administrators or
+TrustedInstaller. The script uses only a cmdlet and a property read, so it runs
+the same under Constrained Language Mode (AppLocker, WDAC), and `whoami` gives
+the user's SID. A descriptor it cannot read refuses. The helper is looked for
+when first needed. A pass is used at once and checked again in the background
+once ten minutes old; a refusal is checked again at the next use. A helper that
+fails a check, or that can no longer be launched and is being checked again, is
+given to no new use; an operation already holding it finishes with it. The
 helper is never discovered from the workspace or PATH. Development uses the
 helper staged beside its server bundle.
 
@@ -473,7 +483,11 @@ volume UUID plus the folder's file ID, never the device number, so a disk mounte
 again under another path is recognized. macOS resolves the UUID through `diskutil`.
 Linux reads it from the held object with `FS_IOC_GETFSUUID`, falling back to a unique
 `/dev/disk/by-uuid` entry for the mount's block device. Btrfs identities also include
-the subvolume ID, and kept copies must share the manuscript's subvolume. Linux
+the subvolume ID, and kept copies must share the manuscript's subvolume. ext4 and XFS
+give a new file a freed inode number at once, so Linux identities also carry the inode
+generation (`FS_IOC_GETVERSION`); a folder recreated at a link's path is never taken
+for the linked one. Records written before the generation was read match by inode
+until the server records it, at startup or at the link's next operation. Linux
 admission checks held-folder `fstatfs` magic and `/proc/self/mountinfo`: ext4, XFS and
 Btrfs are accepted; memory filesystems, overlay, network/virtual filesystems, FUSE,
 FAT/exFAT and NTFS drivers are refused. New identities carry platform and version
