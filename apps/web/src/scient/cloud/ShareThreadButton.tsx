@@ -12,8 +12,8 @@ import { hasCloudAccount } from "./useCloudAccount";
 
 /**
  * "Share" in the thread header. It opens one dialog: inviting people when this computer can host
- * them (publishing a copy is a link inside it), otherwise publishing a copy. A shared thread shows
- * its people instead.
+ * them (publishing a copy is a link inside it), otherwise publishing a copy. A shared thread's
+ * Share button also shows its people (RoomIndicator).
  */
 export function ShareThreadButton({ threadRef }: { threadRef: ScopedThreadRef }) {
   const canShareWithGuest = useAtomValue(canShareWithGuestAtom(threadRef.environmentId));
