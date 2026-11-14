@@ -4,7 +4,7 @@
 
 This alignment integrates, in one literal merge, the 104 official commits after `997b304dd6`
 through `2bee33eb193a0430c9a0d8e24f8f684163f045a4`. No donor commit was replayed, squashed or
-dropped. Its pull request is #PRNUM. Each Scient change the merge touched was either realigned
+dropped. Its pull request is #929. Each Scient change the merge touched was either realigned
 with T3 or kept small and marked.
 
 This record describes the committed integration, not delivery or release acceptance.

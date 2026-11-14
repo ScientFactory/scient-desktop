@@ -649,7 +649,7 @@ The current committed alignment through
 [the 2026-11-14 2bee33eb19 receipt](docs/internals/t3-upstream-sync-20261114-2bee33eb19.md).
 Literal merge `1235ed4b9a21f02197748810dd2f1a3678a450df` has owned base
 `253ef0edc14f8d6d7c20506fd97aaef57176ae4e` and the frozen official target as parents, retaining
-the 104 official commits after `997b304dd6`; PR #PRNUM carries it. Node moves to 26.13.1 with its
+the 104 official commits after `997b304dd6`; PR #929 carries it. Node moves to 26.13.1 with its
 SQLite 3.54.1, renaming a thread renames the Claude session, and provider switches on portable
 forks keep the inherited conversation. Scient keeps its lazy Files tree and pdf.js find. Release
 remains separate.
