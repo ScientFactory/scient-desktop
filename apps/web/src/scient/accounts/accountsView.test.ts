@@ -607,6 +607,19 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
   expect(rows([droid]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
     ["droid", "Linear", droid.instanceId],
   ]);
+  // Scient Agent's own ChatGPT sign-in reports the ChatGPT apps it reaches; its MCP settings do not count.
+  const scient = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-scient"),
+    driver: ProviderDriverKind.make("scient"),
+    mcpServers: [
+      { name: "Gmail", status: "connected" as const, scope: "chatgpt", signedIn: true },
+      { name: "local-files", status: "unknown" as const, scope: "user" },
+    ],
+  };
+  expect(rows([scient]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
+    ["scient", "Gmail", scient.instanceId],
+  ]);
   expect(
     rows([
       { ...base, mcpServers: [] },

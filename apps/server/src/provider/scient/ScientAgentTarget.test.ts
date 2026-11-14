@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { ompTarget } from "../omp/OmpTarget.ts";
-import { scientAgentProcessEnvironment, scientAgentTarget } from "./ScientAgentTarget.ts";
+import {
+  scientAgentHostCommands,
+  scientAgentProcessEnvironment,
+  scientAgentTarget,
+} from "./ScientAgentTarget.ts";
 
 const runtimeInfo = (overrides: Record<string, unknown> = {}): string =>
   `${JSON.stringify({
@@ -147,5 +151,16 @@ describe("scientAgentProcessEnvironment", () => {
     });
     expect(env.OMP_PROFILE).toBe("work");
     expect(env.PI_CODING_AGENT_DIR).toBe("/Users/someone/.omp/agent");
+  });
+});
+
+describe("scientAgentHostCommands", () => {
+  it("reads the commands a release offers, and none from an older one", () => {
+    expect(scientAgentHostCommands(runtimeInfo({ hostCommands: ["apps", "dictate"] }))).toEqual([
+      "apps",
+      "dictate",
+    ]);
+    expect(scientAgentHostCommands(runtimeInfo())).toEqual([]);
+    expect(scientAgentHostCommands("omp/18.4.8\n")).toEqual([]);
   });
 });
