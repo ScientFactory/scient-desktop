@@ -14,7 +14,7 @@ links run on a separate Worker; see [Scient Cloud operations](./scient-cloud.md)
 | Database   | PlanetScale org `scient`, Postgres `t3coderelay`, `us-east`, PS-5, no replicas | Reached through Cloudflare Hyperdrive                                                           |
 | Tunnels    | `<stage>-<digest>.scientusercontent.com`                                       | One Cloudflare tunnel per linked computer                                                       |
 | Hosted app | `https://app.scientfactory.com`                                                | Worker `scient-hosted-web`, static assets from `apps/web`                                       |
-| Sign-in    | Clerk app "Scient", production instance on `clerk.scientfactory.com`           | Google, Microsoft, GitHub, email                                                                |
+| Sign-in    | Clerk app "Scient", production instance on `clerk.scientfactory.com`           | Apple, Google, GitHub, email                                                                    |
 | Logs       | Axiom org `scientfactory-mmof`, US East                                        | Datasets `t3-code-relay-traces-prod`, `t3-code-mobile-logs-prod`, `t3-code-mobile-metrics-prod` |
 
 Cloudflare account `7335fe148c17fc00c2e9cd48fc9162c6` holds the relay, tunnels, both zones, the
@@ -23,7 +23,7 @@ hosted app, and Alchemy's state store (`alchemy-state-store` Worker with its Sec
 Public ids live in `.env.example` (clients) and in the `scient-connect` GitHub environment
 (deploys). Secrets are in the owner's Scient Accounts vault and in that environment's secrets:
 `CLOUDFLARE_API_TOKEN`, `PLANETSCALE_API_TOKEN_ID`, `PLANETSCALE_API_TOKEN`, `AXIOM_TOKEN`,
-`CLERK_SECRET_KEY`, `CLERK_LEGACY_SECRET_KEY`. Never put a secret in `.env.example` or a client
+`CLERK_SECRET_KEY`, `CLERK_LEGACY_SECRET_KEY`, `APPLE_SIGN_IN_PRIVATE_KEY`. Never put a secret in `.env.example` or a client
 build.
 
 ## Deploying
@@ -106,6 +106,19 @@ secret key of the instance that issued the token. The Clerk user goes last, so a
 part-way can be retried with the same sign-in; every step tolerates an earlier partial run. Rows
 keyed by a computer's key (its credentials and agent activity) stay while another account still
 links that computer. Logs and traces already exported to Axiom age out with its retention.
+
+Apple requires that deleting an account also revokes its Sign in with Apple tokens (guideline
+5.1.1(v), TN3194). Clerk signs iPhone users in with Apple's identity token alone and keeps no
+Apple refresh token, so for a user with an Apple sign-in the phone first asks Apple for a fresh
+authorization code (one Apple confirmation sheet), then posts it to
+`POST /v1/me/apple-sign-in-revocations`. The relay redeems it at Apple's `/auth/token` with a client
+secret signed by the Sign in with Apple key, and revokes the refresh token at `/auth/revoke`. A
+failed or cancelled-by-Apple revocation is logged and the deletion still goes ahead, so deleting
+never depends on Apple; cancelling the Apple sheet cancels the deletion. Configuration, in the
+`scient-connect` environment: variables `APPLE_SIGN_IN_TEAM_ID`, `APPLE_SIGN_IN_KEY_ID` and
+`APPLE_SIGN_IN_CLIENT_IDS` (comma-separated bundle IDs whose codes the relay redeems, today
+`com.scientfactory.mobile`), and secret `APPLE_SIGN_IN_PRIVATE_KEY` (the `.p8` contents). Without
+them the endpoint fails and deletion proceeds without revocation.
 
 No Clerk dashboard setting is needed. Keep Clerk's own "Allow users to delete their accounts"
 off: its button in the profile view would delete the Clerk user but leave the relay's records and

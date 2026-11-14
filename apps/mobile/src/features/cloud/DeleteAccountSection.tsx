@@ -1,12 +1,15 @@
 // SCIENT-FORK:START account-deletion — whole file.
-import { useClerk } from "@clerk/expo";
+import { useClerk, useUser } from "@clerk/expo";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import type { RelayAppleSignInRevocationRequest } from "@t3tools/contracts/relay";
+import * as AppleAuthentication from "expo-apple-authentication";
+import * as Application from "expo-application";
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
@@ -16,9 +19,43 @@ import { deleteManagedRelayAccountCommand } from "./managedRelayState";
 
 const CONFIRM_MESSAGE =
   "This deletes your Scient account and removes your linked computers from Scient Connect. This can't be undone.";
+const APPLE_CONFIRM_NOTE =
+  "\n\nYou signed in with Apple, so Apple asks you to confirm once. That also removes Scient from your Apple Account.";
+
+/**
+ * Apple requires that deleting an account also revokes its Sign in with Apple tokens (TN3194).
+ * Clerk keeps no Apple refresh token, so this gets a fresh authorization code for the relay to
+ * redeem and revoke. `cancelled` means the person dismissed Apple's sheet; `null` means revoking
+ * is not possible here, and deletion goes ahead without it.
+ */
+async function requestAppleSignInRevocation(): Promise<
+  RelayAppleSignInRevocationRequest | "cancelled" | null
+> {
+  const clientId = Application.applicationId;
+  if (Platform.OS !== "ios" || !clientId) return null;
+  try {
+    if (!(await AppleAuthentication.isAvailableAsync())) return null;
+    const credential = await AppleAuthentication.signInAsync({ requestedScopes: [] });
+    return credential.authorizationCode
+      ? { authorizationCode: credential.authorizationCode, clientId }
+      : null;
+  } catch (cause) {
+    if (typeof cause === "object" && cause !== null && "code" in cause) {
+      if (cause.code === "ERR_REQUEST_CANCELED") return "cancelled";
+    }
+    console.warn("[scient-connect] Could not get a Sign in with Apple code for deletion", {
+      cause,
+    });
+    return null;
+  }
+}
 
 export function DeleteAccountSection(props: { readonly accountId: string | null }) {
   const clerk = useClerk();
+  const { user } = useUser();
+  const usesAppleSignIn =
+    Platform.OS === "ios" &&
+    (user?.externalAccounts.some((account) => account.provider === "apple") ?? false);
   const deleteAccount = useAtomCommand(deleteManagedRelayAccountCommand, { reportFailure: false });
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -38,7 +75,14 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
 
   const handleDelete = async (accountId: string) => {
     setIsDeleting(true);
-    const result = await deleteAccount({ accountId });
+    const appleSignInRevocation = usesAppleSignIn ? await requestAppleSignInRevocation() : null;
+    if (appleSignInRevocation === "cancelled") {
+      setIsDeleting(false);
+      return;
+    }
+    const result = await deleteAccount(
+      appleSignInRevocation ? { accountId, appleSignInRevocation } : { accountId },
+    );
     if (result._tag === "Success") {
       await signOutDeletedAccount();
       return;
@@ -70,7 +114,7 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
     if (!accountId || isDeleting) return;
     Dialog.confirm({
       title: "Delete account?",
-      message: CONFIRM_MESSAGE,
+      message: usesAppleSignIn ? CONFIRM_MESSAGE + APPLE_CONFIRM_NOTE : CONFIRM_MESSAGE,
       confirmText: "Delete account",
       destructive: true,
       onConfirm: () => void handleDelete(accountId),

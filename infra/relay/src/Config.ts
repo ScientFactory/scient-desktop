@@ -67,6 +67,16 @@ export interface ApnsCredentials {
   readonly environment: ApnsEnvironment;
 }
 
+// SCIENT-FORK:START account-deletion — the Sign in with Apple key, to revoke a deleted account's tokens.
+export interface AppleSignInCredentials {
+  readonly teamId: string;
+  readonly keyId: string;
+  readonly privateKey: Redacted.Redacted<string>;
+  /** The app bundle IDs (Apple client IDs) whose authorization codes the relay may redeem. */
+  readonly clientIds: ReadonlyArray<string>;
+}
+// SCIENT-FORK:END account-deletion
+
 export interface T3ChatSettings {
   readonly baseUrl: string;
   // Shared with T3 Chat: signs link tokens and authenticates relay calls.
@@ -97,6 +107,9 @@ export class RelayConfiguration extends Context.Service<
     readonly legacyManagedEndpointCleanupMode?: ManagedEndpointCleanupMode;
     readonly legacyTunnelGraceMinutes?: number;
     readonly t3Chat?: T3ChatSettings;
+    // SCIENT-FORK:START account-deletion
+    readonly appleSignIn?: AppleSignInCredentials;
+    // SCIENT-FORK:END account-deletion
   }
 >()("t3code-relay/Config/RelayConfiguration") {}
 
