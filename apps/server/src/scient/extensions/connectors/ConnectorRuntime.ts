@@ -2023,12 +2023,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       tools: [],
       ...(message === undefined ? {} : { message }),
     });
-    if (record.status === "needs-auth") return result("needs-auth", "Sign in to use this service.");
-    // Calling its tools is using it: only where a chat would get it (on, eligible, this project).
-    // An agent that was not chosen cannot check it either; a plain check of one that is merely
-    // off still works, as before.
+    // An agent that was not chosen learns nothing about it, not even that it needs a sign-in; a
+    // plain check of one that is merely off still works, as before.
     if (!isForAgent(record, input.location?.providerInstanceId))
       return result("error", notForThisAgent(record));
+    if (record.status === "needs-auth") return result("needs-auth", "Sign in to use this service.");
+    // Calling its tools is using it: only where a chat would get it (on, eligible, this project).
     if ((input.calls?.length ?? 0) > 0) {
       const unusable = yield* unusableIn(
         record,

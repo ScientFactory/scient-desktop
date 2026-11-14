@@ -1866,6 +1866,36 @@ describe("connector proxy", () => {
       expect((yield* copyAs(codex)).message).toContain("No local connector is named");
       expect((yield* copyAs(claude)).message).toContain("runs online");
       expect((yield* harness.runtime.list()).connectors).toHaveLength(1);
+
+      // Its address, added again, is refused without its name; a check reads nothing of it.
+      const addUrlAs = (providerInstanceId: ProviderInstanceId) =>
+        addConnector({
+          from: `${vendor.base}/open/mcp`,
+          location: { projectId: PROJECT, worktreePath: null, providerInstanceId },
+        }).pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provide(discover),
+          Effect.flip,
+        );
+      const hidden = (yield* addUrlAs(codex)).message;
+      expect(hidden).toContain("already added for other agents");
+      expect(hidden).not.toContain(added.connector.displayName);
+      expect((yield* addUrlAs(claude)).message).toContain(added.connector.displayName);
+      const checkedAs = (providerInstanceId: ProviderInstanceId) =>
+        testConnector(added.connector.serverName, {
+          projectId: PROJECT,
+          worktreePath: null,
+          providerInstanceId,
+        }).pipe(Effect.provideService(ConnectorRuntime, harness.runtime));
+      expect(yield* checkedAs(codex)).toEqual({
+        ok: false,
+        tools: [],
+        calls: [],
+        missing: [],
+        error: expect.stringContaining("not available to this agent"),
+      });
+      expect((yield* checkedAs(claude)).ok).toBe(true);
+      expect((yield* harness.runtime.list()).connectors).toHaveLength(1);
     }).pipe(Effect.provide(testLayer)),
   );
 

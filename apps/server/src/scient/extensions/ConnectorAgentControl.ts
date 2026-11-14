@@ -67,6 +67,16 @@ const requireSummary = Effect.fn("ConnectorAgentControl.find")(function* (name: 
   return found;
 });
 
+/** Whether the person gave this connector to the calling agent; every agent when none were chosen. */
+const forThisAgent = (
+  summary: Pick<ConnectorSummary, "agents">,
+  caller: ProviderInstanceId | undefined,
+) => summary.agents === undefined || caller === undefined || summary.agents.includes(caller);
+
+/** Said with the name the agent asked for, so it learns nothing it did not already say. */
+const notForThisAgent = (asked: string) =>
+  `${asked} is not available to this agent. The person can choose this agent on its page in Settings → Extensions.`;
+
 /** Who runs a hosted connector, and so sees what passes through it. */
 const hostOf = (url: string) => (URL.canParse(url) ? new URL(url).host : undefined);
 
@@ -184,11 +194,8 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
   return yield* observed("connectors.agent.list", { searched: query !== undefined })(
     Effect.gen(function* () {
       const { connectors } = yield* runtime.list();
-      const mine = connectors.filter(
-        (connector) =>
-          connector.agents === undefined ||
-          input.providerInstanceId === undefined ||
-          connector.agents.includes(input.providerInstanceId),
+      const mine = connectors.filter((connector) =>
+        forThisAgent(connector, input.providerInstanceId),
       );
       const elsewhere = new Set(
         connectors.filter((item) => !mine.includes(item)).map((item) => item.connectorId),
@@ -318,6 +325,7 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
   const variant = /^https?:\/\//iu.test(from) ? "url" : isPath(from) ? "bundle" : "discover";
   return yield* observed("connectors.agent.add", { variant })(
     Effect.gen(function* () {
+      const caller = input.location?.providerInstanceId;
       let request: ConnectorAddInput;
       if (variant === "url") request = { target: { type: "url", url: from } };
       else if (variant === "bundle") {
@@ -345,12 +353,7 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
             ? undefined
             : findSummary((yield* runtime.list()).connectors, entry.installedConnectorId);
         // Given to other agents only: this agent learns no more than that, and adds no second copy.
-        const caller = input.location?.providerInstanceId;
-        if (
-          existing?.agents !== undefined &&
-          caller !== undefined &&
-          !existing.agents.includes(caller)
-        )
+        if (existing !== undefined && !forThisAgent(existing, caller))
           return yield* invalid(
             `${entry.title ?? entry.name} is already added for other agents. The person can choose this agent on its page in Settings → Extensions.`,
           );
@@ -380,15 +383,26 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
             : yield* askedSetup(entry, choice.target, choice.needs, displayName, input.asks)),
         };
       }
-      const added = yield* runtime
-        .add({ ...request, changedBy: "agent" })
-        .pipe(
-          Effect.mapError((error) =>
-            error.reason === "sign-in-failed" && request.credential?.type === "bound"
-              ? rejectedKey(request.displayName ?? "The service", request.credential.secretRef)
-              : error,
+      const added = yield* runtime.add({ ...request, changedBy: "agent" }).pipe(
+        Effect.mapError((error) =>
+          error.reason === "sign-in-failed" && request.credential?.type === "bound"
+            ? rejectedKey(request.displayName ?? "The service", request.credential.secretRef)
+            : error,
+        ),
+        // The runtime names the connector an address already belongs to; one given to other
+        // agents only is not named to this one.
+        Effect.catch((error) =>
+          Effect.flatMap(runtime.list(), ({ connectors }) =>
+            connectors.some(
+              (item) => !forThisAgent(item, caller) && error.message.includes(item.displayName),
+            )
+              ? invalid(
+                  "That service is already added for other agents. The person can choose this agent on its page in Settings → Extensions.",
+                )
+              : Effect.fail(error),
           ),
-        );
+        ),
+      );
       const summary = added.connector;
       if (agentStatusOf(summary) !== "ready") return changeReport("Added", summary, []);
       const tested = yield* testedTools(summary, input.location);
@@ -484,14 +498,8 @@ export const controlConnector = Effect.fn("ConnectorAgentControl.control")(funct
   return yield* observed("connectors.agent.control", { variant: input.action })(
     Effect.gen(function* () {
       const summary = yield* requireSummary(input.connector);
-      if (
-        providerInstanceId !== undefined &&
-        summary.agents !== undefined &&
-        !summary.agents.includes(providerInstanceId)
-      )
-        return yield* invalid(
-          `${summary.displayName} is not available to this agent. Choose it on the connector page in Settings → Extensions.`,
-        );
+      if (!forThisAgent(summary, providerInstanceId))
+        return yield* invalid(notForThisAgent(input.connector));
       const name = summary.displayName;
       const server = summary.serverName;
       const now = Effect.map(
@@ -597,6 +605,9 @@ export const testConnector = Effect.fn("ConnectorAgentControl.test")(function* (
   return yield* observed("connectors.agent.check", { variant: "installed" })(
     Effect.gen(function* () {
       const summary = yield* requireSummary(name);
+      // Before anything of its own is read: its setup and sign-in are not this agent's to learn.
+      if (!forThisAgent(summary, location?.providerInstanceId))
+        return { ok: false, tools: [], calls: [], missing: [], error: notForThisAgent(name) };
       const tested = yield* runtime.test({
         connectorId: summary.connectorId,
         location,
