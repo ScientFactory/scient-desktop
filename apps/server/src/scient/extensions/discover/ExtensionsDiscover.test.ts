@@ -27,6 +27,7 @@ import {
   curatedServerForUrl,
   curatedDiscoverEntry,
   MOST_USED_SERVER_IDS,
+  MOST_USED_CAP,
   type CuratedServer,
 } from "./curatedCatalog.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
@@ -614,7 +615,7 @@ describe("curated Discover catalog", () => {
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 12 : 40);
+      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? MOST_USED_CAP : 40);
       expect(size, category).toBeGreaterThan(0);
     }
   });

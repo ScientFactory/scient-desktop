@@ -152,7 +152,13 @@ export const make = Effect.gen(function* () {
       resolution,
       support,
       nativeServerNames:
-        nativeServers === undefined ? undefined : new Set(nativeServers.map(({ name }) => name)),
+        nativeServers === undefined
+          ? undefined
+          : new Set(
+              nativeServers
+                .filter((server) => input.driver !== "scient" || server.status === "connected")
+                .map(({ name }) => name),
+            ),
     });
   });
 

@@ -14,6 +14,7 @@ import {
   type ConnectorId,
   type ConnectorSummary,
   ExtensionsError,
+  type ProviderInstanceId,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -23,6 +24,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as yazl from "yazl";
 
+import type { ConnectorLocation } from "../ExtensionsServices.ts";
 import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
 import {
   latestHistory,
@@ -267,6 +269,7 @@ export interface AuthoringDeps {
     record: ConnectorRecord,
     projectId: ProjectId | undefined,
     offAllowed: boolean,
+    providerInstanceId?: ProviderInstanceId,
   ) => Effect.Effect<string | undefined>;
   /** Told when a change reaches a connector's lock, before it waits there. */
   readonly onLock?: (connectorId: string) => void;
@@ -513,14 +516,16 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
   /** Starts the folder like an installed connector, outside any record, then stops it. */
   const runCheck = Effect.fn("LocalConnectorAuthoring.runCheck")(function* (
     input: CheckInput,
-    location: { readonly projectId: ProjectId; readonly worktreePath: string | null } | undefined,
+    location: ConnectorLocation | undefined,
     listOnly: boolean,
   ) {
     const folder = yield* requireFolder(input.folder);
     const base = input.connector === undefined ? undefined : yield* findConnector(input.connector);
     // Its keys and sign-in go only where a chat would get the connector.
     const unusable =
-      base === undefined ? undefined : yield* deps.unusableIn(base, location?.projectId, true);
+      base === undefined
+        ? undefined
+        : yield* deps.unusableIn(base, location?.projectId, true, location?.providerInstanceId);
     if (unusable !== undefined) return yield* invalid(unusable);
     const signIn = yield* checkSignIn(folder, input.signIn);
     const manifest = yield* readFolderManifest(folder).pipe(Effect.result);
@@ -565,7 +570,14 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     };
     let started: CheckedStart | undefined;
     const start = local
-      .start(record, record.serverName, location, { checking: true })
+      .start(
+        record,
+        record.serverName,
+        location?.projectId === undefined
+          ? undefined
+          : { projectId: location.projectId, worktreePath: location.worktreePath },
+        { checking: true },
+      )
       .pipe(Effect.tap((value) => Effect.sync(() => (started = value)))) as Effect.Effect<
       CheckedStart,
       LocalLaunchError
@@ -634,15 +646,13 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     } satisfies CheckResult;
   });
 
-  const check = (
-    input: CheckInput,
-    location: { readonly projectId: ProjectId; readonly worktreePath: string | null } | undefined,
-  ) => runCheck(input, location, false);
+  const check = (input: CheckInput, location: ConnectorLocation | undefined) =>
+    runCheck(input, location, false);
 
   /** Saves a checked folder as the user's own connector: new, a fix, or a copy of a bundle. */
   const save = Effect.fn("LocalConnectorAuthoring.save")(function* (
     input: { readonly folder: string; readonly connector?: string | undefined },
-    location: { readonly projectId: ProjectId; readonly worktreePath: string | null } | undefined,
+    location: ConnectorLocation | undefined,
   ) {
     const found = input.connector === undefined ? undefined : yield* findConnector(input.connector);
     if (found === undefined) return yield* saveAs(input.folder, location, undefined);
@@ -655,7 +665,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
 
   const saveAs = Effect.fn("LocalConnectorAuthoring.saveAs")(function* (
     folderGiven: string,
-    location: { readonly projectId: ProjectId; readonly worktreePath: string | null } | undefined,
+    location: ConnectorLocation | undefined,
     existing: ConnectorRecord | undefined,
   ) {
     const checked = yield* runCheck(

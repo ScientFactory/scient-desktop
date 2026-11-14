@@ -37,7 +37,14 @@ const ChatGptAppsOutput = Schema.Struct({
     }),
   ),
 });
-const decodeOutput = Schema.decodeUnknownOption(Schema.fromJsonString(ChatGptAppsOutput));
+const decodeOutput = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Union([
+      ChatGptAppsOutput,
+      Schema.Struct({ error: Schema.Struct({ kind: Schema.Literal("signed-out") }) }),
+    ]),
+  ),
+);
 
 export const hasChatGptAccount = (
   accounts: ReadonlyArray<ProviderConnectionAccount> | undefined,
@@ -56,10 +63,11 @@ function chatGptAppPage(app: { readonly id: string; readonly name: string }): st
   return `${CHATGPT_APPS_PAGE}/${slug || "app"}/${app.id}`;
 }
 
-/** The apps as server rows, from what `apps --json` printed; none for anything else. */
-export function chatGptAppRows(stdout: string): ReadonlyArray<ServerProviderMcpServer> {
+/** An unreadable answer is distinct from a successful empty listing. */
+export function chatGptAppRows(stdout: string): ReadonlyArray<ServerProviderMcpServer> | undefined {
   const decoded = decodeOutput(stdout.trim().split("\n").at(-1) ?? "");
-  if (decoded._tag === "None") return [];
+  if (decoded._tag === "None") return undefined;
+  if ("error" in decoded.value) return [];
   return decoded.value.apps.flatMap((app): ReadonlyArray<ServerProviderMcpServer> => {
     const name = app.name.trim();
     if (!name) return [];
@@ -106,21 +114,23 @@ export const scientAgentRunsChatGptApps = Effect.fn("scientAgentRunsChatGptApps"
 );
 
 /**
- * The apps, or none when the agent is signed out of ChatGPT, cannot reach it, or predates the
- * command: an executable without `apps` would read the word as a prompt, so its runtime info
- * must name it first.
+ * An executable without `apps` would read the word as a prompt, so its runtime info must name
+ * it first. Failed reads stay failures so callers retain the last published inventory.
  */
 export const readScientAgentChatGptApps = Effect.fn("readScientAgentChatGptApps")(
   function* (executable: string, env: NodeJS.ProcessEnv, cwd: string) {
     const { resolved, runsApps } = yield* runtimeInfo(executable, env, cwd);
     if (!runsApps) return [];
-    // A signed-out agent exits 1 with its reason, which reads as no apps.
-    const output = yield* runProviderPluginCommand(resolved, env, cwd, ["apps", "--json"]).pipe(
-      Effect.orElseSucceed(() => ""),
-    );
-    return chatGptAppRows(output);
+    // Signed-out answers are JSON on stdout with exit code 1.
+    const output = yield* runProviderPluginCommand(resolved, env, cwd, ["apps", "--json"], {
+      acceptNonZeroExit: true,
+    });
+    const rows = chatGptAppRows(output);
+    if (rows === undefined)
+      return yield* Effect.fail({ message: "Scient Agent could not read ChatGPT apps." });
+    return rows;
   },
   Effect.scoped,
-  Effect.timeoutOrElse({ duration: "90 seconds", orElse: () => Effect.succeed([]) }),
-  Effect.orElseSucceed((): ReadonlyArray<ServerProviderMcpServer> => []),
+  Effect.timeout("90 seconds"),
+  Effect.mapError(() => ({ message: "Scient Agent could not read ChatGPT apps." })),
 );

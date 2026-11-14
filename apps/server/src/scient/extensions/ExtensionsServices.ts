@@ -54,7 +54,8 @@ import type {
 
 /** Where an agent's chat runs, for a connector that runs in the project folder. */
 export interface ConnectorLocation {
-  readonly projectId: ProjectId;
+  readonly providerInstanceId?: ProviderInstanceId | undefined;
+  readonly projectId?: ProjectId | undefined;
   readonly worktreePath: string | null;
 }
 

@@ -9,6 +9,7 @@ import * as NodePath from "node:path";
 import {
   type ConnectorAddInput,
   type ConnectorSummary,
+  type ProviderInstanceId,
   type DiscoverEntry,
   ExtensionsError,
   type VaultSecretRef,
@@ -158,6 +159,7 @@ const foundRow = (entry: DiscoverEntry, connectors: ReadonlyArray<ConnectorSumma
 /** The user's connectors and, for a query, ones Scient can add (its own picks, then the Registry). */
 export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* (input: {
   readonly query?: string | undefined;
+  readonly providerInstanceId?: ProviderInstanceId | undefined;
 }) {
   const { runtime, discover, observed } = yield* services;
   // A blank query is no query.
@@ -165,7 +167,14 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
   return yield* observed("connectors.agent.list", { searched: query !== undefined })(
     Effect.gen(function* () {
       const { connectors } = yield* runtime.list();
-      const rows = connectors.map(rowOf);
+      const rows = connectors
+        .filter(
+          (connector) =>
+            connector.agents === undefined ||
+            input.providerInstanceId === undefined ||
+            connector.agents.includes(input.providerInstanceId),
+        )
+        .map(rowOf);
       if (query === undefined) return { connectors: rows };
       if (Option.isNone(discover))
         return { connectors: rows, found: [], message: "Discover is unavailable here." };
@@ -440,11 +449,20 @@ export type ControlAction = "on" | "off" | "restart" | "sign-in";
 export const controlConnector = Effect.fn("ConnectorAgentControl.control")(function* (
   input: { readonly connector: string; readonly action: ControlAction },
   open: (url: string) => Effect.Effect<boolean>,
+  providerInstanceId?: ProviderInstanceId,
 ) {
   const { runtime, observed } = yield* services;
   return yield* observed("connectors.agent.control", { variant: input.action })(
     Effect.gen(function* () {
       const summary = yield* requireSummary(input.connector);
+      if (
+        providerInstanceId !== undefined &&
+        summary.agents !== undefined &&
+        !summary.agents.includes(providerInstanceId)
+      )
+        return yield* invalid(
+          `${summary.displayName} is not available to this agent. Choose it on the connector page in Settings → Extensions.`,
+        );
       const name = summary.displayName;
       const server = summary.serverName;
       const now = Effect.map(

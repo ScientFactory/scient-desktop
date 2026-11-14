@@ -12,6 +12,8 @@ import {
 
 import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
 
+export const MOST_USED_CAP = 12;
+
 const CATALOG_VERIFIED_ON = "2026-10-21";
 
 /** Names of curated servers not listed in the MCP Registry. Install them by URL. */
@@ -578,7 +580,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     id: "telegram",
     accountRequired: true,
     displayName: "Telegram",
-    tagline: "Send, read and search messages through your Telegram bot",
+    tagline: "Send, read and search messages with your bot",
     description:
       "Lets agents send, edit and pin messages, read and search the chats your bot is in, and moderate groups it runs. It works through a bot: create one by messaging @BotFather in Telegram, send /newbot, and paste the token it gives you. Runs on your computer and keeps a copy of the bot's messages there.",
     localPackage: {

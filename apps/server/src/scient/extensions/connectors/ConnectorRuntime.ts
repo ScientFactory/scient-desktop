@@ -214,6 +214,9 @@ const isAvailableIn = (record: ConnectorRecord, projectId: ProjectId | undefined
   record.availability.type === "all-projects" ||
   (projectId !== undefined && record.availability.projectIds.includes(projectId));
 
+const notForThisAgent = (record: ConnectorRecord) =>
+  `${record.displayName} is not available to this agent. Choose it on the connector page in Settings → Extensions.`;
+
 /** Whether the agent is one the person chose; every agent when none were chosen or it is unknown. */
 const isForAgent = (record: ConnectorRecord, providerInstanceId: ProviderInstanceId | undefined) =>
   record.agents === undefined ||
@@ -512,7 +515,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     record: ConnectorRecord,
     projectId: ProjectId | undefined,
     offAllowed = false,
+    providerInstanceId?: ProviderInstanceId,
   ) {
+    if (!isForAgent(record, providerInstanceId)) return notForThisAgent(record);
     if (!(yield* isPluginEligible(record)))
       return `${record.displayName} belongs to a plugin that is off or not verified.`;
     if (!record.enabled && !offAllowed)
@@ -1448,6 +1453,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         // On, off and the projects it reaches stay as the user left them.
         const repointed: ConnectorRecord = {
           ...existing,
+          ...(input.agents === undefined ? {} : { agents: input.agents }),
           auth,
           status: "connected",
           lastError: undefined,
@@ -2003,6 +2009,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const test: ConnectorRuntimeShape["test"] = Effect.fn("ConnectorRuntime.test")(function* (input) {
     const record = yield* requireRecord(input.connectorId);
     const checkedAt = yield* isoNow;
+    const localLocation =
+      input.location?.projectId === undefined
+        ? undefined
+        : { projectId: input.location.projectId, worktreePath: input.location.worktreePath };
     const result = (
       outcome: ConnectorTestResult["outcome"],
       message?: string,
@@ -2015,8 +2025,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     });
     if (record.status === "needs-auth") return result("needs-auth", "Sign in to use this service.");
     // Calling its tools is using it: only where a chat would get it (on, eligible, this project).
+    // An agent that was not chosen cannot check it either; a plain check of one that is merely
+    // off still works, as before.
+    if (!isForAgent(record, input.location?.providerInstanceId))
+      return result("error", notForThisAgent(record));
     if ((input.calls?.length ?? 0) > 0) {
-      const unusable = yield* unusableIn(record, input.location?.projectId);
+      const unusable = yield* unusableIn(
+        record,
+        input.location?.projectId,
+        false,
+        input.location?.providerInstanceId,
+      );
       if (unusable !== undefined) return result("error", unusable);
     }
     if (record.local !== undefined) {
@@ -2027,7 +2046,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       // What the caller's project may use: a sign-in or key scoped elsewhere is missing here.
       const ready = yield* localConnectors
-        .start(record, record.serverName, input.location, { checking: true })
+        .start(record, record.serverName, localLocation, { checking: true })
         .pipe(Effect.result);
       if (ready._tag === "Success" && ready.success.missing.length > 0)
         return result("needs-setup", `Needs ${ready.success.missing.join(", ")}.`);
@@ -2057,7 +2076,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
               body: typeof body === "string" ? new TextEncoder().encode(body) : undefined,
               signal: init?.signal ?? new AbortController().signal,
             },
-            input.location,
+            localLocation,
           ),
         );
         applied.push(...outcome.secrets);

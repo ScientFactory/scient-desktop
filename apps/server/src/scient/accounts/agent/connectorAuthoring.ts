@@ -56,14 +56,18 @@ const runtime = Effect.gen(function* () {
 });
 
 /** The chat's folder, where copies go and relative folders are read from. */
-const workspace = consumeAgentWorkspace().pipe(
-  Effect.map((resolved) => ({
+const workspace = Effect.gen(function* () {
+  const resolved = yield* consumeAgentWorkspace();
+  const scope = yield* McpInvocationContext;
+  return {
     folder: resolved.binding.canonicalRoot,
     location: {
+      providerInstanceId: scope.thread?.providerInstanceId,
       projectId: resolved.binding.hostProjectId,
       worktreePath: resolved.binding.canonicalRoot,
     },
-  })),
+  };
+}).pipe(
   Effect.mapError(
     () =>
       new AccountsError({
@@ -78,7 +82,8 @@ const callerLocation = Effect.gen(function* () {
   const where = yield* workspace.pipe(Effect.option);
   if (Option.isSome(where)) return where.value.location;
   const { projectId } = yield* accountSessionScope();
-  return projectId === undefined ? undefined : { projectId, worktreePath: null };
+  const scope = yield* McpInvocationContext;
+  return { projectId, worktreePath: null, providerInstanceId: scope.thread?.providerInstanceId };
 });
 
 const folderIn = (base: string, folder: string) =>
@@ -97,7 +102,10 @@ export const copyConnector = Effect.fn("AccountsAgent.connectorCopy")(function* 
 export const listConnectors = Effect.fn("AccountsAgent.connectorList")(function* (
   input: Input<"scient_connector_list">,
 ) {
-  return yield* listFor({ query: input.query }).pipe(Effect.mapError(toAccountsError));
+  const scope = yield* AgentInvocationContext;
+  return yield* listFor({ query: input.query, providerInstanceId: scope.providerInstanceId }).pipe(
+    Effect.mapError(toAccountsError),
+  );
 });
 
 /** A key or sign-in app asked in the private card; what went wrong in the user's words. */
@@ -196,10 +204,13 @@ export const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url
 export const controlConnector = Effect.fn("AccountsAgent.connectorControl")(function* (
   input: Input<"scient_connector_control">,
 ) {
+  const invocation = yield* AgentInvocationContext;
   const context = yield* Effect.context<AgentInvocationContext>();
-  return yield* controlFor(input, (url) => openForUser(url).pipe(Effect.provide(context))).pipe(
-    Effect.mapError(toAccountsError),
-  );
+  return yield* controlFor(
+    input,
+    (url) => openForUser(url).pipe(Effect.provide(context)),
+    invocation.providerInstanceId,
+  ).pipe(Effect.mapError(toAccountsError));
 });
 
 export const checkConnector = Effect.fn("AccountsAgent.connectorCheck")(function* (

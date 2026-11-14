@@ -71,6 +71,52 @@ describe("Claude account inventory", () => {
       expect(probes).toBe(3);
     }),
   );
+  it.effect(
+    "retries a failed probe after 15 seconds and preserves the last successful publication",
+    () =>
+      Effect.gen(function* () {
+        let probes = 0;
+        let fail = false;
+        const published: string[][] = [];
+        const refresh = yield* makeClaudeAccountInventoryRefresh(
+          Effect.succeed({
+            apiProvider: "firstParty",
+            subscriptionType: "pro",
+          } as ClaudeCapabilitiesProbe),
+          Effect.suspend(() => {
+            probes++;
+            return fail
+              ? Effect.fail({ message: "unreachable" })
+              : Effect.succeed([{ name: "known", status: "connected" as const }]);
+          }),
+          (servers) =>
+            Effect.sync(() => {
+              published.push(servers.map((server) => server.name));
+            }),
+        );
+        yield* refresh();
+        fail = true;
+        expect((yield* refresh({ force: true }).pipe(Effect.result))._tag).toBe("Failure");
+        expect(probes).toBe(2);
+        yield* refresh();
+        yield* TestClock.adjust("14 seconds");
+        yield* refresh();
+        expect(probes).toBe(2);
+        expect(published).toEqual([["known"]]);
+        yield* TestClock.adjust("1 second");
+        expect((yield* refresh().pipe(Effect.result))._tag).toBe("Failure");
+        expect(probes).toBe(3);
+        yield* TestClock.adjust("15 seconds");
+        fail = false;
+        yield* refresh();
+        expect(probes).toBe(4);
+        expect(published).toEqual([["known"], ["known"]]);
+        yield* TestClock.adjust("15 seconds");
+        yield* refresh();
+        expect(probes).toBe(4);
+      }),
+  );
+
   it("leaves claude.ai discovery enabled without loading user hooks or MCP config", () => {
     const options = accountConnectorOptions(
       "/instance/claude",
