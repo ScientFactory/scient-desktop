@@ -406,6 +406,20 @@ Desktop renders the same web bundle, so it has them too. The waitlist enrollment
 private beta was removed when Connect went GA; sign-up is open unless a Clerk restriction below is
 enabled.
 
+### Scient: the desktop turns Connect on at sign-in
+
+In the Scient desktop app, signing in turns Scient Connect on for that computer;
+there is no onboarding wizard and no relay-client install confirmation. The
+desktop backend's `ScientConnectHost` (`apps/server/src/scient/connect/`) installs
+the pinned `cloudflared`, then links itself through `CloudLink.linkWithAccessToken`
+with a short-lived relay token that a signed-in window lends once
+(`ScientConnectBridge`). One attempt runs at a time; Off, Turn on and an account
+change fence it before credentials apply. The person's Off is stored per computer
+(`scient-connect-off` secret) and also refuses late `relayConfig` applies. Every
+window reads one status stream (`scientConnect.status`); Settings and the guest
+dialog show it. The hosted app keeps upstream's wizard, and hosts linked with
+`scient connect link` stay CLI-owned.
+
 ## Restricting Sign-ups: Known-User Allowlist
 
 For a closed deployment where all permitted users are known in advance, restrict sign-up to

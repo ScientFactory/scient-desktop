@@ -14,6 +14,9 @@ export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
     description: Schema.String,
     /** How long the relay asked callers to wait (`Retry-After`) before retrying. */
     retryAfterMillis: Schema.optionalKey(Schema.Number),
+    // SCIENT-FORK:START — the account's computer limit when the relay refused a link for it.
+    linkLimit: Schema.optionalKey(Schema.Number),
+    // SCIENT-FORK:END
   },
 ) {
   override get message(): string {
@@ -98,7 +101,15 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     return yield* new RelayRequestError({ rejection: "unauthorized", description });
   }
   if (response.status === 403) {
-    return yield* new RelayRequestError({ rejection: "forbidden", description });
+    return yield* new RelayRequestError({
+      rejection: "forbidden",
+      description,
+      // SCIENT-FORK:START — the account's computer limit when the relay refused a link for it.
+      ...(Option.isSome(decoded) && decoded.value._tag === "RelayEnvironmentLinkLimitExceededError"
+        ? { linkLimit: decoded.value.maxTunnels }
+        : {}),
+      // SCIENT-FORK:END
+    });
   }
   if (
     response.status >= 400 &&

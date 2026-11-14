@@ -239,3 +239,65 @@ it("carries the canonical selection from a logical draft into the materialized s
   reconcile(provider, true);
   expect(saved()?.model).toBe(`${old.model}-medium`);
 });
+
+// Runtime 1.4 lists the family with a thinking option where 1.3 listed one ID per level.
+const thinking = {
+  id: "thinking_level",
+  label: "Thinking Level",
+  type: "select" as const,
+  role: "reasoning" as const,
+  options: [
+    { id: "low", label: "Low" },
+    { id: "high", label: "High" },
+  ],
+};
+const runtime14: ServerProvider = {
+  ...provider,
+  models: [
+    {
+      slug: old.model,
+      name: "Gemini 3.8 Flash",
+      isCustom: false,
+      isDefault: true,
+      capabilities: { optionDescriptors: [thinking] },
+    },
+    { slug: "gemini-3.6-pro", name: "Gemini 3.6 Pro", isCustom: false, capabilities: {} },
+  ],
+};
+it("maps a saved 1.3 ID to its 1.4 model and thinking level", () => {
+  expect(
+    resolveAntigravityDraftSelection(
+      createModelSelection(id, `${old.model}-high`, [{ id: "other", value: true }]),
+      runtime14,
+    ),
+  ).toEqual(
+    createModelSelection(id, old.model, [
+      { id: "other", value: true },
+      { id: "thinking_level", value: "high" },
+    ]),
+  );
+  // A model without a thinking option keeps no level.
+  expect(
+    resolveAntigravityDraftSelection(createModelSelection(id, "gemini-3.6-pro-low"), runtime14),
+  ).toEqual(createModelSelection(id, "gemini-3.6-pro"));
+});
+it("does not guess an unlisted level, a hidden model or an unknown family", () => {
+  for (const model of [`${old.model}-medium`, "gemini-missing-high", "gemini-3.6-pro-max"])
+    expect(resolveAntigravityDraftSelection(createModelSelection(id, model), runtime14)).toBeNull();
+  expect(
+    resolveAntigravityDraftSelection(createModelSelection(id, `${old.model}-high`), runtime14, [
+      old.model,
+    ]),
+  ).toBeNull();
+});
+it("shows a fresh draft's saved 1.3 default as the 1.4 model", () => {
+  useComposerDraftStore.getState().reconcileAntigravityDraftSelection({
+    threadRef,
+    provider: runtime14,
+    hasStartedSession: false,
+    fallbackSelection: createModelSelection(id, `${old.model}-high`),
+  });
+  expect(saved()).toEqual(
+    createModelSelection(id, old.model, [{ id: "thinking_level", value: "high" }]),
+  );
+});
