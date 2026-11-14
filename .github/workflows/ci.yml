@@ -582,12 +582,29 @@ jobs:
       - name: Test
         env:
           TEST_REPORT: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
+          # SCIENT-FORK:START — attribute browser socket loss to lifecycle, heartbeat or Chromium exit.
+          DEBUG: "vitest:browser*,pw:browser"
+          # SCIENT-FORK:END
         run: >-
           vp run --filter @t3tools/web test
           --shard ${{ matrix.shard }}/${{ strategy.job-total }}
           --reporter=default
           --reporter=json
           --outputFile.json="$TEST_REPORT"
+
+      # SCIENT-FORK:START — retain resource evidence after a browser transport failure.
+      - name: Report browser runner resources
+        if: failure()
+        run: |
+          free -m
+          df -h /tmp /dev/shm
+          for metric in memory.events memory.peak memory.max; do
+            if test -r "/sys/fs/cgroup/$metric"; then
+              echo "$metric"
+              cat "/sys/fs/cgroup/$metric"
+            fi
+          done
+      # SCIENT-FORK:END
 
       # Browser tests run source modules; this boots the production chunk graph.
       - name: Boot the built web client

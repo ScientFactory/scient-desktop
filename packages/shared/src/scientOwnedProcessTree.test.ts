@@ -10,6 +10,7 @@ import {
   descendantsOf,
   makeOwnedProcessTree,
   parseProcessTable,
+  parseLinuxProcessStat,
   ProcessTableUnavailable,
   readProcessTable,
   type OwnedProcess,
@@ -43,6 +44,26 @@ describe("parseProcessTable", () => {
         },
       ],
     );
+  });
+});
+
+describe("parseLinuxProcessStat", () => {
+  const stat = (command: string, start = "987654", state = "S") =>
+    `4494 (${command}) ${state} 4481 4494 4494 0 -1 0 0 0 0 0 0 0 0 0 0 0 1 0 ${start} 0`;
+
+  it("keeps a process's identity when its thread name changes, including parentheses", () => {
+    const initial = parseLinuxProcessStat(stat("node"));
+    const renamed = parseLinuxProcessStat(stat("node-MainThread (worker)"));
+    assert.deepStrictEqual(initial, { pid: 4494, ppid: 4481, pgid: 4494, identity: "987654" });
+    assert.deepStrictEqual(renamed, initial);
+    assert.notStrictEqual(
+      parseLinuxProcessStat(stat("node", "987655"))?.identity,
+      initial?.identity,
+    );
+  });
+
+  it("does not count zombies as living descendants", () => {
+    assert.isNull(parseLinuxProcessStat(stat("node", "987654", "Z")));
   });
 });
 

@@ -1,7 +1,8 @@
 import { render as _fixtureRender, type Screen, act, fakeTimers } from "../../../test/render";
 import { useEffect, useState, type ReactNode } from "react";
 
-import type { Editor } from "@tiptap/core";
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
 import { undoDepth } from "@tiptap/pm/history";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { EditorState, NodeSelection, TextSelection } from "@tiptap/pm/state";
@@ -17,7 +18,13 @@ vi.mock("~/assets/assetUrls", () => ({
 
 import { LatexVisualEditor } from "./LatexVisualEditor";
 import { latexPageAt, latexPageMarkersKey, setLatexPageMarkers } from "./latexPageMarkers";
-import { latexPagedKey, pagedLayoutSettled } from "./latexPagedGeometry";
+import {
+  latexPagedKey,
+  pagedLayoutSettled,
+  pagedPositionAtPoint,
+  readLatexVisibleReadingTarget,
+} from "./latexPagedGeometry";
+import { LatexReadingAnchor } from "./latexReadingAnchor";
 import { rememberedLatexReadingBlock } from "./latexReadingPosition";
 import { latexEquationReferencesKey, navigateToFootnote } from "./latexEquationReferences";
 import {
@@ -835,35 +842,37 @@ it("numbers equations before the reading position when a document reopens there"
   });
 });
 
-it("keeps the line at the top still when text above it grows its own paragraph", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-  await _setupFixture0(_fixture);
-
-  const editor = await open(_fixture, "visual-stability-line-anchor");
-  await formulasRendered(_fixture);
-  const scroll = scroller(editor);
-  // A paragraph several lines tall, its second line at the top of the reading area.
-  let paragraph = -1;
-  editor.state.doc.forEach((node, offset) => {
-    if (paragraph < 0 && node.type.name === "paragraph" && node.textContent.length > 400)
-      paragraph = offset;
+// regression: 2dc960abf6 anchor the line at the top of the reading area
+it("keeps the captured reading character still when its paragraph grows", async () => {
+  // The anchor needs native text geometry, with no file host, formulas or page planner.
+  await using screen = await _fixtureRender(null, { router: false });
+  const scroll = document.createElement("div");
+  scroll.className = "scient-latex-visual-scroll";
+  scroll.style.cssText = "height:200px;width:400px;overflow:auto;overflow-anchor:none";
+  const host = document.createElement("div");
+  scroll.append(host);
+  screen.container.append(scroll);
+  using cleanup = new DisposableStack();
+  const editor = new Editor({
+    element: host,
+    extensions: [StarterKit, LatexReadingAnchor],
+    content: `<p>${"Reading words in one long paragraph. ".repeat(160)}</p>`,
   });
-  expect(paragraph).toBeGreaterThan(0);
-  const element = editor.view.nodeDOM(paragraph) as HTMLElement;
-  await scrollAndLayout(editor, () => {
-    element.scrollIntoView({ block: "start" });
-    scroll.scrollTop += 40;
-  });
-  const box = scroll.getBoundingClientRect();
-  const position = editor.view.posAtCoords({
-    left: box.left + box.width / 2,
-    top: box.top + 1,
-  })!.pos;
+  cleanup.defer(() => editor.destroy());
+  const measured = vi.spyOn(editor.view, "coordsAtPos");
+  cleanup.defer(() => measured.mockRestore());
+  scroll.scrollTop = 80;
+  await vi.waitFor(() => expect(measured).toHaveBeenCalled());
+  const target = readLatexVisibleReadingTarget(
+    editor.view,
+    scroll.getBoundingClientRect(),
+    editor.view.dom.getBoundingClientRect(),
+  )!;
+  const position = pagedPositionAtPoint(editor.view, target.left, target.top)!;
+  expect(position).toBeGreaterThan(1);
   const before = editor.view.coordsAtPos(position).top;
   const inserted = "More words before the reading line. ".repeat(6);
-  editor.view.dispatch(editor.state.tr.insertText(inserted, paragraph + 1));
-  await settleLayout(editor);
+  editor.view.dispatch(editor.state.tr.insertText(inserted, 1));
   expect(Math.abs(editor.view.coordsAtPos(position + inserted.length).top - before)).toBeLessThan(
     1,
   );

@@ -29,6 +29,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -139,6 +140,37 @@ const stagingRoot = (config: ServerConfig.ServerConfig["Service"]) =>
 
 const makeStaging = (options: ConversationImportStaging.ConversationImportStagingOptions = {}) =>
   ConversationImportStaging.make({ sweepOnTimer: false, ...options });
+
+/**
+ * Staging whose upload files complete `written()` once each chunk is on disk. A receive reads its
+ * body ahead of the file writer, so the body's own reads cannot tell a test that bytes landed.
+ */
+const makeStagingAnnouncingWrites = (
+  written: () => Deferred.Deferred<void>,
+  options: ConversationImportStaging.ConversationImportStagingOptions,
+) =>
+  Effect.flatMap(FileSystem.FileSystem, (fs) =>
+    makeStaging(options).pipe(
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          ...fs,
+          sink: (path, sinkOptions) =>
+            Sink.unwrap(
+              Effect.map(
+                fs.open(path, { ...sinkOptions, flag: sinkOptions?.flag ?? "w" }),
+                (file) =>
+                  Sink.forEach((chunk: Uint8Array) =>
+                    file
+                      .writeAll(chunk)
+                      .pipe(Effect.andThen(Deferred.succeed(written(), undefined))),
+                  ),
+              ),
+            ),
+        }),
+      ),
+    ),
+  );
 
 type Staging = ConversationImportStaging.ConversationImportStaging["Service"];
 
@@ -352,7 +384,11 @@ describe("ConversationImportStaging", () => {
       Effect.gen(function* () {
         resetImporter();
         const config = yield* ServerConfig.ServerConfig;
-        const staging = yield* makeStaging({ quotaBytes: 16, maxLive: 1 });
+        const written = yield* Deferred.make<void>();
+        const staging = yield* makeStagingAnnouncingWrites(() => written, {
+          quotaBytes: 16,
+          maxLive: 1,
+        });
         const created = yield* staging.createUpload({ fileName: "first.scic", sizeBytes: 16 });
         const claims = yield* staging.validateUploadToken(created.relativeUrl.split("/").at(-1)!);
         assert(claims !== null);
@@ -371,6 +407,7 @@ describe("ConversationImportStaging", () => {
         );
         const receiving = yield* Effect.forkChild(staging.receiveUpload(claims, body));
         yield* Deferred.await(started);
+        yield* Deferred.await(written);
         const area = NodePath.join(stagingRoot(config), created.importId);
         assert.isTrue(NodeFS.readdirSync(area).some((name) => name.endsWith(".part")));
         yield* Fiber.interrupt(receiving);
@@ -456,13 +493,17 @@ describe("ConversationImportStaging", () => {
       Effect.gen(function* () {
         resetImporter();
         const config = yield* ServerConfig.ServerConfig;
-        const staging = yield* makeStaging({ quotaBytes: 16 });
+        let written = yield* Deferred.make<void>();
+        const staging = yield* makeStagingAnnouncingWrites(() => written, { quotaBytes: 16 });
         for (let round = 0; round < 3; round += 1) {
+          written = yield* Deferred.make<void>();
           const created = yield* staging.createUpload({ fileName: "a.scic", sizeBytes: 16 });
           const claims = yield* staging.validateUploadToken(created.relativeUrl.split("/").at(-1)!);
           assert(claims !== null);
           const started = yield* Deferred.make<void>();
           const gate = yield* Deferred.make<void>();
+          // A failed check must not leave the uninterruptible read below holding the test open.
+          yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
           // The second read cannot be abandoned midway, as a socket read may not be.
           const body = Stream.make(new Uint8Array(8)).pipe(
             Stream.concat(
@@ -478,6 +519,7 @@ describe("ConversationImportStaging", () => {
           );
           const receiving = yield* Effect.forkChild(staging.receiveUpload(claims, body));
           yield* Deferred.await(started);
+          yield* Deferred.await(written);
           const area = NodePath.join(stagingRoot(config), created.importId);
           const cancelling = yield* Effect.forkChild(staging.cancel(created.importId));
           yield* Effect.yieldNow;

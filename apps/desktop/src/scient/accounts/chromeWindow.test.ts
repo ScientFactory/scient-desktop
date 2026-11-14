@@ -1,7 +1,22 @@
-import type { SessionCookie } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+// @effect-diagnostics nodeBuiltinImport:off -- Synthetic child and isolated temporary profiles.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
-import { readArgs, signedInCookies, windowArgs } from "./chromeWindow.ts";
+import type { SessionCookie } from "@t3tools/contracts";
+import { expect, it, vi } from "vite-plus/test";
+
+import {
+  endSignInWindow,
+  readArgs,
+  signedInCookies,
+  signInInWindow,
+  windowArgs,
+} from "./chromeWindow.ts";
+
+vi.mock("node:child_process", { spy: true });
 
 it("signs in in an ordinary window, and reads with the same storage", () => {
   for (const platform of ["darwin", "win32", "linux"] as const) {
@@ -39,4 +54,38 @@ it("takes only the sites the window signed in to", () => {
   const { units, cookies } = signedInCookies(jar, 1000);
   expect(units).toEqual([["google.com"]]);
   expect(cookies.map(({ domain }) => domain)).toEqual([".google.com", "accounts.google.com"]);
+});
+
+it("still cancels after Done while the browser quits", async () => {
+  const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "chrome-window-cancel-"));
+  const child = Object.assign(new NodeEvents.EventEmitter(), {
+    kill: () => {
+      child.emit("exit", null, "SIGKILL");
+      return true;
+    },
+  });
+  const spawned = Promise.withResolvers<void>();
+  using _spawn = vi.spyOn(NodeChildProcess, "spawn").mockImplementation(() => {
+    queueMicrotask(() => {
+      child.emit("spawn");
+      spawned.resolve();
+    });
+    return child as NodeChildProcess.ChildProcess;
+  });
+  try {
+    const read = signInInWindow({
+      browser: { name: "fixture", executable: "/fixture/browser" },
+      folder,
+      url: "http://fixture/",
+      platform: "win32",
+    });
+    await spawned.promise;
+    expect(endSignInWindow(true, "win32")).toBe(true);
+    expect(endSignInWindow(true, "win32")).toBe(false);
+    expect(endSignInWindow(false, "win32")).toBe(true);
+    expect(await read).toEqual({ outcome: "cancelled" });
+    expect(NodeFS.existsSync(folder)).toBe(false);
+  } finally {
+    NodeFS.rmSync(folder, { recursive: true, force: true });
+  }
 });
