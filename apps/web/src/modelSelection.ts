@@ -31,6 +31,9 @@ import {
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
+// SCIENT-FORK:START — a saved Antigravity 1.3 model ID shows as its 1.4 model and level.
+import { resolveAntigravityDraftSelection } from "./scient/providerConnection/antigravityDraftSelection";
+// SCIENT-FORK:END
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
@@ -343,6 +346,11 @@ export function resolveEffectiveDefaultModelSelection(
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection,
 ): ModelSelection {
+  // SCIENT-FORK:START — a saved Antigravity 1.3 model ID shows as its 1.4 model and level.
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  const antigravity = provider && resolveAntigravityDraftSelection(selection, provider);
+  if (antigravity) return antigravity;
+  // SCIENT-FORK:END
   const model = resolveAppModelSelectionForInstance(
     selection.instanceId,
     settings,
