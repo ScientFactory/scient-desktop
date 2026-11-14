@@ -1885,7 +1885,7 @@ it.effect("keeps a tab's zoom when its viewer resizes", () =>
       const browser = yield* ServerBrowser.ServerBrowser;
       const manager = yield* Manager.PreviewManager;
       const { tabId } = yield* manager.open({
-        threadId: scope.thread.threadId,
+        threadId: scope.threadId,
         runtime: "server",
         zoomFactor: 1.5,
       });

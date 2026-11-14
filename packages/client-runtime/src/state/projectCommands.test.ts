@@ -232,7 +232,7 @@ const makeMetadataHarness = Effect.fn("TestProjectCommands.makeMetadataHarness")
 describe("writeFile metadata", () => {
   it.effect("retires a saved overlay after an equal read succeeds, preserving newer drafts", () =>
     Effect.gen(function* () {
-      const h = yield* makeHarness();
+      const h = yield* makeMetadataHarness();
       const target = { environmentId: ENVIRONMENT_ID, cwd: "/repo", relativePath: "foo" };
       const query = h.commands.readFile({
         environmentId: ENVIRONMENT_ID,
@@ -274,7 +274,7 @@ describe("writeFile metadata", () => {
     "keeps a saved overlay when an older read uses different allowMissing options (confirmation: %s)",
     (allowMissing) =>
       Effect.gen(function* () {
-        const h = yield* makeHarness();
+        const h = yield* makeMetadataHarness();
         const target = { environmentId: ENVIRONMENT_ID, cwd: "/repo", relativePath: "foo" };
         const query = h.commands.readFile({
           environmentId: ENVIRONMENT_ID,

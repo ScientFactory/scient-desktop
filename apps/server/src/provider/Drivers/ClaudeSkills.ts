@@ -275,7 +275,13 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
   // SCIENT-FORK:START — override authority needs the user and managed settings paths.
   const userSettingsPath = path.join(configDirPath, "settings.json");
-  const managedSettingsPath = claudeManagedSettingsPath(path, platform, environment);
+  const managedDirectory = claudeManagedDirectory(path, platform, environment);
+  const programData =
+    platform === "win32" ? windowsEnvironmentValue(environment, "ProgramData") : undefined;
+  const managedSettingsPaths = new Set([
+    ...(programData ? [path.join(programData, "ClaudeCode", "managed-settings.json")] : []),
+    ...(managedDirectory ? [path.join(managedDirectory, "managed-settings.json")] : []),
+  ]);
   // SCIENT-FORK:END
   const projectSettingsPath =
     cwd === undefined ? undefined : path.join(cwd, ".claude", "settings.json");
@@ -312,7 +318,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
           value,
           settingsPath === userSettingsPath
             ? "user"
-            : settingsPath === managedSettingsPath
+            : managedSettingsPaths.has(settingsPath)
               ? "managed"
               : "project",
         ),

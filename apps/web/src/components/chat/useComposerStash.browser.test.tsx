@@ -49,6 +49,9 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
   const environmentId = EnvironmentId.make("stash-env");
   const promptRef = { current: "Describe this screenshot" };
   const input = {
+    // SCIENT-FORK:START — Scient recovers a stashed draft through its own callback.
+    onStashRecoveredDraft: undefined,
+    // SCIENT-FORK:END
     environmentId,
     composerDraftTarget: target,
     promptRef,

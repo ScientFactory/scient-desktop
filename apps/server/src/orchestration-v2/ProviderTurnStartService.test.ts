@@ -1083,10 +1083,12 @@ function makeLocalCommandHarness(input: {
     resumeThread: () => Effect.succeed(sideChatThread),
     forkThread,
     startTurn,
-    resumeTurn: input.nativeResumeUnsupported
-      ? undefined
-      : (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
-          startTurn(ProviderAdapter.resumeTurnInput(input)),
+    ...(input.nativeResumeUnsupported
+      ? {}
+      : {
+          resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
+            startTurn(ProviderAdapter.resumeTurnInput(input)),
+        }),
   };
   const open = vi.fn(
     (): Effect.Effect<
@@ -2619,6 +2621,7 @@ effectIt.effect("a stale outbox start cannot execute the newer retry attempt", (
           Layer.mock(ThreadTitleRegeneration.ThreadTitleRegenerationService)({}),
           Layer.mock(ThreadManagement.ThreadManagementService)({}),
           Layer.mock(ConversationForkService)({}),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
           ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
             Layer.provide(NodeServices.layer),
           ),

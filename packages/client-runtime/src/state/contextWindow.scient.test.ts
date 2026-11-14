@@ -1,3 +1,4 @@
+import { ProviderThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import { deriveLatestContextWindowSnapshot } from "./contextWindow.ts";
@@ -6,6 +7,7 @@ describe("provider cost alongside turn context", () => {
   it("keeps authoritative session cost while live counters own the context meter", () => {
     const live = { usedTokens: 65, maxTokens: 200, updatedAt: "2026-10-25T12:00:00.000Z" };
     const providerThread = {
+      id: ProviderThreadId.make("provider-thread"),
       contextUsage: { usedTokens: 50, cost: { amount: 1.25, currency: "USD" } },
       updatedAt: DateTime.makeUnsafe(live.updatedAt),
     };

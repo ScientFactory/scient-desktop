@@ -165,6 +165,10 @@ it.each(["thread", "session"] as const)(
     });
 
     const input = {
+      // SCIENT-FORK:START — Scient's staging reads the target draft and other question drafts.
+      environmentId,
+      attachmentDraftTarget: target,
+      // SCIENT-FORK:END
       activeThreadId: threadId,
       activePendingProgress: null,
       activePendingIsResponding: false,

@@ -1036,7 +1036,7 @@ export function deriveCommittedServerUserMessageIds(
  * agent-started thread or a long turn can hold no user message.
  */
 export function hasCompactableConversation(input: {
-  readonly visibleTurnItems: ReadonlyArray<ThreadStructureRow>;
+  readonly visibleTurnItems: ReadonlyArray<ThreadStructureVisibleTurnItem>;
   readonly hasMoreHistory: boolean;
   readonly latestUserMessageAt: string | null;
 }): boolean {

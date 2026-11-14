@@ -520,7 +520,7 @@ it.effect.each([
       const error = yield* makeHarness(client, spawns, undefined, modelSelection, version).pipe(
         Effect.flip,
       );
-      assert.include(error.detail, "Pi 0.84.3 or newer");
+      assert.ok(error.detail.includes("Pi 0.84.3 or newer"));
       // Older Pi would save the background thinking change as the user's default.
       assert.deepEqual(spawns, []);
       return;
