@@ -120,13 +120,15 @@ describe("Files panel search", () => {
     workspaceMutationId: null,
   };
 
-  async function renderPanel() {
+  async function renderPanel({ cwd = props.cwd }: { readonly cwd?: string } = {}) {
     const container = document.createElement("div");
     // The tree virtualizes its rows, so it needs a real viewport to render any.
     container.style.cssText = "display: flex; flex-direction: column; width: 320px; height: 480px;";
     await using stack = new AsyncDisposableStack();
-    const screen = stack.use(await render(<FileBrowserPanel {...props} />, { container }));
-    const rerender = () => screen.rerender(<FileBrowserPanel {...props} />);
+    const screen = stack.use(
+      await render(<FileBrowserPanel {...props} cwd={cwd} />, { container }),
+    );
+    const rerender = () => screen.rerender(<FileBrowserPanel {...props} cwd={cwd} />);
     function searchInput() {
       const input = container!.querySelector<HTMLInputElement>('input[type="search"]');
       expect(input).not.toBeNull();
@@ -353,6 +355,51 @@ describe("Files panel search", () => {
     await chooseFromFilesMenu(screen.container, "Collapse all folders");
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
   });
+  describe("a very large folder", () => {
+    const LARGE_FOLDER_SIZE = 50_000;
+    // Out of sort order, because inserting in order hides the cost of each insert.
+    const largeFolder = () =>
+      Array.from({ length: LARGE_FOLDER_SIZE }, (_, index) =>
+        entry(`big/f${String((index * 7_919) % LARGE_FOLDER_SIZE).padStart(5, "0")}.txt`),
+      );
+    const treeRow = (container: HTMLElement, path: string) =>
+      container
+        .querySelector("file-tree-container")
+        ?.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${CSS.escape(path)}"]`) ?? null;
+
+    it("opens without freezing and keeps the folder that was open", async () => {
+      setup();
+      files.directories[""] = [entry("big", "directory"), ...files.directories[""]!];
+      files.directories.big = largeFolder();
+      // Its own folder, so the folders it opens are not remembered for the other tests.
+      await using screen = await renderPanel({ cwd: "/large-folder-open" });
+      await expect.poll(screen.visiblePaths).toEqual(["big/", "src/", "package.json"]);
+      treeRow(screen.container, "src/")!.click();
+      await expect.poll(screen.visiblePaths).toContain("src/app.ts");
+
+      treeRow(screen.container, "big/")!.click();
+      // Batching every row blocked the panel past this wait; the rebuild takes about 170 ms.
+      await expect.poll(screen.visiblePaths).toContain("big/f00000.txt");
+      expect(treeRow(screen.container, "big/")!.getAttribute("aria-expanded")).toBe("true");
+      const src = treeRow(screen.container, "src/");
+      if (src) expect(src.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("keeps an open search accurate when the folder's listing arrives", async () => {
+      setup();
+      files.directories[""] = [entry("big", "directory"), ...files.directories[""]!];
+      files.directories.big = largeFolder();
+      await using screen = await renderPanel({ cwd: "/large-folder-search" });
+      await expect.poll(screen.visiblePaths).toContain("big/");
+      files.searchEntries = [{ path: "big/f49999.txt", kind: "file" }];
+      await screen.search("f49999");
+      await expect.poll(screen.visiblePaths).toEqual(["big/", "big/f49999.txt"]);
+      expect(screen.searchInput().value).toBe("f49999");
+      await screen.search("");
+      await expect.poll(screen.visiblePaths).toEqual(["big/", "src/", "package.json"]);
+    });
+  });
+
   it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
     setup();
     files.directories = { "": [entry("README.md")] };
