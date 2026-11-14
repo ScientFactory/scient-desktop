@@ -416,7 +416,7 @@ function WorkspaceImagePreview(props: {
 }
 
 /** Opaque-origin HTML cannot reach app storage; adjacent assets may be outside the workspace. */
-function WorkspaceBrowserPreview(props: {
+export function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -429,10 +429,15 @@ function WorkspaceBrowserPreview(props: {
   // SCIENT-FORK:START — preserve rooted file and HTML document semantics for persisted threads.
   const resource = workspaceViewerAssetResource(props, "workspace-file", true);
   // SCIENT-FORK:END
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
-  // SCIENT-FORK:START — reload when the file's watcher reports a change
-  useScientViewerRefreshKey(props.refreshKey, assetUrl.refresh);
-  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, props.refreshKey);
+  // SCIENT-FORK:START — each change the file's watcher reports re-mints the URL: a file outside
+  // the workspace is signed by its inode, which an atomic replace changes. The HTML frame keeps
+  // its first URL per key, so the key moves only once the re-minted URL arrives.
+  const assetUrl = useAssetUrlState(props.environmentId, resource, String(props.refreshKey));
+  const [settledRefreshKey, setSettledRefreshKey] = useState(props.refreshKey);
+  if (assetUrl._tag === "Success" && !assetUrl.waiting && settledRefreshKey !== props.refreshKey) {
+    setSettledRefreshKey(props.refreshKey);
+  }
+  const revisionSuffix = scientViewerRevisionSuffix(assetUrl, settledRefreshKey);
   // SCIENT-FORK:END
 
   if (assetUrl._tag === "Failure") {
@@ -454,7 +459,7 @@ function WorkspaceBrowserPreview(props: {
   return (
     <BrowserDocumentFrame
       src={`${assetUrl.url}${revisionSuffix}`}
-      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${props.refreshKey}`}
+      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${settledRefreshKey}`}
       title={props.title}
     />
   );

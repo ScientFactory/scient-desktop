@@ -132,9 +132,10 @@ export const WorkGroupSection = memo(function WorkGroupSection({
 });
 
 export function WorkingTimer({ createdAt }: { createdAt: string }) {
+  const { activeThreadEnvironmentId } = use(TimelineRowCtx);
   return (
     <span
-      ref={tickTextContent(() => formatWorkingTimerNow(createdAt), true)}
+      ref={tickTextContent(() => formatWorkingTimerNow(createdAt, activeThreadEnvironmentId), true)}
       className="tabular-nums"
     />
   );
@@ -696,7 +697,9 @@ export function LiveWorkEntryTimelineRow({
               <span className="min-w-0 truncate">{pathLabel}</span>
               <LiveStepElapsed
                 startedAt={row.entry.createdAt}
-                formatElapsed={formatWorkingTimerNow}
+                formatElapsed={(startedAt) =>
+                  formatWorkingTimerNow(startedAt, ctx.activeThreadEnvironmentId)
+                }
               />
             </span>
           ) : threadLabel ? (

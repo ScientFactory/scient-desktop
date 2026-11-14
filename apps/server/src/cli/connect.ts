@@ -201,6 +201,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : status.desired && status.authenticated
         ? "pending server startup"
         : "not provisioned";
+  const publishOnly = status.desired && status.linkMode === "publish_only";
   const nextStep = !status.authenticated
     ? "Run `scient connect link` to authorize and enable Scient Connect."
     : status.revoked
@@ -208,30 +209,37 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : !status.desired
         ? "Run `scient connect link` to enable Scient Connect."
         : !status.linked
-          ? "Start Scient to provision the environment link and launch its managed tunnel."
+          ? publishOnly
+            ? "Start Scient to provision the environment link."
+            : "Start Scient to provision the environment link and launch its managed tunnel."
           : undefined;
 
   return [
     "Scient Connect",
-    `  Exposure: ${status.desired ? "enabled" : "disabled"}`,
+    `  Exposure: ${publishOnly ? "publish-only" : status.desired ? "enabled" : "disabled"}`,
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
-    ...(!status.desired || status.linkMode !== "managed"
+    ...(!status.desired
       ? []
-      : status.reachability === null
+      : publishOnly
         ? [
             "",
-            "No running server answered, so reachability was not checked. Start Scient (the desktop app or `scient serve`), then run `scient connect status` again.",
+            "This link only publishes agent activity. Remote access through Scient Connect is off, so other devices need their own route to this machine, such as LAN or Tailscale.",
           ]
-        : status.reachability.status === "reachable"
+        : status.reachability === null
           ? [
               "",
-              `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
+              "No running server answered, so reachability was not checked. Start Scient (the desktop app or `scient serve`), then run `scient connect status` again.",
             ]
-          : ["", formatReachabilityFailure(status.reachability)]),
+          : status.reachability.status === "reachable"
+            ? [
+                "",
+                `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
+              ]
+            : ["", formatReachabilityFailure(status.reachability)]),
     ...(nextStep ? ["", `Next: ${nextStep}`] : []),
   ].join("\n");
 }

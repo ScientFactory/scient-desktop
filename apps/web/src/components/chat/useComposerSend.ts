@@ -84,7 +84,6 @@ import {
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
 import { type SetStateAction, useLayoutEffect, useRef } from "react";
-import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -414,6 +413,7 @@ export function useComposerSend(input: ComposerSendInput) {
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
 
+  // SCIENT-FORK:START — shared approval guard for Scient send paths.
   const declineApprovalsForSend = async ({
     sendCtx,
     pendingApprovalIdsAtSend,
@@ -478,6 +478,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     return false;
   };
+  // SCIENT-FORK:END
 
   // A follow-up returns its durable admission identity so only an accepted send
   // retires a queue edit and clears its matching draft.
@@ -1278,25 +1279,18 @@ export function useComposerSend(input: ComposerSendInput) {
               }) &&
               activeThreadKey
             ) {
-              let resolveDockStarted: (() => void) | undefined;
-              const dockStarted = new Promise<void>((resolve) => {
-                resolveDockStarted = resolve;
-              });
-              const dockTransition = runMobileComposerTransition(
+              const docking = runMobileComposerTransition(
                 () => {
-                  flushSync(() => {
-                    captureDraftHeroComposerRect();
-                    setDockedDraftHeroThreadKey(activeThreadKey);
-                  });
-                  resolveDockStarted?.();
+                  captureDraftHeroComposerRect();
+                  setDockedDraftHeroThreadKey(activeThreadKey);
                 },
                 {
                   active: panelAnimationsActive,
                   durationMs: panelAnimationDurationMs,
                 },
               );
-              void dockTransition.catch(() => resolveDockStarted?.());
-              await dockStarted;
+              // Awaiting only a real transition keeps an inline dock in the same render as the send.
+              if (docking) await docking;
             }
 
             assertCurrentDraft();

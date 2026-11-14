@@ -1307,6 +1307,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 > {
   const random = yield* SecureRandom.SecureRandom;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const hostPlatform = yield* HostProcess.Platform;
   const callerScope = yield* Scope.Scope;
   const runtimeScope = yield* Scope.fork(callerScope);
   const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
@@ -1540,17 +1541,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
         ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
         extendEnv: options.spawn.extendEnv ?? true,
-        // SCIENT-FORK:START — Windows owns the tree with taskkill /T, not a group.
-        // A detached agent has no console, so every console program it starts
-        // (Antigravity's own inner process included) opens a visible window.
-        // The host decides, not the teardown platform a test may simulate.
+        // Windows `detached` gives the child its own console, which breaks stdio pipes through
+        // `.cmd` shims; taskkill /T cleans up the tree there without it.
         ...(options.ownDetachedProcessGroup === undefined
           ? {}
-          : {
-              detached:
-                options.ownDetachedProcessGroup && (yield* HostProcess.Platform) !== "win32",
-            }),
-        // SCIENT-FORK:END
+          : { detached: options.ownDetachedProcessGroup && hostPlatform !== "win32" }),
         shell: containedSpawnCommand.shell,
       }),
     )
@@ -1719,7 +1714,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     ),
   );
   if (options.ownDetachedProcessGroup === true) {
-    const hostPlatform = yield* HostProcess.Platform;
     const forceTerminateOwnedProcessGroup =
       hostPlatform === "win32"
         ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(

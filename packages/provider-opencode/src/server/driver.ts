@@ -262,6 +262,7 @@ const openCodeAdapterOptions = (options: OpenCodeDriverOptions) => ({
     ...(options.runtimeInstructions === undefined
       ? {}
       : { runtimeInstructions: options.runtimeInstructions }),
+    ...(options.agentCopy === undefined ? {} : { agentCopy: options.agentCopy }),
     // SCIENT-FORK:END
   } satisfies OpenCode2AdapterV2.OpenCode2AdapterOptions,
 });

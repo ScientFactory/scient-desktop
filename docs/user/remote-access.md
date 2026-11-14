@@ -107,6 +107,31 @@ A computer is reachable only while Scient runs on it: the desktop app, or
 is the same on macOS, Windows and Linux; Scient does not install a background
 service.
 
+### Approve new devices
+
+By default, any device signed in to your Scient Connect account can open a linked
+machine. To require approval instead, turn on **Require approval for new
+devices** with the Scient Connect settings in **Settings → Sharing & access** on the
+host, or when you first set up Scient Connect. Then someone who takes over your
+Scient Connect account cannot reach the machine from a new device without your
+approval. Review the devices that are already approved, described below.
+
+A new device waits and shows a code such as `K7QM-2XFD`. Approve it from a
+device that is already connected, using the prompt or **Settings → Sharing &
+access**. Check that the code matches the one on the waiting device. On a
+headless host, run `scient auth connect-device list` and then
+`scient auth connect-device approve K7QM-2XFD`. A request expires after 10 minutes,
+and the device asks again when it retries. Deny keeps that device out until its
+request expires.
+
+Each device is approved once. Revoke it from **Scient Connect devices** in the same
+settings page, or with `scient auth connect-device revoke <code>`. With approval on,
+it has to ask again. With approval off, it can connect again on its own, so
+revoking in the app offers to turn approval on first. Devices that connected through
+Scient Connect while approval was off stay approved and appear in that list for you to
+review. A device that has not connected since you updated Scient asks for approval like
+a new one. Older apps cannot show the code, so update them before you turn approval on.
+
 ### Share a thread with a guest
 
 A guest link lets one person without Scient watch a thread live in their
@@ -375,8 +400,10 @@ the full path of the desktop app's `scient` launcher or of the Node runtime and
 server it runs from, so it works even where `scient` is not on your `PATH`. It
 keeps your `PATH` when Node is installed only for your user. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries and system fonts with apt; pages that load without text
-can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
-reports what it would change.
+can mean the host has no fonts. It is safe to run again, and each run reloads
+the AppArmor profile: run it again if the browser reports a blocked sandbox on a
+host restored from an image or snapshot, where the profile can be on disk
+without being loaded. Without `sudo`, it only reports what it would change.
 
 The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
 as root. If your Scient server runs as root, run it as a nonroot user to keep

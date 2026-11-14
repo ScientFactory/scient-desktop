@@ -221,6 +221,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { makeOwnedProcessTree } from "@t3tools/shared/scientOwnedProcessTree";
 // SCIENT-FORK:END
 import {
+  claudeLocalSettingsDirectory,
   claudeSignedOutMessage,
   makeClaudeEnvironment,
   mergeClaudeProcessEnvironment,
@@ -2096,7 +2097,8 @@ function canApplyClaudeSelectionLive(
 ): boolean {
   return (
     live.settings.alwaysThinkingEnabled === next.settings.alwaysThinkingEnabled &&
-    (next.effort !== undefined || live.effort === undefined)
+    (next.effort !== undefined || live.effort === undefined) &&
+    live.pinnedAlias === next.pinnedAlias
   );
 }
 
@@ -2185,8 +2187,6 @@ const subagentDeviceInstructions: HookCallback = () =>
     },
   });
 
-const CLAUDE_CODE_MODEL_ALIASES = new Set(["opus", "sonnet", "haiku", "fable"]);
-
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly modelCatalog?: ClaudeModelCatalog;
@@ -2269,12 +2269,13 @@ export function makeClaudeQueryOptions(input: {
         } as ClaudeSdkSettings);
   // Claude Code expands a bare alias to its own model, so a custom model with an alias's name
   // pins the alias to itself.
-  const aliasOverrideEnv = CLAUDE_CODE_MODEL_ALIASES.has(compiledSelection.apiModelId)
-    ? {
-        [`ANTHROPIC_DEFAULT_${compiledSelection.apiModelId.toUpperCase()}_MODEL`]:
-          compiledSelection.apiModelId,
-      }
-    : undefined;
+  const aliasOverrideEnv =
+    compiledSelection.pinnedAlias === undefined
+      ? undefined
+      : {
+          [`ANTHROPIC_DEFAULT_${compiledSelection.pinnedAlias.toUpperCase()}_MODEL`]:
+            compiledSelection.pinnedAlias,
+        };
   // A settings file path cannot take extra keys, so it goes through unchanged.
   const effectiveQuerySettings =
     (input.toolSearchOverride === undefined &&
@@ -2478,6 +2479,7 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__scient__scient_preview_list",
   "mcp__scient__scient_environment_read",
   "mcp__scient__scient_environment_links",
+  "mcp__scient__scient_theme_read",
   "mcp__scient__html_preview",
   "mcp__scient__html_render",
   "mcp__scient__send_to_user",
@@ -5570,6 +5572,15 @@ export interface ClaudeAdapterV2Options {
   // SCIENT-FORK:START Scient Extensions: provider-native plugins and MCP servers from live sessions
   readonly onNativeInventory?: (inventory: ProviderNativeInventory) => Effect.Effect<void>;
   // SCIENT-FORK:END
+  /**
+   * Applies Claude Code's reported model ids for a turn's cwd, so turns send ids its backend
+   * accepts. Defaults to the catalog unchanged.
+   */
+  readonly routeModelCatalog?: (
+    catalog: ClaudeModelCatalog,
+    cwd: string | null,
+    launchSettings?: ClaudeSdkSettings,
+  ) => Effect.Effect<ClaudeModelCatalog>;
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -5651,6 +5662,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       };
     },
   );
+  const routeModelCatalog = adapterOptions.routeModelCatalog ?? Effect.succeed;
 
   // Claude Code's own subagent TTL setting, in its precedence order. Unset or unreadable means
   // Anthropic's default applies.
@@ -5687,44 +5699,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       }),
       Effect.orElseSucceed(() => undefined),
     );
-  // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
-  // <main>/.git. A bare repository has no main checkout, so its worktree keeps its own file.
-  const mainCheckoutRoot = (checkout: string) =>
-    fileSystem.readFileString(path.join(checkout, ".git")).pipe(
-      Effect.flatMap((pointer) => {
-        const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
-        if (gitDir === undefined) return Effect.succeed(checkout);
-        const worktreeGitDir = path.resolve(checkout, gitDir);
-        return fileSystem.readFileString(path.join(worktreeGitDir, "commondir")).pipe(
-          Effect.map((commonDir) => {
-            const common = path.resolve(worktreeGitDir, commonDir.trim());
-            return path.basename(common) === ".git" ? path.dirname(common) : checkout;
-          }),
-        );
-      }),
-      Effect.orElseSucceed(() => checkout),
-    );
-  // Claude Code keeps .claude/settings.local.json at the repository root, or in cwd outside a
-  // repository, on Windows, or when the root is home. Its owner check is skipped: missing it only
-  // leaves tool search on, Claude Code's default.
-  const localSettingsDirectory = Effect.fn("ClaudeAdapterV2.localSettingsDirectory")(function* (
-    cwd: string,
-  ) {
-    if ((yield* HostProcess.Platform) === "win32") return cwd;
-    for (let directory = cwd; ; directory = path.dirname(directory)) {
-      const isCheckout = yield* fileSystem
-        .exists(path.join(directory, ".git"))
-        .pipe(Effect.orElseSucceed(() => false));
-      if (isCheckout) {
-        const root = yield* mainCheckoutRoot(directory);
-        return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
-      }
-      if (path.dirname(directory) === directory) return cwd;
-    }
-  });
   const settingsFilesByPrecedence = Effect.fn("ClaudeAdapterV2.settingsFilesByPrecedence")(
     function* (cwd: string | null) {
-      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
+      const localDirectory =
+        cwd === null
+          ? null
+          : yield* claudeLocalSettingsDirectory(cwd).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            );
       return [
         ...(cwd === null || localDirectory === null
           ? []
@@ -12724,6 +12707,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
+        const routedCatalogFor = (live: ClaudeLiveQueryContext) =>
+          routeModelCatalog(modelCatalog, live.settingsCwd, live.launchArgSettings);
+
         const applySelectionLive = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
           selection: CompiledClaudeModelSelection,
@@ -12767,10 +12753,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
+          queryPolicy: Effect.Success<ReturnType<typeof queryPolicyForTurn>>,
+          // SCIENT-FORK:START — Stop may revoke a start while its preparation yields.
           startGeneration: number,
+          // SCIENT-FORK:END
         ) {
+          // SCIENT-FORK:START — check ownership before query-side effects.
           yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
-          const queryPolicy = yield* queryPolicyForTurn(turnInput);
+          // SCIENT-FORK:END
           // SCIENT-FORK:START Scient Extensions connectors
           const mcpSession =
             input.configureMcp === false ? undefined : yield* mcpSessions.read(turnInput.threadId);
@@ -12785,14 +12775,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
+          // SCIENT-FORK:START — native plugin suppression is part of query identity.
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, {
             ...mcpOverrides,
             pluginKeyPolicies: mcpSession?.pluginKeyPolicies,
           });
-          const compiledSelection = compileClaudeModelSelection(
-            turnInput.modelSelection,
-            modelCatalog,
-          );
+          // SCIENT-FORK:END
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
@@ -12802,8 +12790,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
-            return existing;
+            // SCIENT-FORK:START — a reused process keeps the settings it opened with.
+            const autoCompactWindow = yield* resolveAutoCompactWindow(
+              existing.settingsCwd,
+              turnInput.modelSelection,
+              existing.launchArgSettings,
+            );
+            return { querySession: existing, autoCompactWindow };
+            // SCIENT-FORK:END
           }
+          const reuseLaunchSettings =
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            existing.queryPolicyKey === queryPolicyKey &&
+            !existing.stopping;
+          const readLaunchSettings = readClaudeLaunchArgSettings({
+            settings: adapterOptions.settings,
+            cwd: turnInput.runtimePolicy.cwd,
+            fileSystem,
+            path,
+          });
+          let launchArgSettings = reuseLaunchSettings
+            ? existing.launchArgSettings
+            : yield* readLaunchSettings;
+          let catalog = yield* routeModelCatalog(
+            modelCatalog,
+            turnInput.runtimePolicy.cwd,
+            launchArgSettings,
+          );
+          let compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -12840,7 +12855,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
                 );
             }
-            return existing;
+            // SCIENT-FORK:START — a reused process keeps the settings it opened with.
+            const autoCompactWindow = yield* resolveAutoCompactWindow(
+              existing.settingsCwd,
+              turnInput.modelSelection,
+              existing.launchArgSettings,
+            );
+            return { querySession: existing, autoCompactWindow };
+            // SCIENT-FORK:END
           }
 
           // Replacing this thread's process kills its background work, even with a new native identity.
@@ -12854,26 +12876,45 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
 
+          if (reuseLaunchSettings) {
+            launchArgSettings = yield* readLaunchSettings;
+            catalog = yield* routeModelCatalog(
+              modelCatalog,
+              turnInput.runtimePolicy.cwd,
+              launchArgSettings,
+            );
+            compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
+          }
+
           // Read before closing the live process so a bad path leaves it running.
-          const appendSystemPromptFileText = yield* readClaudeAppendSystemPromptFile({
-            settings: adapterOptions.settings,
-            cwd: turnInput.runtimePolicy.cwd,
-            fileSystem,
-            path,
-          });
-          const launchArgSettings = yield* readClaudeLaunchArgSettings({
-            settings: adapterOptions.settings,
-            cwd: turnInput.runtimePolicy.cwd,
-            fileSystem,
-            path,
-          });
+          const [appendSystemPromptFileText, toolSearchOverride] = yield* Effect.all(
+            [
+              readClaudeAppendSystemPromptFile({
+                settings: adapterOptions.settings,
+                cwd: turnInput.runtimePolicy.cwd,
+                fileSystem,
+                path,
+              }),
+              resolveToolSearchOverride(turnInput.runtimePolicy.cwd, launchArgSettings),
+            ],
+            { concurrency: "unbounded" },
+          );
+          // SCIENT-FORK:START — read compaction settings before opening, so fast EOF cannot precede publication.
+          const autoCompactWindow = yield* resolveAutoCompactWindow(
+            turnInput.runtimePolicy.cwd,
+            turnInput.modelSelection,
+            launchArgSettings,
+          );
+          yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
+          // Failed replacement retires only its captured wake state.
           return yield* Effect.gen(function* () {
+            // SCIENT-FORK:END
             const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
             clearedNativeSessions.delete(nativeThreadId);
             if (existing !== null) {
-              // Same-thread selection changes replay the settled query's reports.
-              // Unexpected EOF and Stop retire them with their captured query.
+              // SCIENT-FORK:START — same-thread replacements preserve settled wake reports.
               existing.preserveWakeForReplacement = existing.nativeThreadId === nativeThreadId;
+              // SCIENT-FORK:END
               yield* existing.query.close.pipe(Effect.ignore);
               if (existing.nativeThreadId !== nativeThreadId) {
                 yield* clearWakeStateForNativeThread(existing.nativeThreadId);
@@ -12889,13 +12930,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
             const shouldResume =
               resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
-            const toolSearchOverride = yield* resolveToolSearchOverride(
-              turnInput.runtimePolicy.cwd,
-              launchArgSettings,
-            );
+            // SCIENT-FORK:START — plugin policy amends the generic query options below.
             const baseQueryOptions = makeClaudeQueryOptions({
+              // SCIENT-FORK:END
               modelSelection: turnInput.modelSelection,
-              modelCatalog,
+              modelCatalog: catalog,
               nativeThreadId,
               title: turnInput.appThread.title,
               resume: shouldResume,
@@ -12903,12 +12942,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               cwd: turnInput.runtimePolicy.cwd,
               attachmentsDir,
               settings: adapterOptions.settings,
-              ...(launchArgSettings === undefined
-                ? {}
-                : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
               // Delegated threads have no one typing, so they never ask for suggestions.
               promptSuggestions:
                 !isDelegatedAppThread(turnInput.appThread) && (yield* promptSuggestionsEnabled),
+              ...(launchArgSettings === undefined
+                ? {}
+                : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
               environment: claudeQueryEnvironment(
                 adapterOptions.environment,
                 turnInput.appThread,
@@ -12951,6 +12990,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const resolvedTurnCwd = yield* fileSystem
               .realPath(turnInput.runtimePolicy.cwd ?? ".")
               .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
+            // SCIENT-FORK:START — preparation must not open a query after Stop revoked its start.
+            yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
+            // SCIENT-FORK:END
             const openQueryRuntime = queryRunner.open({
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
@@ -13256,7 +13298,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.ensuring(Deferred.succeed(closed, undefined)),
               Effect.forkIn(sessionScope),
             );
-            return context;
+            // SCIENT-FORK:START — return the window resolved before this process opened.
+            return { querySession: context, autoCompactWindow };
           }).pipe(
             Effect.onError(() =>
               Effect.gen(function* () {
@@ -13273,6 +13316,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             ),
           );
+          // SCIENT-FORK:END
         });
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
@@ -13340,6 +13384,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     const used = turnInput.providerThread.nativeMetadata?.claudeAttachmentBudget;
                     pdfBudgets.set(nativeThreadId, makeClaudeAttachmentBudget(used));
                   }
+                  // SCIENT-FORK:START — policy probes retain the pre-probe ownership check.
+                  yield* queryOwnership.withPermits(1)(checkStartOwnership(startGeneration));
+                  // SCIENT-FORK:END
+                  const [skills, queryPolicy] = yield* Effect.all(
+                    [
+                      promptUuid === null
+                        ? Effect.undefined
+                        : userInvocableSkills(turnInput.runtimePolicy.cwd),
+                      queryPolicyForTurn(turnInput),
+                    ],
+                    { concurrency: "unbounded" },
+                  );
                   const pdfReservation = yield* reserveClaudePdfBudget(
                     pdfBudgets.get(nativeThreadId)!,
                     persistAttachmentBudget(nativeThreadId),
@@ -13368,27 +13424,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                           attachmentsDir,
                           fileSystem,
                           pdfReservation,
-                          skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                          ...(skills === undefined ? {} : { skills }),
                           uuid: promptUuid,
                         }).pipe(
                           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                           Effect.provideService(Path.Path, path),
                         );
-                  // SCIENT-FORK:START — read the compaction window before a new query opens, so a
-                  // fast native exit cannot slip between open and start publication. A reused
-                  // query keeps the settings directory it opened with.
-                  const turnCwd = turnInput.runtimePolicy.cwd;
-                  const turnCompactWindow = yield* resolveAutoCompactWindow(
-                    turnCwd,
-                    turnInput.modelSelection,
-                    yield* readClaudeLaunchArgSettings({
-                      settings: adapterOptions.settings,
-                      cwd: turnCwd,
-                      fileSystem,
-                      path,
-                    }),
-                  );
-                  // SCIENT-FORK: replay belongs to the captured process, even if preparation yields past EOF.
+                  // SCIENT-FORK:START — replay belongs to the captured process if preparation yields past EOF.
                   if (
                     continuationQuery !== null &&
                     (continuationQuery.streamExited ||
@@ -13396,15 +13438,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       (yield* Ref.get(queryContext)) !== continuationQuery)
                   )
                     return yield* refuseQueryOwnership(CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL);
-                  const querySession = yield* openQuery(turnInput, nativeThreadId, startGeneration);
-                  const autoCompactWindow =
-                    querySession.settingsCwd === turnCwd
-                      ? turnCompactWindow
-                      : yield* resolveAutoCompactWindow(
-                          querySession.settingsCwd,
-                          turnInput.modelSelection,
-                          querySession.launchArgSettings,
-                        );
+                  const { querySession, autoCompactWindow } = yield* openQuery(
+                    turnInput,
+                    nativeThreadId,
+                    queryPolicy,
+                    startGeneration,
+                  );
                   // SCIENT-FORK:END
                   const context: ActiveClaudeTurnContext = {
                     input: turnInput,
@@ -14071,7 +14110,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const steerSelection =
               turnInput.modelSelection === undefined
                 ? undefined
-                : compileClaudeModelSelection(turnInput.modelSelection, modelCatalog);
+                : compileClaudeModelSelection(
+                    turnInput.modelSelection,
+                    yield* routedCatalogFor(existing),
+                  );
             const liveSteerSelection =
               steerSelection !== undefined &&
               existing.selection.queryIdentity !== steerSelection.queryIdentity &&
@@ -14496,12 +14538,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             modelSelection,
           }) {
             const live = yield* Ref.get(queryContext);
-            const selection = compileClaudeModelSelection(modelSelection, modelCatalog);
-            // A model change still waits for the next turn, which checks it against the turn's permission mode.
             if (
               live === null ||
               live.stopping ||
-              live.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
+              live.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+            ) {
+              return;
+            }
+            const selection = compileClaudeModelSelection(
+              modelSelection,
+              yield* routedCatalogFor(live),
+            );
+            // A model change still waits for the next turn, which checks it against the turn's permission mode.
+            if (
               live.selection.queryIdentity === selection.queryIdentity ||
               live.selection.apiModelId !== selection.apiModelId ||
               !canApplyClaudeSelectionLive(live.selection, selection)
@@ -14969,12 +15018,16 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    // SCIENT-FORK:START Scient Extensions native inventory
     hooks: Pick<
       ClaudeAdapterV2Options,
-      "scopedLimitNames" | "onUsageLimits" | "onNativeInventory" | "modelCatalog"
+      | "scopedLimitNames"
+      | "onUsageLimits"
+      | "modelCatalog"
+      | "routeModelCatalog"
+      // SCIENT-FORK:START — live-session native inventory joins upstream driver hooks.
+      | "onNativeInventory"
+      // SCIENT-FORK:END
     > = {},
-    // SCIENT-FORK:END
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

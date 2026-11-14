@@ -22,6 +22,7 @@ import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
+import { makeFakeWslHost } from "../testUtils/fakeWsl.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
@@ -162,6 +163,14 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
   yield* fileSystem.writeFileString(absolutePath, contents).pipe(Effect.orDie);
 });
 
+const makeWslHost = Effect.gen(function* () {
+  const { mountRoot, underWsl } = yield* makeFakeWslHost;
+  const service = yield* underWsl(
+    WorkspaceFileSystem.make.pipe(Effect.provide(layerKnownWorkspacesTest)),
+  );
+  return { mountRoot, service, underWsl };
+});
+
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
@@ -259,6 +268,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(statted).toEqual([]);
       }),
     );
+
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "reports a Windows drive path under WSL as the file it maps to",
+      () =>
+        Effect.gen(function* () {
+          const { mountRoot, service, underWsl } = yield* makeWslHost;
+          yield* writeTextFile(mountRoot, "c/Users/me/Documents/notes.md", "# Notes\n");
+
+          const { entries } = yield* underWsl(
+            service.getMetadata({
+              paths: [
+                "C:\\Users\\me\\Documents\\notes.md",
+                "C:/Users/me/Documents/notes.md",
+                "C:/Users/me/Documents/notes\u0000.md",
+              ],
+            }),
+          );
+
+          expect(entries).toEqual([
+            { kind: "file", byteLength: 8 },
+            { kind: "file", byteLength: 8 },
+            null,
+          ]);
+        }),
+    );
   });
 
   describe("readFile", () => {
@@ -280,6 +314,18 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           byteLength: 26,
           truncated: false,
         });
+
+        const bomContents = "\uFEFFexport const answer = 42;\n";
+        yield* writeTextFile(cwd, "bom.ts", bomContents);
+        const bomRead = yield* workspaceFileSystem.readFile({ cwd, relativePath: "bom.ts" });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "bom.ts",
+          contents: bomRead.contents.replace("42", "43"),
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const saved = yield* fs.readFile(`${cwd}/bom.ts`);
+        expect([...saved]).toEqual([...new TextEncoder().encode(bomContents.replace("42", "43"))]);
 
         yield* writeTextFile(cwd, "report.txt", "ordinary file");
         for (const relativePath of whitespaceFilePaths) {
@@ -506,6 +552,93 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(error).toMatchObject({ workspaceRoot: cwd, relativePath: "../escape.md" });
       }),
     );
+
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "reads a Windows drive path under WSL from where wslpath mounts it",
+      () =>
+        Effect.gen(function* () {
+          const { mountRoot, service, underWsl } = yield* makeWslHost;
+          const cwd = yield* makeTempDir;
+          yield* writeTextFile(mountRoot, "c/Users/me/Documents/notes.md", "# Notes\n");
+
+          for (const relativePath of [
+            "C:\\Users\\me\\Documents\\notes.md",
+            "C:/Users/me/Documents/notes.md",
+          ]) {
+            const result = yield* underWsl(service.readFile({ cwd, relativePath }));
+            expect(result).toMatchObject({ contents: "# Notes\n", truncated: false });
+          }
+        }),
+    );
+
+    // SCIENT-FORK:START — mapped host reads retain viewer authority and raw-byte revisions.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "keeps WSL host paths read-only and marks only outside files as outside the workspace",
+      () =>
+        Effect.gen(function* () {
+          const { mountRoot, service, underWsl } = yield* makeWslHost;
+          const path = yield* Path.Path;
+          const outside = yield* makeTempDir;
+          const inside = path.join(mountRoot, "c/Users/me/Documents");
+          yield* writeTextFile(inside, "notes.md", "# Notes\n");
+
+          for (const relativePath of [
+            "C:\\Users\\me\\Documents\\notes.md",
+            "C:/Users/me/Documents/notes.md",
+          ]) {
+            for (const method of ["readFile", "viewFile"] as const) {
+              for (const cwd of [inside, outside]) {
+                const result = yield* underWsl(service[method]({ cwd, relativePath }));
+                expect(result).toMatchObject({
+                  relativePath,
+                  contents: "# Notes\n",
+                  readOnly: true,
+                  revision: WorkspaceFileMutations.revisionForBytes(
+                    new TextEncoder().encode("# Notes\n"),
+                  ),
+                });
+                expect(result.outsideWorkspace === true).toBe(cwd === outside);
+              }
+            }
+          }
+        }),
+    );
+
+    it.effect("keeps a BOM through revision-checked saves and mutation replay", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "bom.ts", "\uFEFFexport const answer = 42;\n");
+        const read = yield* service.readFile({ cwd, relativePath: "bom.ts" });
+        expect(read.contents).toBe("export const answer = 42;\n");
+        const input = {
+          cwd,
+          relativePath: "bom.ts",
+          contents: read.contents.replace("42", "43"),
+          expectedRevision: read.revision,
+          mutationId: NodeCrypto.randomUUID(),
+        };
+        const saved = yield* service.writeFile(input);
+        const replay = yield* service.writeFile(input);
+        const bytes = yield* fs.readFile(path.join(cwd, "bom.ts"));
+        expect([...bytes]).toEqual([
+          ...new TextEncoder().encode("\uFEFFexport const answer = 43;\n"),
+        ]);
+        expect(saved.revision).toBe(WorkspaceFileMutations.revisionForBytes(bytes));
+        expect(replay).toEqual(saved);
+        const alreadyPrefixed = "\uFEFFexport const answer = 44;\n";
+        yield* service.writeFile({
+          cwd,
+          relativePath: "bom.ts",
+          contents: alreadyPrefixed,
+          expectedRevision: saved.revision,
+        });
+        expect(yield* fs.readFileString(path.join(cwd, "bom.ts"))).toBe(alreadyPrefixed);
+      }),
+    );
+    // SCIENT-FORK:END
 
     it.effect("refuses a network path outside the workspace", () =>
       Effect.gen(function* () {
@@ -744,14 +877,17 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects binary files without leaking their contents into the error", () =>
+    it.effect.each([
+      { name: "a NUL byte", bytes: [0x61, 0, 0x62] },
+      { name: "invalid UTF-8", bytes: [0x63, 0x61, 0x66, 0xe9] },
+    ])("rejects files with $name without leaking their contents", ({ bytes }) =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         const absolutePath = path.join(cwd, "asset.bin");
-        yield* fileSystem.writeFile(absolutePath, Uint8Array.from([0x61, 0, 0x62]));
+        yield* fileSystem.writeFile(absolutePath, Uint8Array.from(bytes));
 
         const error = yield* workspaceFileSystem
           .readFile({ cwd, relativePath: "asset.bin" })

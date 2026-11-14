@@ -64,6 +64,7 @@ import { pendingServiceUpdateExists } from "./updateHandoff.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
@@ -141,6 +142,7 @@ describe("reconcileDesiredCloudLink", () => {
           // Authorization is checked before anything is signed.
           Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "unused" })),
           Layer.provide(ManagedPolicy.layerTest()),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provideMerge(
             ServerConfigModule.layerTest("/", { prefix: "t3-cloud-reconcile-test-" }).pipe(
               Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -278,6 +280,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             ),
             Layer.provide(EnvironmentKeys.layer),
             Layer.provide(ManagedPolicy.layerTest()),
+            Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           ),
         ),
         Effect.provideService(ServerSecretStore.ServerSecretStore, harness.store),
@@ -1314,6 +1317,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           pid: 123,
           readyConnections: 0,
           hostname: "prod-abc.t3coderelay.com",
+          origin: null,
           protocol: null,
         },
       }),
