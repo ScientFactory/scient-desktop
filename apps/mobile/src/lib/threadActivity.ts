@@ -2496,6 +2496,13 @@ export function buildThreadFeed(
       continue;
     }
     if (item.type === "room_message") {
+      // SCIENT-FORK: a room message leaves the feed once deleted or sent to the agent; the
+      // agent's message stands in for it. A cancelled send brings it back.
+      if (
+        item.deletedAt !== undefined ||
+        item.deliveries?.some((delivery) => delivery.status === "sent") === true
+      )
+        continue;
       const entry: RawThreadFeedEntry = {
         type: "room-message",
         id: `room-message:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,

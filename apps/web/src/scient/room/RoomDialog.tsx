@@ -6,13 +6,12 @@ import {
 import {
   AuthOrchestrationOperateScope,
   ROOM_ROLE_LABEL,
-  roomWaitingCount,
   type RoomAccessDuration,
   type RoomParticipant,
   type RoomRole,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, MessagesSquareIcon, ShareIcon, XIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, ShareIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { guestShareDialogThreadAtom } from "~/components/chat/guestShareDialogState";
@@ -43,8 +42,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
-import { useRightPanelStore } from "~/rightPanelStore";
-import { scientRoomChatSurface } from "~/scient/rightPanel/surfaces";
+import { roomPersonClass } from "./RoomMessageRow";
 
 const DURATION_LABEL: Record<RoomAccessDuration, string> = {
   day: "1 day",
@@ -86,7 +84,8 @@ const failureMessage = (
   return error instanceof Error ? error.message : fallback;
 };
 
-const ROLES = ["watch", "discuss", "agent"] as const;
+// "watch" stays readable for rooms made before; new invites chat at least.
+const ROLES = ["discuss", "agent"] as const;
 const DURATIONS = ["day", "week", "month"] as const;
 
 function RoomDialog({
@@ -317,8 +316,7 @@ const initialsOf = (name: string) =>
 const FACES_SHOWN = 3;
 
 /**
- * The header of a shared thread: the faces of the people in it, opening Share, and the people
- * chat, marked while guests' messages wait.
+ * The header of a shared thread: Share, with the faces of the people in it.
  */
 export function RoomIndicator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
@@ -327,7 +325,6 @@ export function RoomIndicator({ threadRef }: { readonly threadRef: ScopedThreadR
   const joined = room.participants.flatMap((participant) =>
     participant.name === null ? [] : [{ ...participant, name: participant.name }],
   );
-  const waiting = roomWaitingCount(room) > 0;
   const shown = joined.slice(0, FACES_SHOWN);
   const names = joined.map((person) => person.name).join(", ");
   return (
@@ -351,7 +348,8 @@ export function RoomIndicator({ threadRef }: { readonly threadRef: ScopedThreadR
                 <span
                   key={person.id}
                   className={cn(
-                    "flex size-5 items-center justify-center rounded-full border-2 border-background bg-accent text-[9px] font-medium text-foreground",
+                    "flex size-5 items-center justify-center rounded-full border-2 border-background bg-guest-surface text-[9px] font-medium text-guest-foreground",
+                    roomPersonClass(person.id),
                     !online.has(person.id) && "opacity-45",
                   )}
                 >
@@ -370,30 +368,6 @@ export function RoomIndicator({ threadRef }: { readonly threadRef: ScopedThreadR
         <TooltipPopup side="bottom">
           {joined.length === 0 ? "Invited. Nobody has joined yet." : names}
         </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="relative"
-              aria-label={waiting ? "Chat, new messages" : "Chat"}
-              onClick={() =>
-                useRightPanelStore.getState().openScient(threadRef, scientRoomChatSurface())
-              }
-            />
-          }
-        >
-          <MessagesSquareIcon />
-          {waiting ? (
-            <span
-              aria-hidden
-              className="absolute end-0.5 top-0.5 size-1.5 rounded-full bg-primary"
-            />
-          ) : null}
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">Chat with people</TooltipPopup>
       </Tooltip>
     </div>
   );

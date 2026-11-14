@@ -1,19 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { RoomReplyTarget, ScopedThreadRef, ThreadRoom } from "@t3tools/contracts";
+import type { ScopedThreadRef, ThreadRoom } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
-import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadDetails } from "../../state/threads";
 
 const NO_ROOM = Atom.make<ThreadRoom | null>(null);
-const roomState = Atom.family((_key: string) =>
-  Atom.make<{
-    readonly to: "agent" | "people";
-    readonly replyTo: RoomReplyTarget | null;
-  }>({ to: "agent", replyTo: null }).pipe(Atom.keepAlive),
-);
+/** Whether this person's messages in a shared thread go straight to the agent; off by default. */
+const roomDirect = Atom.family((_key: string) => Atom.make(false).pipe(Atom.keepAlive));
 
 export function useThreadRoom(ref: ScopedThreadRef | null) {
   const environmentId = ref?.environmentId;
@@ -32,27 +27,14 @@ export function useThreadRoom(ref: ScopedThreadRef | null) {
   return useAtomValue(atom);
 }
 
-export function useRoomComposerState(key: string) {
-  return useAtomValue(roomState(key));
+export function useRoomDirect(key: string) {
+  return useAtomValue(roomDirect(key));
 }
 
-export function readRoomComposerState(key: string) {
-  return appAtomRegistry.get(roomState(key));
+export function readRoomDirect(key: string) {
+  return appAtomRegistry.get(roomDirect(key));
 }
 
-export function setRoomDestination(key: string, to: "agent" | "people") {
-  const current = appAtomRegistry.get(roomState(key));
-  appAtomRegistry.set(roomState(key), { to, replyTo: to === "agent" ? null : current.replyTo });
-}
-
-export function clearRoomReply(key: string) {
-  const current = appAtomRegistry.get(roomState(key));
-  appAtomRegistry.set(roomState(key), { ...current, replyTo: null });
-}
-
-export function replyInRoom(ref: ScopedThreadRef, replyTo: RoomReplyTarget) {
-  appAtomRegistry.set(roomState(scopedThreadKey(ref.environmentId, ref.threadId)), {
-    to: "people",
-    replyTo,
-  });
+export function setRoomDirect(key: string, on: boolean) {
+  appAtomRegistry.set(roomDirect(key), on);
 }

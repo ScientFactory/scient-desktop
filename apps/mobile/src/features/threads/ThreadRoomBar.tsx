@@ -23,9 +23,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { roomCommandSucceeded } from "./room-command-result";
 import { useThreadRoom } from "./thread-room-state";
 
-const roles: ReadonlyArray<{ id: RoomRole; title: string }> = (
-  ["watch", "discuss", "agent"] as const
-).map((id) => ({ id, title: ROOM_ROLE_LABEL[id] }));
+const roles: ReadonlyArray<{ id: RoomRole; title: string }> = (["discuss", "agent"] as const).map(
+  (id) => ({ id, title: ROOM_ROLE_LABEL[id] }),
+);
 const durations: ReadonlyArray<{ id: RoomAccessDuration; title: string }> = [
   { id: "day", title: "1 day" },
   { id: "week", title: "1 week" },
@@ -210,7 +210,7 @@ function RoomBar({
             return (
               <View key={participant.id} className="gap-1 rounded-xl border border-border p-2">
                 <Text className="text-sm text-foreground">
-                  {participant.name ?? "Invited"} · {participant.role} ·{" "}
+                  {participant.name ?? "Invited"} · {ROOM_ROLE_LABEL[participant.role]} ·{" "}
                   {online
                     ? "Online"
                     : presence.data && !presence.error

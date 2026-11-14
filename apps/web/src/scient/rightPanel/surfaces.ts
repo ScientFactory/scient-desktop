@@ -21,8 +21,6 @@ const isPdfSourceDescriptor = Schema.is(PdfSourceDescriptor);
 
 export type ScientRightPanelSurface =
   | { readonly id: "scient:sources"; readonly kind: "scient"; readonly module: "sources" }
-  /** The people chat of the thread's room. */
-  | { readonly id: "scient:room-chat"; readonly kind: "scient"; readonly module: "room-chat" }
   | { readonly id: `scient:new-tab:${string}`; readonly kind: "scient"; readonly module: "new-tab" }
   | {
       readonly id: `scient:compute:${string}`;
@@ -79,10 +77,6 @@ export type ScientRightPanelSurface =
 
 export function scientSourcesSurface(): Extract<ScientRightPanelSurface, { module: "sources" }> {
   return { id: "scient:sources", kind: "scient", module: "sources" };
-}
-
-export function scientRoomChatSurface(): Extract<ScientRightPanelSurface, { module: "room-chat" }> {
-  return { id: "scient:room-chat", kind: "scient", module: "room-chat" };
 }
 
 /** The launcher page as a tab: what "+" opens. Each one is a separate tab. */
@@ -206,9 +200,6 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
   if (surface.id === "scient:sources" && surface.module === "sources") {
     return scientSourcesSurface();
   }
-  if (surface.id === "scient:room-chat" && surface.module === "room-chat") {
-    return scientRoomChatSurface();
-  }
   if (
     surface.module === "new-tab" &&
     typeof surface.id === "string" &&
@@ -311,8 +302,6 @@ export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): 
   switch (surface.module) {
     case "sources":
       return "Sources";
-    case "room-chat":
-      return "Chat";
     case "new-tab":
       return "New tab";
     case "compute":

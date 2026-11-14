@@ -42,6 +42,8 @@ import {
 } from "~/scient/threadQueue/optimisticQueuePresentation";
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
 import { flushComposerDraftPersistence } from "../../composerDraftStore";
+// SCIENT-FORK: thread rooms.
+import { useRoomComposerPost } from "../../scient/room/roomComposer";
 
 import { assertQueueEditSelectionProvenance } from "../../scient/threadQueue/composerSnapshot";
 
@@ -2008,8 +2010,20 @@ export function useComposerSend(input: ComposerSendInput) {
   );
 
   const onSendLatest = useStableCallback(onSend);
+  // SCIENT-FORK:START — in a thread with people in it, a message is for them first.
+  const postToRoom = useRoomComposerPost({
+    environmentId,
+    threadId: isServerThread && activeThread ? activeThread.id : null,
+    composerDraftTarget,
+    promptRef,
+    onError: setThreadError,
+  });
+  // SCIENT-FORK:END
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
+    // SCIENT-FORK: steering and direct prompts always go to the agent.
+    if (args[4]?.steer !== true && args[4]?.directPrompt === undefined && postToRoom.applies())
+      return postToRoom.post();
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null

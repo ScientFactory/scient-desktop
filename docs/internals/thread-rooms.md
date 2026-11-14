@@ -23,12 +23,17 @@ and a T3 share already open at upgrade keeps working until it ends.
 - **Position**: the EventSink places a room message in the position range of
   `anchorRunOrdinal`, the latest run that had started when it was posted; work folding
   skips it.
-- **Drawing**: the web clients never draw room messages in the thread. The timeline
-  derivation (`session-logic.ts`) drops them, and `scient/room/RoomChat.tsx` shows them
-  as the people chat: the owner's `scient:room-chat` side-panel tab, and the guest
-  page's chat beside the thread (over it on a phone). The thread's composer always
-  talks to the agent; the chat's always talks to people. The phone app still shows them
-  in the thread with a destination switch.
+- **Drawing**: a room message is a standalone timeline row
+  (`scient/room/RoomMessageRow.tsx`) until it is sent or deleted: a dashed bubble in
+  its writer's colour (`room-person-*` utilities, which reset the guest colour) with
+  Send to agent. The timeline derivation (`session-logic.ts`) drops it once a delivery
+  is `sent` (a cancelled send brings it back); the dispatched message stands in for
+  it, coloured by `context.room.author`. With people in the room, the owner's
+  composer posts (`scient/room/roomComposer.tsx`, a seam in `useComposerSend`) unless
+  "straight to the agent" is on (`roomDirectStore`, per thread, in local storage);
+  steering and direct prompts always go to the agent. The guest page has one
+  composer and the same switch for the agent role. The phone app follows the same
+  model.
 - **Sending to the agent** is `message.dispatch` with `roomItemId`. The orchestrator
   builds the agent's words from the stored item (who wrote it, who sent it, what it
   replies to), records a delivery on the item in the same commit, and dispatches
@@ -51,10 +56,11 @@ closes the room, so the web dialog has no Stop sharing step. Removing someone or
 changing their role applies on their next request; their open stream ends when the room changes.
 Presence is in memory: open guest streams per participant.
 
-Roles (shown as Can view, Can chat, Can use agent): Watch reads; Discuss also chats;
-Agent also sends to the agent, sends any chat message to it, and stops the run. The
-`suggested` and `replyTo` fields remain in the contract; the web chat no longer sets
-or shows them.
+Roles (shown as Can chat and Can use agent): Discuss reads and posts; Agent also sends
+to the agent, sends anyone's message to it, and stops the run. Watch (Can view, read
+only) is no longer offered; rooms made with it keep working. The
+`suggested` and `replyTo` fields remain in the contract; the clients no longer set
+or show them.
 Approvals, model and runtime settings and room administration stay with the owner.
 A guest's send runs with the thread's own permissions: one session mixes everyone's
 instructions, so a narrower mode for guests would not hold.

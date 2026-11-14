@@ -60,7 +60,7 @@ import {
 
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 // SCIENT-FORK: thread rooms.
-import { RoomSentLine } from "~/scient/room/RoomChat";
+import { RoomSentLine, roomPersonClassOf } from "~/scient/room/RoomMessageRow";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -790,7 +790,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       // SCIENT-FORK:START — the first prompt's entrance plays on its bubble.
       ref={entranceRef}
       // SCIENT-FORK:END
-      className="group @container flex flex-col items-end gap-1"
+      className={cn(
+        "group @container flex flex-col items-end gap-1",
+        // SCIENT-FORK: a message from a thread room keeps its writer's colour.
+        row.message.context?.room !== undefined &&
+          roomPersonClassOf(row.message.context.room.author),
+      )}
       data-user-message-attribution={folded ? "agent" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
@@ -804,12 +809,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </p>
       ) : null}
       {/* The row's heading already names the guest for screen readers. */}
-      {userMessage.guestName !== undefined ? (
+      {/* SCIENT-FORK: a thread room message names its writer on its own line, below. */}
+      {userMessage.guestName !== undefined && row.message.context?.room === undefined ? (
         <div aria-hidden>
           <GuestMessageName name={userMessage.guestName} />
         </div>
       ) : null}
-      {/* SCIENT-FORK: a message from a thread room says where it came from. */}
+      {/* SCIENT-FORK: a message from a thread room: who wrote it, and who sent it on. */}
       {row.message.context?.room !== undefined ? (
         <RoomSentLine room={row.message.context.room} />
       ) : null}

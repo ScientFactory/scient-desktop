@@ -50,29 +50,47 @@ function roomRow(deleted = false) {
 }
 
 describe("room timeline projection", () => {
-  it.each([false, true])(
-    "keeps room rows visible without treating them as agent messages or work",
-    (deleted) => {
-      const row = roomRow(deleted);
-      const feed = buildThreadFeed([row]);
-      expect(feed).toEqual([
-        expect.objectContaining({ type: "room-message", runId: null, item: row.item }),
-      ]);
-      for (const toolCallVisibility of ["showAll", "hideAll", "zen"] as const) {
-        const presented = deriveThreadFeedPresentation(
-          feed,
-          null,
-          new Set(),
-          new Set(),
-          null,
-          false,
-          undefined,
-          { toolCallVisibility, revealedMessageId: null },
-        );
-        expect(presented).toEqual(feed);
-      }
-    },
-  );
+  it("keeps a room message visible without treating it as an agent message or work", () => {
+    const row = roomRow();
+    const feed = buildThreadFeed([row]);
+    expect(feed).toEqual([
+      expect.objectContaining({ type: "room-message", runId: null, item: row.item }),
+    ]);
+    for (const toolCallVisibility of ["showAll", "hideAll", "zen"] as const) {
+      const presented = deriveThreadFeedPresentation(
+        feed,
+        null,
+        new Set(),
+        new Set(),
+        null,
+        false,
+        undefined,
+        { toolCallVisibility, revealedMessageId: null },
+      );
+      expect(presented).toEqual(feed);
+    }
+  });
+
+  it("drops a room message once deleted or sent to the agent, and keeps it after a cancelled send", () => {
+    const row = roomRow();
+    const withDelivery = (status: "sent" | "cancelled") => ({
+      ...row,
+      item: {
+        ...row.item,
+        deliveries: [
+          {
+            messageId: MessageId.make("sent"),
+            by: { kind: "owner" as const },
+            at: "2026-11-13T00:00:00.000Z",
+            status,
+          },
+        ],
+      },
+    });
+    expect(buildThreadFeed([roomRow(true)])).toEqual([]);
+    expect(buildThreadFeed([withDelivery("sent")])).toEqual([]);
+    expect(buildThreadFeed([withDelivery("cancelled")])).toHaveLength(1);
+  });
 
   it("keeps a room message between collapsed work and the agent answer", () => {
     const room = roomRow();
@@ -110,14 +128,9 @@ describe("room timeline projection", () => {
     expect(collapsed[1]).toMatchObject({ item: room.item });
   });
 
-  it("refreshes a cached row when a message is deleted", () => {
+  it("drops a cached row when its message is deleted", () => {
     const cache = createThreadFeedCache();
-    const before = buildThreadFeed([roomRow()], { cache });
-    const after = buildThreadFeed([roomRow(true)], { cache });
-    expect(after[0]).not.toBe(before[0]);
-    expect(after[0]).toMatchObject({
-      type: "room-message",
-      item: { text: "", deletedAt: expect.any(String) },
-    });
+    expect(buildThreadFeed([roomRow()], { cache })).toHaveLength(1);
+    expect(buildThreadFeed([roomRow(true)], { cache })).toEqual([]);
   });
 });
