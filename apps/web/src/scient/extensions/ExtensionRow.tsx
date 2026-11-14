@@ -308,8 +308,11 @@ export function ExtensionRow({
   feedback,
   audience,
   type,
+  worksWith = true,
 }: {
   readonly audience?: ExtensionAudience;
+  /** False under a heading that already says which agents (a store's own section). */
+  readonly worksWith?: boolean;
   /** The table's Type column, when the target alone does not say it. */
   readonly type?: string | undefined;
   readonly target: ExtensionTarget;
@@ -396,9 +399,11 @@ export function ExtensionRow({
         </div>
         {trailing ? <div className="relative z-10 shrink-0">{trailing}</div> : null}
       </div>
-      <div className="relative z-10 px-2 ps-15 text-xs text-muted-foreground">
-        <WorksWithValue audience={audience} />
-      </div>
+      {worksWith ? (
+        <div className="relative z-10 px-2 ps-15 text-xs text-muted-foreground">
+          <WorksWithValue audience={audience} />
+        </div>
+      ) : null}
       {feedback ? <div className="grid gap-1 px-2 pb-1 ps-15">{feedback}</div> : null}
     </li>
   );

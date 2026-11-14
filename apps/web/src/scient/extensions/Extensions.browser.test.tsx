@@ -1092,6 +1092,39 @@ describe("Discover", () => {
     expect(results().querySelector("[data-discover-error]")).toBeNull();
   });
 
+  it("gives each store one section with one working Show more", async () => {
+    await using fixture = setup();
+    const plugin = (name: string, kind: "codex" | "shared"): ProviderStoreEntry => ({
+      id: name,
+      name,
+      displayName: name,
+      marketplace: "test",
+      description: "Data tools",
+      kind,
+      installed: false,
+      includes: [],
+      apps: [],
+    });
+    state.storePages[codex] = { entries: [plugin("Plotter", "codex")], total: 9, nextCursor: "c" };
+    state.storePages[claude] = { entries: [plugin("Tables", "shared")], total: 9, nextCursor: "c" };
+    await fixture.render(<CategoryPage category="data" />);
+    const claudeStore = fixture.section("From Claude’s store");
+    const codexStore = fixture.section("From Codex’s store");
+    expect(fixture.rowNames(claudeStore)).toEqual(["Tables"]);
+    expect(fixture.rowNames(codexStore)).toEqual(["Plotter"]);
+    expect(claudeStore.textContent).toContain("Works with Claude and Scient Agent");
+    const more = (section: Element) =>
+      [...section.querySelectorAll("button")].filter(
+        (button) => button.textContent === "Show more plugins",
+      );
+    expect(more(claudeStore)).toHaveLength(1);
+    expect(more(codexStore)).toHaveLength(1);
+    await userEvent.click(more(claudeStore)[0]!);
+    // The next page is asked for; this fake answers with the same cursor, so nothing is left.
+    await vi.waitFor(() => expect(more(fixture.section("From Claude’s store"))).toHaveLength(0));
+    expect(more(fixture.section("From Codex’s store"))).toHaveLength(1);
+  });
+
   it("keeps picks visible while registry is pending and groups store alternatives", async () => {
     await using fixture = setup();
     const pick = entry("scient.curated/scite", {
@@ -1121,8 +1154,10 @@ describe("Discover", () => {
     expect(fixture.rowNames()).toEqual(["Scite", "Zotero"]);
     expect(fixture.container.textContent).toContain("Also add from Codex");
     expect(fixture.container.textContent).toContain("Not checked by Scient");
-    expect(fixture.container.textContent).toContain("Codex only");
-    await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
+    // Each store has its own section, which says the agent once; the rows just say Add.
+    expect(fixture.section("From Codex’s store").textContent).toContain("Codex only");
+    expect(fixture.row("Zotero").textContent).not.toContain("Codex only");
+    await userEvent.click(buttonIn(fixture.row("Zotero"), "Add")!);
     expect(state.commands.providerAct).toHaveBeenCalledWith(
       expect.objectContaining({
         environmentId: "local",
@@ -1596,7 +1631,7 @@ describe("Installed", () => {
     expect(buttonIn(fixture.row("Linear"), "Turn off")?.disabled).toBe(true);
     expect(buttonIn(fixture.row("Linear"), "Remove")?.disabled).toBe(true);
     expect(buttonIn(fixture.row("Linear"), "Open")?.disabled).toBe(false);
-    expect(buttonIn(fixture.container, "Add your own")?.disabled).toBe(true);
+    expect(buttonIn(fixture.container, "Add")?.disabled).toBe(true);
     expect(fixture.container.textContent).toContain(
       "This connection can view extensions but not change them.",
     );

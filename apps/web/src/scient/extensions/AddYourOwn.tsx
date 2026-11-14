@@ -1,7 +1,8 @@
-import { BotIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, FolderInputIcon, PlusIcon, PlugIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import { AddLocalConnectorDialog } from "./AddLocalConnectorDialog";
 import { MAKE_CONNECTOR_PROMPT, useConnectorAgentChat } from "./connectorAgentChat";
@@ -11,8 +12,10 @@ import type { ExtensionKind } from "./extensionsView";
 type Shown = { readonly step: "choose" } | { readonly step: "web"; readonly url: string };
 
 /**
- * The one way in for anything not in the catalog: a skill, connector or plugin from a file, a
- * folder, a web address, pasted text, or another app. Shown on Discover and Installed alike, and under Discover search results.
+ * The one way in for anything not in the catalog. As a button it is a small "Add" menu: create a
+ * connector with an agent, or bring a skill, connector or plugin from a file, a folder, a web
+ * address, pasted text or another app. On Skills, and wherever no agent can make one, the button
+ * opens the second straight away. The link sits under Discover search results.
  */
 export function AddYourOwn({
   variant = "button",
@@ -23,6 +26,11 @@ export function AddYourOwn({
   readonly kind?: ExtensionKind | undefined;
 }) {
   const { environmentId, canWrite, callbackOrigin } = useExtensionsEnvironment();
+  const startChat = useConnectorAgentChat(environmentId);
+  const create =
+    variant === "button" && kind !== "skills" && startChat !== undefined
+      ? () => void startChat(MAKE_CONNECTOR_PROMPT, "make")
+      : undefined;
   const [shown, setShown] = useState<Shown | null>(null);
   const onOpenChange = (open: boolean) => {
     if (!open) setShown(null);
@@ -30,10 +38,30 @@ export function AddYourOwn({
   const open = () => setShown({ step: "choose" });
   return (
     <>
-      {variant === "button" ? (
-        <Button size="sm" variant="outline" disabled={!canWrite} onClick={open}>
+      {variant === "button" && create ? (
+        <Menu>
+          <MenuTrigger
+            render={<Button size="sm" variant="outline" disabled={!canWrite} aria-label="Add" />}
+          >
+            <PlusIcon aria-hidden />
+            Add
+            <ChevronDownIcon aria-hidden className="-me-1 size-3.5 opacity-60" />
+          </MenuTrigger>
+          <MenuPopup align="end" className="w-max">
+            <MenuItem onClick={create}>
+              <PlugIcon aria-hidden />
+              Create a connector with an agent
+            </MenuItem>
+            <MenuItem onClick={open}>
+              <FolderInputIcon aria-hidden />
+              Add from a file, folder or link
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      ) : variant === "button" ? (
+        <Button size="sm" variant="outline" disabled={!canWrite} onClick={open} aria-label="Add">
           <PlusIcon aria-hidden />
-          Add your own
+          Add
         </Button>
       ) : (
         <Button
@@ -68,23 +96,5 @@ export function AddYourOwn({
         />
       ) : null}
     </>
-  );
-}
-
-/** Opens a chat where an agent makes a connector with the user; shown with the plugins. */
-export function MakeConnector({ kind }: { readonly kind?: ExtensionKind | undefined }) {
-  const { environmentId, canWrite } = useExtensionsEnvironment();
-  const startChat = useConnectorAgentChat(environmentId);
-  if (kind === "skills" || startChat === undefined) return null;
-  return (
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={!canWrite}
-      onClick={() => void startChat(MAKE_CONNECTOR_PROMPT, "make")}
-    >
-      <BotIcon aria-hidden />
-      Make a connector
-    </Button>
   );
 }

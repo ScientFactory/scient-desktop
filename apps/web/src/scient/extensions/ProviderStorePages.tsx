@@ -48,10 +48,13 @@ export function StoreInstall({
   provider,
   entry,
   refresh,
+  compact = false,
 }: {
   readonly provider: ServerProvider;
   readonly entry: ProviderStoreEntry;
   readonly refresh: () => void;
+  /** In a list under the store's own heading: "Add" and "Remove", the agent goes without saying. */
+  readonly compact?: boolean;
 }) {
   const { environmentId, providers } = useExtensionsEnvironment();
   const target =
@@ -67,7 +70,8 @@ export function StoreInstall({
   const act = useAtomCommand(actOnProviderPlugin);
   const lock = useActionLock(JSON.stringify(["store", provider.instanceId, entry.id]));
   if (installed && plugin?.canUninstall)
-    return <StoreRemove provider={target} plugin={plugin} refresh={refresh} />;
+    return <StoreRemove provider={target} plugin={plugin} refresh={refresh} compact={compact} />;
+  if (compact && installed) return <span className="text-sm text-muted-foreground">Added</span>;
   return (
     <>
       <PrimaryAction
@@ -95,13 +99,15 @@ export function StoreInstall({
       >
         {lock.busy
           ? "Adding…"
-          : installed
-            ? "Added"
-            : target.driver === "codex"
-              ? "Add to Codex"
-              : target.driver === "claudeAgent"
-                ? "Add to Claude Code"
-                : "Add to Scient Agent"}
+          : compact
+            ? "Add"
+            : installed
+              ? "Added"
+              : target.driver === "codex"
+                ? "Add to Codex"
+                : target.driver === "claudeAgent"
+                  ? "Add to Claude Code"
+                  : "Add to Scient Agent"}
       </PrimaryAction>
       {installed ? (
         <MutedLine>
@@ -117,10 +123,12 @@ function StoreRemove({
   provider,
   plugin,
   refresh,
+  compact,
 }: {
   readonly provider: ServerProvider;
   readonly plugin: ServerProviderPlugin;
   readonly refresh: () => void;
+  readonly compact: boolean;
 }) {
   const actions = useProviderPluginActions(
     provider,
@@ -130,13 +138,17 @@ function StoreRemove({
   );
   return (
     <>
-      <span className="text-sm text-muted-foreground">Added</span>
       <Button
         variant="destructive-outline"
+        {...(compact ? { size: "sm" as const } : {})}
         disabled={actions.locked}
         onClick={() => void actions.uninstall().then(refresh)}
       >
-        {actions.busy ? "Removing…" : `Remove from ${provider.displayName ?? "this agent"}`}
+        {actions.busy
+          ? "Removing…"
+          : compact
+            ? "Remove"
+            : `Remove from ${provider.displayName ?? "this agent"}`}
       </Button>
       <ActionFeedback feedback={actions.feedback} />
     </>
