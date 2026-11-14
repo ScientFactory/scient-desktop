@@ -3071,7 +3071,8 @@ describe("orchestrator MCP toolkit", () => {
           const cancellable = yield* decodeLocalDelegateTaskResult(
             cancellableCall.structuredContent,
           ).pipe(Effect.orDie);
-          expect(cancellable.status).toBe("running");
+          // The task says starting until the child's provider starts its turn.
+          expect(["starting", "running"]).toContain(cancellable.status);
           expect(cancellable.hasPendingChildRuns).toBe(false);
           yield* waitForProjection(orchestrator, cancellable.childThreadId, (projection) =>
             projection.providerTurns.some((turn) => turn.status === "running"),
@@ -3979,7 +3980,8 @@ describe("orchestrator MCP toolkit", () => {
           const upgradedDelegated = yield* decodeLocalDelegateTaskResult(
             upgradedCall.structuredContent,
           ).pipe(Effect.orDie);
-          expect(upgradedDelegated.status).toBe("running");
+          // The task says starting until the child's provider starts its turn.
+          expect(["starting", "running"]).toContain(upgradedDelegated.status);
           yield* waitForProjection(orchestrator, upgradedDelegated.childThreadId, (projection) =>
             projection.providerTurns.some((turn) => turn.status === "running"),
           );

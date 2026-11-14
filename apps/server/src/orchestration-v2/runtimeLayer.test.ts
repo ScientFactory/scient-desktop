@@ -6974,8 +6974,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.equal(error._tag, "OrchestratorDispatchError");
+      // SCIENT-FORK: Scient reports a blocked settle as a typed error carrying the reason.
       assert.equal(
-        error.cause,
+        (error.cause as { readonly message?: string }).message,
         `Thread ${threadId} has a queued message. Send it or remove it from the queue before settling.`,
       );
       const blocked = yield* orchestrator.getThreadProjection(threadId);

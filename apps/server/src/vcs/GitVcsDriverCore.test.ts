@@ -7466,8 +7466,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(started);
         if (failure === "timeout") {
+          // A remote fetch is bounded at five minutes; a retry would need another window.
           yield* TestClock.adjust("31 seconds");
-          yield* TestClock.adjust("31 seconds");
+          yield* TestClock.adjust("5 minutes");
         }
         const result = yield* Fiber.join(fetching);
         assert.isTrue(Result.isFailure(result));

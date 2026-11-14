@@ -1888,7 +1888,8 @@ it.effect("gives outside clients an upload URL on the origin their request reach
                 id: 2,
                 method: "tools/call",
                 params: {
-                  name: "t3_attachment_prepare_upload",
+                  // SCIENT-FORK: Scient names its tools scient_*.
+                  name: "scient_attachment_prepare_upload",
                   arguments: {
                     upload: {
                       type: "image",

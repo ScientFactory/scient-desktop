@@ -72,11 +72,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
-import {
-  idleThreadProjection,
-  liveThreadShell,
-  scientToolServicesLayer,
-} from "./McpToolAccess.testkit.ts";
+import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import { threadNotFound } from "./threadAccess.ts";
@@ -506,7 +502,7 @@ describe("OrchestratorMcpService", () => {
           layerOrchestratorService.pipe(
             Layer.provide(layerDependencies),
             // SCIENT-FORK: Scient's tools read the live owner's policy.
-            Layer.provide(scientToolServicesLayer),
+            Layer.provide(fullAccessCapturedPolicyLayer),
           ),
         ),
       );
@@ -1383,7 +1379,7 @@ describe("OrchestratorMcpService", () => {
             layerOrchestratorService.pipe(
               Layer.provide(layerDependencies),
               // SCIENT-FORK: Scient's tools read the live owner's policy.
-              Layer.provide(scientToolServicesLayer),
+              Layer.provide(fullAccessCapturedPolicyLayer),
             ),
           ),
         );
@@ -2760,7 +2756,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           layerOrchestratorService.pipe(
             Layer.provide(layerDependencies),
             // SCIENT-FORK: Scient's tools read the live owner's policy.
-            Layer.provide(scientToolServicesLayer),
+            Layer.provide(fullAccessCapturedPolicyLayer),
           ),
         ),
       );
@@ -2835,7 +2831,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             layerOrchestratorService.pipe(
               Layer.provide(layerDependencies),
               // SCIENT-FORK: Scient's tools read the live owner's policy.
-              Layer.provide(scientToolServicesLayer),
+              Layer.provide(fullAccessCapturedPolicyLayer),
             ),
           ),
         );
@@ -4989,7 +4985,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             layerOrchestratorService.pipe(
               Layer.provide(layerDependencies),
               // SCIENT-FORK: Scient's tools read the live owner's policy.
-              Layer.provide(scientToolServicesLayer),
+              Layer.provide(fullAccessCapturedPolicyLayer),
             ),
           ),
         );

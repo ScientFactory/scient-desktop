@@ -162,6 +162,11 @@ describe("remote helper lifecycle", () => {
           "#!/bin/sh\nprintf 'emulated webcam<N> none\\n' >&2\n",
           { mode: 0o755 },
         );
+        // SCIENT-FORK:START — Android needs a complete SDK, built from the same stubs.
+        const sdk = NodePath.join(home, "android-sdk");
+        await completeSdk(sdk, "exit 0");
+        await NodeFSP.copyFile(NodePath.join(bin, "emulator"), NodePath.join(sdk, "emulator/emulator"));
+        // SCIENT-FORK:END
         const root = NodePath.join(home, ".t3/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
         const agentDir = NodePath.join(root, `tools/agent-device@${AGENT_DEVICE_VERSION}`);
@@ -222,7 +227,8 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
               HOME: home,
               PATH: `${bin}:${process.env.PATH}`,
               SERVE_EMU_FFMPEG: NodePath.join(home, "missing-ffmpeg"),
-              ANDROID_HOME: "",
+              // SCIENT-FORK: the SSH shell setup chooses ANDROID_HOME before the script runs.
+              ANDROID_HOME: sdk,
               EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: "-memory 4096",
             },
           });

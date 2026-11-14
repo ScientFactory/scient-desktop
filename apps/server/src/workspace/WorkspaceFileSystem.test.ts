@@ -635,7 +635,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           contents: alreadyPrefixed,
           expectedRevision: saved.revision,
         });
-        expect(yield* fs.readFileString(path.join(cwd, "bom.ts"))).toBe(alreadyPrefixed);
+        // Compare bytes: decoding to a string drops a leading BOM.
+        expect([...(yield* fs.readFile(path.join(cwd, "bom.ts")))]).toEqual([
+          ...new TextEncoder().encode(alreadyPrefixed),
+        ]);
       }),
     );
     // SCIENT-FORK:END
