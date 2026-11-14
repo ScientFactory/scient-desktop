@@ -8,7 +8,6 @@ function thread(overrides: Partial<RestartThread> = {}): RestartThread {
     blockedOnThreadWait: false,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
-    pendingSubagentRequest: null,
     pendingBackgroundTasks: [],
     ...overrides,
   };
@@ -53,6 +52,27 @@ describe("threadBlocksUpdateRestart", () => {
     expect(threadBlocksUpdateRestart(thread({ runtime: running, blockedOnThreadWait: true }))).toBe(
       false,
     );
+  });
+
+  it("blocks for a running turn whose subagent or side chat asks something", () => {
+    // The shell copies a child's request onto its parent; the parent's own turn keeps going.
+    const parent = {
+      ...thread({ runtime: runtime("running") }),
+      pendingSubagentRequest: "approval",
+    };
+    expect(threadBlocksUpdateRestart(parent as RestartThread)).toBe(true);
+  });
+
+  it("blocks for awaited work even while a question is open", () => {
+    expect(
+      threadBlocksUpdateRestart(
+        thread({
+          runtime: runtime("idle"),
+          hasPendingUserInput: true,
+          pendingBackgroundTasks: [task("command", { awaited: true })],
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("does not block for a pull request watch or a monitor", () => {

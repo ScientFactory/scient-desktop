@@ -7,18 +7,15 @@ export type RestartThread = Pick<
   | "blockedOnThreadWait"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
-  | "pendingSubagentRequest"
   | "pendingBackgroundTasks"
 >;
 
 /**
- * Whether restarting this app would cut off work this thread's agent is doing. An agent waiting
- * on you, on another thread, or on a pull request or monitor is not working; it continues after
- * the restart. Work it started and waits on (a build, a subagent) would have to start again.
+ * Whether a restart would cut off this thread's work. Awaited work blocks even while a question is
+ * open; waiting on the user, another thread, a PR watch or a monitor does not. A child's request
+ * shown on this thread does not stop its own turn, so it is not counted as waiting.
  */
 export function threadBlocksUpdateRestart(thread: RestartThread): boolean {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
-  if (thread.pendingSubagentRequest != null) return false;
   const holdsWork = thread.pendingBackgroundTasks.some(
     (task) =>
       !isPullRequestWatchTask(task) &&
@@ -27,6 +24,7 @@ export function threadBlocksUpdateRestart(thread: RestartThread): boolean {
         (task.kind === "command" && task.awaited === true)),
   );
   if (holdsWork) return true;
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   const status = thread.runtime?.status;
   const running =
     status === "preparing" || status === "queued" || status === "starting" || status === "running";
