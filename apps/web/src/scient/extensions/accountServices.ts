@@ -111,8 +111,11 @@ export interface AccountServiceRoute {
   readonly label: string;
   /** ChatGPT apps reach Codex and Scient Agent; claude.ai connectors reach Claude. */
   readonly family: "chatgpt" | "claude";
-  /** `off`: the agent has it but the person turned it off there. */
-  readonly state: "connected" | "connect" | "sign-in" | "off";
+  /**
+   * `off`: the agent has it but the person turned it off there. `checking`: the agent's
+   * inventory is not read yet, so nothing is claimed.
+   */
+  readonly state: "connected" | "connect" | "sign-in" | "off" | "checking";
   /** Why the agent does not have it yet. */
   readonly reason?: string;
   /** The page that connects it, or manages it once connected. */
@@ -159,6 +162,19 @@ function codexApp(provider: ServerProvider, service: AccountService): "on" | "of
  * account (by email) speaks for it too: apps belong to the account, not the agent.
  */
 export function accountServiceRoutes(
+  service: AccountService,
+  providers: ReadonlyArray<ServerProvider>,
+  /** False before the agents' inventories are read: an agent without evidence is `checking`. */
+  inventoriesRead = true,
+): ReadonlyArray<AccountServiceRoute> {
+  return accountServiceRoutesFromInventory(service, providers).map((route) =>
+    !inventoriesRead && route.state === "connect"
+      ? { ...route, state: "checking", reason: "Checking its account…" }
+      : route,
+  );
+}
+
+function accountServiceRoutesFromInventory(
   service: AccountService,
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<AccountServiceRoute> {

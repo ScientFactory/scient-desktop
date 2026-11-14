@@ -1,4 +1,5 @@
 import { CheckIcon, ExternalLinkIcon, PlusIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useRef } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -34,8 +35,12 @@ function useAccountService(service: AccountService) {
   const { environmentId, canWrite, providers, providerInventory } = useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   const waiting = useRef(false);
-  const known = providerInventory.phase === "ready" ? providerInventory.providers : providers;
-  const routes = accountServiceRoutes(service, known);
+  const read = providerInventory.phase === "ready";
+  const routes = accountServiceRoutes(
+    service,
+    read ? providerInventory.providers : providers,
+    read,
+  );
   const step = nextAccountServiceStep(routes);
   useWindowFocusRefresh(() => {
     if (!waiting.current) return;
@@ -118,7 +123,33 @@ const ROUTE_STATE_TEXT = {
   connect: "Not connected",
   "sign-in": "Sign-in needed",
   off: "Off in Codex",
+  checking: "Checking…",
 };
+
+/** What a person can do for one agent: connect on the provider's page, or sign the agent in. */
+function RouteAction({
+  route,
+  open,
+}: {
+  readonly route: ReturnType<typeof accountServiceRoutes>[number];
+  readonly open: (page: string) => void;
+}) {
+  if (route.state === "connect")
+    return (
+      <Button variant="ghost-primary" size="sm" onClick={() => open(route.page)}>
+        {route.family === "chatgpt" ? "Connect in ChatGPT" : "Connect on claude.ai"}
+      </Button>
+    );
+  if (route.state === "sign-in")
+    return (
+      <Button variant="ghost-muted" size="sm" render={<Link to="/settings/providers" />}>
+        Sign in
+      </Button>
+    );
+  return (
+    <span className="shrink-0 text-xs text-muted-foreground">{ROUTE_STATE_TEXT[route.state]}</span>
+  );
+}
 
 function AccountServiceDetail({ service }: { readonly service: AccountService }) {
   const { routes, step, audience, connect, open } = useAccountService(service);
@@ -132,7 +163,9 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
           name={service.name}
           tagline={service.tagline}
           actions={
-            step ? (
+            routes.some((route) => route.state === "checking") ? (
+              <span className="text-sm text-muted-foreground">Checking your agents…</span>
+            ) : step ? (
               <PrimaryAction
                 icon={PlusIcon}
                 disabled={connect === undefined}
@@ -174,9 +207,7 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
                       : route.reason}
                   </span>
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {ROUTE_STATE_TEXT[route.state]}
-                </span>
+                <RouteAction route={route} open={open} />
               </CardRow>
             ))}
           </div>

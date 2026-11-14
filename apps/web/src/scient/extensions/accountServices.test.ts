@@ -81,6 +81,11 @@ describe("account services", () => {
       { instanceId: claude(false).instanceId, reason: "Connect Gmail on claude.ai" },
     ]);
 
+    // Before the agents are read nothing is claimed and nothing is offered.
+    const unread = accountServiceRoutes(gmail, [scient(false), codex, claude(false)], false);
+    expect(unread.map((route) => route.state)).toEqual(["checking", "checking", "checking"]);
+    expect(nextAccountServiceStep(unread)).toBeUndefined();
+
     const all = accountServiceRoutes(gmail, [scient(true), codex, claude(true)]);
     expect(nextAccountServiceStep(all)).toBeUndefined();
   });
