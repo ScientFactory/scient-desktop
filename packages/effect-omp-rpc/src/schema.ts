@@ -242,6 +242,8 @@ export const OmpRpcEvent = Schema.Struct({
   usage: maybeUnknown,
   // SCIENT-FORK: Scient Agent's confirmed prompt-cache entry, for idle compaction.
   promptCache: maybeUnknown,
+  // SCIENT-FORK: goal_updated carries the goal the thread shows.
+  goal: maybeUnknown,
 });
 export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
@@ -598,6 +600,8 @@ const OmpLifecycleEvent = Schema.Struct({
   result: maybeUnknown,
   /** thinking_level_changed: the effective level; absent when the model has none. */
   thinkingLevel: maybeString,
+  // SCIENT-FORK: goal_updated carries the goal the thread shows.
+  goal: maybeUnknown,
 });
 export type OmpLifecycleEvent = typeof OmpLifecycleEvent.Type;
 

@@ -393,6 +393,8 @@ export function makeNativeSessionAdapterV2(
           readonly afterWake: number;
         }[] = [];
         let backgroundPending = false;
+        // SCIENT-FORK: a native turn has started and not yet ended (OMP reports both).
+        let nativeTurnOpen = false;
         let wakeOffered = false;
         const wake: {
           readonly update: NativeSessionUpdate;
@@ -873,6 +875,9 @@ export function makeNativeSessionAdapterV2(
           eventPermit.withPermit(
             Effect.gen(function* () {
               if (budget.closed) return;
+              // SCIENT-FORK: a native turn has started and not yet ended (OMP reports both).
+              if (update.type === "continuation-started") nativeTurnOpen = true;
+              else if (update.type === "terminal") nativeTurnOpen = false;
               if (update.type === "native-thread" && !thread) return;
               if (
                 options.eventQueueLimits &&
@@ -1971,7 +1976,8 @@ export function makeNativeSessionAdapterV2(
                 yield* onUpdate(event.update);
               }
               for (const pending of presentation) yield* onUpdate(pending.update);
-              if (active && !backgroundPending)
+              // SCIENT-FORK: a turn the agent is still running ends with its own terminal.
+              if (active && !backgroundPending && !nativeTurnOpen)
                 yield* finish({ type: "terminal", status: "completed" });
             } else {
               for (const pending of presentation) yield* onUpdate(pending.update);

@@ -1101,6 +1101,25 @@ it.layer(TestLayer)("NativeSessionAdapterV2", (it) => {
     ),
   );
 
+  it.effect("keeps a turn the agent started open until the agent ends it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        yield* h.publish({ type: "continuation-started" });
+        yield* h.publish({ type: "text", id: "goal", delta: "Created notes" });
+        assert.equal(h.wakes(), 1);
+        yield* h.startWake;
+        yield* h.publish({ type: "text", id: "goal", delta: ".txt" });
+        yield* h.publish({ type: "terminal", status: "completed" });
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const replies = h.recorded.flatMap((event) =>
+          event.type === "message.updated" ? [event.message.text] : [],
+        );
+        assert.equal(replies.at(-1), "Created notes.txt");
+      }),
+    ),
+  );
+
   it.effect.each(["completed", "failed"] as const)(
     "releases a %s retry owner after updating its original turn during a newer turn",
     (status) =>
