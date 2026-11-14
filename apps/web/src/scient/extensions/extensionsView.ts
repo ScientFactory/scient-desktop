@@ -448,7 +448,9 @@ export function audienceLabel(audience: ExtensionAudience): string {
       return `${audience.label} only`;
     case "account":
       return audience.connected.length === 0
-        ? "Not connected yet"
+        ? audience.pending.length === 0
+          ? "Through your ChatGPT or Claude account"
+          : "Not connected yet"
         : `Works with ${listLabels([...new Set(audience.connected.map((agent) => agent.label))])}`;
   }
 }

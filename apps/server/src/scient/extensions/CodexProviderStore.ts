@@ -737,6 +737,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
             .map((app): ProviderStoreApp => {
               const url = codexAppInstallUrl(app.installUrl);
               return {
+                id: app.id,
                 name: app.name,
                 connected: app.isAccessible === true,
                 enabled: app.isEnabled !== false,

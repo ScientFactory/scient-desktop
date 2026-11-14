@@ -53,22 +53,24 @@ function useAccountService(service: AccountService) {
   return {
     routes,
     step,
-    audience: accountServiceAudience(routes),
+    // Before the agents' inventories are read (Discover reads none), nothing is claimed.
+    audience:
+      providerInventory.phase === "ready"
+        ? accountServiceAudience(routes)
+        : ({ layer: "account", connected: [], pending: [] } as const),
     connect: step && canWrite ? () => open(step.page) : undefined,
     open,
   };
 }
 
 export function AccountServiceItem({ service }: { readonly service: AccountService }) {
-  const { routes, audience, connect } = useAccountService(service);
-  const connected = routes.some((route) => route.state === "connected");
+  const { audience, connect } = useAccountService(service);
   return (
     <ExtensionRow
       target={{ kind: "account", serviceId: service.id }}
       name={service.name}
       audience={audience}
       tagline={service.tagline}
-      status={connected ? null : "Not connected"}
       trailing={
         connect ? (
           <Button
