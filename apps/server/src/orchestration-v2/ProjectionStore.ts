@@ -115,6 +115,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 // SCIENT-FORK:START
 import * as Option from "effect/Option";
+import { isOwnGuestShare } from "../scient/guest/ownGuestShare.ts";
 // SCIENT-FORK:END
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
@@ -9563,13 +9564,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const findGuestShareThreadId = Effect.fn("ProjectionStore.findGuestShareThreadId")(function* (
       shareId: GuestShareId,
     ) {
-      const rows = yield* sql<{ readonly thread_id: string }>`
-        SELECT thread_id
+      // SCIENT-FORK:START copied-guest-share — a copied share never wins the lookup.
+      const rows = yield* sql<{
+        readonly thread_id: string;
+        readonly created_at: string;
+        readonly share_created_at: string;
+      }>`
+        SELECT thread_id,
+          json_extract(payload_json, '$.createdAt') AS created_at,
+          json_extract(payload_json, '$.guestShare.createdAt') AS share_created_at
         FROM orchestration_v2_projection_threads
         WHERE json_extract(payload_json, '$.guestShare.id') = ${shareId}
-        LIMIT 1
       `;
-      return rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id);
+      const owner = rows.find((row) =>
+        isOwnGuestShare({
+          threadCreatedAtMs: Date.parse(row.created_at),
+          shareCreatedAt: row.share_created_at,
+        }),
+      );
+      return owner === undefined ? null : ThreadId.make(owner.thread_id);
+      // SCIENT-FORK:END
     }, Effect.mapError(shellSnapshotReadError));
 
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(

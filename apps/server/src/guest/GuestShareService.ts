@@ -59,6 +59,9 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
+// SCIENT-FORK:START copied-guest-share
+import { isOwnGuestShare } from "../scient/guest/ownGuestShare.ts";
+// SCIENT-FORK:END
 import {
   classifyGuestUploads,
   GUEST_UPLOAD_HEADER_BYTES,
@@ -328,6 +331,12 @@ const make = Effect.gen(function* () {
       thread.deletedAt !== null ||
       DateTime.toEpochMillis(now) >= Date.parse(share.expiresAt) ||
       (kind === "session" && share.guestName === null) ||
+      // SCIENT-FORK:START copied-guest-share
+      !isOwnGuestShare({
+        threadCreatedAtMs: DateTime.toEpochMillis(thread.createdAt),
+        shareCreatedAt: share.createdAt,
+      }) ||
+      // SCIENT-FORK:END
       (yield* connectHostname) !== share.host
     ) {
       return yield* inactive;

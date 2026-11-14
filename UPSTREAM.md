@@ -2297,9 +2297,19 @@ T3's `makeSubagentChildThread` (`packages/provider-core/src/server/subagentProje
 subagent from a copy of its parent thread. Delegated tasks and Claude's and Codex's native
 subagents all use it. A copy carried Scient's own thread state into every subagent: a subagent of a
 forked conversation claimed to be that fork, so `delegate_task` from a fork failed and fork, import,
-rollback and usage-limit readers misjudged the subagent. The `derived-thread-fields` seam spreads
-`SCIENT_DERIVED_THREAD_RESETS` (`scientDerivedThread.ts`) after the copy. The same seam resets the
-four T3 fields T3's own fork already resets (`delegatedFrom`, `opens`, `activeOrderKey`,
-`lastSnoozeWakeAt`); that part is offered to T3, and the seam lines give way to T3's code once T3
-has it. The field table in `scient-fork/DelegatedTaskFromFork.test.ts` decides every thread field
-for subagents, so an alignment that adds one fails typecheck until it is classified.
+rollback and usage-limit readers misjudged the subagent. `SCIENT_DERIVED_THREAD_RESETS`
+(`scientDerivedThread.ts`) is spread after the copy inside the `derived-thread-fields` seam. It also
+resets the parent's opens, list position and snooze wake, as T3's own fork does. The seam's other
+line drops `delegatedFrom`, matching T3's open pingdotgg/t3code#30334 word for word; once T3 merges
+it, that line gives way to T3's. The field table in `scient-fork/DelegatedTaskFromFork.test.ts`
+decides every thread field for subagents, so an alignment that adds one fails typecheck until it
+is classified.
+
+## Copied guest links
+
+Forks made before #914 copied their source's `guestShare`, so an invite to the source could open
+the fork. The `copied-guest-share` seams in T3's `ProjectionStore.findGuestShareThreadId` and
+`GuestShareService.authorize` accept a share only on a thread created before it
+(`scient/guest/ownGuestShare.ts`): a share made for a thread always comes after the thread. They
+also protect forks already in users' databases, whose events still carry the copy. T3 has no copy
+path, so it needs no such check.

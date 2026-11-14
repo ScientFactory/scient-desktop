@@ -104,12 +104,6 @@ export function makeSubagentChildThread(input: {
     // A guest link belongs to the thread it was made for.
     guestShare: null,
     lastVisitedAt: null,
-    // SCIENT-FORK:START derived-thread-fields
-    // A subagent is a new thread; it does not inherit the parent's opens or list position.
-    opens: null,
-    activeOrderKey: null,
-    lastSnoozeWakeAt: null,
-    // SCIENT-FORK:END
     deletedAt: null,
   };
 }
