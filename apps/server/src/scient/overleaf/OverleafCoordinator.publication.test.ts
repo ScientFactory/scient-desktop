@@ -508,6 +508,68 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, publication
     );
   });
 
+  it.live("finds the retention folder once for a sync that applies and sends", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A", "other.tex": "O" },
+          remote: { "main.tex": "A", "other.tex": "O2" },
+        });
+        let located = 0;
+        const coordinator = yield* w.coordinatorWith({
+          ...w.store,
+          prepareRetention: (input) => {
+            located += 1;
+            return w.store.prepareRetention(input);
+          },
+        });
+        yield* write(w.folder, { "main.tex": "A, edited here" });
+        const prepared = yield* coordinator.prepare({ connectionId: CONNECTION });
+        if (prepared._tag !== "review") return yield* Effect.die(prepared);
+        located = 0;
+        expect(
+          yield* coordinator.confirm({
+            connectionId: CONNECTION,
+            requestId: "request-1",
+            reviewId: prepared.review.id,
+            digest: prepared.review.digest,
+            acknowledgements: prepared.review.binding.acknowledgements,
+          }),
+        ).toMatchObject({
+          adopted: { outcome: "complete" },
+          publication: { _tag: "accepted", attemptNumber: 1 },
+        });
+        expect(located).toBe(1);
+      }),
+    ),
+  );
+
+  it.live("never applies into a retention folder replaced after the sync found it", () => {
+    let vault = "";
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          at: (point) =>
+            point === "linked"
+              ? Effect.promise(async () => {
+                  await NodeFSP.rename(vault, `${vault}-replaced`);
+                  await NodeFSP.mkdir(vault, { mode: 0o700 });
+                })
+              : Effect.void,
+        });
+        vault = w.vault;
+        expect(yield* Effect.flip(w.sync())).toMatchObject({
+          _tag: "OverleafRetentionUnavailableError",
+          reason: "vault-replaced",
+        });
+        expect(yield* read(w.folder, "main.tex")).toBe("A");
+      }),
+    );
+  });
+
   it.live("records a send Git gave up on at Overleaf's ref advertisement as never sent", () =>
     run(
       Effect.gen(function* () {

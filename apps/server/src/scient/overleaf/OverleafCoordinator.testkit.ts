@@ -378,6 +378,8 @@ export const world = (input: {
       coordinatorWith,
       volumeUuid,
       stateRoot,
+      /** The connection's retention folder. */
+      vault: retention.directory,
       checkout,
       folder,
       repo,

@@ -367,6 +367,9 @@ export type OverleafRecoverResult =
     };
 
 type FetchError = OverleafRepository.OverleafRepositoryError | OverleafGitError;
+type Retention = Effect.Success<
+  ReturnType<OverleafStateStore.OverleafStateStore["Service"]["prepareRetention"]>
+>;
 /** Everything a coordinator operation can fail with; business outcomes are results instead. */
 export type OverleafCoordinatorError =
   | OverleafFilesystemError
@@ -774,6 +777,29 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     publicationHelper: options.publicationHelper,
     expected: connection.retention.vaultIdentity,
   });
+  /** The connection's retention folder, found and verified (`OverleafRetentionVault.ts`). */
+  const retentionOf = (connection: OverleafConnectionDocument) =>
+    store.prepareRetention(retentionInput(connection));
+  /**
+   * The folder an operation found earlier, while it stands unchanged at its place;
+   * otherwise it is found again. The vault leaves this check before each use to us.
+   */
+  const retentionAgain = (connection: OverleafConnectionDocument, found: Retention) =>
+    Effect.promise(() =>
+      platformFileIdentity
+        .directory(
+          found.directory,
+          async () => found.identity.volume,
+          options.publicationHelper ?? undefined,
+        )
+        .catch(() => null),
+    ).pipe(
+      Effect.flatMap((identity) =>
+        identity !== null && platformFileIdentity.equal(identity, found.identity)
+          ? Effect.succeed(found)
+          : retentionOf(connection),
+      ),
+    );
 
   /** The checkout and folder are still the physical folders the connection recorded. */
   const verifyFolders = Effect.fn("OverleafCoordinator.verifyFolders")(function* (
@@ -1305,14 +1331,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   const leaseRoom = Effect.fn("OverleafCoordinator.leaseRoom")(function* (
     connection: OverleafConnectionDocument,
     plan: WorkspaceApplier.WorkspaceApplyPlan,
+    retention: Retention,
   ) {
-    const retention = yield* store.prepareRetention({
-      environmentId: connection.environmentId,
-      connectionId: connection.connectionId,
-      checkoutRoot: connection.checkout.canonicalRoot,
-      publicationHelper: options.publicationHelper,
-      expected: connection.retention.vaultIdentity,
-    });
     yield* Effect.try({
       try: () =>
         assertOverleafApplyPaths(
@@ -1337,15 +1357,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     repo: string,
     connection: OverleafConnectionDocument,
     plan?: OverleafReview["applyPlan"],
+    found?: Retention,
   ) {
     const link = connection.activeApply!;
-    const retention = yield* store.prepareRetention({
-      environmentId: connection.environmentId,
-      connectionId: connection.connectionId,
-      checkoutRoot: connection.checkout.canonicalRoot,
-      publicationHelper: options.publicationHelper,
-      expected: connection.retention.vaultIdentity,
-    });
+    const retention =
+      found === undefined
+        ? yield* retentionOf(connection)
+        : yield* retentionAgain(connection, found);
     const result = yield* applier.apply({
       cwd: folderOf(connection),
       applicationDirectory: retention.directory,
@@ -1619,6 +1637,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     readonly review: OverleafReview;
     readonly adopted: OverleafAdopted;
     readonly applied: WorkspaceApplier.WorkspaceApplyResult;
+    readonly retention: Retention;
   }) {
     const { repo, review, applied } = input;
     const connection = yield* readActive(input.connectionId);
@@ -1697,7 +1716,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     // A program still holding a file this apply replaced may have written into its kept
     // copy since adoption: newer work than the candidate. Each copy is checked again; a
     // change is recorded and stops the send.
-    const vault = yield* vaultOf(connection);
+    const vault = (yield* retentionAgain(connection, input.retention)).directory;
     const rechecked = yield* Effect.forEach(connection.retention.copies, (copy) =>
       copy.applyId !== input.adopted.applyId || copy.state !== "releasable"
         ? Effect.succeed(copy)
@@ -2048,7 +2067,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   connectionId: input.connectionId,
                   limit: "conflict-group",
                 });
-              if (!(yield* leaseRoom(connection, plan)))
+              const retention = yield* retentionOf(connection);
+              if (!(yield* leaseRoom(connection, plan, retention)))
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "folder-depth",
@@ -2102,7 +2122,12 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               yield* replaceWithPins(repo, connection, withLink);
               linked = true;
               yield* hook(options, "linked");
-              const { adopted, applied } = yield* runLinked(repo, withLink, review.applyPlan);
+              const { adopted, applied } = yield* runLinked(
+                repo,
+                withLink,
+                review.applyPlan,
+                retention,
+              );
               return {
                 _tag: "applied" as const,
                 adopted,
@@ -2114,6 +2139,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   review,
                   adopted,
                   applied,
+                  retention,
                 }),
                 verified: { keys: section.keys, epoch: section.epoch },
               };
@@ -2167,10 +2193,6 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     ),
   );
 
-  const vaultOf = (connection: OverleafConnectionDocument) =>
-    store
-      .prepareRetention(retentionInput(connection))
-      .pipe(Effect.map((retention) => retention.directory));
   const revisionOf = (read: FileRead) => (read._tag === "read" ? read.revision : null);
 
   const keptCopies: OverleafCoordinator["Service"]["keptCopies"] = Effect.fn(
@@ -2271,7 +2293,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   reason: "recovery-required",
                 });
               yield* verifyFolders(connection);
-              const vault = yield* vaultOf(connection);
+              const retention = yield* retentionOf(connection);
+              const vault = retention.directory;
               // The record that kept this version: its main one, or another it names.
               const copy = connection.retention.copies.find(
                 (entry) =>
@@ -2364,7 +2387,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                 markerPaths: [],
               } satisfies WorkspaceApplier.WorkspaceApplyPlan;
               // Its one write must fit a native lease too, checked before anything is recorded.
-              if (!(yield* leaseRoom(connection, plan)))
+              if (!(yield* leaseRoom(connection, plan, retention)))
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "folder-depth",
@@ -2398,7 +2421,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               registry.invalidate(input.connectionId);
               return {
                 _tag: "restored" as const,
-                adopted: (yield* runLinked(repo, withLink, plan)).adopted,
+                adopted: (yield* runLinked(repo, withLink, plan, retention)).adopted,
               };
             }),
           );
@@ -2783,7 +2806,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
                   connectionId: input.connectionId,
                   limit: "conflict-group",
                 });
-              if (!(yield* leaseRoom(connection, applyPlan)))
+              const retention = yield* retentionOf(connection);
+              if (!(yield* leaseRoom(connection, applyPlan, retention)))
                 return yield* new OverleafRetainedLimitError({
                   connectionId: input.connectionId,
                   limit: "folder-depth",
@@ -2825,7 +2849,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
               registry.invalidate(input.connectionId);
               return {
                 ...summary,
-                adopted: (yield* runLinked(repo, withLink, applyPlan)).adopted,
+                adopted: (yield* runLinked(repo, withLink, applyPlan, retention)).adopted,
               };
             }),
           );
