@@ -6,6 +6,7 @@
 import {
   type ScientConnectHostAuthorizeInput,
   type ScientConnectHostBlock,
+  ScientConnectHostSaveError,
   type ScientConnectHostStatus,
 } from "@t3tools/contracts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -21,10 +22,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpServer from "effect/http/HttpServer";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -33,6 +37,7 @@ import * as CloudLink from "../../cloud/CloudLink.ts";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig.ts";
 import { relayRetryAfterMillis } from "../../cloud/relayResponse.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
 import * as ManagedLimits from "../../policy/managedLimits.ts";
 import * as ServerActivation from "../../serverActivation.ts";
@@ -57,10 +62,15 @@ export class ScientConnectHost extends Context.Service<
     /** A window lends a token. Only the desktop app's own session may (`desktop-bootstrap`). */
     readonly authorize: (
       input: ScientConnectHostAuthorizeInput,
-    ) => Effect.Effect<ScientConnectHostStatus>;
-    readonly turnOff: Effect.Effect<ScientConnectHostStatus>;
-    /** Whether the person turned it off here; late links from older paths must not apply. */
-    readonly isOff: Effect.Effect<boolean>;
+    ) => Effect.Effect<ScientConnectHostStatus, ScientConnectHostSaveError>;
+    /** With a token, also removes this computer from the account. */
+    readonly turnOff: (input: {
+      readonly token?: string;
+    }) => Effect.Effect<ScientConnectHostStatus, ScientConnectHostSaveError>;
+    /** Runs a link from an older path only while on, serialized with Off; none when off. */
+    readonly whileOn: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<Option.Option<A>, E, R>;
   }
 >()("t3/scient/connect/ScientConnectHost") {}
 
@@ -81,7 +91,7 @@ const messageOf = (cause: unknown): string =>
   cause instanceof Error && cause.message ? cause.message : "Scient Connect could not be set up.";
 
 /** What to do after a failed attempt: wait and retry, ask for a new token, or wait for the person. */
-function classifyFailure(cause: unknown): Failure {
+function classifyFailure(cause: unknown, accountId: string): Failure {
   const tagged = cause as { readonly _tag?: string; readonly reason?: string } | null;
   switch (tagged?._tag) {
     case "RelayClientInstallError": {
@@ -101,7 +111,10 @@ function classifyFailure(cause: unknown): Failure {
         readonly description: string;
       };
       if (relay.linkLimit !== undefined) {
-        return { kind: "block", block: { reason: "limit", maxTunnels: relay.linkLimit } };
+        return {
+          kind: "block",
+          block: { reason: "limit", maxTunnels: relay.linkLimit, accountId },
+        };
       }
       if (relay.rejection === "unavailable") {
         const afterMillis = relayRetryAfterMillis(cause);
@@ -114,7 +127,10 @@ function classifyFailure(cause: unknown): Failure {
       if (relay.rejection === "unauthorized") {
         return { kind: "reauthorize", reason: relay.description };
       }
-      return { kind: "block", block: { reason: "failed", message: relay.description } };
+      return {
+        kind: "block",
+        block: { reason: "failed", message: relay.description, accountId },
+      };
     }
     case "ManagedPolicyRefusedError":
       return { kind: "block", block: { reason: "policy", message: messageOf(cause) } };
@@ -124,7 +140,7 @@ function classifyFailure(cause: unknown): Failure {
     case "PlatformError":
       return { kind: "retry", reason: messageOf(cause) };
     default:
-      return { kind: "block", block: { reason: "failed", message: messageOf(cause) } };
+      return { kind: "block", block: { reason: "failed", message: messageOf(cause), accountId } };
   }
 }
 
@@ -161,22 +177,27 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
       authorize: Effect.fn("ScientConnectHost.authorizeUnmanaged")(function* () {
         return yield* SubscriptionRef.get(statusRef);
       }),
-      turnOff: SubscriptionRef.get(statusRef),
-      isOff: Effect.succeed(false),
+      turnOff: Effect.fn("ScientConnectHost.turnOffUnmanaged")(function* () {
+        return yield* SubscriptionRef.get(statusRef);
+      }),
+      whileOn: Effect.asSome,
     });
   }
 
   const cloudLink = yield* CloudLink.CloudLink;
   const relayClient = yield* RelayClient.RelayClient;
   const settings = yield* Effect.serviceOption(ServerSettingsService);
+  const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+  const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
   const scope = yield* Scope.Scope;
   const attemptsScope = yield* Scope.fork(scope, "sequential");
   const lock = yield* Semaphore.make(1);
 
+  // An unreadable record may hide an Off, so it keeps setup from starting until Turn on.
   const off = yield* Ref.make(
     yield* secrets.get(SCIENT_CONNECT_OFF_SECRET).pipe(
       Effect.map(Option.isSome),
-      Effect.orElseSucceed(() => false),
+      Effect.orElseSucceed(() => true),
     ),
   );
   const generation = yield* Ref.make(0);
@@ -253,12 +274,16 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
     if (linked.connected) {
       return yield* publish({ phase: "connected", off: false, linkedAccountId: linked.accountId });
     }
+    // A new request only when setup starts waiting, so a recheck does not ask windows again.
     const current = yield* SubscriptionRef.get(statusRef);
     yield* publish({
       phase: "needs-authorization",
       off: false,
       linkedAccountId: linked.accountId,
-      authorizationRequest: current.authorizationRequest + 1,
+      authorizationRequest:
+        current.phase === "needs-authorization"
+          ? current.authorizationRequest
+          : current.authorizationRequest + 1,
     });
   });
 
@@ -329,7 +354,7 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
       const cause = outcome.cause;
       const error = Option.getOrUndefined(Exit.findErrorOption(outcome));
       if (error === undefined) return yield* Effect.failCause(cause);
-      const failure = classifyFailure(error);
+      const failure = classifyFailure(error, accountId);
       yield* Effect.logWarning("Scient Connect setup attempt failed", {
         kind: failure.kind,
         error: messageOf(error),
@@ -341,7 +366,7 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
       if (failure.kind === "reauthorize") {
         unauthorized += 1;
         if (unauthorized >= MAX_UNAUTHORIZED_ATTEMPTS) {
-          yield* Ref.set(block, { reason: "failed", message: failure.reason });
+          yield* Ref.set(block, { reason: "failed", message: failure.reason, accountId });
           return;
         }
       }
@@ -372,7 +397,9 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
           : Effect.logWarning("Scient Connect setup stopped", { cause }).pipe(
-              Effect.andThen(Ref.set(block, { reason: "failed", message: messageOf(cause) })),
+              Effect.andThen(
+                Ref.set(block, { reason: "failed", message: messageOf(cause), accountId }),
+              ),
             ),
       ),
       // Never take the lock here: Off and Turn on interrupt attempts while holding it.
@@ -409,13 +436,27 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
         }
         if (input.turnOn) {
           if (yield* Ref.get(off)) {
-            yield* secrets.remove(SCIENT_CONNECT_OFF_SECRET).pipe(Effect.ignore);
+            yield* secrets.remove(SCIENT_CONNECT_OFF_SECRET).pipe(
+              Effect.mapError(
+                () =>
+                  new ScientConnectHostSaveError({
+                    message:
+                      "Scient couldn't save that Scient Connect is on for this computer, so it stays off. Try again.",
+                  }),
+              ),
+            );
             yield* Ref.set(off, false);
           }
           yield* Ref.set(block, null);
         }
         if (yield* Ref.get(off)) return null;
-        if ((yield* Ref.get(block)) !== null) return null;
+        const blocked = yield* Ref.get(block);
+        // Another account signing in starts over; a block about this computer stays.
+        if (blocked !== null && "accountId" in blocked && blocked.accountId !== input.accountId) {
+          yield* Ref.set(block, null);
+        } else if (blocked !== null) {
+          return null;
+        }
         const token: LentToken = {
           accountId: input.accountId,
           token: input.token,
@@ -442,19 +483,57 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
         return yield* startAttempt(input.accountId);
       }),
     );
-    if (started !== null) yield* Fiber.await(started.fiber);
+    // Done, or retrying in the background: the status stream reports the rest.
+    if (started !== null) {
+      yield* Effect.raceFirst(
+        Fiber.await(started.fiber),
+        SubscriptionRef.changes(statusRef).pipe(
+          Stream.filter((status) => status.phase === "waiting-to-retry"),
+          Stream.runHead,
+        ),
+      );
+    }
     return yield* SubscriptionRef.get(statusRef);
   });
 
-  const turnOff = lock
-    .withPermits(1)(
+  /** Best effort: removes this computer's record from the account, as the CLI's unlink does. */
+  const removeFromAccount = Effect.fn("ScientConnectHost.removeFromAccount")(
+    function* (token: string, relayUrl: string) {
+      if (Option.isNone(environment) || Option.isNone(httpClient)) return;
+      const environmentId = yield* environment.value.getEnvironmentId;
+      yield* HttpClientRequest.delete(
+        `${relayUrl}/v1/client/environment-links/${encodeURIComponent(environmentId)}`,
+      ).pipe(
+        HttpClientRequest.bearerToken(token),
+        httpClient.value.execute,
+        Effect.timeout("10 seconds"),
+      );
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Scient Connect could not remove this computer from the account", {
+        errors: Cause.prettyErrors(cause).map((error) => error.message),
+      }),
+    ),
+  );
+
+  const turnOff = Effect.fn("ScientConnectHost.turnOff")(function* (input: {
+    readonly token?: string;
+  }) {
+    const saved = yield* lock.withPermits(1)(
       Effect.gen(function* () {
-        yield* secrets.set(SCIENT_CONNECT_OFF_SECRET, OFF_BYTES).pipe(Effect.ignore);
+        // Off takes effect now even if it cannot be saved; the caller hears that it won't last.
+        const saved = yield* secrets.set(SCIENT_CONNECT_OFF_SECRET, OFF_BYTES).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
         yield* Ref.set(off, true);
         yield* Ref.set(block, null);
         yield* stopAttempt;
-        const linked = yield* linkedAccount;
-        if (linked.accountId !== null) {
+        const state = yield* cloudLink.linkState().pipe(Effect.option);
+        if (Option.isSome(state) && state.value.linked) {
+          if (input.token !== undefined && state.value.relayUrl !== null) {
+            yield* removeFromAccount(input.token, state.value.relayUrl);
+          }
           yield* cloudLink.unlink().pipe(
             Effect.andThen(stopCloudCopy),
             Effect.catch((cause) =>
@@ -465,9 +544,25 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
           );
         }
         yield* settle;
+        return saved;
       }),
-    )
-    .pipe(Effect.andThen(SubscriptionRef.get(statusRef)));
+    );
+    if (!saved) {
+      return yield* new ScientConnectHostSaveError({
+        message:
+          "Scient Connect is off now, but Scient couldn't save that, so it may turn on again after Scient restarts.",
+      });
+    }
+    return yield* SubscriptionRef.get(statusRef);
+  });
+
+  const whileOn = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        if (yield* Ref.get(off)) return Option.none<A>();
+        return Option.some(yield* effect);
+      }),
+    );
 
   // After activation, so a standby server never links: learn this server's address, drop a link
   // left behind by a failed Off, and ask signed-in windows for a token if setup is needed.
@@ -488,6 +583,10 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
           yield* settleIfIdle;
         }),
       );
+      // Notices changes made elsewhere: removed from the account, unlinked by another path.
+      yield* lock
+        .withPermits(1)(settleIfIdle)
+        .pipe(Effect.repeat(Schedule.spaced("30 seconds")), Effect.forkIn(attemptsScope));
     }),
   );
 
@@ -495,7 +594,7 @@ export const make = Effect.fn("ScientConnectHost.make")(function* (options: {
     status: SubscriptionRef.changes(statusRef),
     authorize,
     turnOff,
-    isOff: Ref.get(off),
+    whileOn,
   });
 });
 

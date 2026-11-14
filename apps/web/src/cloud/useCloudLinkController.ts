@@ -161,77 +161,81 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
     // Connect on and off, so Off holds and no window links around it. Preferences stay below.
     if (connectHost !== null) {
       const hostOn = !connectHost.off && connectHost.block?.reason !== "revoked";
-      if (desired.managedTunnel) {
-        if (
-          !hostOn ||
-          connectHost.phase !== "connected" ||
-          connectHost.linkedAccountId !== userId
-        ) {
-          const token = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
-          if (token._tag === "Failure" || !token.value || typeof userId !== "string") {
-            reportUpdateFailure(
-              token._tag === "Failure"
-                ? squashAtomCommandFailure(token)
-                : new Error("Sign in to Scient Connect before enabling this."),
-            );
-            return false;
-          }
-          const result = await authorizeHost({
-            environmentId,
-            input: { accountId: userId, token: token.value, turnOn: true },
-          });
-          refreshManagedTunnelUsage();
-          cloudLinkState.refresh();
-          if (result._tag === "Failure") {
-            if (!isAtomCommandInterrupted(result))
-              reportUpdateFailure(squashAtomCommandFailure(result));
-            return false;
-          }
-          const status = result.value;
-          if (status.phase === "blocked" && status.block?.reason === "limit") {
-            setTunnelLimit(status.block.maxTunnels);
-            return false;
-          }
-          if (status.phase !== "connected") {
-            reportUpdateFailure(
-              new Error(describeScientConnectHost(status, true) ?? "Scient Connect is not on yet."),
-            );
-            return false;
-          }
-        }
-      } else if (hostOn) {
-        const result = await turnOffHost({ environmentId, input: {} });
-        if (result._tag === "Failure") {
-          if (!isAtomCommandInterrupted(result))
-            reportUpdateFailure(squashAtomCommandFailure(result));
-          cloudLinkState.refresh();
-          return false;
-        }
-        // Off is remembered here; the unlink below also removes this computer from the account.
-      }
-      if (desired.managedTunnel) {
-        const prefResult = await updateEnvironmentPreferences({
-          target,
-          publishAgentActivity: desired.publish,
-          ...(desired.holdWebhooksWhileOffline === undefined
-            ? {}
-            : { holdWebhooksWhileOffline: desired.holdWebhooksWhileOffline }),
+      if (!desired.managedTunnel) {
+        // The server unlinks here and, with a token, removes the computer from the account, all
+        // under the same lock as Turn on, so a newer On from another window is never undone.
+        const token = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+        const result = await turnOffHost({
+          environmentId,
+          input: token._tag === "Success" && token.value ? { token: token.value } : {},
         });
-        if (prefResult._tag === "Failure") {
-          if (!isAtomCommandInterrupted(prefResult)) {
-            reportUpdateFailure(squashAtomCommandFailure(prefResult));
-          }
-          cloudLinkState.refresh();
-          return false;
-        }
+        refreshManagedTunnelUsage();
         cloudLinkState.refresh();
-        const refreshResult = await refreshRelayEnvironments();
-        if (refreshResult._tag === "Failure" && !isAtomCommandInterrupted(refreshResult)) {
-          reportUpdateFailure(squashAtomCommandFailure(refreshResult));
+        await refreshRelayEnvironments();
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            reportUpdateFailure(squashAtomCommandFailure(result));
+          }
           return false;
         }
         return true;
       }
+      if (!hostOn || connectHost.phase !== "connected" || connectHost.linkedAccountId !== userId) {
+        const token = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+        if (token._tag === "Failure" || !token.value || typeof userId !== "string") {
+          reportUpdateFailure(
+            token._tag === "Failure"
+              ? squashAtomCommandFailure(token)
+              : new Error("Sign in to Scient Connect before enabling this."),
+          );
+          return false;
+        }
+        const result = await authorizeHost({
+          environmentId,
+          input: { accountId: userId, token: token.value, turnOn: true },
+        });
+        refreshManagedTunnelUsage();
+        cloudLinkState.refresh();
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result))
+            reportUpdateFailure(squashAtomCommandFailure(result));
+          return false;
+        }
+        const status = result.value;
+        if (status.phase === "blocked" && status.block?.reason === "limit") {
+          setTunnelLimit(status.block.maxTunnels);
+          return false;
+        }
+        // Retrying in the background; Settings shows why and the switch stays usable.
+        if (status.phase === "waiting-to-retry") return false;
+        if (status.phase !== "connected") {
+          reportUpdateFailure(
+            new Error(describeScientConnectHost(status, true) ?? "Scient Connect is not on yet."),
+          );
+          return false;
+        }
+      }
+      const prefResult = await updateEnvironmentPreferences({
+        target,
+        publishAgentActivity: desired.publish,
+        ...(desired.holdWebhooksWhileOffline === undefined
+          ? {}
+          : { holdWebhooksWhileOffline: desired.holdWebhooksWhileOffline }),
+      });
+      if (prefResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(prefResult)) {
+          reportUpdateFailure(squashAtomCommandFailure(prefResult));
+        }
+        cloudLinkState.refresh();
+        return false;
+      }
+      cloudLinkState.refresh();
+      const refreshResult = await refreshRelayEnvironments();
+      if (refreshResult._tag === "Failure" && !isAtomCommandInterrupted(refreshResult)) {
+        reportUpdateFailure(squashAtomCommandFailure(refreshResult));
+        return false;
+      }
+      return true;
     }
     // SCIENT-FORK:END
     const wantsLink = desired.managedTunnel || desired.publish;

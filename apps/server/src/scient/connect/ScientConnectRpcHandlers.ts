@@ -5,6 +5,7 @@
 import {
   AuthRelayWriteScope,
   EnvironmentAuthorizationError,
+  type ScientConnectHostSaveError,
   type ScientConnectHostStatus,
   WS_METHODS,
   WsServerManagementRpcGroup,
@@ -25,10 +26,10 @@ const UNMANAGED: ScientConnectHostStatus = {
 };
 
 /** Servers composed without the host service (tests, older layers) answer "not managed here". */
-const withHost = <A>(
-  use: (host: ScientConnectHost["Service"]) => Effect.Effect<A>,
+const withHost = <A, E>(
+  use: (host: ScientConnectHost["Service"]) => Effect.Effect<A, E>,
   fallback: A,
-): Effect.Effect<A> =>
+): Effect.Effect<A, E> =>
   Effect.serviceOption(ScientConnectHost).pipe(
     Effect.flatMap(Option.match({ onNone: () => Effect.succeed(fallback), onSome: use })),
   );
@@ -61,8 +62,11 @@ export const makeScientConnectRpcHandlers = ({
       observeRpcEffect(
         WS_METHODS.scientConnectAuthorize,
         sessionSubject === "desktop-bootstrap"
-          ? withHost((host) => host.authorize(input), UNMANAGED)
-          : Effect.fail(
+          ? withHost<
+              ScientConnectHostStatus,
+              ScientConnectHostSaveError | EnvironmentAuthorizationError
+            >((host) => host.authorize(input), UNMANAGED)
+          : Effect.fail<ScientConnectHostSaveError | EnvironmentAuthorizationError>(
               new EnvironmentAuthorizationError({
                 message: "Only the Scient app on this computer can turn on Scient Connect here.",
                 requiredScope: AuthRelayWriteScope,
@@ -70,10 +74,10 @@ export const makeScientConnectRpcHandlers = ({
             ),
         { "rpc.aggregate": "cloud" },
       ),
-    [WS_METHODS.scientConnectTurnOff]: (_input) =>
+    [WS_METHODS.scientConnectTurnOff]: (input) =>
       observeRpcEffect(
         WS_METHODS.scientConnectTurnOff,
-        withHost((host) => host.turnOff, UNMANAGED),
+        withHost((host) => host.turnOff(input), UNMANAGED),
         { "rpc.aggregate": "cloud" },
       ),
   }) satisfies ScientRpcHandlerSubset<

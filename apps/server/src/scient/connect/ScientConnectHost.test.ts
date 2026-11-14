@@ -27,10 +27,19 @@ function makeComputer() {
     links: [] as Array<string>,
     gate: null as Deferred.Deferred<void> | null,
     fail: [] as Array<RelayRequestError>,
+    secretWritesFail: false,
   };
   const store: ServerSecretStore.ServerSecretStore["Service"] = {
     get: (name) => Effect.sync(() => Option.fromNullishOr(secrets.get(name))),
-    set: (name, value) => Effect.sync(() => void secrets.set(name, value)),
+    set: (name, value) =>
+      computer.secretWritesFail
+        ? Effect.fail(
+            new ServerSecretStore.SecretStorePersistError({
+              resource: name,
+              cause: new Error("disk full"),
+            }),
+          )
+        : Effect.sync(() => void secrets.set(name, value)),
     create: (name, value) => Effect.sync(() => void secrets.set(name, value)),
     getOrCreateRandom: () => Effect.die("unused"),
     remove: (name) => Effect.sync(() => void secrets.delete(name)),
@@ -120,7 +129,7 @@ describe("ScientConnectHost", () => {
       computer.gate = yield* Deferred.make<void>();
       const pending = yield* Effect.forkChild(host.authorize(lend("A")));
       yield* untilStatus((status) => status.phase === "linking")(host.status);
-      const off = yield* host.turnOff;
+      const off = yield* host.turnOff({});
       yield* Deferred.succeed(computer.gate, undefined);
       yield* Fiber.await(pending);
       expect(off).toMatchObject({ off: true, phase: "idle" });
@@ -170,8 +179,9 @@ describe("ScientConnectHost", () => {
       });
       yield* host.authorize(lend("A"));
       expect(computer.links).toHaveLength(1);
-      const retried = yield* host.authorize(lend("A", true));
-      expect(retried).toMatchObject({ phase: "connected", linkedAccountId: "A" });
+      // Another account signing in starts over without the person retrying.
+      const other = yield* host.authorize(lend("B"));
+      expect(other).toMatchObject({ phase: "connected", linkedAccountId: "B" });
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
 
@@ -196,6 +206,21 @@ describe("ScientConnectHost", () => {
       yield* Fiber.join(attempt);
       expect(computer.linkedAccount).toBe("A");
       expect(computer.links).toHaveLength(2);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  });
+
+  it.effect("says when Off could not be saved, and still turns it off now", () => {
+    const { computer, layer } = makeComputer();
+    return Effect.gen(function* () {
+      const host = yield* make({ cloudConfigured: true });
+      yield* untilStatus((status) => status.phase === "needs-authorization")(host.status);
+      yield* host.authorize(lend("A"));
+      computer.secretWritesFail = true;
+      const off = yield* Effect.flip(host.turnOff({}));
+      expect(off._tag).toBe("ScientConnectHostSaveError");
+      expect(computer.linkedAccount).toBeNull();
+      yield* host.authorize(lend("A"));
+      expect(computer.linkedAccount).toBeNull();
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
 

@@ -13,15 +13,24 @@ import { RelayClientInstallProgressStageSchema } from "../relayClient.ts";
 /** Why setup stopped and waits for the person, not for time. */
 export const ScientConnectHostBlock = Schema.Union([
   /** The account already has its maximum number of computers. */
-  Schema.Struct({ reason: Schema.Literal("limit"), maxTunnels: Schema.Number }),
+  Schema.Struct({
+    reason: Schema.Literal("limit"),
+    maxTunnels: Schema.Number,
+    /** Another account signing in starts over. */
+    accountId: Schema.String,
+  }),
   /** An administrator's policy turns Scient Connect off. */
   Schema.Struct({ reason: Schema.Literal("policy"), message: Schema.String }),
   /** This computer was removed from the account elsewhere; only Turn on links it again. */
   Schema.Struct({ reason: Schema.Literal("revoked") }),
   /** The tunnel program could not be installed here (unsupported, blocked or corrupted download). */
   Schema.Struct({ reason: Schema.Literal("install"), message: Schema.String }),
-  /** Anything else that retrying would not fix. */
-  Schema.Struct({ reason: Schema.Literal("failed"), message: Schema.String }),
+  /** Anything else that retrying would not fix; for that account when one is named. */
+  Schema.Struct({
+    reason: Schema.Literal("failed"),
+    message: Schema.String,
+    accountId: Schema.optionalKey(Schema.String),
+  }),
 ]);
 export type ScientConnectHostBlock = typeof ScientConnectHostBlock.Type;
 
@@ -66,6 +75,17 @@ export const ScientConnectHostAuthorizeInput = Schema.Struct({
 });
 export type ScientConnectHostAuthorizeInput = typeof ScientConnectHostAuthorizeInput.Type;
 
+/** The person's choice could not be saved on this computer, so a restart would not keep it. */
+export class ScientConnectHostSaveError extends Schema.TaggedError<ScientConnectHostSaveError>()(
+  "ScientConnectHostSaveError",
+  { message: Schema.String },
+) {}
+
+export const ScientConnectHostTurnOffInput = Schema.Struct({
+  /** A relay token, when signed in, to remove this computer from the account too. Not stored. */
+  token: Schema.optionalKey(Schema.String),
+});
+
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_CONNECT_HOST_WS_METHODS = {
   scientConnectStatus: "scientConnect.status",
@@ -83,22 +103,22 @@ export const WsScientConnectStatusRpc = Rpc.make(
   },
 );
 
-/** Resolves with the status once this attempt settles (connected, blocked or waiting). */
+/** Resolves with the status once this attempt is connected, blocked or retrying in the background. */
 export const WsScientConnectAuthorizeRpc = Rpc.make(
   SCIENT_CONNECT_HOST_WS_METHODS.scientConnectAuthorize,
   {
     payload: ScientConnectHostAuthorizeInput,
     success: ScientConnectHostStatus,
-    error: EnvironmentAuthorizationError,
+    error: Schema.Union([EnvironmentAuthorizationError, ScientConnectHostSaveError]),
   },
 );
 
-/** Remembers Off for this computer, stops any setup, and unlinks it here. */
+/** Remembers Off for this computer, stops any setup, and unlinks it here and from the account. */
 export const WsScientConnectTurnOffRpc = Rpc.make(
   SCIENT_CONNECT_HOST_WS_METHODS.scientConnectTurnOff,
   {
-    payload: Schema.Struct({}),
+    payload: ScientConnectHostTurnOffInput,
     success: ScientConnectHostStatus,
-    error: EnvironmentAuthorizationError,
+    error: Schema.Union([EnvironmentAuthorizationError, ScientConnectHostSaveError]),
   },
 );

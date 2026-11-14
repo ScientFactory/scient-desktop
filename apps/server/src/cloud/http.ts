@@ -11,6 +11,9 @@ import {
 } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Effect from "effect/Effect";
+// SCIENT-FORK:START — scient/connect
+import * as Option from "effect/Option";
+// SCIENT-FORK:END
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -160,15 +163,25 @@ export const layer = HttpApiBuilder.group(
     const cloudLink = yield* CloudLink.CloudLink;
     const reachability = yield* ConnectReachability.ConnectReachability;
     // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+    // Serialized with Off, so a link that started before Off cannot finish after it.
     const connectHost = yield* Effect.serviceOption(ScientConnectHost);
-    const refuseWhileTurnedOff = Effect.gen(function* () {
-      if (connectHost._tag === "Some" && (yield* connectHost.value.isOff)) {
-        return yield* new EnvironmentHttpConflictError({
-          message:
-            "Scient Connect is turned off on this computer. Turn it on in Settings > Sharing & access.",
-        });
-      }
-    });
+    const applyWhileOn = <A, E, R>(apply: Effect.Effect<A, E, R>) =>
+      connectHost._tag === "None"
+        ? apply
+        : connectHost.value.whileOn(apply).pipe(
+            Effect.flatMap(
+              Option.match({
+                onSome: (result) => Effect.succeed(result),
+                onNone: () =>
+                  Effect.fail(
+                    new EnvironmentHttpConflictError({
+                      message:
+                        "Scient Connect is turned off on this computer. Turn it on in Settings > Sharing & access.",
+                    }),
+                  ),
+              }),
+            ),
+          );
     // SCIENT-FORK:END
     // SCIENT-FORK:START — the computer left the account, so it stops copying to it; copies stay.
     const settings = yield* Effect.serviceOption(ServerSettingsService);
@@ -189,10 +202,15 @@ export const layer = HttpApiBuilder.group(
       )
       .handle("relayConfig", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
-          Effect.andThen(refuseWhileTurnedOff),
-          // SCIENT-FORK:END
-          Effect.andThen(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload))),
+          Effect.andThen(
+            // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+            applyWhileOn(
+              // SCIENT-FORK:END
+              toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload)),
+              // SCIENT-FORK:START
+            ),
+            // SCIENT-FORK:END
+          ),
         ),
       )
       .handle("linkState", () =>
