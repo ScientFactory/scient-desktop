@@ -420,14 +420,15 @@ export const ChatHeader = memo(function ChatHeader({
       />
       {/* SCIENT-FORK:START */}
       {newSection.popover}
+      {isServerThread && canOperateThread ? (
+        <ShareThreadButton threadRef={activeThreadRef} />
+      ) : null}
+      {/* Connectors sit last, beside the thread details button that follows the header. */}
       {isServerThread ? (
         <ExtensionsReceiptIndicator
           environmentId={activeThreadEnvironmentId}
           threadId={activeThreadId}
         />
-      ) : null}
-      {isServerThread && canOperateThread ? (
-        <ShareThreadButton threadRef={activeThreadRef} />
       ) : null}
       {/* SCIENT-FORK:END */}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
