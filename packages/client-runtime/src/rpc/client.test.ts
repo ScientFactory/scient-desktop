@@ -529,7 +529,9 @@ describe("environment RPC", () => {
   );
 
   it.effect(
-    "waits for the next session after a transport failure even when completion resubscribes",
+    // SCIENT-FORK: since T3 #24400 a transport failure resubscribes on the same session after its
+    // backoff; the completion interval must not turn that into a fast loop.
+    "retries a transport failure after its backoff, not at the completion interval",
     () =>
       Effect.gen(function* () {
         const subscriptionCount = yield* Ref.make(0);
@@ -565,12 +567,15 @@ describe("environment RPC", () => {
           Effect.forkChild,
         );
         yield* Deferred.await(subscribed);
-        yield* TestClock.adjust("1 second");
-        // Nothing should follow: give a wrongful resubscription its chance to run.
+        // Well past the 100 ms completion interval, but before the failure's backoff ends.
+        yield* TestClock.adjust("900 millis");
+        for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
+        expect(yield* Ref.get(subscriptionCount)).toBe(1);
+        yield* TestClock.adjust("100 millis");
         for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
         yield* Fiber.interrupt(subscriptionFiber);
 
-        expect(yield* Ref.get(subscriptionCount)).toBe(1);
+        expect(yield* Ref.get(subscriptionCount)).toBe(2);
       }),
   );
 
