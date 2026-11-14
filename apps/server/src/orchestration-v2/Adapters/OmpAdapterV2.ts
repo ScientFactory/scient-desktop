@@ -48,6 +48,7 @@ import {
 } from "../../provider/omp/OmpDashboardPage.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import { OmpToolRows } from "../../provider/omp/OmpToolRows.ts";
+import { OmpSessionTree, branchBefore } from "../../provider/omp/OmpSessionTree.ts";
 import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
 import {
@@ -219,7 +220,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
     capabilities: {
       ...AcpProviderCapabilitiesV2,
       sessions: { ...AcpProviderCapabilitiesV2.sessions, supportsModelSwitchInSession: true },
-      threads: { ...AcpProviderCapabilitiesV2.threads, canRollbackThread: false },
+      threads: { ...AcpProviderCapabilitiesV2.threads, canRollbackThread: true },
       turns: {
         ...AcpProviderCapabilitiesV2.turns,
         supportsActiveSteering: true,
@@ -250,8 +251,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
       },
       checkpointing: {
         ...AcpProviderCapabilitiesV2.checkpointing,
-        providerCanRollbackConversation: false,
-        providerRollbackReturnsSnapshot: false,
+        providerCanRollbackConversation: true,
+        providerRollbackReturnsSnapshot: true,
       },
     },
     open: Effect.fn("OmpAdapterV2.open")(function* (input, onUpdate) {
@@ -679,6 +680,22 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
         const waitRows = new OmpWaitRows();
         const toolRows = new OmpToolRows((text) => client.redaction.text(text));
+        const sessionTree = new OmpSessionTree();
+        /** When this process last sent the user's message; its turn's entry is found from it. */
+        let promptSentAt: number | undefined;
+        const recordTurnEntry = Effect.suspend(() => {
+          const sentAt = promptSentAt;
+          promptSentAt = undefined;
+          return sentAt === undefined
+            ? Effect.void
+            : sessionTree
+                .turnStart(client.command, nativeId, sentAt)
+                .pipe(
+                  Effect.flatMap((entryId) =>
+                    entryId === undefined ? Effect.void : onUpdate({ type: "turn-entry", entryId }),
+                  ),
+                );
+        });
         // Native subagents' own steps, read from the conversation OMP saves for each:
         // at most once a second while one runs, then twice after it ends, since its last
         // record can land after its ending frame. Two reads run at a time per session.
@@ -1170,6 +1187,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 ? publishProcessLoss(publish)
                 : refreshUsage().pipe(
                     Effect.andThen(refreshSettledState()),
+                    Effect.andThen(recordTurnEntry),
                     Effect.andThen(publish),
                   );
             }
@@ -1692,6 +1710,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 });
             }
             yield* settled;
+            yield* recordTurnEntry;
             yield* onUpdate({ type: "background", pending: false });
           });
           // Bound command acknowledgement and event settlement together. A hung RPC
@@ -2008,6 +2027,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 ),
               );
               const admission = yield* runtime.begin(nativeTurnId);
+              promptSentAt = DateTime.toEpochMillis(yield* DateTime.now);
               if (admission.steering) {
                 yield* restore;
                 return yield* new NativeSessionOperationError({
@@ -2115,6 +2135,23 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           ...(target.driverKind === "scient" ? { liveVoice: liveVoice.runtime } : {}),
           interrupt: interrupt().pipe(Effect.mapError(safeFailure)),
           resume,
+          rewindBefore: Effect.fn("OmpAdapterV2.rewindBefore")(
+            function* (entryId: string) {
+              if (yield* branchBefore(client.command, entryId))
+                return yield* new NativeSessionOperationError({
+                  detail: `${target.name} cancelled the rewind.`,
+                });
+              const state = yield* client.getState();
+              if (!state.sessionFile)
+                return yield* new NativeSessionOperationError({
+                  detail: `${target.name} did not save the rewound conversation.`,
+                });
+              yield* refreshCursor(state.sessionFile, state.sessionId);
+              sessionTree.reset(nativeId);
+              return { nativeId, ...(cursor === undefined ? {} : { resumeCursor: cursor }) };
+            },
+            (effect, _entryId) => effect.pipe(Effect.mapError(safeFailure)),
+          ),
           respond: Effect.fn("OmpAdapterV2.respond")(
             function* (id, response) {
               const question = runtime.lookupQuestion(id);

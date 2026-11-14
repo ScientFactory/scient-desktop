@@ -7,6 +7,7 @@ import { assert, it } from "@effect/vitest";
 import {
   OmpSettings,
   ChatAttachmentId,
+  CheckpointId,
   EnvironmentId,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   MessageId,
@@ -2635,6 +2636,142 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           false,
         );
         assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+      }),
+    ),
+  );
+
+  it.effect("records each turn's message entry and rewinds by branching before a later one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Each turn adds its user message and a reply; `since` lists only what came after.
+        const listed: Array<{ id: string; parentId: string | null; role: string }> = [];
+        const branched: Array<string> = [];
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          responseData: (frame) => {
+            if (frame.type === "get_entries") {
+              const since = Reflect.get(frame, "since");
+              const ordinal = listed.length / 2 + 1;
+              const parentId = listed.at(-1)?.id ?? null;
+              listed.push(
+                { id: `user-${ordinal}`, parentId, role: "user" },
+                { id: `reply-${ordinal}`, parentId: `user-${ordinal}`, role: "assistant" },
+              );
+              const from = since === undefined ? 0 : listed.findIndex((e) => e.id === since) + 1;
+              return {
+                entries: listed.slice(from).map((entry) => ({
+                  type: "message",
+                  id: entry.id,
+                  parentId: entry.parentId,
+                  // Later than any send: the test clock starts at the epoch.
+                  timestamp: "2999-01-01T00:00:00.000Z",
+                  message: { role: entry.role },
+                })),
+                leafId: listed.at(-1)!.id,
+              };
+            }
+            if (frame.type === "switch_session") {
+              const sessionPath = String(Reflect.get(frame, "sessionPath"));
+              peer.state.sessionFile = sessionPath;
+              peer.state.sessionOrdinal = Number(/models-session-(\d+)/u.exec(sessionPath)?.[1]);
+              return { cancelled: false };
+            }
+            if (frame.type === "branch") {
+              branched.push(String(Reflect.get(frame, "entryId")));
+              peer.state.sessionOrdinal++;
+              peer.state.sessionFile = undefined;
+              return { text: "", cancelled: false };
+            }
+            return undefined;
+          },
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        const turns = () => [
+          ...new Map(
+            h.recorded.flatMap((event) =>
+              event.type === "provider_turn.updated"
+                ? [[event.providerTurn.id, event.providerTurn] as const]
+                : [],
+            ),
+          ).values(),
+        ];
+        for (const ordinal of [1, 2]) {
+          yield* h.runtime.startTurn({
+            ...h.input,
+            runId: RunId.make(`rewind-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`rewind-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`rewind-root-${ordinal}`),
+          });
+          yield* peer.finish();
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+        }
+        const [first, second] = turns();
+        assert.ok(first && second);
+        assert.deepInclude(first.nativeTurnRef, { nativeId: "user-1", strength: "strong" });
+        assert.deepInclude(second.nativeTurnRef, { nativeId: "user-2", strength: "strong" });
+        assert.deepEqual(
+          peer.state.frames.flatMap((frame) =>
+            frame.type === "get_entries" ? [Reflect.get(frame, "since") ?? null] : [],
+          ),
+          [null, "reply-1"],
+        );
+        const before = h.recorded.findLast((event) => event.type === "provider_thread.updated");
+        assert.ok(before?.type === "provider_thread.updated");
+        const snapshot = yield* h.runtime.rollbackThread({
+          providerThread: before.providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("rewind-checkpoint"),
+            appRunOrdinal: 1,
+            providerTurn: first,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(branched, ["user-2"]);
+        assert.notEqual(
+          snapshot.providerThread.nativeThreadRef?.nativeId,
+          before.providerThread.nativeThreadRef?.nativeId,
+        );
+        const unrecorded = yield* h.runtime
+          .rollbackThread({
+            providerThread: snapshot.providerThread,
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("start"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [
+              { ...first, nativeTurnRef: { ...first.nativeTurnRef!, strength: "weak" } },
+            ],
+          })
+          .pipe(Effect.flip);
+        assert.equal(unrecorded._tag, "ProviderAdapterRollbackThreadError");
+        assert.deepEqual(branched, ["user-2"]);
+        // A retry after a failed file restore starts from the conversation still on record.
+        const retried = yield* h.runtime.rollbackThread({
+          providerThread: before.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("retry"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(branched, ["user-2", "user-1"]);
+        assert.includeMembers(
+          peer.state.frames.map((frame) => frame.type),
+          ["switch_session"],
+        );
+        assert.notEqual(
+          retried.providerThread.nativeThreadRef?.nativeId,
+          before.providerThread.nativeThreadRef?.nativeId,
+        );
       }),
     ),
   );
