@@ -332,7 +332,7 @@ export function ExtensionRow({
       // Rows divide by a line; a hovered row turns into a rounded tile and the lines on both
       // sides of it give way, as on claude.ai's Connectors page.
       <li
-        className="group/row min-w-0 border-b border-border/70 transition-colors last:border-b-0 hover:border-transparent has-[+li:hover]:border-transparent"
+        className="group/row min-w-0 border-t border-border/70 transition-colors hover:border-transparent [li:hover+&]:border-transparent"
         data-extension-row={name}
       >
         <div className="relative grid min-h-14 grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-x-4 rounded-xl px-2 py-2 transition-colors group-hover/row:bg-foreground/[0.045] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring @min-[720px]/extensions:grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem]">
@@ -417,7 +417,7 @@ export function ExtensionTable({
       <div className="-mx-2 min-w-0 overflow-hidden">
         <div
           aria-hidden
-          className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem] gap-x-4 border-b border-border/70 px-2 pb-2 text-xs text-muted-foreground transition-colors @min-[720px]/extensions:grid [&:has(+ul>li:first-child:hover)]:border-transparent"
+          className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem] gap-x-4 px-2 pb-2 text-xs text-muted-foreground @min-[720px]/extensions:grid"
         >
           <span>Name</span>
           <span>Type</span>

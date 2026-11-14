@@ -47,6 +47,7 @@ import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AccountServiceItem } from "./AccountServicePages";
 import {
   type AccountService,
+  accountServiceForApp,
   accountServiceOfServer,
   installedAccountServices,
 } from "./accountServices";
@@ -63,25 +64,30 @@ const isAppGateway = (group: ProviderExtensionGroup, server: ServerProviderMcpSe
   group.provider.driver === "codex" && server.name === "codex_apps";
 
 /**
- * Each agent's own plugins and servers as rows. One installation is one row: a Claude plugin
- * that Scient Agent also loads is listed once. A server gets no row when a listed service, its
- * plugin or Codex's apps already stand for it, unless it still needs a sign-in only its row offers.
+ * Each agent's own plugins and servers, one row per installation. No row for a plugin another
+ * agent shares, a project merely echoes, or whose app is listed; nor for a server a listed app,
+ * its plugin or Codex's apps stand for, unless only its row offers a needed sign-in.
  */
 function agentRows(
   groups: ReadonlyArray<ProviderExtensionGroup>,
   services: ReadonlyArray<AccountService>,
 ) {
+  const listed = new Set(services.map((service) => service.id));
   const installations = new Set<string>();
   const rows: ReactNode[] = [];
   for (const group of groups)
     for (const { plugin, cwd } of group.plugins) {
+      if (plugin.apps?.some((app) => listed.has(accountServiceForApp(app)?.id ?? ""))) continue;
       // Two agents that load the same plugin share its id; each agent's own plugins do not.
       const owner =
         providerExtensionAudience(group.provider, plugin).layer === "shared"
           ? "shared"
           : group.provider.instanceId;
-      const id = `${owner}:${plugin.id}:${cwd ?? ""}`;
-      if (installations.has(id)) continue;
+      // Machine-wide plugins come first, so a project that reports the same one, in the same
+      // state, adds nothing; one turned off for that project alone is its own row.
+      const everywhere = `${owner}:${plugin.id}:${plugin.enabled}`;
+      const id = cwd === undefined ? everywhere : `${everywhere}:${cwd}`;
+      if (installations.has(id) || installations.has(everywhere)) continue;
       installations.add(id);
       rows.push(
         <ProviderPluginItem
@@ -221,7 +227,8 @@ function YoursTable({
       >
         {inventory === null && inventoryError ? <MutedLine>Unavailable.</MutedLine> : null}
         {connectorsNote ? <MutedLine>{connectorsNote}</MutedLine> : null}
-        {providerInventory.phase !== "ready" ? (
+        {/* A read that ended with gaps says which below; the rows are what the agents reported. */}
+        {providerInventory.phase !== "ready" && providerInventory.phase !== "partial" ? (
           <MutedLine>{providerInventoryMessage(providerInventory)}</MutedLine>
         ) : null}
         {providerInventory.errors.map((error) => (

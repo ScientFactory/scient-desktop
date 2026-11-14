@@ -1477,16 +1477,65 @@ describe("Installed", () => {
       local: [
         provider(codex, "codex", {
           // Two stores carry a plugin of one name: two installations, two rows.
-          plugins: ["bundled", "curated"].map((store) => ({
-            id: `visualize@${store}`,
-            name: "visualize",
-            displayName: "Visualize",
-            source: "remote" as const,
-            enabled: true,
-          })),
+          plugins: [
+            ...["bundled", "curated"].map((store) => ({
+              id: `visualize@${store}`,
+              name: "visualize",
+              displayName: "Visualize",
+              source: "remote" as const,
+              enabled: true,
+            })),
+            {
+              id: "gmail@remote",
+              name: "gmail",
+              displayName: "Gmail",
+              source: "remote" as const,
+              enabled: true,
+              apps: [
+                {
+                  id: "connector_2128aebfecb84f64a069897515042a44",
+                  name: "Gmail",
+                  connected: true,
+                  enabled: true,
+                },
+              ],
+            },
+          ],
           mcpServers: [
             { name: "figma", status: "needs-auth", canStartSignIn: true, pluginId: "figma@x" },
             { name: "cua_repl", status: "connected", pluginId: "computer-use@x" },
+            {
+              name: "Gmail",
+              status: "connected",
+              scope: "chatgpt",
+              connectUrl:
+                "https://chatgpt.com/apps/gmail/connector_2128aebfecb84f64a069897515042a44",
+            },
+          ],
+          // A project reports the machine-wide plugin again, and one of its own turned off there.
+          workspaceSnapshots: [
+            {
+              cwd: "/work/alpha",
+              checkedAt: "2026-10-21T00:00:00.000Z",
+              slashCommands: [],
+              skills: [],
+              plugins: [
+                {
+                  id: "visualize@bundled",
+                  name: "visualize",
+                  displayName: "Visualize",
+                  source: "remote" as const,
+                  enabled: true,
+                },
+                {
+                  id: "visualize@curated",
+                  name: "visualize",
+                  displayName: "Visualize",
+                  source: "remote" as const,
+                  enabled: false,
+                },
+              ],
+            },
           ],
         }),
         // A Claude plugin Scient Agent also loads is one installation.
@@ -1499,10 +1548,16 @@ describe("Installed", () => {
         }),
       ],
     };
+    state.projects = [
+      { environmentId: "local", id: "alpha", title: "Alpha", workspaceRoot: "/work/alpha" },
+    ];
     await fixture.render(<InstalledPage />);
     const names = fixture.rowNames(fixture.section("Yours"));
     expect(names.filter((name) => name === "Playwright")).toHaveLength(1);
-    expect(names.filter((name) => name === "Visualize")).toHaveLength(2);
+    // Two stores' plugins, plus the one a project turned off; the project's echo adds none.
+    expect(names.filter((name) => name === "Visualize")).toHaveLength(3);
+    // Codex's Gmail plugin only carries the Gmail app, which has its own row.
+    expect(names.filter((name) => name === "Gmail")).toHaveLength(1);
     // The plugin's page has no sign-in for its server, so the row that offers it stays.
     expect(names).toContain("figma");
     expect(names).not.toContain("cua_repl");
