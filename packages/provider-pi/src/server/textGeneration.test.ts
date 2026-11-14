@@ -214,7 +214,10 @@ it.effect("puts linked source control context in the Pi thread title prompt", ()
         /Reset credits must route through the hub that owns the account\./,
       );
     }),
-  ).pipe(Effect.provide(NodeServices.layer));
+  ).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piVersionSpawner("0.84.3")),
+    Effect.provide(NodeServices.layer),
+  );
 });
 
 it.effect("names the model and the disabled extensions when Pi cannot load it", () => {
@@ -507,7 +510,7 @@ it.effect("drops an earlier error once a later attempt succeeds", () =>
 
 it.effect.each([
   { thinking: "high", version: "0.84.3", fails: false },
-  { thinking: "max", version: "1.4.0", fails: false },
+  { thinking: "high", version: "1.4.0", fails: false },
   { thinking: "low", version: "0.84.2", fails: true },
 ])("handles thinking=$thinking on Pi $version", ({ thinking, version, fails }) => {
   const client = new FakeClient();

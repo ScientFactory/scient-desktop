@@ -9465,9 +9465,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }
                     const failure =
                       hiddenFailure ??
-                      (context.interrupted
+                      // SCIENT-FORK:START — a reply cut at the output limit completes with the
+                      // truncation notice below; refusals and request limits still fail.
+                      (context.interrupted || result.stopReason === "max_tokens"
                         ? undefined
                         : stopReasonFailure(result.stopReason, result.error));
+                    // SCIENT-FORK:END
                     const status =
                       failure !== undefined
                         ? "failed"

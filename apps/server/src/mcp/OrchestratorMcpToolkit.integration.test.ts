@@ -3506,10 +3506,11 @@ describe("orchestrator MCP toolkit", () => {
             "thread.created",
             "thread.create",
           );
+          // A new thread's creation carries its first message, so the same command starts the run.
           const promptedDispatchReceipt = yield* receiptFor(
             promptedThread.threadId,
             "run.created",
-            "message.dispatch",
+            "thread.create",
           );
           const beforeDisabledEmpty = yield* orchestrator.getThreadProjection(emptyThread.threadId);
           const beforeDisabledPrompted = yield* waitForDurableProjection(

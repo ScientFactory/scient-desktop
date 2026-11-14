@@ -27,7 +27,6 @@ import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Option from "effect/Option";
-import { isPiThinkingLevel } from "./modelCapabilities.ts";
 import { applyPiModelSelection } from "./modelSelection.ts";
 import { MINIMUM_PI_VERSION, runPiVersionCommand } from "./status.ts";
 import { resolvePiModelSlug } from "./rpc.ts";
@@ -90,8 +89,9 @@ export const makePiRunJson = (run: {
         const thinking =
           getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel") ??
           getModelSelectionStringOptionValue(input.modelSelection, "thinking");
-        if (thinking !== undefined && isPiThinkingLevel(thinking)) {
-          // Earlier Pi saves a background thinking change as the user's global default.
+        // Earlier Pi saves a background thinking change as the user's global default. A named
+        // model also changes thinking: a fresh session picks that model's preferred level.
+        if (thinking !== undefined || input.modelSelection.model !== "default") {
           const output = yield* runPiVersionCommand(settings, environment, input.cwd).pipe(
             Effect.timeoutOption(4_000),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -99,13 +99,12 @@ export const makePiRunJson = (run: {
           );
           const version =
             Option.isSome(output) && output.value.code === 0
-              ? parseGenericCliVersion(`${output.value.stdout}
-${output.value.stderr}`)
+              ? parseGenericCliVersion(`${output.value.stdout}\n${output.value.stderr}`)
               : null;
           if (version === null || compareSemverVersions(version, MINIMUM_PI_VERSION) < 0)
             return yield* new TextGenerationError({
               operation: input.operation,
-              detail: `Pi ${MINIMUM_PI_VERSION} or newer is required for text generation thinking options. Update Pi and try again.`,
+              detail: `Pi ${MINIMUM_PI_VERSION} or newer is required for text generation model and thinking options. Update Pi and try again.`,
             });
         }
         const resolved = resolvePiLaunchArgs(settings.launchArgs);

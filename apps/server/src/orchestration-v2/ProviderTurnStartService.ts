@@ -1940,7 +1940,8 @@ export const layer: Layer.Layer<
         mcpSessionInjection: session.mcpSessionInjection === true,
         projectRoot: resolvedRuntimePolicy.cwd ?? undefined,
         text: userText,
-        selectedScientSkillNames: message.selectedScientSkillNames ?? [],
+        // A resumed prompt that never reached the provider keeps its own skill selection.
+        selectedScientSkillNames: providerMessage.selectedScientSkillNames ?? [],
       }).pipe(
         Effect.provideService(ScientSkillSessionPlanner, skillPlanner),
         Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),

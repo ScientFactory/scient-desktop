@@ -762,13 +762,22 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           path.join(config.attachmentsDir, `${file.id}.png`);
         yield* fileSystem.writeFileString(filePath(shared), "bytes");
         yield* fileSystem.writeFileString(filePath(dropped), "bytes");
+        // SCIENT-FORK:START — a Scient fork resolves its project's runtime policy.
+        yield* seedProject({
+          projectId: ProjectId.make(`${key}:project`),
+          title: "Shared file",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: "2026-09-07T00:00:00.000Z",
+        });
+        // SCIENT-FORK:END
         yield* orchestrator.dispatch({
           type: "thread.create",
           commandId: CommandId.make(`${key}:create`),
           createdBy: "user",
           creationSource: "web",
           threadId,
-          projectId: ProjectId.make("queued-edit-shared-file-project"),
+          projectId: ProjectId.make(`${key}:project`),
           title: "Shared file",
           modelSelection,
           runtimeMode: "full-access",

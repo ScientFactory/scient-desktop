@@ -287,6 +287,8 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
           // server withdrawn meanwhile (availability, eligibility, or the sidebar leaving) is
           // settled as not updated, named in the summary, and offered Retry once eligible again.
           updateServers: async (staged) => {
+            // Downloads finish first, so eligibility and admission are read just before restarts.
+            await Promise.all(servers.map((server) => staged.get(server.environmentId)));
             const current = currentConfirmedServerTargets(servers, committedServersRef.current);
             const withdrawn = servers.filter(
               (server) => !current.some((target) => target.environmentId === server.environmentId),
@@ -318,7 +320,6 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               }
             }
             const runs = admitted.map(async (server) => {
-              await staged.get(server.environmentId);
               const serverOutcome = await updateServer(server, { quiet: true });
               settleUpdateRunMachine(
                 server.environmentId,
