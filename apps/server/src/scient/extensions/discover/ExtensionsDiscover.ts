@@ -418,7 +418,7 @@ const matchesQuery = (server: CuratedServer, terms: ReadonlyArray<string>): bool
   return terms.every((term) => haystack.includes(term));
 };
 
-/** Entries whose primary category is `category` first, then the rest, each in catalog order. */
+/** Entries whose primary category is `category` first (most used leading), then the rest. */
 const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCategory) => {
   const members = servers.filter((server) => server.categories.includes(category));
   if (category === "most-used") {
@@ -430,7 +430,15 @@ const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCat
   }
   const primary = (server: CuratedServer) =>
     server.categories.find((candidate) => candidate !== "most-used") === category;
-  return [...members.filter(primary), ...members.filter((server) => !primary(server))];
+  // Within a field, the most used lead: GitHub before the rest of Code, Slack in chat.
+  const mostUsedFirst = (list: ReadonlyArray<CuratedServer>) => [
+    ...list.filter((server) => server.categories.includes("most-used")),
+    ...list.filter((server) => !server.categories.includes("most-used")),
+  ];
+  return [
+    ...mostUsedFirst(members.filter(primary)),
+    ...members.filter((server) => !primary(server)),
+  ];
 };
 
 export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (

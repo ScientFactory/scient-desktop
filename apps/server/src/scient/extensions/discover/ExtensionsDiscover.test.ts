@@ -470,9 +470,10 @@ describe("curated Discover catalog", () => {
         "paper-3",
         "paper-4",
       ]);
+      // A most used member leads its field.
       expect(catalog.sections[2]!.entries.map((entry) => entry.title)).toEqual([
-        "kaggle",
         "hub",
+        "kaggle",
         "lab",
       ]);
       const semantic = catalog.sections[0]!.entries[0]!;
