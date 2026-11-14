@@ -197,6 +197,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
         Effect.sync(() => {
           opened.push(input);
           return {
+            renameSession: () => Effect.void,
             stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),

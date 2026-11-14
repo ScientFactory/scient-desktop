@@ -652,6 +652,8 @@ it.effect.each([
               Effect.die("Bootstrap fixture does not preflight worktree bases."),
             retryPreparation: () =>
               Effect.die("Bootstrap fixture does not retry workspace preparation."),
+            isNonGitProject: () =>
+              Effect.die("Bootstrap fixture does not check project Git state."),
             launch: (input) =>
               createBootstrapThread(input).pipe(
                 Effect.provideService(ThreadManagement.ThreadManagementService, threads),

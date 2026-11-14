@@ -21,6 +21,7 @@ import {
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
+import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { type PendingUserInput } from "../../session-logic";
 import {
   changeQuestionAttachmentPreparation,
@@ -84,6 +85,7 @@ export function useComposerAttachmentIntake(input: {
   readonly insertAttachmentReferences: (
     references: ReadonlyArray<ComposerContextReference>,
     selection?: { start: number; end: number },
+    pendingInsertion?: ComposerAttachmentInsertion,
   ) => boolean;
 }) {
   const {
@@ -253,6 +255,10 @@ export function useComposerAttachmentIntake(input: {
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
     const preparingIds = new Set(preparingImages.map((image) => image.id));
+    // Images land where the caret was when they were added, not where it is after compression.
+    const pendingInsertion = imageAttachmentsGetChips
+      ? composerEditorRef.current?.captureAttachmentInsertion()
+      : undefined;
     // Runs at commit and again in the finally. The size check keeps an empty second run from
     // recreating a cleared question's count: `-0` is not a decrement.
     const releasePreparingImages = () => {
@@ -338,7 +344,11 @@ export function useComposerAttachmentIntake(input: {
           }
           if (storedImages.length > 0 && imageAttachmentsGetChips) {
             insertedAny =
-              insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
+              insertAttachmentReferences(
+                storedImages.map(imageContextReference),
+                undefined,
+                pendingInsertion,
+              ) || insertedAny;
           }
           return insertedAny;
         },
@@ -346,7 +356,10 @@ export function useComposerAttachmentIntake(input: {
       if (staged.error !== null) setThreadError(threadId, staged.error);
       return staged.inserted;
     };
-    return await stageAttachments().finally(releasePreparingImages);
+    return await stageAttachments().finally(() => {
+      pendingInsertion?.dispose();
+      releasePreparingImages();
+    });
   };
 
   const removeComposerImage = (imageId: string) => {

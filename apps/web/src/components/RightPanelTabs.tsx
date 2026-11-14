@@ -1696,7 +1696,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           hideScrollbars
           scrollFade
           // SCIENT-FORK:START — with "+" outside it, the list hugs its tabs
-          className={cn("min-w-0", props.onAddNewTab ? "h-full w-auto flex-initial" : "flex-1")}
+          className={cn(
+            "min-w-0",
+            props.onAddNewTab ? "h-full w-auto flex-initial" : "flex-1",
+            ownsDesktopTitleBar && tabScrollState.hasOverflow && "[-webkit-app-region:no-drag]",
+          )}
           // SCIENT-FORK:END
           data-right-panel-tab-list
         >

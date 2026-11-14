@@ -215,7 +215,8 @@ const readOwnHistoryItems = Effect.fn("orchestrationV2.contextHandoff.readOwnHis
 );
 
 /** Rows of the run-fork ancestors named by `forkedFrom`, oldest first. */
-const readRunForkAncestorItems = Effect.fn(
+// SCIENT-FORK: exported for the Orchestrator, which reads a Scient fork's rows on its own.
+export const readRunForkAncestorItems = Effect.fn(
   "orchestrationV2.contextHandoff.readRunForkAncestorItems",
 )(function* (
   projectionStore: Pick<ProjectionStoreV2Shape, "getThreadRecords">,

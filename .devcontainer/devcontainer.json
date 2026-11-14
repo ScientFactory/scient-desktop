@@ -9,7 +9,7 @@
     // needs for node-pty's node-gyp fallback (its prebuilds are mac/win only).
     "ghcr.io/devcontainers/features/node:2": {
       // SCIENT-FORK:START — native executable builds require the root engine.
-      "version": "26.12.1"
+      "version": "26.13.1"
       // SCIENT-FORK:END
     },
     // native/resource-monitor (edition 2024, needs stable >= 1.85). The server

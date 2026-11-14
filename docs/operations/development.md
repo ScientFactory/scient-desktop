@@ -85,6 +85,9 @@ For `vp run dev`, a nonblank `--home-dir` takes precedence over the linked workt
 The runner sets `SCIENT_NEXT_HOME` and the compatibility variable `T3CODE_HOME` for
 its children from that resolved path, rather than inheriting ambient home overrides.
 This is the dev runner's precedence, not a rule for every server or desktop entry point.
+The first start in any checkout also builds the native resource monitor with Cargo when
+`native/resource-monitor/target` has no binary. Without Rust, dev starts with a warning
+and no process telemetry; install Rust and run `vp run build:resource-monitor`.
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a

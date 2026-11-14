@@ -543,7 +543,7 @@ export function useScientFileActions(input: {
     await windowFocused();
     // Clicked elsewhere meanwhile (the chat box, say): that is where the typing goes.
     if (early.typed.abandoned) return;
-    model.add(treePath);
+    controller.addProvisional(treePath);
     pendingCreateRef.current = { relativePath, kind };
     input.quietSelection();
     model.startRenaming(treePath, { removeIfCanceled: true });

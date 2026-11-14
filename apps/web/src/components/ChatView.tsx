@@ -3871,6 +3871,10 @@ function ChatViewContent(props: ChatViewProps) {
       .length ?? 0;
   // SCIENT-FORK:END
 
+  const onExpandTimelineImage = (preview: ExpandedImagePreview) => {
+    openExpandedImagePreview(routeThreadKey, preview);
+  };
+  const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
   const queuedRunsControl =
     isServerThread && activeThread ? (
       <>
@@ -3901,6 +3905,7 @@ function ChatViewContent(props: ChatViewProps) {
           })}
           timestampFormat={timestampFormat}
           onOpenThread={onOpenRelatedThreadStable}
+          onImageExpand={onExpandTimelineImageStable}
         />
       </>
     ) : null;
@@ -3946,10 +3951,6 @@ function ChatViewContent(props: ChatViewProps) {
     workLocallyResendReady,
   ]);
 
-  const onExpandTimelineImage = (preview: ExpandedImagePreview) => {
-    openExpandedImagePreview(routeThreadKey, preview);
-  };
-  const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
   // SCIENT-FORK:START — timeline row fork actions.
   const { onForkAssistantMessage, onForkUserMessage, onForkFromRun } = createForkMessageCommands({
     activeThreadId,
