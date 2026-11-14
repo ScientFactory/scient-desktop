@@ -13196,6 +13196,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.exit,
               Effect.flatMap(
                 Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                  // EOF must be visible to a continuation holding query ownership while awaiting replay.
+                  context.streamExited = true;
                   // Output held for a prompt echo that never came still
                   // belongs to the turn this stream ended in. A replaced
                   // query's exit must not touch the next query's turn.
@@ -13209,7 +13211,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }
                   const ownsLiveQuery = yield* queryOwnership.withPermits(1)(
                     Effect.gen(function* () {
-                      context.streamExited = true;
                       const current = yield* Ref.get(queryContext);
                       if (current !== context) return false;
                       // A settled root can start again while EOF cleanup yields.
@@ -13276,6 +13277,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            const continuationQuery = isClaudeProviderContinuationTurn(turnInput)
+              ? yield* Ref.get(queryContext)
+              : null;
             modelCatalog = yield* loadModelCatalog;
             return yield* Effect.acquireUseRelease(
               reserveStart,
@@ -13384,6 +13388,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       path,
                     }),
                   );
+                  // SCIENT-FORK: replay belongs to the captured process, even if preparation yields past EOF.
+                  if (
+                    continuationQuery !== null &&
+                    (continuationQuery.streamExited ||
+                      continuationQuery.stopping ||
+                      (yield* Ref.get(queryContext)) !== continuationQuery)
+                  )
+                    return yield* refuseQueryOwnership(CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL);
                   const querySession = yield* openQuery(turnInput, nativeThreadId, startGeneration);
                   const autoCompactWindow =
                     querySession.settingsCwd === turnCwd
@@ -13581,6 +13593,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.gen(function* () {
                       if (
                         (yield* Ref.get(queryContext))?.query !== querySession.query ||
+                        querySession.streamExited ||
                         querySession.stopping
                       ) {
                         return yield* new ProviderAdapter.ProviderAdapterProtocolError({

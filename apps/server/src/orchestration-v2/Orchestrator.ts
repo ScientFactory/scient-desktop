@@ -2280,7 +2280,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (item) => item.type === "user_message" && item.runId === queuedRun.id,
     );
     const now = yield* DateTime.now;
-    const automatic = isAutomaticCompletionRun(projection, queuedRun);
+    const automatic =
+      isAutomaticCompletionRun(projection, queuedRun) ||
+      projection.messages.some(
+        (message) =>
+          message.id === queuedRun.userMessageId && message.scheduledTaskId !== undefined,
+      );
     const attempt = projection.attempts.find((entry) => entry.id === queuedRun.activeAttemptId);
     const rootNode = projection.nodes.find((node) => node.id === queuedRun.rootNodeId);
     const providerThread = projection.providerThreads.find(
@@ -2305,7 +2310,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       class: handoffUnsupported ? "validation_error" : "unknown",
     });
     yield* writeSystemEvents([
-      // SCIENT-FORK: only an automatic run fails here; a user's run stays queued and held,
+      // SCIENT-FORK: completion and scheduled deliveries fail; a user's run stays queued and held,
       // so its prompt is not republished as failed.
       ...(automatic
         ? retainedUserItems.map((item) => ({
@@ -2395,7 +2400,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
           ]),
       ...projection.runs
-        .filter((run) => run.status === "queued" && !isAutomaticCompletionRun(projection, run))
+        .filter(
+          (run) =>
+            run.status === "queued" &&
+            !(automatic && run.id === queuedRun.id) &&
+            !isAutomaticCompletionRun(projection, run),
+        )
         .map((run) => ({
           type: "run.updated" as const,
           threadId,
@@ -16793,7 +16803,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
-  const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+  const dispatchWithReceipt = Effect.fnUntraced(function* (
+    command: OrchestrationV2ServerCommand,
+  ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     // Freeze fork source facts and destination identity under one lock order.
     const ids =
       command.type === "thread.fork"
@@ -16846,6 +16858,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? withSubagentParentLock(message.threadId, dispatch)
           : dispatch,
       );
+    // SCIENT-FORK: settle a stopped child's row before returning, after releasing its lock.
+    if (command.type === "thread.stop") {
+      return yield* withSubagentParentLock(
+        command.threadId,
+        dispatch.pipe(
+          Effect.tap(() =>
+            finalizeAppOwnedSubagent(command.threadId).pipe(mapDispatchError(command)),
+          ),
+        ),
+      );
+    }
     // Answering a message-mode question can also start a follow-up.
     return yield* command.type === "runtime-request.respond"
       ? withSubagentParentLock(command.threadId, dispatch)

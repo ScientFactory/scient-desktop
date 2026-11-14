@@ -380,6 +380,8 @@ it.each([
             } as never),
             Path.layer,
             Layer.mock(ServerConfig.ServerConfig)({
+              // SCIENT-FORK: the configured scratch root also checks development mode.
+              devUrl: undefined,
               baseDir: "/tmp/t3-home",
               worktreesDir: managedWorktreesDir,
             } as ServerConfig.ServerConfig["Service"]),
