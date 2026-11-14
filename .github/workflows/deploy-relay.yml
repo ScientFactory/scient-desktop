@@ -56,6 +56,11 @@ jobs:
       APNS_ENABLED: ${{ vars.APNS_ENABLED }}
       RELAY_DEFAULT_TUNNEL_LIMIT: ${{ vars.RELAY_DEFAULT_TUNNEL_LIMIT }}
       # SCIENT-FORK:END
+      # SCIENT-FORK:START account-deletion — Sign in with Apple token revocation.
+      APPLE_SIGN_IN_TEAM_ID: ${{ vars.APPLE_SIGN_IN_TEAM_ID }}
+      APPLE_SIGN_IN_KEY_ID: ${{ vars.APPLE_SIGN_IN_KEY_ID }}
+      APPLE_SIGN_IN_CLIENT_IDS: ${{ vars.APPLE_SIGN_IN_CLIENT_IDS }}
+      # SCIENT-FORK:END account-deletion
       ALCHEMY_TELEMETRY_DISABLED: "1"
     steps:
       - name: Checkout
@@ -91,6 +96,9 @@ jobs:
           CLERK_LEGACY_SECRET_KEY: ${{ secrets.CLERK_LEGACY_SECRET_KEY }}
           # SCIENT-FORK:END clerk-legacy-instance
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
+          # SCIENT-FORK:START account-deletion
+          APPLE_SIGN_IN_PRIVATE_KEY: ${{ secrets.APPLE_SIGN_IN_PRIVATE_KEY }}
+          # SCIENT-FORK:END account-deletion
           FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
           T3CHAT_LINK_SECRET: ${{ secrets.T3CHAT_LINK_SECRET }}
 
