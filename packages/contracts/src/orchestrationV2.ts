@@ -1239,6 +1239,8 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** SCIENT-FORK: the agent is planning and changes nothing until a plan is approved. */
+  planMode: Schema.optional(Schema.Boolean),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });

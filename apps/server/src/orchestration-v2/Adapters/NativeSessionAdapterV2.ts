@@ -224,6 +224,8 @@ export type NativeSessionUpdate =
   | { readonly type: "background"; readonly pending: boolean }
   /** SCIENT-FORK: the native goal changed; null when none is set. */
   | { readonly type: "goal"; readonly goal: OrchestrationV2ProviderGoal | null }
+  /** SCIENT-FORK: the native agent turned plan mode on or off. */
+  | { readonly type: "plan-mode"; readonly enabled: boolean }
   | { readonly type: "continuation-started" }
   | {
       readonly type: "terminal";
@@ -917,6 +919,7 @@ export function makeNativeSessionAdapterV2(
                 update.type === "question-resolved" ||
                 update.type === "native-thread" ||
                 update.type === "goal" ||
+                update.type === "plan-mode" ||
                 (update.type === "model" &&
                   active !== undefined &&
                   active.turn.acceptedAt === undefined) ||
@@ -1010,6 +1013,13 @@ export function makeNativeSessionAdapterV2(
                 if (update.type === "goal") {
                   if (!thread || providerGoalsEqual(thread.goal ?? null, update.goal)) return;
                   thread = { ...thread, goal: update.goal, updatedAt: yield* DateTime.now };
+                  yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+                  return;
+                }
+                // SCIENT-FORK: the thread shows whether the agent is planning.
+                if (update.type === "plan-mode") {
+                  if (!thread || (thread.planMode ?? false) === update.enabled) return;
+                  thread = { ...thread, planMode: update.enabled, updatedAt: yield* DateTime.now };
                   yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
                   return;
                 }
