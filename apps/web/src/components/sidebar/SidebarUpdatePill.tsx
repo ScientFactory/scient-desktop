@@ -61,9 +61,8 @@ import { isUpdateRunActive } from "../../scient/desktopUpdate/otherUpdates.logic
 import { SidebarOtherUpdates } from "../../scient/desktopUpdate/SidebarOtherUpdates";
 import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:END
-// SCIENT-FORK:START — a pass's restart countdown sits above the Restart pill, which restarts now.
-import { UpdateRestartCountdown } from "../../scient/desktopUpdate/UpdateRestartCountdown";
-import { restartUpdateNow } from "./updateEverythingRun";
+// SCIENT-FORK:START — a downloaded update restarts at once only while nothing here is working.
+import { useLocalWorkBlocksRestart } from "../../scient/desktopUpdate/restartWhenIdle";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — replaces upstream's UpdateEverythingDialog: a pass asks beside the pill,
 // and only when it would stop running threads.
@@ -225,6 +224,7 @@ function SidebarUpdateControl() {
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the imperative ready notice when its owner unmounts
   useEffect(() => () => updateReadyNoticeRef.current?.close(), []);
+  const localWorkBlocksRestart = useLocalWorkBlocksRestart();
   // Resolves true when the app is relaunching; a bulk pass passes `reportError` for its summary.
   const installFromFooter = (
     bridge: NonNullable<typeof window.desktopBridge>,
@@ -310,10 +310,7 @@ function SidebarUpdateControl() {
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
-  // SCIENT-FORK:START — under a pass's restart countdown, the Restart pill restarts now.
-  const isInteractionDisabled =
-    run?.phase !== "countdown" && (disabled || isActionPending || isRunningEverything);
-  // SCIENT-FORK:END
+  const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
   const showReleaseNotesPopover =
     !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
 
@@ -329,12 +326,6 @@ function SidebarUpdateControl() {
 
   const handleAction = async () => {
     const bridge = window.desktopBridge;
-    // SCIENT-FORK:START — under a pass's restart countdown, the Restart pill restarts now.
-    if (run?.phase === "countdown") {
-      restartUpdateNow();
-      return;
-    }
-    // SCIENT-FORK:END
     if (isInteractionDisabled) return;
 
     if (runsEverything) {
@@ -380,6 +371,11 @@ function SidebarUpdateControl() {
             releaseNotesPopoverHandle.close();
           }
           updateReadyNoticeRef.current?.close();
+          // Nothing here is working, so the update the user asked for installs now.
+          if (!localWorkBlocksRestart()) {
+            void installFromFooter(bridge);
+            return;
+          }
           updateReadyNoticeRef.current = showScientUpdateReadyNotice({
             shell: bridge,
             state: downloadedState,
@@ -462,6 +458,7 @@ function SidebarUpdateControl() {
           ? { installLocal: (reportError) => installFromFooter(bridge, reportError) }
           : {}),
         admitServer,
+        localWorkBlocksRestart,
         // SCIENT-FORK:END
       }),
     );
@@ -695,7 +692,6 @@ function SidebarUpdateControl() {
           if (askingPass !== null) void runEverything(askingPass.admitServer);
         }}
       />
-      <UpdateRestartCountdown anchorId={releaseNotesTriggerId} run={run} />
       {/* SCIENT-FORK:END */}
     </SidebarMenuItem>
   );

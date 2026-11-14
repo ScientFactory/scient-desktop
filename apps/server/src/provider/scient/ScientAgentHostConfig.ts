@@ -32,6 +32,9 @@ export const scientAgentHostConfigText = (input: ScientAgentHostConfigInput): st
     ...(input.computerControl ? ["tools:", "  approval:", "    computer.control: allow"] : []),
     "generate_image:",
     `  enabled: ${input.imageGeneration}`,
+    // An active goal keeps working between turns, as in the agent's terminal.
+    "goal:",
+    "  continuationModes: [interactive, rpc]",
     "",
   ].join("\n");
 

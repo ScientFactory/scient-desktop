@@ -1314,7 +1314,9 @@ function ScopedCompactIdleThreadsRow() {
       settingKeys={["idleCompaction", "compactIdleThreads"]}
       mixed={idleCompaction.mixed}
       {...searchableSetting("compact-idle-threads")}
-      description="When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this."
+      // SCIENT-FORK:START - Scient Agent threads compact too.
+      description="When to compact an idle Claude or Scient Agent thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude and Scient Agent provider can override this."
+      // SCIENT-FORK:END
       resetAction={
         globalIdleCompaction(settings) !== globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) ? (
           <SettingResetButton
