@@ -519,17 +519,18 @@ export function ProviderServerItem({
   provider,
   label,
   server,
+  serviceId,
 }: {
   readonly provider: ServerProvider;
   readonly label: string;
   readonly server: ServerProviderMcpServer;
+  /** The account service this row is one agent's side of; the row opens its page. */
+  readonly serviceId?: string | undefined;
 }) {
   const actions = useProviderServerActions(provider, label, server);
-  const target: ExtensionTarget = {
-    kind: "provider-server",
-    instanceId: provider.instanceId,
-    serverName: server.name,
-  };
+  const target: ExtensionTarget = serviceId
+    ? { kind: "account", serviceId }
+    : { kind: "provider-server", instanceId: provider.instanceId, serverName: server.name };
   return (
     <ExtensionRow
       target={target}

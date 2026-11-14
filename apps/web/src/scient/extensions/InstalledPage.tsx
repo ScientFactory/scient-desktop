@@ -76,9 +76,7 @@ function ProviderSection({
         workspace={cwd}
       />
     )),
-    // A ChatGPT app or claude.ai connector for a service Scient lists on its own is shown there.
     ...(showsKind(kind, "plugins") ? group.mcpServers : [])
-      .filter((server) => accountServiceOfServer(group.provider, server) === undefined)
       // Codex already shows the apps its plugins bring inside those plugins' rows.
       .filter(
         (server) =>
@@ -96,6 +94,8 @@ function ProviderSection({
           provider={group.provider}
           label={group.label}
           server={server}
+          // Gmail, Calendar and Drive open their one page, which shows every agent.
+          serviceId={accountServiceOfServer(group.provider, server)?.id}
         />
       )),
   ];

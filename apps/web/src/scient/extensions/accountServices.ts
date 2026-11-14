@@ -203,7 +203,11 @@ function accountServiceRoutesFromInventory(
       );
       if (chatGptSignedIn && provider.accountAppsAvailable !== true)
         return [
-          { ...chatgpt, state: "update", reason: "This Scient Agent version has no ChatGPT apps" },
+          {
+            ...chatgpt,
+            state: "update",
+            reason: "Signed in to ChatGPT; ChatGPT apps come with the next Scient Agent update",
+          },
         ];
       if (provider.accountAppsAvailable !== true) {
         // Scient Agent reaches account apps only through ChatGPT, whatever else it signed in to.
