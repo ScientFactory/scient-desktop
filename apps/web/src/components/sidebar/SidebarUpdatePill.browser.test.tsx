@@ -37,6 +37,7 @@ vi.mock("../../env", async (importOriginal) => ({
   isElectron: true,
 }));
 vi.mock("./useUpdateEverything", () => ({
+  isHostedByThisApp: () => false,
   useUpdateEverything: () => ({
     hasUpdates: mocks.hasUpdates,
     summary: "Update everything",
@@ -54,7 +55,6 @@ vi.mock("./updateEverythingRun", async (importOriginal) => ({
   useUpdateEverythingRun: () => null,
   clearSavedUpdateEverythingResult: vi.fn(),
   saveUpdateEverythingResult: vi.fn(),
-  restartUpdateNow: vi.fn(),
 }));
 vi.mock("../../scient/desktopUpdate/SidebarOtherUpdates", () => ({
   SidebarOtherUpdates: () => null,

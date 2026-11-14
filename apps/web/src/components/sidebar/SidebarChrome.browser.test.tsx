@@ -13,7 +13,7 @@ import { SidebarNewThreadRow } from "../../scient/sidebar/SidebarNewThreadRow";
 import { SidebarFooter, SidebarProvider } from "../ui/sidebar";
 import { TooltipProvider } from "../ui/tooltip";
 import { SidebarUtilityMenu } from "./SidebarChrome";
-import { setUpdateEverythingRun, waitForUpdateRestart } from "./updateEverythingRun";
+import { setUpdateEverythingRun } from "./updateEverythingRun";
 import type { useUpdateEverything } from "./useUpdateEverything";
 
 const fixture = vi.hoisted(() => ({
@@ -58,6 +58,7 @@ vi.mock("../../state/desktopUpdate", async (original) => ({
 vi.mock("./useUpdateEverything", async (original) => {
   const actual = await original<typeof import("./useUpdateEverything")>();
   return {
+    isHostedByThisApp: actual.isHostedByThisApp,
     useUpdateEverything: (localUpdateVersion: string | null) => {
       const real = actual.useUpdateEverything(localUpdateVersion);
       return fixture.everything ?? real;
@@ -471,48 +472,6 @@ it("asks on a row's own line before its Update stops running threads", async () 
     });
   }
 });
-
-it.each(["Later", "Restart"] as const)(
-  "counts down above the Restart pill, and %s decides the restart",
-  async (choice) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-    await mountFooter(_fixture, 216, updateState);
-    // Room above the footer for the countdown, which otherwise flips below the pill.
-    _fixture.host!.style.marginTop = "120px";
-    window.scrollTo(0, 0);
-    setUpdateEverythingRun(() => ({
-      localVersion: "0.6.21",
-      phase: "servers",
-      restartAt: null,
-      machines: [],
-    }));
-    const decision = waitForUpdateRestart(5_000);
-    const later = page.getByRole("button", { name: "Later" });
-    await expect.element(later).toBeVisible();
-    const countdown = document.querySelector<HTMLElement>("[data-update-countdown]")!;
-    expect(countdown.textContent).toMatch(/^Restart in [45]sLater$/);
-
-    const pill = page.getByRole("button", { name: /^Restart/ });
-    await expect.element(pill).toBeVisible();
-    expect(pill.element().getAttribute("aria-disabled")).toBeNull();
-    await expect
-      .poll(
-        () =>
-          countdown.getBoundingClientRect().bottom <=
-          (pill.element() as HTMLElement).getBoundingClientRect().top,
-      )
-      .toBe(true);
-    if (import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS && choice === "Later") {
-      await page.screenshot({
-        path: `${import.meta.env.VITE_SCIENT_SIDEBAR_SCREENSHOTS}/restart-countdown.png`,
-      });
-    }
-    await (choice === "Later" ? later : pill).click();
-    await expect(decision).resolves.toBe(choice === "Restart");
-  },
-);
 
 const availableUpdateState: DesktopUpdateState = {
   ...updateState,

@@ -29,7 +29,6 @@ import {
   settleUpdateRunMachine,
   showUpdateEverythingResult,
   waitForServerUpdateHandoff,
-  waitForUpdateRestart,
 } from "./updateEverythingRun";
 // SCIENT-FORK:START — T3 npm publication does not qualify a Scient server artifact.
 import { useScientServerReleasePublished } from "~/scient/desktopUpdate/serverReleaseAvailability";
@@ -52,8 +51,6 @@ import { isMachineUpdating } from "~/scient/desktopUpdate/useOtherUpdates";
 import { releaseUpdateRunServer } from "~/scient/desktopUpdate/updateRunServers";
 import type { ServerUpdateTarget } from "../ServerUpdateAction";
 // SCIENT-FORK:END
-
-const UPDATE_RESTART_DELAY_MS = 5_000;
 
 /** Servers this desktop app runs; they update with it. */
 export function isHostedByThisApp(
@@ -167,10 +164,13 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
       installLocal,
       // SCIENT-FORK:START — the circle admits each server again when its restart is due.
       admitServer,
+      // This app restarts at the end only when nothing here is working; otherwise Restart waits.
+      localWorkBlocksRestart = () => true,
     }: {
       downloadLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
       installLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
       admitServer?: (target: ServerUpdateTarget) => boolean;
+      localWorkBlocksRestart?: () => boolean;
       // SCIENT-FORK:END
     }) => {
       const localFailures: Array<string> = [];
@@ -326,7 +326,8 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
             providers: outcome.providers,
           });
         if (outcome.localReady && installLocal) {
-          if (await waitForUpdateRestart(UPDATE_RESTART_DELAY_MS)) {
+          // SCIENT-FORK: replaces upstream's restart countdown with an idle check.
+          if (!localWorkBlocksRestart()) {
             setUpdateEverythingRun(
               (run) => run && { ...run, phase: "installing", restartAt: null },
             );
