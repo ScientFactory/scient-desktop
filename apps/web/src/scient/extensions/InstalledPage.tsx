@@ -1,6 +1,10 @@
-import type { ProviderInstanceId, ScientPluginSummary } from "@t3tools/contracts";
+import type {
+  ProviderInstanceId,
+  ScientPluginSummary,
+  ServerProviderMcpServer,
+} from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
 import { SettingsSearchTarget } from "../../components/settings/settingsLayout";
 import { searchableSetting } from "../../components/settings/settingsSearch";
@@ -52,9 +56,89 @@ const serverType = (scope: string | undefined) =>
   scope === "chatgpt" ? "ChatGPT app" : scope === "claudeai" ? "claude.ai connector" : "MCP server";
 
 /**
+ * Each agent's own plugins, apps and servers as rows, each thing once:
+ * - a service several agents reach (Gmail and the like) is already its own row;
+ * - a ChatGPT app is one row naming every agent whose ChatGPT account has it;
+ * - an agent's plugin named like one of those, or like another of its plugins, adds no row.
+ */
+function agentRows(
+  groups: ReadonlyArray<ProviderExtensionGroup>,
+  services: ReadonlyArray<AccountService>,
+) {
+  const key = (name: string) => name.trim().toLowerCase();
+  const apps = new Map<
+    string,
+    Array<{ readonly group: ProviderExtensionGroup; readonly server: ServerProviderMcpServer }>
+  >();
+  const others: Array<{
+    readonly group: ProviderExtensionGroup;
+    readonly server: ServerProviderMcpServer;
+  }> = [];
+  for (const group of groups)
+    for (const server of group.mcpServers) {
+      if (accountServiceOfServer(group.provider, server)) continue;
+      if (server.scope === "chatgpt") {
+        const list = apps.get(key(server.name)) ?? [];
+        list.push({ group, server });
+        apps.set(key(server.name), list);
+      } else others.push({ group, server });
+    }
+  const covered = new Set([...services.map((service) => key(service.name)), ...apps.keys()]);
+  const rows: ReactNode[] = [];
+  for (const group of groups) {
+    const seen = new Set<string>();
+    for (const { plugin, cwd } of group.plugins) {
+      const name = key(plugin.displayName ?? plugin.name);
+      if (covered.has(name) || seen.has(name)) continue;
+      seen.add(name);
+      rows.push(
+        <ProviderPluginItem
+          key={`${group.provider.instanceId}:plugin:${cwd ?? ""}:${plugin.id}`}
+          provider={group.provider}
+          label={group.label}
+          plugin={plugin}
+          workspace={cwd}
+        />,
+      );
+    }
+  }
+  for (const [name, list] of apps) {
+    const first = list[0]!;
+    rows.push(
+      <ProviderServerItem
+        key={`app:${name}`}
+        provider={first.group.provider}
+        label={first.group.label}
+        server={first.server}
+        type="ChatGPT app"
+        audience={{
+          layer: "account",
+          connected: list
+            .filter(({ server }) => server.status === "connected")
+            .map(({ group }) => ({ instanceId: group.provider.instanceId, label: group.label })),
+          pending: [],
+        }}
+      />,
+    );
+  }
+  for (const { group, server } of others)
+    rows.push(
+      <ProviderServerItem
+        key={`${group.provider.instanceId}:server:${server.name}`}
+        provider={group.provider}
+        label={group.label}
+        server={server}
+        type={serverType(server.scope)}
+      />,
+    );
+  return rows;
+}
+
+/**
  * Everything this environment has, in one table like claude.ai's Connectors page: the services
- * the agents reach through their accounts, Scient's connectors and plugins, then each agent's
- * own plugins, apps and servers. A service several agents reach is one row naming them all.
+ * the agents reach through their accounts, Scient's connectors, then each agent's own plugins,
+ * apps and servers. A service several agents reach is one row naming them all. What comes built
+ * into Scient follows in its own table.
  */
 function YoursTable({
   selected,
@@ -102,41 +186,7 @@ function YoursTable({
         entry={curated.find((entry) => entry.installedConnectorId === connector.connectorId)}
       />
     )),
-    ...plugins.map((plugin) => <PluginItem key={plugin.pluginId} plugin={plugin} />),
-    ...groups.flatMap((group) => [
-      ...group.plugins.map(({ plugin, cwd }) => (
-        <ProviderPluginItem
-          key={`${group.provider.instanceId}:plugin:${cwd ?? ""}:${plugin.id}`}
-          provider={group.provider}
-          label={group.label}
-          plugin={plugin}
-          workspace={cwd}
-        />
-      )),
-      ...group.mcpServers
-        // A service several agents reach is its own row above, naming them all.
-        .filter((server) => accountServiceOfServer(group.provider, server) === undefined)
-        // Codex already shows the apps its plugins bring inside those plugins' rows.
-        .filter(
-          (server) =>
-            !(
-              group.provider.driver === "codex" &&
-              server.scope === "chatgpt" &&
-              group.plugins.some(({ plugin }) =>
-                (plugin.apps ?? []).some((app) => app.name === server.name),
-              )
-            ),
-        )
-        .map((server) => (
-          <ProviderServerItem
-            key={`${group.provider.instanceId}:server:${server.name}`}
-            provider={group.provider}
-            label={group.label}
-            server={server}
-            type={serverType(server.scope)}
-          />
-        )),
-    ]),
+    ...agentRows(groups, accountServices),
   ];
   // Where an agent's own account adds apps: ChatGPT for Codex and Scient Agent, claude.ai for Claude.
   const chatGptApps = groups.some(
@@ -155,7 +205,7 @@ function YoursTable({
   return (
     <SettingsSearchTarget
       id={searchableSetting("extensions-connected-services").id}
-      className="outline-none"
+      className="grid gap-10 outline-none"
     >
       <ExtensionsSection
         title="Yours"
@@ -212,6 +262,18 @@ function YoursTable({
           </div>
         ) : null}
       </ExtensionsSection>
+      {plugins.length > 0 ? (
+        <ExtensionsSection
+          id={searchableSetting("extensions-scient-plugins").id}
+          title="Built into Scient"
+        >
+          <ExtensionTable label="Built into Scient">
+            {plugins.map((plugin) => (
+              <PluginItem key={plugin.pluginId} plugin={plugin} />
+            ))}
+          </ExtensionTable>
+        </ExtensionsSection>
+      ) : null}
     </SettingsSearchTarget>
   );
 }

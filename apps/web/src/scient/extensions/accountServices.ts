@@ -81,8 +81,10 @@ export function accountServiceOfServer(
   server: Pick<ServerProviderMcpServer, "name" | "scope" | "connectUrl">,
 ): AccountService | undefined {
   if ((provider.driver === "scient" || provider.driver === "codex") && server.scope === "chatgpt")
-    return ACCOUNT_SERVICES.find((service) =>
-      server.connectUrl?.endsWith(`/${service.chatgptAppId}`),
+    return ACCOUNT_SERVICES.find(
+      (service) =>
+        server.connectUrl?.endsWith(`/${service.chatgptAppId}`) === true ||
+        server.name === service.name,
     );
   if (provider.driver === "claudeAgent" && server.scope === "claudeai")
     return ACCOUNT_SERVICES.find((service) => service.claudeConnector === claudeName(server));

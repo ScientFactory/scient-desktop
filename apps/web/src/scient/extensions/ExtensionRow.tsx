@@ -329,7 +329,7 @@ export function ExtensionRow({
   if (layout === "table")
     return (
       <li className="min-w-0 border-b border-border/70 last:border-b-0" data-extension-row={name}>
-        <div className="relative grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-2 py-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring @min-[720px]/extensions:grid-cols-[minmax(0,1fr)_9rem_8rem_auto]">
+        <div className="relative grid min-h-14 grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-x-4 px-2 py-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring @min-[720px]/extensions:grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem]">
           <div className="flex min-w-0 items-center gap-3">
             <ExtensionIcon
               name={name}
@@ -358,7 +358,7 @@ export function ExtensionRow({
           <span className="hidden truncate text-sm text-muted-foreground @min-[720px]/extensions:block">
             {type ?? rowType(target, audience)}
           </span>
-          <div className="relative z-10 hidden @min-[720px]/extensions:block">
+          <div className="relative z-10 hidden min-w-0 overflow-hidden @min-[720px]/extensions:block">
             <WorksWithAgents audience={audience} />
           </div>
           <div className="relative z-10 flex shrink-0 justify-end">{trailing}</div>
@@ -412,15 +412,15 @@ export function ExtensionTable({
 }) {
   return (
     <RowLayout.Provider value="table">
-      <div className="-mx-2 min-w-0">
+      <div className="-mx-2 min-w-0 overflow-hidden">
         <div
           aria-hidden
-          className="hidden grid-cols-[minmax(0,1fr)_9rem_8rem_auto] gap-x-4 border-b border-border/70 px-2 pb-2 text-xs text-muted-foreground @min-[720px]/extensions:grid"
+          className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem] gap-x-4 border-b border-border/70 px-2 pb-2 text-xs text-muted-foreground @min-[720px]/extensions:grid"
         >
           <span>Name</span>
           <span>Type</span>
           <span>Works with</span>
-          <span className="w-8" />
+          <span />
         </div>
         <ul aria-label={label}>{children}</ul>
       </div>

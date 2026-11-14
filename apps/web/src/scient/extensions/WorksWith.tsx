@@ -172,15 +172,18 @@ export function WorksWithAgents({
   const { inventory, providers } = useExtensionsEnvironment();
   const support = audienceSupport(audience, providers, inventory?.providerSupport ?? []);
   const usable = worksWithCardAgents(audience, support);
-  if (support.length > 1 && support.every((entry) => entry.status === "supported"))
+  // Scient's own connectors and plugins reach every agent: say so, not eleven logos.
+  if (audience.layer === "scient" || (support.length > 1 && usable.length === support.length))
     return <span className="text-sm text-muted-foreground">All agents</span>;
   if (usable.length === 0)
     return <span className="text-sm text-muted-foreground">{audienceLabel(audience)}</span>;
+  const shown = usable.slice(0, 3);
+  const more = usable.length - shown.length;
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
     providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
   return (
     <ul className="flex items-center gap-1.5" aria-label={audienceLabel(audience)}>
-      {usable.map((entry) => (
+      {shown.map((entry) => (
         <li key={entry.providerInstanceId}>
           <Tooltip>
             <TooltipTrigger
@@ -210,6 +213,7 @@ export function WorksWithAgents({
           </Tooltip>
         </li>
       ))}
+      {more > 0 ? <li className="text-xs text-muted-foreground">+{more}</li> : null}
     </ul>
   );
 }

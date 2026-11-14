@@ -1540,11 +1540,12 @@ describe("Installed", () => {
       ],
     };
     await fixture.render(<InstalledPage />);
-    // One table: connected services, then Scient's plugins, then each agent's own items.
+    // One table of yours: connected services, then each agent's own items; what is built
+    // into Scient follows in its own table.
     const names = fixture.rowNames(fixture.section("Yours"));
-    expect(names.slice(0, 3)).toEqual(["Linear", "Lab kit", "Sources"]);
+    expect(names[0]).toBe("Linear");
     expect(names).toEqual(expect.arrayContaining(["github", "claude-1", "claude-6"]));
-    expect(names.indexOf("github")).toBeLessThan(names.indexOf("claude-1"));
+    expect(fixture.rowNames(fixture.section("Built into Scient"))).toEqual(["Lab kit", "Sources"]);
     expect(fixture.row("Lab kit").querySelector("[data-extension-status]")?.textContent).toBe(
       "Off",
     );
