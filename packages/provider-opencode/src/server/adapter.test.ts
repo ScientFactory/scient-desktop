@@ -2351,14 +2351,22 @@ describe("OpenCodeAdapterV2", () => {
       const root = "ses_root";
       const child = "ses_child";
       let promptId = "";
+      // SCIENT-FORK: Scient confirms each turn's permission rules, so the peer echoes them.
+      const permissionPeer = nativePermissionPeer();
       const harness = yield* makeOpenCodeRuntimeHarness("resumed-child", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
-          get: async () => ({
-            data: { id: child, parentID: root, permission: [], time: { created: 2, updated: 2 } },
-          }),
-          update: async () => ({ data: { id: child, parentID: root } }),
+          get: async (input: { readonly sessionID: string }) => {
+            const { data } = await permissionPeer.get(input);
+            return input.sessionID === child
+              ? { data: { ...data, parentID: root, time: { created: 2, updated: 2 } } }
+              : { data };
+          },
+          update: async (input: Parameters<typeof permissionPeer.update>[0]) => {
+            const { data } = await permissionPeer.update(input);
+            return { data: input.sessionID === child ? { ...data, parentID: root } : data };
+          },
           promptAsync: async (input: { messageID: string }) => {
             promptId = input.messageID;
             return { data: true };

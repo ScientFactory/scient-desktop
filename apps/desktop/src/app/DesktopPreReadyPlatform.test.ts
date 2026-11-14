@@ -235,7 +235,8 @@ describe("DesktopPreReadyPlatform", () => {
     ({ relaunchedByUpdater, restored }) => {
       vi.stubEnv("VITE_DEV_SERVER_URL", "");
       getSwitchValueMock.mockReturnValue("");
-      const entryPath = "/xdg/applications/com.t3tools.T3Code.desktop";
+      // SCIENT-FORK: Scient's desktop entry.
+      const entryPath = "/xdg/applications/scient.desktop";
       const files = new Map([[entryPath, "Exec=/Applications/T3-Code-0.1.8-x86_64.AppImage %U\n"]]);
       readFileSyncMock.mockImplementation((path: string) => files.get(path) ?? "{}");
       writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {

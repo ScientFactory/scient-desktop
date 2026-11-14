@@ -15429,27 +15429,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]);
         return;
       }
-      // SCIENT-FORK:START — a failed root can still own live native child turns. A cancelled
-      // task waits only for its work to stop, as the caller guard does.
-      const taskProgress = delegatedTaskProgress(
-        taskRuns.length === 0
-          ? childControls
-          : {
-              ...childControls,
-              runs: taskRuns,
-              subagents: childControls.subagents.filter((task) =>
-                taskRuns.some((run) => run.id === task.runId),
-              ),
-            },
-        { includeUnstartedResults: true },
-      ).state;
+      // SCIENT-FORK:START — the task that created the child has no task runs, and a failed root
+      // can still own live native child turns. Cancelling it waits only for its work to stop.
+      if (taskRuns.length === 0) {
+        const taskProgress = delegatedTaskProgress(childControls, {
+          includeUnstartedResults: true,
+        }).state;
+        if (
+          options.task.cancelledRunId === childRun.id
+            ? taskProgress === "working"
+            : taskProgress !== "result_available"
+        )
+          return;
+      }
+      // SCIENT-FORK:END
+      // A follow-up ends with the work it awaits, as the original task does. A cancelled task
+      // does not wait for the background work its cancel is stopping.
       if (
-        options.task.cancelledRunId === childRun.id
-          ? taskProgress === "working"
-          : taskProgress !== "result_available"
+        delegatedTaskAwaitsWork(
+          taskRuns,
+          options.task.cancelledRunId === undefined
+            ? childControls
+            : { subagents: childControls.subagents, providerThreads: [] },
+        )
       )
         return;
-      // SCIENT-FORK:END
       if (
         yield* childAwaitsRestartContinuation(
           taskRuns.length === 0 ? childControls.runs : taskRuns,

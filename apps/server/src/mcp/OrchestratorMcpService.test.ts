@@ -3570,6 +3570,14 @@ describe("OrchestratorMcpService provider resolution", () => {
                   calls.threads.push(target);
                   return [{ ...callerShell, projectId: target ?? projectId }];
                 }),
+              // The page's shells, as listProjectThreads reported them.
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  threads: calls.threads.map((target) => ({
+                    ...callerShell,
+                    projectId: target ?? projectId,
+                  })),
+                } as never),
             }),
             ServerSettings.layerTest(),
             Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
