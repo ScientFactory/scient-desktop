@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Tests exercise real project, library and git folders.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
@@ -15,9 +17,13 @@ import {
   ScientLibraryMoveCrash,
   scientLibraryMoveStatusLines,
 } from "@scientfactory/scient-sources/library-move";
+import { readScientLibraryAliases } from "@scientfactory/scient-sources/library-aliases";
+import { mergeScientLibrarySources } from "@scientfactory/scient-sources/library-merge";
 import {
+  ensureScientLibrary,
   scientLibraryLocation,
   scientLibraryRootFor,
+  type ScientSourceStoreLocation,
 } from "@scientfactory/scient-sources/library-root";
 import {
   organizeScientSources,
@@ -79,7 +85,9 @@ async function setup(name = "project") {
 
 type Fixture = Awaited<ReturnType<typeof setup>>;
 
-async function addV1Source(root: string, sourceKey: string) {
+const addV1Source = (root: string, sourceKey: string) => addSource(root, sourceKey);
+
+async function addSource(root: ScientSourceStoreLocation, sourceKey: string) {
   const imported = await importScientSource({
     root,
     operationId: NodeCrypto.randomUUID(),
@@ -523,6 +531,53 @@ describe("the move status, one row per state", () => {
         state: "done",
         lines: [...SUMMARY_LINES, "Undo for bulk edits made before the move was not kept."],
       });
+    }),
+  );
+});
+
+describe("a merge a stopped process left halfway", () => {
+  it.effect("is finished by the first write call of the next process", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(() => setup());
+      yield* Effect.promise(() => ensureScientLibrary(fixture.library.root));
+      const kept = yield* Effect.promise(() => addSource(fixture.library, "KEPT"));
+      const merged = yield* Effect.promise(() => addSource(fixture.library, "MERGED"));
+      // The process stops after the merged source reached the Trash and before its alias.
+      const rename = NodeFS.promises.rename;
+      NodeFS.promises.rename = async (from, to) => {
+        if (String(to).endsWith("aliases.json")) throw new Error("The process stopped here.");
+        return rename(from, to);
+      };
+      NodeModule.syncBuiltinESMExports();
+      const stopped = yield* Effect.promise(() =>
+        mergeScientLibrarySources({
+          library: fixture.library,
+          sourceIds: [kept.sourceId, merged.sourceId],
+          survivorId: kept.sourceId,
+        }).then(
+          () => false,
+          () => true,
+        ),
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            NodeFS.promises.rename = rename;
+            NodeModule.syncBuiltinESMExports();
+          }),
+        ),
+      );
+      expect(stopped).toBe(true);
+      expect((yield* Effect.promise(() => readScientLibraryAliases(fixture.library))).size).toBe(0);
+
+      yield* writeStore(fixture);
+
+      const aliases = yield* Effect.promise(() => readScientLibraryAliases(fixture.library));
+      expect(aliases.get(merged.sourceId)?.survivorId).toBe(kept.sourceId);
+      expect(
+        (yield* Effect.promise(() => listScientSourceRecords(fixture.library))).map(
+          (record) => record.sourceId,
+        ),
+      ).toEqual([kept.sourceId]);
     }),
   );
 });

@@ -4,6 +4,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import * as Schema from "effect/Schema";
+
 import { scientSourceCollectionsInternals } from "./collections.ts";
 import {
   readLibraryAliasesAt,
@@ -264,6 +266,25 @@ function pendingMergePath(paths: StorePaths, mergeId: string): string {
   return NodePath.join(paths.root, MERGES_DIRECTORY, PENDING_MERGES_DIRECTORY, `${mergeId}.json`);
 }
 
+/** A started Undo, written before its first change so a later open can finish it. */
+const PendingMergeUndo = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  mergeId: Schema.String,
+  undoneBy: ScientSourceActor,
+  startedAt: Schema.String,
+});
+const PENDING_UNDO_PREFIX = "undo_";
+
+function pendingUndoPath(paths: StorePaths, mergeId: string): string {
+  assertSafeIdentifier(mergeId, "Merge ID");
+  return NodePath.join(
+    paths.root,
+    MERGES_DIRECTORY,
+    PENDING_MERGES_DIRECTORY,
+    `${PENDING_UNDO_PREFIX}${mergeId}.json`,
+  );
+}
+
 async function libraryPaths(library: ScientLibraryLocation): Promise<StorePaths> {
   const paths = await sourceStorePaths(library);
   if (paths.owner.kind !== "library") throw new Error("Only a library merges sources.");
@@ -416,17 +437,22 @@ async function finishMerges(
 }
 
 /**
- * Finishes merges a crash interrupted. One whose survivor revision landed is completed; one that
- * stopped before it, or whose records changed since, is dropped, and the next pass finds the pair
- * again. Caller holds the lock.
+ * Finishes merges and Undos a stopped process left halfway. A merge whose survivor revision
+ * landed is completed; one that stopped before it, or whose records changed since, is dropped,
+ * and the next pass finds the pair again. A started Undo is run to its end. Caller holds the lock.
  */
 async function settlePendingMerges(paths: StorePaths): Promise<void> {
   const directory = NodePath.join(paths.root, MERGES_DIRECTORY, PENDING_MERGES_DIRECTORY);
   if ((await snapshot(directory)) !== "directory") return;
   const finishing: ScientLibraryMerge[] = [];
+  const undoing: string[] = [];
   for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     const filePath = NodePath.join(directory, entry.name);
+    if (entry.name.startsWith(PENDING_UNDO_PREFIX)) {
+      undoing.push(filePath);
+      continue;
+    }
     const merge = await readBoundedJson(filePath, MAX_MERGE_BYTES, ScientLibraryMerge).catch(
       () => null,
     );
@@ -455,6 +481,30 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
     await NodeFSP.rm(filePath, { force: true });
   }
   await finishMerges(paths, finishing);
+  for (const filePath of undoing) {
+    const started = await readBoundedJson(filePath, MAX_MERGE_BYTES, PendingMergeUndo).catch(
+      () => null,
+    );
+    const merge = started
+      ? await readBoundedJson(
+          mergePath(paths, started.mergeId),
+          MAX_MERGE_BYTES,
+          ScientLibraryMerge,
+        ).catch(() => null)
+      : null;
+    if (started && merge?.state === "done") await applyMergeUndo(paths, merge, started.undoneBy);
+    await NodeFSP.rm(filePath, { force: true });
+  }
+}
+
+/**
+ * Finishes merges and Undos a stopped process left halfway. Every merge and Undo does this
+ * first; the server also does it when it first opens the Library for writing, so a half-merged
+ * source never waits for the next merge.
+ */
+export async function settleScientLibraryMerges(library: ScientLibraryLocation): Promise<void> {
+  const paths = await libraryPaths(library);
+  await withStoreLock(paths, "source-write", () => settlePendingMerges(paths));
 }
 
 /** Every receipt and the exclusions they and the distinct pairs hold. Caller lists `live`. */
@@ -775,66 +825,114 @@ export async function undoScientLibraryMerge(input: {
     if ((await snapshot(filePath)) === "missing") return { outcome: "not-found" };
     const merge = await readBoundedJson(filePath, MAX_MERGE_BYTES, ScientLibraryMerge);
     if (merge.state === "undone") return { outcome: "already-undone" };
-    const current = await readScientSourceRecordIfPresent(paths, merge.survivorId);
-    if (!current) return { outcome: "survivor-missing" };
+    if (!(await readScientSourceRecordIfPresent(paths, merge.survivorId))) {
+      return { outcome: "survivor-missing" };
+    }
     const liveLoser = await readScientSourceRecordIfPresent(paths, merge.loserId);
     const trashed = liveLoser ? null : await readTrashEntry(paths, merge.loserId);
     if (!liveLoser && trashed?.mergedInto?.mergeId !== merge.mergeId) {
       return { outcome: "loser-missing" };
     }
 
-    const now = new Date().toISOString();
-    const { next, unrevertedFields } = revertMerge(current, merge);
-    let survivor = current;
-    if (!same(next, current)) {
-      survivor = { ...next, revision: current.revision + 1, updatedAt: now, updatedBy: actor };
+    const startedPath = pendingUndoPath(paths, merge.mergeId);
+    await atomicWriteJson(
+      startedPath,
+      {
+        formatVersion: 1,
+        mergeId: merge.mergeId,
+        undoneBy: actor,
+        startedAt: new Date().toISOString(),
+      },
+      MAX_MERGE_BYTES,
+    );
+    const { survivor, loser, unrevertedFields } = await applyMergeUndo(paths, merge, actor);
+    await NodeFSP.rm(startedPath, { force: true });
+    // Both were checked above under this lock.
+    if (!survivor || !loser) throw new Error("The merge could not be undone.");
+    return { outcome: "undone", survivor, loser, unrevertedFields };
+  });
+}
+
+/**
+ * Undo's writes: the survivor's revert, the merged source back from the trash, collection
+ * membership, the alias tombstone, then the receipt. Each is safe to repeat, so an Undo a stopped
+ * process left halfway is finished by running them again; a source that has gone since then is
+ * skipped. Caller holds the lock.
+ */
+async function applyMergeUndo(
+  paths: StorePaths,
+  merge: ScientLibraryMerge,
+  actor: ScientSourceActor,
+): Promise<{
+  readonly survivor: ScientSourceRecord | null;
+  readonly loser: ScientSourceRecord | null;
+  readonly unrevertedFields: ReadonlyArray<string>;
+}> {
+  const now = new Date().toISOString();
+  const current = await readScientSourceRecordIfPresent(paths, merge.survivorId);
+  let survivor = current;
+  let unrevertedFields: ReadonlyArray<string> = [];
+  if (current) {
+    const reverted = revertMerge(current, merge);
+    unrevertedFields = reverted.unrevertedFields;
+    if (!same(reverted.next, current)) {
+      survivor = {
+        ...reverted.next,
+        revision: current.revision + 1,
+        updatedAt: now,
+        updatedBy: actor,
+      };
       await persistSourceRevision(paths, current, survivor);
     }
     if (
       merge.zoteroBaseCopied &&
-      !survivor.externalReferences.some((reference) => reference.system === "zotero")
+      !survivor?.externalReferences.some((reference) => reference.system === "zotero")
     ) {
       await NodeFSP.rm(zoteroSyncPath(paths, merge.survivorId), { force: true });
     }
-    const loser =
-      liveLoser ??
-      (await restoreTrashedRecord(
-        paths,
-        trashed!,
-        await listScientSourceRecordsFromPaths(paths),
-        actor,
-      )) ??
-      (await readSourceRecordFromPaths(paths, merge.loserId));
+  }
+  const liveLoser = await readScientSourceRecordIfPresent(paths, merge.loserId);
+  const trashed = liveLoser ? null : await readTrashEntry(paths, merge.loserId);
+  const loser =
+    liveLoser ??
+    (trashed?.mergedInto?.mergeId === merge.mergeId
+      ? ((await restoreTrashedRecord(
+          paths,
+          trashed,
+          await listScientSourceRecordsFromPaths(paths),
+          actor,
+        )) ?? (await readSourceRecordFromPaths(paths, merge.loserId)))
+      : null);
 
-    await rewriteLibraryCollections(paths, (collections, collectionNow) => ({
-      collections: collections.map((collection) => {
-        if (!merge.collectionIds.includes(collection.collectionId)) return collection;
-        const withoutSurvivor = merge.addedToCollectionIds.includes(collection.collectionId)
-          ? collection.sourceIds.filter((sourceId) => sourceId !== merge.survivorId)
-          : collection.sourceIds;
-        const sourceIds = withoutSurvivor.includes(merge.loserId)
+  await rewriteLibraryCollections(paths, (collections, collectionNow) => ({
+    collections: collections.map((collection) => {
+      if (!merge.collectionIds.includes(collection.collectionId)) return collection;
+      const withoutSurvivor = merge.addedToCollectionIds.includes(collection.collectionId)
+        ? collection.sourceIds.filter((sourceId) => sourceId !== merge.survivorId)
+        : collection.sourceIds;
+      const sourceIds =
+        !loser || withoutSurvivor.includes(merge.loserId)
           ? withoutSurvivor
           : [...withoutSurvivor, merge.loserId];
-        return same(sourceIds, collection.sourceIds)
-          ? collection
-          : { ...collection, sourceIds, updatedAt: collectionNow, updatedBy: actor };
-      }),
-      result: undefined,
-    }));
+      return same(sourceIds, collection.sourceIds)
+        ? collection
+        : { ...collection, sourceIds, updatedAt: collectionNow, updatedBy: actor };
+    }),
+    result: undefined,
+  }));
 
-    const aliases = await readLibraryAliasesAt(paths.root);
-    const alias = aliases.get(merge.loserId);
-    if (alias?.mergeId === merge.mergeId && alias.undoneAt === undefined) {
-      aliases.set(merge.loserId, { ...alias, undoneAt: now });
-      await writeLibraryAliasesAt(paths.root, aliases);
-    }
-    await atomicWriteJson(
-      filePath,
-      { ...merge, state: "undone", undoneAt: now, undoneBy: actor },
-      MAX_MERGE_BYTES,
-    );
-    return { outcome: "undone", survivor, loser, unrevertedFields };
-  });
+  const aliases = await readLibraryAliasesAt(paths.root);
+  const alias = aliases.get(merge.loserId);
+  if (alias?.mergeId === merge.mergeId && alias.undoneAt === undefined) {
+    aliases.set(merge.loserId, { ...alias, undoneAt: now });
+    await writeLibraryAliasesAt(paths.root, aliases);
+  }
+  await atomicWriteJson(
+    mergePath(paths, merge.mergeId),
+    { ...merge, state: "undone", undoneAt: now, undoneBy: actor },
+    MAX_MERGE_BYTES,
+  );
+  return { survivor, loser, unrevertedFields };
 }
 
 export type ScientLibraryMergeUndoState =

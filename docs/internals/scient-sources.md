@@ -174,7 +174,7 @@ apps never touch the installed app's library.
 ├── aliases.json             merged source ID → survivor, with Undo tombstones
 ├── distinct-pairs.json      pairs never merged automatically
 ├── merges/<merge-id>.json   one per merge: report and what Undo reverts
-├── merges/pending/          merges a crash interrupted, finished by the next write
+├── merges/pending/          merges and Undos a stopped process left halfway
 ├── zotero/<source-id>.json  Zotero merge bases
 ├── annotations/v1/<sha256>.json  highlights on the library's PDFs
 ├── migrations/<instance-id>/    each checkout's move: journal, move lock, kept v1 copy, review backups
@@ -391,10 +391,18 @@ pairs and what is left as possible duplicates. One merge:
   tombstones; the instance map (5c) resolves through it.
 
 A merge first writes `merges/pending/<id>.json`, then the survivor revision,
-then the trash entry, then membership, aliases and the final merge file. The
-next merge, bulk pass or Undo finishes a pending merge whose loser is in the
+then the trash entry, then membership, aliases and the final merge file.
+`settleScientLibraryMerges` finishes a pending merge whose loser is in the
 trash or whose survivor revision landed, and drops one that stopped earlier;
-the pair is then found again.
+the pair is then found again. An Undo first writes
+`merges/pending/undo_<merge-id>.json` (who started it and when); settling runs
+that Undo's writes again, each of which is safe to repeat, and skips a source
+that has gone since. Every merge, bulk pass and Undo settles first, and so does
+the first write call of each server process (`finishInterruptedLibraryMerges`
+in `SourcesBackend.ts`): a crash is followed by a new process, so a merged
+source never waits in the Trash without its alias, and a restored one never
+keeps an alias to the survivor, until the next merge. A failed settle is logged
+and tried again on the next write call.
 
 `undoScientLibraryMerge` restores the loser as a new revision, reverts each
 field the merge set only where the survivor still holds the merged value,
