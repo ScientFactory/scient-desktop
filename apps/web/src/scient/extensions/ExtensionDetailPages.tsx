@@ -84,6 +84,7 @@ import {
   entryName,
   entryNeedsSetup,
   entryFacts,
+  providerServerConnectLabel,
   providerServerDisplayName,
   entrySourceLabel,
   entryTagline,
@@ -1457,11 +1458,8 @@ function ProviderServerDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.signIn()}
                 >
-                  {server.connectUrl
-                    ? "Connect on claude.ai"
-                    : server.status === "connected"
-                      ? "Sign in again"
-                      : "Sign in"}
+                  {providerServerConnectLabel(server) ??
+                    (server.status === "connected" ? "Sign in again" : "Sign in")}
                 </PrimaryAction>
               ) : null}
               <ManagedBy label={group.label} />

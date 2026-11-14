@@ -406,7 +406,9 @@ export function providerExtensionAudience(
         ? "Uses Codex's own ChatGPT account"
         : provider.driver === "claudeAgent" && "scope" in entry && entry.scope === "claudeai"
           ? "Uses Claude's own Claude account"
-          : "Managed by this agent",
+          : provider.driver === "scient" && "scope" in entry && entry.scope === "chatgpt"
+            ? "Uses Scient Agent's own ChatGPT account"
+            : "Managed by this agent",
   };
 }
 
@@ -476,6 +478,14 @@ export function worksWithCardAgents(
   return audience.layer === "scient"
     ? support
     : support.filter((entry) => entry.status !== "unsupported");
+}
+
+/** The action that opens an agent's account page for this server, or none. */
+export function providerServerConnectLabel(
+  server: Pick<ServerProviderMcpServer, "connectUrl" | "scope">,
+): string | undefined {
+  if (!server.connectUrl) return undefined;
+  return server.scope === "chatgpt" ? "Open in ChatGPT" : "Connect on claude.ai";
 }
 
 export function providerServerDisplayName(

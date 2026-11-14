@@ -84,6 +84,13 @@ function ProviderSection({
     )),
   ];
   const title = `From ${group.label}`;
+  // Where the agent's own account adds apps: claude.ai for Claude, ChatGPT for Scient Agent.
+  const accountAppsPage =
+    group.provider.driver === "claudeAgent"
+      ? { url: "https://claude.ai/settings/connectors", label: "Add more on claude.ai" }
+      : group.provider.driver === "scient"
+        ? { url: "https://chatgpt.com/apps", label: "Add more on ChatGPT" }
+        : undefined;
   return (
     <ExtensionsSection
       title={title}
@@ -121,17 +128,17 @@ function ProviderSection({
       <ExtensionGrid label={title}>
         {expanded ? rows : rows.slice(0, PROVIDER_PREVIEW_ROWS)}
       </ExtensionGrid>
-      {group.provider.driver === "claudeAgent" && group.provider.accountAppsAvailable === true ? (
+      {accountAppsPage && group.provider.accountAppsAvailable === true ? (
         <div>
           <Button
             variant="ghost-muted"
             size="sm"
             onClick={() => {
               waitingForConnection.current = true;
-              void openAuthorizationPage(async () => "https://claude.ai/settings/connectors");
+              void openAuthorizationPage(async () => accountAppsPage.url);
             }}
           >
-            Add more on claude.ai
+            {accountAppsPage.label}
           </Button>
         </div>
       ) : null}

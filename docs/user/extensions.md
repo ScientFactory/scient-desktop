@@ -254,11 +254,18 @@ connection status updates after Codex confirms it. Some apps **connect the
 first time Codex uses them**. Plan and administrator restrictions appear beside
 a disabled action.
 
+**From Scient Agent** lists the ChatGPT apps you connected in ChatGPT, such as
+Gmail, Google Drive or Google Calendar, when Scient Agent is signed in to
+ChatGPT. Every Scient Agent conversation can use them through that sign-in.
+**Add more on ChatGPT** opens ChatGPT's apps page; **Open in ChatGPT** on an
+app opens its page there, to connect it again or remove it. Return to Scient
+afterwards and the list updates.
+
 **From Claude** can list claude.ai connectors without starting a conversation.
 Choose **Connect on claude.ai**, then return after signing in. **Add more on
 claude.ai** opens the account's connector settings. These connectors are
-**Claude only**. Google's account apps remain available through Codex or
-Claude; Scient does not add Google's official MCP servers itself.
+**Claude only**. Google's account apps remain available through Codex, Scient
+Agent or Claude; Scient does not add Google's official MCP servers itself.
 
 ## See what a conversation received
 
