@@ -25,6 +25,7 @@ import type {
   VoiceTranscriptCorrectionError,
   ChatGptDictationError,
 } from "@t3tools/contracts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
@@ -45,6 +46,24 @@ export interface ProviderVoiceDictation {
     readonly wav: Uint8Array;
     readonly language?: VoiceTranscriptionLanguage | undefined;
   }) => Effect.Effect<{ readonly text: string }, ChatGptDictationError>;
+}
+
+/** A voice call in an agent process of the provider's own, apart from any conversation's session. */
+export interface ProviderLiveVoiceHost {
+  /**
+   * Starts the call's agent for the caller's scope. Undefined from an agent too old to take
+   * reports, whose calls run in the conversation's own session instead.
+   */
+  readonly openCall: Effect.Effect<
+    ProviderLiveVoiceCall | undefined,
+    ProviderAdapter.ScientLiveVoiceFailure,
+    Scope.Scope
+  >;
+}
+
+export interface ProviderLiveVoiceCall extends ProviderAdapter.ScientLiveVoiceRuntime {
+  /** The delegated request's progress, or with `final` its answer, for the voice to speak. */
+  readonly report: (text: string, final: boolean) => Effect.Effect<void>;
 }
 
 export interface ProviderSkillActionFailure {

@@ -2223,6 +2223,7 @@ export const layerWsRpc = (
           observeRpcStream,
           threadManagement,
           providerSessions: providerSessionsV2,
+          providerInstances,
         }),
         ...makeChatGptDictationRpcHandlers({ observeRpcEffect, providerInstances }),
         // SCIENT-FORK:END

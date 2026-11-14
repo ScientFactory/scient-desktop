@@ -7,6 +7,7 @@ import {
 import {
   type EnvironmentId,
   type LiveVoiceCallEvent,
+  type ProviderInstanceId,
   type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -28,6 +29,7 @@ export const liveVoiceCallCommand = createRuntimeCommand(connectionAtomRuntime, 
     readonly environmentId: EnvironmentId;
     readonly threadId: ThreadId;
     readonly sdpOffer: string;
+    readonly instanceId?: ProviderInstanceId;
     readonly signal: AbortSignal;
     readonly onEvent: (event: LiveVoiceCallEvent) => void;
   }) {
@@ -38,6 +40,7 @@ export const liveVoiceCallCommand = createRuntimeCommand(connectionAtomRuntime, 
         runStream(WS_METHODS.liveVoiceCall, {
           threadId: input.threadId,
           sdpOffer: input.sdpOffer,
+          ...(input.instanceId === undefined ? {} : { instanceId: input.instanceId }),
         }),
       )
       .pipe(
