@@ -503,9 +503,10 @@ export const make = Effect.gen(function* () {
           }),
       });
     });
-    const hostPath = requestedPath.startsWith("~/")
-      ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
-      : (mappedPath ?? (yield* toHostPath(requestedPath)));
+    const hostPath =
+      requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
+        ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
+        : (mappedPath ?? (yield* toHostPath(requestedPath)));
     const resolvedHostPath = path.isAbsolute(hostPath)
       ? isNetworkPath(hostPath)
         ? path.resolve(hostPath)

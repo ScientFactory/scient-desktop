@@ -7,8 +7,9 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { environmentIdsKey } from "~/state/environmentAtomList";
-import { environmentUpdateStatesAtom } from "~/state/server";
+import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
 import { environmentSessionStatesAtom } from "~/state/session";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
@@ -132,6 +133,9 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const restarts = collectRestartingMachines(machines, servers, localUpdateVersion !== null);
   const providers = useProviderUpdates();
   const updateServer = useServerUpdate();
+  const stageServerUpdate = useAtomCommand(serverEnvironment.stageServerUpdate, {
+    reportFailure: false,
+  });
 
   const view = describeUpdateEverything({
     localVersion: localUpdateVersion,
@@ -259,10 +263,30 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
             return [...outcomes, ...managedRuntimeRunOutcomes(managedRuns)];
             // SCIENT-FORK:END
           },
+          ...(providers.machines.length > 0
+            ? {
+                stageServers: () =>
+                  new Map(
+                    servers
+                      .filter(
+                        (server) =>
+                          machines.find((machine) => machine.environmentId === server.environmentId)
+                            ?.serverConfig?.environment.capabilities.serverUpdateStaging === true,
+                      )
+                      .map((server) => [
+                        server.environmentId,
+                        stageServerUpdate({
+                          environmentId: server.environmentId,
+                          input: { targetVersion: server.targetVersion, stageOnly: true },
+                        }),
+                      ]),
+                  ),
+              }
+            : {}),
           // SCIENT-FORK:START — only servers still eligible after the provider step update. A
           // server withdrawn meanwhile (availability, eligibility, or the sidebar leaving) is
           // settled as not updated, named in the summary, and offered Retry once eligible again.
-          updateServers: async () => {
+          updateServers: async (staged) => {
             const current = currentConfirmedServerTargets(servers, committedServersRef.current);
             const withdrawn = servers.filter(
               (server) => !current.some((target) => target.environmentId === server.environmentId),
@@ -294,6 +318,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               }
             }
             const runs = admitted.map(async (server) => {
+              await staged.get(server.environmentId);
               const serverOutcome = await updateServer(server, { quiet: true });
               settleUpdateRunMachine(
                 server.environmentId,

@@ -412,28 +412,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("reads ~/ paths from the server home outside the workspace", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const cwd = yield* makeTempDir;
-        const home = yield* makeTempDir;
-        yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
-        yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
+    it.effect.each(["~/.claude/CLAUDE.md", "~\\.claude/CLAUDE.md"])(
+      "reads %s from the server home outside the workspace",
+      (relativePath) =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const cwd = yield* makeTempDir;
+          const home = yield* makeTempDir;
+          yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
+          yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
 
-        const result = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "~/.claude/CLAUDE.md" })
-          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+          const result = yield* workspaceFileSystem
+            .readFile({ cwd, relativePath })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
 
-        expect(result).toEqual({
-          relativePath: "~/.claude/CLAUDE.md",
-          contents: "# Notes\n",
-          readOnly: true,
-          outsideWorkspace: true,
-          revision: expect.stringMatching(/^sha256:/),
-          byteLength: 8,
-          truncated: false,
-        });
-      }),
+          expect(result).toEqual({
+            relativePath,
+            contents: "# Notes\n",
+            readOnly: true,
+            outsideWorkspace: true,
+            revision: expect.stringMatching(/^sha256:/),
+            byteLength: 8,
+            truncated: false,
+          });
+        }),
     );
 
     it.effect("keeps absent host files read-only when allowMissing is requested", () =>

@@ -652,14 +652,13 @@ function makeLinuxProcessTreeController(): AcpPosixProcessTreeController {
         return identity === undefined ? [] : [identity];
       }),
     identity: readLinuxProcessIdentity,
-    // SCIENT-FORK:START procfs-snapshot-race
     snapshot: () =>
+      // By name only: withFileTypes lstats entries, which throws when a process exits mid-scan.
       NodeFS.readdirSync("/proc").flatMap((entry) => {
         if (!/^[1-9][0-9]*$/.test(entry)) return [];
         const identity = readLinuxProcessIdentity(Number(entry));
         return identity === undefined ? [] : [identity];
       }),
-    // SCIENT-FORK:END procfs-snapshot-race
     signalProcess: (pid, signal) => process.kill(pid, signal),
   };
 }

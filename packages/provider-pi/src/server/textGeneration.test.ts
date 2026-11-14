@@ -6,6 +6,8 @@ import { createModelSelection, MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Sink from "effect/Sink";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -104,11 +106,32 @@ const input = {
   modelSelection: selection,
 };
 
+// Answers the `pi --version` check that guards a thinking change.
+const piVersionSpawner = (version: string) =>
+  ChildProcessSpawner.make(() =>
+    Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(999_999_999),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.make(new TextEncoder().encode(version)),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    ),
+  );
+
 const makeHarness = (
   client: FakeClient,
   spawns: PiRpcSpawnOptions[],
   timeoutMs?: number,
   modelSelection = selection,
+  piVersion = "0.84.3",
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -127,7 +150,10 @@ const makeHarness = (
       );
       return yield* textGeneration.generateCommitMessage({ ...input, modelSelection });
     }),
-  ).pipe(Effect.provide(NodeServices.layer));
+  ).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piVersionSpawner(piVersion)),
+    Effect.provide(NodeServices.layer),
+  );
 
 it.effect("selects the decoded model and thinking level, then parses assistant text", () => {
   const client = new FakeClient();
@@ -478,3 +504,28 @@ it.effect("drops an earlier error once a later attempt succeeds", () =>
     assert.equal(error.detail, "Pi returned empty output.");
   }),
 );
+
+it.effect.each([
+  { thinking: "high", version: "0.84.3", fails: false },
+  { thinking: "max", version: "1.4.0", fails: false },
+  { thinking: "low", version: "0.84.2", fails: true },
+])("handles thinking=$thinking on Pi $version", ({ thinking, version, fails }) => {
+  const client = new FakeClient();
+  const spawns: PiRpcSpawnOptions[] = [];
+  const modelSelection = createModelSelection(ProviderInstanceId.make("pi-test"), "demo/model", [
+    { id: "thinking", value: thinking },
+  ]);
+  return Effect.gen(function* () {
+    if (fails) {
+      const error = yield* makeHarness(client, spawns, undefined, modelSelection, version).pipe(
+        Effect.flip,
+      );
+      assert.include(error.detail, "Pi 0.84.3 or newer");
+      // Older Pi would save the background thinking change as the user's default.
+      assert.deepEqual(spawns, []);
+      return;
+    }
+    yield* makeHarness(client, spawns, undefined, modelSelection, version);
+    assert.deepEqual(client.thinking, [thinking]);
+  });
+});

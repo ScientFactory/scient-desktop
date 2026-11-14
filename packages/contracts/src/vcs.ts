@@ -289,8 +289,23 @@ export class VcsCheckpointUnavailableError extends Schema.TaggedError<VcsCheckpo
   }
 }
 
+export class VcsCheckpointStorageError extends Schema.TaggedError<VcsCheckpointStorageError>()(
+  "VcsCheckpointStorageError",
+  {
+    operation: Schema.String,
+    cwd: Schema.String,
+    stage: Schema.Literals(["isolate", "publish"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not ${this.stage} checkpoint objects.`;
+  }
+}
+
 export const VcsError = Schema.Union([
   VcsCheckpointUnavailableError,
+  VcsCheckpointStorageError,
   VcsProcessSpawnError,
   VcsProcessExitError,
   VcsProcessTimeoutError,

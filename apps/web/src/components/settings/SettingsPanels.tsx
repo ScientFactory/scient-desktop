@@ -24,7 +24,7 @@ import {
   ScreenReaderAnnouncements,
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, pickModelSelection } from "@t3tools/shared/model";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import * as Equal from "effect/Equal";
@@ -1689,7 +1689,11 @@ export function ThreadsSettingsPanel() {
                       textGenerationModelSelection: resolveAppModelSelectionState(
                         {
                           ...settings,
-                          textGenerationModelSelection: createModelSelection(instanceId, model),
+                          textGenerationModelSelection: pickModelSelection(
+                            textGenerationModelSelection,
+                            instanceId,
+                            model,
+                          ),
                         },
                         textGenerationProviders,
                       ),

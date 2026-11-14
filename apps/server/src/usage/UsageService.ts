@@ -944,6 +944,7 @@ export const make = Effect.gen(function* () {
       };
     });
 
+    const summaryPricing = pricing();
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -1179,7 +1180,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       sources,
-      pricing: pricing(),
+      pricing: summaryPricing,
       accounting: { sources: accountingSources, pi: piUsage },
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),

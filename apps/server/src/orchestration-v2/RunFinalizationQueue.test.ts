@@ -102,6 +102,7 @@ it.effect.each([
         }),
         // SCIENT-FORK: the worker also dispatches conversation forks.
         Layer.mock(ConversationForkService)({}),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         ServerSettings.layerTest(),
         Layer.mock(ProviderTurnStart.ProviderTurnStartServiceV2)({
           start: () => Effect.sync(() => calls.push("start")).pipe(Effect.asVoid),

@@ -363,6 +363,7 @@ let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null 
 let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
 let acceptCommands = false;
+let projects: ReadonlyArray<OrchestrationProjectShell> = [project];
 let holdCommand: (command: OrchestrationV2Command) => boolean = () => false;
 let pendingDispatches: Array<{
   readonly command: OrchestrationV2Command;
@@ -410,7 +411,7 @@ const handlers: Record<string, (input: never) => unknown> = {
         snapshot: {
           schemaVersion: 1,
           snapshotSequence: sequence,
-          projects: [project],
+          projects,
           threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
           archivedThreads: [],
         },
@@ -508,6 +509,7 @@ export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
   options?: {
     readonly acceptCommands?: boolean;
+    readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
@@ -517,6 +519,14 @@ export function installFakeEnvironment(
   baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER]);
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
+  projects = [
+    project,
+    ...(options?.extraProjects ?? []).map((extra) => ({
+      ...project,
+      ...extra,
+      workspaceRoot: `/workspace/${extra.title}`,
+    })),
+  ];
   holdCommand = options?.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
@@ -542,6 +552,7 @@ export function installFakeEnvironment(
       baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
       dispatched = [];
       acceptCommands = false;
+      projects = [project];
       holdCommand = () => false;
       pendingDispatches = [];
     },

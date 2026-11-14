@@ -1,32 +1,51 @@
-import { type ProjectId, type ServerSettings } from "@t3tools/contracts";
+import * as NodeUtil from "node:util";
+
+import { type ProjectId, type ProjectSettingsOverrides } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Settings from "../serverSettings.ts";
 
-const findOrphanedProjectIds = (
-  settings: Pick<ServerSettings, "projectSettingsOverrides">,
-  liveProjectIds: ReadonlySet<ProjectId>,
-): ReadonlyArray<ProjectId> =>
-  Object.keys(settings.projectSettingsOverrides)
-    .map((projectId) => projectId as ProjectId)
-    .filter((projectId) => !liveProjectIds.has(projectId));
+export function deletedProjectOverridePatch(entry: ProjectSettingsOverrides | undefined) {
+  // Keep cleanup policy for deleted threads; omitting providerInstances would preserve obsolete references in the merge.
+  return entry?.worktreeCleanup !== undefined
+    ? { worktreeCleanup: entry.worktreeCleanup, providerInstances: {} }
+    : null;
+}
 
 export const sweep = Effect.gen(function* () {
   const serverSettings = yield* Settings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
 
   const settings = yield* serverSettings.getSettings;
-  const liveShells = yield* projectStore.listShells();
-  const liveProjectIds = new Set(liveShells.map((shell) => shell.id));
+  const projects = yield* projectStore.list({ includeDeleted: true });
+  const projectsById = new Map<string, ProjectStore.ProjectRow>(
+    projects.map((project) => [project.projectId, project]),
+  );
 
-  const orphanedProjectIds = findOrphanedProjectIds(settings, liveProjectIds);
-  if (orphanedProjectIds.length === 0) return;
+  const overrides = Object.entries(settings.projectSettingsOverrides).flatMap(
+    ([projectId, entry]) => {
+      const project = projectsById.get(projectId);
+      if (project?.deletedAt === null) return [];
+      const patch = project ? deletedProjectOverridePatch(entry) : null;
+      if (NodeUtil.isDeepStrictEqual(entry, patch)) return [];
+      return [[projectId, patch] as const];
+    },
+  );
+  if (overrides.length === 0) return;
 
   // SCIENT-FORK:START — a `null` patch entry keeps title instructions for released clients, so
   // orphans use the server-only removal.
-  yield* serverSettings.removeProjectSettingsOverrides(orphanedProjectIds);
+  const removed = overrides.flatMap(([projectId, patch]) =>
+    patch === null ? [projectId as ProjectId] : [],
+  );
+  const kept = overrides.filter(([, patch]) => patch !== null);
+  if (removed.length > 0) yield* serverSettings.removeProjectSettingsOverrides(removed);
+  if (kept.length === 0) return;
   // SCIENT-FORK:END
+  yield* serverSettings.updateSettings({
+    projectSettingsOverrides: Object.fromEntries(kept),
+  });
 }).pipe(
   Effect.asVoid,
   Effect.catchCause((cause) =>

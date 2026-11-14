@@ -23,7 +23,7 @@ import { useId, useImperativeHandle, useState, type ReactNode, type Ref } from "
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
-import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
+import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
@@ -104,7 +104,7 @@ export function QueuedRunsControl({
   readonly error?: string | null;
   // SCIENT-FORK:END queue-scient-parts
 }) {
-  const projection = useThreadProjection(
+  const projection = useQuietThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);

@@ -37,6 +37,7 @@ export interface VcsProcessInput {
   readonly stdinBytes?: Uint8Array;
   readonly onStdoutChunkEffect?: ProcessRunner.ProcessRunInput["onStdoutChunkEffect"];
   // SCIENT-FORK:END
+  readonly onSpawn?: () => void;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
@@ -242,6 +243,7 @@ export const make = Effect.gen(function* () {
           ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
           : {}),
         // SCIENT-FORK:END
+        ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
         env: {
           ...(input.command === "git"
             ? unsetInheritedRepositoryEnv(process.env, hostPlatform)
