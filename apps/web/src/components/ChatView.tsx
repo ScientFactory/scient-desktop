@@ -3234,6 +3234,8 @@ function ChatViewContent(props: ChatViewProps) {
     scrollToEnd,
     persistThreadSettingsForNextTurn,
   });
+  // SCIENT-FORK: the Goal and Plan chips send their commands through the same path as the goal row.
+  const sendModeChipCommand = useStableCallback(sendStandaloneCommand);
   const activeThreadHasCompactableConversation = hasCompactableConversation({
     visibleTurnItems: serverVisibleTurnItems,
     hasMoreHistory: serverThreadHistory.hasMoreHistory,
@@ -4787,6 +4789,12 @@ function ChatViewContent(props: ChatViewProps) {
                                 onInterrupt={onInterruptStable}
                                 // SCIENT-FORK:START — conversation fork from the composer.
                                 onForkConversation={onForkConversation}
+                                // Goal and Plan chips beside the attach button.
+                                modeChips={{
+                                  goal: activeThreadShell?.goal ?? null,
+                                  planMode: activeProviderThread?.planMode === true,
+                                  onSendCommand: activeThread ? sendModeChipCommand : undefined,
+                                }}
                                 // SCIENT-FORK:END
                                 onSelectActivePendingUserInputOption={
                                   onSelectActivePendingUserInputOptionStable

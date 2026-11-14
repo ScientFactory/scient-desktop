@@ -59,6 +59,7 @@ import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
 import { ompGoalUpdate, runOmpGoalTurn } from "../../provider/omp/OmpGoal.ts";
 // SCIENT-FORK: /plan drives Scient Agent's plan mode.
 import {
+  ompPlanMode,
   ompProposedPlan,
   parseOmpPlanCommand,
   runOmpPlanTurn,
@@ -929,6 +930,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                       status: "completed",
                       item: { type: "proposed_plan", markdown: client.redaction.text(markdown) },
                     });
+              }
+              // SCIENT-FORK: the thread shows whether the agent is planning.
+              if (event.type === "plan_updated") {
+                const enabled = ompPlanMode(event);
+                return enabled === undefined
+                  ? Effect.void
+                  : onUpdate({ type: "plan-mode", enabled });
               }
               if (event.type === "todo_auto_clear") return publishTodos([]);
               if (event.type === "auto_retry_start" || event.type === "auto_retry_end") {
