@@ -18,6 +18,9 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START derived-thread-fields
+import { SCIENT_DERIVED_THREAD_RESETS } from "./scientDerivedThread.ts";
+// SCIENT-FORK:END
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
@@ -61,8 +64,13 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
+  // SCIENT-FORK:START derived-thread-fields
+  // The remote parent delegated the parent thread, not its subagents.
+  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...inherited,
+    ...SCIENT_DERIVED_THREAD_RESETS,
+    // SCIENT-FORK:END
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,
@@ -96,6 +104,12 @@ export function makeSubagentChildThread(input: {
     // A guest link belongs to the thread it was made for.
     guestShare: null,
     lastVisitedAt: null,
+    // SCIENT-FORK:START derived-thread-fields
+    // A subagent is a new thread; it does not inherit the parent's opens or list position.
+    opens: null,
+    activeOrderKey: null,
+    lastSnoozeWakeAt: null,
+    // SCIENT-FORK:END
     deletedAt: null,
   };
 }

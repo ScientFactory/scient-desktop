@@ -2290,3 +2290,16 @@ When T3 changes those viewers' open or layout code, carry it into the session fu
 When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
 worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
 replace Scient's rather than run beside it.
+
+## Subagent thread fields
+
+T3's `makeSubagentChildThread` (`packages/provider-core/src/server/subagentProjection.ts`) builds a
+subagent from a copy of its parent thread. Delegated tasks and Claude's and Codex's native
+subagents all use it. A copy carried Scient's own thread state into every subagent: a subagent of a
+forked conversation claimed to be that fork, so `delegate_task` from a fork failed and fork, import,
+rollback and usage-limit readers misjudged the subagent. The `derived-thread-fields` seam spreads
+`SCIENT_DERIVED_THREAD_RESETS` (`scientDerivedThread.ts`) after the copy. The same seam resets the
+four T3 fields T3's own fork already resets (`delegatedFrom`, `opens`, `activeOrderKey`,
+`lastSnoozeWakeAt`); that part is offered to T3, and the seam lines give way to T3's code once T3
+has it. The field table in `scient-fork/DelegatedTaskFromFork.test.ts` decides every thread field
+for subagents, so an alignment that adds one fails typecheck until it is classified.
