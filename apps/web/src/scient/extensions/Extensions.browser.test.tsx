@@ -595,7 +595,7 @@ function entry(name: string, patch: Partial<DiscoverEntry> = {}): DiscoverEntry 
       { type: "streamable-http", url: `https://${name}.example.com/mcp`, requiresInput: false },
     ],
     installable: true,
-    categories: ["featured"],
+    categories: ["most-used"],
     ...patch,
   };
 }
@@ -652,7 +652,7 @@ const catalog: DiscoverCatalog = {
   fetchedAt: "2026-10-21T00:00:00.000Z",
   sections: [
     {
-      category: "featured",
+      category: "most-used",
       title: "Popular",
       total: 3,
       entries: [
@@ -791,9 +791,17 @@ describe("Discover", () => {
     await fixture.render(<DiscoverPage />);
     const popular = fixture.section("Popular");
     expect(linkIn(fixture.container, "Popular")?.getAttribute("href")).toBe(
-      "/settings/extensions/category/featured",
+      "/settings/extensions/category/most-used",
     );
-    expect(fixture.rowNames(popular)).toEqual(["Linear", "Notion", "Local tool"]);
+    // Most used leads with the account services, then the catalog's picks.
+    expect(fixture.rowNames(popular)).toEqual([
+      "Gmail",
+      "Google Calendar",
+      "Google Drive",
+      "Linear",
+      "Notion",
+      "Local tool",
+    ]);
     expect(fixture.rowNames(fixture.section("Built into Scient"))).toEqual(["Sources"]);
     expect(linkIn(fixture.container, "Browse all MCP servers")?.getAttribute("href")).toBe(
       "/settings/extensions/all",
@@ -1037,7 +1045,7 @@ describe("Discover", () => {
     state.discoverPages = {
       [curatedKey]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
-        entries: [entry("scient.curated/granola", { title: "Granola", categories: ["writing"] })],
+        entries: [entry("scient.curated/granola", { title: "Granola", categories: ["files"] })],
       },
     };
     state.discoverOutcomes = { [registryKey]: "pending" };
@@ -1141,7 +1149,7 @@ describe("Discover", () => {
     const granola = entry("scient.curated/granola", {
       title: "Granola",
       tagline: "Meeting notes",
-      categories: ["writing"],
+      categories: ["files"],
     });
     state.discoverPages = {
       [JSON.stringify({ scope: "registry" })]: {
@@ -1178,17 +1186,23 @@ describe("Discover", () => {
   it("lists a category with a way back, and rejects unknown categories", async () => {
     await using fixture = setup();
     state.discoverPages = {
-      [JSON.stringify({ scope: "curated", category: "featured" })]: {
+      [JSON.stringify({ scope: "curated", category: "most-used" })]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
         entries: [entry("io.notion/notion", { title: "Notion" })],
         nextCursor: "page-2",
       },
     };
-    await fixture.render(<CategoryPage category="featured" />);
+    await fixture.render(<CategoryPage category="most-used" />);
     expect(linkIn(fixture.container, "Discover")?.getAttribute("href")).toBe(
       "/settings/extensions",
     );
-    expect(fixture.rowNames(fixture.section("Scient’s picks"))).toEqual(["Notion"]);
+    // The account services lead Most used, then the curated picks.
+    expect(fixture.rowNames(fixture.section("Scient’s picks"))).toEqual([
+      "Gmail",
+      "Google Calendar",
+      "Google Drive",
+      "Notion",
+    ]);
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
     expect(fixture.container.textContent).not.toContain("From your agents’ stores");
 
@@ -2001,7 +2015,7 @@ describe("Detail pages", () => {
         version: "3.1.0",
         websiteUrl: "https://www.full.example/docs",
         repositoryUrl: "https://github.com/acme/full",
-        categories: ["featured", "papers"],
+        categories: ["most-used", "papers"],
       }),
       "scient.curated/bare": entry("scient.curated/bare", {
         title: "Bare",

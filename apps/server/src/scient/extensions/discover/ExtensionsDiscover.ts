@@ -35,7 +35,7 @@ import {
   canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
   CATALOG_SECTIONS,
-  FEATURED_SERVER_IDS,
+  MOST_USED_SERVER_IDS,
   CURATED_NAME_PREFIX,
   CURATED_SERVERS,
   curatedDiscoverEntry,
@@ -44,18 +44,19 @@ import {
 } from "./curatedCatalog.ts";
 
 const CATEGORY_KEYWORDS: Readonly<Record<ExtensionCategory, readonly string[]>> = {
-  featured: [],
-  papers: ["scholarly", "literature", "citation", "crossref"],
+  "most-used": [],
+  papers: ["scholarly", "literature", "citation", "crossref", "zotero", "bibliography"],
   biology: ["genomics", "protein", "clinical", "bioinformatics"],
   chemistry: ["chemistry", "compound", "pubchem", "materials"],
   earth: ["climate", "earthdata", "geospatial", "biodiversity", "weather"],
   "physics-math": ["astronomy", "physics", "arxiv", "symbolic", "mathematics"],
   "social-science": ["economics", "census", "survey", "worldbank", "fred"],
   data: ["statistics", "dataset", "notebook", "SQL"],
-  writing: ["citation", "zotero", "bibliography"],
+  files: ["drive", "files", "documents", "storage"],
+  communication: ["email", "calendar", "chat", "meeting"],
+  projects: ["project", "tasks", "issues"],
   figures: ["diagram", "figure", "presentation"],
   code: ["repository", "documentation"],
-  teamwork: ["meeting", "project"],
 };
 const CategoryCursor = Schema.fromJsonString(
   Schema.Struct({
@@ -420,15 +421,15 @@ const matchesQuery = (server: CuratedServer, terms: ReadonlyArray<string>): bool
 /** Entries whose primary category is `category` first, then the rest, each in catalog order. */
 const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCategory) => {
   const members = servers.filter((server) => server.categories.includes(category));
-  if (category === "featured") {
+  if (category === "most-used") {
     const rank = (id: string) => {
-      const index = FEATURED_SERVER_IDS.findIndex((candidate) => candidate === id);
-      return index < 0 ? FEATURED_SERVER_IDS.length : index;
+      const index = MOST_USED_SERVER_IDS.findIndex((candidate) => candidate === id);
+      return index < 0 ? MOST_USED_SERVER_IDS.length : index;
     };
     return members.toSorted((a, b) => rank(a.id) - rank(b.id));
   }
   const primary = (server: CuratedServer) =>
-    server.categories.find((candidate) => candidate !== "featured") === category;
+    server.categories.find((candidate) => candidate !== "most-used") === category;
   return [...members.filter(primary), ...members.filter((server) => !primary(server))];
 };
 

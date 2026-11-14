@@ -32,7 +32,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     tagline: "Search, read and draft email",
     description:
       "Your agents search and read your Gmail, draft replies and organize mail, through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds your Google sign-in.",
-    categories: ["teamwork"],
+    categories: ["most-used", "communication"],
     websiteUrl: "https://mail.google.com",
     chatgptAppId: "connector_2128aebfecb84f64a069897515042a44",
     claudeConnector: "Gmail",
@@ -43,7 +43,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     tagline: "Check availability and manage events",
     description:
       "Your agents read your calendars, find free time and create or answer events, through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds your Google sign-in.",
-    categories: ["teamwork"],
+    categories: ["most-used", "communication"],
     websiteUrl: "https://calendar.google.com",
     chatgptAppId: "connector_947e0d954944416db111db556030eea6",
     claudeConnector: "Google Calendar",
@@ -54,7 +54,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     tagline: "Find and read Docs, Sheets and files",
     description:
       "Your agents search your Drive and read Docs, Sheets, Slides and other files, and can create or edit them, through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds your Google sign-in.",
-    categories: ["writing"],
+    categories: ["most-used", "files"],
     websiteUrl: "https://drive.google.com",
     chatgptAppId: "connector_5f3c8c41a1e54ad7a76272c89e2554fa",
     claudeConnector: "Google Drive",

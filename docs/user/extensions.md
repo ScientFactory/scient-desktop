@@ -9,8 +9,10 @@ Open **Settings → Extensions**. The picker at the top, **Tools on**, chooses
 which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
-- **Discover** lists services you can add. Curated sections such as Featured
-  and Research come first, followed by the features built into Scient and
+- **Discover** lists services you can add. Curated sections come first: **Most used**
+  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, PubMed and
+  Semantic Scholar), then one section per kind of work, such as Papers &
+  literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
   the shared plugin shelf, the Codex store, and **Browse all MCP servers**, which lists the public MCP Registry. Select a
   section title to see the whole category. Search covers the catalog, the
   registry, and what you have already installed.

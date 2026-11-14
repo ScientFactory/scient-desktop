@@ -333,9 +333,9 @@ function formatDate(iso: string | undefined): string | undefined {
   return iso === undefined ? undefined : DATE_FORMAT.format(new Date(iso));
 }
 
-/** Curated categories by their section titles; "featured" is a shelf, not a category. */
+/** Curated categories by their section titles; "most-used" is a shelf, not a category. */
 function categoryLabel(entry: DiscoverEntry | undefined, catalog: DiscoverCatalog | null) {
-  const categories = entry?.categories.filter((category) => category !== "featured") ?? [];
+  const categories = entry?.categories.filter((category) => category !== "most-used") ?? [];
   if (categories.length === 0) return undefined;
   return categories
     .map(

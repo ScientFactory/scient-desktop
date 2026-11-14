@@ -26,7 +26,7 @@ import {
   CURATED_SERVERS,
   curatedServerForUrl,
   curatedDiscoverEntry,
-  FEATURED_SERVER_IDS,
+  MOST_USED_SERVER_IDS,
   type CuratedServer,
 } from "./curatedCatalog.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
@@ -426,13 +426,13 @@ const curated = (
 const CURATED_FIXTURE: ReadonlyArray<CuratedServer> = [
   // Declared in an order that differs from the section order.
   curated("figure", ["figures"]),
-  curated("semantic", ["featured", "papers"], {
+  curated("semantic", ["most-used", "papers"], {
     tagline: "Search papers and citations",
     icon: ICON_URIS.semantic,
   }),
   curated("kaggle", ["data", "papers"]),
   ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["papers"])),
-  curated("hub", ["featured", "data"], {
+  curated("hub", ["most-used", "data"], {
     url: "https://hub.example/mcp/",
     registry: { name: "ac.inference.sh/mcp", version: "2.0.1" },
     icon: ICON_URIS.hub,
@@ -454,13 +454,13 @@ describe("curated Discover catalog", () => {
           section.entries.length,
         ]),
       ).toEqual([
-        ["featured", 2, 2],
+        ["most-used", 2, 2],
         ["papers", 9, 6],
         ["data", 3, 3],
         ["figures", 1, 1],
       ]);
       const research = catalog.sections[1]!;
-      expect(research.title).toBe("Papers & evidence");
+      expect(research.title).toBe("Papers & literature");
       // Primary members first, in catalog order; secondary members after them.
       expect(research.entries.map((entry) => entry.title)).toEqual([
         "semantic",
@@ -483,7 +483,7 @@ describe("curated Discover catalog", () => {
         title: "semantic",
         description: "semantic description.",
         tagline: "Search papers and citations",
-        categories: ["featured", "papers"],
+        categories: ["most-used", "papers"],
         websiteUrl: "https://semantic.example",
         remotes: [
           { type: "streamable-http", url: "https://semantic.example/mcp", requiresInput: false },
@@ -584,7 +584,7 @@ describe("curated Discover catalog", () => {
       expect(byName["ac.inference.sh/mcp"]).toMatchObject({
         title: "hub",
         tagline: "hub tagline",
-        categories: ["featured", "data"],
+        categories: ["most-used", "data"],
         iconUrl: "data:image/svg+xml;base64,aGY=",
       });
       expect(byName["ae.easyvoice/tts"]).toMatchObject({ categories: [] });
@@ -606,12 +606,12 @@ describe("curated Discover catalog", () => {
       );
       expect(new URL(server.websiteUrl).protocol, server.id).toBe("https:");
       expect(
-        server.categories.filter((category) => category !== "featured").length,
+        server.categories.filter((category) => category !== "most-used").length,
       ).toBeGreaterThan(0);
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(category === "featured" ? 6 : 40);
+      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 6 : 40);
       expect(size, category).toBeGreaterThan(0);
     }
   });
@@ -635,12 +635,12 @@ describe("curated Discover catalog", () => {
     }
   });
 
-  it.effect("ranks Featured independently of catalog order", () =>
+  it.effect("ranks Most used independently of catalog order", () =>
     Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
       const catalog = yield* discover.catalog();
       expect(catalog.sections[0]?.entries.map((entry) => entry.title)).toEqual(
-        FEATURED_SERVER_IDS.map(
+        MOST_USED_SERVER_IDS.map(
           (id) => CURATED_SERVERS.find((server) => server.id === id)?.displayName,
         ),
       );
@@ -924,7 +924,7 @@ describe("split Discover search", () => {
     const http = harness(registryRoutes, [
       ...CURATED_FIXTURE,
       // Not in the registry by name, but publishing a registry server's remote URL.
-      curated("voice", ["teamwork"], { url: "https://easyvoice.ae/api/mcp" }),
+      curated("voice", ["communication"], { url: "https://easyvoice.ae/api/mcp" }),
     ]);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
@@ -936,7 +936,7 @@ describe("split Discover search", () => {
       expect(fromRegistry).toEqual(fromCurated);
       // A URL alias takes the curated name, so clients can dedup by `name`.
       const voice = registryHub.entries.find((entry) => entry.title === "voice");
-      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["teamwork"] });
+      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["communication"] });
       expect(registryHub.entries.some((entry) => entry.name === "ae.easyvoice/tts")).toBe(false);
       const names = registryHub.entries.map((entry) => entry.name);
       expect(new Set(names).size).toBe(names.length);
@@ -1025,7 +1025,7 @@ describe("split Discover search", () => {
           });
           expect(next.entries).toEqual([]);
         }
-        const featured = yield* discover.search({ scope: "registry", category: "featured" });
+        const featured = yield* discover.search({ scope: "registry", category: "most-used" });
         expect(featured.entries).toEqual([]);
       }).pipe(Effect.provide(http.layer()));
     },

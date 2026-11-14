@@ -234,7 +234,11 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
       ) : (
         <>
           {catalog.sections
-            .filter((section) => section.category === "featured" || section.total >= 4)
+            .filter(
+              (section) =>
+                section.category === "most-used" ||
+                section.total + accountServicesFor(section.category).length >= 4,
+            )
             .map((section) => (
               <ExtensionsSection
                 key={section.category}
@@ -261,7 +265,11 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
             ))}
           <nav aria-label="More categories" className="flex flex-wrap gap-x-6 gap-y-3">
             {catalog.sections
-              .filter((section) => section.category !== "featured" && section.total < 4)
+              .filter(
+                (section) =>
+                  section.category !== "most-used" &&
+                  section.total + accountServicesFor(section.category).length < 4,
+              )
               .map((section) => (
                 <Link
                   key={section.category}
@@ -463,7 +471,7 @@ function CategoryContents({
   );
   const targets = providers.filter(
     (provider) =>
-      category !== "featured" &&
+      category !== "most-used" &&
       storeAvailable(provider) &&
       ["codex", "claudeAgent", "scient"].includes(provider.driver),
   );
@@ -556,7 +564,7 @@ function CategoryContents({
         </ExtensionGrid>
         {ready && !visiblePicks.length ? <MutedLine>No picks match this search.</MutedLine> : null}
       </ExtensionsSection>
-      {category !== "featured" ? (
+      {category !== "most-used" ? (
         <>
           <ExtensionsSection title="From your agents’ stores">
             <ExtensionGrid label="From your agents’ stores">
