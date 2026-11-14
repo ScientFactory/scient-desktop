@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadProjection: (() => state.projection) as never,
+  // The queue control reads the quiet structure, which never changes while text streams.
+  useQuietThreadProjection: (() => state.projection) as never,
   useThreadShell: (() => state.shell) as never,
 }));
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
