@@ -254,6 +254,14 @@ connection status updates after Codex confirms it. Some apps **connect the
 first time Codex uses them**. Plan and administrator restrictions appear beside
 a disabled action.
 
+**Gmail, Google Calendar and Google Drive** each appear once, in Discover and,
+when any agent has them, in Installed → Connected services. Your agents reach
+them through the ChatGPT or Claude account they use, so Scient never holds your
+Google sign-in. **Connect** opens ChatGPT's page for the app in your browser;
+one connection there serves both Codex and Scient Agent. If Claude still needs
+it, Connect then opens claude.ai's connector settings. "Works with" shows which
+agents have it and what the others still need.
+
 **From Scient Agent** lists the ChatGPT apps you connected in ChatGPT, such as
 Gmail, Google Drive or Google Calendar, when Scient Agent is signed in to
 ChatGPT. Every Scient Agent conversation can use them through that sign-in.

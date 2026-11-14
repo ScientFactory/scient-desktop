@@ -227,7 +227,7 @@ export function matchesQuery(query: string, texts: ReadonlyArray<string | undefi
   return words.every((word) => haystack.includes(word));
 }
 
-function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
+export function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
   if (provider.driver === "scient" && (!provider.displayName || provider.displayName === "Scient"))
     return "Scient Agent";
   if (provider.displayName) return provider.displayName;
@@ -408,7 +408,9 @@ export function providerExtensionAudience(
           ? "Uses Claude's own Claude account"
           : provider.driver === "scient" && "scope" in entry && entry.scope === "chatgpt"
             ? "Uses Scient Agent's own ChatGPT account"
-            : "Managed by this agent",
+            : provider.driver === "codex" && "scope" in entry && entry.scope === "chatgpt"
+              ? "Uses Codex's own ChatGPT account"
+              : "Managed by this agent",
   };
 }
 
@@ -426,7 +428,16 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
       );
     case "agent":
       return provider.instanceId === audience.instanceId;
+    case "account":
+      return audience.connected.some((agent) => agent.instanceId === provider.instanceId);
   }
+}
+
+/** "Codex", "Codex and Claude", "Codex, Claude and Scient Agent". */
+function listLabels(labels: ReadonlyArray<string>): string {
+  return labels.length <= 1
+    ? (labels[0] ?? "")
+    : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
 }
 
 export function audienceLabel(audience: ExtensionAudience): string {
@@ -437,6 +448,12 @@ export function audienceLabel(audience: ExtensionAudience): string {
       return "Works with Claude and Scient Agent";
     case "agent":
       return `${audience.label} only`;
+    case "account":
+      return audience.connected.length === 0
+        ? audience.pending.length === 0
+          ? "Through your ChatGPT or Claude account"
+          : "Not connected yet"
+        : `Works with ${listLabels([...new Set(audience.connected.map((agent) => agent.label))])}`;
   }
 }
 
@@ -451,6 +468,19 @@ export function audienceSupport(
       (entry) => entry.providerInstanceId === provider.instanceId,
     );
     if (audience.layer === "scient" && connector) return connector;
+    const pending =
+      audience.layer === "account"
+        ? audience.pending.find((agent) => agent.instanceId === provider.instanceId)
+        : undefined;
+    // An agent one step away from a service (a sign-in, a connect) shows with that step.
+    if (!supported && pending)
+      return {
+        providerInstanceId: provider.instanceId,
+        driver: provider.driver,
+        displayName: providerLabel(provider),
+        status: "conditional",
+        reason: pending.reason,
+      };
     return {
       providerInstanceId: provider.instanceId,
       driver: provider.driver,
@@ -459,7 +489,11 @@ export function audienceSupport(
       ...(!supported
         ? {
             reason:
-              audience.layer === "agent" ? audience.reason : "Uses Claude Code's plugin format",
+              audience.layer === "agent"
+                ? audience.reason
+                : audience.layer === "account"
+                  ? "This agent has no account that offers it"
+                  : "Uses Claude Code's plugin format",
           }
         : {}),
     };
