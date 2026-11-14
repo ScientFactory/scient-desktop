@@ -1463,6 +1463,51 @@ describe("Installed", () => {
     expect(showAllIn(fixture.section("Yours"))).toBeNull();
   });
 
+  it("lists one row per installation and keeps a plugin server that still needs sign-in", async () => {
+    await using fixture = setup();
+    const shared = {
+      id: "playwright@claude-plugins-official",
+      name: "playwright",
+      displayName: "Playwright",
+      marketplace: "claude-plugins-official",
+      source: "local" as const,
+      enabled: true,
+    };
+    state.providersByEnvironment = {
+      local: [
+        provider(codex, "codex", {
+          // Two stores carry a plugin of one name: two installations, two rows.
+          plugins: ["bundled", "curated"].map((store) => ({
+            id: `visualize@${store}`,
+            name: "visualize",
+            displayName: "Visualize",
+            source: "remote" as const,
+            enabled: true,
+          })),
+          mcpServers: [
+            { name: "figma", status: "needs-auth", canStartSignIn: true, pluginId: "figma@x" },
+            { name: "cua_repl", status: "connected", pluginId: "computer-use@x" },
+          ],
+        }),
+        // A Claude plugin Scient Agent also loads is one installation.
+        provider(claude, "claudeAgent", { plugins: [shared], mcpServers: [] }),
+        provider(ProviderInstanceId.make("scient"), "scient", {
+          version: "0.1.11",
+          usesClaudePlugins: true,
+          plugins: [shared],
+          mcpServers: [],
+        }),
+      ],
+    };
+    await fixture.render(<InstalledPage />);
+    const names = fixture.rowNames(fixture.section("Yours"));
+    expect(names.filter((name) => name === "Playwright")).toHaveLength(1);
+    expect(names.filter((name) => name === "Visualize")).toHaveLength(2);
+    // The plugin's page has no sign-in for its server, so the row that offers it stays.
+    expect(names).toContain("figma");
+    expect(names).not.toContain("cua_repl");
+  });
+
   it("filters by Works with and explains when an agent cannot use connected services", async () => {
     await using fixture = setup();
     // The filter lists the agents the person has; Pi is one that takes no connectors.

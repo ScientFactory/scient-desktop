@@ -38,6 +38,7 @@ import {
   type ExtensionKind,
   type ProviderExtensionGroup,
   providerAvailable,
+  providerExtensionAudience,
   showsKind,
   worksWithOptions,
 } from "./extensionsView";
@@ -62,27 +63,29 @@ const isAppGateway = (group: ProviderExtensionGroup, server: ServerProviderMcpSe
   group.provider.driver === "codex" && server.name === "codex_apps";
 
 /**
- * Each agent's own plugins and servers as rows, each thing once. No row for a plugin already
- * listed (shared by two agents, held twice under one name, or named like a listed service), nor
- * for a server a listed service, a plugin or Codex's apps already stand for.
+ * Each agent's own plugins and servers as rows. One installation is one row: a Claude plugin
+ * that Scient Agent also loads is listed once. A server gets no row when a listed service, its
+ * plugin or Codex's apps already stand for it, unless it still needs a sign-in only its row offers.
  */
 function agentRows(
   groups: ReadonlyArray<ProviderExtensionGroup>,
   services: ReadonlyArray<AccountService>,
 ) {
-  const serviceNames = new Set(services.map((service) => service.name.trim().toLowerCase()));
-  const plugins = new Set<string>();
+  const installations = new Set<string>();
   const rows: ReactNode[] = [];
   for (const group of groups)
     for (const { plugin, cwd } of group.plugins) {
-      const id = `${plugin.id}:${cwd ?? ""}`;
-      const name = (plugin.displayName ?? plugin.name).trim().toLowerCase();
-      const named = `${group.provider.instanceId}:${name}:${cwd ?? ""}`;
-      if (plugins.has(id) || plugins.has(named) || serviceNames.has(name)) continue;
-      plugins.add(id).add(named);
+      // Two agents that load the same plugin share its id; each agent's own plugins do not.
+      const owner =
+        providerExtensionAudience(group.provider, plugin).layer === "shared"
+          ? "shared"
+          : group.provider.instanceId;
+      const id = `${owner}:${plugin.id}:${cwd ?? ""}`;
+      if (installations.has(id)) continue;
+      installations.add(id);
       rows.push(
         <ProviderPluginItem
-          key={`${group.provider.instanceId}:plugin:${id}`}
+          key={`${group.provider.instanceId}:plugin:${plugin.id}:${cwd ?? ""}`}
           provider={group.provider}
           label={group.label}
           plugin={plugin}
@@ -92,10 +95,12 @@ function agentRows(
     }
   for (const group of groups)
     for (const server of group.mcpServers) {
+      const ofPlugin =
+        Boolean(server.pluginId) || server.scope === "plugin" || server.name.startsWith("plugin:");
+      // A plugin's server that waits for a sign-in keeps its row: the plugin's page has no such action.
+      const needsRow = server.canStartSignIn === true || server.status === "needs-auth";
       if (
-        server.pluginId ||
-        server.scope === "plugin" ||
-        server.name.startsWith("plugin:") ||
+        (ofPlugin && !needsRow) ||
         isAppGateway(group, server) ||
         accountServiceOfServer(group.provider, server, services)
       )

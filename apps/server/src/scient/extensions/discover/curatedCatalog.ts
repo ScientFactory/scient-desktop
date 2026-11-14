@@ -578,6 +578,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     // local: npx @ghostpaw/telegram 0.7.9 mcp, 4 tools, no dependencies; MCP Registry
     // io.github.GhostPawJS/telegram (verified 2026-11-14). Telegram has no official server.
     id: "telegram",
+    hosting: "Community",
     accountRequired: true,
     displayName: "Telegram",
     tagline: "Send, read and search messages with your bot",

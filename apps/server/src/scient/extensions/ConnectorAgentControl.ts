@@ -140,9 +140,19 @@ const agentAddTarget = (
   return { reason: entry.unsupportedReason ?? "Scient can't run it." };
 };
 
-const foundRow = (entry: DiscoverEntry, connectors: ReadonlyArray<ConnectorSummary>) => {
+/**
+ * `connectors` are the ones this agent may use. One added for other agents only is named neither
+ * as added nor as addable: adding it again would make a second copy.
+ */
+const foundRow = (
+  entry: DiscoverEntry,
+  connectors: ReadonlyArray<ConnectorSummary>,
+  elsewhere: ReadonlySet<string>,
+) => {
   const choice = agentAddTarget(entry);
   const added = connectors.find((item) => item.connectorId === entry.installedConnectorId);
+  const forOthers =
+    entry.installedConnectorId !== undefined && elsewhere.has(entry.installedConnectorId);
   const description = entry.tagline ?? entry.description;
   const host = "target" in choice && "url" in choice.target ? hostOf(choice.target.url) : undefined;
   return {
@@ -150,8 +160,15 @@ const foundRow = (entry: DiscoverEntry, connectors: ReadonlyArray<ConnectorSumma
     ...(entry.title === undefined ? {} : { title: entry.title }),
     ...(description === undefined ? {} : { description: oneLine(description, 200) }),
     ...(host === undefined ? {} : { host }),
-    addable: "target" in choice && added === undefined,
-    ...("reason" in choice ? { reason: choice.reason } : {}),
+    addable: "target" in choice && added === undefined && !forOthers,
+    ...(forOthers
+      ? {
+          reason:
+            "Already added for other agents. The person can choose this agent on its page in Settings → Extensions.",
+        }
+      : "reason" in choice
+        ? { reason: choice.reason }
+        : {}),
     ...(added === undefined ? {} : { added: added.serverName }),
   };
 };
@@ -167,14 +184,16 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
   return yield* observed("connectors.agent.list", { searched: query !== undefined })(
     Effect.gen(function* () {
       const { connectors } = yield* runtime.list();
-      const rows = connectors
-        .filter(
-          (connector) =>
-            connector.agents === undefined ||
-            input.providerInstanceId === undefined ||
-            connector.agents.includes(input.providerInstanceId),
-        )
-        .map(rowOf);
+      const mine = connectors.filter(
+        (connector) =>
+          connector.agents === undefined ||
+          input.providerInstanceId === undefined ||
+          connector.agents.includes(input.providerInstanceId),
+      );
+      const elsewhere = new Set(
+        connectors.filter((item) => !mine.includes(item)).map((item) => item.connectorId),
+      );
+      const rows = mine.map(rowOf);
       if (query === undefined) return { connectors: rows };
       if (Option.isNone(discover))
         return { connectors: rows, found: [], message: "Discover is unavailable here." };
@@ -194,7 +213,7 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
       const entries = [...byName.values()];
       return {
         connectors: rows,
-        found: entries.slice(0, MAX_FOUND).map((entry) => foundRow(entry, connectors)),
+        found: entries.slice(0, MAX_FOUND).map((entry) => foundRow(entry, mine, elsewhere)),
         ...(registry._tag === "Failure"
           ? {
               message: "The MCP Registry could not be searched just now; these are Scient's picks.",

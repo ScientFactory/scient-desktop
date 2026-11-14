@@ -35,6 +35,7 @@
     "packages/contracts/src/scient/extensionsPermissions.ts",
     "packages/contracts/src/scient/extensionsPermissions.test.ts",
     "scripts/generate-extension-brand-icons.mjs",
+    "scripts/generate-claude-connectors.mjs",
     "scripts/scient-extension-brands.json",
     "packages/contracts/src/scient/pluginContents.ts",
     "packages/contracts/src/scient/pluginKeys.ts",
@@ -291,6 +292,11 @@
       "path": "apps/web/src/components/chat/ChatComposer.tsx",
       "anchor": "composerSkillPrompt",
       "purpose": "Reuse the same invocation token for composer selection and the shared skill card."
+    },
+    {
+      "path": "knip.jsonc",
+      "anchor": "generate-claude-connectors.mjs",
+      "purpose": "Register the manual refresh script for the claude.ai connectors Scient links to."
     }
   ],
   "scientMounts": [

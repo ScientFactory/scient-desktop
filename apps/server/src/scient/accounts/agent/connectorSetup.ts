@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
 import { ConnectorRuntime } from "../../extensions/ExtensionsServices.ts";
+import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { askForAccountKey } from "./accountAdd.ts";
@@ -40,6 +41,14 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
     return yield* new AccountsError({
       reason: "invalid-input",
       message: `No local connector is named ${input.connector}.`,
+    });
+  }
+  // Before any card, account or change: the person may have given it to other agents only.
+  const agent = (yield* AgentInvocationContext).providerInstanceId;
+  if (connector.agents !== undefined && !connector.agents.includes(agent)) {
+    return yield* new AccountsError({
+      reason: "invalid-input",
+      message: `${connector.displayName} is not available to this agent. Choose it on the connector page in Settings → Extensions.`,
     });
   }
   const fieldFor = (name: string) =>

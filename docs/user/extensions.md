@@ -267,27 +267,24 @@ connection status updates after Codex confirms it. Some apps **connect the
 first time Codex uses them**. Plan and administrator restrictions appear beside
 a disabled action.
 
-**Gmail, Google Calendar and Google Drive** each appear once, in Discover and,
-when any agent has them, in Installed as an **App**, like every other app your
-ChatGPT or Claude account has. Your agents reach
-them through the ChatGPT or Claude account they use, so Scient never holds your
-Google sign-in. **Connect** opens ChatGPT's page for the app in your browser;
-one connection there serves both Codex and Scient Agent. If Claude still needs
-it, Connect then opens claude.ai's Connectors page (Customize → Connectors). "Works with" shows which
-agents have it and what the others still need.
+**Apps your agents reach through their own accounts** (Gmail, Google Calendar,
+Google Drive and any other app your ChatGPT or Claude account has) each appear
+once: in Discover for the three Google ones, and in Installed as an **App** when
+any agent has them. Scient never holds those sign-ins.
 
-**From Scient Agent** lists the ChatGPT apps you connected in ChatGPT, such as
-Gmail, Google Drive or Google Calendar, when Scient Agent is signed in to
-ChatGPT. Every Scient Agent conversation can use them through that sign-in.
-**Add more on ChatGPT** opens ChatGPT's apps page; **Open in ChatGPT** on an
-app opens its page there, to connect it again or remove it. Return to Scient
-afterwards and the list updates.
+An app's page lists **Your agents**, each with its own state and action:
 
-**From Claude** can list claude.ai connectors without starting a conversation.
-Choose **Connect on claude.ai**, then return after signing in. **Add more on
-claude.ai** opens the account's Connectors page (Customize → Connectors). These connectors are
-**Claude only**. Google's account apps remain available through Codex, Scient
-Agent or Claude; Scient does not add Google's official MCP servers itself.
+- **Connect in ChatGPT** for Codex and Scient Agent. One connection there
+  serves both when they use the same ChatGPT account. Scient Agent needs its
+  ChatGPT sign-in; the row offers it when it is missing.
+- **Connect on claude.ai** for Claude, when claude.ai has a connector for that
+  app. It opens that connector's own page. Where claude.ai names it differently
+  (Outlook is part of Microsoft 365), the row says the name to look for. An app
+  claude.ai does not have shows no Claude row.
+
+Return to Scient afterwards and the rows update. Under the Installed table,
+**Add apps on ChatGPT** and **Add connectors on claude.ai** open each account's
+own page. Scient does not add Google's official MCP servers itself.
 
 ## See what a conversation received
 
