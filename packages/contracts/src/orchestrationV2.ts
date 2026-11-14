@@ -77,6 +77,7 @@ export {
 import {
   makeRoomMessageItems,
   RoomParticipantId,
+  RoomPerson,
   ThreadRoom,
   ThreadRoomOwnerAction,
   ThreadRoomServerAction,
@@ -2415,6 +2416,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestCompletedAnswer: Schema.optional(Schema.NullOr(ScientCompletedAnswer)),
   conversationImport: Schema.optional(Schema.NullOr(OrchestrationConversationImport)),
   forkLineage: Schema.optional(Schema.NullOr(OrchestrationForkLineage)),
+  /** Who has joined the thread's room; absent from older servers. */
+  roomPeople: Schema.optional(Schema.Array(RoomPerson)),
   // SCIENT-FORK:END
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;

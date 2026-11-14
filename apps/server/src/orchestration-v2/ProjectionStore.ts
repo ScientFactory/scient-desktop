@@ -4,6 +4,7 @@ import {
   checkpointSupportsRewind,
   pendingGuestMessageCount,
   // SCIENT-FORK: thread rooms.
+  roomPeople,
   roomWaitingCount,
 } from "@t3tools/contracts";
 // SCIENT-FORK:START — retained-source adapters and fixture selection.
@@ -2032,6 +2033,8 @@ function shellFromState(input: {
       pendingGuestMessageCount(input.state.thread.guestShare) +
       // SCIENT-FORK: guests' room messages the owner has not seen yet.
       roomWaitingCount(input.state.thread.room),
+    // SCIENT-FORK: who has joined the thread's room, for its sidebar card.
+    roomPeople: roomPeople(input.state.thread.room),
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,

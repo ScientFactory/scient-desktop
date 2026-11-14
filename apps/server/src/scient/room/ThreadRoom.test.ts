@@ -361,6 +361,27 @@ it.effect("never takes room attribution from a client", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("renews someone's access from now, keeping their permission", () =>
+  Effect.gen(function* () {
+    const room = yield* setup;
+    yield* room.invite("a", "agent");
+    yield* room.join("a", "Ann");
+    yield* room.orchestrator.dispatch({
+      type: "thread.room",
+      commandId: nextCommandId("renew"),
+      threadId,
+      action: { type: "renew", participantId: RoomParticipantId.make("a"), duration: "month" },
+    });
+    const [ann] =
+      (yield* room.projections.getThreadProjection(threadId)).thread.room?.participants ?? [];
+    assert.equal(ann?.role, "agent");
+    const daysLeft =
+      (Date.parse(ann?.expiresAt ?? "") - DateTime.toEpochMillis(yield* DateTime.now)) /
+      (24 * 60 * 60 * 1000);
+    assert.isTrue(daysLeft > 29 && daysLeft <= 30, `${daysLeft} days left`);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("archiving ends the room", () =>
   Effect.gen(function* () {
     const room = yield* setup;

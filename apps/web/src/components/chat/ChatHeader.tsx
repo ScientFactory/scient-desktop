@@ -49,8 +49,6 @@ import { ConversationImportProvenanceBadge } from "./scient-import/ConversationI
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
-// SCIENT-FORK: thread rooms.
-import { RoomIndicator } from "~/scient/room/RoomDialog";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -433,8 +431,6 @@ export const ChatHeader = memo(function ChatHeader({
       ) : null}
       {/* SCIENT-FORK:END */}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
-      {/* SCIENT-FORK: who is in the thread's room. */}
-      {isServerThread ? <RoomIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );
 });

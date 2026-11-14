@@ -16,6 +16,7 @@ import {
   orchestrationV2RunWorkStartedAt,
   pendingGuestMessageCount,
   // SCIENT-FORK: thread rooms.
+  roomPeople,
   roomWaitingCount,
 } from "@t3tools/contracts";
 
@@ -184,6 +185,8 @@ export function threadShellFromProjection(
       pendingGuestMessageCount(projection.thread.guestShare) +
       // SCIENT-FORK: guests' room messages the owner has not seen yet.
       roomWaitingCount(projection.thread.room),
+    // SCIENT-FORK: who has joined the thread's room, for its sidebar card.
+    roomPeople: roomPeople(projection.thread.room),
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,

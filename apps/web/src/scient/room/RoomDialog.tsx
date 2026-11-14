@@ -6,12 +6,14 @@ import {
 import {
   AuthOrchestrationOperateScope,
   ROOM_ROLE_LABEL,
+  roomPeople,
   type RoomAccessDuration,
   type RoomParticipant,
   type RoomRole,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, ShareIcon, XIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, RotateCwIcon, UsersIcon, XIcon } from "lucide-react";
+import { Atom } from "effect/reactivity";
 import { useState } from "react";
 
 import { guestShareDialogThreadAtom } from "~/components/chat/guestShareDialogState";
@@ -25,6 +27,14 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuTrigger,
+} from "~/components/ui/menu";
+import {
   Select,
   SelectItem,
   SelectPopup,
@@ -33,6 +43,7 @@ import {
 } from "~/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useQuietThreadProjection } from "~/state/entities";
@@ -42,7 +53,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
-import { roomPersonClass } from "./RoomMessageRow";
+import { RoomFaces } from "./RoomFaces";
 
 const DURATION_LABEL: Record<RoomAccessDuration, string> = {
   day: "1 day",
@@ -52,6 +63,12 @@ const DURATION_LABEL: Record<RoomAccessDuration, string> = {
 
 const expiryLabel = (expiresAt: string) =>
   new Date(expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+/** Which thread has its People dialog open. */
+const roomPeopleThreadAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("thread-room:people-dialog"),
+);
 
 function useRoomPresence(threadRef: ScopedThreadRef): ReadonlySet<string> {
   const presence = useEnvironmentSubscription(
@@ -63,16 +80,27 @@ function useRoomPresence(threadRef: ScopedThreadRef): ReadonlySet<string> {
   return new Set(presence.data?.online ?? []);
 }
 
-/** Renders the room dialog for the thread the share commands opened it for. */
+/** Renders the Share and People dialogs for the thread they were opened for. */
 export function RoomDialogHost() {
-  const threadRef = useAtomValue(guestShareDialogThreadAtom);
-  if (threadRef === null) return null;
+  const shareRef = useAtomValue(guestShareDialogThreadAtom);
+  const peopleRef = useAtomValue(roomPeopleThreadAtom);
   return (
-    <RoomDialog
-      key={`${threadRef.environmentId}:${threadRef.threadId}`}
-      threadRef={threadRef}
-      onClose={() => appAtomRegistry.set(guestShareDialogThreadAtom, null)}
-    />
+    <>
+      {shareRef === null ? null : (
+        <ShareDialog
+          key={`${shareRef.environmentId}:${shareRef.threadId}`}
+          threadRef={shareRef}
+          onClose={() => appAtomRegistry.set(guestShareDialogThreadAtom, null)}
+        />
+      )}
+      {peopleRef === null ? null : (
+        <PeopleDialog
+          key={`${peopleRef.environmentId}:${peopleRef.threadId}`}
+          threadRef={peopleRef}
+          onClose={() => appAtomRegistry.set(roomPeopleThreadAtom, null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -88,21 +116,18 @@ const failureMessage = (
 const ROLES = ["discuss", "agent"] as const;
 const DURATIONS = ["day", "week", "month"] as const;
 
-function RoomDialog({
+/** Share makes a link: what the person can do, for how long, and Copy link. */
+function ShareDialog({
   threadRef,
   onClose,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly onClose: () => void;
 }) {
-  const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
-  const online = useRoomPresence(threadRef);
   const canInvite = useAtomValue(
     serverEnvironment.inviteToThreadRoom.permissionAtom(threadRef.environmentId),
   );
-  const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const invite = useAtomCommand(serverEnvironment.inviteToThreadRoom, { reportFailure: false });
-  const roomAction = useOrchestrationCommand(threadEnvironment.roomAction, { label: "room" });
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "invite link" });
   const [role, setRole] = useState<RoomRole>("discuss");
   const [duration, setDuration] = useState<RoomAccessDuration>("week");
@@ -123,115 +148,137 @@ function RoomDialog({
       setError(failureMessage(result, "Could not create an invite."));
   };
 
-  const act = (action: Parameters<typeof roomAction>[0]["input"]["action"]) =>
-    roomAction({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, action },
-    });
-
-  const joined = (room?.participants ?? []).filter((participant) => participant.name !== null);
-  const unopened = (room?.participants ?? []).filter((participant) => participant.name === null);
   return (
     <Dialog open onOpenChange={(open) => (!open && !creating ? onClose() : null)}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>Share</DialogTitle>
-          <DialogDescription>People you invite see this thread live.</DialogDescription>
+          <DialogDescription>Each link lets one person follow this thread live.</DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          <div className="flex flex-col gap-4">
-            <section className="flex flex-col gap-2" aria-label="New invite">
-              <div className="flex items-center gap-2">
-                <RolePicker label="Permission" size="sm" value={role} onChange={setRole} />
-                <Select
-                  value={duration}
-                  onValueChange={(next) => setDuration(next as RoomAccessDuration)}
-                >
-                  <SelectTrigger
-                    size="sm"
-                    className="w-24 min-w-0 shrink-0"
-                    aria-label="Access for"
-                  >
-                    <SelectValue>{DURATION_LABEL[duration]}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup alignItemWithTrigger={false}>
-                    {DURATIONS.map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {DURATION_LABEL[value]}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="ms-auto shrink-0"
-                  disabled={!canInvite || creating}
-                  onClick={() => void createInvite()}
-                >
-                  {isCopied ? <CheckIcon /> : <CopyIcon />}
-                  {/* Both words hold their space, so the button keeps its width when it changes. */}
-                  <span className="grid">
-                    <span className={cn("col-start-1 row-start-1", isCopied && "invisible")}>
-                      Copy link
-                    </span>
-                    <span className={cn("col-start-1 row-start-1", !isCopied && "invisible")}>
-                      Copied
-                    </span>
-                  </span>
-                </Button>
-              </div>
-              {error !== null ? (
-                <p role="alert" className="text-destructive text-xs">
-                  {error}
-                </p>
-              ) : null}
-            </section>
-            {joined.length > 0 || unopened.length > 0 ? (
-              <ul className="flex flex-col gap-1" aria-label="People in this room">
-                {joined.map((participant) => (
-                  <ParticipantRow
-                    key={participant.id}
-                    participant={participant}
-                    online={online.has(participant.id)}
-                    canManage={canOperate}
-                    onRole={(next) =>
-                      void act({ type: "set-role", participantId: participant.id, role: next })
-                    }
-                    onRemove={() => void act({ type: "remove", participantId: participant.id })}
-                  />
+          <div className="flex items-center gap-2">
+            <RolePicker label="Permission" size="sm" value={role} onChange={setRole} />
+            <Select
+              value={duration}
+              onValueChange={(next) => setDuration(next as RoomAccessDuration)}
+            >
+              <SelectTrigger size="sm" className="w-24 min-w-0 shrink-0" aria-label="Access for">
+                <SelectValue>{DURATION_LABEL[duration]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup alignItemWithTrigger={false}>
+                {DURATIONS.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {DURATION_LABEL[value]}
+                  </SelectItem>
                 ))}
-                {unopened.length > 0 ? (
-                  // Links nobody has opened yet are one line, not a row each: they are not people.
-                  <li className="flex h-7 items-center gap-2 ps-4 text-muted-foreground text-sm">
-                    <span className="min-w-0 flex-1 truncate">
-                      {unopened.length === 1
-                        ? "1 link not opened yet"
-                        : `${unopened.length} links not opened yet`}
-                    </span>
-                    <Button
-                      size="xs"
-                      variant="ghost-muted"
-                      disabled={!canOperate}
-                      onClick={() => {
-                        for (const participant of unopened)
-                          void act({ type: "remove", participantId: participant.id });
-                      }}
-                    >
-                      {unopened.length === 1 ? "Cancel it" : "Cancel them"}
-                    </Button>
-                  </li>
-                ) : null}
-              </ul>
-            ) : null}
+              </SelectPopup>
+            </Select>
+            <Button
+              size="sm"
+              variant="outline"
+              className="ms-auto shrink-0"
+              disabled={!canInvite || creating}
+              onClick={() => void createInvite()}
+            >
+              {isCopied ? <CheckIcon /> : <CopyIcon />}
+              {/* Both words hold their space, so the button keeps its width when it changes. */}
+              <span className="grid">
+                <span className={cn("col-start-1 row-start-1", isCopied && "invisible")}>
+                  Copy link
+                </span>
+                <span className={cn("col-start-1 row-start-1", !isCopied && "invisible")}>
+                  Copied
+                </span>
+              </span>
+            </Button>
           </div>
+          {error !== null ? (
+            <p role="alert" className="mt-2 text-destructive text-xs">
+              {error}
+            </p>
+          ) : null}
         </DialogPanel>
       </DialogPopup>
     </Dialog>
   );
 }
 
-/** What someone may do: Can view, Can chat or Can use agent. */
+/** People shows who is in the thread and what each may do, for how long. */
+function PeopleDialog({
+  threadRef,
+  onClose,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly onClose: () => void;
+}) {
+  const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
+  const online = useRoomPresence(threadRef);
+  const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
+  const roomAction = useOrchestrationCommand(threadEnvironment.roomAction, { label: "room" });
+  const act = (action: Parameters<typeof roomAction>[0]["input"]["action"]) =>
+    roomAction({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId, action },
+    });
+  const joined = (room?.participants ?? []).filter((participant) => participant.name !== null);
+  const unopened = (room?.participants ?? []).filter((participant) => participant.name === null);
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : null)}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>People</DialogTitle>
+          <DialogDescription>
+            {joined.length === 0
+              ? "Nobody has joined yet."
+              : "Changes apply at once. Removing everyone stops sharing."}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <ul className="flex flex-col gap-1" aria-label="People in this thread">
+            {joined.map((participant) => (
+              <ParticipantRow
+                key={participant.id}
+                participant={participant}
+                online={online.has(participant.id)}
+                canManage={canOperate}
+                onRole={(next) =>
+                  void act({ type: "set-role", participantId: participant.id, role: next })
+                }
+                onRenew={(duration) =>
+                  void act({ type: "renew", participantId: participant.id, duration })
+                }
+                onRemove={() => void act({ type: "remove", participantId: participant.id })}
+              />
+            ))}
+            {unopened.length > 0 ? (
+              // Links nobody has opened yet are one line, not a row each: they are not people.
+              <li className="flex h-7 items-center gap-2 ps-4 text-muted-foreground text-sm">
+                <span className="min-w-0 flex-1 truncate">
+                  {unopened.length === 1
+                    ? "1 link not opened yet"
+                    : `${unopened.length} links not opened yet`}
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  disabled={!canOperate}
+                  onClick={() => {
+                    for (const participant of unopened)
+                      void act({ type: "remove", participantId: participant.id });
+                  }}
+                >
+                  {unopened.length === 1 ? "Cancel it" : "Cancel them"}
+                </Button>
+              </li>
+            ) : null}
+          </ul>
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+/** What someone may do: Can chat or Can use agent. */
 function RolePicker(props: {
   readonly label: string;
   readonly size: "sm" | "xs";
@@ -268,10 +315,13 @@ function ParticipantRow(props: {
   readonly online: boolean;
   readonly canManage: boolean;
   readonly onRole: (role: RoomRole) => void;
+  readonly onRenew: (duration: RoomAccessDuration) => void;
   readonly onRemove: () => void;
 }) {
   const { participant } = props;
   const name = participant.name ?? "Invited";
+  const nowMinute = useNowMinute();
+  const expired = Date.parse(participant.expiresAt) <= Date.parse(`${nowMinute}Z`);
   return (
     <li className="flex h-7 items-center gap-2">
       <span
@@ -279,11 +329,20 @@ function ParticipantRow(props: {
         className={cn("size-2 shrink-0 rounded-full", props.online ? "bg-success" : "bg-border")}
       />
       <Tooltip>
-        <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-sm" />}>
+        <TooltipTrigger
+          render={
+            <span
+              className={cn("min-w-0 flex-1 truncate text-sm", expired && "text-muted-foreground")}
+            />
+          }
+        >
           {name}
+          {expired ? <span className="text-muted-foreground"> · Expired</span> : null}
           <span className="sr-only">{props.online ? ", here now" : ""}</span>
         </TooltipTrigger>
-        <TooltipPopup side="top">Access until {expiryLabel(participant.expiresAt)}</TooltipPopup>
+        <TooltipPopup side="top">
+          {expired ? "Access ended" : "Access until"} {expiryLabel(participant.expiresAt)}
+        </TooltipPopup>
       </Tooltip>
       <RolePicker
         label={`Permission of ${name}`}
@@ -292,83 +351,89 @@ function ParticipantRow(props: {
         disabled={!props.canManage}
         onChange={props.onRole}
       />
-      <Button
-        size="icon-xs"
-        variant="ghost-muted"
-        disabled={!props.canManage}
-        aria-label={`Remove ${name}`}
-        onClick={props.onRemove}
-      >
-        <XIcon />
-      </Button>
-    </li>
-  );
-}
-
-const initialsOf = (name: string) =>
-  name
-    .split(/\s+/u)
-    .filter((part) => part !== "")
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-
-const FACES_SHOWN = 3;
-
-/**
- * The header of a shared thread: Share, with the faces of the people in it.
- */
-export function RoomIndicator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
-  const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
-  const online = useRoomPresence(threadRef);
-  if (room === null) return null;
-  const joined = room.participants.flatMap((participant) =>
-    participant.name === null ? [] : [{ ...participant, name: participant.name }],
-  );
-  const shown = joined.slice(0, FACES_SHOWN);
-  const names = joined.map((person) => person.name).join(", ");
-  return (
-    <div className="flex shrink-0 items-center gap-1">
+      <Menu>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    disabled={!props.canManage}
+                    aria-label={`Renew ${name}'s access`}
+                  />
+                }
+              />
+            }
+          >
+            <RotateCwIcon />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Renew access</TooltipPopup>
+        </Tooltip>
+        <MenuPopup align="end" className="w-max min-w-28">
+          <MenuGroup>
+            <MenuGroupLabel>Renew from now for</MenuGroupLabel>
+            {DURATIONS.map((value) => (
+              <MenuItem key={value} onClick={() => props.onRenew(value)}>
+                {DURATION_LABEL[value]}
+              </MenuItem>
+            ))}
+          </MenuGroup>
+        </MenuPopup>
+      </Menu>
       <Tooltip>
         <TooltipTrigger
           render={
             <Button
-              size="xs"
-              variant="ghost"
-              aria-label={joined.length === 0 ? "Share: nobody has joined yet" : `Share: ${names}`}
-              onClick={() => appAtomRegistry.set(guestShareDialogThreadAtom, threadRef)}
+              size="icon-xs"
+              variant="ghost-muted"
+              disabled={!props.canManage}
+              aria-label={`Remove ${name}`}
+              onClick={props.onRemove}
             />
           }
         >
-          {shown.length === 0 ? (
-            <ShareIcon aria-hidden />
-          ) : (
-            <span aria-hidden className="flex -space-x-1">
-              {shown.map((person) => (
-                <span
-                  key={person.id}
-                  className={cn(
-                    "flex size-5 items-center justify-center rounded-full border-2 border-background bg-guest-surface text-[9px] font-medium text-guest-foreground",
-                    roomPersonClass(person.id),
-                    !online.has(person.id) && "opacity-45",
-                  )}
-                >
-                  {initialsOf(person.name)}
-                </span>
-              ))}
-              {joined.length > FACES_SHOWN ? (
-                <span className="flex size-5 items-center justify-center rounded-full border-2 border-background bg-muted text-[9px] text-muted-foreground">
-                  +{joined.length - FACES_SHOWN}
-                </span>
-              ) : null}
-            </span>
-          )}
-          Share
+          <XIcon />
         </TooltipTrigger>
-        <TooltipPopup side="bottom">
-          {joined.length === 0 ? "Invited. Nobody has joined yet." : names}
-        </TooltipPopup>
+        <TooltipPopup side="top">Remove</TooltipPopup>
       </Tooltip>
-    </div>
+    </li>
+  );
+}
+
+/**
+ * The faces of the people in a shared thread, beside Share in its header; they open People.
+ * With only unopened links, a people icon stands in for the faces.
+ */
+export function RoomPeopleButton({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
+  const online = useRoomPresence(threadRef);
+  if (room === null || room.participants.length === 0) return null;
+  const joined = roomPeople(room);
+  const names = joined.map((person) => person.name).join(", ");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="xs"
+            variant="ghost"
+            className="shrink-0"
+            aria-label={joined.length === 0 ? "People: nobody has joined yet" : `People: ${names}`}
+            onClick={() => appAtomRegistry.set(roomPeopleThreadAtom, threadRef)}
+          />
+        }
+      >
+        {joined.length === 0 ? (
+          <UsersIcon aria-hidden />
+        ) : (
+          <RoomFaces people={joined} online={online} />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        {joined.length === 0 ? "Invited. Nobody has joined yet." : names}
+      </TooltipPopup>
+    </Tooltip>
   );
 }

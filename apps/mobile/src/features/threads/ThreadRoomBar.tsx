@@ -263,6 +263,33 @@ function RoomBar({
                       />
                     </>
                   ) : null}
+                  {pending ? null : (
+                    // Access again from now, keeping their permission.
+                    <Menu
+                      title="Renew from now for"
+                      actions={durations.map((duration) => ({
+                        ...duration,
+                        attributes: { disabled },
+                      }))}
+                      onPressAction={({ nativeEvent }) => {
+                        const duration = durations.find((entry) => entry.id === nativeEvent.event);
+                        if (duration && !disabled)
+                          void mutate({
+                            type: "renew",
+                            participantId: participant.id,
+                            duration: duration.id,
+                          });
+                      }}
+                    >
+                      <Button
+                        size="compact"
+                        label="Renew"
+                        tone="text"
+                        disabled={disabled}
+                        onPress={() => {}}
+                      />
+                    </Menu>
+                  )}
                   <Button
                     size="compact"
                     label="Remove"
