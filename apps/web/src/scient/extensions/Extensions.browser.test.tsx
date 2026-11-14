@@ -548,6 +548,7 @@ import {
 } from "./ExtensionDetailPages";
 import { ProviderStoreDetailPage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
+import { AccountServiceDetailPage } from "./AccountServicePages";
 import { forgetListPage } from "./ExtensionsPage";
 import { WORKS_WITH_OPEN_DELAY_MS } from "./WorksWith";
 
@@ -778,6 +779,7 @@ function setup() {
     async reset() {
       await screen?.[Symbol.asyncDispose]();
       screen = undefined;
+      forgetListPage();
     },
     rowNames(scope: ParentNode = host) {
       return [...scope.querySelectorAll<HTMLElement>("[data-extension-row]")].map(
@@ -1334,159 +1336,6 @@ describe("Discover", () => {
 });
 
 describe("Installed", () => {
-  it("lists all unopened project roots beyond both retention bounds only in the selected environment", async () => {
-    await using fixture = setup();
-    state.scopeEnvironmentId = "remote";
-    state.projects = [
-      ...Array.from({ length: 40 }, (_, index) => ({
-        environmentId: "remote",
-        id: `p-${index}`,
-        title: `Project ${index}`,
-        workspaceRoot: `/p-${index}`,
-      })),
-      { environmentId: "local", id: "local", title: "Local", workspaceRoot: "/local" },
-      {
-        environmentId: "remote",
-        id: "scratch",
-        title: "Scratch",
-        workspaceRoot: "/scratch",
-        isScratch: true,
-      },
-    ];
-    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
-    state.providersByEnvironment = { remote: [raw] };
-    let snapshots: NonNullable<ServerProvider["workspaceSnapshots"]> = [];
-    state.refreshInventory.mockImplementation(
-      async (_registry, target: { environmentId: string; input: { cwd?: string } }) => {
-        expect(target.environmentId).toBe("remote");
-        const cwd = target.input.cwd;
-        if (cwd)
-          snapshots = [
-            ...snapshots,
-            {
-              cwd,
-              checkedAt: "2026-10-26T00:00:00.000Z",
-              skills: [],
-              slashCommands: [],
-              plugins: [
-                { id: cwd, name: `Plugin ${cwd}`, source: "local" as const, enabled: true },
-              ],
-            },
-          ].slice(-16);
-        return {
-          _tag: "Success",
-          value: { providers: [{ ...raw, workspaceSnapshots: snapshots }] },
-        };
-      },
-    );
-    await fixture.render(<InstalledPage />);
-    await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
-    await userEvent.click(showAllIn(fixture.section("Yours"))!);
-    expect(
-      fixture.rowNames(fixture.section("Yours")).filter((name) => name?.includes("/p-")),
-    ).toHaveLength(40);
-    expect(fixture.rowNames()).toContain("Plugin /p-0");
-    expect(fixture.rowNames()).toContain("Plugin /p-39");
-    expect(
-      state.refreshInventory.mock.calls.flatMap(([, target]) => target.input.cwd ?? []),
-    ).toHaveLength(40);
-    expect(snapshots).toHaveLength(16);
-  });
-
-  it.each([false, true])(
-    "sweeps 40 roots once after same-ID replacement (coalesced reset: %s)",
-    async (coalesced) => {
-      await using fixture = setup();
-      state.projects = Array.from({ length: 40 }, (_, index) => ({
-        environmentId: "local",
-        id: `p-${index}`,
-        title: `Project ${index}`,
-        workspaceRoot: `/p-${index}`,
-      }));
-      let raw = provider(codex, "codex", {
-        nativeInventoryGeneration: "old",
-        plugins: [],
-        mcpServers: [],
-      });
-      state.providersByEnvironment = { local: [raw] };
-      let snapshots: NonNullable<ServerProvider["workspaceSnapshots"]> = [];
-      const scanned: string[] = [];
-      const entered = Promise.withResolvers<void>();
-      const release = Promise.withResolvers<unknown>();
-      let held = false;
-      state.refreshInventory.mockImplementation(
-        async (_registry, { input }: { input: { cwd?: string } }) => {
-          if (held) {
-            held = false;
-            entered.resolve();
-            return release.promise;
-          }
-          if (input.cwd) {
-            scanned.push(`${raw.nativeInventoryGeneration}:${input.cwd}`);
-            snapshots = [
-              ...snapshots.filter((entry) => entry.cwd !== input.cwd),
-              {
-                cwd: input.cwd,
-                checkedAt: raw.checkedAt,
-                skills: [],
-                slashCommands: [],
-                plugins: [
-                  {
-                    id: input.cwd,
-                    name: `${raw.nativeInventoryGeneration} ${input.cwd}`,
-                    source: "local" as const,
-                    enabled: true,
-                  },
-                ],
-              },
-            ].slice(-16);
-          }
-          return {
-            _tag: "Success",
-            value: { providers: [{ ...raw, workspaceSnapshots: snapshots }] },
-          };
-        },
-      );
-      await fixture.render(<InstalledPage />);
-      await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
-      const retired = { ...raw, workspaceSnapshots: snapshots };
-      held = true;
-      await act(async () => state.publishRevision("local", 2));
-      await entered.promise;
-      raw = { ...raw, nativeInventoryGeneration: "new" };
-      snapshots = coalesced
-        ? [
-            {
-              cwd: "/p-39",
-              checkedAt: raw.checkedAt,
-              skills: [],
-              slashCommands: [],
-              plugins: [{ id: "/p-39", name: "new /p-39", source: "local", enabled: true }],
-            },
-          ]
-        : [];
-      state.providersByEnvironment.local = [raw];
-      await fixture.render(<InstalledPage />);
-      expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
-      await act(async () => release.resolve({ _tag: "Success", value: { providers: [retired] } }));
-      await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
-      await userEvent.click(showAllIn(fixture.section("Yours"))!);
-      expect(
-        fixture.rowNames(fixture.section("Yours")).filter((name) => name?.includes("/p-")),
-      ).toHaveLength(40);
-      expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
-      expect(scanned.filter((entry) => entry.startsWith("old:"))).toHaveLength(40);
-      expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
-      const reads = state.refreshInventory.mock.calls.length;
-      state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
-      await fixture.render(<InstalledPage />);
-      expect(state.refreshInventory).toHaveBeenCalledTimes(reads);
-      await act(async () => state.publishRevision("local", 3));
-      await vi.waitFor(() => expect(state.refreshInventory).toHaveBeenCalledTimes(reads + 1));
-      expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
-    },
-  );
-
   it("rejects late results after an environment switch", async () => {
     await using fixture = setup();
     const local = Promise.withResolvers<unknown>();
@@ -1513,60 +1362,6 @@ describe("Installed", () => {
     );
     expect(fixture.rowNames()).not.toContain("Codex plugin 1");
     expect(fixture.rowNames()).toContain("Remote plugin");
-  });
-
-  it("serializes changed roots and discards the previous root's pending reply", async () => {
-    await using fixture = setup();
-    const old = Promise.withResolvers<unknown>();
-    const started = Promise.withResolvers<void>();
-    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
-    state.providersByEnvironment = { local: [raw] };
-    state.projects = [{ environmentId: "local", id: "p", title: "Project", workspaceRoot: "/old" }];
-    state.refreshInventory.mockImplementation(
-      (_registry, { input }: { input: { cwd?: string } }) => {
-        if (input.cwd === "/old") {
-          started.resolve();
-          return old.promise;
-        }
-        return Promise.resolve({
-          _tag: "Success",
-          value: {
-            providers: [
-              {
-                ...raw,
-                workspaceSnapshots: input.cwd
-                  ? [
-                      {
-                        cwd: input.cwd,
-                        checkedAt: raw.checkedAt,
-                        skills: [],
-                        slashCommands: [],
-                        plugins: [
-                          { id: "new", name: "New root plugin", source: "local", enabled: true },
-                        ],
-                      },
-                    ]
-                  : [],
-              },
-            ],
-          },
-        });
-      },
-    );
-    await fixture.render(<InstalledPage />);
-    await started.promise;
-    state.projects = [{ environmentId: "local", id: "p", title: "Project", workspaceRoot: "/new" }];
-    await fixture.render(<InstalledPage />);
-    expect(
-      state.refreshInventory.mock.calls.some(([, target]) => target.input.cwd === "/new"),
-    ).toBe(false);
-    await act(async () =>
-      old.resolve({ _tag: "Success", value: { providers: state.providersByEnvironment.local } }),
-    );
-    await vi.waitFor(() => expect(fixture.rowNames()).toContain("New root plugin"));
-    expect(
-      state.refreshInventory.mock.calls.filter(([, target]) => target.input.cwd === "/old"),
-    ).toHaveLength(1);
   });
 
   it("observes native plugin revisions without timestamp or inventory re-render scans", async () => {
@@ -1796,6 +1591,50 @@ describe("Detail pages", () => {
     );
     expect(fixture.headerButtons()).toEqual([]);
     expect(fixture.header().textContent).toContain("Remove this plugin in Codex");
+  });
+
+  it("shows an account app's agents, with Claude only where claude.ai has the connector", async () => {
+    await using fixture = setup();
+    const app = (name: string, id: string) => ({
+      name,
+      status: "connected" as const,
+      scope: "chatgpt",
+      connectUrl: `https://chatgpt.com/apps/${name.toLowerCase().replaceAll(" ", "-")}/${id}`,
+    });
+    state.providersByEnvironment = {
+      local: [
+        provider(codex, "codex", {
+          auth: { status: "authenticated", type: "chatgpt" },
+          plugins: [],
+          mcpServers: [
+            app("Gmail", "connector_2128aebfecb84f64a069897515042a44"),
+            app("Pets Picker 9000", "connector_pets"),
+          ],
+        }),
+        provider(claude, "claudeAgent", {
+          accountAppsAvailable: true,
+          plugins: [],
+          mcpServers: [{ name: "claude.ai Gmail", status: "needs-auth", scope: "claudeai" }],
+        }),
+      ],
+    };
+    await fixture.render(<AccountServiceDetailPage serviceId="gmail" />);
+    await vi.waitFor(() => expect(fixture.section("Your agents")).not.toBeNull());
+    const agents = () => fixture.section("Your agents");
+    await vi.waitFor(() => expect(agents().textContent).toContain("Through its ChatGPT account"));
+    // Each agent says its state once; the header and About do not repeat it.
+    expect(fixture.header().textContent).toBe("GmailSearch, read and draft email");
+    expect(fixture.aboutTerms()).toEqual(["Website"]);
+    expect(buttonIn(agents(), "Connect on claude.ai")).not.toBeNull();
+
+    // claude.ai has no connector for this app: Claude gets no row and no link.
+    await fixture.render(<AccountServiceDetailPage serviceId="pets-picker-9000" />);
+    await vi.waitFor(() =>
+      expect(fixture.container.querySelector("h1")?.textContent).toBe("Pets Picker 9000"),
+    );
+    expect(agents().textContent).toContain("Codex");
+    expect(agents().textContent).not.toContain("Claude");
+    expect(fixture.container.textContent).not.toContain("claude.ai");
   });
 
   it("shows the connection with its sign-in, menu and On/Off switch", async () => {

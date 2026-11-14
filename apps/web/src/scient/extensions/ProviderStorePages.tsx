@@ -33,7 +33,7 @@ import {
   extensionsProviderStoreEntry,
   extensionsProviderStorePage,
 } from "./extensionsState";
-import { providerAvailable } from "./extensionsView";
+import { providerAvailable, providerStoreAudience } from "./extensionsView";
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
@@ -262,17 +262,7 @@ function StoreResults({
                   instanceId: provider.instanceId,
                   entryId: entry.id,
                 }}
-                audience={
-                  entry.kind === "shared"
-                    ? { layer: "shared", ownerInstanceId: provider.instanceId }
-                    : {
-                        layer: "agent",
-                        driver: provider.driver,
-                        instanceId: provider.instanceId,
-                        label: "Codex",
-                        reason: "Uses Codex's own ChatGPT account",
-                      }
-                }
+                audience={providerStoreAudience(provider, entry.kind)}
                 name={entry.displayName}
                 iconUrl={entry.iconUrl}
                 tagline={entry.description}
@@ -501,17 +491,7 @@ function StoreDetail({
             "Works with",
             <WorksWithValue
               key="works-with"
-              audience={
-                entry.kind === "shared"
-                  ? { layer: "shared", ownerInstanceId: provider.instanceId }
-                  : {
-                      layer: "agent",
-                      driver: provider.driver,
-                      instanceId: provider.instanceId,
-                      label: "Codex",
-                      reason: "Uses Codex's own ChatGPT account",
-                    }
-              }
+              audience={providerStoreAudience(provider, entry.kind)}
             />,
           ],
           connector

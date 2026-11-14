@@ -684,15 +684,11 @@ function ConnectorDetail({
             </div>
             {allowed.signIn ? (
               <PrimaryAction
-                icon={allowed.signIn === "sign-in" ? LogInIcon : RefreshCwIcon}
+                icon={LogInIcon}
                 disabled={!actions.canSignIn}
                 onClick={() => void actions.signIn()}
               >
-                {actions.busy === "sign-in"
-                  ? "Opening…"
-                  : allowed.signIn === "sign-in"
-                    ? "Sign in"
-                    : "Reconnect"}
+                {actions.busy === "sign-in" ? "Opening…" : "Sign in"}
               </PrimaryAction>
             ) : null}
             <MoreMenu label={`More for ${name} connection`}>
@@ -1213,12 +1209,15 @@ export function ServerDetailPage({ name }: { readonly name: string }) {
   );
 }
 
-type ComponentGroupLabel = "Skills" | "Connected services" | "Tools" | "Other";
+type ComponentGroupLabel = "Connected services" | "Tools" | "Other";
+/** A plugin's parts other than its skills, which have their own section. */
+type PluginPart = ExtensionComponent & {
+  readonly type: Exclude<ExtensionComponent["type"], "skill">;
+};
 
 const COMPONENT_KINDS: Readonly<
-  Record<ExtensionComponent["type"], { readonly group: ComponentGroupLabel; readonly kind: string }>
+  Record<PluginPart["type"], { readonly group: ComponentGroupLabel; readonly kind: string }>
 > = {
-  skill: { group: "Skills", kind: "Skill" },
   connector: { group: "Connected services", kind: "Connected service" },
   "mcp-tools": { group: "Tools", kind: "Tools" },
   settings: { group: "Other", kind: "Settings" },
@@ -1226,15 +1225,12 @@ const COMPONENT_KINDS: Readonly<
 };
 
 const COMPONENT_GROUP_ORDER: ReadonlyArray<ComponentGroupLabel> = [
-  "Skills",
   "Connected services",
   "Tools",
   "Other",
 ];
 
-function componentGroups(
-  components: ReadonlyArray<ExtensionComponent>,
-): ReadonlyArray<DetailGroup> {
+function componentGroups(components: ReadonlyArray<PluginPart>): ReadonlyArray<DetailGroup> {
   return COMPONENT_GROUP_ORDER.map((label) => ({
     label,
     rows: components
@@ -1242,15 +1238,7 @@ function componentGroups(
       .map((component) => ({
         key: `${component.type}:${component.name}`,
         name:
-          component.type === "skill" ? (
-            <Link
-              to="/settings/extensions"
-              search={{ kind: "skills" }}
-              className={cn(GHOST_LINK_CLASS, "text-foreground")}
-            >
-              {component.name}
-            </Link>
-          ) : component.type === "mcp-tools" ? (
+          component.type === "mcp-tools" ? (
             <span className="font-mono text-xs leading-5">{component.name}</span>
           ) : (
             component.name
@@ -1314,7 +1302,9 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
           <GroupsCard
             label="Parts"
             groups={componentGroups(
-              plugin.components.filter((component) => component.type !== "skill"),
+              plugin.components.filter(
+                (component): component is PluginPart => component.type !== "skill",
+              ),
             )}
           />
         </DetailSection>

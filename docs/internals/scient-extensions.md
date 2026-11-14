@@ -22,7 +22,9 @@ remain in the account layer; Scient does not add Google's official MCP servers.
 the services that exist only as account apps: Gmail, Google Calendar and Google
 Drive, each mapped to its ChatGPT app id and its claude.ai connector name. Each
 shows as one row, in Discover's categories and search and, once any agent has
-it, in Installed → Connected services. Each agent's route comes from its own
+it, in Installed. Every other ChatGPT app an agent reports is a service too
+(`accountServicesFrom`), installed when an agent holds a row for it or reaches
+it through its account (`installedAccountServices`). Each agent's route comes from its own
 inventory:
 
 - Scient Agent: its `chatgpt` server rows.
@@ -77,19 +79,22 @@ access.
   `https://` address (handed to the URL form), or **Run a command…** (connectors tab only). The
   import list leaves out servers that cannot start here (program not found, or
   Codex `env_vars` that are neither in the environment nor keys).
-- **Installed** (`/settings/extensions/installed`) — Connected services,
-  Scient plugins, then one
-  **From <agent>** section per provider instance with its plugins and MCP
-  servers. A **Works with** filter narrows every section to what one provider
-  instance can use. Provider sections show six entries with a header toggle to
-  show the rest.
+- **Installed** (`/settings/extensions/installed`) — one **Yours** table:
+  Scient's connectors and installed bundles, account apps (one row per service,
+  naming every agent that has it), then each agent's plugins and own MCP
+  servers; **Built into Scient** follows. Each thing is one row: a plugin two
+  agents share, a server that belongs to a plugin or stands behind a listed
+  app, and Codex's `codex_apps` gateway add none. Type is Connector, App,
+  Plugin, MCP server or Built in. A **Works with** filter narrows the table to
+  what one of the person's agents can use, honouring a connector's chosen
+  agents. The table shows 24 rows with a header toggle to show the rest.
 - **Detail pages** (`/settings/extensions/item/…`) — one per connector, catalog
   or registry entry, Scient plugin, provider plugin and provider MCP server. The
   header carries the entry's identity and its primary action (Add, Remove,
   Uninstall, or who manages it). Below it, cards:
   - **Connection** (connectors) — status with Sign in or Reconnect, Test, the
-    Use with agents switch, Available in (all projects or selected
-    projects), and Agents (all agents or selected agents). A connector's
+    Use with agents switch, Agents (all agents or selected agents) and
+    Projects (all projects or selected projects). A connector's
     optional `agents` list is stored on its record; delivery skips other agents
     with `agent-deselected`, and the proxy re-checks the session's agent on
     every request. Discover's **+** asks for the agents first when more than one

@@ -140,11 +140,11 @@ its key. **Sign in** or **Reconnect** appears when signing in is possible; use
 **⋯** menu offers **Test**, which checks that the service answers.
 
 - **Use with agents** turns the service on or off for every agent.
-- **Available in** chooses **All projects** or **Selected projects**. With
-  selected projects, turn each project on or off in the list below.
 - **Agents** chooses **All agents** or **Selected agents**. With selected
   agents, turn each agent on or off in the list below. An agent you add later
   gets the service only while **All agents** is set.
+- **Projects** chooses **All projects** or **Selected projects**. With
+  selected projects, turn each project on or off in the list below.
 
 Turning a service off, or narrowing where it is available, applies to an
 agent's next call. A service you add or turn on reaches an agent when its next
@@ -160,11 +160,14 @@ the service and its stored sign-in or key. A key from Accounts stays in Accounts
 
 ## Works with
 
-An item's page says who can use it: **Works with all your agents**, **Works
-with the agents you chose**, **Works with Claude and Scient Agent**, **Codex
-only**, or **Claude only**. Hover over it or select it to see the agents and
-any limits. On **Installed**, the **Works with** column shows the agents' logos. Account apps use
-their owning agent's account. A standalone server configured in Claude stays
+An item's page says who can use it beside **Works with**: **All your agents**,
+the agents you chose by name, **Claude and Scient Agent**, **Codex only**, or
+**Claude only**. Hover over it or select it to see the agents and any limits.
+On **Installed**, the **Works with** column shows the agents' logos and
+**Type** says what each row is: a **Connector** Scient manages, an **App** an
+agent reaches through its own ChatGPT or Claude account, a **Plugin**, an
+agent's own **MCP server**, or **Built in**. Apps use their owning agent's
+account. A standalone server configured in Claude stays
 with Claude.
 
 On **Installed**, the **Works with** filter shows only what a chosen agent can
@@ -265,7 +268,8 @@ first time Codex uses them**. Plan and administrator restrictions appear beside
 a disabled action.
 
 **Gmail, Google Calendar and Google Drive** each appear once, in Discover and,
-when any agent has them, in Installed → Connected services. Your agents reach
+when any agent has them, in Installed as an **App**, like every other app your
+ChatGPT or Claude account has. Your agents reach
 them through the ChatGPT or Claude account they use, so Scient never holds your
 Google sign-in. **Connect** opens ChatGPT's page for the app in your browser;
 one connection there serves both Codex and Scient Agent. If Claude still needs

@@ -1,7 +1,6 @@
 import type {
   DiscoverEntry,
   DiscoverSearchInput,
-  ExtensionAudience,
   ExtensionCategory,
   ProviderStoreEntry,
   ServerProvider,
@@ -44,6 +43,7 @@ import {
   audienceLabel,
   catalogEntries,
   providerAvailable,
+  providerStoreAudience,
   type ExtensionKind,
   isExtensionCategory,
   matchesQuery,
@@ -353,6 +353,7 @@ function DiscoverSearchResults({
   // Until the catalog answers, which registry rows repeat it is unknown.
   const curatedPending = curated.data === null && !curated.error;
   const curatedNames = new Set(curated.data?.entries.map((entry) => entry.name));
+  const catalogList = catalogEntries(catalog);
   return (
     <ExtensionGrid label="Search results">
       {(showsKind(kind, "plugins") ? accountServicesFor(undefined, query) : []).map((service) => (
@@ -362,9 +363,7 @@ function DiscoverSearchResults({
         <ConnectorItem
           key={connector.connectorId}
           connector={connector}
-          entry={catalogEntries(catalog).find(
-            (entry) => entry.installedConnectorId === connector.connectorId,
-          )}
+          entry={catalogList.find((entry) => entry.installedConnectorId === connector.connectorId)}
         />
       ))}
       {plugins.map((plugin) => (
@@ -530,16 +529,10 @@ function StoreSection({
   readonly more: Readonly<Record<string, readonly string[]>>;
   readonly onMore: (cursors: ReadonlyArray<readonly [string, string]>) => void;
 }) {
-  const audience: ExtensionAudience =
-    group.key === "codex"
-      ? {
-          layer: "agent",
-          driver: group.providers[0]!.driver,
-          instanceId: group.providers[0]!.instanceId,
-          label: "Codex",
-          reason: "Uses Codex’s own ChatGPT account",
-        }
-      : { layer: "shared", ownerInstanceId: group.providers[0]!.instanceId };
+  const audience = providerStoreAudience(
+    group.providers[0]!,
+    group.key === "codex" ? "codex" : "shared",
+  );
   // Each store's latest page says whether it has more; one button asks every store in the group.
   const next = group.providers.flatMap((provider): Array<readonly [string, string]> => {
     const latest = pages.filter((page) => page.provider === provider).at(-1);

@@ -85,7 +85,7 @@ export function connectorStatusText(
 
 export interface ConnectorActions {
   /** The primary action appears only when a grant is needed. */
-  readonly signIn: "sign-in" | "reconnect" | null;
+  readonly signIn: "sign-in" | null;
   readonly canTest: boolean;
 }
 
@@ -93,7 +93,7 @@ export interface ConnectorActions {
  * A missing credential cannot be repaired by sign-in: the entered key is gone
  * and the connector must be added again.
  */
-export function connectorActions(connector: Pick<ConnectorSummary, "status" | "auth">) {
+export function connectorActions(connector: Pick<ConnectorSummary, "status">) {
   const actions: Readonly<Record<ConnectorStatus, ConnectorActions>> = {
     connected: { signIn: null, canTest: true },
     "needs-auth": { signIn: "sign-in", canTest: false },
@@ -430,6 +430,22 @@ export function providerExtensionAudience(
               ? "Uses Codex's own ChatGPT account"
               : "Managed by this agent",
   };
+}
+
+/** Who a store's plugin is for: Claude's stores serve Claude and Scient Agent, Codex's serve Codex. */
+export function providerStoreAudience(
+  provider: Pick<ServerProvider, "driver" | "instanceId">,
+  kind: "shared" | "codex",
+): ExtensionAudience {
+  return kind === "shared"
+    ? { layer: "shared", ownerInstanceId: provider.instanceId }
+    : {
+        layer: "agent",
+        driver: provider.driver,
+        instanceId: provider.instanceId,
+        label: "Codex",
+        reason: "Uses Codex’s own ChatGPT account",
+      };
 }
 
 export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {

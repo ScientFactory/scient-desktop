@@ -1,11 +1,13 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
+import CLAUDE_CONNECTORS from "./claudeConnectors.json" with { type: "json" };
 import {
   ACCOUNT_SERVICES,
   accountServiceAudience,
   accountServiceForApp,
   claudeConnectorFor,
+  installedAccountServices,
   accountServiceOfServer,
   accountServiceRoutes,
   isAccountServiceStoreEntry,
@@ -15,6 +17,7 @@ import { audienceLabel } from "./extensionsView";
 
 const gmail = ACCOUNT_SERVICES.find((service) => service.id === "gmail")!;
 const GMAIL_PAGE = `https://chatgpt.com/apps/gmail/${gmail.chatgptAppId}`;
+const LINEAR_PAGE = "https://chatgpt.com/apps/linear/connector_linear";
 
 const provider = (driver: string, overrides: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: ProviderInstanceId.make(`synthetic-${driver}`),
@@ -184,6 +187,40 @@ describe("account services", () => {
     expect(accountServiceRoutes(outlook, [scient(false)])[0]?.page).toBe(
       "https://chatgpt.com/apps/microsoft-outlook-email/connector_outlook",
     );
+  });
+
+  it("holds only Anthropic's own Add to Claude ids in the checked-in list", () => {
+    expect(CLAUDE_CONNECTORS.length).toBeGreaterThan(500);
+    for (const [name, id] of CLAUDE_CONNECTORS) {
+      expect(name?.trim(), String(id)).toBeTruthy();
+      expect(id, name).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    }
+  });
+
+  it("lists as installed what an agent holds, whatever its state, once per service", () => {
+    const failing = {
+      ...scient(false),
+      mcpServers: [
+        { name: "Linear", status: "failed" as const, scope: "chatgpt", connectUrl: LINEAR_PAGE },
+      ],
+    };
+    const installed = (agents: Parameters<typeof installedAccountServices>[0], only?: string) =>
+      installedAccountServices(agents, only ?? null).map((service) => service.name);
+    // A row that failed is still the person's; Gmail is connected for both ChatGPT agents.
+    expect(
+      installed([
+        { ...scient(true), mcpServers: [...scient(true).mcpServers!, ...failing.mcpServers] },
+        codex,
+        claude(false),
+      ]),
+    ).toEqual(["Gmail", "Linear"]);
+    // Nothing connected and no row: nothing installed, though the catalog always offers Gmail.
+    expect(installed([scient(false), codex])).toEqual([]);
+    // A claude.ai connector still to sign in is in the person's account, so it is listed.
+    expect(installed([scient(false), claude(false)])).toEqual(["Gmail"]);
+    // Filtered to one agent, only what that agent has.
+    expect(installed([scient(true), codex], claude(true).instanceId)).toEqual([]);
+    expect(installed([scient(true), claude(true)], claude(true).instanceId)).toEqual(["Gmail"]);
   });
 
   it("recognises the services' own rows and Codex store entries", () => {

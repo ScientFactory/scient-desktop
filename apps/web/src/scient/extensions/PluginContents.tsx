@@ -33,6 +33,9 @@ import {
 } from "./extensionsState";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
+/** A skill's description is written for agents; its Markdown marks are noise in a one-line row. */
+const plainLine = (text: string | undefined) => text?.replace(/\*\*|__|`/g, "");
+
 function PluginSkillCard({
   skill,
   input,
@@ -216,7 +219,7 @@ function PluginContentsView({
                     {formatProviderSkillDisplayName(skill)}
                   </span>
                   <span className="block truncate text-sm text-muted-foreground">
-                    {skill.description}
+                    {plainLine(skill.description)}
                   </span>
                 </span>
               </button>
