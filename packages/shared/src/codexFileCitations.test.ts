@@ -51,6 +51,7 @@ describe("resolveCodexFileCitationLink", () => {
       }),
     ).toEqual({
       path: "reports/100% #1? draft.md",
+      // SCIENT-FORK: Scient's link pattern accepts this path, so it needs no "./".
       href: "reports/100%25 %231%3F draft.md#L7",
       label: "100% #1? draft.md",
       lineRangeStart: 7,

@@ -358,6 +358,35 @@ describe("readChromiumCookieDatabase", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("reads a cookie database the browser has emptied as having no cookies", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-chromium-cookies-",
+      });
+      const filename = `${directory}/Cookies`;
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`create table scratch (id integer)`;
+        yield* sql`drop table scratch`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+      const result = yield* readChromiumCookieDatabase(
+        filename,
+        { cbcV10: Buffer.from("0123456789abcdef") },
+        "darwin",
+      );
+
+      expect(result).toEqual({
+        cookies: [],
+        undecryptable: 0,
+        undecryptableHosts: [],
+        // SCIENT-FORK: Scient counts skipped cookies by reason.
+        skippedByReason: { appBoundEncryption: 0, decryptFailed: 0, partitionUnsupported: 0 },
+      });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("skips partitioned cookies without breaking pre-CHIPS schemas", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

@@ -82,6 +82,7 @@ it.live(
                 const frames = child ? childFrames : sourceFrames;
                 if (!child) options = input.options;
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),

@@ -108,6 +108,7 @@ const makeCapturedStopHarness = (name: string, closeFails = false) =>
               options: input.options,
             });
             return {
+              renameSession: () => Effect.void,
               messages: Stream.fromQueue(sdkMessages).pipe(
                 Stream.flatMap((message) =>
                   Stream.make(message).pipe(

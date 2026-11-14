@@ -94,6 +94,7 @@ import React, {
   type MouseEvent as ReactMouseEvent,
   use,
   memo,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -1997,8 +1998,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownTable {...props} dir={tableDirection} />;
     // SCIENT-FORK:END
   },
-  details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
-    return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
+  details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen, dir }) {
+    return (
+      <MarkdownDetails open={detailsOpen} dir={dir}>
+        {children}
+      </MarkdownDetails>
+    );
   },
   pre: function MarkdownPre({ node, children, ...props }) {
     // SCIENT-FORK:START — direction; Mermaid's expandMedia is unused.
@@ -2162,12 +2167,15 @@ const MarkdownSource = memo(function MarkdownSource({
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });
+  const element = render(text);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
+  useEffect(() => {
+    if (shared && cache) render.remember(text, element);
+  }, [render, text, element, shared, cache]);
   return (
     <ChatMarkdownTextContext value={text}>
       {/* SCIENT-FORK:START — it changes per streamed token, so only math reads it. */}
-      <ScientAuthoredMathTextContext value={authoredText}>
-        {render(text, shared && cache)}
-      </ScientAuthoredMathTextContext>
+      <ScientAuthoredMathTextContext value={authoredText}>{element}</ScientAuthoredMathTextContext>
       {/* SCIENT-FORK:END */}
     </ChatMarkdownTextContext>
   );

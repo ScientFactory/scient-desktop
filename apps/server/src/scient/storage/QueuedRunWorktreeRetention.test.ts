@@ -26,6 +26,8 @@ import {
 } from "../../../integration/TransferBudgetV2Fixture.integration.ts";
 import { ServerConfig } from "../../config.ts";
 import { GitManager } from "../../git/GitManager.ts";
+import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -181,6 +183,9 @@ describe("storage cleanup keeps worktrees of threads with queued runs", () => {
           Layer.mergeAll(
             Layer.succeed(Settings.ServerSettingsService, settings),
             Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
+            // The branch follow-up is a no-op without a current branch.
+            Layer.mock(GitWorkflowService)({ currentBranch: () => Effect.succeed(null) }),
+            Layer.mock(ThreadManagementService)({}),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
                 listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),

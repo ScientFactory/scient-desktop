@@ -320,6 +320,7 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
               Effect.sync(() => {
                 openedOptions = input.options;
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -483,6 +484,7 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
             allocateSessionId: Effect.succeed("native-thread-claude-attachments"),
             open: () =>
               Effect.succeed({
+                renameSession: () => Effect.void,
                 stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
@@ -1057,6 +1059,7 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
                 const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                 processQueues.push(sdkMessages);
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -1244,6 +1247,7 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
               Effect.sync(() => {
                 executablePaths.push(input.options.pathToClaudeCodeExecutable);
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -1333,6 +1337,7 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                 Effect.sync(() => {
                   openedOptions = input.options;
                   return {
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
@@ -2715,6 +2720,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               Effect.sync(() => {
                 openedQueries.push(input);
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -2860,6 +2866,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
@@ -4382,6 +4389,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               Effect.sync(() => {
                 openCount += 1;
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -4999,6 +5007,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
