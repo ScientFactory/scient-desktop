@@ -327,9 +327,9 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         targetVersion: "1.1.0",
         method: "boot-service",
       });
-      expect(order).toEqual(["download", "extract", "preflight"]);
+      expect(order).toEqual(["install", "preflight"]);
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
-      expect(order).toEqual(["download", "extract", "preflight", "preflight", "accept"]);
+      expect(order).toEqual(["install", "preflight", "preflight", "accept"]);
     }),
   );
 

@@ -219,7 +219,11 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   )
     return yield* threads.dispatch(command);
   // An accepted edit's retry replays its receipt even if a later cleanup removed its files.
-  if (command.type === "queued-run.edit" && !(yield* threads.hasReceipt(command.commandId))) {
+  // SCIENT-FORK:START — Scient's claim re-verifies stored bytes, so a replay skips claiming.
+  if (command.type === "queued-run.edit" && (yield* threads.hasReceipt(command.commandId)))
+    return yield* threads.dispatch(command);
+  // SCIENT-FORK:END
+  if (command.type === "queued-run.edit") {
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     // A stale view can keep a file that another client's edit dropped and deleted.
