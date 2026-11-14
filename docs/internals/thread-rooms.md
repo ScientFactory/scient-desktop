@@ -46,8 +46,9 @@ guest's send as the `message.dispatch` it becomes under the same thread lock.
 `ThreadRoomService` and `scient/room/http.ts` serve `/api/room/*`. Invites and sessions
 are signed claims checked against the live room on every request: the room is open,
 the participant is in it and unexpired, their role allows the action, Connect still
-serves the host, and guest links are on in Labs. Removing someone or changing their
-role applies on their next request; their open stream ends when the room changes.
+serves the host, and guest links are on in Labs. Removing the last participant (joined or not)
+closes the room, so the web dialog has no Stop sharing step. Removing someone or
+changing their role applies on their next request; their open stream ends when the room changes.
 Presence is in memory: open guest streams per participant.
 
 Roles (shown as Can view, Can chat, Can use agent): Watch reads; Discuss also chats;

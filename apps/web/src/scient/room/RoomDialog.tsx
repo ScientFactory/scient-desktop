@@ -12,7 +12,7 @@ import {
   type RoomRole,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, LinkIcon, MessagesSquareIcon, ShareIcon, XIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, MessagesSquareIcon, ShareIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { guestShareDialogThreadAtom } from "~/components/chat/guestShareDialogState";
@@ -20,7 +20,6 @@ import { Button } from "~/components/ui/button";
 import {
   Dialog,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogPanel,
   DialogPopup,
@@ -45,8 +44,6 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { openShareLinkDialog } from "~/scient/cloud/shareDialogState";
-import { hasCloudAccount } from "~/scient/cloud/useCloudAccount";
 import { scientRoomChatSurface } from "~/scient/rightPanel/surfaces";
 
 const DURATION_LABEL: Record<RoomAccessDuration, string> = {
@@ -112,9 +109,6 @@ function RoomDialog({
   const [duration, setDuration] = useState<RoomAccessDuration>("week");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [closing, setClosing] = useState(false);
-  // The other way to share: a read-only copy in Scient Cloud, which needs no live computer.
-  const canPublish = hasCloudAccount();
 
   // One step: the invite is made and its link copied, ready to paste to the person.
   const createInvite = async () => {
@@ -233,39 +227,6 @@ function RoomDialog({
             ) : null}
           </div>
         </DialogPanel>
-        {room !== null || canPublish ? (
-          <DialogFooter className="sm:justify-between">
-            {canPublish ? (
-              <Button
-                variant="ghost-muted"
-                size="sm"
-                onClick={() => {
-                  onClose();
-                  openShareLinkDialog(threadRef);
-                }}
-              >
-                <LinkIcon />
-                Publish a copy…
-              </Button>
-            ) : (
-              <span />
-            )}
-            {room !== null ? (
-              <Button
-                variant="ghost-destructive"
-                size="sm"
-                disabled={!canOperate || closing}
-                onClick={async () => {
-                  setClosing(true);
-                  await act({ type: "close" });
-                  setClosing(false);
-                }}
-              >
-                Stop sharing
-              </Button>
-            ) : null}
-          </DialogFooter>
-        ) : null}
       </DialogPopup>
     </Dialog>
   );

@@ -301,9 +301,11 @@ export function decideOwnerRoomAction(
           : room.participants.map((p) =>
               p.id === action.participantId ? { ...p, role: action.role } : p,
             );
+      // Removing the last person, or the last unopened link, ends sharing: there is no
+      // separate Stop sharing step.
       return Result.succeed({
         ...unchanged,
-        thread: withRoom(thread, { ...room, participants }, now),
+        thread: withRoom(thread, participants.length === 0 ? null : { ...room, participants }, now),
       });
     }
     case "close":

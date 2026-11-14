@@ -214,6 +214,7 @@ it.effect("spends an invite once and checks the member on every request", () =>
     assert.equal(yield* reasonOf(rooms.check(token)), "closed");
     yield* Ref.set(hostname, "env.t3.test");
 
+    const unopened = yield* invite("watch");
     yield* orchestrator.dispatch({
       type: "thread.room",
       commandId: CommandId.make(`remove:${threadId}`),
@@ -221,6 +222,14 @@ it.effect("spends an invite once and checks the member on every request", () =>
       action: { type: "remove", participantId: dana.participantId },
     });
     assert.equal(yield* reasonOf(rooms.check(token)), "removed");
+    // Cancelling the last unopened link ends sharing.
+    yield* orchestrator.dispatch({
+      type: "thread.room",
+      commandId: CommandId.make(`cancel:${threadId}`),
+      threadId,
+      action: { type: "remove", participantId: unopened.participantId },
+    });
+    assert.equal(yield* reasonOf(rooms.check(token)), "closed");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -253,6 +262,8 @@ it.effect("streams the room and ends it for a removed guest", () =>
     const { orchestrator, rooms, threadId, invite } = yield* openRoom;
     const dana = yield* invite("discuss");
     const { token } = yield* rooms.join({ credential: dana.credential, name: "Dana" });
+    // Someone else keeps the room open, so Dana's stream ends as removed, not closed.
+    yield* invite("watch");
     const events = yield* rooms.stream(token);
     yield* orchestrator.dispatch({
       type: "thread.room",
