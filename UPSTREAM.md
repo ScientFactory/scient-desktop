@@ -642,6 +642,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`6b47939e606b17fc6fab278eec3fcbde65995514` is recorded in
+[the 2026-11-14 6b47939e60 receipt](docs/internals/t3-upstream-sync-20261114-6b47939e60.md).
+Literal merge `1ca684c4e8f8e2b44666fe5b60cd8ad3cda2763c` has owned base
+`4c2096097a783f32868dd2ccada06b724259be7d` and the frozen official target as parents, retaining
+the 113 official commits after `f313d0a6cb`. Follow-up delegated tasks wait as T3's do, Scient's
+tool list declares T3's `send_to_user`, and Scient cleanup keeps any local file in a No project
+folder. AppImages keep Scient's versioned names. Release remains separate.
+
+The previous committed alignment through
 `f313d0a6cb843551fb60e57a454a71e71a3a8c04` is recorded in
 [the 2026-11-13 f313d0a6cb receipt](docs/internals/t3-upstream-sync-20261113-f313d0a6cb.md).
 Literal merge `056b8ccc26884eb7c40f517fb3a302b595253bc0` has owned base
