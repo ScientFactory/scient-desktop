@@ -103,7 +103,7 @@ function ProviderSection({
   // Where the agent's own account adds apps: claude.ai for Claude, ChatGPT for Scient Agent.
   const accountAppsPage =
     group.provider.driver === "claudeAgent"
-      ? { url: "https://claude.ai/settings/connectors", label: "Add more on claude.ai" }
+      ? { url: "https://claude.ai/customize/connectors", label: "Add more on claude.ai" }
       : group.provider.driver === "scient"
         ? { url: "https://chatgpt.com/apps", label: "Add more on ChatGPT" }
         : undefined;

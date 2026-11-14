@@ -18,7 +18,7 @@ const encodeServers = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(ServerProviderMcpServer)),
 );
 
-const CLAUDE_CONNECTORS_URL = "https://claude.ai/settings/connectors";
+const CLAUDE_CONNECTORS_URL = "https://claude.ai/customize/connectors";
 
 class ClaudeAccountServersError extends Schema.TaggedError<ClaudeAccountServersError>()(
   "ClaudeAccountServersError",

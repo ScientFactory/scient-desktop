@@ -61,7 +61,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
   },
 ];
 
-const CLAUDE_CONNECTORS_PAGE = "https://claude.ai/settings/connectors";
+const CLAUDE_CONNECTORS_PAGE = "https://claude.ai/customize/connectors";
 
 /** ChatGPT's page for the service's app, where the browser's ChatGPT account connects it. */
 function chatGptServicePage(service: AccountService): string {

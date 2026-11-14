@@ -30,7 +30,7 @@ describe("Claude account inventory", () => {
           name: "account",
           scope: "claudeai",
           status: "needs-auth",
-          connectUrl: "https://claude.ai/settings/connectors",
+          connectUrl: "https://claude.ai/customize/connectors",
         },
       ]);
       expect(samples).toBe(3);
