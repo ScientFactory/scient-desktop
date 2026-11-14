@@ -271,13 +271,7 @@ function RoomDialog({
   );
 }
 
-const ROLE_HINT: Record<RoomRole, string> = {
-  watch: "Sees the thread live",
-  discuss: "Also chats with you",
-  agent: "Also uses the agent, on this computer",
-};
-
-/** What someone may do. The menu says what each choice means, so nothing appears beside it. */
+/** What someone may do: Can view, Can chat or Can use agent. */
 function RolePicker(props: {
   readonly label: string;
   readonly size: "sm" | "xs";
@@ -298,13 +292,10 @@ function RolePicker(props: {
       >
         <SelectValue>{ROOM_ROLE_LABEL[props.value]}</SelectValue>
       </SelectTrigger>
-      <SelectPopup alignItemWithTrigger={false} matchTriggerWidth={false}>
+      <SelectPopup alignItemWithTrigger={false}>
         {ROLES.map((value) => (
           <SelectItem key={value} value={value}>
-            <span className="flex flex-col py-0.5">
-              <span>{ROOM_ROLE_LABEL[value]}</span>
-              <span className="text-muted-foreground text-xs">{ROLE_HINT[value]}</span>
-            </span>
+            {ROOM_ROLE_LABEL[value]}
           </SelectItem>
         ))}
       </SelectPopup>
