@@ -73,6 +73,35 @@ export function chatGptAppRows(stdout: string): ReadonlyArray<ServerProviderMcpS
   });
 }
 
+const runtimeInfo = Effect.fn("scientAgentRuntimeInfo")(function* (
+  executable: string,
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+) {
+  const resolved =
+    (yield* resolveCommandPath(executable, { env, bypassCache: true })) ?? executable;
+  const gate = yield* OmpExecutableGate;
+  yield* gate.acquireProcess(yield* canonicalOmpExecutablePath(resolved), {
+    target: scientAgentTarget,
+    kind: "one-shot",
+  });
+  const info = yield* runProviderPluginCommand(resolved, env, cwd, ["--runtime-info"]);
+  const runsApps =
+    scientAgentTarget.identify(info) !== undefined &&
+    scientAgentHostCommands(info).includes("apps");
+  return { resolved, runsApps };
+});
+
+/** Whether this executable runs ChatGPT apps; an older one ignores the request for them. */
+export const scientAgentRunsChatGptApps = Effect.fn("scientAgentRunsChatGptApps")(
+  function* (executable: string, env: NodeJS.ProcessEnv, cwd: string) {
+    return (yield* runtimeInfo(executable, env, cwd)).runsApps;
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({ duration: "30 seconds", orElse: () => Effect.succeed(false) }),
+  Effect.orElseSucceed(() => false),
+);
+
 /**
  * The apps, or none when the agent is signed out of ChatGPT, cannot reach it, or predates the
  * command: an executable without `apps` would read the word as a prompt, so its runtime info
@@ -80,16 +109,8 @@ export function chatGptAppRows(stdout: string): ReadonlyArray<ServerProviderMcpS
  */
 export const readScientAgentChatGptApps = Effect.fn("readScientAgentChatGptApps")(
   function* (executable: string, env: NodeJS.ProcessEnv, cwd: string) {
-    const resolved =
-      (yield* resolveCommandPath(executable, { env, bypassCache: true })) ?? executable;
-    const gate = yield* OmpExecutableGate;
-    yield* gate.acquireProcess(yield* canonicalOmpExecutablePath(resolved), {
-      target: scientAgentTarget,
-      kind: "one-shot",
-    });
-    const info = yield* runProviderPluginCommand(resolved, env, cwd, ["--runtime-info"]);
-    if (!scientAgentTarget.identify(info) || !scientAgentHostCommands(info).includes("apps"))
-      return [];
+    const { resolved, runsApps } = yield* runtimeInfo(executable, env, cwd);
+    if (!runsApps) return [];
     // A signed-out agent exits 1 with its reason, which reads as no apps.
     const output = yield* runProviderPluginCommand(resolved, env, cwd, ["apps", "--json"]).pipe(
       Effect.orElseSucceed(() => ""),

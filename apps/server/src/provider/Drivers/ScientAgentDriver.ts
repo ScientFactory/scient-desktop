@@ -64,6 +64,7 @@ import { readScientAgentMcpServers } from "../../scient/extensions/ScientAgentMc
 import {
   hasChatGptAccount,
   readScientAgentChatGptApps,
+  scientAgentRunsChatGptApps,
   SCIENT_AGENT_CHATGPT_APPS_ALL,
   SCIENT_AGENT_CHATGPT_APPS_ENV,
 } from "../../scient/extensions/ScientAgentChatGptApps.ts";
@@ -202,13 +203,15 @@ export const ScientAgentDriver: ScientProviderDriver<
     // client that predates the account method still decodes this provider.
     const stamp = (
       snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts" | "checkFailure">,
+      runsChatGptApps = false,
     ): ServerProvider => {
       const { accounts, checkFailure, ...draft } = snapshot;
       return {
         ...stampIdentity(draft),
         usesClaudePlugins: supportsScientClaudePlugins(draft.version),
-        // The apps of the agent's own ChatGPT sign-in, which only it holds.
-        accountAppsAvailable: hasChatGptAccount(accounts),
+        // The apps of the agent's own ChatGPT sign-in, which only it holds and only a build
+        // that runs them can use.
+        accountAppsAvailable: runsChatGptApps && hasChatGptAccount(accounts),
         connection: {
           methods: [],
           canDisconnect: false,
@@ -302,11 +305,26 @@ export const ScientAgentDriver: ScientProviderDriver<
                         snapshot.accounts,
                       )
                     : Effect.undefined,
+                  hasChatGptAccount(snapshot.accounts)
+                    ? scientAgentRunsChatGptApps(
+                        launchConfig.binaryPath,
+                        processEnv,
+                        serverConfig.stateDir,
+                      ).pipe(
+                        Effect.provideService(OmpExecutableGate, executableGate),
+                        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                        Effect.provideService(FileSystem.FileSystem, fs),
+                        Effect.provideService(Path.Path, path),
+                      )
+                    : Effect.succeed(false),
                 ],
                 { concurrency: "unbounded" },
               ).pipe(
-                Effect.map(([skills, usageLimits]) =>
-                  stamp({ ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) }),
+                Effect.map(([skills, usageLimits, runsChatGptApps]) =>
+                  stamp(
+                    { ...snapshot, skills, ...(usageLimits ? { usageLimits } : {}) },
+                    runsChatGptApps,
+                  ),
                 ),
               )
             : Effect.succeed(stamp(snapshot)),
@@ -354,7 +372,9 @@ export const ScientAgentDriver: ScientProviderDriver<
       streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSnapshotSettings)),
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
       initialSnapshot: (settings) =>
-        makePendingOmpProvider(scientAgentTarget, settings.provider).pipe(Effect.map(stamp)),
+        makePendingOmpProvider(scientAgentTarget, settings.provider).pipe(
+          Effect.map((snapshot) => stamp(snapshot)),
+        ),
       checkProvider: checkProvider(),
     }).pipe(
       Effect.mapError((cause) =>
