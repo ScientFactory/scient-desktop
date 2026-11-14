@@ -92,6 +92,9 @@ const messageOf = (cause: unknown): string =>
 
 /** What to do after a failed attempt: wait and retry, ask for a new token, or wait for the person. */
 function classifyFailure(cause: unknown, accountId: string): Failure {
+  // The server could not reach its own files for a moment.
+  if (ServerSecretStore.isSecretStoreError(cause))
+    return { kind: "retry", reason: messageOf(cause) };
   const tagged = cause as { readonly _tag?: string; readonly reason?: string } | null;
   switch (tagged?._tag) {
     case "RelayClientInstallError": {
@@ -134,9 +137,9 @@ function classifyFailure(cause: unknown, accountId: string): Failure {
     }
     case "ManagedPolicyRefusedError":
       return { kind: "block", block: { reason: "policy", message: messageOf(cause) } };
-    // The tunnel did not start, or the server could not reach its own files for a moment.
+    // The tunnel did not start, or saving the link or reading a file failed for a moment.
     case "CloudLinkEndpointUnavailableError":
-    case "SecretStoreError":
+    case "CloudLinkInternalError":
     case "PlatformError":
       return { kind: "retry", reason: messageOf(cause) };
     default:
