@@ -1590,7 +1590,9 @@ const make = Effect.gen(function* () {
                           ? "an Overleaf link record can't be read; set it aside in Settings › Synced folders › Overleaf"
                           : error.reason === "newer-unfinished-record"
                             ? "a newer version of Scient left an Overleaf sync unfinished; finish it there"
-                            : "an unfinished Overleaf sync needs recovery first",
+                            : error.reason === "unlinked-unfinished-sync"
+                              ? "an unlinked Overleaf folder has an unfinished sync; link it again to finish it"
+                              : "an unfinished Overleaf sync needs recovery first",
                       ),
                     CheckoutLookupError: () => Effect.succeed("its folder could not be examined"),
                   }),

@@ -170,7 +170,9 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
           "recovery-required",
           field("reason") === "unreadable-record" || field("reason") === "newer-unfinished-record"
             ? `${error.message} Ask the user to do this; it can't be done from a tool.`
-            : `${error.message} Use scient_overleaf_manage with action recover.`,
+            : field("reason") === "unlinked-unfinished-sync"
+              ? `${error.message} ${LIST_LINKS}`
+              : `${error.message} Use scient_overleaf_manage with action recover.`,
         ),
       );
     case "CheckoutSuspendedError":

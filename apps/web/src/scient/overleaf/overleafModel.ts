@@ -168,7 +168,9 @@ export function overleafChipView(
       label: "Overleaf problem",
       detail:
         status.availability === "disconnected"
-          ? "This folder is no longer linked."
+          ? status.reasons.length === 0
+            ? "This folder is no longer linked."
+            : "This folder was unlinked before a sync finished. Link it to the same project again to finish it."
           : "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.",
     };
   }
@@ -639,9 +641,11 @@ function publicationLine(
     case "not-sent":
       return {
         line:
-          publication.reason === "rate-limited"
-            ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
-            : "Nothing was sent: the Overleaf token changed during the sync. Sync again.",
+          publication.reason === undefined
+            ? "Nothing was sent: the Overleaf token changed during the sync. Sync again."
+            : publication.reason === "rate-limited"
+              ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
+              : `Nothing was sent. ${refusalText({ reason: publication.reason })}`,
         tone: "warning",
       };
     case "out-of-date":

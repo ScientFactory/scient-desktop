@@ -239,9 +239,11 @@ const publicationLines = (
       ];
     case "not-sent":
       return [
-        publication.reason === "rate-limited"
-          ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
-          : "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
+        publication.reason === undefined
+          ? "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again."
+          : publication.reason === "rate-limited"
+            ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
+            : `Nothing was sent. ${notSentReason(publication.reason)}`,
       ];
     case "out-of-date":
       return ["Overleaf changed again while sending, so nothing was sent. Sync again."];
@@ -249,6 +251,21 @@ const publicationLines = (
       return [
         `Send #${publication.attemptNumber} got no answer from Overleaf, so it may or may not have arrived. Scient never sends it again; the next sync or a recover checks whether it arrived.`,
       ];
+  }
+};
+
+/** Why Git or Overleaf refused a send before anything went out. */
+const notSentReason = (reason: string): string => {
+  switch (reason) {
+    case "access-denied":
+    case "project-not-found":
+      return refusalReason({ reason });
+    case "unreachable":
+      return "Overleaf could not be reached. Sync again later.";
+    case "git-unavailable":
+      return "Git 2.39 or newer is needed on this project's server.";
+    default:
+      return "Git failed before sending. Sync again.";
   }
 };
 
@@ -665,7 +682,11 @@ export const statusLines = (status: ScientOverleafStatus): string[] => {
       lines.push("Ready to sync.");
       break;
     case "disconnected":
-      lines.push("Disconnected. Connect the folder again to keep its history.");
+      lines.push(
+        status.reasons.length === 0
+          ? "Disconnected. Connect the folder again to keep its history."
+          : "Disconnected before an interrupted sync finished. Connect the folder to the same project again to finish it; until then, pulls, branch switches and checkpoint restores in this project are refused.",
+      );
       break;
     default:
       lines.push(`Needs attention: ${reasons.join("; ")}.`);
