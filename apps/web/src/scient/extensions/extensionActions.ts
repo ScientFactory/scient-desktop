@@ -72,7 +72,8 @@ export interface ConnectorActionsState extends ItemActionsState {
   readonly setAvailability: (availability: GrantScope) => Promise<unknown>;
   /** The agents that get it; null gives it to every agent again. */
   readonly setAgents: (agents: ReadonlyArray<ProviderInstanceId> | null) => Promise<unknown>;
-  readonly remove: () => Promise<void>;
+  /** Whether it was removed; false when the person cancelled or it failed. */
+  readonly remove: () => Promise<boolean>;
   /** Local connectors: back to the folder's earlier version, or back after a removal. */
   readonly undo: () => Promise<void>;
   /** Local connectors: saves it as an .mcpb file to share. */
@@ -248,13 +249,13 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
     setAgents: (agents: ReadonlyArray<ProviderInstanceId> | null) =>
       lock.run("availability", () => update({ environmentId, input: { connectorId, agents } })),
     remove: async () => {
-      if (lock.locked) return;
+      if (lock.locked) return false;
       // A local connector is kept for Undo; a remote one's stored sign-in or key is deleted.
       if (connector.local !== undefined) {
         const removed = await lock.run("remove", () =>
           remove({ environmentId, input: { connectorId } }),
         );
-        if (removed?._tag !== "Success") return;
+        if (removed?._tag !== "Success") return false;
         toastManager.add({
           type: "success",
           title: `Removed ${connector.displayName}`,
@@ -263,13 +264,18 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
             onClick: () => void undoChange({ environmentId, input: { connectorId } }),
           },
         });
-        return;
+        return true;
       }
       const confirmed = await confirmDestructive(
-        `Remove ${connector.displayName}? Its stored sign-in or key is deleted and agents stop receiving it.`,
+        connector.auth.type === "none"
+          ? `Remove ${connector.displayName}? Agents stop receiving it.`
+          : `Remove ${connector.displayName}? Its stored sign-in or key is deleted and agents stop receiving it.`,
       );
-      if (confirmed)
-        await lock.run("remove", () => remove({ environmentId, input: { connectorId } }));
+      if (!confirmed) return false;
+      const removed = await lock.run("remove", () =>
+        remove({ environmentId, input: { connectorId } }),
+      );
+      return removed?._tag === "Success";
     },
     undo: async () => {
       await lock.run("undo", () => undoChange({ environmentId, input: { connectorId } }));

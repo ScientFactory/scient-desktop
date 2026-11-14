@@ -25,7 +25,7 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { AddYourOwn } from "./AddYourOwn";
-import { ProviderStoreShelves, StoreInstall, storeAvailable } from "./ProviderStorePages";
+import { ProviderStoreShelves, StoreInstall } from "./ProviderStorePages";
 import { ConnectorItem, EntryItem, PluginItem } from "./ExtensionItems";
 import {
   BackLink,
@@ -43,6 +43,7 @@ import { extensionsDiscoverPage, extensionsProviderStorePage } from "./extension
 import {
   audienceLabel,
   catalogEntries,
+  providerAvailable,
   type ExtensionKind,
   isExtensionCategory,
   matchesQuery,
@@ -613,7 +614,7 @@ function categoryStoreTargets(
   return providers.filter(
     (provider) =>
       category !== "most-used" &&
-      storeAvailable(provider) &&
+      providerAvailable(provider) &&
       ["codex", "claudeAgent", "scient"].includes(provider.driver),
   );
 }
@@ -728,16 +729,7 @@ function CategoryContents({
   const storeReady = pages.every(({ result }) => !AsyncResult.isInitial(result));
   return (
     <>
-      <ExtensionsSection
-        title="Scient’s picks"
-        action={
-          ready ? (
-            <span className="text-xs text-muted-foreground">
-              {visiblePicks.length} of {curated.length}
-            </span>
-          ) : undefined
-        }
-      >
+      <ExtensionsSection title="Scient’s picks">
         {picks.error ? (
           <MutedLine>{picks.error}</MutedLine>
         ) : !ready && slow && curated.length === 0 ? (

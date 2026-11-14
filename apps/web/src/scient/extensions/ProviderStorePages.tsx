@@ -33,17 +33,9 @@ import {
   extensionsProviderStoreEntry,
   extensionsProviderStorePage,
 } from "./extensionsState";
+import { providerAvailable } from "./extensionsView";
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
-
-export function storeAvailable(provider: ServerProvider) {
-  return (
-    provider.enabled &&
-    provider.installed &&
-    (provider.status === "ready" || provider.status === "warning") &&
-    provider.availability !== "unavailable"
-  );
-}
 
 export function StoreInstall({
   provider,
@@ -60,7 +52,7 @@ export function StoreInstall({
   const { environmentId, providers } = useExtensionsEnvironment();
   const target =
     entry.kind === "shared" && provider.driver === "scient"
-      ? (providers.find((item) => storeAvailable(item) && item.driver === "claudeAgent") ??
+      ? (providers.find((item) => providerAvailable(item) && item.driver === "claudeAgent") ??
         provider)
       : provider;
   const plugin = target.plugins?.find(
@@ -181,7 +173,7 @@ function StoreResults({
   });
   const page = useEnvironmentQuery(atom);
   // Scient Agent's official entries repeat Claude's only when Claude's own home serves them.
-  const claude = providers.find((item) => storeAvailable(item) && item.driver === "claudeAgent");
+  const claude = providers.find((item) => providerAvailable(item) && item.driver === "claudeAgent");
   const claudePage = useEnvironmentQuery(
     extensionsProviderStorePage({
       environmentId,
@@ -312,15 +304,15 @@ function StoreResults({
 export function ProviderStoreShelves({ query = "" }: { readonly query?: string }) {
   const { providers } = useExtensionsEnvironment();
   const claude = providers.filter(
-    (provider) => storeAvailable(provider) && provider.driver === "claudeAgent",
+    (provider) => providerAvailable(provider) && provider.driver === "claudeAgent",
   );
   const scient = providers.filter(
-    (provider) => storeAvailable(provider) && provider.driver === "scient",
+    (provider) => providerAvailable(provider) && provider.driver === "scient",
   );
   const targets = [...claude, ...scient];
   const primary = targets[0];
   const codex = providers.filter(
-    (provider) => storeAvailable(provider) && provider.driver === "codex",
+    (provider) => providerAvailable(provider) && provider.driver === "codex",
   );
   return (
     <>
@@ -427,7 +419,7 @@ function Store({ instanceId }: { readonly instanceId: string }) {
               ? [provider]
               : providers.filter(
                   (item) =>
-                    storeAvailable(item) &&
+                    providerAvailable(item) &&
                     (item.driver === "claudeAgent" || item.driver === "scient"),
                 )
             ).map((target) => (

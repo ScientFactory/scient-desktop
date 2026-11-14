@@ -70,6 +70,7 @@ import {
   GHOST_LINK_CLASS,
   MutedLine,
   SECTION_HEADING_CLASS,
+  useBackToList,
   useExtensionsEnvironment,
 } from "./ExtensionsPage";
 import { ExtensionIcon, type ExtensionTarget } from "./ExtensionRow";
@@ -505,7 +506,7 @@ function connectionDetail(connector: ConnectorSummary, busy: string | null): str
 }
 
 /**
- * "Available in" with the projects it names. A saved project deleted since
+ * "Projects" with the projects it names. A saved project deleted since
  * shows as "Deleted project". Every change leaves deleted projects out: the
  * server refuses a list that names one, and dropping it only narrows where
  * the service is available.
@@ -535,9 +536,9 @@ function AvailabilityRows({
     sendProjects(enabled ? [...others, projectId] : others);
   };
   return (
-    <div role="group" aria-label="Available in" className="divide-y divide-border">
+    <div role="group" aria-label="Projects" className="divide-y divide-border">
       <CardRow>
-        <span className="min-w-0 flex-1 text-sm text-foreground">Available in</span>
+        <span className="min-w-0 flex-1 text-sm text-foreground">Projects</span>
         <span className="w-44">
           <NativeSelect
             size="sm"
@@ -620,6 +621,7 @@ function ConnectorDetail({
 }) {
   const { inventory, catalog, environmentId, canWrite } = useExtensionsEnvironment();
   const actions = useConnectorActions(connector);
+  const backToList = useBackToList();
   const allowed = connectorActions(connector);
   const [editing, setEditing] = useState(false);
   const startChat = useConnectorAgentChat(environmentId);
@@ -656,7 +658,12 @@ function ConnectorDetail({
             <Button
               variant="destructive-outline"
               disabled={actions.locked}
-              onClick={() => void actions.remove()}
+              onClick={() =>
+                // Its own page has nothing left to show; a catalog entry's page shows the entry again.
+                void actions.remove().then((removed) => {
+                  if (removed && back === "installed") backToList();
+                })
+              }
             >
               Remove
             </Button>
@@ -744,17 +751,17 @@ function ConnectorDetail({
               onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
             />
           </CardRow>
-          <AvailabilityRows
-            connector={connector}
-            name={name}
-            locked={actions.locked}
-            setAvailability={actions.setAvailability}
-          />
           <AgentRows
             connector={connector}
             name={name}
             locked={actions.locked}
             setAgents={actions.setAgents}
+          />
+          <AvailabilityRows
+            connector={connector}
+            name={name}
+            locked={actions.locked}
+            setAvailability={actions.setAvailability}
           />
         </div>
         {problem !== undefined ? (
@@ -867,9 +874,12 @@ function ConnectorDetail({
           ],
           ...(connector.local === undefined
             ? ([
-                ["Sign-in used", connectorAuthLabel(connector.auth)],
+                // Connection already says when there is no sign-in.
+                connector.auth.type === "none"
+                  ? null
+                  : ["Sign-in used", connectorAuthLabel(connector.auth)],
                 ["URL", <Mono key="url">{connector.url}</Mono>],
-              ] satisfies ReadonlyArray<Fact>)
+              ] satisfies ReadonlyArray<Fact | null>)
             : [
                 fact("Version", connector.local.version),
                 fact("Author", connector.local.author),
@@ -1311,8 +1321,9 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
       ) : null}
       <AboutCard
         rows={[
-          ["Developer", plugin.publisher],
-          ["Version", plugin.version],
+          // A built-in's header and Source already say whose it is.
+          builtIn ? null : ["Developer", plugin.publisher],
+          builtIn ? null : ["Version", plugin.version],
           fact("Installed on", formatDate(plugin.installedAt)),
           fact(
             "Settings",
@@ -1465,8 +1476,6 @@ function ProviderPluginDetail({
       />
       <AboutCard
         rows={[
-          ["Managed by", group.label],
-          ["Plugin ID", <Mono key="plugin-id">{plugin.name}</Mono>],
           [
             "Works with",
             <WorksWithValue
@@ -1474,7 +1483,8 @@ function ProviderPluginDetail({
               audience={providerExtensionAudience(group.provider, plugin)}
             />,
           ],
-          fact("Version", plugin.version),
+          // Claude records a commit hash where others give a version; a hash tells a person nothing.
+          fact("Version", /^[0-9a-f]{7,40}$/.test(plugin.version ?? "") ? null : plugin.version),
           fact("Marketplace", plugin.marketplace),
           fact("Source", plugin.sourceLabel),
           fact("Workspace", workspace ? workspaceLabel(workspace) : null),
@@ -1570,7 +1580,6 @@ function ProviderServerDetail({
     >
       <AboutCard
         rows={[
-          ["Managed by", group.label],
           [
             "Works with",
             <WorksWithValue
@@ -1579,9 +1588,6 @@ function ProviderServerDetail({
             />,
           ],
           ["Status", status],
-          fact("Tools", server.toolCount === undefined ? null : String(server.toolCount)),
-          fact("Scope", server.scope),
-          fact("From plugin", server.pluginId),
         ]}
       />
     </DetailLayout>

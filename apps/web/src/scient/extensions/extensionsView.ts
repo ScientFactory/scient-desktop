@@ -265,6 +265,16 @@ export function worksWithOptions(
   return options;
 }
 
+/** An agent the person has and can use now: installed, turned on and ready. */
+export function providerAvailable(provider: ServerProvider): boolean {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    (provider.status === "ready" || provider.status === "warning") &&
+    provider.availability !== "unavailable"
+  );
+}
+
 /** A Scient connector's audience: every agent, or the ones the person chose. */
 export function connectorAudience(connector: Pick<ConnectorSummary, "agents">): ExtensionAudience {
   return connector.agents === undefined
@@ -442,20 +452,19 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
 }
 
 /** "Codex", "Codex and Claude", "Codex, Claude and Scient Agent". */
-function listLabels(labels: ReadonlyArray<string>): string {
+export function listLabels(labels: ReadonlyArray<string>): string {
   return labels.length <= 1
     ? (labels[0] ?? "")
     : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
 }
 
-export function audienceLabel(audience: ExtensionAudience): string {
+/** Who can use it, as the value beside a "Works with" label: "All your agents", "Codex only". */
+export function audienceNames(audience: ExtensionAudience): string {
   switch (audience.layer) {
     case "scient":
-      return audience.agents === undefined
-        ? "Works with all your agents"
-        : "Works with the agents you chose";
+      return audience.agents === undefined ? "All your agents" : "The agents you chose";
     case "shared":
-      return "Works with Claude and Scient Agent";
+      return "Claude and Scient Agent";
     case "agent":
       return `${audience.label} only`;
     case "account":
@@ -463,7 +472,22 @@ export function audienceLabel(audience: ExtensionAudience): string {
         ? audience.pending.length === 0
           ? "Through your ChatGPT or Claude account"
           : "Not connected yet"
-        : `Works with ${listLabels([...new Set(audience.connected.map((agent) => agent.label))])}`;
+        : listLabels([...new Set(audience.connected.map((agent) => agent.label))]);
+  }
+}
+
+/** The same as a sentence of its own: "Works with all your agents", "Codex only". */
+export function audienceLabel(audience: ExtensionAudience): string {
+  const names = audienceNames(audience);
+  switch (audience.layer) {
+    case "scient":
+      return `Works with ${names.charAt(0).toLowerCase()}${names.slice(1)}`;
+    case "shared":
+      return `Works with ${names}`;
+    case "agent":
+      return names;
+    case "account":
+      return audience.connected.length === 0 ? names : `Works with ${names}`;
   }
 }
 
@@ -533,10 +557,11 @@ export function worksWithCardAgents(
 
 /** The action that opens an agent's account page for this server, or none. */
 export function providerServerConnectLabel(
-  server: Pick<ServerProviderMcpServer, "connectUrl" | "scope">,
+  server: Pick<ServerProviderMcpServer, "connectUrl" | "scope" | "status">,
 ): string | undefined {
   if (!server.connectUrl) return undefined;
-  return server.scope === "chatgpt" ? "Open in ChatGPT" : "Connect on claude.ai";
+  if (server.scope === "chatgpt") return "Open in ChatGPT";
+  return server.status === "connected" ? "Manage on claude.ai" : "Connect on claude.ai";
 }
 
 export function providerServerDisplayName(
@@ -609,8 +634,10 @@ export function connectorFacts(
   connector: Pick<ConnectorSummary, "status" | "auth">,
 ): ReadonlyArray<readonly [string, string]> {
   const signedIn = connector.status === "connected" && connector.auth.type !== "none";
+  // Without a sign-in, the Connection card already says so.
+  const settled = signedIn || connector.auth.type === "none";
   return entryFacts(entry).flatMap(([label, value]) =>
-    !signedIn || label !== "Access"
+    !settled || label !== "Access"
       ? [[label, value] as const]
       : connector.auth.type === "source-control"
         ? [[label, `Signed in as ${connector.auth.account}`] as const]

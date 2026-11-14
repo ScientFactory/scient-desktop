@@ -37,16 +37,17 @@ import {
   connectorsReach,
   type ExtensionKind,
   type ProviderExtensionGroup,
+  providerAvailable,
   showsKind,
   worksWithOptions,
 } from "./extensionsView";
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
-import { AccountServiceItem, connectedAccountServices } from "./AccountServicePages";
+import { AccountServiceItem } from "./AccountServicePages";
 import {
   type AccountService,
-  accountServiceForApp,
   accountServiceOfServer,
+  installedAccountServices,
 } from "./accountServices";
 import { AgentSkills } from "../skills/AgentSkills";
 import { PersonalSkillsSection } from "../skills/PersonalSkillsSection";
@@ -56,49 +57,32 @@ import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLi
 /** Rows the table shows before "Show all". */
 const PREVIEW_ROWS = 24;
 
-/** The row's kind for a provider's own server: a ChatGPT app, a claude.ai connector, or MCP. */
-const serverType = (scope: string | undefined) =>
-  scope === "chatgpt" ? "ChatGPT app" : scope === "claudeai" ? "claude.ai connector" : "MCP server";
+/** Codex's gateway to the ChatGPT apps, which the list already shows one by one. */
+const isAppGateway = (group: ProviderExtensionGroup, server: ServerProviderMcpServer) =>
+  group.provider.driver === "codex" && server.name === "codex_apps";
 
 /**
- * Each agent's own plugins, apps and servers as rows, each thing once:
- * - a service several agents reach (Gmail and the like) is already its own row;
- * - a ChatGPT app is one row naming every agent whose ChatGPT account has it;
- * - an agent's plugin named like one of those, or like another of its plugins, adds no row.
+ * Each agent's own plugins and servers as rows, each thing once. No row for a plugin already
+ * listed (shared by two agents, held twice under one name, or named like a listed service), nor
+ * for a server a listed service, a plugin or Codex's apps already stand for.
  */
 function agentRows(
   groups: ReadonlyArray<ProviderExtensionGroup>,
   services: ReadonlyArray<AccountService>,
 ) {
-  const key = (name: string) => name.trim().toLowerCase();
-  const apps = new Map<
-    string,
-    Array<{ readonly group: ProviderExtensionGroup; readonly server: ServerProviderMcpServer }>
-  >();
-  const others: Array<{
-    readonly group: ProviderExtensionGroup;
-    readonly server: ServerProviderMcpServer;
-  }> = [];
-  for (const group of groups)
-    for (const server of group.mcpServers) {
-      if (accountServiceOfServer(group.provider, server)) continue;
-      if (server.scope === "chatgpt") {
-        const list = apps.get(key(server.name)) ?? [];
-        list.push({ group, server });
-        apps.set(key(server.name), list);
-      } else others.push({ group, server });
-    }
-  const covered = new Set([...services.map((service) => key(service.name)), ...apps.keys()]);
+  const serviceNames = new Set(services.map((service) => service.name.trim().toLowerCase()));
+  const plugins = new Set<string>();
   const rows: ReactNode[] = [];
-  for (const group of groups) {
-    const seen = new Set<string>();
+  for (const group of groups)
     for (const { plugin, cwd } of group.plugins) {
-      const name = key(plugin.displayName ?? plugin.name);
-      if (covered.has(name) || seen.has(name)) continue;
-      seen.add(name);
+      const id = `${plugin.id}:${cwd ?? ""}`;
+      const name = (plugin.displayName ?? plugin.name).trim().toLowerCase();
+      const named = `${group.provider.instanceId}:${name}:${cwd ?? ""}`;
+      if (plugins.has(id) || plugins.has(named) || serviceNames.has(name)) continue;
+      plugins.add(id).add(named);
       rows.push(
         <ProviderPluginItem
-          key={`${group.provider.instanceId}:plugin:${cwd ?? ""}:${plugin.id}`}
+          key={`${group.provider.instanceId}:plugin:${id}`}
           provider={group.provider}
           label={group.label}
           plugin={plugin}
@@ -106,39 +90,25 @@ function agentRows(
         />,
       );
     }
-  }
-  for (const [name, list] of apps) {
-    const first = list[0]!;
-    rows.push(
-      <ProviderServerItem
-        key={`app:${name}`}
-        provider={first.group.provider}
-        label={first.group.label}
-        server={first.server}
-        type="ChatGPT app"
-        serviceId={
-          accountServiceForApp({ name: first.server.name, installUrl: first.server.connectUrl })?.id
-        }
-        audience={{
-          layer: "account",
-          connected: list
-            .filter(({ server }) => server.status === "connected")
-            .map(({ group }) => ({ instanceId: group.provider.instanceId, label: group.label })),
-          pending: [],
-        }}
-      />,
-    );
-  }
-  for (const { group, server } of others)
-    rows.push(
-      <ProviderServerItem
-        key={`${group.provider.instanceId}:server:${server.name}`}
-        provider={group.provider}
-        label={group.label}
-        server={server}
-        type={serverType(server.scope)}
-      />,
-    );
+  for (const group of groups)
+    for (const server of group.mcpServers) {
+      if (
+        server.pluginId ||
+        server.scope === "plugin" ||
+        server.name.startsWith("plugin:") ||
+        isAppGateway(group, server) ||
+        accountServiceOfServer(group.provider, server, services)
+      )
+        continue;
+      rows.push(
+        <ProviderServerItem
+          key={`${group.provider.instanceId}:server:${server.name}`}
+          provider={group.provider}
+          label={group.label}
+          server={server}
+        />,
+      );
+    }
   return rows;
 }
 
@@ -183,19 +153,31 @@ function YoursTable({
     refreshAgents();
   });
 
+  // What the person added in Scient first, then what each agent brings.
   const rows = [
+    ...(connectorsShown ? (inventory?.connectors ?? []) : [])
+      .filter(
+        (connector) =>
+          selected === null ||
+          connector.agents === undefined ||
+          connector.agents.includes(selected),
+      )
+      .map((connector) => (
+        <ConnectorItem
+          key={connector.connectorId}
+          connector={connector}
+          entry={curated.find((entry) => entry.installedConnectorId === connector.connectorId)}
+        />
+      )),
+    ...plugins
+      .filter((plugin) => plugin.origin !== "built-in")
+      .map((plugin) => <PluginItem key={plugin.pluginId} plugin={plugin} />),
     ...accountServices.map((service) => (
       <AccountServiceItem key={`account:${service.id}`} service={service} />
     )),
-    ...(connectorsShown ? (inventory?.connectors ?? []) : []).map((connector) => (
-      <ConnectorItem
-        key={connector.connectorId}
-        connector={connector}
-        entry={curated.find((entry) => entry.installedConnectorId === connector.connectorId)}
-      />
-    )),
     ...agentRows(groups, accountServices),
   ];
+  const builtIn = plugins.filter((plugin) => plugin.origin === "built-in");
   // Where an agent's own account adds apps: ChatGPT for Codex and Scient Agent, claude.ai for Claude.
   const chatGptApps = groups.some(
     (group) =>
@@ -270,13 +252,13 @@ function YoursTable({
           </div>
         ) : null}
       </ExtensionsSection>
-      {plugins.length > 0 ? (
+      {builtIn.length > 0 ? (
         <ExtensionsSection
           id={searchableSetting("extensions-scient-plugins").id}
           title="Built into Scient"
         >
           <ExtensionTable label="Built into Scient">
-            {plugins.map((plugin) => (
+            {builtIn.map((plugin) => (
               <PluginItem key={plugin.pluginId} plugin={plugin} />
             ))}
           </ExtensionTable>
@@ -301,7 +283,12 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
     canWrite,
   } = useExtensionsEnvironment();
   const [worksWith, setWorksWith] = useState<ProviderInstanceId | null>(null);
-  const options = worksWithOptions(inventory?.providerSupport ?? [], providers);
+  // The agents this person has; ones Scient merely knows about are not worth filtering by.
+  const options = worksWithOptions(inventory?.providerSupport ?? [], providers).filter((option) =>
+    providers.some(
+      (provider) => provider.instanceId === option.instanceId && providerAvailable(provider),
+    ),
+  );
   const selected = options.find((option) => option.instanceId === worksWith) ?? null;
   const groups = collectProviderExtensionGroups(
     providerInventory.providers,
@@ -309,14 +296,11 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
   );
   const curated = catalogEntries(catalog);
   // Each agent's inventory counts as it arrives; one that never reports holds nothing back.
-  const accountServices = connectedAccountServices(
+  const accountServices = installedAccountServices(
     providerInventory.providers,
     selected?.instanceId ?? null,
   );
-  const plugins = [
-    ...(inventory?.plugins.filter((plugin) => plugin.origin === "bundle") ?? []),
-    ...(inventory?.plugins.filter((plugin) => plugin.origin === "built-in") ?? []),
-  ];
+  const plugins = inventory?.plugins ?? [];
 
   return (
     <>

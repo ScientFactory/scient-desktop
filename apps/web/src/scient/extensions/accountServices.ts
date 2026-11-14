@@ -74,7 +74,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     name: "Gmail",
     tagline: "Search, read and draft email",
     description:
-      "Your agents search and read your Gmail, draft replies and organize mail, through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds your Google sign-in.",
+      "Each agent reaches Gmail through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
     categories: ["most-used", "communication"],
     websiteUrl: "https://mail.google.com",
     chatgptAppId: "connector_2128aebfecb84f64a069897515042a44",
@@ -85,7 +85,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     name: "Google Calendar",
     tagline: "Check availability and manage events",
     description:
-      "Your agents read your calendars, find free time and create or answer events, through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds your Google sign-in.",
+      "Each agent reaches Google Calendar through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
     categories: ["most-used", "communication"],
     websiteUrl: "https://calendar.google.com",
     chatgptAppId: "connector_947e0d954944416db111db556030eea6",
@@ -96,7 +96,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     name: "Google Drive",
     tagline: "Find and read Docs, Sheets and files",
     description:
-      "Your agents search your Drive and read Docs, Sheets, Slides and other files, and can create or edit them, through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds your Google sign-in.",
+      "Each agent reaches Google Drive through its own ChatGPT or Claude account. Scient never holds your Google sign-in.",
     categories: ["most-used", "files"],
     websiteUrl: "https://drive.google.com",
     chatgptAppId: "connector_5f3c8c41a1e54ad7a76272c89e2554fa",
@@ -144,10 +144,10 @@ export function accountServiceForApp(app: {
   return {
     id: slug(app.name),
     name: app.name,
-    tagline: app.description?.split("\n")[0]?.slice(0, 80) ?? "A ChatGPT app",
+    tagline: app.description?.split("\n")[0]?.slice(0, 80) ?? "",
     description: claude
-      ? `Your agents use ${app.name} through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds that sign-in.`
-      : `Codex and Scient Agent use ${app.name} through your ChatGPT account. Connect it once on ChatGPT; Scient never holds that sign-in. claude.ai has no connector for it.`,
+      ? `Each agent reaches ${app.name} through its own ChatGPT or Claude account. Scient never holds that sign-in.`
+      : `Codex and Scient Agent reach ${app.name} through your ChatGPT account. Scient never holds that sign-in.`,
     categories: [],
     chatgptAppId: id,
     claude,
@@ -190,12 +190,36 @@ function serverIsService(
   return false;
 }
 
-/** The service a ChatGPT app row or claude.ai connector row of an agent belongs to. */
+/** The service, among `services`, a ChatGPT app row or claude.ai connector row belongs to. */
 export function accountServiceOfServer(
   provider: Pick<ServerProvider, "driver">,
   server: Pick<ServerProviderMcpServer, "name" | "scope" | "connectUrl">,
+  services: ReadonlyArray<AccountService> = ACCOUNT_SERVICES,
 ): AccountService | undefined {
-  return ACCOUNT_SERVICES.find((service) => serverIsService(provider, server, service));
+  return services.find((service) => serverIsService(provider, server, service));
+}
+
+/**
+ * The services this environment has, or `instanceId` has when one is chosen: an agent holds a
+ * row for it (whatever its state), or reaches it through its account, on or turned off.
+ */
+export function installedAccountServices(
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: string | null,
+): ReadonlyArray<AccountService> {
+  const chosen = (id: string) => instanceId === null || id === instanceId;
+  return accountServicesFrom(providers).filter(
+    (service) =>
+      providers.some(
+        (provider) =>
+          chosen(provider.instanceId) &&
+          (provider.mcpServers ?? []).some((server) => serverIsService(provider, server, service)),
+      ) ||
+      accountServiceRoutes(service, providers).some(
+        (route) =>
+          (route.state === "connected" || route.state === "off") && chosen(route.instanceId),
+      ),
+  );
 }
 
 /** A Codex store entry that is only one of these services' apps, which Scient lists itself. */

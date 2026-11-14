@@ -220,16 +220,19 @@ export function ExtensionsTopBar({
             </Toggle>
           ))}
         </ToggleGroup>
-        <Link
-          to="/settings/extensions/all"
-          className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
-        >
-          Browse all MCP servers
-          <ChevronRightIcon
-            aria-hidden
-            className="size-3.5 transition-transform group-hover:translate-x-0.5"
-          />
-        </Link>
+        {/* MCP servers are plugins' business; the Skills tab has none to browse. */}
+        {kind === "skills" ? null : (
+          <Link
+            to="/settings/extensions/all"
+            className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
+          >
+            Browse all MCP servers
+            <ChevronRightIcon
+              aria-hidden
+              className="size-3.5 transition-transform group-hover:translate-x-0.5"
+            />
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -372,6 +375,12 @@ export function useRememberListPage(label: string) {
     // A list page still mounted while the router moves on sees the next page's address.
     if (!href.startsWith(ITEM_PATH_PREFIX)) lastListPage = { href, label };
   }, [href, label]);
+}
+
+/** Goes to the list an item's page was opened from, or to Installed when it was opened directly. */
+export function useBackToList(): () => void {
+  const router = useRouter();
+  return () => router.history.push(lastListPage?.href ?? "/settings/extensions/installed");
 }
 
 /**

@@ -6,8 +6,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
-import { connectorsReach, worksWithOptions } from "./extensionsView";
-import { storeAvailable } from "./ProviderStorePages";
+import { connectorsReach, providerAvailable, worksWithOptions } from "./extensionsView";
 
 export interface ConnectorAgent {
   readonly instanceId: ProviderInstanceId;
@@ -23,7 +22,7 @@ export function useConnectorAgents(): ReadonlyArray<ConnectorAgent> {
   const { inventory, providers } = useExtensionsEnvironment();
   return worksWithOptions(inventory?.providerSupport ?? [], providers).flatMap((option) => {
     const provider = providers.find((candidate) => candidate.instanceId === option.instanceId);
-    return provider && storeAvailable(provider) && connectorsReach(option)
+    return provider && providerAvailable(provider) && connectorsReach(option)
       ? [{ instanceId: option.instanceId, label: option.label, provider }]
       : [];
   });

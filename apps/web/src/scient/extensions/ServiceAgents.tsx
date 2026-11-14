@@ -115,6 +115,16 @@ export function ServiceAgents({ service }: { readonly service: AccountService })
   const [signingIn, setSigningIn] = useState<string | null>(null);
   if (routes.length === 0)
     return <MutedLine>None of your agents reaches {service.name} through its account.</MutedLine>;
+  // The line under an agent's name, when it says more than the action beside it does.
+  const note = (route: (typeof routes)[number]) =>
+    route.state === "connected"
+      ? route.family === "chatgpt"
+        ? "Through its ChatGPT account"
+        : "Through its Claude account"
+      : route.state === "connect" &&
+          (route.family === "chatgpt" || service.claude?.name === service.name)
+        ? undefined
+        : route.reason;
   return (
     <div className="min-w-0 divide-y divide-border overflow-hidden rounded-xl border bg-card">
       {routes.map((route) => {
@@ -133,13 +143,11 @@ export function ServiceAgents({ service }: { readonly service: AccountService })
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{route.label}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {route.state === "connected"
-                    ? route.family === "chatgpt"
-                      ? "Through its ChatGPT account"
-                      : "Through its Claude account"
-                    : route.reason}
-                </span>
+                {note(route) ? (
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {note(route)}
+                  </span>
+                ) : null}
               </span>
               <RouteAction
                 route={route}

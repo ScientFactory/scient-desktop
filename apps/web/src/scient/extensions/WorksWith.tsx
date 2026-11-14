@@ -6,7 +6,13 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { useExtensionsEnvironment, GHOST_LINK_CLASS } from "./ExtensionsPage";
-import { audienceLabel, audienceSupport, worksWithCardAgents } from "./extensionsView";
+import {
+  audienceLabel,
+  audienceNames,
+  audienceSupport,
+  listLabels,
+  worksWithCardAgents,
+} from "./extensionsView";
 
 /** An agent's logo with its name below; an amber dot marks one that works with limits. */
 function AgentTileContent({
@@ -36,7 +42,7 @@ function AgentTileContent({
 const AGENT_TILE_CLASS = "flex w-[4.5rem] flex-col items-center gap-1.5 py-1 text-center";
 
 /** How long the pointer rests on "Works with" before its card opens. */
-const WORKS_WITH_OPEN_DELAY_MS = 200;
+export const WORKS_WITH_OPEN_DELAY_MS = 200;
 
 /**
  * A press pins the reason even if hover/focus just opened it; otherwise a tap following focus would
@@ -98,7 +104,11 @@ export function WorksWithValue({
     return <span className="text-muted-foreground">No agents reported</span>;
   }
   const usable = worksWithCardAgents(audience, support);
-  const count = audienceLabel(audience);
+  // Beside its "Works with" label the value is the names alone; chosen agents are named.
+  const count =
+    audience.layer === "scient" && audience.agents !== undefined && usable.length > 0
+      ? listLabels(usable.map((entry) => entry.displayName))
+      : audienceNames(audience);
   if (usable.length === 0) return <span>{count}</span>;
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
     providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
@@ -173,13 +183,16 @@ export function WorksWithAgents({
   const support = audienceSupport(audience, providers, inventory?.providerSupport ?? []);
   const usable = worksWithCardAgents(audience, support);
   // Scient's own connectors and plugins reach every agent: say so, not eleven logos.
+  // "All agents" only when every agent has it now; one still to connect keeps its logo and reason.
   if (
     (audience.layer === "scient" && audience.agents === undefined) ||
-    (support.length > 1 && usable.length === support.length)
+    (support.length > 1 &&
+      usable.length === support.length &&
+      usable.every((entry) => entry.status === "supported"))
   )
     return <span className="text-sm text-muted-foreground">All agents</span>;
   if (usable.length === 0)
-    return <span className="text-sm text-muted-foreground">{audienceLabel(audience)}</span>;
+    return <span className="text-sm text-muted-foreground">{audienceNames(audience)}</span>;
   const shown = usable.slice(0, 3);
   const more = usable.length - shown.length;
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
@@ -192,7 +205,13 @@ export function WorksWithAgents({
             <TooltipTrigger
               render={
                 <span
-                  className={cn("flex", entry.status !== "supported" && "opacity-40")}
+                  // Focusable, so the keyboard reaches an agent's name and why it is waiting.
+                  tabIndex={0}
+                  role="img"
+                  className={cn(
+                    "flex rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                    entry.status !== "supported" && "opacity-40",
+                  )}
                   aria-label={
                     entry.status === "supported"
                       ? entry.displayName

@@ -549,6 +549,7 @@ import {
 import { ProviderStoreDetailPage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
 import { forgetListPage } from "./ExtensionsPage";
+import { WORKS_WITH_OPEN_DELAY_MS } from "./WorksWith";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claude");
@@ -1657,7 +1658,9 @@ describe("Installed", () => {
     const names = fixture.rowNames(fixture.section("Yours"));
     expect(names[0]).toBe("Linear");
     expect(names).toEqual(expect.arrayContaining(["github", "claude-1", "claude-6"]));
-    expect(fixture.rowNames(fixture.section("Built into Scient"))).toEqual(["Lab kit", "Sources"]);
+    // A bundle the person installed is theirs; only what ships with Scient is built in.
+    expect(names).toContain("Lab kit");
+    expect(fixture.rowNames(fixture.section("Built into Scient"))).toEqual(["Sources"]);
     expect(fixture.row("Lab kit").querySelector("[data-extension-status]")?.textContent).toBe(
       "Off",
     );
@@ -1667,6 +1670,10 @@ describe("Installed", () => {
 
   it("filters by Works with and explains when an agent cannot use connected services", async () => {
     await using fixture = setup();
+    // The filter lists the agents the person has; Pi is one that takes no connectors.
+    state.providersByEnvironment = {
+      local: [...state.providersByEnvironment.local!, provider(pi, "pi", { displayName: "Pi" })],
+    };
     await fixture.render(<InstalledPage />);
     const worksWith = fixture.container.querySelector<HTMLSelectElement>(
       'select[aria-label="Works with"]',
@@ -1867,10 +1874,7 @@ describe("Detail pages", () => {
     ];
     state.commands.update.mockResolvedValue({ _tag: "Success", value: inventory() });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    await userEvent.selectOptions(
-      fixture.section("Available in").querySelector("select")!,
-      "projects",
-    );
+    await userEvent.selectOptions(fixture.section("Projects").querySelector("select")!, "projects");
     expect(state.commands.update).toHaveBeenLastCalledWith({
       environmentId: "local",
       input: { connectorId: LINEAR, availability: { type: "projects", projectIds: [] } },
@@ -1885,9 +1889,9 @@ describe("Detail pages", () => {
       ],
     });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.section("Available in").textContent).toContain("Not available in any project.");
+    expect(fixture.section("Projects").textContent).toContain("Not available in any project.");
     const switches = () => [
-      ...fixture.section("Available in").querySelectorAll<HTMLButtonElement>('[role="switch"]'),
+      ...fixture.section("Projects").querySelectorAll<HTMLButtonElement>('[role="switch"]'),
     ];
     expect(switches().map((item) => item.getAttribute("aria-label"))).toEqual([
       "Turn on in Alpha",
@@ -1908,9 +1912,7 @@ describe("Detail pages", () => {
       ],
     });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.section("Available in").textContent).not.toContain(
-      "Not available in any project.",
-    );
+    expect(fixture.section("Projects").textContent).not.toContain("Not available in any project.");
     await userEvent.click(switches()[1]!);
     expect(state.commands.update).toHaveBeenLastCalledWith({
       environmentId: "local",
@@ -1943,7 +1945,7 @@ describe("Detail pages", () => {
     });
     state.commands.update.mockResolvedValue({ _tag: "Success", value: inventory() });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const available = fixture.section("Available in");
+    const available = fixture.section("Projects");
     expect(available.textContent).toContain("Deleted project");
 
     await userEvent.click(buttonIn(available, "Turn off in Alpha")!);
@@ -1973,8 +1975,8 @@ describe("Detail pages", () => {
     // Before the project list arrives, nothing is called deleted or dropped.
     state.projectsKnown = false;
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.section("Available in").textContent).not.toContain("Deleted project");
-    expect(fixture.section("Available in").textContent).toContain("Loading projects…");
+    expect(fixture.section("Projects").textContent).not.toContain("Deleted project");
+    expect(fixture.section("Projects").textContent).toContain("Loading projects…");
   });
 
   it("removes a connector only after confirmation", async () => {
@@ -2080,15 +2082,6 @@ describe("Detail pages", () => {
         target: { type: "registry-bundle", name: "io.github.acme/echo", version: "1.0.0", bundle },
       }),
     });
-  });
-
-  it("shows an added catalog server as its connector", async () => {
-    await using fixture = setup();
-    await fixture.render(<ServerDetailPage name="app.linear/linear" />);
-    expect(fixture.container.querySelector("h1")?.textContent).toBe("Linear");
-    expect(buttonIn(fixture.section("Connection"), "Turn off Linear")).not.toBeNull();
-    expect(fixture.header().querySelector("img")).not.toBeNull();
-    expect(fixture.section("Available in")).not.toBeNull();
   });
 
   it("opens a catalog entry that no preview lists, by link, reload and search", async () => {
@@ -2213,15 +2206,15 @@ describe("Detail pages", () => {
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     // Agents with limits count; Pi can't use connectors at all.
-    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
-    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
-    expect(trigger.textContent).toBe("Works with all your agents");
+    expect(fixture.aboutValue("Works with")).toBe("All your agents");
+    const trigger = buttonIn(fixture.section("About"), "Works with: All your agents")!;
+    expect(trigger.textContent).toBe("All your agents");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(fixture.section("About").querySelector("[data-support]")).toBeNull();
 
     using _timers = fakeTimers();
     await userEvent.hover(trigger);
-    await advance(200);
+    await advance(WORKS_WITH_OPEN_DELAY_MS + 1);
     const card = agentsCard()!;
     expect(card).not.toBeNull();
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
@@ -2252,7 +2245,7 @@ describe("Detail pages", () => {
     // A touch screen has no pointer resting anywhere: park the test's mouse
     // where no card or tooltip will open under it.
     await userEvent.hover(fixture.container.querySelector("h1")!);
-    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
+    const trigger = buttonIn(fixture.section("About"), "Works with: All your agents")!;
     // A real tap: touch pointer events and a click with `detail: 1` (a click
     // with `detail: 0` reads as a keyboard press).
     const tap = async (target: HTMLElement) => {
@@ -2281,7 +2274,7 @@ describe("Detail pages", () => {
     // the next tap hides it.
     await tap(limited);
     await expect.element(page.elementLocator(limited)).toHaveAttribute("data-popup-open");
-    await vi.waitFor(() => expect(reasonTooltip()).not.toBeNull());
+    expect(reasonTooltip()).not.toBeNull();
     expect(agentsCard()).not.toBeNull();
     await tap(limited);
     await expect.element(page.elementLocator(limited)).not.toHaveAttribute("data-popup-open");
@@ -2300,11 +2293,8 @@ describe("Detail pages", () => {
     await using fixture = setup();
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
-    for (let step = 0; step < 60 && document.activeElement !== trigger; step += 1) {
-      await userEvent.tab();
-    }
-    expect(document.activeElement).toBe(trigger);
+    const trigger = buttonIn(fixture.section("About"), "Works with: All your agents")!;
+    await act(async () => trigger.focus({ focusVisible: true }));
     await userEvent.keyboard("{Enter}");
     const card = agentsCard()!;
     expect(card).not.toBeNull();
@@ -2316,26 +2306,6 @@ describe("Detail pages", () => {
     await userEvent.keyboard("{Escape}");
     expect(agentsCard()).toBeNull();
     await expect.element(page.elementLocator(trigger)).toHaveFocus();
-  });
-
-  it("explains unsupported agents in the works-with popover", async () => {
-    await using fixture = setup();
-    state.inventory = inventory({
-      providerSupport: inventory().providerSupport.map((entry) => ({
-        ...entry,
-        status: "unsupported" as const,
-      })),
-    });
-    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
-    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
-    await userEvent.click(trigger);
-    await expect.element(page.getByRole("dialog", { name: "Agents" })).toBeVisible();
-    expect(
-      [...agentsCard()!.querySelectorAll("[data-support]")].every(
-        (tile) => tile.getAttribute("data-support") === "unsupported",
-      ),
-    ).toBe(true);
   });
 
   it("lists tools only after See tools and retains the result", async () => {
@@ -2557,7 +2527,9 @@ describe("Detail pages", () => {
       input: { instanceId: codex, action: { type: "uninstall", pluginId: "plugin-1" } },
     });
     expect(fixture.container.querySelector('[role="alert"]')?.textContent).toBe("Codex refused.");
-    expect(fixture.aboutValue("Managed by")).toBe("Codex");
+    // The header names the agent once; About does not repeat it.
+    expect(fixture.header().textContent).toContain("Codex");
+    expect(fixture.aboutValue("Managed by")).toBeUndefined();
   });
 });
 

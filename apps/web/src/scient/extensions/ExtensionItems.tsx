@@ -1,7 +1,6 @@
 import { usePluginKeys, pluginKeyStatusLabel } from "./PluginKeys";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import type {
-  ExtensionAudience,
   ConnectorSummary,
   ConnectorTestResult,
   DiscoverEntry,
@@ -430,6 +429,7 @@ export function PluginItem({ plugin }: { readonly plugin: ScientPluginSummary })
       name={plugin.displayName}
       glyph={pluginGlyph(plugin)}
       tagline={plugin.description}
+      type={plugin.origin === "built-in" ? undefined : "Plugin"}
       status={plugin.origin === "bundle" && !plugin.enabled ? "Off" : null}
       trailing={
         <ItemMenu name={plugin.displayName} target={target}>
@@ -473,9 +473,7 @@ export function ProviderPluginItem({
       target={target}
       name={name}
       audience={providerExtensionAudience(provider, plugin)}
-      tagline={[plugin.description, plugin.sourceLabel ?? `${label} plugin`]
-        .filter(Boolean)
-        .join(" · ")}
+      tagline={plugin.description}
       status={
         !plugin.enabled
           ? "Off"
@@ -517,45 +515,34 @@ export function ProviderPluginItem({
   );
 }
 
-export function mcpServerSummary(server: ServerProviderMcpServer): string {
-  return [
-    server.toolCount === undefined
-      ? null
-      : `${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`,
-    server.pluginId ? `from ${server.pluginId}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+export function mcpServerSummary(server: ServerProviderMcpServer): string | undefined {
+  return server.toolCount === undefined
+    ? undefined
+    : `${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`;
 }
 
 export function ProviderServerItem({
   provider,
   label,
   server,
-  serviceId,
-  audience,
-  type,
 }: {
   readonly provider: ServerProvider;
   readonly label: string;
   readonly server: ServerProviderMcpServer;
-  /** The account service this row is one agent's side of; the row opens its page. */
-  readonly serviceId?: string | undefined;
-  /** Who can use it, when that is wider than this agent (a service several agents reach). */
-  readonly audience?: ExtensionAudience | undefined;
-  /** The table's Type column. */
-  readonly type?: string | undefined;
 }) {
   const actions = useProviderServerActions(provider, label, server);
-  const target: ExtensionTarget = serviceId
-    ? { kind: "account", serviceId }
-    : { kind: "provider-server", instanceId: provider.instanceId, serverName: server.name };
+  const target: ExtensionTarget = {
+    kind: "provider-server",
+    instanceId: provider.instanceId,
+    serverName: server.name,
+  };
   return (
     <ExtensionRow
       target={target}
       name={providerServerDisplayName(server)}
-      audience={audience ?? providerExtensionAudience(provider, server)}
-      type={type}
+      audience={providerExtensionAudience(provider, server)}
+      // An app the agent has through its own account, not a server it runs.
+      type={server.scope === "chatgpt" || server.scope === "claudeai" ? "App" : undefined}
       tagline={server.error ?? mcpServerSummary(server)}
       status={MCP_SERVER_STATUS_TEXT[server.status]}
       trailing={

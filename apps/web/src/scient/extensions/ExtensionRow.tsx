@@ -17,8 +17,11 @@ import { WorksWithAgents } from "./WorksWith";
 /** How rows lay out: two columns of cards, or one table like claude.ai's Connectors page. */
 const RowLayout = createContext<"grid" | "table">("grid");
 
-/** What kind of thing a row is, for the table's Type column. */
-function rowType(target: ExtensionTarget, audience: ExtensionAudience | undefined): string {
+/**
+ * What kind of thing a row is, for the table's Type column. One name per kind: Works with says
+ * which agent a plugin, app or server belongs to.
+ */
+function rowType(target: ExtensionTarget): string {
   switch (target.kind) {
     case "connector":
     case "server":
@@ -26,11 +29,10 @@ function rowType(target: ExtensionTarget, audience: ExtensionAudience | undefine
     case "plugin":
       return "Built in";
     case "account":
-      return "Account app";
+      return "App";
     case "provider-plugin":
-      return audience?.layer === "agent" ? `${audience.label} plugin` : "Plugin";
     case "provider-store":
-      return "Store plugin";
+      return "Plugin";
     case "provider-server":
       return "MCP server";
   }
@@ -360,7 +362,7 @@ export function ExtensionRow({
             </div>
           </div>
           <span className="hidden truncate text-sm text-muted-foreground @min-[720px]/extensions:block">
-            {type ?? rowType(target, audience)}
+            {type ?? rowType(target)}
           </span>
           <div className="relative z-10 hidden min-w-0 overflow-hidden @min-[720px]/extensions:block">
             <WorksWithAgents audience={audience} />
