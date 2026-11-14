@@ -12,8 +12,15 @@ periodically while the app is open. Updates are deliberate:
 1. Select the update control near the bottom of the sidebar, or use
    **Scient → Check for Updates…** on macOS.
 2. When a release is available, choose the control again to download it.
-3. When the download finishes, a notice appears just above the control. Choose
-   **Restart now** to install the update.
+3. When the download finishes, Scient restarts right away if nothing on this
+   computer is working. If something is, a notice appears just above the
+   control instead. Choose **Restart now** to install the update.
+
+Nothing is working when no agent is in the middle of a turn and no Compute code
+is running. An agent waiting on you, on another thread, or watching a pull
+request or a monitor counts as not working; it continues after the restart. An
+agent waiting on work it started itself, such as a build or a subagent, counts
+as working, because a restart would stop that work.
 
 The notice closes after about five seconds, or when you dismiss it. The update
 control then shows **Restart**. Choosing **Restart** in the sidebar, or
@@ -28,8 +35,9 @@ three-dot **More sidebar actions** menu while the update control or the update
 circle is showing. Widening the sidebar brings their icons back into the footer
 row.
 
-Scient never installs an update on its own. Restarting interrupts running agent
-turns and terminal commands, so let them finish before choosing **Restart**.
+Scient installs an update only after you choose **Update** or **Restart**.
+Restarting interrupts running agent turns and terminal commands, so when you
+choose **Restart** yourself, let them finish first.
 Threads, settings, and project files remain in their existing locations.
 
 If the app restarts on its old version, Scient tells you the update did not
@@ -89,9 +97,10 @@ release from its own channel. If servers would stop running threads, a small
 card above **Update** says how many and waits for you to choose **Update** or
 **Cancel**; otherwise the step starts straight away. Progress appears in the
 circle. Once each server has started its own
-restart, a tooltip above **Restart** counts down to this app's restart: choose
-**Restart** to restart now, or **Later** to keep working and restart when you
-are ready. A server that is still restarting finishes on its own.
+restart, this app restarts right away if nothing on this computer is working,
+as described above. Otherwise the update control shows **Restart**, and you
+restart when you are ready. A server that is still restarting finishes on its
+own.
 
 ## Keep a connected server in sync
 

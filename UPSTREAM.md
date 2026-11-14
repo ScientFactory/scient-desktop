@@ -200,8 +200,11 @@ and Scient-managed runtimes appear in a Scient-owned circle and card
 `SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation. A pass
 that downloads this app asks in a small card above the pill (`UpdateEverythingAsk.tsx`) only when
 servers would stop running threads. Upstream's `SidebarUpdateCapsule` and `UpdateEverythingDialog`
-are retained unmounted (knip entries) so their changes still merge; the pass's restart countdown is a Scient tooltip above
-the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
+are retained unmounted (knip entries) so their changes still merge. Scient replaces upstream's
+5-second restart countdown with an idle check (`scient/desktopUpdate/restartWhenIdle.ts`): when a
+download the user started finishes, alone or at the end of a pass, this app restarts at once only
+while none of its own threads is working and Compute has no running work; otherwise the pill shows
+Restart. Upstream's `waitForUpdateRestart` stays in place, unused. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
 where a server is left for later while its machine still updates a provider or runtime, and is
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
 A marked root mount delegates browser "update available" toasts to Scient's
