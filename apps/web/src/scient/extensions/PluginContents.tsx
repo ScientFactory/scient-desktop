@@ -128,11 +128,11 @@ function PluginContentsView({
     <>
       {contents.apps.length ? (
         <DetailSection title="Apps" count={contents.apps.length}>
-          <div className="grid gap-3">
+          <div className="grid min-w-0 grid-cols-1 gap-3">
             {contents.apps.map((app) => {
               const service = accountServiceForApp(app);
               return (
-                <div key={app.id ?? app.name} className="grid gap-2">
+                <div key={app.id ?? app.name} className="grid min-w-0 grid-cols-1 gap-2">
                   <div className="flex items-center gap-3 rounded-lg px-3 hover:bg-muted/50 focus-within:bg-muted/50">
                     <button
                       type="button"

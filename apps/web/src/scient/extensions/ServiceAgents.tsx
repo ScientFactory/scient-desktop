@@ -116,7 +116,7 @@ export function ServiceAgents({ service }: { readonly service: AccountService })
   if (routes.length === 0)
     return <MutedLine>None of your agents reaches {service.name} through its account.</MutedLine>;
   return (
-    <div className="divide-y divide-border overflow-hidden rounded-xl border bg-card">
+    <div className="min-w-0 divide-y divide-border overflow-hidden rounded-xl border bg-card">
       {routes.map((route) => {
         const provider = providers.find((entry) => entry.instanceId === route.instanceId);
         // Scient Agent signs in to ChatGPT right here; the agent runs the sign-in.
