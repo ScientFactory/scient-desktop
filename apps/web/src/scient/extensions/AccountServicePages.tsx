@@ -117,6 +117,7 @@ const ROUTE_STATE_TEXT = {
   connected: "Connected",
   connect: "Not connected",
   "sign-in": "Sign-in needed",
+  off: "Off in Codex",
 };
 
 function AccountServiceDetail({ service }: { readonly service: AccountService }) {

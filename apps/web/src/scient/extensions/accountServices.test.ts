@@ -94,6 +94,22 @@ describe("account services", () => {
       accountServiceRoutes(gmail, [scient(true), other, signedOut]).map((route) => route.state),
     ).toEqual(["connected", "connect", "sign-in"]);
     expect(accountServiceRoutes(gmail, [provider("cursor")])).toEqual([]);
+    // Turned off in Codex stays off, whatever its ChatGPT account has.
+    const off = {
+      ...codex,
+      plugins: [
+        {
+          id: "gmail",
+          name: "gmail",
+          source: "remote" as const,
+          enabled: true,
+          apps: [{ id: gmail.chatgptAppId, name: "Gmail", connected: true, enabled: false }],
+        },
+      ],
+    };
+    const routes = accountServiceRoutes(gmail, [scient(true), off]);
+    expect(routes.map((route) => route.state)).toEqual(["connected", "off"]);
+    expect(nextAccountServiceStep(routes)).toBeUndefined();
   });
 
   it("recognises the services' own rows and Codex store entries", () => {

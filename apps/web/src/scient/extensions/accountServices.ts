@@ -111,7 +111,8 @@ export interface AccountServiceRoute {
   readonly label: string;
   /** ChatGPT apps reach Codex and Scient Agent; claude.ai connectors reach Claude. */
   readonly family: "chatgpt" | "claude";
-  readonly state: "connected" | "connect" | "sign-in";
+  /** `off`: the agent has it but the person turned it off there. */
+  readonly state: "connected" | "connect" | "sign-in" | "off";
   /** Why the agent does not have it yet. */
   readonly reason?: string;
   /** The page that connects it, or manages it once connected. */
@@ -133,12 +134,15 @@ function scientHas(provider: ServerProvider, service: AccountService): boolean {
   );
 }
 
-function codexHas(provider: ServerProvider, service: AccountService): boolean {
-  return (provider.plugins ?? []).some((plugin) =>
-    (plugin.apps ?? []).some(
+/** What Codex's plugins say about the service's app: on, turned off in Codex, or nothing. */
+function codexApp(provider: ServerProvider, service: AccountService): "on" | "off" | undefined {
+  const apps = (provider.plugins ?? []).flatMap((plugin) =>
+    (plugin.apps ?? []).filter(
       (app) => app.connected && (app.id === service.chatgptAppId || app.name === service.name),
     ),
   );
+  if (apps.some((app) => app.enabled === false)) return "off";
+  return apps.length > 0 ? "on" : undefined;
 }
 
 /**
@@ -156,7 +160,7 @@ export function accountServiceRoutes(
       .filter(
         (provider) =>
           (provider.driver === "scient" && scientHas(provider, service)) ||
-          (provider.driver === "codex" && codexHas(provider, service)),
+          (provider.driver === "codex" && codexApp(provider, service) === "on"),
       )
       .map(chatGptEmail)
       .filter((email): email is string => email !== undefined),
@@ -180,9 +184,12 @@ export function accountServiceRoutes(
     if (provider.driver === "codex") {
       if (provider.auth.status !== "authenticated" || provider.auth.type !== "chatgpt")
         return [{ ...chatgpt, state: "sign-in", reason: "Sign in to Codex with ChatGPT" }];
+      const app = codexApp(provider, service);
+      if (app === "off")
+        return [{ ...chatgpt, state: "off", reason: `${service.name} is turned off in Codex` }];
       const email = chatGptEmail(provider);
       return [
-        codexHas(provider, service) || (email !== undefined && chatGptAccountsWith.has(email))
+        app === "on" || (email !== undefined && chatGptAccountsWith.has(email))
           ? { ...chatgpt, state: "connected" }
           : { ...chatgpt, state: "connect", reason: `Connect ${service.name} in ChatGPT` },
       ];
