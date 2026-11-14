@@ -529,8 +529,8 @@ describe("environment RPC", () => {
   );
 
   it.effect(
-    // SCIENT-FORK: since T3 #24400 a transport failure resubscribes on the same session after its
-    // backoff; the completion interval must not turn that into a fast loop.
+    // SCIENT-FORK: a transport failure now resubscribes on the same session after its backoff; the
+    // completion interval must not turn that into a fast loop.
     "retries a transport failure after its backoff, not at the completion interval",
     () =>
       Effect.gen(function* () {
