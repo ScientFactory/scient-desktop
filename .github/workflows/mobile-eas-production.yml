@@ -183,6 +183,11 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+          # SCIENT-FORK:START mobile-ios-only-env
+          # An iOS-only dispatch never builds or fingerprints Android, so it runs before
+          # Scient has a Firebase project.
+          IOS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.platform == 'ios' }}
+          # SCIENT-FORK:END mobile-ios-only-env
         run: |
           eas env:pull production --non-interactive
           # EAS commands skip dotenv, and the Android fingerprint hashes this
@@ -192,6 +197,12 @@ jobs:
           import { parseEnv } from "node:util";
           const env = parseEnv(readFileSync(".env.local", "utf8"));
           const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          // SCIENT-FORK:START mobile-ios-only-env
+          if (!googleServicesFile && process.env.IOS_ONLY === "true") {
+            console.log("T3CODE_ANDROID_GOOGLE_SERVICES_FILE is not set; skipped for this iOS-only build.");
+            process.exit(0);
+          }
+          // SCIENT-FORK:END mobile-ios-only-env
           if (!googleServicesFile) {
             throw new Error("T3CODE_ANDROID_GOOGLE_SERVICES_FILE is missing from the production environment");
           }
