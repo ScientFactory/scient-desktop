@@ -5,17 +5,20 @@
  * that are still the same process, and what they started since, are stopped. macOS and Linux.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
+import * as HostProcess from "./HostProcess.ts";
+
 export interface OwnedProcess {
   readonly pid: number;
   readonly ppid: number;
   readonly pgid: number;
-  /** Start time (to the second) and command: with the PID, tells a process from a PID reuse. */
+  /** Kernel start ticks on Linux; start time and executable on macOS. */
   readonly identity: string;
 }
 
@@ -37,13 +40,13 @@ export function parseProcessTable(text: string): ReadonlyArray<OwnedProcess> {
   return processes;
 }
 
-/** `ps` failed or timed out. Never read as "nothing is running": that would forget what is owned. */
+/** The process snapshot failed. Never read as "nothing is running": that would forget ownership. */
 export class ProcessTableUnavailable extends Schema.TaggedError<ProcessTableUnavailable>()(
   "ProcessTableUnavailable",
   { cause: Schema.Defect() },
 ) {}
 
-export const readProcessTable: Effect.Effect<
+const readPsProcessTable: Effect.Effect<
   ReadonlyArray<OwnedProcess>,
   ProcessTableUnavailable
 > = Effect.callback((resume) => {
@@ -64,6 +67,64 @@ export const readProcessTable: Effect.Effect<
           : Effect.succeed(parseProcessTable(stdout)),
       ),
   );
+});
+
+/** Linux comm can change during startup; only the kernel start ticks identify the process. */
+export function parseLinuxProcessStat(text: string): OwnedProcess | null {
+  const close = text.lastIndexOf(")");
+  const pid = Number(text.slice(0, text.indexOf(" ")));
+  const fields = text
+    .slice(close + 2)
+    .trim()
+    .split(/\s+/);
+  const ppid = Number(fields[1]);
+  const pgid = Number(fields[2]);
+  const start = fields[19];
+  if (
+    close < 0 ||
+    !Number.isSafeInteger(pid) ||
+    !Number.isSafeInteger(ppid) ||
+    !Number.isSafeInteger(pgid) ||
+    !start ||
+    !/^\d+$/.test(start)
+  ) {
+    throw new Error("Invalid Linux process stat");
+  }
+  if (fields[0] === "Z" || fields[0] === "X") return null;
+  return { pid, ppid, pgid, identity: start };
+}
+
+const readLinuxProcessTable = Effect.tryPromise({
+  try: () => NodeFSP.readdir("/proc"),
+  catch: (cause) => new ProcessTableUnavailable({ cause }),
+}).pipe(
+  Effect.flatMap((names) =>
+    Effect.forEach(
+      names.filter((name) => /^\d+$/.test(name)),
+      (name) =>
+        Effect.tryPromise({
+          try: async () => {
+            try {
+              return parseLinuxProcessStat(await NodeFSP.readFile(`/proc/${name}/stat`, "utf8"));
+            } catch (cause) {
+              // Gone since the listing, or another user's under hidepid=1: never ours to stop.
+              const code = (cause as NodeJS.ErrnoException).code;
+              if (code === "ENOENT" || code === "ESRCH" || code === "EACCES" || code === "EPERM")
+                return null;
+              throw cause;
+            }
+          },
+          catch: (cause) => new ProcessTableUnavailable({ cause }),
+        }),
+      { concurrency: 16 },
+    ),
+  ),
+  Effect.map((rows) => rows.filter((row): row is OwnedProcess => row !== null)),
+);
+
+export const readProcessTable = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  return yield* platform === "linux" ? readLinuxProcessTable : readPsProcessTable;
 });
 
 /** Every process whose parent chain leads to `rootPid`, excluding the root itself. */

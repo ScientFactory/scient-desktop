@@ -652,12 +652,14 @@ function makeLinuxProcessTreeController(): AcpPosixProcessTreeController {
         return identity === undefined ? [] : [identity];
       }),
     identity: readLinuxProcessIdentity,
+    // SCIENT-FORK:START procfs-snapshot-race
     snapshot: () =>
-      NodeFS.readdirSync("/proc", { withFileTypes: true }).flatMap((entry) => {
-        if (!entry.isDirectory() || !/^[1-9][0-9]*$/.test(entry.name)) return [];
-        const identity = readLinuxProcessIdentity(Number(entry.name));
+      NodeFS.readdirSync("/proc").flatMap((entry) => {
+        if (!/^[1-9][0-9]*$/.test(entry)) return [];
+        const identity = readLinuxProcessIdentity(Number(entry));
         return identity === undefined ? [] : [identity];
       }),
+    // SCIENT-FORK:END procfs-snapshot-race
     signalProcess: (pid, signal) => process.kill(pid, signal),
   };
 }
