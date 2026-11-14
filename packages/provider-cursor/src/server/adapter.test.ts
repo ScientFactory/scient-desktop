@@ -456,46 +456,6 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
-      reason: "the usage of each model turn Cursor reported",
-      updates: [
-        { type: "text-delta", text: "Checking." },
-        {
-          type: "turn-ended",
-          usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 900, cacheWriteTokens: 50 },
-        },
-        { type: "text-delta", text: "Done." },
-        {
-          type: "turn-ended",
-          usage: {
-            inputTokens: 10,
-            outputTokens: 30,
-            cacheReadTokens: 1_000,
-            cacheWriteTokens: 0,
-            reasoningTokens: 5,
-          },
-        },
-      ] satisfies ReadonlyArray<InteractionUpdate>,
-      wait: Effect.succeed({
-        id: "native-cursor-run",
-        requestId: "native-request",
-        status: "finished" as const,
-        model: { id: "claude-fable-5" },
-        durationMs: 1,
-      }),
-      failure: null,
-      turnTokenUsage: {
-        usageScope: "main_agent" as const,
-        usageStatus: "complete" as const,
-        hasSubagents: false,
-        inputTokens: 1_050 + 1_010,
-        outputTokens: 50,
-        cachedInputTokens: 1_900,
-        cacheCreationTokens: 50,
-        requests: 2,
-        failedRequests: 0,
-      },
-    },
-    {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({
@@ -510,10 +470,44 @@ describe("CursorAdapterV2", () => {
       failure: null,
       answers: [],
     },
-  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers, turnTokenUsage }) =>
+    {
+      reason: "the token usage Cursor reported",
+      // Cursor's inputTokens already include cache reads and writes.
+      updates: [
+        { type: "text-delta", text: "Done." },
+        {
+          type: "turn-ended",
+          usage: {
+            inputTokens: 31_961,
+            outputTokens: 181,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 31_955,
+          },
+        },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "finished" as const,
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+      usage: {
+        inputTokens: 31_961,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 31_955,
+        outputTokens: 181,
+      },
+      // The checkpoint holds the context fill; billed input counts every step.
+      contextFill: { usedTokens: 8_304, maxTokens: 200_000 },
+    },
+  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers, usage, contextFill }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-failure-",
+      });
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-failure-thread");
       const modelSelection = { instanceId, model: "claude-fable-5" };
@@ -532,6 +526,7 @@ describe("CursorAdapterV2", () => {
             Effect.succeed({
               agentId: "native-cursor-failure",
               listMessages: Effect.succeed([]),
+              readContextUsage: Effect.succeed(contextFill),
               close: Effect.void,
               send: (input) =>
                 Effect.gen(function* () {
@@ -610,16 +605,6 @@ describe("CursorAdapterV2", () => {
       assert.equal(terminal?.status, failure === null ? "completed" : "failed");
       assert.equal(terminal?.failure?.class, failure?.class);
       assert.equal(terminal?.failure?.message, failure?.message);
-      if (turnTokenUsage !== undefined) {
-        const turn = events.findLast(
-          (event) =>
-            event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
-        );
-        assert.deepStrictEqual(
-          turn?.type === "provider_turn.updated" ? turn.providerTurn.turnTokenUsage : undefined,
-          turnTokenUsage,
-        );
-      }
       if (answers !== undefined) {
         assert.deepEqual(
           events.flatMap((event) =>
@@ -629,6 +614,15 @@ describe("CursorAdapterV2", () => {
           ),
           answers,
         );
+      }
+      if (usage !== undefined) {
+        const completedTurn = events.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+        );
+        assert(completedTurn?.type === "provider_turn.updated");
+        assert.deepInclude(completedTurn.providerTurn.turnTokenUsage, usage);
+        assert.deepInclude(completedTurn.providerTurn.tokenUsage, contextFill);
       }
     }).pipe(
       Effect.scoped,

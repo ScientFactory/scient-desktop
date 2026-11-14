@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
 } from "react";
@@ -598,11 +599,37 @@ function MiniPlayerShell({
   });
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — T3's interrupted-gesture ending, in Scient's resizer.
+  const captureRef = useRef<HTMLElement | null>(null);
+  /** A gesture whose release never reached its handle ends here. */
+  const finishGesture = () => {
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+    gestureRef.current = null;
+    handleTappedRef.current = false;
+    const handle = captureRef.current;
+    captureRef.current = null;
+    if (handle?.hasPointerCapture(gesture.pointerId)) {
+      handle.releasePointerCapture(gesture.pointerId);
+    }
+  };
+  const endInterruptedGesture = useEffectEvent(() => {
+    finishGesture();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window blur ends a gesture whose release went to another window
+  useEffect(() => {
+    window.addEventListener("blur", endInterruptedGesture);
+    return () => window.removeEventListener("blur", endInterruptedGesture);
+  }, []);
+  // SCIENT-FORK:END
+
   const beginGesture = (
     event: ReactPointerEvent<HTMLElement>,
     direction: BrowserViewportResizeDirection | null,
   ) => {
     if (event.button !== 0 || !frame) return;
+    // SCIENT-FORK: a gesture left open by a missed release ends before the next one.
+    finishGesture();
     gestureRef.current = {
       pointerId: event.pointerId,
       pointerType: event.pointerType,
@@ -612,6 +639,8 @@ function MiniPlayerShell({
       direction,
       moved: false,
     };
+    // SCIENT-FORK: the handle holding capture, so an interrupted gesture can release it.
+    captureRef.current = event.currentTarget;
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
@@ -620,6 +649,12 @@ function MiniPlayerShell({
   const handlePointerMove = (event: ReactPointerEvent<HTMLElement>) => {
     const gesture = gestureRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId || !container || !obstacles) return;
+    // SCIENT-FORK: a release the handle never saw (over a native view, another window) leaves
+    // only this trace.
+    if ((event.buttons & 1) === 0) {
+      finishGesture();
+      return;
+    }
     const delta = { x: event.clientX - gesture.pointerX, y: event.clientY - gesture.pointerY };
     if (!gesture.moved && Math.hypot(delta.x, delta.y) < HANDLE_TAP_SLOP_PX) return;
     gesture.moved = true;
@@ -646,6 +681,8 @@ function MiniPlayerShell({
     const gesture = gestureRef.current;
     if (gesture?.pointerId !== event.pointerId) return;
     gestureRef.current = null;
+    // SCIENT-FORK: capture ends with the gesture.
+    captureRef.current = null;
     handleTappedRef.current =
       event.type === "pointerup" &&
       gesture.direction === null &&

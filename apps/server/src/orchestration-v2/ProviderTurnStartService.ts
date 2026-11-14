@@ -2019,13 +2019,19 @@ export const layer: Layer.Layer<
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
+          const text = goalCommand
+            ? preparedUserText
+            : withInlineContext(context, preparedUserText);
           yield* start({
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
               ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
-              text: goalCommand ? preparedUserText : withInlineContext(context, preparedUserText),
+              text,
             },
+            ...(text === preparedUserText
+              ? {}
+              : { inlineContextLength: text.length - preparedUserText.length }),
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>

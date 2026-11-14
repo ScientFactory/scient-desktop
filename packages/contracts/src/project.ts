@@ -367,6 +367,8 @@ export type ProjectDirectoryOperation = typeof ProjectDirectoryOperation.Type;
 // are left out, so the list stays small enough to pick from.
 export const ProjectListIgnoredFilesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  /** Case-insensitive path substring, applied before the listing cap. */
+  query: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(256))),
 });
 export type ProjectListIgnoredFilesInput = typeof ProjectListIgnoredFilesInput.Type;
 

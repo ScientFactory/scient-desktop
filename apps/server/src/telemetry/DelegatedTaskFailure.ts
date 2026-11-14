@@ -30,8 +30,8 @@ function taskRun(
   task: OrchestrationV2Subagent,
   forkedFromNodeId: string | undefined,
 ): OrchestrationV2Run | undefined {
-  if (runs.some((run) => run.delegatedTaskId === task.id))
-    return delegatedTaskResultRun(runs, task.id);
+  const owned = runs.filter((run) => run.delegatedTaskId === task.id);
+  if (owned.length > 0) return delegatedTaskResultRun(owned);
   // The task that created the child thread drives its first runs without a task id.
   if (task.id !== forkedFromNodeId) return undefined;
   return runs

@@ -4,6 +4,7 @@ import {
   type DesktopPreviewTabDefaults,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  type PreviewZoomFactor,
 } from "@t3tools/contracts";
 
 import {
@@ -19,7 +20,7 @@ import { activeProfiles, useRetiredProfiles } from "~/scient/accounts/activeProf
 
 export interface BrowserDefaults {
   readonly viewport: PreviewViewportSetting;
-  readonly zoomFactor: number;
+  readonly zoomFactor: PreviewZoomFactor;
   readonly appearance: PreviewAppearancePreference;
   readonly autoShowFloatingPreview: boolean;
   readonly profiles: ReadonlyArray<BrowserProfile>;
@@ -28,7 +29,7 @@ export interface BrowserDefaults {
 
 const toBrowserDefaults = (settings: {
   readonly browserDefaultViewport: PreviewViewportSetting;
-  readonly browserDefaultZoomFactor: number;
+  readonly browserDefaultZoomFactor: PreviewZoomFactor;
   readonly browserDefaultAppearance: PreviewAppearancePreference;
   readonly browserAutoShowFloatingPreview: boolean;
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;

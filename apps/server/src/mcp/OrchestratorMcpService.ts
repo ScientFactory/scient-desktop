@@ -101,7 +101,12 @@ import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
 } from "../orchestration-v2/ProjectionStore.ts";
-import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import {
+  delegatedTaskAwaitsWork,
+  delegatedTaskResultRun,
+  delegatedTaskRuns,
+  runOutcome,
+} from "../orchestration-v2/RestartBackgroundNote.ts";
 import { DelegatedStopHandledByCaller } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -253,6 +258,7 @@ function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
       return failure("run_not_found", error.message);
     case "ThreadManagementThreadArchivedError":
     case "ThreadManagementNoSteerableRunError":
+    case "ThreadManagementWorktreeRestoreError":
       return failure("thread_not_sendable", error.message);
     case "ThreadManagementThreadNotInterruptibleError":
       return failure("thread_not_interruptible", error.message);
@@ -1706,35 +1712,19 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
     const terminalRun = latestTerminalResultRun(childControls, childRun);
-    const taskRunIds =
-      childRun?.delegatedTaskId === task.id
-        ? new Set(
-            childControls.runs
-              .filter((run) => run.delegatedTaskId === task.id)
-              .map((run) => run.id),
-          )
-        : undefined;
-    const progress = delegatedTaskProgress(
-      taskRunIds === undefined
-        ? childControls
-        : {
-            ...childControls,
-            runs: childControls.runs.filter((run) => taskRunIds.has(run.id)),
-            subagents: childControls.subagents.filter(
-              (childTask) => childTask.runId !== null && taskRunIds.has(childTask.runId),
-            ),
-          },
-      taskRunIds === undefined ? undefined : { includeUnstartedResults: true },
-    );
+    const progress = delegatedTaskProgress(childControls);
+    const followupRuns =
+      childRun?.delegatedTaskId === task.id ? delegatedTaskRuns(childControls, task.id) : undefined;
     const taskResultRun =
-      taskRunIds !== undefined
-        ? delegatedTaskResultRun(childControls.runs, task.id)
-        : progress.resultRun;
-    // SCIENT-FORK: the task's own runs settle it only once their live native child turns end too.
+      followupRuns === undefined ? progress.resultRun : delegatedTaskResultRun(followupRuns);
     const taskWorkState =
-      taskRunIds !== undefined && !isTerminalTaskStatus(taskStatusForRun(taskResultRun))
-        ? "working"
-        : progress.state;
+      followupRuns === undefined
+        ? progress.state
+        : !isTerminalTaskStatus(taskStatusForRun(taskResultRun))
+          ? "working"
+          : delegatedTaskAwaitsWork(followupRuns, childControls)
+            ? "waiting_for_children"
+            : "result_available";
     const resultRunIds = [
       ...new Set(
         [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -3213,16 +3203,14 @@ const make = Effect.gen(function* () {
       if (!input.allProjects && input.projectId !== undefined) {
         yield* requireProject(input.projectId);
       }
+      const listFailure = (error: unknown) =>
+        failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`);
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
           includeSubagents: input.includeSubagents !== false,
         })
-        .pipe(
-          Effect.mapError((error) =>
-            failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
-          ),
-        );
+        .pipe(Effect.mapError(listFailure));
       const nowMs = yield* Clock.currentTimeMillis;
       // An empty list is no filter: clients that fill every optional field send `[]`.
       const statuses =
@@ -3230,29 +3218,58 @@ const make = Effect.gen(function* () {
           ? null
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
-      const filtered = projectThreads
-        .filter((thread) => statuses === null || statuses.has(listedThreadStatus(thread)))
+      const candidates = projectThreads
         .filter(
           (thread) =>
             input.settled === undefined || threadSettlement(thread).settled === input.settled,
         )
         .filter(
-          (thread) => input.snoozed === undefined || isSnoozed(thread, nowMs) === input.snoozed,
-        )
-        .filter(
           (thread) =>
             titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains),
+        )
+        // Only a snooze that ends later can hold, so the rest skip building a shell.
+        .filter(
+          (thread) =>
+            input.snoozed !== true ||
+            (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs),
         );
+      // Shells are the costly part, so build them only for the threads the page needs.
+      const shellsOf = (threads: ReadonlyArray<{ readonly id: ThreadId }>) =>
+        threads.length === 0
+          ? Effect.succeed([])
+          : threadManagement
+              .getShellSnapshot({ location: "active", threadIds: threads.map(({ id }) => id) })
+              .pipe(
+                Effect.map((snapshot) => {
+                  const shellsById = new Map(snapshot.threads.map((shell) => [shell.id, shell]));
+                  return threads.flatMap(({ id }) => shellsById.get(id) ?? []);
+                }),
+                Effect.mapError(listFailure),
+              );
       const cursor = input.cursor ?? 0;
       const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
-      const page = filtered.slice(cursor, cursor + limit);
-      const nextCursor = cursor + page.length < filtered.length ? cursor + page.length : null;
+      let page: ReadonlyArray<OrchestrationV2ThreadShell>;
+      let total: number;
+      if (statuses === null && input.snoozed === undefined) {
+        total = candidates.length;
+        page = yield* shellsOf(candidates.slice(cursor, cursor + limit));
+      } else {
+        // Status and snooze state are derived from the shell.
+        const filtered = (yield* shellsOf(candidates))
+          .filter((thread) => statuses === null || statuses.has(listedThreadStatus(thread)))
+          .filter(
+            (thread) => input.snoozed === undefined || isSnoozed(thread, nowMs) === input.snoozed,
+          );
+        total = filtered.length;
+        page = filtered.slice(cursor, cursor + limit);
+      }
+      const nextCursor = cursor + limit < total ? cursor + limit : null;
       return {
         projectId,
         currentThreadId: parent?.thread.id ?? null,
         threads: page.map((shell) => listItemFromShell(scope, shell, nowMs)),
         nextCursor,
-        total: filtered.length,
+        total,
       } satisfies OrchestratorMcpThreadListResult;
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {

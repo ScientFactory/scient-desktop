@@ -3570,6 +3570,14 @@ describe("OrchestratorMcpService provider resolution", () => {
                   calls.threads.push(target);
                   return [{ ...callerShell, projectId: target ?? projectId }];
                 }),
+              // The page's shells, as listProjectThreads reported them.
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  threads: calls.threads.map((target) => ({
+                    ...callerShell,
+                    projectId: target ?? projectId,
+                  })),
+                } as never),
             }),
             ServerSettings.layerTest(),
             Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -4873,6 +4881,7 @@ describe("OrchestratorMcpService thread list", () => {
       ],
     },
   ];
+  const shellRequests: Array<ReadonlyArray<ThreadId>> = [];
   const service = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -4885,6 +4894,13 @@ describe("OrchestratorMcpService thread list", () => {
                 (thread) => input.projectId === undefined || thread.projectId === input.projectId,
               ),
             ),
+          getShellSnapshot: (options) => {
+            const threadIds = options?.threadIds ?? shells.map((thread) => thread.id);
+            shellRequests.push(threadIds);
+            return Effect.succeed({
+              threads: shells.filter((thread) => threadIds.includes(thread.id)),
+            } as never);
+          },
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -4978,6 +4994,22 @@ describe("OrchestratorMcpService thread list", () => {
         listed.threads.map((thread) => thread.threadId),
         ["thread:a-awaiting-command"],
       );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("builds shells only for the threads on the page", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      shellRequests.length = 0;
+      const listed = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:a"),
+        limit: 1,
+      });
+      assert.deepStrictEqual(
+        [listed.threads.map((thread) => thread.threadId), listed.total, listed.nextCursor],
+        [["thread:a-snoozed"], 3, 1],
+      );
+      assert.deepStrictEqual(shellRequests, [[ThreadId.make("thread:a-snoozed")]]);
     }).pipe(Effect.provide(service)),
   );
 
