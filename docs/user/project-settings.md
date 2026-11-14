@@ -249,6 +249,13 @@ Choose **Delete now** to run the enabled rules immediately. The latest results s
 worktrees were removed or kept and why, plus any failures.
 Results also list folders in the worktree folder that no thread uses, with their sizes; cleanup never removes them, so remove them manually if you want.
 
+The inactive and settled retention periods also apply to the folders of
+[threads without a project](./thread-sidebar.md#threads-without-a-project). Those folders are not
+Git repositories, so their files could not be recovered: a folder is removed only when it holds
+nothing but `node_modules`. The thread stays, and its next turn starts in a new, empty folder. A
+folder is also kept when it has a Git repository anywhere inside it or when its thread has an enabled
+scheduled task. Folders that no thread uses are listed here too.
+
 Browser captures and rotated logs have separate retention periods in **Settings → Maintenance**. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 

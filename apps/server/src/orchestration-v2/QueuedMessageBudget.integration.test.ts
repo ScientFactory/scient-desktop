@@ -18,6 +18,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
@@ -99,7 +100,10 @@ const withBusyNative = <A, E, R>(name: string, body: Effect.Effect<A, E, R>) =>
         SqlitePersistenceMemory,
         CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
       );
-      const layer = ThreadManagement.layerWithLegacyImporter.pipe(Layer.provideMerge(services));
+      const layer = ThreadManagement.layerWithLegacyImporter.pipe(
+        Layer.provideMerge(services),
+        Layer.provide(Layer.succeed(ThreadWorktreeRestore, { restore: () => Effect.void })),
+      );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
         const sink = yield* EventSinkV2;

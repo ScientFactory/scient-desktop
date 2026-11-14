@@ -73,6 +73,7 @@ export type T3McpToolSummaryAction =
   | "device"
   | "html-preview"
   | "html-render"
+  | "send-to-user"
   // SCIENT-FORK:START — Scient's names and its own tools in the shared table.
   | ScientMcpToolSummaryAction;
 // SCIENT-FORK:END
@@ -401,6 +402,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   // SCIENT-FORK:END
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
 };
 
 // SCIENT-FORK:START — Scient adapter: agents call `scient_*`; the table keeps upstream's `t3_*` keys.

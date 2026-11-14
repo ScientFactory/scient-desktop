@@ -47,6 +47,7 @@ import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSe
 import { useCloudLinkState } from "../../cloud/cloudLinkState";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { retryClerkLoad, useClerkLoadFailed } from "../clerk/clerkLoadFailure";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import {
@@ -941,6 +942,7 @@ function PhoneStep({ step, children }: { readonly step: number; readonly childre
 
 function PhoneConnectLink({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const loadFailed = useClerkLoadFailed();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const linkState = useCloudLinkState(environmentId);
   const refreshLinkState = useEffectEvent(linkState.refresh);
@@ -1009,9 +1011,15 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
       <p className="text-sm text-foreground">
         Sign in to Scient Connect here, then in the app with the same account.
       </p>
-      <Button variant="outline" size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
-        Sign in to Scient Connect
-      </Button>
+      {loadFailed ? (
+        <Button variant="outline" size="xs" onClick={retryClerkLoad}>
+          Retry sign-in
+        </Button>
+      ) : (
+        <Button variant="outline" size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
+          Sign in to Scient Connect
+        </Button>
+      )}
     </>
   );
 }

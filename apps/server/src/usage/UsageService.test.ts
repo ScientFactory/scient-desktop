@@ -3338,7 +3338,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v15.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v16.json");
           // SCIENT-FORK: older cache files stay for older Scient builds; stale temp folders go.
           assert.deepStrictEqual(
             (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
