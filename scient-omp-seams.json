@@ -44,6 +44,7 @@
     "apps/web/src/components/ScientProviderIcons.tsx",
     "packages/client-runtime/src/scientProviderClients.ts",
     "packages/shared/src/scientTextGenerationSelection.ts",
+    "apps/server/src/scient/extensions/ScientAgentChatGptApps.ts",
     "packages/shared/src/scientTextGenerationSelection.test.ts",
     "scripts/scient-alignment-checks.json"
   ],
