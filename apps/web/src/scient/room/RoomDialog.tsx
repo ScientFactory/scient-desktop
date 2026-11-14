@@ -6,12 +6,13 @@ import {
 import {
   AuthOrchestrationOperateScope,
   ROOM_ROLE_LABEL,
+  roomWaitingCount,
   type RoomAccessDuration,
   type RoomParticipant,
   type RoomRole,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, UsersIcon, XIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LinkIcon, MessagesSquareIcon, UsersIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { guestShareDialogThreadAtom } from "~/components/chat/guestShareDialogState";
@@ -37,6 +38,10 @@ import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
+import { useRightPanelStore } from "~/rightPanelStore";
+import { openShareLinkDialog } from "~/scient/cloud/shareDialogState";
+import { hasCloudAccount } from "~/scient/cloud/useCloudAccount";
+import { scientRoomChatSurface } from "~/scient/rightPanel/surfaces";
 
 const DURATION_LABEL: Record<RoomAccessDuration, string> = {
   day: "1 day",
@@ -101,6 +106,8 @@ function RoomDialog({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  // The other way to share: a read-only copy in Scient Cloud, which needs no live computer.
+  const canPublish = hasCloudAccount();
 
   // One step: the invite is made and its link copied, ready to paste to the person.
   const createInvite = async () => {
@@ -127,10 +134,8 @@ function RoomDialog({
     <Dialog open onOpenChange={(open) => (!open && !creating ? onClose() : null)}>
       <DialogPopup className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Invite people</DialogTitle>
-          <DialogDescription>
-            They see this thread live. The agent only gets what someone sends to it.
-          </DialogDescription>
+          <DialogTitle>Share</DialogTitle>
+          <DialogDescription>People you invite see this thread live.</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-4">
@@ -205,20 +210,37 @@ function RoomDialog({
             ) : null}
           </div>
         </DialogPanel>
-        {room !== null ? (
-          <DialogFooter>
-            <Button
-              variant="ghost-destructive"
-              size="sm"
-              disabled={!canOperate || closing}
-              onClick={async () => {
-                setClosing(true);
-                await act({ type: "close" });
-                setClosing(false);
-              }}
-            >
-              Stop sharing
-            </Button>
+        {room !== null || canPublish ? (
+          <DialogFooter className="sm:justify-between">
+            {canPublish ? (
+              <Button
+                variant="ghost-muted"
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  openShareLinkDialog(threadRef);
+                }}
+              >
+                <LinkIcon />
+                Publish a copy…
+              </Button>
+            ) : (
+              <span />
+            )}
+            {room !== null ? (
+              <Button
+                variant="ghost-destructive"
+                size="sm"
+                disabled={!canOperate || closing}
+                onClick={async () => {
+                  setClosing(true);
+                  await act({ type: "close" });
+                  setClosing(false);
+                }}
+              >
+                Stop sharing
+              </Button>
+            ) : null}
           </DialogFooter>
         ) : null}
       </DialogPopup>
@@ -262,7 +284,7 @@ function ParticipantRow(props: {
         </TooltipTrigger>
         <TooltipPopup side="top">Access until {expiryLabel(participant.expiresAt)}</TooltipPopup>
       </Tooltip>
-      <span className="w-48 shrink-0">
+      <span className="w-36 shrink-0">
         <NativeSelect
           aria-label={`Permission of ${name}`}
           size="xs"
@@ -306,24 +328,94 @@ function ParticipantRow(props: {
   );
 }
 
-/** The header's room status: who is in it, opening the dialog. */
+const initialsOf = (name: string) =>
+  name
+    .split(/\s+/u)
+    .filter((part) => part !== "")
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+
+const FACES_SHOWN = 3;
+
+/**
+ * The header of a shared thread: the faces of the people in it, opening Share, and the people
+ * chat, marked while guests' messages wait.
+ */
 export function RoomIndicator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
   const online = useRoomPresence(threadRef);
   if (room === null) return null;
-  const joined = room.participants.filter((participant) => participant.name !== null);
-  const here = joined.filter((participant) => online.has(participant.id)).length;
+  const joined = room.participants.flatMap((participant) =>
+    participant.name === null ? [] : [{ ...participant, name: participant.name }],
+  );
+  const waiting = roomWaitingCount(room) > 0;
+  const shown = joined.slice(0, FACES_SHOWN);
+  const names = joined.map((person) => person.name).join(", ");
   return (
-    <Button
-      size="xs"
-      variant="ghost-muted"
-      className="shrink-0"
-      onClick={() => appAtomRegistry.set(guestShareDialogThreadAtom, threadRef)}
-    >
-      <UsersIcon aria-hidden />
-      {joined.length === 0
-        ? "Invited"
-        : `${joined.length} ${joined.length === 1 ? "person" : "people"}${here > 0 ? `, ${here} here` : ""}`}
-    </Button>
+    <div className="flex shrink-0 items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="xs"
+              variant="ghost"
+              aria-label={joined.length === 0 ? "Share: nobody has joined yet" : `Share: ${names}`}
+              onClick={() => appAtomRegistry.set(guestShareDialogThreadAtom, threadRef)}
+            />
+          }
+        >
+          {shown.length === 0 ? (
+            <UsersIcon aria-hidden />
+          ) : (
+            <span aria-hidden className="flex -space-x-1">
+              {shown.map((person) => (
+                <span
+                  key={person.id}
+                  className={cn(
+                    "flex size-5 items-center justify-center rounded-full border-2 border-background bg-accent text-[9px] font-medium text-foreground",
+                    !online.has(person.id) && "opacity-45",
+                  )}
+                >
+                  {initialsOf(person.name)}
+                </span>
+              ))}
+              {joined.length > FACES_SHOWN ? (
+                <span className="flex size-5 items-center justify-center rounded-full border-2 border-background bg-muted text-[9px] text-muted-foreground">
+                  +{joined.length - FACES_SHOWN}
+                </span>
+              ) : null}
+            </span>
+          )}
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          {joined.length === 0 ? "Invited. Nobody has joined yet." : names}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="relative"
+              aria-label={waiting ? "Chat, new messages" : "Chat"}
+              onClick={() =>
+                useRightPanelStore.getState().openScient(threadRef, scientRoomChatSurface())
+              }
+            />
+          }
+        >
+          <MessagesSquareIcon />
+          {waiting ? (
+            <span
+              aria-hidden
+              className="absolute end-0.5 top-0.5 size-1.5 rounded-full bg-primary"
+            />
+          ) : null}
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">Chat with people</TooltipPopup>
+      </Tooltip>
+    </div>
   );
 }

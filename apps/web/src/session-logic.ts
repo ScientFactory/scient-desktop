@@ -265,8 +265,6 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "secret_request",
   "link_request",
   "subagent",
-  // SCIENT-FORK: a message posted to people in a thread room.
-  "room_message",
 ]);
 
 const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -700,6 +698,8 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
+    // SCIENT-FORK: people's chat in a thread room is drawn beside the thread, never in it.
+    if (item.type === "room_message") continue;
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
       entries.push({
         id: item.id,
