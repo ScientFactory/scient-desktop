@@ -328,8 +328,13 @@ export function ExtensionRow({
   const layout = useContext(RowLayout);
   if (layout === "table")
     return (
-      <li className="min-w-0 border-b border-border/70 last:border-b-0" data-extension-row={name}>
-        <div className="relative grid min-h-14 grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-x-4 px-2 py-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring @min-[720px]/extensions:grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem]">
+      // Rows divide by a line; a hovered row turns into a rounded tile and the lines on both
+      // sides of it give way, as on claude.ai's Connectors page.
+      <li
+        className="group/row min-w-0 border-b border-border/70 transition-colors last:border-b-0 hover:border-transparent has-[+li:hover]:border-transparent"
+        data-extension-row={name}
+      >
+        <div className="relative grid min-h-14 grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-x-4 rounded-xl px-2 py-2 transition-colors group-hover/row:bg-foreground/[0.045] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring @min-[720px]/extensions:grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem]">
           <div className="flex min-w-0 items-center gap-3">
             <ExtensionIcon
               name={name}
@@ -342,7 +347,7 @@ export function ExtensionRow({
               <div className="flex min-w-0 items-baseline gap-1.5">
                 <ExtensionLink
                   target={target}
-                  className="truncate text-sm font-medium text-foreground outline-none after:absolute after:inset-0"
+                  className="truncate text-sm font-medium text-foreground outline-none after:absolute after:inset-0 after:rounded-xl"
                 >
                   {name}
                 </ExtensionLink>
@@ -415,7 +420,7 @@ export function ExtensionTable({
       <div className="-mx-2 min-w-0 overflow-hidden">
         <div
           aria-hidden
-          className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem] gap-x-4 border-b border-border/70 px-2 pb-2 text-xs text-muted-foreground @min-[720px]/extensions:grid"
+          className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem] gap-x-4 border-b border-border/70 px-2 pb-2 text-xs text-muted-foreground transition-colors @min-[720px]/extensions:grid [&:has(+ul>li:first-child:hover)]:border-transparent"
         >
           <span>Name</span>
           <span>Type</span>
