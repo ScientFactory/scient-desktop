@@ -81,7 +81,9 @@ jobs:
     # SCIENT-FORK:START mobile-release-gate
     # Off until the owner sets the SCIENT_MOBILE_RELEASE repository variable to true
     # (docs/operations/mobile-release.md). GitHub-hosted runners: Scient has no Blacksmith.
-    if: vars.SCIENT_MOBILE_RELEASE == 'true'
+    # Scient publishes to the production channel only by manual dispatch from a tested
+    # release, never on a push to main, so App Store users never get untested code.
+    if: github.event_name == 'workflow_dispatch' && vars.SCIENT_MOBILE_RELEASE == 'true'
     runs-on: ubuntu-24.04
     # SCIENT-FORK:END mobile-release-gate
     # Serialize runs so OTAs publish in merge order. GitHub keeps at most one
