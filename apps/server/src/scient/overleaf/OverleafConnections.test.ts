@@ -2,10 +2,16 @@
 import * as NodeHttp from "node:http";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { isRefusedBeforeSending, OverleafGitError } from "./OverleafGitExecutor.ts";
+import {
+  isRefusedBeforeSending,
+  OverleafGitError,
+  OverleafGitExecutor,
+} from "./OverleafGitExecutor.ts";
 import { withExecutor } from "./OverleafGitExecutor.testkit.ts";
 import { gitRefusal } from "./OverleafProtocolProbe.ts";
-import { parsePushPorcelain } from "./OverleafRepository.ts";
+import * as OverleafRepository from "./OverleafRepository.ts";
+
+const TOKEN = new TextEncoder().encode("olp_test-token");
 
 /** A local HTTP remote answering every request with `answer`; its port. */
 const serve = (answer: NodeHttp.RequestListener) =>
@@ -103,46 +109,37 @@ describe("Overleaf project access failures", () => {
             response.end(pkt("ERR no git access\n"));
           });
         });
-        const repo = `${work}/repo`;
-        yield* git.execute({ cwd: work, args: ["init", "-q", repo] });
-        const tree = new TextDecoder()
-          .decode((yield* git.execute({ cwd: repo, args: ["mktree"] })).stdout)
-          .trim();
-        const commit = new TextDecoder()
-          .decode(
-            (yield* git.execute({ cwd: repo, args: ["commit-tree", tree, "-m", "send"] })).stdout,
-          )
-          .trim();
-        const push = (stage: string) =>
-          git.execute({
-            cwd: repo,
-            args: [
-              "-c",
-              "protocol.http.allow=always",
-              "push",
-              "--porcelain",
-              `http://127.0.0.1:${port}/${stage}/`,
-              `${commit}:refs/heads/main`,
-            ],
-            acceptExitCodes: [1],
-          });
+        // The shipped executor allows only HTTPS; this local remote speaks plain HTTP.
+        const repos = yield* OverleafRepository.make.pipe(
+          Effect.provideService(OverleafGitExecutor, {
+            ...git,
+            execute: (input) =>
+              git.execute(
+                input.args[0] === "push"
+                  ? { ...input, args: ["-c", "protocol.http.allow=always", ...input.args] }
+                  : input,
+              ),
+          }),
+        );
+        const push = Effect.fnUntraced(function* (stage: string) {
+          const repo = `${work}/${stage}.git`;
+          yield* repos.initialize({ repo, gitUrl: `http://127.0.0.1:${port}/${stage}/` });
+          const tree = yield* repos.writeTree({ repo, entries: [] });
+          const commit = yield* repos.commit({ repo, tree, parents: [], message: "send" });
+          return yield* repos.push({ repo, commit, branch: "main", token: TOKEN });
+        });
         for (const [stage, reason] of [
           ["forbidden", "access-denied"],
           ["missing", "project-not-found"],
           ["no-access", "project-not-found"],
         ] as const) {
           const error = yield* Effect.flip(push(stage));
-          expect(isRefusedBeforeSending(error)).toBe(true);
+          expect(error._tag === "OverleafGitError" && isRefusedBeforeSending(error)).toBe(true);
           expect(gitRefusal(error)).toBe(reason);
         }
         // After the pack went out Git exits 1 with no ref status: an unknown outcome.
-        for (const stage of ["pack-forbidden", "pack-no-access"]) {
-          const result = yield* push(stage);
-          expect(result.exitCode).toBe(1);
-          expect(
-            parsePushPorcelain(new TextDecoder().decode(result.stdout), result.stderr)._tag,
-          ).toBe("unknown");
-        }
+        for (const stage of ["pack-forbidden", "pack-no-access"])
+          expect((yield* push(stage))._tag).toBe("unknown");
       }).pipe(Effect.scoped),
     ),
   );
