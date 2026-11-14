@@ -10,6 +10,7 @@ import {
   isActiveProviderConnectionOperation,
   isActiveProviderRuntimeOperation,
   isManagedRuntimeBypassed,
+  isUserFacingRuntimeFailure,
   isProviderRuntimePresentedAsInstalled,
   needsManagedRuntimeRecovery,
 } from "./providerConnectionPresentation";
@@ -171,7 +172,7 @@ export function providerSettingsLifecyclePresentation(
       busy: true,
     };
   }
-  if (runtimeOperation?.status === "failed") {
+  if (runtimeOperation && isUserFacingRuntimeFailure(runtimeOperation)) {
     return {
       kind: "failed",
       statusLabel: "Setup failed",

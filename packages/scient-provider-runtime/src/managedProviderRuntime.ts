@@ -13,6 +13,7 @@ import {
 import {
   canUnpackManagedRuntimeZstd,
   downloadManagedRuntime,
+  type ManagedRuntimeDownloadResult,
   type ManagedRuntimeDownloadRetry,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
@@ -44,6 +45,14 @@ export interface ManagedProviderRuntimeProgress {
   readonly totalBytes?: number | undefined;
   /** Set while the download waits to try again after a temporary failure. */
   readonly retry?: ManagedRuntimeDownloadRetry | undefined;
+  /** Set once the download is complete, on the `verifying` stage. */
+  readonly download?: ManagedRuntimeDownloadFacts | undefined;
+}
+
+/** How a finished download went, for analytics. */
+export interface ManagedRuntimeDownloadFacts extends ManagedRuntimeDownloadResult {
+  /** The zstd copy, not the raw binary, was downloaded. */
+  readonly compressed: boolean;
 }
 
 export interface ManagedProviderRuntimeStateV1 {
@@ -107,6 +116,8 @@ export interface ManagedProviderRuntimeInstallInput {
   readonly beforeActivate?: (signal: AbortSignal) => Promise<void>;
   /** Told why the compressed copy failed, before the raw binary is downloaded; a throw stops the install. */
   readonly onCompressedFallback?: (cause: unknown) => void;
+  /** Per download copy; `null` waits as long as data keeps arriving. Ten minutes by default. */
+  readonly downloadTimeLimitMs?: number | null | undefined;
 }
 
 interface ManagedProviderRuntimeActivation {
@@ -282,7 +293,9 @@ export async function smokeManagedRuntimeExecutable(
 
 export interface ManagedProviderRuntimeDependencies {
   readonly filesystem: typeof runtimeFilesystem;
-  readonly download: typeof downloadManagedRuntime;
+  readonly download: (
+    input: Parameters<typeof downloadManagedRuntime>[0],
+  ) => Promise<ManagedRuntimeDownloadResult | void>;
   readonly verify: typeof verifyManagedRuntimeChecksum;
   readonly materialize: typeof materializeManagedRuntimeArtifact;
   /** Absent where this Node cannot unpack zstd; the raw binary is downloaded then. */
@@ -495,6 +508,7 @@ export class ManagedProviderRuntime {
   readonly #mutationLockPath: string;
   readonly #versionsDir: string;
   readonly #stagingDir: string;
+  readonly #downloadsDir: string;
   readonly #leasesDir: string;
   readonly #pruneLockPath: string;
   readonly #dependencies: ManagedProviderRuntimeDependencies;
@@ -511,6 +525,8 @@ export class ManagedProviderRuntime {
     this.#mutationLockPath = NodePath.join(this.#root, "mutation.lock");
     this.#versionsDir = NodePath.join(this.#root, "versions");
     this.#stagingDir = NodePath.join(this.#root, "staging");
+    // Outside staging, which each install empties, so a failed download continues next time.
+    this.#downloadsDir = NodePath.join(this.#root, "downloads");
     // Outside the runtime folder, so inspecting never recreates one that Remove has moved away.
     this.#leasesDir = NodePath.join(
       baseDir,
@@ -667,6 +683,7 @@ export class ManagedProviderRuntime {
     readonly signal: AbortSignal;
     readonly onProgress: ManagedProviderRuntimeInstallInput["onProgress"];
     readonly onCompressedFallback: ManagedProviderRuntimeInstallInput["onCompressedFallback"];
+    readonly timeLimitMs: ManagedProviderRuntimeInstallInput["downloadTimeLimitMs"];
   }): Promise<void> {
     const { artifact, archivePath, signal, onProgress } = input;
     const compressed = artifact.compressed;
@@ -677,18 +694,21 @@ export class ManagedProviderRuntime {
       readonly checksum: ManagedRuntimeArtifact["checksum"];
       readonly size: number;
       readonly destination: string;
+      readonly compressed: boolean;
     }) => {
       onProgress?.({ stage: "downloading", downloadedBytes: 0, totalBytes: copy.size });
-      await this.#dependencies.download({
+      const result = await this.#dependencies.download({
         ...(copy.mirrorUrl
           ? {
               url: copy.mirrorUrl,
               fallbackUrl: copy.url,
-              checksum: copy.checksum,
               allowedHosts: [...artifact.allowedHosts, new URL(copy.mirrorUrl).hostname],
             }
           : { url: copy.url, allowedHosts: artifact.allowedHosts }),
+        checksum: copy.checksum,
         destination: copy.destination,
+        partialPath: this.#partialDownloadPath(copy.checksum),
+        ...(input.timeLimitMs === undefined ? {} : { timeLimitMs: input.timeLimitMs }),
         expectedSize: copy.size,
         signal,
         onProgress: (downloadedBytes, totalBytes) =>
@@ -696,12 +716,15 @@ export class ManagedProviderRuntime {
         onRetry: (retry) =>
           onProgress?.({ stage: "downloading", downloadedBytes: 0, totalBytes: copy.size, retry }),
       });
-      onProgress?.({ stage: "verifying" });
+      onProgress?.({
+        stage: "verifying",
+        ...(result ? { download: { ...result, compressed: copy.compressed } } : {}),
+      });
     };
     if (compressed && unpack) {
       const compressedPath = `${archivePath}.zst`;
       try {
-        await fetchVerified({ ...compressed, destination: compressedPath });
+        await fetchVerified({ ...compressed, destination: compressedPath, compressed: true });
         await this.#dependencies.verify(compressedPath, compressed.checksum);
         await unpack({
           source: compressedPath,
@@ -725,6 +748,7 @@ export class ManagedProviderRuntime {
       checksum: artifact.checksum,
       size: artifact.size,
       destination: archivePath,
+      compressed: false,
     });
     await this.#dependencies.verify(archivePath, artifact.checksum);
   }
@@ -732,12 +756,21 @@ export class ManagedProviderRuntime {
   async #installOwned(
     input: ManagedProviderRuntimeInstallInput,
   ): Promise<ManagedProviderRuntimeStatus> {
-    const { artifact, signal, onProgress, qualify, beforeActivate, onCompressedFallback } = input;
+    const {
+      artifact,
+      signal,
+      onProgress,
+      qualify,
+      beforeActivate,
+      onCompressedFallback,
+      downloadTimeLimitMs,
+    } = input;
     await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });
     // This process launches what it installs. Pruning needs the mutation lock held here.
     await this.#lease(artifact.version);
     await this.#reconcileOwned(signal, artifact);
     await this.#cleanStaging();
+    await this.#pruneDownloads(artifact);
     onProgress?.({ stage: "preparing" });
     const stage = await NodeFSP.mkdtemp(NodePath.join(this.#stagingDir, "install-"));
     const archivePath = NodePath.join(stage, artifact.artifactName);
@@ -756,6 +789,7 @@ export class ManagedProviderRuntime {
         signal,
         onProgress,
         onCompressedFallback,
+        timeLimitMs: downloadTimeLimitMs,
       });
       onProgress?.({ stage: "installing" });
       const stagedExecutable = await this.#dependencies.materialize({
@@ -1090,6 +1124,27 @@ export class ManagedProviderRuntime {
         force: true,
       }).catch(() => {});
     }
+  }
+
+  #partialDownloadPath(checksum: ManagedRuntimeArtifact["checksum"]): string {
+    return NodePath.join(this.#downloadsDir, `${checksum.digest.trim().toLowerCase()}.part`);
+  }
+
+  /** Keeps only the partial downloads of the release being installed. */
+  async #pruneDownloads(artifact: ManagedRuntimeArtifact): Promise<void> {
+    const kept = [artifact.checksum, artifact.compressed?.checksum].flatMap((checksum) =>
+      checksum ? [NodePath.basename(this.#partialDownloadPath(checksum))] : [],
+    );
+    const entries = await NodeFSP.readdir(this.#downloadsDir).catch(() => []);
+    await Promise.all(
+      entries
+        .filter((entry) => !kept.some((name) => entry === name || entry === `${name}.json`))
+        .map((entry) =>
+          NodeFSP.rm(NodePath.join(this.#downloadsDir, entry), { force: true }).catch(
+            () => undefined,
+          ),
+        ),
+    );
   }
 
   async #cleanStaging(): Promise<void> {

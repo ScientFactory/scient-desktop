@@ -304,6 +304,7 @@ import {
 } from "./orchestration-v2/scient-fork/ConversationForkRpcHandlers.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import { ScientAgentBackgroundRuntime } from "./scient/providerLifecycle/ScientAgentBackgroundRuntime.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import {
   makeProviderConnectionRpcHandlers,
@@ -1982,6 +1983,7 @@ export const layerWsRpc = (
       const managedRuntimeCatalog = yield* ManagedRuntimeCatalog.ManagedRuntimeCatalog;
       const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
       const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
+      const scientAgentBackground = yield* ScientAgentBackgroundRuntime;
       const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
         registry: providerRegistry,
         serverSettings,
@@ -3176,6 +3178,7 @@ export const layerWsRpc = (
           observeRpcEffect,
           providerConnectionManager,
           providerRuntimeManager,
+          scientAgentBackground,
         }),
         ...makeCustomModelRpcHandlers({
           observeRpcEffect,

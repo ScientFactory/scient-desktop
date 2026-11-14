@@ -1054,6 +1054,91 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
+  it.effect("runs a background install without a download limit and says how it ended", () =>
+    Effect.gen(function* () {
+      const backgroundRuns = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(missingRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: (_action, _revision, report, _await, options) =>
+          Ref.update(backgroundRuns, (runs) => [...runs, options?.background]).pipe(
+            Effect.andThen(
+              report({
+                status: "verifying",
+                message: "Verifying.",
+                download: { resumedBytes: 40, source: "fallback", compressed: true },
+              }),
+            ),
+          ),
+      };
+      const { manager, providersRef } = yield* makeHarness(actions);
+      const outcome = yield* manager.startInBackground({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+        attempt: 2,
+      });
+      assert.strictEqual(outcome, "succeeded");
+      assert.deepStrictEqual(yield* Ref.get(backgroundRuns), [true]);
+      const operation = (yield* SubscriptionRef.get(providersRef))[0]?.connection?.runtime
+        ?.operation;
+      assert.strictEqual(operation?.status, "succeeded");
+      assert.strictEqual(operation?.background, true);
+      assert.strictEqual(operation?.attempt, 2);
+      assert.deepStrictEqual(operation?.download, {
+        resumedBytes: 40,
+        source: "fallback",
+        compressed: true,
+      });
+    }),
+  );
+
+  it.effect(
+    "stops a background download for the user's own change, and tells a user cancel apart",
+    () =>
+      Effect.gen(function* () {
+        const never = yield* Deferred.make<void>();
+        const actions: ProviderManagedRuntimeActions = {
+          getSummary: Effect.succeed(missingRuntime),
+          plan: () => Effect.succeed(installPlan()),
+          run: (_action, _revision, _report, _await, options) =>
+            options?.background ? Deferred.await(never) : Effect.void,
+        };
+        const other: ServerProvider = {
+          ...provider,
+          instanceId: ProviderInstanceId.make("claude"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+        };
+        const { manager, providersRef } = yield* makeHarness(actions, [provider, other]);
+        const background = () =>
+          manager
+            .startInBackground({
+              instanceId: INSTANCE,
+              action: "install",
+              catalogRevision: "reviewed:1",
+              attempt: 1,
+            })
+            .pipe(Effect.forkChild);
+        const running = (providers: ReadonlyArray<ServerProvider>) =>
+          providers[0]?.connection?.runtime?.operation?.status === "preparing";
+
+        const yielded = yield* background();
+        yield* awaitState(providersRef, running);
+        yield* manager.start({
+          instanceId: other.instanceId,
+          action: "install",
+          catalogRevision: "reviewed:1",
+        });
+        assert.strictEqual(yield* Fiber.join(yielded), "yielded");
+
+        const cancelled = yield* background();
+        const providers = yield* awaitState(providersRef, running);
+        const operationId = providers[0]!.connection!.runtime!.operation!.operationId;
+        yield* manager.cancel({ instanceId: INSTANCE, operationId });
+        assert.strictEqual(yield* Fiber.join(cancelled), "cancelled");
+      }),
+  );
+
   it.effect("holds the lifecycle reservation until cancelled runtime state is published", () =>
     Effect.gen(function* () {
       const cancellationPublicationStarted = yield* Deferred.make<void>();

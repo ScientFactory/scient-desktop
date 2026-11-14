@@ -94,6 +94,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverStartProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelProviderRuntime]: AuthProvidersManageScope,
+  [WS_METHODS.serverObserveProviderRuntimePick]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallRemove]: AuthProvidersManageScope,
   [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,

@@ -220,6 +220,21 @@ export const ProviderRuntimeOperation = Schema.Struct({
   retrying: Schema.optionalKey(Schema.Boolean),
   /** Set on a failed operation. Optional for older clients. */
   failureClass: Schema.optionalKey(ProviderRuntimeFailureClass),
+  /**
+   * Scient started it on its own, not the user: clients show its progress where the
+   * user looks for the provider, and no notice, failure or cancellation.
+   */
+  background: Schema.optionalKey(Schema.Boolean),
+  /** Which background try this is, from 1, for analytics. */
+  attempt: Schema.optionalKey(PositiveInt),
+  /** How the finished download went, for analytics. */
+  download: Schema.optionalKey(
+    Schema.Struct({
+      resumedBytes: NonNegativeInt,
+      source: Schema.Literals(["primary", "fallback"]),
+      compressed: Schema.Boolean,
+    }),
+  ),
 });
 export type ProviderRuntimeOperation = typeof ProviderRuntimeOperation.Type;
 
@@ -457,6 +472,12 @@ export const ProviderRuntimeCancelInput = Schema.Struct({
   operationId: TrimmedNonEmptyString,
 });
 export type ProviderRuntimeCancelInput = typeof ProviderRuntimeCancelInput.Type;
+
+/** The user picked this provider in the composer, for "ready at first pick" analytics. */
+export const ProviderRuntimePickInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+});
+export type ProviderRuntimePickInput = typeof ProviderRuntimePickInput.Type;
 
 export class ProviderConnectionError extends Schema.TaggedError<ProviderConnectionError>()(
   "ProviderConnectionError",

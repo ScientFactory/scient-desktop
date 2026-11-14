@@ -36,6 +36,7 @@ import {
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
+  runtimeDownloadPercent,
 } from "./providerConnectionPresentation";
 import {
   externalProviderUpdate,
@@ -164,13 +165,19 @@ export function ManagedRuntimeComposerSetup(props: {
   if (active || pending === "install" || pending === "repair" || pending === "update") {
     const action: ProviderManagedRuntimeAction =
       active?.action ?? (pending === "repair" || pending === "update" ? pending : "install");
+    const percent = runtimeDownloadPercent(active);
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={localError ?? active?.message ?? `Preparing ${name}…`}
+          body={
+            localError ??
+            (active?.background
+              ? `Downloading in the background. You can use another agent meanwhile.`
+              : (active?.message ?? `Preparing ${name}…`))
+          }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           role={localError ? "alert" : "status"}
-          title={`${WORKING_VERBS[action]} ${name}`}
+          title={`${active?.background ? `Getting ${name} ready` : `${WORKING_VERBS[action]} ${name}`}${percent === null ? "" : ` · ${percent}%`}`}
         />
         {active ? (
           <AssistedSetupActions>
