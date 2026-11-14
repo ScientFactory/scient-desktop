@@ -9,6 +9,7 @@ import { useLayoutEffect } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UseVoiceRecorderOptions } from "./useVoiceRecorder.ts";
+import type { VoiceJobTranscriber } from "./voiceProcessing.ts";
 import type { VoiceTranscriptCorrectionClient } from "./voiceTranscriptCorrectionClient.ts";
 
 const recorder = vi.hoisted(() => ({
@@ -67,6 +68,8 @@ describe("voice operation ownership", () => {
 
   let delivered = vi.fn<(owner: string, text: string) => void>();
   let correctionClient: VoiceTranscriptCorrectionClient | undefined;
+  /** Set to dictate with ChatGPT; null when no Scient Agent is signed in to it. */
+  let chatGpt: VoiceJobTranscriber | null | undefined;
   let now: number;
   function Probe({ _fixture, owner }: { owner: string } & { _fixture: _Fixture }) {
     const control = useScientVoiceController({
@@ -75,6 +78,7 @@ describe("voice operation ownership", () => {
       environmentId: EnvironmentId.make("test"),
       correctionEnabled: !!correctionClient,
       ...(correctionClient ? { correctionClient } : {}),
+      ...(chatGpt !== undefined ? { engine: "chatgpt" as const, chatGpt } : {}),
     });
     useLayoutEffect(() => {
       _fixture.publishControl(owner, control);
@@ -88,6 +92,7 @@ describe("voice operation ownership", () => {
       callbacks.current = undefined;
     });
     correctionClient = undefined;
+    chatGpt = undefined;
     now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     pending = deferred<VoiceTranscript>();
@@ -190,6 +195,42 @@ describe("voice operation ownership", () => {
       expect(delivered).not.toHaveBeenCalled();
     },
   );
+
+  it("dictates with ChatGPT without consulting this computer's models", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const transcribe = vi.fn(async () => ({ text: "from ChatGPT" }));
+    chatGpt = { transcribe };
+    client.getModelsState = vi.fn(async () => snapshot);
+
+    await act(
+      async () => await _fixture.root0.rerender(<Probe _fixture={_fixture} owner="owner" />),
+    );
+    await start(_fixture);
+    expect(client.getModelsState).not.toHaveBeenCalled();
+    const { completion } = await stop(_fixture);
+    await act(async () => await completion);
+    expect(transcribe).toHaveBeenCalledOnce();
+    expect(client.transcribe).not.toHaveBeenCalled();
+    expect(delivered).toHaveBeenCalledWith("owner", "from ChatGPT");
+  });
+
+  it("asks for a ChatGPT sign-in instead of recording without one", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    chatGpt = null;
+
+    await act(
+      async () => await _fixture.root0.rerender(<Probe _fixture={_fixture} owner="owner" />),
+    );
+    await start(_fixture);
+    expect(recorder.start).not.toHaveBeenCalled();
+    expect(control(_fixture).errorMessage).toBe(
+      "Sign in to ChatGPT in Scient Agent to dictate with ChatGPT.",
+    );
+  });
 
   it("never sends unsafe global cancellation to an older host", async () => {
     await using _fixture = _createFixture();

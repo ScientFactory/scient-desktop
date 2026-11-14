@@ -323,8 +323,9 @@ import { makeDocumentPdfRpcHandlers } from "./scient/documentExport/DocumentPdfR
 import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcHandlers.ts";
 // SCIENT-FORK:START — windows answer the server's editor flush requests.
 import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
-// SCIENT-FORK: voice calls with a thread's Scient Agent.
+// SCIENT-FORK: voice calls with a thread's Scient Agent, and dictation with its ChatGPT sign-in.
 import { makeLiveVoiceRpcHandlers } from "./scient/liveVoice/LiveVoiceRpcHandlers.ts";
+import { makeChatGptDictationRpcHandlers } from "./scient/voice/ChatGptDictationRpcHandlers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
 import { makeScientConnectRpcHandlers } from "./scient/connect/ScientConnectRpcHandlers.ts";
@@ -2216,13 +2217,14 @@ export const layerWsRpc = (
         // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash.
         ...makeWorkspaceEntryRpcHandlers({ observeRpcEffect, workspaceFileSystem }),
         // SCIENT-FORK:END
-        // SCIENT-FORK:START — voice calls with a thread's Scient Agent.
+        // SCIENT-FORK:START — voice calls with a thread's Scient Agent, and dictation with its ChatGPT sign-in.
         ...makeLiveVoiceRpcHandlers({
           observeRpcEffect,
           observeRpcStream,
           threadManagement,
           providerSessions: providerSessionsV2,
         }),
+        ...makeChatGptDictationRpcHandlers({ observeRpcEffect, providerInstances }),
         // SCIENT-FORK:END
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),

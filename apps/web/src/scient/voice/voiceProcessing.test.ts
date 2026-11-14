@@ -32,6 +32,7 @@ const fixture = (overrides: Partial<VoiceJobInput> = {}) => {
     voiceBridge: {
       transcribe: async () => ({ text: "private synthetic transcript", engine: "local" }),
     },
+    engineClass: "local-whisper",
     correction: null,
     language: undefined,
     recordAnalytics: (event) => events.push(event),

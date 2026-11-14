@@ -1,8 +1,8 @@
 /**
  * Scient's optional per-instance seams on `ProviderInstance`: voice transcript
- * correction, native skill activation, native plugin management, assisted
- * account connection and app-managed runtime actions. Drivers that leave them
- * absent keep pure T3 behaviour.
+ * correction, dictation through the provider's own account, native skill
+ * activation, native plugin management, assisted account connection and
+ * app-managed runtime actions. Drivers that leave them absent keep pure T3 behaviour.
  */
 import type {
   ExtensionPluginContents,
@@ -23,6 +23,7 @@ import type {
   ServerProviderPlugin,
   VoiceTranscriptionLanguage,
   VoiceTranscriptCorrectionError,
+  ChatGptDictationError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -35,6 +36,15 @@ export interface ProviderVoiceTranscriptCorrection {
     readonly language?: VoiceTranscriptionLanguage;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<{ readonly text: string }, VoiceTranscriptCorrectionError>;
+}
+
+/** Dictation through the provider's own sign-in, such as Scient Agent's ChatGPT account. */
+export interface ProviderVoiceDictation {
+  readonly dictate: (input: {
+    /** A 16-bit mono WAV recording. */
+    readonly wav: Uint8Array;
+    readonly language?: VoiceTranscriptionLanguage | undefined;
+  }) => Effect.Effect<{ readonly text: string }, ChatGptDictationError>;
 }
 
 export interface ProviderSkillActionFailure {

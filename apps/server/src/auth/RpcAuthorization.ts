@@ -368,6 +368,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.liveVoiceCall]: AuthOrchestrationOperateScope,
   [WS_METHODS.liveVoiceMute]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — ChatGPT dictation runs the agent with its sign-in, like transcript correction.
+  [WS_METHODS.voiceDictateWithChatGpt]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash write files.
   [WS_METHODS.projectsChangeEntries]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsOpenWithApps]: AuthFilesystemReadScope,

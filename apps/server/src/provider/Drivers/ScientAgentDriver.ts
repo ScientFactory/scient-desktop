@@ -65,6 +65,7 @@ import { makeSharedPluginStore } from "../../scient/extensions/SharedPluginStore
 import { readScientClaudePlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
 import { discoverScientAgentSkills } from "../scient/ScientAgentSkills.ts";
 import { readScientAgentUsageLimits, scientAgentUsageReader } from "../scient/ScientAgentUsage.ts";
+import { makeScientAgentDictation } from "../scient/ScientAgentDictation.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
@@ -384,6 +385,16 @@ export const ScientAgentDriver: ScientProviderDriver<
       Effect.provideService(Path.Path, path),
     );
     yield* Ref.set(refreshAccounts, Effect.asVoid(snapshot.refresh));
+    const voiceDictation = yield* makeScientAgentDictation({
+      binaryPath: launchConfig.binaryPath,
+      environment: processEnv,
+      workDir: root,
+    }).pipe(
+      Effect.provideService(OmpExecutableGate, executableGate),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
     return {
       pluginActions: { ...native.actions, store },
       nativeInventoryChanges: native.reports,
@@ -399,6 +410,7 @@ export const ScientAgentDriver: ScientProviderDriver<
       textGeneration,
       connectionActions,
       managedRuntimeActions: managedRuntime.actions,
+      voiceDictation,
     } satisfies ScientProviderInstance;
   }),
 };

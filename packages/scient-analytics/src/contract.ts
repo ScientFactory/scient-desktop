@@ -427,7 +427,7 @@ const REVERT_FAILURE_CLASSES = new Set([
   "validation",
   "unknown",
 ]);
-const VOICE_ENGINE_CLASSES = new Set(["local-whisper", "system", "other"]);
+const VOICE_ENGINE_CLASSES = new Set(["local-whisper", "chatgpt", "system", "other"]);
 const VOICE_LANGUAGE_MODES = new Set(["automatic", "explicit", "unknown"]);
 const VOICE_FAILURE_CLASSES = new Set([
   "permission",
