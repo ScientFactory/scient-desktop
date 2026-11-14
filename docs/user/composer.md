@@ -220,8 +220,10 @@ selection for new threads. A model configured in a project's settings overrides 
 selection for that project; resetting the project setting returns it to the remembered selection.
 
 Model options shown as provider defaults remain display values until you choose them in Scient.
-Scient only sends options you selected explicitly, so an unset reasoning level or service tier can
-still come from the provider's own configuration.
+Scient only sends options you selected explicitly, so an unset reasoning level can still come from
+the provider's own configuration. Codex speed is the exception: a new thread runs at the speed the
+picker shows, usually Standard, even when Fast is turned on in the Codex app or CLI. Choose Fast in
+Scient to use it here.
 
 ## Quote a Markdown file
 

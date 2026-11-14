@@ -115,9 +115,10 @@ Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.
 
-Before a conversation starts, desktop/web can update an older saved Gemini family
-selection to its matching available reasoning variant. Existing conversations are
-not switched automatically. If the matching variant is unavailable, select an
+Before a conversation starts, desktop/web can update an older saved Gemini
+selection, including a default model, to the model and thinking level the agent
+lists now: a saved `gemini-3.8-flash-high` shows as Gemini 3.8 Flash with High
+thinking. Existing conversations are not switched automatically. If the matching variant is unavailable, select an
 available model rather than reinstalling the provider.
 Use Antigravity's native `/plan` command for planning. Tool approvals follow [Permission modes](./permission-modes.md).
 Questions with fixed choices still need one of the offered answers, even in

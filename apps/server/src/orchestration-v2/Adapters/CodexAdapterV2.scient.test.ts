@@ -2297,6 +2297,24 @@ describe("CodexAdapterV2 runtime policy (Policy)", () => {
         omitServiceTier: true,
       });
       assert.equal(managed.serviceTier, undefined);
+
+      // Without a pick, the model's listed speed goes out so Codex's global Fast setting can't apply.
+      const speed = (options: ReadonlyArray<{ id: string; value: string }>, omit = false) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-model-options",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+            options,
+          },
+          defaultServiceTier: "default",
+          omitServiceTier: omit,
+        }).pipe(Effect.map((built) => built.serviceTier));
+      assert.equal(yield* speed([]), "default");
+      assert.equal(yield* speed([{ id: "serviceTier", value: "priority" }]), "priority");
+      assert.equal(yield* speed([], true), undefined);
     }),
   );
 });

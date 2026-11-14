@@ -404,21 +404,8 @@ function withConfiguredSelectDefault(
   );
 }
 
-function applyConfiguredCodexServiceTier(
-  models: ReadonlyArray<ServerProviderModel>,
-  serviceTier: string | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  if (!serviceTier) return models;
-  return withConfiguredSelectDefault(
-    models,
-    "serviceTier",
-    (options) =>
-      options.find(
-        (option) =>
-          option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
-      )?.id,
-  );
-}
+// SCIENT-FORK:START — applyConfiguredCodexServiceTier removed; see the catalog pipeline.
+// SCIENT-FORK:END
 
 /** Mirrors Codex: `daybreak = true` prefers a Daybreak program, Blue before Red. */
 function applyConfiguredCodexCyberAccess(
@@ -1127,7 +1114,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     models: pipe(
       appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
       applyPreferredCodexDefaultModel,
-      (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
+      // SCIENT-FORK:START — Scient's speed picker starts at the catalog's speed. Codex's own
+      // global `service_tier`, which its Fast toggle rewrites, does not carry into Scient.
+      // SCIENT-FORK:END
       (models) => applyConfiguredCodexCyberAccess(models, snapshot),
     ),
     skills: snapshot.skills,

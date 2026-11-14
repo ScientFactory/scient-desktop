@@ -812,6 +812,18 @@ function codexCyberAccess(
   return descriptor?.type === "select" ? { defaultProgram: descriptor.currentValue } : undefined;
 }
 
+// SCIENT-FORK:START — an unchosen speed runs as the picker shows it, not Codex's global setting.
+function codexDefaultServiceTier(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string,
+): string | undefined {
+  const descriptor = models
+    .find((candidate) => candidate.slug === model)
+    ?.capabilities?.optionDescriptors?.find((candidate) => candidate.id === "serviceTier");
+  return descriptor?.type === "select" ? descriptor.currentValue : undefined;
+}
+// SCIENT-FORK:END
+
 export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTurnStartParams")(
   function* (input: {
     readonly nativeThreadId: string;
@@ -824,6 +836,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly deviceToolsAvailable?: boolean;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
+    // SCIENT-FORK:START — the model's listed speed, sent when the user chose none.
+    readonly defaultServiceTier?: string | undefined;
+    // SCIENT-FORK:END
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     /** Set only for a model that offers Cyber Access; custom models never do. */
     readonly cyberAccess?: { readonly defaultProgram: string | undefined } | undefined;
@@ -847,7 +862,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     const serviceTier =
       input.omitServiceTier === true
         ? undefined
-        : getCodexServiceTierOptionValue(input.modelSelection);
+        : // SCIENT-FORK:START — Codex would otherwise apply its own global speed setting.
+          (getCodexServiceTierOptionValue(input.modelSelection) ?? input.defaultServiceTier);
+    // SCIENT-FORK:END
     // A chosen program goes as is, even one the model lacks, so Codex rejects it visibly.
     const cyberAccessProgram =
       input.cyberAccess === undefined
@@ -7552,6 +7569,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               browserToolsAvailable: mcpSession?.capabilities.has("preview") ?? false,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
+              // SCIENT-FORK:START — an unchosen speed runs as the picker shows it.
+              defaultServiceTier: codexDefaultServiceTier(models, turnInput.modelSelection.model),
+              // SCIENT-FORK:END
               ...(mcpSession === undefined
                 ? {}
                 : { mcpCapabilities: toMcpCapabilities(mcpSession.capabilities) }),
