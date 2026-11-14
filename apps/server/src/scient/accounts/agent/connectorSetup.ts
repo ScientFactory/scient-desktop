@@ -48,7 +48,8 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
   if (connector.agents !== undefined && !connector.agents.includes(agent)) {
     return yield* new AccountsError({
       reason: "invalid-input",
-      message: `${connector.displayName} is not available to this agent. Choose it on the connector page in Settings → Extensions.`,
+      // The name the agent gave, not the saved one it may not know.
+      message: `${input.connector} is not available to this agent. The person can choose this agent on its page in Settings → Extensions.`,
     });
   }
   const fieldFor = (name: string) =>

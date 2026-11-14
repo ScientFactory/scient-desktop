@@ -531,7 +531,10 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     listOnly: boolean,
   ) {
     const folder = yield* requireFolder(input.folder);
-    const base = input.connector === undefined ? undefined : yield* findConnector(input.connector);
+    const base =
+      input.connector === undefined
+        ? undefined
+        : yield* findConnector(input.connector, location?.providerInstanceId);
     // Its keys and sign-in go only where a chat would get the connector.
     const unusable =
       base === undefined
@@ -665,7 +668,10 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     input: { readonly folder: string; readonly connector?: string | undefined },
     location: ConnectorLocation | undefined,
   ) {
-    const found = input.connector === undefined ? undefined : yield* findConnector(input.connector);
+    const found =
+      input.connector === undefined
+        ? undefined
+        : yield* findConnector(input.connector, location?.providerInstanceId);
     if (found === undefined) return yield* saveAs(input.folder, location, undefined);
     return yield* exclusive(found.connectorId)(
       Effect.flatMap(recordNow(found.connectorId), (record) =>

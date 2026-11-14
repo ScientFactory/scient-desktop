@@ -214,8 +214,9 @@ const isAvailableIn = (record: ConnectorRecord, projectId: ProjectId | undefined
   record.availability.type === "all-projects" ||
   (projectId !== undefined && record.availability.projectIds.includes(projectId));
 
-const notForThisAgent = (record: ConnectorRecord) =>
-  `${record.displayName} is not available to this agent. Choose it on the connector page in Settings → Extensions.`;
+/** Names nothing: the agent that asked may not learn what the connector is called. */
+const NOT_FOR_THIS_AGENT =
+  "This connector is not available to this agent. The person can choose this agent on its page in Settings → Extensions.";
 
 /** Whether the agent is one the person chose; every agent when none were chosen or it is unknown. */
 const isForAgent = (record: ConnectorRecord, providerInstanceId: ProviderInstanceId | undefined) =>
@@ -517,7 +518,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     offAllowed = false,
     providerInstanceId?: ProviderInstanceId,
   ) {
-    if (!isForAgent(record, providerInstanceId)) return notForThisAgent(record);
+    if (!isForAgent(record, providerInstanceId)) return NOT_FOR_THIS_AGENT;
     if (!(yield* isPluginEligible(record)))
       return `${record.displayName} belongs to a plugin that is off or not verified.`;
     if (!record.enabled && !offAllowed)
@@ -2026,7 +2027,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     // An agent that was not chosen learns nothing about it, not even that it needs a sign-in; a
     // plain check of one that is merely off still works, as before.
     if (!isForAgent(record, input.location?.providerInstanceId))
-      return result("error", notForThisAgent(record));
+      return result("error", NOT_FOR_THIS_AGENT);
     if (record.status === "needs-auth") return result("needs-auth", "Sign in to use this service.");
     // Calling its tools is using it: only where a chat would get it (on, eligible, this project).
     if ((input.calls?.length ?? 0) > 0) {

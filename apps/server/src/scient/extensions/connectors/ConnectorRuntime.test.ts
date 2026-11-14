@@ -1781,7 +1781,10 @@ describe("connector proxy", () => {
       const refused = yield* invoke(codex).pipe(Effect.flip);
       expect(refused).toBeInstanceOf(AccountsError);
       expect(refused.reason).toBe("invalid-input");
-      expect(refused.message).toContain("not available to this agent");
+      // Said with the name the agent gave, never the saved one.
+      expect(refused.message).toBe(
+        `${added.connector.serverName} is not available to this agent. The person can choose this agent on its page in Settings → Extensions.`,
+      );
       expect((yield* harness.runtime.list()).connectors).toEqual(before);
       expect(accountLookups).toBe(0);
       expect(cards).toBe(0);
@@ -4006,12 +4009,15 @@ describe("connectors agents make and fix", () => {
       expect(added.connector.agents).toEqual([codex]);
       const excluded = { projectId: PROJECT, worktreePath: chat, providerInstanceId: claude };
       const check = { folder: copied.folder, connector: connectorId };
-      expect((yield* Effect.flip(harness.runtime.checkFolder(check, excluded))).message).toContain(
-        "not available to this agent",
-      );
-      expect((yield* Effect.flip(harness.runtime.saveFolder(check, excluded))).message).toContain(
-        "not available to this agent",
-      );
+      // For an agent that was not chosen it is not there: nothing of it is named back.
+      for (const refused of [
+        yield* Effect.flip(harness.runtime.checkFolder(check, excluded)),
+        yield* Effect.flip(harness.runtime.saveFolder(check, excluded)),
+      ]) {
+        expect(refused.message).toContain(`No local connector is named ${connectorId}`);
+        expect(refused.message).not.toContain(added.connector.displayName);
+        expect(refused.message).not.toContain(added.connector.serverName);
+      }
       // The agent's edit, in the package's own code.
       yield* Effect.promise(() =>
         NodeFSP.writeFile(
