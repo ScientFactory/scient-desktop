@@ -277,6 +277,8 @@ export interface NativeSession {
   ) => Effect.Effect<void, NativeSessionOperationError>;
   /** The user's likely next message after a completed turn; null when the agent has no guess. */
   readonly predictNextMessage?: Effect.Effect<string | null, NativeSessionOperationError>;
+  // SCIENT-FORK: a spoken conversation with this session; see ScientLiveVoiceRuntime.
+  readonly liveVoice?: ProviderAdapter.ScientLiveVoiceRuntime;
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
   // SCIENT-FORK:START — bounded graceful Stop can still require destructive fallback.
@@ -1928,6 +1930,8 @@ export function makeNativeSessionAdapterV2(
           ...(native.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: native.getModelContextWindow }),
+          // SCIENT-FORK: live voice passes straight through to the session owner.
+          ...(native.liveVoice === undefined ? {} : { liveVoice: native.liveVoice }),
           ...(options.eventQueueStorage ? { eventConsumer: events.consumer } : {}),
           events: events.events.pipe(
             Stream.mapError(

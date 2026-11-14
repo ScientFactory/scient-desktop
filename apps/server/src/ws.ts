@@ -322,6 +322,8 @@ import { makeDocumentPdfRpcHandlers } from "./scient/documentExport/DocumentPdfR
 import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcHandlers.ts";
 // SCIENT-FORK:START — windows answer the server's editor flush requests.
 import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
+// SCIENT-FORK: voice calls with a thread's Scient Agent.
+import { makeLiveVoiceRpcHandlers } from "./scient/liveVoice/LiveVoiceRpcHandlers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash.
 import { makeWorkspaceEntryRpcHandlers } from "./scient/workspace/WorkspaceEntryRpcHandlers.ts";
@@ -2203,6 +2205,14 @@ export const layerWsRpc = (
         // SCIENT-FORK:END
         // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash.
         ...makeWorkspaceEntryRpcHandlers({ observeRpcEffect, workspaceFileSystem }),
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — voice calls with a thread's Scient Agent.
+        ...makeLiveVoiceRpcHandlers({
+          observeRpcEffect,
+          observeRpcStream,
+          threadManagement,
+          providerSessions: providerSessionsV2,
+        }),
         // SCIENT-FORK:END
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),

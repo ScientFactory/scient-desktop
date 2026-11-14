@@ -94,6 +94,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.terminalObserve;
 
 export type EnvironmentStreamCommandRpcTag =
+  // SCIENT-FORK:START — a Scient Agent voice call streams until the window hangs up.
+  | typeof WS_METHODS.liveVoiceCall
+  // SCIENT-FORK:END
   | typeof WS_METHODS.chatGptHandoffSubscribe
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.serverUpdateServerWithProgress
