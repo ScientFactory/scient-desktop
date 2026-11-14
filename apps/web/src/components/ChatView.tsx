@@ -549,6 +549,41 @@ function incrementDismissTick(setTick: (update: (tick: number) => number) => voi
 
 const ignoreComposerFocus = () => {};
 
+function useRouteGuardedSave<Id, Result>(
+  save: (id: Id, run: () => void) => Result,
+  currentRoute: { readonly current: string | null },
+  route: string | null,
+) {
+  return useStableCallback((id: Id, run: () => void) =>
+    save(id, () => {
+      if (currentRoute.current === route) run();
+    }),
+  );
+}
+
+// Fork commands may outlive a render; their reader must not retain its scope.
+function createLiveTimelineEntriesReader(
+  routeThreadDetailRef: ScopedThreadRef | null,
+  timelineEntries: ReturnType<typeof useIncrementalTimelineEntries>,
+  timelineEntriesInput: Omit<
+    Parameters<typeof deriveTimelineEntriesFromVisibleTurnItemsWithState>[0],
+    "visibleTurnItems"
+  >,
+) {
+  return () => {
+    if (!routeThreadDetailRef) return timelineEntries;
+    const live = readThreadProjection(routeThreadDetailRef)?.projection;
+    if (!live) return timelineEntries;
+    return deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      ...timelineEntriesInput,
+      visibleTurnItems: live.visibleTurnItems,
+      attempts: live.attempts,
+      nodes: live.nodes,
+      plans: live.plans,
+    }).entries;
+  };
+}
+
 function ChatViewContent(props: ChatViewProps) {
   const {
     environmentId,
@@ -1485,14 +1520,16 @@ function ChatViewContent(props: ChatViewProps) {
     pendingFileSurfaceIdsByProject,
     handleMarkdownAttention,
   });
-  const runAfterPendingSurfaceSave: typeof runAfterSurfaceSave = (ids, run) =>
-    runAfterSurfaceSave(ids, () => {
-      if (currentRouteThreadKeyRef.current === routeThreadKey) run();
-    });
-  const runAfterPendingFileSave: typeof runAfterFileSave = (id, run) =>
-    runAfterFileSave(id, () => {
-      if (currentRouteThreadKeyRef.current === routeThreadKey) run();
-    });
+  const runAfterPendingSurfaceSave = useRouteGuardedSave(
+    runAfterSurfaceSave,
+    currentRouteThreadKeyRef,
+    routeThreadKey,
+  );
+  const runAfterPendingFileSave = useRouteGuardedSave(
+    runAfterFileSave,
+    currentRouteThreadKeyRef,
+    routeThreadKey,
+  );
   // SCIENT-FORK:END
   const openProjectScriptPreview = useProjectScriptAutoPreview({
     activeThreadRef,
@@ -2059,18 +2096,11 @@ function ChatViewContent(props: ChatViewProps) {
     // SCIENT-FORK:END
   );
   // SCIENT-FORK:START — the composer's fork command.
-  const readLiveTimelineEntries = () => {
-    if (!routeThreadDetailRef) return timelineEntries;
-    const live = readThreadProjection(routeThreadDetailRef)?.projection;
-    if (!live) return timelineEntries;
-    return deriveTimelineEntriesFromVisibleTurnItemsWithState({
-      ...timelineEntriesInput,
-      visibleTurnItems: live.visibleTurnItems,
-      attempts: live.attempts,
-      nodes: live.nodes,
-      plans: live.plans,
-    }).entries;
-  };
+  const readLiveTimelineEntries = createLiveTimelineEntriesReader(
+    routeThreadDetailRef,
+    timelineEntries,
+    timelineEntriesInput,
+  );
   const onForkConversation = createForkConversationCommand({
     readTimelineEntries: readLiveTimelineEntries,
     timelineEntries,

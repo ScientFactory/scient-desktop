@@ -37,6 +37,17 @@ import { readThreadTurnItems } from "../../state/entities";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
 
+// Cached Markdown link handlers must retain only the inputs needed for directory lookup.
+function createAgentDirectoriesReader(
+  threadRef: Parameters<typeof readThreadTurnItems>[0] | null,
+  projectedItem: Extract<TimelineRow, { kind: "message" }>["projectedItem"],
+) {
+  return () =>
+    threadRef && projectedItem
+      ? agentWorkingDirectories(readThreadTurnItems(threadRef), projectedItem)
+      : [];
+}
+
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   // The timeline holds a streaming message's row while only its text grows.
@@ -75,11 +86,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
                 text={messageText}
                 renderInsights
                 cwd={ctx.markdownCwd}
-                agentDirectories={() =>
-                  ctx.threadRef && row.projectedItem
-                    ? agentWorkingDirectories(readThreadTurnItems(ctx.threadRef), row.projectedItem)
-                    : []
-                }
+                agentDirectories={createAgentDirectoriesReader(ctx.threadRef, row.projectedItem)}
                 threadRef={ctx.threadRef ?? undefined}
                 isStreaming={Boolean(row.message.streaming)}
                 messageId={row.message.id}
