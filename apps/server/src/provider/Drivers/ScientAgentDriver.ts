@@ -66,6 +66,7 @@ import { readScientClaudePlugins } from "../../scient/extensions/ClaudeInstalled
 import { discoverScientAgentSkills } from "../scient/ScientAgentSkills.ts";
 import { readScientAgentUsageLimits, scientAgentUsageReader } from "../scient/ScientAgentUsage.ts";
 import { makeScientAgentDictation } from "../scient/ScientAgentDictation.ts";
+import { openScientAgentLiveVoiceCall } from "../scient/ScientAgentLiveVoiceHost.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
@@ -395,6 +396,21 @@ export const ScientAgentDriver: ScientProviderDriver<
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
+    // A voice call runs in an agent of its own, so it needs no running conversation.
+    const liveVoiceHost = {
+      openCall: openScientAgentLiveVoiceCall(
+        makeRpcClient({
+          target: scientAgentTarget,
+          command: launchConfig.binaryPath,
+          env: processEnv,
+          extraArgs: OMP_ISOLATED_ARGS,
+        }),
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      ),
+    };
     return {
       pluginActions: { ...native.actions, store },
       nativeInventoryChanges: native.reports,
@@ -411,6 +427,7 @@ export const ScientAgentDriver: ScientProviderDriver<
       connectionActions,
       managedRuntimeActions: managedRuntime.actions,
       voiceDictation,
+      liveVoiceHost,
     } satisfies ScientProviderInstance;
   }),
 };

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { ThreadId } from "../baseSchemas.ts";
+import { ProviderInstanceId } from "../providerInstance.ts";
 
 /**
  * A spoken conversation with a thread's Scient Agent. The window owns the microphone and
@@ -11,6 +12,11 @@ export const LiveVoiceCallInput = Schema.Struct({
   threadId: ThreadId,
   /** The window's WebRTC offer: one audio track and an `oai-events` data channel. */
   sdpOffer: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64_000)),
+  /**
+   * A Scient Agent signed in to ChatGPT to run the call in an agent of its own, so the call needs
+   * no running conversation. Without it, the call runs in the conversation's own session.
+   */
+  instanceId: Schema.optional(ProviderInstanceId),
 });
 export type LiveVoiceCallInput = typeof LiveVoiceCallInput.Type;
 
@@ -40,8 +46,16 @@ export const LiveVoiceCallEvent = Schema.Union([
     text: Schema.String,
     final: Schema.Boolean,
   }),
-  /** A spoken request the agent should work on; the server sends it as the user's message. */
-  Schema.Struct({ type: Schema.Literal("request"), text: Schema.String }),
+  /**
+   * A spoken request the agent should work on, sent as the user's message: by the server, or with
+   * `send` by the window, because the conversation does not exist yet and its first message
+   * creates it.
+   */
+  Schema.Struct({
+    type: Schema.Literal("request"),
+    text: Schema.String,
+    send: Schema.optional(Schema.Literal(true)),
+  }),
   /** Last event; `error` says why the call ended when it failed. */
   Schema.Struct({ type: Schema.Literal("ended"), error: Schema.optional(Schema.String) }),
 ]);

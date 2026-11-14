@@ -2,16 +2,21 @@ import type {
   EnvironmentId,
   LiveVoiceCallEvent,
   LiveVoicePhase,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
+import { type SetStateAction, useEffect, useState, useSyncExternalStore } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { getVoiceBridge } from "../voice/voiceClient.ts";
 import { acquireCurrentMicrophone } from "../voice/voiceMedia.ts";
 import { describeMicrophoneAccessRefusal } from "../voice/useScientVoiceController.ts";
+import {
+  deliverVoiceTranscriptToDraft,
+  type VoiceDraftOrigin,
+} from "../voice/voiceDraftDelivery.ts";
 import { liveVoiceCallCommand, liveVoiceMuteCommand } from "./liveVoiceCommands.ts";
 import { type LiveVoicePeer, openLiveVoicePeer } from "./liveVoicePeer.ts";
 
@@ -34,12 +39,50 @@ export type LiveVoiceCallState =
   | { readonly status: "failed"; readonly message: string };
 
 const LEVELS_INTERVAL_MS = 100;
+/**
+ * How long a call outlives its last composer. Sending a new conversation's first message swaps
+ * the draft's composer for the conversation's; leaving the conversation hangs up.
+ */
+const LEAVE_GRACE_MS = 2_000;
 
 interface Call {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly abort: AbortController;
+  /** The draft a request goes to while its conversation does not exist yet. */
+  readonly draftOrigin: VoiceDraftOrigin | null;
   peer?: LiveVoicePeer;
+}
+
+/** A conversation's call, kept outside React so it survives its composer being replaced. */
+interface CallSlot {
+  call: Call | null;
+  state: LiveVoiceCallState;
+  owners: number;
+  hangUpTimer: ReturnType<typeof setTimeout> | undefined;
+  readonly listeners: Set<() => void>;
+}
+
+const IDLE: LiveVoiceCallState = { status: "idle" };
+const slots = new Map<string, CallSlot>();
+
+const slotKey = (environmentId: EnvironmentId, threadId: ThreadId) =>
+  `${environmentId}\u0000${threadId}`;
+
+function slotFor(key: string): CallSlot {
+  let slot = slots.get(key);
+  if (slot === undefined) {
+    slot = { call: null, state: IDLE, owners: 0, hangUpTimer: undefined, listeners: new Set() };
+    slots.set(key, slot);
+  }
+  return slot;
+}
+
+function setSlotState(slot: CallSlot, update: SetStateAction<LiveVoiceCallState>): void {
+  const next = typeof update === "function" ? update(slot.state) : update;
+  if (next === slot.state) return;
+  slot.state = next;
+  for (const listener of slot.listeners) listener();
 }
 
 /** The failure's own message when it has one, else a plain one. */
@@ -59,7 +102,7 @@ const describeFailure = (cause: Cause.Cause<unknown>): string => {
 async function runLiveVoiceCall(input: {
   readonly call: Call;
   readonly current: () => boolean;
-  readonly setState: Dispatch<SetStateAction<LiveVoiceCallState>>;
+  readonly setState: (update: SetStateAction<LiveVoiceCallState>) => void;
   readonly connect: (
     sdpOffer: string,
     onEvent: (event: LiveVoiceCallEvent) => void,
@@ -104,6 +147,10 @@ async function runLiveVoiceCall(input: {
           );
           return;
         case "request":
+          // The conversation does not exist yet: its first message, sent like a typed one, creates it.
+          if (event.send && call.draftOrigin) {
+            deliverVoiceTranscriptToDraft(call.draftOrigin, event.text, true);
+          }
           return;
         case "ended":
           ended = event.error;
@@ -127,86 +174,112 @@ async function runLiveVoiceCall(input: {
 }
 
 /**
- * One voice call with the thread's Scient Agent. Leaving the thread or closing the window
- * hangs up.
+ * One voice call with Scient Agent for a conversation, or a draft that becomes one. With
+ * `instanceId` the call runs in an agent of its own, so it needs no running conversation. Leaving
+ * the conversation or closing the window hangs up.
  */
 export function useScientLiveVoiceCall(input: {
   readonly environmentId: EnvironmentId | undefined;
   readonly threadId: ThreadId | null | undefined;
+  readonly instanceId?: ProviderInstanceId | null | undefined;
 }) {
   const runCall = useAtomCommand(liveVoiceCallCommand, { reportFailure: false });
   const runMute = useAtomCommand(liveVoiceMuteCommand, { reportFailure: false });
-  const [state, setState] = useState<LiveVoiceCallState>({ status: "idle" });
   const [levels, setLevels] = useState({ input: 0, output: 0 });
-  const callRef = useRef<Call | null>(null);
-  const { environmentId: currentEnvironmentId, threadId: currentThreadId } = input;
-
-  const hangUp = () => {
-    callRef.current?.abort.abort();
-  };
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the WebRTC call and its server stream belong to one thread; leaving it or unmounting hangs up.
-  useEffect(
-    () => () => {
-      const call = callRef.current;
-      if (
-        call &&
-        call.environmentId === currentEnvironmentId &&
-        call.threadId === currentThreadId
-      ) {
-        call.abort.abort();
-      }
+  const { environmentId, threadId } = input;
+  const key = environmentId && threadId ? slotKey(environmentId, threadId) : null;
+  const state = useSyncExternalStore(
+    (listener) => {
+      if (key === null) return () => {};
+      const { listeners } = slotFor(key);
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
-    [currentEnvironmentId, currentThreadId],
+    () => (key === null ? IDLE : (slots.get(key)?.state ?? IDLE)),
   );
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a call belongs to the composers showing its conversation; when the last one goes and none replaces it, it hangs up.
+  useEffect(() => {
+    if (key === null) return;
+    const slot = slotFor(key);
+    slot.owners += 1;
+    clearTimeout(slot.hangUpTimer);
+    return () => {
+      slot.owners -= 1;
+      if (slot.owners > 0) return;
+      slot.hangUpTimer = setTimeout(() => {
+        if (slot.owners === 0) slot.call?.abort.abort();
+      }, LEAVE_GRACE_MS);
+    };
+  }, [key]);
 
   const active = state.status === "active";
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the call's audio analysers, which live outside React, while the call is up.
   useEffect(() => {
-    if (!active) return;
+    if (!active || key === null) return;
     const timer = setInterval(() => {
-      const peer = callRef.current?.peer;
+      const peer = slots.get(key)?.call?.peer;
       if (peer) setLevels(peer.levels());
     }, LEVELS_INTERVAL_MS);
     return () => {
       clearInterval(timer);
       setLevels({ input: 0, output: 0 });
     };
-  }, [active]);
+  }, [active, key]);
 
-  const start = async (): Promise<void> => {
-    const { environmentId, threadId } = input;
-    if (!environmentId || !threadId || callRef.current) return;
-    const call: Call = { environmentId, threadId, abort: new AbortController() };
-    callRef.current = call;
-    setState({ status: "starting" });
+  /** Starts the call; `draftOrigin` receives the first request of a conversation not created yet. */
+  const start = async (draftOrigin: VoiceDraftOrigin | null = null): Promise<void> => {
+    if (!environmentId || !threadId || key === null) return;
+    const slot = slotFor(key);
+    if (slot.call) return;
+    const call: Call = { environmentId, threadId, abort: new AbortController(), draftOrigin };
+    const instanceId = input.instanceId ?? undefined;
+    slot.call = call;
+    setSlotState(slot, { status: "starting" });
     const failure = await runLiveVoiceCall({
       call,
-      current: () => callRef.current === call && !call.abort.signal.aborted,
-      setState,
+      current: () => slot.call === call && !call.abort.signal.aborted,
+      setState: (update) => {
+        if (slot.call === call) setSlotState(slot, update);
+      },
       connect: (sdpOffer, onEvent) =>
-        runCall({ environmentId, threadId, sdpOffer, signal: call.abort.signal, onEvent }),
+        runCall({
+          environmentId,
+          threadId,
+          sdpOffer,
+          ...(instanceId ? { instanceId } : {}),
+          signal: call.abort.signal,
+          onEvent,
+        }),
     });
-    if (callRef.current !== call) return;
-    callRef.current = null;
+    if (slot.call !== call) return;
+    slot.call = null;
     const userHungUp = call.abort.signal.aborted && failure === null;
-    setState(
-      failure !== null && !userHungUp ? { status: "failed", message: failure } : { status: "idle" },
+    setSlotState(
+      slot,
+      failure !== null && !userHungUp ? { status: "failed", message: failure } : IDLE,
     );
   };
 
+  const hangUp = () => {
+    if (key !== null) slots.get(key)?.call?.abort.abort();
+  };
+
   const setMuted = (muted: boolean) => {
-    const { environmentId, threadId } = input;
-    const peer = callRef.current?.peer;
-    if (!peer || !environmentId || !threadId) return;
+    const slot = key === null ? undefined : slots.get(key);
+    const peer = slot?.call?.peer;
+    if (!slot || !peer || !environmentId || !threadId) return;
     peer.setMuted(muted);
-    setState((previous) => (previous.status === "active" ? { ...previous, muted } : previous));
+    setSlotState(slot, (previous) =>
+      previous.status === "active" ? { ...previous, muted } : previous,
+    );
     // The agent's mute only changes the phase it reports; the audio is muted here.
     void runMute({ environmentId, input: { threadId, muted } });
   };
 
   const dismiss = () => {
-    setState((previous) => (previous.status === "failed" ? { status: "idle" } : previous));
+    const slot = key === null ? undefined : slots.get(key);
+    if (slot) setSlotState(slot, (previous) => (previous.status === "failed" ? IDLE : previous));
   };
 
   return { state, levels, start, hangUp, setMuted, dismiss };

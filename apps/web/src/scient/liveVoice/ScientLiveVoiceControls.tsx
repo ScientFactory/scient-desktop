@@ -11,6 +11,7 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip.tsx";
 import { cn } from "../../lib/utils.ts";
+import type { VoiceDraftOrigin } from "../voice/voiceDraftDelivery.ts";
 import type { ScientLiveVoiceCall } from "./useScientLiveVoiceCall.ts";
 
 const PHASE_LABELS: Record<LiveVoicePhase, string> = {
@@ -26,9 +27,12 @@ const PHASE_LABELS: Record<LiveVoicePhase, string> = {
 export function ScientLiveVoiceButton({
   call,
   unavailableReason,
+  draftOrigin = null,
 }: {
   readonly call: ScientLiveVoiceCall;
   readonly unavailableReason: string | null;
+  /** Where the first spoken request goes while the conversation does not exist yet. */
+  readonly draftOrigin?: VoiceDraftOrigin | null;
 }) {
   if (call.state.status !== "idle" && call.state.status !== "failed") return null;
   const label = unavailableReason ?? "Talk with Scient Agent";
@@ -42,7 +46,7 @@ export function ScientLiveVoiceButton({
               aria-disabled={unavailableReason !== null || undefined}
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => {
-                if (unavailableReason === null) void call.start();
+                if (unavailableReason === null) void call.start(draftOrigin);
               }}
               className={cn(unavailableReason !== null && "opacity-64")}
             />

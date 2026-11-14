@@ -10,7 +10,10 @@ import {
   ScientLiveVoiceButton,
   ScientLiveVoiceCard,
 } from "../../scient/liveVoice/ScientLiveVoiceControls.tsx";
-import { liveVoiceUnavailableReason } from "../../scient/liveVoice/liveVoiceAvailability.ts";
+import {
+  liveVoiceCallInstance,
+  liveVoiceUnavailableReason,
+} from "../../scient/liveVoice/liveVoiceAvailability.ts";
 import { useScientLiveVoiceCall } from "../../scient/liveVoice/useScientLiveVoiceCall.ts";
 import { mergeEffectiveProviderSkills } from "@t3tools/client-runtime/providerSkills";
 // SCIENT-FORK:START — skill cards and the composer share invocation and document helpers.
@@ -1016,7 +1019,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ? threadShellHasStarted(props.activeThreadShell)
     : routeKind !== "draft";
   // SCIENT-FORK:START — voice calls with a thread's Scient Agent.
-  const liveVoiceCall = useScientLiveVoiceCall({ environmentId, threadId: activeThreadId });
+  const liveVoiceCall = useScientLiveVoiceCall({
+    environmentId,
+    threadId: activeThreadId,
+    instanceId: liveVoiceCallInstance(selectedProviderEntry?.snapshot),
+  });
   const showLiveVoice = selectedProvider === "scient" && typeof RTCPeerConnection !== "undefined";
   const liveVoiceUnavailable = liveVoiceUnavailableReason({
     provider: selectedProviderEntry?.snapshot,
@@ -4090,6 +4097,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <ScientLiveVoiceButton
                       call={liveVoiceCall}
                       unavailableReason={liveVoiceUnavailable}
+                      draftOrigin={voiceDraftAccepted ? voiceDraftOrigin : null}
                     />
                   ) : null}
                   <div
