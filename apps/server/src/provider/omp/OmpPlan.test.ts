@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import { OmpRpcCommandError } from "effect-omp-rpc/errors";
 
 import type { NativeSessionUpdate } from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
-import { ompProposedPlan, parseOmpPlanCommand, runOmpPlanTurn } from "./OmpPlan.ts";
+import { ompPlanMode, ompProposedPlan, parseOmpPlanCommand, runOmpPlanTurn } from "./OmpPlan.ts";
 
 /** A `/plan` message against an agent that answers `plan` with `refusal`, if given. */
 const planTurn = (text: string, refusal?: string) =>
@@ -62,11 +62,15 @@ it.effect("answers in the conversation when there is nothing to send", () =>
   }),
 );
 
-it("reads the plan the agent proposed from its frame", () => {
+it("reads the plan the agent proposed, and whether it is planning, from its frames", () => {
   assert.strictEqual(
     ompProposedPlan({ type: "plan_proposed", raw: { type: "plan_proposed", markdown: "# Fit" } }),
     "# Fit",
   );
+  assert.isFalse(
+    ompPlanMode({ type: "plan_updated", raw: { type: "plan_updated", enabled: false } }),
+  );
+  assert.isUndefined(ompPlanMode({ type: "plan_proposed", raw: { markdown: "# Fit" } }));
   assert.isUndefined(ompProposedPlan({ type: "goal_updated", goal: null }));
   assert.isNull(parseOmpPlanCommand("/planet"));
 });

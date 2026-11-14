@@ -37,6 +37,17 @@ const decodePlanProposed = Schema.decodeUnknownOption(PlanProposed);
 export const ompProposedPlan = (event: unknown): string | undefined =>
   Option.getOrUndefined(Option.map(decodePlanProposed(event), (frame) => frame.raw.markdown));
 
+// The agent reports each time plan mode turns on or off, including after an approval.
+const PlanUpdated = Schema.Struct({
+  type: Schema.Literal("plan_updated"),
+  raw: Schema.Struct({ enabled: Schema.Boolean }),
+});
+const decodePlanUpdated = Schema.decodeUnknownOption(PlanUpdated);
+
+/** Whether plan mode is now on, or undefined for any other event. */
+export const ompPlanMode = (event: unknown): boolean | undefined =>
+  Option.getOrUndefined(Option.map(decodePlanUpdated(event), (frame) => frame.raw.enabled));
+
 const UNSUPPORTED = /unknown command/iu;
 
 /**
