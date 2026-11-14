@@ -220,8 +220,15 @@ failures. Missing terminal events are not automatically failures.
 
 The dedicated worker owns SQLite and remote delivery. Limits are 1,000 memory
 events, two in-flight local batches, 10,000 durable events, 50 events per upload,
-three-second upload deadlines, 20 delivery attempts, and 100 metadata-only dead
-letters. Summary events are trimmed before core/critical events. Expired,
+up to 10 uploads per flush, 15-second upload deadlines (10 seconds for deletion),
+20 gateway rejections per event, and 100 metadata-only dead letters. A timeout,
+network error, 408, 429 or 5xx backs off the endpoint (30 seconds doubling to 15
+minutes, with jitter, and at least any `Retry-After` on 429/503); it never parks or
+retires the events, so an outage only delays them. Other refusals and invalid
+acknowledgements hold that batch alone. `droppedCountBucket` reports events
+removed undelivered (retired, invalid or trimmed) since the last diagnostic. The
+worker applies the main thread's outbound networking setup. Summary events are
+trimmed before core/critical events. Expired,
 malformed, or no-longer-valid persisted events cannot bypass the shape and
 privacy check. Local raw events expire after 180 days, diagnostics after 30 days,
 and dead-letter metadata after 30 days when maintenance runs. An app that is
