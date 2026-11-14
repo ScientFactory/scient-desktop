@@ -662,6 +662,12 @@ const make = Effect.gen(function* () {
             linkedPullRequest: null,
             branchPullRequest: null,
             pullRequests: [],
+            // A guest link and a remote delegation belong to the thread they were made for.
+            guestShare: null,
+            delegatedFrom: undefined,
+            opens: null,
+            lastSnoozeWakeAt: null,
+            autoSettleDisabledAt: null,
           };
           const events: OrchestrationV2DomainEvent[] = [
             {
