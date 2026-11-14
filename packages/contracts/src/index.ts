@@ -118,6 +118,9 @@ export * from "./scientMarkdown.ts";
 // SCIENT-FORK:START — Scient tool input schema checks (new file, no upstream edits).
 export * from "./scientToolSchemas.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient idle compaction providers (new file, no upstream edits).
+export * from "./scient/idleCompaction.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
 // SCIENT-FORK:END

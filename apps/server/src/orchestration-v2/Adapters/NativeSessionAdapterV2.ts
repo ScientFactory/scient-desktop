@@ -8,6 +8,7 @@ import {
   type ModelSelection,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderTurnTokenUsage,
+  OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRetry,
   type ThreadTokenUsageSnapshot,
@@ -77,7 +78,9 @@ type NativeSessionPresentation =
       readonly beforeTokenCount?: number;
       readonly afterTokenCount?: number;
     }
-  | { readonly type: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> };
+  | { readonly type: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> }
+  // SCIENT-FORK: a plan the agent proposed, shown as the shared plan card.
+  | { readonly type: "proposed_plan"; readonly markdown: string };
 
 /** SCIENT-FORK: one step of a native subagent's conversation; `id` is stable across reads. */
 export type NativeSubagentStep =
@@ -108,6 +111,8 @@ export type NativeToolRow = NativeToolRowItem extends infer Item
     ? Omit<Item, Exclude<keyof Item, "type"> & keyof OrchestrationV2TurnItem>
     : never
   : never;
+
+const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
@@ -217,6 +222,8 @@ export type NativeSessionUpdate =
   | { readonly type: "native-thread"; readonly id: string; readonly resumeCursor?: unknown }
   | { readonly type: "model"; readonly model: string }
   | { readonly type: "background"; readonly pending: boolean }
+  /** SCIENT-FORK: the native goal changed; null when none is set. */
+  | { readonly type: "goal"; readonly goal: OrchestrationV2ProviderGoal | null }
   | { readonly type: "continuation-started" }
   | {
       readonly type: "terminal";
@@ -388,6 +395,8 @@ export function makeNativeSessionAdapterV2(
           readonly afterWake: number;
         }[] = [];
         let backgroundPending = false;
+        // SCIENT-FORK: a native turn has started and not yet ended (OMP reports both).
+        let nativeTurnOpen = false;
         let wakeOffered = false;
         const wake: {
           readonly update: NativeSessionUpdate;
@@ -868,6 +877,9 @@ export function makeNativeSessionAdapterV2(
           eventPermit.withPermit(
             Effect.gen(function* () {
               if (budget.closed) return;
+              // SCIENT-FORK: a native turn has started and not yet ended (OMP reports both).
+              if (update.type === "continuation-started") nativeTurnOpen = true;
+              else if (update.type === "terminal") nativeTurnOpen = false;
               if (update.type === "native-thread" && !thread) return;
               if (
                 options.eventQueueLimits &&
@@ -904,6 +916,7 @@ export function makeNativeSessionAdapterV2(
                 update.type === "turn-entry" ||
                 update.type === "question-resolved" ||
                 update.type === "native-thread" ||
+                update.type === "goal" ||
                 (update.type === "model" &&
                   active !== undefined &&
                   active.turn.acceptedAt === undefined) ||
@@ -991,6 +1004,13 @@ export function makeNativeSessionAdapterV2(
                       providerThread: thread,
                     });
                   }
+                  return;
+                }
+                // SCIENT-FORK: the thread's goal row follows the native goal.
+                if (update.type === "goal") {
+                  if (!thread || providerGoalsEqual(thread.goal ?? null, update.goal)) return;
+                  thread = { ...thread, goal: update.goal, updatedAt: yield* DateTime.now };
+                  yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
                   return;
                 }
                 if (update.type === "background") {
@@ -1415,6 +1435,37 @@ export function makeNativeSessionAdapterV2(
                         steps,
                       },
                     });
+                    // SCIENT-FORK:START - a proposed plan is a plan artifact, as for Claude.
+                  } else if (content.type === "proposed_plan") {
+                    const planId =
+                      previous?.type === "proposed_plan"
+                        ? previous.planId
+                        : yield* idAllocator.allocate.plan({
+                            threadId: owner.threadId,
+                            runId: owner.runId,
+                            driver,
+                          });
+                    item = {
+                      ...common,
+                      type: "proposed_plan",
+                      planId,
+                      markdown: content.markdown,
+                      streaming: false,
+                    };
+                    yield* emit({
+                      type: "plan.updated",
+                      driver,
+                      plan: {
+                        id: planId,
+                        threadId: owner.threadId,
+                        runId: owner.runId,
+                        nodeId: base.nodeId,
+                        kind: "proposed_plan",
+                        status: "active",
+                        markdown: content.markdown,
+                      },
+                    });
+                    // SCIENT-FORK:END
                   } else if (content.type === "compaction")
                     item = { ...common, ...content, driver };
                   else item = { ...common, ...content };
@@ -1715,24 +1766,27 @@ export function makeNativeSessionAdapterV2(
                   kind:
                     item.type === "todo_list"
                       ? "todo_list"
-                      : item.type === "compaction" ||
-                          item.type === "error" ||
-                          item.type === "system_notice"
-                        ? "system"
-                        : item.type === "approval_request"
-                          ? "approval_request"
-                          : item.type === "user_input_request"
-                            ? "user_input_request"
-                            : item.type === "dynamic_tool" ||
-                                item.type === "command_execution" ||
-                                item.type === "file_change" ||
-                                item.type === "web_search"
-                              ? "tool_call"
-                              : item.type === "subagent"
-                                ? "subagent"
-                                : item.type === "reasoning"
-                                  ? "reasoning"
-                                  : "assistant_message",
+                      : // SCIENT-FORK: a proposed plan is a plan node.
+                        item.type === "proposed_plan"
+                        ? "plan"
+                        : item.type === "compaction" ||
+                            item.type === "error" ||
+                            item.type === "system_notice"
+                          ? "system"
+                          : item.type === "approval_request"
+                            ? "approval_request"
+                            : item.type === "user_input_request"
+                              ? "user_input_request"
+                              : item.type === "dynamic_tool" ||
+                                  item.type === "command_execution" ||
+                                  item.type === "file_change" ||
+                                  item.type === "web_search"
+                                ? "tool_call"
+                                : item.type === "subagent"
+                                  ? "subagent"
+                                  : item.type === "reasoning"
+                                    ? "reasoning"
+                                    : "assistant_message",
                   status: item.status,
                   countsForRun: false,
                   providerThreadId: base.providerThreadId,
@@ -1958,7 +2012,8 @@ export function makeNativeSessionAdapterV2(
                 yield* onUpdate(event.update);
               }
               for (const pending of presentation) yield* onUpdate(pending.update);
-              if (active && !backgroundPending)
+              // SCIENT-FORK: a turn the agent is still running ends with its own terminal.
+              if (active && !backgroundPending && !nativeTurnOpen)
                 yield* finish({ type: "terminal", status: "completed" });
             } else {
               for (const pending of presentation) yield* onUpdate(pending.update);

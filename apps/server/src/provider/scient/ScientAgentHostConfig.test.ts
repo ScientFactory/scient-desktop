@@ -9,7 +9,7 @@ import {
   writeScientAgentHostConfig,
 } from "./ScientAgentHostConfig.ts";
 
-it("turns computer control on with the full-access answer to foreground control", () => {
+it("turns computer control on with the full-access answer to foreground control, and lets goals continue", () => {
   assert.strictEqual(
     scientAgentHostConfigText({ computerControl: true, imageGeneration: true }),
     [
@@ -21,6 +21,8 @@ it("turns computer control on with the full-access answer to foreground control"
       "    computer.control: allow",
       "generate_image:",
       "  enabled: true",
+      "goal:",
+      "  continuationModes: [interactive, rpc]",
       "",
     ].join("\n"),
   );

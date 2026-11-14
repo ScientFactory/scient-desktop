@@ -8,6 +8,8 @@ import {
   type ServerSettings,
   type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
+// SCIENT-FORK: Scient Agent offers the same compaction on return.
+import { compactsIdleThreads } from "@t3tools/contracts";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   COMPACTION_SUGGESTION_MIN_TOKENS,
@@ -231,7 +233,8 @@ export function shouldOfferResumeCompaction(input: {
   readonly now: string;
 }): boolean {
   if (
-    input.provider !== "claudeAgent" ||
+    // SCIENT-FORK: Scient Agent offers the same compaction on return.
+    !compactsIdleThreads(input.provider) ||
     (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
   ) {
     return false;

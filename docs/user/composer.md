@@ -468,20 +468,22 @@ On web and desktop, turn on **Context window** in **Settings → Appearance →
 Thread details** to see context usage in the thread details card. It appears
 once the provider reports usage.
 
-Claude instances can also compact idle threads for you. See
+Claude and Scient Agent instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
 ## Goals
 
-With Codex, Claude, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example
+With Codex, Claude, Scient Agent, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
 until it judges the goal met. The thread shows **Goal** while it works, and a
 line at the end of the thread (above the composer on mobile) shows the goal and
 its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
-- Codex and OpenCode also support `/goal pause` and `/goal resume`. Stopping
-  their goal pauses it. Codex also pauses when its work ends without meeting the goal.
+- Codex, Scient Agent and OpenCode also support `/goal pause` and `/goal resume`.
+  Stopping their goal pauses it. Codex also pauses when its work ends without meeting the goal.
+- Scient Agent works on the goal in turns it starts by itself, and stops on its own
+  when a turn makes no progress. A new goal replaces the current one.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
 - Sending a new goal, or `/goal resume`, while the agent works stops the current

@@ -1117,6 +1117,33 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect("refuses to steer a running Scient Agent turn with /plan", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const turn = yield* h.takeUntil((event) => event.type === "provider_turn.updated");
+        if (turn.type !== "provider_turn.updated") return yield* Effect.die("Missing native turn");
+        const steered = yield* Effect.result(
+          h.runtime.steerTurn({
+            runId: h.input.runId,
+            threadId: h.input.threadId,
+            providerThread: h.input.providerThread,
+            providerTurnId: turn.providerTurn.id,
+            message: { ...h.input.message, text: "/plan analyse the data" },
+          }),
+        );
+        assert.equal(steered._tag, "Failure");
+        assert.isFalse(peer.state.frames.some((frame) => frame.type === "steer"));
+      }),
+    ),
+  );
+
   it.effect.each([
     {
       caseTitle: "names a failure by the most specific kind Scient Agent reports",

@@ -1715,7 +1715,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const adapter = yield* providerAdapters.get(providerInstanceId).pipe(mapDispatchError(command));
     const { driver } = adapter;
-    if (driver === "opencode" || driver === "antigravity") {
+    // SCIENT-FORK: Scient Agent reports native goals as a capability, like OpenCode.
+    if (driver === "opencode" || driver === "antigravity" || driver === "scient") {
       const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
       return capabilities.turns.supportsNativeGoals === true ? driver : undefined;
     }
