@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import {
   ACCOUNT_SERVICES,
   accountServiceAudience,
+  accountServiceForApp,
+  claudeConnectorFor,
   accountServiceOfServer,
   accountServiceRoutes,
   isAccountServiceStoreEntry,
@@ -158,6 +160,30 @@ describe("account services", () => {
     const routes = accountServiceRoutes(gmail, [scient(true), off]);
     expect(routes.map((route) => route.state)).toEqual(["connected", "off"]);
     expect(nextAccountServiceStep(routes)).toBeUndefined();
+  });
+
+  it("links Claude only to claude.ai connectors in Anthropic's directory", () => {
+    // Anthropic's own "Add to Claude" pages, never a page made up from a name.
+    expect(gmail.claude?.page).toMatch(/^https:\/\/claude\.ai\/directory\/[0-9a-f-]{36}$/);
+    const outlook = accountServiceForApp({
+      id: "connector_outlook",
+      name: "Microsoft Outlook Email",
+    })!;
+    expect(outlook.claude?.name).toBe("Microsoft 365");
+    expect(accountServiceRoutes(outlook, [claude(false)])[0]?.reason).toBe(
+      "Connect Microsoft 365 on claude.ai",
+    );
+    // An app claude.ai has no connector for has no Claude row and no claude.ai link.
+    const unknown = accountServiceForApp({ id: "connector_x", name: "Pets Picker 9000" })!;
+    expect(unknown.claude).toBeUndefined();
+    expect(
+      accountServiceRoutes(unknown, [scient(false), claude(false)]).map((r) => r.family),
+    ).toEqual(["chatgpt"]);
+    expect(claudeConnectorFor("figma")?.name).toBe("Figma");
+    // ChatGPT pages are built as Codex builds them: every other character becomes "-".
+    expect(accountServiceRoutes(outlook, [scient(false)])[0]?.page).toBe(
+      "https://chatgpt.com/apps/microsoft-outlook-email/connector_outlook",
+    );
   });
 
   it("recognises the services' own rows and Codex store entries", () => {

@@ -44,13 +44,16 @@ export const hasChatGptAccount = (
 ): boolean =>
   accounts?.some((account) => account.connected && account.id === "openai-codex") ?? false;
 
-/** ChatGPT's page for one app, where the person connects or reconnects it. */
+/**
+ * ChatGPT's page for one app, where the person connects or reconnects it: built exactly as Codex
+ * builds its install links (each character but a-z and 0-9 becomes "-", then the app's id).
+ */
 function chatGptAppPage(app: { readonly id: string; readonly name: string }): string {
   const slug = app.name
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/[^a-z0-9]/g, "-")
     .replace(/^-+|-+$/g, "");
-  return `${CHATGPT_APPS_PAGE}/${slug}/${app.id}`;
+  return `${CHATGPT_APPS_PAGE}/${slug || "app"}/${app.id}`;
 }
 
 /** The apps as server rows, from what `apps --json` printed; none for anything else. */

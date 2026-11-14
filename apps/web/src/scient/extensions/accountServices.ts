@@ -5,6 +5,7 @@ import type {
   ServerProviderMcpServer,
 } from "@t3tools/contracts";
 
+import CLAUDE_CONNECTORS from "./claudeConnectors.json" with { type: "json" };
 import { providerLabel } from "./extensionsView";
 
 /**
@@ -21,8 +22,50 @@ export interface AccountService {
   readonly websiteUrl?: string | undefined;
   /** ChatGPT's id for the app, the same for every account. */
   readonly chatgptAppId: string;
-  /** The claude.ai connector's name, without Claude's "claude.ai " prefix. */
-  readonly claudeConnector: string;
+  /**
+   * The claude.ai connector for the same service, when claude.ai has one: its name as Claude
+   * reports it (without the "claude.ai " prefix) and Anthropic's own "Add to Claude" page.
+   * Absent, Claude has no route to it and none is offered.
+   */
+  readonly claude?: { readonly name: string; readonly page: string } | undefined;
+}
+
+const comparable = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * ChatGPT apps whose claude.ai counterpart has another name. Microsoft's apps are one connector
+ * on claude.ai, Microsoft 365, which covers Outlook, OneDrive, SharePoint and Teams.
+ */
+const CLAUDE_NAMES: Readonly<Record<string, string>> = {
+  outlookemail: "Microsoft 365",
+  outlookcalendar: "Microsoft 365",
+  microsoftoutlookemail: "Microsoft 365",
+  microsoftoutlookcalendar: "Microsoft 365",
+  sharepoint: "Microsoft 365",
+  microsoftsharepoint: "Microsoft 365",
+  onedrive: "Microsoft 365",
+  microsoftonedrive: "Microsoft 365",
+  teams: "Microsoft 365",
+  microsoftteams: "Microsoft 365",
+};
+
+const claudeConnectors = new Map(
+  CLAUDE_CONNECTORS.flatMap(([name, id]) =>
+    name && id
+      ? [[comparable(name), { name, page: `https://claude.ai/directory/${id}` }] as const]
+      : [],
+  ),
+);
+
+/**
+ * The claude.ai connector for a service, from Anthropic's public directory (refreshed by
+ * scripts/generate-claude-connectors.mjs). Only a name in that list gets a claude.ai link.
+ */
+export function claudeConnectorFor(
+  name: string,
+): { readonly name: string; readonly page: string } | undefined {
+  const key = comparable(name);
+  return claudeConnectors.get(comparable(CLAUDE_NAMES[key] ?? name));
 }
 
 export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
@@ -35,7 +78,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     categories: ["most-used", "communication"],
     websiteUrl: "https://mail.google.com",
     chatgptAppId: "connector_2128aebfecb84f64a069897515042a44",
-    claudeConnector: "Gmail",
+    claude: claudeConnectorFor("Gmail"),
   },
   {
     id: "google-calendar",
@@ -46,7 +89,7 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     categories: ["most-used", "communication"],
     websiteUrl: "https://calendar.google.com",
     chatgptAppId: "connector_947e0d954944416db111db556030eea6",
-    claudeConnector: "Google Calendar",
+    claude: claudeConnectorFor("Google Calendar"),
   },
   {
     id: "google-drive",
@@ -57,21 +100,16 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
     categories: ["most-used", "files"],
     websiteUrl: "https://drive.google.com",
     chatgptAppId: "connector_5f3c8c41a1e54ad7a76272c89e2554fa",
-    claudeConnector: "Google Drive",
+    claude: claudeConnectorFor("Google Drive"),
   },
 ];
 
-/** claude.ai's own page for one connector, where it connects or is managed. */
-const claudeConnectorPage = (service: AccountService) =>
-  `https://claude.ai/customize/connectors/id/${slug(service.claudeConnector)}`;
-
-/** ChatGPT's page for the service's app, where the browser's ChatGPT account connects it. */
+/**
+ * ChatGPT's page for the service's app, where the browser's ChatGPT account connects it. Built
+ * exactly as Codex builds it: each character but a-z and 0-9 becomes "-", then the id.
+ */
 function chatGptServicePage(service: AccountService): string {
-  const slug = service.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return `https://chatgpt.com/apps/${slug}/${service.chatgptAppId}`;
+  return `https://chatgpt.com/apps/${slug(service.name) || "app"}/${service.chatgptAppId}`;
 }
 
 const claudeName = (server: Pick<ServerProviderMcpServer, "name">) =>
@@ -80,7 +118,7 @@ const claudeName = (server: Pick<ServerProviderMcpServer, "name">) =>
 const slug = (name: string) =>
   name
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/[^a-z0-9]/g, "-")
     .replace(/^-+|-+$/g, "");
 
 /** The ChatGPT app id at the end of a `chatgpt.com/apps/<slug>/<id>` page. */
@@ -102,14 +140,17 @@ export function accountServiceForApp(app: {
   if (known) return known;
   const id = app.id ?? appIdOf(app.installUrl);
   if (!id) return undefined;
+  const claude = claudeConnectorFor(app.name);
   return {
     id: slug(app.name),
     name: app.name,
     tagline: app.description?.split("\n")[0]?.slice(0, 80) ?? "A ChatGPT app",
-    description: `Your agents use ${app.name} through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds that sign-in.`,
+    description: claude
+      ? `Your agents use ${app.name} through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds that sign-in.`
+      : `Codex and Scient Agent use ${app.name} through your ChatGPT account. Connect it once on ChatGPT; Scient never holds that sign-in. claude.ai has no connector for it.`,
     categories: [],
     chatgptAppId: id,
-    claudeConnector: app.name,
+    claude,
   };
 }
 
@@ -142,7 +183,10 @@ function serverIsService(
   if ((provider.driver === "scient" || provider.driver === "codex") && server.scope === "chatgpt")
     return appIdOf(server.connectUrl) === service.chatgptAppId || server.name === service.name;
   if (provider.driver === "claudeAgent" && server.scope === "claudeai")
-    return claudeName(server) === service.claudeConnector;
+    return (
+      service.claude !== undefined &&
+      comparable(claudeName(server)) === comparable(service.claude.name)
+    );
   return false;
 }
 
@@ -308,8 +352,9 @@ function accountServiceRoutesFromInventory(
           : { ...chatgpt, state: "connect", reason: `Connect ${service.name} in ChatGPT` },
       ];
     }
-    if (provider.driver === "claudeAgent") {
-      const claude = { ...base, family: "claude" as const, page: claudeConnectorPage(service) };
+    // Claude only for a service claude.ai has, with Anthropic's own page for it.
+    if (provider.driver === "claudeAgent" && service.claude) {
+      const claude = { ...base, family: "claude" as const, page: service.claude.page };
       if (provider.accountAppsAvailable !== true)
         return [
           { ...claude, state: "sign-in", reason: "Needs Claude signed in with a Claude plan" },
@@ -320,7 +365,12 @@ function accountServiceRoutesFromInventory(
       return [
         connected
           ? { ...claude, state: "connected" }
-          : { ...claude, state: "connect", reason: `Connect ${service.name} on claude.ai` },
+          : {
+              ...claude,
+              state: "connect",
+              // claude.ai's own name for it, which can differ: Outlook is part of Microsoft 365.
+              reason: `Connect ${service.claude.name} on claude.ai`,
+            },
       ];
     }
     return [];

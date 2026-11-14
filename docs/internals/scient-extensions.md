@@ -34,7 +34,15 @@ inventory:
 agent still needs (connect, or sign in). **Connect** opens the next provider
 page in the system browser: ChatGPT's page for the app first, since one
 ChatGPT connection serves Codex and Scient Agent, then claude.ai's connector
-settings. Returning refreshes the agents' inventories. The provider sections
+page.
+
+Links are never guessed. ChatGPT pages are built exactly as Codex builds its
+install links (`chatgpt.com/apps/<name with each other character as ->/<app id>`).
+claude.ai links come only from `claudeConnectors.json`: each connector's "Add to
+Claude" address (`claude.ai/directory/<id>`) from Anthropic's public directory,
+refreshed with `node scripts/generate-claude-connectors.mjs`. A ChatGPT app with
+no claude.ai connector of the same name (or an alias, such as Outlook to
+Microsoft 365) gets no Claude route at all. Returning refreshes the agents' inventories. The provider sections
 no longer repeat these services' rows, and a category's store list hides a
 Codex store entry for one of them. Adding a service is a data change in that
 file.
