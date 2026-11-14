@@ -165,7 +165,10 @@ describe("remote helper lifecycle", () => {
         // SCIENT-FORK:START — Android needs a complete SDK, built from the same stubs.
         const sdk = NodePath.join(home, "android-sdk");
         await completeSdk(sdk, "exit 0");
-        await NodeFSP.copyFile(NodePath.join(bin, "emulator"), NodePath.join(sdk, "emulator/emulator"));
+        await NodeFSP.copyFile(
+          NodePath.join(bin, "emulator"),
+          NodePath.join(sdk, "emulator/emulator"),
+        );
         // SCIENT-FORK:END
         const root = NodePath.join(home, ".t3/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);

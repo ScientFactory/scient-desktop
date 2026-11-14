@@ -110,7 +110,7 @@ describe("LocalApi", () => {
     if (!revealSavedCopy) throw new Error("Expected the desktop reveal capability.");
     await expect(revealSavedCopy("/tmp/report.pdf")).resolves.toBeUndefined();
 
-    expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
+    expect(showContextMenu).toHaveBeenCalledWith(items, undefined, undefined);
     expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp" });
     expect(getClientSettings).toHaveBeenCalledTimes(1);
     expect(setClientSettings).toHaveBeenCalledWith(DEFAULT_CLIENT_SETTINGS);
