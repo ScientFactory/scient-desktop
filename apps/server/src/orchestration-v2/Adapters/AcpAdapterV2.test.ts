@@ -4879,6 +4879,8 @@ describe("AcpAdapterV2", () => {
       const [silent, next] = yield* harness.terminals(2);
       assert.equal(silent?.status, "failed");
       assert.include(silent?.failure?.message, "15 minutes");
+      // SCIENT-FORK: analytics count the watchdog by its own code.
+      assert.equal(silent?.failure?.code, "prompt_inactivity");
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 2);
     }).pipe(Effect.provide(layerTest)),

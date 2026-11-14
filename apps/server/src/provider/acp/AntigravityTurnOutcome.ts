@@ -11,6 +11,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+// SCIENT-FORK:START — Scient classifies harness errors that are not Google API errors.
+import { antigravityHarnessFailure } from "../../scient/providerLifecycle/AntigravityHarnessFailure.ts";
+// SCIENT-FORK:END
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
 
 // CORTEX_STEP_TYPE_ERROR_MESSAGE in the native trajectory.
@@ -122,13 +125,14 @@ function turnFailure(
       code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
       retryable: true,
       resetAt: resetAtFrom(text, now) ?? null,
+      // SCIENT-FORK: the Google API error's HTTP status.
+      httpStatus: apiError === null ? null : Number(apiError[1]),
     });
   }
   if (apiError === null) {
-    return makeProviderFailure({
-      class: "provider_error",
-      message: "Antigravity stopped this turn because of an error.",
-    });
+    // SCIENT-FORK:START — Antigravity's own error text, and a tool server that failed to start.
+    return antigravityHarnessFailure(step?.payload ?? null);
+    // SCIENT-FORK:END
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
@@ -138,6 +142,8 @@ function turnFailure(
     code: status ?? null,
     retryable: rateLimited || Number(httpStatus) >= 500,
     resetAt: resetAtFrom(text, now) ?? null,
+    // SCIENT-FORK: the Google API error's HTTP status.
+    httpStatus: Number(httpStatus),
   });
 }
 

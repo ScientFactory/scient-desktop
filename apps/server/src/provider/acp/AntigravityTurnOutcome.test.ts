@@ -89,6 +89,8 @@ describe("watchAntigravityPromptOutcome", () => {
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T01:00:00.000Z",
+          // SCIENT-FORK: the Google API error's HTTP status.
+          httpStatus: 429,
         },
       );
       // The earlier error step is outside this turn.
@@ -115,6 +117,8 @@ describe("watchAntigravityPromptOutcome", () => {
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T00:00:42.000Z",
+          // SCIENT-FORK: the Google API error's HTTP status.
+          httpStatus: 429,
         },
       );
       assert.deepEqual(
@@ -127,6 +131,8 @@ describe("watchAntigravityPromptOutcome", () => {
           message: "Request contains an invalid argument.",
           code: "INVALID_ARGUMENT",
           retryable: false,
+          // SCIENT-FORK: the Google API error's HTTP status.
+          httpStatus: 400,
         },
       );
       // A completed tool keeps its usage, and the turn still fails.
