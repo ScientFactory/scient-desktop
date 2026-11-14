@@ -694,8 +694,12 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
   // checkout or worktree does not have yet.
   if (input.mode !== "dev:web") {
     const crate = path.join(repoRoot, "native/resource-monitor");
+    // SCIENT-FORK:START — Scient's crate builds the scient-named binary.
     const binary =
-      (yield* HostProcess.Platform) === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+      (yield* HostProcess.Platform) === "win32"
+        ? "scient-resource-monitor.exe"
+        : "scient-resource-monitor";
+    // SCIENT-FORK:END
     if (
       !(yield* exists(path.join(crate, "target/release", binary))) &&
       !(yield* exists(path.join(crate, "target/debug", binary)))

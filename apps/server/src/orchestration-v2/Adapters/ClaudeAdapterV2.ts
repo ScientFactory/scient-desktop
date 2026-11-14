@@ -6172,7 +6172,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
         >();
         // Claude reports a stopped workflow's members as failed; this is the only evidence it was Stop.
-        const workflowStopRequestedAt = new Map<string, number>();
+        // SCIENT-FORK: a Stop belongs to the workflow activation it was sent to.
+        const workflowStopRequestedAt = new Map<string, { at: number; activation: number }>();
         // Buffered idle outcomes must not settle a resumed child again.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
         // Subagent frames can precede the task_started that registers their owner.
@@ -7613,7 +7614,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return;
             const memberKey = `${input.coordinator.childThreadId}:agent:${member.index}`;
             const previous = seen.get(memberKey);
-            const stopRequestedAt = workflowStopRequestedAt.get(taskId);
+            // SCIENT-FORK:START - a Stop sent to an earlier activation does not cancel this one.
+            const stopRequest = workflowStopRequestedAt.get(taskId);
+            const stopRequestedAt =
+              stopRequest?.activation ===
+              (input.coordinator.task.presentation?.activationCount ?? 1)
+                ? stopRequest.at
+                : undefined;
+            // SCIENT-FORK:END
             let status = // SCIENT-FORK: include sparse native observation states below.
               (member.state === "queued" || member.state === "running") &&
               input.coordinator.task.status !== "running"
@@ -15067,7 +15075,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: "No running workflow activation belongs to this provider thread",
               });
             }
-            workflowStopRequestedAt.set(taskId, DateTime.toEpochMillis(yield* DateTime.now));
+            workflowStopRequestedAt.set(taskId, {
+              at: DateTime.toEpochMillis(yield* DateTime.now),
+              activation: task.task.presentation?.activationCount ?? 1,
+            });
             yield* liveQuery.query.stopTask(taskId).pipe(
               Effect.mapError(
                 (cause) =>

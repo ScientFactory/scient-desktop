@@ -587,7 +587,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("dev-runner", (it
             Effect.provideService(FileSystem.FileSystem, {
               ...fs,
               exists: (file) =>
-                NodePath.basename(file) === "t3-resource-monitor"
+                NodePath.basename(file) === "scient-resource-monitor"
                   ? Effect.succeed(
                       built !== undefined && NodePath.basename(NodePath.dirname(file)) === built,
                     )

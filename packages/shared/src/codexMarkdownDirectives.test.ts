@@ -100,7 +100,8 @@ describe.each([
     ["\\\\server\\share\\report.md", "\\\\server\\share\\report.md"],
     ["/tmp/report%5C.md", "/tmp/report%5C.md"],
     ["~\\reports\\draft.md", "~/reports/draft.md"],
-    ["reports/100% #1? draft.md", "./reports/100% #1? draft.md"],
+    // SCIENT-FORK: Scient's link pattern accepts this path, so it keeps no "./".
+    ["reports/100% #1? draft.md", "reports/100% #1? draft.md"],
     ["./reports/draft.md", "./reports/draft.md"],
   ])("preserves the literal path and line: %s", (path, linkPath) => {
     const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);

@@ -174,8 +174,8 @@ import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptSt
 import {
   ContextHandoffServiceV2,
   readForkHistoryItems,
-  readInheritedHandoffItems,
   readPortableForkItems,
+  readRunForkAncestorItems,
   visibleConversationItems,
   visibleDeltaRunOrdinals,
 } from "./ContextHandoffService.ts";
@@ -1972,12 +1972,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
   );
 
-  /** Includes tombstones, which still reserve their id. */
+  // SCIENT-FORK:START — a Scient fork's frozen rows arrive as its runless rows instead.
   const readInheritedItems = (thread: OrchestrationV2AppThread) =>
-    readInheritedHandoffItems(projectionStore, thread).pipe(
+    readRunForkAncestorItems(projectionStore, thread).pipe(
       Effect.mapError((cause) => new OrchestratorProjectionError({ threadId: thread.id, cause })),
     );
+  // SCIENT-FORK:END
 
+  /** Includes tombstones, which still reserve their id. */
   const findThread = (threadId: ThreadId) =>
     projectionStore.getThread(threadId).pipe(
       Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),

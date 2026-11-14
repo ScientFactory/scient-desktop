@@ -25339,6 +25339,66 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // SCIENT-FORK:START - Scient reopens a settled workflow as a new activation.
+  it.effect("keeps a reopened workflow's member failure failed after an earlier Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWorkflowHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-workflow-stop-reopened"),
+            text: "Run the alpha workflow.",
+            attachments: [],
+          }),
+        );
+        yield* launchWorkflow({ harness, snapshotUuid: "00000000-0000-4000-8000-000000001395" });
+        const latestMember = () => workflowMemberEvents(harness.events, 1).at(-1)?.subagent;
+        yield* harness.runtime.stopTask!({
+          providerThread: harness.providerThread,
+          taskId: WORKFLOW_TASK_ID,
+        });
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001396", state: "error" }),
+        );
+        assert.equal(latestMember()?.status, "cancelled");
+        yield* harness.offerAndWait(
+          workflowNotification({ uuid: "00000000-0000-4000-8000-000000001397", status: "stopped" }),
+        );
+        yield* harness.offerAndWait(workflowTaskStarted);
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001398", state: "start" }),
+        );
+        yield* harness.until(
+          () =>
+            latestMember()?.status === "running" &&
+            latestMember()?.presentation?.activationCount === 2,
+        );
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001399", state: "error" }),
+        );
+        assert.equal(latestMember()?.status, "failed");
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-00000000139a", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+  // SCIENT-FORK:END
+
   it.effect("reads a settled workflow member's transcript to its end past the read cap", () =>
     Effect.gen(function* () {
       const harness = yield* makeWorkflowHarness;

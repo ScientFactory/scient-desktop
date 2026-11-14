@@ -5788,6 +5788,8 @@ describe("orchestration v2 provider switching", () => {
           const switched = turnFor("fork-codex");
           // The switched provider gets the conversation the fork shows, oldest first.
           assert.include(switched, "Prompt source");
+          // SCIENT-FORK: a Scient fork's frozen rows arrive once, as its runless rows.
+          assert.lengthOf(switched.split("Prompt source"), 2);
           const positions = ["Prompt source", "release marker is violet", "Prompt fork-claude"].map(
             (text) => switched.indexOf(text),
           );

@@ -51,7 +51,8 @@ describe("resolveCodexFileCitationLink", () => {
       }),
     ).toEqual({
       path: "reports/100% #1? draft.md",
-      href: "./reports/100%25 %231%3F draft.md#L7",
+      // SCIENT-FORK: Scient's link pattern accepts this path, so it needs no "./".
+      href: "reports/100%25 %231%3F draft.md#L7",
       label: "100% #1? draft.md",
       lineRangeStart: 7,
     });
@@ -64,7 +65,7 @@ describe("codexFileCitationMarkdown", () => {
       path: "reports/*draft*_[copy]`<&.txt",
     });
     expect(citation && codexFileCitationMarkdown(citation)).toBe(
-      "[\\*draft\\*\\_\\[copy\\]\\`\\<\\&.txt](<./reports/*draft*_[copy]`%3C%26.txt>)",
+      "[\\*draft\\*\\_\\[copy\\]\\`\\<\\&.txt](<reports/*draft*_[copy]`%3C%26.txt>)",
     );
   });
 });

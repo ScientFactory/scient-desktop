@@ -377,7 +377,13 @@ describe("readChromiumCookieDatabase", () => {
         "darwin",
       );
 
-      expect(result).toEqual({ cookies: [], undecryptable: 0, undecryptableHosts: [] });
+      expect(result).toEqual({
+        cookies: [],
+        undecryptable: 0,
+        undecryptableHosts: [],
+        // SCIENT-FORK: Scient counts skipped cookies by reason.
+        skippedByReason: { appBoundEncryption: 0, decryptFailed: 0, partitionUnsupported: 0 },
+      });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
