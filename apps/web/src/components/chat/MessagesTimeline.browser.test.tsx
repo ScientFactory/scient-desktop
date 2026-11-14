@@ -1219,9 +1219,8 @@ describe("MessagesTimeline citations", () => {
     );
     await expect.element(screen.getByText(text)).toHaveStyle({ pointerEvents: "auto" });
     await userEvent.tripleClick(screen.getByText(text));
-    await expect
-      .element(page.getByRole("button", { name: "Cite selection in composer" }))
-      .toBeVisible();
+    // SCIENT-FORK: Scient's selection action is Ask in chat.
+    await expect.element(page.getByRole("button", { name: "Ask in chat" })).toBeVisible();
   });
 
   it("lands a citation present at mount under StrictMode", async () => {

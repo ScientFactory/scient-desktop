@@ -122,9 +122,11 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
     desktopByTabId: {
       "tab-1": {
         hasWebContents: true,
-        navStatus: mocks.idleDesktopOverlay
-          ? { _tag: "Idle" }
-          : { _tag: "Success", url: "http://example.com/", title: "Example" },
+        // SCIENT-FORK: an empty tab's desktop view is idle too, for Scient's start page tests.
+        navStatus:
+          mocks.idleDesktopOverlay || mocks.showEmptyState
+            ? { _tag: "Idle" }
+            : { _tag: "Success", url: "http://example.com/", title: "Example" },
         canGoBack: false,
         canGoForward: false,
         loading: mocks.loading,
