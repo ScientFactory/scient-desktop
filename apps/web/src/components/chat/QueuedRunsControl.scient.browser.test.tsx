@@ -59,6 +59,7 @@ const props = {
   onCancelEdit: () => undefined,
   timestampFormat: "locale",
   onOpenThread: () => undefined,
+  onImageExpand: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
 
 function queuedRun(ordinal: number, held: boolean): OrchestrationV2Run {

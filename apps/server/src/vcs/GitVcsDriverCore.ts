@@ -73,6 +73,8 @@ const isCheckoutRefusal = Schema.is(
 // SCIENT-FORK:END overleaf-checkout-barrier
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
+// SCIENT-FORK: narrows the kept listing cause.
+const isGitCommandError = Schema.is(GitCommandError);
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** T3's record of the branch, named as on the host, that a branch was cut from. */
 const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`;
@@ -3847,7 +3849,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           Math.min(UNTRACKED_TOTALS_RETRY_MIN_MS * 2 ** (count - 1), UNTRACKED_TOTALS_RETRY_MAX_MS),
         detail: untracked.unavailable,
         // SCIENT-FORK: keeps the listing error as cause; also offered upstream.
-        cause: "cause" in untracked ? untracked.cause : undefined,
+        cause:
+          "cause" in untracked && isGitCommandError(untracked.cause) ? untracked.cause : undefined,
       });
       if (untrackedTotalsFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
         const oldestKey = untrackedTotalsFailures.keys().next().value;

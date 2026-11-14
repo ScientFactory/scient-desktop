@@ -3242,7 +3242,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         isActive={routeRowThreadKey === threadKey}
         revealRef={routeRowThreadKey === threadKey ? revealActiveRow : undefined}
         isRouteThread={routeThreadKey === threadKey}
-        openPullRequestsInRightPanel={routeThreadRef !== null}
+        readOpensPullRequestsInRightPanel={readOpensPullRequestsInRightPanel}
         jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
         currentEnvironmentId={primaryEnvironmentId}
         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}

@@ -19844,6 +19844,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       Effect.sync(() => {
                         sdkStops.push({ query, taskId });
                       }).pipe(Effect.andThen(Queue.offer(sdkStopRequests, { query, taskId }))),
+                    renameSession: () => Effect.void,
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
                     readMcpResource: () => Effect.die("unexpected MCP resource read"),
