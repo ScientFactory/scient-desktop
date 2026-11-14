@@ -498,12 +498,16 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
 }
 
 /**
- * Finishes merges and Undos a stopped process left halfway. Every merge and Undo does this
- * first; the server also does it when it first opens the Library for writing, so a half-merged
- * source never waits for the next merge.
+ * Finishes merges and Undos that stopped halfway (a killed process, or an error such as a full
+ * disk). Every merge and Undo does this first, and the server before each write call. With
+ * nothing pending it reads one directory and takes no lock.
  */
 export async function settleScientLibraryMerges(library: ScientLibraryLocation): Promise<void> {
   const paths = await libraryPaths(library);
+  const pending = await NodeFSP.readdir(
+    NodePath.join(paths.root, MERGES_DIRECTORY, PENDING_MERGES_DIRECTORY),
+  ).catch(() => []);
+  if (!pending.some((name) => name.endsWith(".json"))) return;
   await withStoreLock(paths, "source-write", () => settlePendingMerges(paths));
 }
 

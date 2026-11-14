@@ -18,7 +18,10 @@ import {
   scientLibraryMoveStatusLines,
 } from "@scientfactory/scient-sources/library-move";
 import { readScientLibraryAliases } from "@scientfactory/scient-sources/library-aliases";
-import { mergeScientLibrarySources } from "@scientfactory/scient-sources/library-merge";
+import {
+  mergeScientLibrarySources,
+  undoScientLibraryMerge,
+} from "@scientfactory/scient-sources/library-merge";
 import {
   ensureScientLibrary,
   scientLibraryLocation,
@@ -535,49 +538,94 @@ describe("the move status, one row per state", () => {
   );
 });
 
-describe("a merge a stopped process left halfway", () => {
-  it.effect("is finished by the first write call of the next process", () =>
+/** Runs `work` while every write of `aliases.json` fails, as when a process stops or a disk fills there. */
+async function stoppedAtAliases(work: () => Promise<unknown>): Promise<boolean> {
+  const rename = NodeFS.promises.rename;
+  NodeFS.promises.rename = async (from, to) => {
+    if (String(to).endsWith("aliases.json")) throw new Error("Stopped here.");
+    return rename(from, to);
+  };
+  NodeModule.syncBuiltinESMExports();
+  try {
+    return await work().then(
+      () => false,
+      () => true,
+    );
+  } finally {
+    NodeFS.promises.rename = rename;
+    NodeModule.syncBuiltinESMExports();
+  }
+}
+
+describe("a merge or an Undo that stopped halfway", () => {
+  const pair = (fixture: Fixture) =>
+    Effect.promise(async () => {
+      await ensureScientLibrary(fixture.library.root);
+      const kept = await addSource(fixture.library, "KEPT");
+      const merged = await addSource(fixture.library, "MERGED");
+      return [kept.sourceId, merged.sourceId] as const;
+    });
+  const merge = (fixture: Fixture, [kept, merged]: readonly [string, string]) =>
+    mergeScientLibrarySources({
+      library: fixture.library,
+      sourceIds: [kept, merged],
+      survivorId: kept,
+    });
+  const aliasOf = (fixture: Fixture, sourceId: string) =>
+    Effect.promise(async () => (await readScientLibraryAliases(fixture.library)).get(sourceId));
+
+  it.effect("a merge is finished by the next write call", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(() => setup());
-      yield* Effect.promise(() => ensureScientLibrary(fixture.library.root));
-      const kept = yield* Effect.promise(() => addSource(fixture.library, "KEPT"));
-      const merged = yield* Effect.promise(() => addSource(fixture.library, "MERGED"));
-      // The process stops after the merged source reached the Trash and before its alias.
-      const rename = NodeFS.promises.rename;
-      NodeFS.promises.rename = async (from, to) => {
-        if (String(to).endsWith("aliases.json")) throw new Error("The process stopped here.");
-        return rename(from, to);
-      };
-      NodeModule.syncBuiltinESMExports();
-      const stopped = yield* Effect.promise(() =>
-        mergeScientLibrarySources({
-          library: fixture.library,
-          sourceIds: [kept.sourceId, merged.sourceId],
-          survivorId: kept.sourceId,
-        }).then(
-          () => false,
-          () => true,
-        ),
-      ).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            NodeFS.promises.rename = rename;
-            NodeModule.syncBuiltinESMExports();
-          }),
-        ),
-      );
-      expect(stopped).toBe(true);
-      expect((yield* Effect.promise(() => readScientLibraryAliases(fixture.library))).size).toBe(0);
+      const ids = yield* pair(fixture);
+      // The merged source reached the Trash; its alias did not.
+      expect(yield* Effect.promise(() => stoppedAtAliases(() => merge(fixture, ids)))).toBe(true);
+      expect(yield* aliasOf(fixture, ids[1])).toBeUndefined();
 
       yield* writeStore(fixture);
 
-      const aliases = yield* Effect.promise(() => readScientLibraryAliases(fixture.library));
-      expect(aliases.get(merged.sourceId)?.survivorId).toBe(kept.sourceId);
-      expect(
-        (yield* Effect.promise(() => listScientSourceRecords(fixture.library))).map(
-          (record) => record.sourceId,
+      expect((yield* aliasOf(fixture, ids[1]))?.survivorId).toBe(ids[0]);
+    }),
+  );
+
+  // regression: review H1-a-1 finding 1, a settled-once memory skipped this.
+  it.effect("an Undo that failed in a running server is finished by its next write call", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(() => setup());
+      const ids = yield* pair(fixture);
+      yield* writeStore(fixture);
+      const merged = yield* Effect.promise(() => merge(fixture, ids));
+      if (merged.outcome !== "merged") throw new Error("Expected a merge.");
+      // The merged source is back among the sources; its alias still points at the kept one.
+      const failed = yield* Effect.promise(() =>
+        stoppedAtAliases(() =>
+          undoScientLibraryMerge({ library: fixture.library, mergeId: merged.merge.mergeId }),
         ),
-      ).toEqual([kept.sourceId]);
+      );
+      expect(failed).toBe(true);
+      expect((yield* aliasOf(fixture, ids[1]))?.undoneAt).toBeUndefined();
+
+      yield* writeStore(fixture);
+
+      expect((yield* aliasOf(fixture, ids[1]))?.undoneAt).toBeDefined();
+    }),
+  );
+
+  it.effect("the background pass finishes it too, for a server with only read-only sessions", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(() => setup());
+      const ids = yield* pair(fixture);
+      expect(yield* Effect.promise(() => stoppedAtAliases(() => merge(fixture, ids)))).toBe(true);
+
+      yield* runLibraryMovePass([fixture.root]).pipe(
+        Effect.provideService(ServerConfig.ServerConfig, {
+          stateDir: fixture.stateDir,
+        } as ServerConfig.ServerConfig["Service"]),
+        Effect.provideService(ScientSourcesBackend, "library"),
+        Effect.provide(gitLayer(fixture)),
+      );
+
+      expect((yield* aliasOf(fixture, ids[1]))?.survivorId).toBe(ids[0]);
     }),
   );
 });

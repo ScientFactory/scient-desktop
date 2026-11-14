@@ -78,23 +78,17 @@ const projectStore = (project: ScientSourcesProject): ScientSourcesStore => ({
   store: project.root,
 });
 
-/** Libraries this process has already checked for merges a stopped process left halfway. */
-const settledLibraries = new Set<string>();
-
 /**
- * Finishes merges and Undos a stopped process left halfway, once per process and library: a
- * crash is followed by a new process, whose first write call lands here. A failure is logged and
- * tried again on the next write call; it never fails that call.
+ * Finishes merges and Undos that stopped halfway, before anything else is written: a killed
+ * process, or an error that left the process running. Cheap when nothing is pending. A failure is
+ * logged and tried again on the next write call; it never fails that call.
  */
-const finishInterruptedLibraryMerges = (library: ScientLibraryLocation) =>
-  settledLibraries.has(library.root)
-    ? Effect.void
-    : Effect.promise(() => settleScientLibraryMerges(library)).pipe(
-        Effect.andThen(Effect.sync(() => void settledLibraries.add(library.root))),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Could not finish the Library's interrupted merges.", { cause }),
-        ),
-      );
+export const finishInterruptedLibraryMerges = (library: ScientLibraryLocation) =>
+  Effect.promise(() => settleScientLibraryMerges(library)).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not finish the Library's interrupted merges.", { cause }),
+    ),
+  );
 
 /**
  * Where a Sources call reads and writes: today's project root, or the project root plus the

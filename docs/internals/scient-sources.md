@@ -398,11 +398,17 @@ the pair is then found again. An Undo first writes
 `merges/pending/undo_<merge-id>.json` (who started it and when); settling runs
 that Undo's writes again, each of which is safe to repeat, and skips a source
 that has gone since. Every merge, bulk pass and Undo settles first, and so does
-the first write call of each server process (`finishInterruptedLibraryMerges`
-in `SourcesBackend.ts`): a crash is followed by a new process, so a merged
-source never waits in the Trash without its alias, and a restored one never
-keeps an alias to the survivor, until the next merge. A failed settle is logged
-and tried again on the next write call.
+every server write call (`finishInterruptedLibraryMerges` in
+`SourcesBackend.ts`) and the background pass, which covers a server that only
+gets read-only sessions. With nothing pending, settling reads one directory and
+takes no lock. So neither a killed process nor an error in a process that
+stays up (a full disk) leaves a merged source in the Trash without its alias,
+or a restored one with an alias to the survivor, past the next write. A failed
+settle is logged and tried again on the next write call; it never fails that
+call. Known limit: a settle that fails, followed at once by a write that
+changes the same collection's membership of the two sources (or sets a merged
+field back to the merged value), is replayed over that change when settling
+later succeeds.
 
 `undoScientLibraryMerge` restores the loser as a new revision, reverts each
 field the merge set only where the survivor still holds the merged value,
