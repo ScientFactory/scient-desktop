@@ -132,7 +132,7 @@ function RoomDialog({
   const people = room?.participants ?? [];
   return (
     <Dialog open onOpenChange={(open) => (!open && !creating ? onClose() : null)}>
-      <DialogPopup className="max-w-lg">
+      <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>Share</DialogTitle>
           <DialogDescription>People you invite see this thread live.</DialogDescription>
@@ -155,7 +155,7 @@ function RoomDialog({
                     ))}
                   </NativeSelect>
                 </span>
-                <span className="w-36 shrink-0">
+                <span className="w-24 shrink-0">
                   <NativeSelect
                     aria-label="Access for"
                     size="sm"
