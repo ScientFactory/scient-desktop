@@ -4,13 +4,13 @@
 import { useSyncExternalStore } from "react";
 import type {
   EnvironmentId,
+  VoiceCancelTranscriptionRequest,
   VoiceTranscribeRequest,
   VoiceTranscriptionLanguage,
 } from "@t3tools/contracts";
 
 import { randomUUID } from "../../lib/utils.ts";
 import type { ScientAnalyticsUiEvent } from "@t3tools/contracts";
-import type { VoiceTranscriptionClient } from "./voiceClient.ts";
 import { describeVoiceError } from "./voiceErrorPresentation.ts";
 import {
   correctVoiceTranscript,
@@ -22,13 +22,23 @@ const EMPTY_TRANSCRIPT_MESSAGE = "No speech detected";
 
 export type VoiceJobPhase = "transcribing" | "correcting";
 
+/** Turns a committed recording into text: this computer's Whisper, or ChatGPT. */
+export interface VoiceJobTranscriber {
+  readonly transcribe: (request: VoiceTranscribeRequest) => Promise<{ readonly text: string }>;
+  readonly cancelTranscriptionRequest?: (request: VoiceCancelTranscriptionRequest) => Promise<void>;
+}
+
+/** The analytics name of the engine that transcribed. */
+export type VoiceEngineClass = "local-whisper" | "chatgpt";
+
 export interface VoiceJobInput {
   /** Fixed at the stop click; the control showing this key displays the job. */
   readonly ownerKey: string;
   /** The recorder's final flush, already started. */
   readonly clip: Promise<VoiceWavClip | null>;
   readonly send: boolean;
-  readonly voiceBridge: Pick<VoiceTranscriptionClient, "transcribe" | "cancelTranscriptionRequest">;
+  readonly voiceBridge: VoiceJobTranscriber;
+  readonly engineClass: VoiceEngineClass;
   readonly correction: {
     readonly corrector: VoiceTranscriptCorrectionClient;
     readonly environmentId: EnvironmentId;
@@ -151,7 +161,7 @@ function complete(
       name: "voice.transcription.failed",
       properties: {
         voiceSchemaVersion: 2,
-        engineClass: "local-whisper",
+        engineClass: job.input.engineClass,
         failureClass: "delivery",
         stage: "delivering",
         durationMs: performance.now() - job.startedAt,
@@ -162,7 +172,7 @@ function complete(
   record(job, {
     name: "voice.transcription.completed",
     properties: {
-      engineClass: "local-whisper",
+      engineClass: job.input.engineClass,
       voiceSchemaVersion: 2,
       durationMs: performance.now() - job.startedAt,
       transcriptionDurationMs: job.transcriptionDurationMs ?? performance.now() - startedAt,
@@ -181,7 +191,7 @@ async function run(job: VoiceJob): Promise<void> {
     name: "voice.transcription.started",
     properties: {
       voiceSchemaVersion: 2,
-      engineClass: "local-whisper",
+      engineClass: job.input.engineClass,
       languageMode: input.language ? "explicit" : "automatic",
     },
   });
@@ -193,7 +203,7 @@ async function run(job: VoiceJob): Promise<void> {
         name: "voice.transcription.failed",
         properties: {
           voiceSchemaVersion: 2,
-          engineClass: "local-whisper",
+          engineClass: job.input.engineClass,
           failureClass: "audio",
           stage: "preparing",
           durationMs: performance.now() - job.startedAt,
@@ -226,7 +236,7 @@ async function run(job: VoiceJob): Promise<void> {
         name: "voice.transcription.failed",
         properties: {
           voiceSchemaVersion: 2,
-          engineClass: "local-whisper",
+          engineClass: job.input.engineClass,
           failureClass: "audio",
           stage: "transcribing",
           durationMs: performance.now() - job.startedAt,
@@ -267,7 +277,7 @@ async function run(job: VoiceJob): Promise<void> {
       name: "voice.transcription.failed",
       properties: {
         voiceSchemaVersion: 2,
-        engineClass: "local-whisper",
+        engineClass: job.input.engineClass,
         failureClass: "engine",
         stage: "transcribing",
         durationMs: performance.now() - job.startedAt,

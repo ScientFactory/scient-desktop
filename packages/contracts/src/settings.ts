@@ -84,7 +84,7 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
 } from "./providerInstance.ts";
-import { VoiceLanguagePreference } from "./voice.ts";
+import { VoiceDictationEngine, VoiceLanguagePreference } from "./voice.ts";
 import { CustomModelsSettings } from "./customModels.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 // SCIENT-FORK: conversation-fork preferences.
@@ -635,6 +635,11 @@ export const ClientSettingsSchema = Schema.Struct({
   voiceLanguagePreference: VoiceLanguagePreference.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_LANGUAGE_PREFERENCE)),
   ),
+  // SCIENT-FORK:START — dictation with ChatGPT through Scient Agent's sign-in.
+  voiceDictationEngine: VoiceDictationEngine.pipe(
+    Schema.withDecodingDefault(Effect.succeed("local" as const)),
+  ),
+  // SCIENT-FORK:END
   // Superseded by voiceMicrophones; read only to seed an empty order.
   voiceMicrophone: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   // Device-local microphone order. Recording uses the first connected entry.
@@ -2307,6 +2312,9 @@ export const ClientSettingsPatch = Schema.Struct({
   timestampFormat: Schema.optionalKey(TimestampFormat),
   voiceTranscriptCorrectionEnabled: Schema.optionalKey(Schema.Boolean),
   voiceLanguagePreference: Schema.optionalKey(VoiceLanguagePreference),
+  // SCIENT-FORK:START — dictation with ChatGPT through Scient Agent's sign-in.
+  voiceDictationEngine: Schema.optionalKey(VoiceDictationEngine),
+  // SCIENT-FORK:END
   voiceMicrophone: Schema.optionalKey(Schema.String),
   voiceMicrophones: Schema.optionalKey(Schema.Array(VoiceMicrophoneEntry)),
   voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),

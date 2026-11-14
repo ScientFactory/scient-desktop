@@ -5,12 +5,14 @@ import type {
   VoiceModelDownloadProgress,
   VoiceModelId,
   VoiceModelsSnapshot,
+  VoiceDictationEngine,
   VoiceLanguagePreference,
 } from "@t3tools/contracts";
 
 import { randomUUID } from "../../lib/utils.ts";
 
 import { type VoiceRecorderErrorKind, useVoiceRecorder } from "./useVoiceRecorder.ts";
+import { SIGN_IN_TO_DICTATE_MESSAGE } from "./chatGptDictation.ts";
 import type { VoiceTranscriptionClient } from "./voiceClient.ts";
 import {
   deliverVoiceTranscriptToDraft,
@@ -27,6 +29,7 @@ import {
   startVoiceJob,
   useVoiceJob,
   useVoiceJobError,
+  type VoiceJobTranscriber,
 } from "./voiceProcessing.ts";
 import type { VoiceWavClip } from "./voiceWavEncoder.ts";
 import { useBeginVoiceAnalytics, useRecordScientAnalytics } from "../analytics/client.ts";
@@ -41,6 +44,11 @@ export type VoicePhase =
   | "transcribing"
   | "correcting";
 
+/** ChatGPT dictation whose sign-in ended while recording: it fails instead of going local. */
+const signedOutOfChatGpt: VoiceJobTranscriber = {
+  transcribe: () => Promise.reject(new Error(SIGN_IN_TO_DICTATE_MESSAGE)),
+};
+
 const MODEL_SETUP_FAILED_MESSAGE = "Voice setup didn't finish. Try again.";
 const ARM_DELAY_MS = 250;
 
@@ -49,6 +57,9 @@ interface VoiceControllerOptions {
   readonly correctionClient?: VoiceTranscriptCorrectionClient | null;
   readonly correctionEnabled?: boolean;
   readonly languagePreference?: VoiceLanguagePreference;
+  /** Who transcribes. ChatGPT needs `chatGpt`, a Scient Agent signed in to ChatGPT. */
+  readonly engine?: VoiceDictationEngine;
+  readonly chatGpt?: VoiceJobTranscriber | null;
   readonly environmentId?: EnvironmentId;
   /**
    * The composer draft a stop click commits to. With an origin, a committed
@@ -149,6 +160,8 @@ export function useScientVoiceController({
   correctionClient = null,
   correctionEnabled = false,
   languagePreference = "auto",
+  engine = "local",
+  chatGpt = null,
   environmentId,
   draftOrigin = null,
   localFieldKey = null,
@@ -156,6 +169,7 @@ export function useScientVoiceController({
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
   const recordAnalytics = useStableCallback(useRecordScientAnalytics());
+  const engineClass = engine === "chatgpt" ? "chatgpt" : "local-whisper";
   const beginVoiceAnalytics = useBeginVoiceAnalytics(environmentId);
   const [{ localPhase, errorMessage, microphonePermissionDenied }, dispatchController] = useReducer(
     (
@@ -289,7 +303,8 @@ export function useScientVoiceController({
       ownerKey,
       clip,
       send,
-      voiceBridge: client,
+      voiceBridge: engine === "chatgpt" ? (chatGpt ?? signedOutOfChatGpt) : client,
+      engineClass,
       correction: correctionRequested ? { corrector: correctionClient, environmentId } : null,
       language: languagePreference === "auto" ? undefined : languagePreference,
       recordAnalytics: beginVoiceAnalytics(),
@@ -330,7 +345,7 @@ export function useScientVoiceController({
           name: "voice.recording.failed",
           properties: {
             voiceSchemaVersion: 2,
-            engineClass: "local-whisper",
+            engineClass,
             failureClass: "permission",
             stage: "recording",
           },
@@ -350,6 +365,13 @@ export function useScientVoiceController({
 
   const activate = async (): Promise<void> => {
     if (!client) return;
+    // ChatGPT needs no model on this computer, only Scient Agent's sign-in.
+    if (engine === "chatgpt") {
+      clearErrors();
+      if (chatGpt) await beginRecording();
+      else setErrorMessage(SIGN_IN_TO_DICTATE_MESSAGE);
+      return;
+    }
     const operation = (operationRef.current += 1);
     clearErrors();
     let state: VoiceModelsSnapshot;
@@ -493,11 +515,11 @@ export function useScientVoiceController({
       properties: {
         voiceSchemaVersion: 2,
         stage: "recording",
-        engineClass: "local-whisper",
+        engineClass,
         failureClass: recorderErrorKind === "permission-denied" ? "permission" : "audio",
       },
     });
-  }, [recordAnalytics, recorderErrorKind, recorderStatus]);
+  }, [engineClass, recordAnalytics, recorderErrorKind, recorderStatus]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- advances the elapsed-time display on an interval while recording
   useEffect(() => {

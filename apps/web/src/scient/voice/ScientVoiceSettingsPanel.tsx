@@ -20,6 +20,8 @@ import {
   type VoiceModelsSnapshot,
 } from "@t3tools/contracts";
 
+import { ChatGptDictationCard } from "./ChatGptDictationCard";
+import { useChatGptDictation } from "./chatGptDictation";
 import { describeVoiceError } from "./voiceErrorPresentation";
 import { getVoiceBridge } from "./voiceClient";
 import { Badge } from "../../components/ui/badge";
@@ -34,6 +36,7 @@ import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { SettingsPageContainer, SettingsSection } from "../../components/settings/settingsLayout";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 
 function formatBytes(bytes: number): string {
   const mib = bytes / 1024 / 1024;
@@ -383,6 +386,8 @@ export function ScientVoiceSettingsPanel(): ReactNode {
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
   const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const engine = useClientSettings((settings) => settings.voiceDictationEngine);
+  const chatGptSignedIn = useChatGptDictation(usePrimaryEnvironmentId() ?? undefined) !== null;
   const [snapshot, setSnapshot] = useState<VoiceModelsSnapshot | null>(null);
   const [busyModelId, setBusyModelId] = useState<VoiceModelId | null>(null);
   const [localDownloadModelId, setLocalDownloadModelId] = useState<VoiceModelId | null>(null);
@@ -488,6 +493,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
 
   const handleSelect = (modelId: VoiceModelId) => {
     if (!client) return;
+    updateClientSettings({ voiceDictationEngine: "local" });
     void run(modelId, () => client.selectModel({ modelId }));
   };
 
@@ -553,7 +559,8 @@ export function ScientVoiceSettingsPanel(): ReactNode {
           <div className="border-border/60 border-t pt-3">
             <h3 className="font-medium text-sm">Voice model</h3>
             <p className="text-muted-foreground text-xs">
-              Choose the balance of speed and accuracy for this computer.
+              Transcribe with ChatGPT, or on this computer with the balance of speed and accuracy
+              you choose.
             </p>
           </div>
           {!snapshot ? (
@@ -570,12 +577,17 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             </p>
           ) : null}
           <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
+            <ChatGptDictationCard
+              selected={engine === "chatgpt"}
+              signedIn={chatGptSignedIn}
+              onSelect={() => updateClientSettings({ voiceDictationEngine: "chatgpt" })}
+            />
             {snapshot?.models.map((model) => (
               <VoiceModelCard
                 key={model.id}
                 model={model}
                 runtimeAvailable={snapshot.runtimeAvailable}
-                selected={snapshot.selectedModelId === model.id}
+                selected={engine === "local" && snapshot.selectedModelId === model.id}
                 recommended={snapshot.recommendation?.modelId === model.id}
                 busy={busyModelId !== null}
                 activeDownload={observedActiveDownloadModelId === model.id}

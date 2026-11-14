@@ -633,12 +633,16 @@ import {
   WsScientConnectTurnOffRpc,
 } from "./scient/connectHost.ts";
 // SCIENT-FORK:END
-// SCIENT-FORK:START — Scient Agent live voice RPCs.
+// SCIENT-FORK:START — Scient Agent voice RPCs: live calls and ChatGPT dictation.
 import {
   SCIENT_LIVE_VOICE_WS_METHODS,
   WsLiveVoiceCallRpc,
   WsLiveVoiceMuteRpc,
 } from "./scient/liveVoiceRpcs.ts";
+import {
+  SCIENT_CHATGPT_DICTATION_WS_METHODS,
+  WsVoiceDictateWithChatGptRpc,
+} from "./scient/chatGptDictation.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient editor flush RPCs.
 import {
@@ -715,8 +719,9 @@ export const WS_METHODS = {
   // SCIENT-FORK:START — Scient editor flush methods.
   ...SCIENT_EDITOR_FLUSH_WS_METHODS,
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — Scient Agent live voice methods.
+  // SCIENT-FORK:START — Scient Agent voice methods: live calls and ChatGPT dictation.
   ...SCIENT_LIVE_VOICE_WS_METHODS,
+  ...SCIENT_CHATGPT_DICTATION_WS_METHODS,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   ...SCIENT_WORKSPACE_ENTRY_WS_METHODS,
@@ -2701,9 +2706,10 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsDocumentsPrepareConversationPdfRpc,
   WsDocumentsPublishDocumentPdfRpc,
   WsDocumentsReleaseDocumentPdfRpc,
-  // SCIENT-FORK:START — Scient Agent live voice RPCs.
+  // SCIENT-FORK:START — Scient Agent voice RPCs: live calls and ChatGPT dictation.
   WsLiveVoiceCallRpc,
   WsLiveVoiceMuteRpc,
+  WsVoiceDictateWithChatGptRpc,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush RPCs.
   WsEditorsFlushConnectRpc,

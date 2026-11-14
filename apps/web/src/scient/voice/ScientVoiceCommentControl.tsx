@@ -2,6 +2,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { ScientVoiceComposerControl } from "./ScientVoiceComposerControl.tsx";
+import { useClientSettings } from "../../hooks/useSettings.ts";
+import { useChatGptDictation } from "./chatGptDictation.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
 import { hasReadySelectedVoiceModel } from "./voiceModelReadiness.ts";
 
@@ -24,6 +26,8 @@ export function ScientVoiceCommentControl({
 }): ReactNode {
   const client = getVoiceBridge();
   const [ready, setReady] = useState(false);
+  const engine = useClientSettings((settings) => settings.voiceDictationEngine);
+  const chatGptReady = useChatGptDictation(environmentId) !== null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the voice client's model state when the client changes, ignoring stale completions
   useEffect(() => {
@@ -42,7 +46,7 @@ export function ScientVoiceCommentControl({
     };
   }, [client]);
 
-  if (!client || !ready) return null;
+  if (!client || !(engine === "chatgpt" ? chatGptReady : ready)) return null;
   return (
     <ScientVoiceComposerControl
       ariaLabel="Dictate citation comment"
