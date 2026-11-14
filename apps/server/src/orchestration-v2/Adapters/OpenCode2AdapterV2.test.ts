@@ -769,7 +769,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           buildScientOrchestrationSystemPrompt(!external),
           external
             ? undefined
-            : "To wait for a background shell you started (tests, a build), call `scient_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs.",
+            : // SCIENT-FORK: background-wait recovery: the ID exists only once the start result returns.
+              "To wait for a background shell you started (tests, a build), call `scient_background_wait` with `taskIds: [id]` in a later response, once the start result shows the shell ID, before you end your turn. Do not mark work you leave running, or PRs.",
         ]
           .filter(Boolean)
           .join("\n\n");
@@ -1473,7 +1474,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             taskIds: [shellID],
             awaited: true,
           }),
-          { matched: [] },
+          // SCIENT-FORK: background-wait recovery: a finished shell reads as settled.
+          { matched: [], settled: [shellID] },
         );
         assert.deepInclude(items.filter((i) => i.type === "command_execution").at(-1), {
           type: "command_execution",
@@ -1636,7 +1638,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           taskIds: [id, "sh_other"],
           awaited: true,
         }),
-        { matched: discovery === "settled" ? [] : [id] },
+        // SCIENT-FORK: background-wait recovery: a finished shell reads as settled.
+        discovery === "settled" ? { matched: [], settled: [id] } : { matched: [id] },
       );
       assert.equal(
         yield* runtime.hasPendingBackgroundWorkForThread!(thread),

@@ -43,6 +43,9 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+// SCIENT-FORK:START — background-wait recovery: a refusal names the tasks that do run.
+import { runningBackgroundTasksHint } from "@t3tools/provider-core/server/scientBackgroundWait";
+// SCIENT-FORK:END
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as Clock from "effect/Clock";
@@ -355,6 +358,13 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
     threadId: ThreadId,
     reason: Schema.Literals(["unsupported", "unavailable", "failed", "unmatched"]),
     cause: Schema.optional(Schema.Defect()),
+    // SCIENT-FORK:START — background-wait recovery: a refusal names the tasks that do run.
+    running: Schema.optional(
+      Schema.Array(
+        Schema.Struct({ taskId: Schema.String, description: Schema.optional(Schema.String) }),
+      ),
+    ),
+    // SCIENT-FORK:END
   },
 ) {
   override get message(): string {
@@ -366,7 +376,11 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
       case "failed":
         return "Failed to update the awaited background work.";
       case "unmatched":
-        return "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here.";
+        return (
+          "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here." +
+          // SCIENT-FORK: background-wait recovery: a refusal names the tasks that do run.
+          runningBackgroundTasksHint(this.running ?? [])
+        );
     }
   }
 }
@@ -509,7 +523,12 @@ export interface ThreadManagementServiceShape {
     readonly taskIds: ReadonlyArray<string>;
     readonly awaited: boolean;
   }) => Effect.Effect<
-    { readonly matched: ReadonlyArray<string>; readonly unmatched: ReadonlyArray<string> },
+    {
+      readonly matched: ReadonlyArray<string>;
+      readonly unmatched: ReadonlyArray<string>;
+      // SCIENT-FORK: background-wait recovery: finished ids need no wait.
+      readonly settled?: ReadonlyArray<string>;
+    },
     ThreadManagementBackgroundWaitError
   >;
   readonly stopDelegatedTasks: (input: {
@@ -1629,7 +1648,12 @@ const make = Effect.gen(function* () {
         reason: "unsupported",
       });
     }
-    const { matched } = yield* runtime.value
+    // SCIENT-FORK: background-wait recovery: finished ids and the live roster.
+    const {
+      matched,
+      settled = [],
+      running = [],
+    } = yield* runtime.value
       .awaitBackgroundTasks({ providerThread, taskIds: input.taskIds, awaited: input.awaited })
       .pipe(
         Effect.timeout("15 seconds"),
@@ -1642,14 +1666,21 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    if (input.awaited && matched.length === 0) {
+    // SCIENT-FORK:START — background-wait recovery: finished ids succeed, a miss names the roster.
+    if (input.awaited && matched.length === 0 && settled.length === 0) {
       return yield* new ThreadManagementBackgroundWaitError({
         threadId: input.threadId,
         reason: "unmatched",
+        ...(running.length === 0 ? {} : { running }),
       });
     }
-    const matchedIds = new Set(matched);
-    return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
+    const known = new Set([...matched, ...settled]);
+    return {
+      matched,
+      unmatched: input.taskIds.filter((taskId) => !known.has(taskId)),
+      ...(settled.length === 0 ? {} : { settled }),
+    };
+    // SCIENT-FORK:END
   });
 
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(

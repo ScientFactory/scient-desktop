@@ -656,6 +656,47 @@ describe("Scient PDF build handler", () => {
     }),
   );
 
+  it.effect("accepts absolute paths inside the project and names a missing source's root", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-pdf-absolute-"));
+      yield* Effect.promise(() => writeHtml(root));
+      // macOS temp folders are /var/… as agents see them and /private/var/… once resolved.
+      const spelled = root.replace(/^\/private(?=\/var\/)/u, "");
+      const projectId = ProjectId.make("project-pdf-absolute");
+      const threadId = ThreadId.make("thread-pdf-absolute");
+      const query = makeQuery({
+        project: makeProject(projectId, root),
+        thread: makeThread({ threadId, projectId }),
+      });
+      const store = makeStore();
+      const broker = makeBroker();
+      const context = {
+        invocation: makeInvocation(threadId),
+        query,
+        store: store.store,
+        broker: broker.broker,
+      };
+
+      const built = yield* runBuild(
+        buildScientPdfForInvocation({
+          sourcePath: NodePath.join(spelled, defaultBuildInput.sourcePath),
+          outputPath: NodePath.join(spelled, defaultBuildInput.outputPath),
+        }),
+        context,
+      );
+      expect(built).toMatchObject(defaultBuildInput);
+
+      const missing = yield* runBuild(
+        buildScientPdfForInvocation({ ...defaultBuildInput, sourcePath: "documents/missing.html" }),
+        context,
+      ).pipe(Effect.flip);
+      expect(missing).toMatchObject({ _tag: "ScientPdfBuildToolError", code: "source-not-found" });
+      expect(missing.message).toContain(
+        `No file at documents/missing.html in this project (${root})`,
+      );
+    }),
+  );
+
   it.effect("rejects output paths outside the project before rendering", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-pdf-output-paths-"));

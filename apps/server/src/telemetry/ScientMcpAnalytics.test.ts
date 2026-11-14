@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import { McpSchema } from "effect/ai";
 
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+
 import {
   BrowserToolCallLedger,
   closedErrorCode,
+  refusedDelegateTarget,
   scientMcpAnalyticsInput,
   scientToolOutcome,
 } from "./ScientMcpAnalytics.ts";
@@ -127,5 +130,43 @@ describe("Scient MCP analytics input", () => {
     expect(ledger.take("thread-a", 50)).toEqual({ calls: 1, failures: 0 });
     expect(ledger.take("thread-a", 50)).toEqual({ calls: 0, failures: 0 });
     expect(ledger.take("thread-b", 50)).toEqual({ calls: 1, failures: 1 });
+  });
+
+  it("reports a refused delegation's target as a driver and a reviewed model name only", () => {
+    const providers = [
+      {
+        instanceId: ProviderInstanceId.make("scient-work"),
+        driver: ProviderDriverKind.make("scient"),
+        models: [],
+      } as unknown as ServerProvider,
+    ];
+    const failed = { outcome: "error" };
+    const target = (value: object) =>
+      refusedDelegateTarget(
+        "delegate_task",
+        { task: "Private task", target: value },
+        failed,
+        providers,
+      );
+    expect(target({ providerInstanceId: "scient-work", model: "openai-codex/gpt-6-luna" })).toEqual(
+      {
+        targetProvider: "scient",
+        targetModel: "gpt-6-luna",
+      },
+    );
+    // A user's own model name never leaves the computer.
+    expect(target({ providerInstanceId: "scient-work", model: "acme-private-7b" })).toEqual({
+      targetProvider: "scient",
+      targetModel: "other",
+    });
+    expect(target({ providerInstanceId: "missing" })).toEqual({ targetProvider: "unknown" });
+    expect(
+      refusedDelegateTarget(
+        "delegate_task",
+        { target: { model: "gpt-6-luna" } },
+        { outcome: "ok" },
+        providers,
+      ),
+    ).toEqual({});
   });
 });

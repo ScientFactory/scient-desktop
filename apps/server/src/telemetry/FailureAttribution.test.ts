@@ -86,6 +86,9 @@ describe("failure attribution", () => {
     ["permission_denied", "environment"],
     ["network", "external"],
     ["no_host", "scient"],
+    // A skill save that could not write is Scient's; a name already used is the agent's.
+    ["storage_failed", "scient"],
+    ["name_taken", "input"],
     ["timeout", "unknown"],
   ] as const)("a tool error %s belongs to %s", (errorCode, owner) => {
     expect(toolFailureAttribution(errorCode).failureOwner).toBe(owner);

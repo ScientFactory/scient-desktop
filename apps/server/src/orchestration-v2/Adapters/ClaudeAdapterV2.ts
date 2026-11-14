@@ -269,6 +269,13 @@ import {
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+// SCIENT-FORK:START — background-wait recovery: finished ids and the live roster.
+import {
+  backgroundTaskSummary,
+  classifyBackgroundWait,
+  rememberSettledBackgroundTask,
+} from "@t3tools/provider-core/server/scientBackgroundWait";
+// SCIENT-FORK:END
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriverCreateInput,
@@ -5978,6 +5985,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     instanceId: adapterOptions.instanceId,
     driver: CLAUDE_PROVIDER,
     mcpSessionInjection: true,
+    // SCIENT-FORK: background-wait recovery: sessions implement awaitBackgroundTasks.
+    backgroundWait: Effect.succeed(true),
     getCapabilities: Effect.fn("ClaudeAdapterV2.getCapabilities")(function () {
       return Effect.succeed(ClaudeProviderCapabilitiesV2);
     }),
@@ -6137,6 +6146,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
         );
+        // SCIENT-FORK:START — background-wait recovery: task id → native thread it finished on.
+        const settledBackgroundTasks = new Map<string, string>();
+        // SCIENT-FORK:END
         // Survives roster REPLACE levels, which rebuild every entry without the agent's mark.
         const awaitedBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
@@ -10666,6 +10678,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.nativeThreadId,
               message.task_id,
             );
+            // SCIENT-FORK: background-wait recovery: a registration after this reads as finished.
+            rememberSettledBackgroundTask(
+              settledBackgroundTasks,
+              message.task_id,
+              input.nativeThreadId,
+            );
             yield* clearTaskIdFromNativeThreadSet(
               wakeEligibleBackgroundTasksByNativeThread,
               input.nativeThreadId,
@@ -15111,8 +15129,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
                 nativeThreadId,
               );
-              const matched = [...new Set(taskIds)].filter((taskId) => roster.has(taskId));
-              if (matched.length === 0) return { matched };
+              // SCIENT-FORK:START — background-wait recovery: finished ids and the live roster.
+              const awaitedIds = taskIdSetForNativeThread(
+                yield* Ref.get(awaitedBackgroundTasksByNativeThread),
+                nativeThreadId,
+              );
+              const waitOutcome = classifyBackgroundWait({
+                taskIds,
+                isRunning: (taskId) => roster.has(taskId),
+                isSettled: (taskId) => settledBackgroundTasks.get(taskId) === nativeThreadId,
+                unawaited: () =>
+                  [...roster.values()]
+                    .filter((task) => task.kind !== "subagent" && !awaitedIds.has(task.taskId))
+                    .map((task) =>
+                      backgroundTaskSummary(task.taskId, task.description ?? task.command),
+                    ),
+              });
+              const { matched } = waitOutcome;
+              if (matched.length === 0) return waitOutcome;
+              // SCIENT-FORK:END
               if (awaited) {
                 yield* addTaskIdsToNativeThreadSet(
                   awaitedBackgroundTasksByNativeThread,
@@ -15133,7 +15168,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 nativeThreadId,
                 active?.nativeThreadId === nativeThreadId ? active : null,
               );
-              return { matched };
+              // SCIENT-FORK: background-wait recovery: report finished ids beside the matched ones.
+              return waitOutcome;
             },
             (effect) => sdkMessageLock.withPermits(1)(effect),
           ),

@@ -182,7 +182,7 @@ export function captureRejectionAttribution(
 
 const TOOL_CANCELLED = /(^|_)(interrupt|interrupted|cancel|cancelled|canceled|aborted)($|_)/u;
 const TOOL_INPUT =
-  /(^|_)(invalid|validation|bad_request|not_found|unknown_session|session_not_found|selector|missing_argument|unsupported|conflict|stale)($|_)/u;
+  /(^|_)(invalid|validation|bad_request|not_found|unknown_session|session_not_found|selector|missing_argument|unsupported|conflict|stale|name_taken)($|_)/u;
 const TOOL_ENVIRONMENT =
   /(^|_)(permission|denied|forbidden|not_installed|missing_runtime|unauthorized|auth)($|_)/u;
 const TOOL_EXTERNAL = /(^|_)(network|http|fetch|dns|offline|remote|upstream|page)($|_)/u;

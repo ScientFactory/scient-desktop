@@ -210,6 +210,15 @@ const OrchestratorMcpExecutedModel = Schema.NullOr(Schema.String).annotate({
     "Model the provider reported running, or null when unavailable. Can differ from the requested `model`.",
 });
 
+// SCIENT-FORK:START — ID recovery: say which ID kind each tool takes.
+const OrchestratorMcpThreadIdInput = ThreadId.annotate({
+  description: "Full thread ID from a thread link or result, prefix included. Not a taskId.",
+});
+const OrchestratorMcpTaskIdInput = NodeId.annotate({
+  description: "`taskId` from this thread's own `delegate_task` result. Not `childThreadId`.",
+});
+// SCIENT-FORK:END
+
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   /** Null for a task that runs in a linked environment; see `remoteChild`. */
@@ -254,12 +263,14 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
 export const OrchestratorMcpTaskStatusInput = Schema.Struct({
-  taskId: NodeId,
+  // SCIENT-FORK: ID recovery: say which ID kind this takes.
+  taskId: OrchestratorMcpTaskIdInput,
 });
 export type OrchestratorMcpTaskStatusInput = typeof OrchestratorMcpTaskStatusInput.Type;
 
 export const OrchestratorMcpTaskCancelInput = Schema.Struct({
-  taskId: NodeId,
+  // SCIENT-FORK: ID recovery: say which ID kind this takes.
+  taskId: OrchestratorMcpTaskIdInput,
   reason: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
@@ -437,7 +448,8 @@ export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListRe
 
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
-  threadId: ThreadId,
+  // SCIENT-FORK: ID recovery: say which ID kind this takes.
+  threadId: OrchestratorMcpThreadIdInput,
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
@@ -540,7 +552,8 @@ export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadRe
 
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
-  threadId: ThreadId,
+  // SCIENT-FORK: ID recovery: say which ID kind this takes.
+  threadId: OrchestratorMcpThreadIdInput,
   message: OrchestratorMcpPrompt,
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   freshContext: Schema.optional(
@@ -566,7 +579,8 @@ export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendRe
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
-  threadId: ThreadId,
+  // SCIENT-FORK: ID recovery: say which ID kind this takes.
+  threadId: OrchestratorMcpThreadIdInput,
   runId: Schema.optional(RunId),
   timeoutMs: Schema.optional(Schema.Finite),
   untilDelegatedWorkSettled: Schema.optional(
@@ -591,7 +605,8 @@ export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitRe
 
 export const OrchestratorMcpThreadInterruptInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
-  threadId: ThreadId,
+  // SCIENT-FORK: ID recovery: say which ID kind this takes.
+  threadId: OrchestratorMcpThreadIdInput,
   runId: Schema.optional(RunId),
   reason: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
   /**
