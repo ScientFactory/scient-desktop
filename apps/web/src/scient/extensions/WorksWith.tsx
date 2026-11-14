@@ -182,7 +182,7 @@ export function WorksWithAgents({
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
     providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
   return (
-    <ul className="flex items-center gap-1.5" aria-label={audienceLabel(audience)}>
+    <ul className="flex items-center gap-2.5" aria-label={audienceLabel(audience)}>
       {shown.map((entry) => (
         <li key={entry.providerInstanceId}>
           <Tooltip>
