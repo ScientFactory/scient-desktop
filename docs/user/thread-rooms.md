@@ -23,12 +23,13 @@ Everyone sees the same thread. What differs is what each person can do:
   only to people you trust with that.
 
 Once someone joins, their faces appear beside **Share** in the header. Open it to
-change what someone can do, remove someone, cancel links nobody has opened yet, or
-**Stop sharing**. A change applies at once. Archiving the thread also ends sharing.
-Removing someone stops their access; it cannot take back what they already saw.
+change what someone can do, remove someone, or cancel links nobody has opened yet. A
+change applies at once. Removing the last person and link ends sharing, as does
+archiving the thread. Removing someone stops their access; it cannot take back what
+they already saw.
 
-**Publish a copy…** in the same dialog shares a read-only copy instead, which
-people can open without your computer being on.
+To share a read-only copy that people can open without your computer being on, use
+**Share › Link…** in the thread's menu.
 
 ## The thread and the chat
 
