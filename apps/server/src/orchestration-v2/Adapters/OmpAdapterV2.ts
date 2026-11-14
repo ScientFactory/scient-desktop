@@ -2191,6 +2191,16 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           ),
           steer: Effect.fn("OmpAdapterV2.steer")(
             function* (steerInput, validateOwner) {
+              // SCIENT-FORK: /plan switches plan mode, which never joins a running turn.
+              if (
+                target.driverKind === "scient" &&
+                parseOmpPlanCommand(steerInput.message.text) !== null
+              )
+                return yield* new NativeSessionOperationError({
+                  detail:
+                    "/plan must run as a separate turn. Queue it or wait for the active turn to finish.",
+                  breaksSession: false,
+                });
               const prompt = yield* payload(steerInput.message);
               // SCIENT-FORK: recheck the captured owner after payload preparation.
               yield* validateOwner?.() ?? Effect.void;
