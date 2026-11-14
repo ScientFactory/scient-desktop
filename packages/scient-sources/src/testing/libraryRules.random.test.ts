@@ -101,7 +101,7 @@ async function runSteps(root: string, seed: number, stepCount: number): Promise<
       throw new Error(`${String(error)}\n${told()}`, { cause: error });
     }
     model = applyStep(model, step, facts);
-    const report = await checkLibraryRules(scenario, [model]);
+    const report = await checkLibraryRules(scenario, [model], { noUnreferencedPdfs: true });
     if (report.violations.length > 0) {
       throw new Error(`${report.violations.join("\n")}\n${told()}`);
     }

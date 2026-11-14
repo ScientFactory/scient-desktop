@@ -10,7 +10,7 @@ import { describe, expect, it } from "@effect/vitest";
 import type { FileFaultPlan } from "./fileFaults.ts";
 import { applyStep, EMPTY_MODEL, type Model, type Step } from "./libraryModel.ts";
 import { createScenario, PROJECT_COUNT, runStep } from "./librarySteps.ts";
-import type { WorkerRequest, WorkerResult } from "./libraryWorker.ts";
+import type { WorkerAction, WorkerRequest, WorkerResult } from "./libraryWorker.ts";
 
 /**
  * Stops one step at its file changes with a real SIGKILL (or a full disk) in a child process;
@@ -129,18 +129,33 @@ const refreshed = (model: Model): Model =>
     model,
   );
 
-/** Evenly spread positions, always with the first and the last. */
-function sample(count: number, size: number): ReadonlyArray<number> {
-  if (FULL || count <= size) return Array.from({ length: count }, (_, index) => index + 1);
+/** Removing, renaming or linking a real file: where a store's state changes hands. */
+const PUBLISHES = new Set(["rename", "link", "unlink", "rm", "rmdir", "copyFile"]);
+
+/**
+ * The changes to stop at: every one in a full sweep; otherwise an even spread over the changes
+ * just before and just after each publication, which is where a half-done state can show.
+ */
+function sample(points: ReadonlyArray<{ readonly call: string; readonly path: string }>) {
+  const all = points.map((_, index) => index + 1);
+  if (FULL || all.length <= SAMPLE_SIZE) return all;
+  const around = all.filter((at) =>
+    [points[at - 1], points[at - 2]].some(
+      (point) => point && PUBLISHES.has(point.call) && !point.path.includes(".tmp-"),
+    ),
+  );
+  const from = around.length >= SAMPLE_SIZE ? around : all;
   return [
     ...new Set(
       Array.from(
-        { length: size },
-        (_, index) => 1 + Math.round((index * (count - 1)) / (size - 1)),
+        { length: SAMPLE_SIZE },
+        (_, index) => from[Math.round((index * (from.length - 1)) / (SAMPLE_SIZE - 1))]!,
       ),
     ),
   ];
 }
+
+const NO_HARD_LINKS: FileFaultPlan = { kind: "count", refuseLinks: true };
 
 async function sweep(crashCase: CrashCase, part: number): Promise<ReadonlyArray<string>> {
   const base = await NodeFSP.realpath(
@@ -177,63 +192,88 @@ async function sweep(crashCase: CrashCase, part: number): Promise<ReadonlyArray<
     const { points } = first;
 
     const plans: FileFaultPlan[] = [];
-    for (const at of sample(points.length, SAMPLE_SIZE)) {
+    for (const at of sample(points)) {
       plans.push({ kind: "kill", at });
       if (WRITES_CONTENTS.has(points[at - 1]!.call)) plans.push({ kind: "kill", at, torn: true });
       plans.push({ kind: "error", at, code: "ENOSPC", persist: true });
     }
     // The same step on a volume without hard links, once, with no interruption.
-    plans.push({ kind: "count", refuseLinks: true });
+    plans.push(NO_HARD_LINKS);
 
     const failures: string[] = [];
+    const run = (actions: ReadonlyArray<WorkerAction>) =>
+      runWorker(base, { root: live, model: before, actions });
+    const report = (told: string, when: string, result: WorkerResult | undefined) => {
+      if (result?.kind === "check") {
+        for (const violation of result.report.violations) {
+          failures.push(`${told}, ${when}: ${violation}`);
+        }
+      } else if (result?.error) {
+        failures.push(`${told}, ${when}: ${result.error}`);
+      }
+    };
     for (const plan of plans.filter((_, index) => index % PARTS === part)) {
-      const told = () => {
-        if (plan.kind === "count") return "on a volume without hard links";
-        const where = points[plan.at - 1]!;
-        const what =
-          plan.kind === "kill"
-            ? plan.torn
-              ? "killed halfway through"
-              : "killed before"
-            : "disk full from";
-        return `${what} change ${plan.at} of ${points.length} (${where.call} ${NodePath.relative(live, where.path)})`;
-      };
       await restore();
-      const interrupted = await runWorker(base, {
-        root: live,
-        model: before,
-        actions: [{ kind: "step", step: crashCase.step, fault: plan }],
-      });
-      if (plan.kind === "kill" && interrupted.signal !== "SIGKILL") {
-        failures.push(`${told()}: the worker was not killed (${interrupted.stderr.trim()})`);
+      if (plan.kind === "count") {
+        const told = "on a volume without hard links";
+        const { results, stderr } = await run([
+          { kind: "step", step: crashCase.step, fault: plan },
+          { kind: "recover", fault: plan },
+          { kind: "check", models: [refreshed(after)] },
+        ]);
+        if (!results) failures.push(`${told}: the process failed: ${stderr.trim().slice(0, 600)}`);
+        report(told, "the step", results?.[0]);
+        report(told, "recovery", results?.[1]);
+        report(told, "afterwards", results?.[2]);
         continue;
       }
-      const settled = await runWorker(base, {
-        root: live,
-        model: before,
-        actions: [
-          { kind: "check", models: [before, after] },
-          { kind: "recover" },
-          { kind: "check", models: [refreshed(before)] },
-          { kind: "check", models: [refreshed(after)] },
-          { kind: "step", step: crashCase.step },
-          { kind: "recover" },
-          { kind: "check", models: [refreshed(after)] },
-        ],
-      });
-      if (!settled.results) {
-        failures.push(`${told()}: the next process failed: ${settled.stderr.trim().slice(0, 600)}`);
+      const where = points[plan.at - 1]!;
+      const what =
+        plan.kind === "kill"
+          ? plan.torn
+            ? "killed halfway through"
+            : "killed before"
+          : "disk full from";
+      const told = `${what} change ${plan.at} of ${points.length} (${where.call} ${NodePath.relative(live, where.path)})`;
+      const interrupt = () => run([{ kind: "step", step: crashCase.step, fault: plan }]);
+      if (plan.kind === "kill" && (await interrupt()).signal !== "SIGKILL") {
+        failures.push(`${told}: the worker was not killed`);
         continue;
       }
-      const [evidence, recovery, asBefore, asAfter, retry, , final] = settled.results;
-      if (evidence?.kind === "check") {
-        for (const violation of evidence.report.violations) {
-          failures.push(`${told()}, before anything else ran: ${violation}`);
+      if (plan.kind !== "kill") await interrupt();
+      if (plan.kind === "kill" && FULL) {
+        // Recovery is itself killed halfway, and the next process starts it again.
+        const counted = (await run([{ kind: "recover", fault: { kind: "count" } }])).results?.[0];
+        const changes = counted?.kind === "recover" ? counted.points : 0;
+        if (changes > 1) {
+          await restore();
+          await interrupt();
+          const at = Math.ceil(changes / 2);
+          const killed = await run([{ kind: "recover", fault: { kind: "kill", at } }]);
+          if (killed.signal !== "SIGKILL") {
+            failures.push(`${told}: recovery was not killed at its change ${at} of ${changes}`);
+          }
         }
       }
-      if (recovery?.kind === "recover" && recovery.error) {
-        failures.push(`${told()}: recovery failed: ${recovery.error}`);
+      const { results, stderr } = await run([
+        { kind: "check", models: [before, after] },
+        { kind: "recover" },
+        { kind: "check", models: [refreshed(before)] },
+        { kind: "check", models: [refreshed(after)] },
+        { kind: "step", step: crashCase.step },
+        { kind: "recover" },
+        { kind: "check", models: [refreshed(after)] },
+        // Recovering once more changes nothing.
+        { kind: "recover" },
+        { kind: "check", models: [refreshed(after)] },
+      ]);
+      if (!results) {
+        failures.push(`${told}: the next process failed: ${stderr.trim().slice(0, 600)}`);
+        continue;
       }
+      const [evidence, recovery, asBefore, asAfter, retry, again, final, third, last] = results;
+      report(told, "before anything else ran", evidence);
+      report(told, "recovery", recovery);
       if (
         asBefore?.kind === "check" &&
         asAfter?.kind === "check" &&
@@ -241,17 +281,14 @@ async function sweep(crashCase: CrashCase, part: number): Promise<ReadonlyArray<
         asAfter.report.violations.length > 0
       ) {
         failures.push(
-          `${told()}, after recovery the Library is neither as before nor as after the step. Against before: ${asBefore.report.violations.join(" ")} Against after: ${asAfter.report.violations.join(" ")}`,
+          `${told}, after recovery the Library is neither as before nor as after the step. Against before: ${asBefore.report.violations.join(" ")} Against after: ${asAfter.report.violations.join(" ")}`,
         );
       }
-      if (retry?.kind === "step" && retry.error) {
-        failures.push(`${told()}: doing the step again failed: ${retry.error}`);
-      }
-      if (final?.kind === "check") {
-        for (const violation of final.report.violations) {
-          failures.push(`${told()}, after doing the step again: ${violation}`);
-        }
-      }
+      report(told, "doing the step again", retry);
+      report(told, "recovery after the step", again);
+      report(told, "after doing the step again", final);
+      report(told, "a further recovery", third);
+      report(told, "after a further recovery", last);
     }
     return failures;
   } finally {

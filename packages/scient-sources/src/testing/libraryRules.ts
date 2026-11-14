@@ -97,6 +97,8 @@ const targetLabelId = (model: Model, label: string) =>
 export async function checkLibraryRules(
   scenario: Scenario,
   models: ReadonlyArray<Model>,
+  /** `noUnreferencedPdfs`: only where nothing was interrupted; a killed write may leave one. */
+  options: { readonly noUnreferencedPdfs?: boolean } = {},
 ): Promise<RuleReport> {
   const violations: string[] = [];
   const library = libraryOf(scenario);
@@ -211,6 +213,32 @@ export async function checkLibraryRules(
     if (endAlias && endAlias.undoneAt === undefined) {
       violations.push(`Rule 2: the alias of ${sourceId} does not end.`);
     }
+  }
+  // Settled: each source's ID stands for the source the model says it was merged into, or itself.
+  const [settled] = models;
+  if (settled && !interrupted) {
+    for (const work of settled.works) {
+      const expected = targetOf(settled, work.label).sourceId;
+      const end = resolveScientLibraryAlias(aliases, work.sourceId);
+      if (end !== expected) {
+        violations.push(`Rule 2: the ID of ${work.label} stands for ${end}, not for ${expected}.`);
+      }
+    }
+  }
+
+  // Rule 3, the other way: a PDF no live or trashed source names is gone (delete for good).
+  if (settled && options.noUnreferencedPdfs) {
+    const named = new Set(
+      settled.works
+        .filter((work) => work.state !== "deleted")
+        .flatMap((work) => work.pdfs.map((pdf) => pdf.sha256)),
+    );
+    await walk(NodePath.join(scenario.libraryRoot, "files"), async (path) => {
+      const name = NodePath.basename(path);
+      if (name.endsWith(".pdf") && !named.has(name.slice(0, -".pdf".length))) {
+        violations.push(`Rule 3: the PDF ${name} is kept although no source names it.`);
+      }
+    });
   }
 
   // Rule 2 and rule 6 (project notes): every project key cites what a model says it cites.

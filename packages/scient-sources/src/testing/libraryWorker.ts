@@ -18,7 +18,7 @@ export type WorkerAction =
   | { readonly kind: "step"; readonly step: Step; readonly fault?: FileFaultPlan }
   | { readonly kind: "check"; readonly models: ReadonlyArray<Model> }
   /** What a restarted server does before a person acts (`recoverScenario`). */
-  | { readonly kind: "recover" };
+  | { readonly kind: "recover"; readonly fault?: FileFaultPlan };
 
 export interface WorkerRequest {
   readonly root: string;
@@ -35,7 +35,7 @@ export type WorkerResult =
       readonly points: ReadonlyArray<{ readonly call: string; readonly path: string }>;
     }
   | { readonly kind: "check"; readonly report: RuleReport }
-  | { readonly kind: "recover"; readonly error: string | null };
+  | { readonly kind: "recover"; readonly error: string | null; readonly points: number };
 
 async function main(): Promise<void> {
   const requestPath = NodeProcess.argv[2];
@@ -50,11 +50,13 @@ async function main(): Promise<void> {
       continue;
     }
     if (action.kind === "recover") {
+      if (action.fault) startFileFaults(action.fault);
       const error = await recoverScenario(scenario).then(
         () => null,
         (cause: unknown) => (cause instanceof Error ? cause.message : String(cause)),
       );
-      results.push({ kind: "recover", error });
+      const points = action.fault ? stopFileFaults().length : 0;
+      results.push({ kind: "recover", error, points });
       continue;
     }
     let facts: StepFacts | null = null;
