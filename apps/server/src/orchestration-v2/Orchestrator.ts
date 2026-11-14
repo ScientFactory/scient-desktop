@@ -135,6 +135,7 @@ import {
   steerExecutionThread,
 } from "./scient-fork/RunStartDecisions.ts";
 import { subscribeDelegatedChildSettlements } from "./scient-fork/DelegatedChildSettlements.ts";
+import { SubagentParentLockHeld } from "./scient-fork/SubagentParentLockHeld.ts";
 import {
   conversationForkHistoryEvents,
   conversationForkProvisionEffect,
@@ -16800,8 +16801,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const withSubagentParentLock = <A, E, R>(threadId: ThreadId, dispatch: Effect.Effect<A, E, R>) =>
     appOwnedSubagentParentThreadId(threadId).pipe(
       Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      Effect.flatMap((parentThreadId) =>
-        parentThreadId === undefined ? dispatch : threadDispatch.withLock(parentThreadId, dispatch),
+      // SCIENT-FORK: a caller that already holds the parent's lock runs under it; locks don't nest.
+      Effect.zip(Effect.service(SubagentParentLockHeld)),
+      Effect.flatMap(([parentThreadId, held]) =>
+        parentThreadId === undefined || parentThreadId === held
+          ? dispatch
+          : threadDispatch.withLock(parentThreadId, dispatch),
       ),
     );
 
@@ -17280,11 +17285,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.threadId,
           Effect.gen(function* () {
             // Hold intake closed until descendants stop and this thread's Stop commits.
-            yield* input.stopDescendants((command) =>
-              commandThreadId(command) === input.command.threadId
-                ? dispatchWithReceiptEffect(command)
-                : dispatchWithReceipt(command),
-            );
+            yield* input
+              .stopDescendants((command) =>
+                commandThreadId(command) === input.command.threadId
+                  ? dispatchWithReceiptEffect(command)
+                  : dispatchWithReceipt(command),
+              )
+              // SCIENT-FORK: Stop on this thread's own tasks runs under the lock held here.
+              .pipe(Effect.provideService(SubagentParentLockHeld, command.threadId));
             const child = yield* projectionStore
               .getThreadRecords(
                 command.threadId,
