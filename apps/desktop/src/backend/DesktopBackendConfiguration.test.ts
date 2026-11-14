@@ -1596,6 +1596,9 @@ describe("DesktopBackendConfiguration", () => {
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           readFileString: () => Effect.fail(cause),
+          // The desktop host scope is created beside the settings it cannot read.
+          makeDirectory: () => Effect.void,
+          writeFileString: () => Effect.void,
         }),
       );
 

@@ -318,7 +318,11 @@ describe("makeManagedServerProvider", () => {
 
           yield* TestClock.adjust("10 seconds");
           assert.strictEqual(yield* Ref.get(checkCalls), 0);
-          assert.deepStrictEqual(yield* provider.getSnapshot, initialSnapshot);
+          // SCIENT-FORK: Scient's snapshot marks the first check as pending.
+          assert.deepStrictEqual(yield* provider.getSnapshot, {
+            ...initialSnapshot,
+            probePending: true,
+          });
           assert.isTrue(yield* provider.isAwaitingFirstCheck!);
 
           yield* Deferred.succeed(serverReady, undefined);

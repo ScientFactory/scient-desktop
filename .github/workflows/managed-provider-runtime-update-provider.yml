@@ -587,6 +587,7 @@ jobs:
             apps/server/src/customModels.ts \
             apps/server/src/imageMime.ts \
             apps/server/src/modelReasoning.ts \
+            apps/server/src/noCopyOnWrite.ts \
             apps/server/src/scientServerSettings.ts \
             apps/server/src/secrets/secretProviderDefinitions.ts \
             apps/server/src/secrets/settingsSecretValue.ts \

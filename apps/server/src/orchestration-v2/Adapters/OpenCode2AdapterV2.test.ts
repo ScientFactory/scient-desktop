@@ -767,6 +767,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           buildOpenCodeRuntimeGuidance(external ? undefined : capabilities),
           buildScientRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
           buildScientOrchestrationSystemPrompt(!external),
+          external
+            ? undefined
+            : "To wait for a background shell you started (tests, a build), call `scient_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs.",
         ]
           .filter(Boolean)
           .join("\n\n");
