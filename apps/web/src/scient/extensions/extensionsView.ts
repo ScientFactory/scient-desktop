@@ -55,6 +55,7 @@ export const SKIP_REASON_LABELS: Readonly<Record<ExtensionDeliverySkipReason, st
   "needs-credential": "Credential missing",
   disabled: "Turned off",
   "project-deselected": "Off for this project",
+  "agent-deselected": "Not chosen for this agent",
   "transport-unsupported": "Not supported by this agent",
   "name-collision": "Name taken by the agent's own server",
   "native-servers-unknown": "Agent's own servers couldn't be checked",
@@ -264,6 +265,13 @@ export function worksWithOptions(
   return options;
 }
 
+/** A Scient connector's audience: every agent, or the ones the person chose. */
+export function connectorAudience(connector: Pick<ConnectorSummary, "agents">): ExtensionAudience {
+  return connector.agents === undefined
+    ? { layer: "scient" }
+    : { layer: "scient", agents: connector.agents };
+}
+
 /** Connectors reach an agent only when its instance reports remote MCP support. */
 export function connectorsReach(option: WorksWithOption | null): boolean {
   if (option === null) return true;
@@ -417,7 +425,7 @@ export function providerExtensionAudience(
 export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {
   switch (audience.layer) {
     case "scient":
-      return true;
+      return audience.agents === undefined || audience.agents.includes(provider.instanceId);
     case "shared":
       return (
         provider.driver === "claudeAgent" ||
@@ -443,7 +451,9 @@ function listLabels(labels: ReadonlyArray<string>): string {
 export function audienceLabel(audience: ExtensionAudience): string {
   switch (audience.layer) {
     case "scient":
-      return "Works with all your agents";
+      return audience.agents === undefined
+        ? "Works with all your agents"
+        : "Works with the agents you chose";
     case "shared":
       return "Works with Claude and Scient Agent";
     case "agent":
@@ -467,6 +477,13 @@ export function audienceSupport(
     const connector = connectorSupport.find(
       (entry) => entry.providerInstanceId === provider.instanceId,
     );
+    // An agent left out of a connector's chosen agents shows as such, not as unable to take it.
+    if (audience.layer === "scient" && connector && !supported)
+      return {
+        ...connector,
+        status: "unsupported",
+        reason: "Not chosen for this agent",
+      };
     if (audience.layer === "scient" && connector) return connector;
     const pending =
       audience.layer === "account"
@@ -509,7 +526,7 @@ export function worksWithCardAgents(
   audience: ExtensionAudience,
   support: ReadonlyArray<ConnectorProviderSupport>,
 ): ReadonlyArray<ConnectorProviderSupport> {
-  return audience.layer === "scient"
+  return audience.layer === "scient" && audience.agents === undefined
     ? support
     : support.filter((entry) => entry.status !== "unsupported");
 }
@@ -555,7 +572,7 @@ export function showsKind(selected: ExtensionKind | undefined, kind: ExtensionKi
 
 export function entryNeedsSetup(entry: DiscoverEntry): boolean {
   return (
-    entry.localPackage !== undefined ||
+    (entry.localPackage !== undefined && entry.localPackage.environment.length > 0) ||
     entry.oauthClientRequired === true ||
     entryNeedsToken(entry) ||
     entry.apiKey !== undefined ||

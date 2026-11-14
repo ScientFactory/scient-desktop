@@ -410,7 +410,7 @@ export interface DiscoverOptions {
 /** How a curated entry is matched against connectors and registry results. */
 const curatedKeys = (server: CuratedServer) => ({
   name: server.registry?.name,
-  url: canonicalConnectorUrl(server.url),
+  url: server.url === undefined ? undefined : canonicalConnectorUrl(server.url),
 });
 
 const matchesQuery = (server: CuratedServer, terms: ReadonlyArray<string>): boolean => {
@@ -547,7 +547,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   const curatedEntry = (server: CuratedServer, installed: Installed): DiscoverEntry => {
     const entry = curatedDiscoverEntry(server);
     const installedConnectorId =
-      installedFor(installed, entry.name, [server.url]) ??
+      installedFor(installed, entry.name, server.url === undefined ? [] : [server.url]) ??
       (server.address
         ? [...installed.byUrl].find(
             ([url]) => curatedServerForUrl(url, [server]) !== undefined,
@@ -567,7 +567,15 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
         const members = serversIn(servers, category);
         return members.length === 0
           ? []
-          : [{ category, members, preview: members.slice(0, CATALOG_PREVIEW_ENTRIES) }];
+          : [
+              {
+                category,
+                members,
+                // Most used is the short list everyone needs, so the home page shows all of it.
+                preview:
+                  category === "most-used" ? members : members.slice(0, CATALOG_PREVIEW_ENTRIES),
+              },
+            ];
       });
       const sections = previews.map(({ category, members, preview }): DiscoverCatalogSection => ({
         category,

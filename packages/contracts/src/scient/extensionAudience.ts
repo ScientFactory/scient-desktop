@@ -4,7 +4,11 @@ import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { TrimmedNonEmptyString } from "../baseSchemas.ts";
 
 export const ExtensionAudience = Schema.Union([
-  Schema.Struct({ layer: Schema.Literal("scient") }),
+  /** Scient's own connectors and plugins: every agent, or only the agents the person chose. */
+  Schema.Struct({
+    layer: Schema.Literal("scient"),
+    agents: Schema.optional(Schema.Array(ProviderInstanceId)),
+  }),
   Schema.Struct({
     layer: Schema.Literal("shared"),
     ownerInstanceId: Schema.optional(ProviderInstanceId),

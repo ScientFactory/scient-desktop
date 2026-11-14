@@ -80,8 +80,12 @@ access.
   header carries the entry's identity and its primary action (Add, Remove,
   Uninstall, or who manages it). Below it, cards:
   - **Connection** (connectors) — status with Sign in or Reconnect, Test, the
-    Use with agents switch, and Available in (all projects or selected
-    projects).
+    Use with agents switch, Available in (all projects or selected
+    projects), and Agents (all agents or selected agents). A connector's
+    optional `agents` list is stored on its record; delivery skips other agents
+    with `agent-deselected`, and the proxy re-checks the session's agent on
+    every request. Discover's **+** asks for the agents first when more than one
+    takes connectors.
   - **Tools** (connectors) — listed only on request ("See tools" runs Test);
     the result belongs to the connector's current sign-in generation and is
     discarded when it changes.

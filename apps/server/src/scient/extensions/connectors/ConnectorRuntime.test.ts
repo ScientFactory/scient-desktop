@@ -1560,6 +1560,43 @@ describe("connector proxy", () => {
       expect(yield* granted(PROJECT)).toBe(false);
     }).pipe(Effect.provide(testLayer)),
   );
+
+  it.live("gives a connector only to the agents chosen for it, and to every agent again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const codex = ProviderInstanceId.make("codex");
+      const claude = ProviderInstanceId.make("claude");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/open/mcp` },
+        agents: [codex],
+      });
+      const connectorId = added.connector.connectorId;
+      expect(added.connector.agents).toEqual([codex]);
+      const granted = (providerInstanceId: ProviderInstanceId) =>
+        harness.runtime.isGranted({ connectorId, projectId: PROJECT, providerInstanceId });
+      const reasons = (providerInstanceId: ProviderInstanceId) =>
+        harness.runtime
+          .resolveDelivery({ projectId: PROJECT, providerInstanceId })
+          .pipe(
+            Effect.map(({ eligible, skipped }) => [eligible.length, skipped.map((e) => e.reason)]),
+          );
+      expect(yield* granted(codex)).toBe(true);
+      expect(yield* granted(claude)).toBe(false);
+      expect(yield* reasons(codex)).toEqual([1, []]);
+      expect(yield* reasons(claude)).toEqual([0, ["agent-deselected"]]);
+
+      // Chosen again with a repeat: each agent once.
+      yield* harness.runtime.update({ connectorId, agents: [codex, claude, codex] });
+      expect((yield* harness.runtime.list()).connectors[0]?.agents).toEqual([codex, claude]);
+      expect(yield* granted(claude)).toBe(true);
+
+      // null gives it to every agent again, and the field is gone.
+      yield* harness.runtime.update({ connectorId, agents: null });
+      const all = (yield* harness.runtime.list()).connectors[0];
+      expect(all && "agents" in all).toBe(false);
+      expect(yield* granted(ProviderInstanceId.make("cursor"))).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
 });
 
 describe("connector token lifecycle", () => {

@@ -7,6 +7,7 @@ import {
   matchesExtensionAddressTemplate,
   type DiscoverEntry,
   type ExtensionCategory,
+  type LocalPackage,
 } from "@t3tools/contracts";
 
 import CURATED_ICONS from "./curatedIcons.json" with { type: "json" };
@@ -21,8 +22,11 @@ export const MOST_USED_SERVER_IDS = [
   "github",
   "slack",
   "notion",
+  "playwright",
   "pubmed",
   "semantic-scholar",
+  "vercel",
+  "cloudflare",
 ] as const;
 
 /** Section order on the Discover home page: most used, then fields led by where users work. */
@@ -107,8 +111,10 @@ export interface CuratedServer {
   readonly tagline: string;
   /** Two or three sentences. */
   readonly description: string;
-  /** Streamable HTTP endpoint (https). */
-  readonly url: string;
+  /** Streamable HTTP endpoint (https); absent for a server Scient runs on the computer. */
+  readonly url?: string;
+  /** A pinned package Scient runs on the computer, for a server with no web address. */
+  readonly localPackage?: LocalPackage;
   /** The MCP Registry entry publishing this exact remote, when there is one. */
   readonly registry?: { readonly name: string; readonly version: string };
   /** First category is the primary one; `featured` may be added to any entry. */
@@ -527,9 +533,41 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Inspect Vercel projects and deployments, read build logs and search Vercel documentation. Access follows the teams you authorize.",
     url: "https://mcp.vercel.com",
     registry: { name: "com.vercel/vercel-mcp", version: "0.0.3" },
-    categories: ["code"],
+    categories: ["most-used", "code"],
     websiteUrl: "https://vercel.com",
     icon: CURATED_ICONS["vercel"],
+  },
+  {
+    // sign-in: 401 OAuth, dynamic client registration (verified 2026-11-14)
+    id: "cloudflare",
+    accountRequired: true,
+    displayName: "Cloudflare",
+    tagline: "Workers, DNS, storage and the rest of your account",
+    description:
+      "Manage your Cloudflare account through its whole API: Workers, Pages, DNS, R2, D1 and more. Access follows the account you authorize.",
+    url: "https://mcp.cloudflare.com/mcp",
+    categories: ["most-used", "code"],
+    websiteUrl: "https://www.cloudflare.com",
+    icon: CURATED_ICONS["cloudflare"],
+  },
+  {
+    // local: npx @playwright/mcp 0.0.85, no keys (verified 2026-11-14)
+    id: "playwright",
+    accountRequired: false,
+    displayName: "Playwright",
+    tagline: "Drive a real browser: open, click, fill and check pages",
+    description:
+      "Lets agents open web pages in a browser on your computer, click, type, fill forms and read what is on screen, for testing sites or doing web tasks. Made by Microsoft; runs locally, no account needed.",
+    localPackage: {
+      runner: "npx",
+      identifier: "@playwright/mcp",
+      version: "0.0.85",
+      args: [],
+      environment: [],
+    },
+    categories: ["most-used", "code"],
+    websiteUrl: "https://playwright.dev",
+    icon: CURATED_ICONS["playwright"],
   },
   {
     // open: 200 "docs-ai-search" 0.4.14
@@ -1250,7 +1288,7 @@ export const curatedServerForUrl = (
   return servers.find((server) =>
     server.address
       ? matchesExtensionAddressTemplate(url, server.address.urlTemplate)
-      : canonicalConnectorUrl(server.url) === canonical,
+      : server.url !== undefined && canonicalConnectorUrl(server.url) === canonical,
   );
 };
 
@@ -1266,11 +1304,13 @@ export const curatedDiscoverEntry = (
   ...(server.oauthClientRequired ? { oauthClientRequired: true } : {}),
   hosting:
     server.hosting ??
-    (server.url.includes(".caseyjhand.com/")
-      ? "Community"
-      : /https:\/\/(hcls|pubmed)\.mcp\.claude\.com\//.test(server.url)
-        ? "Hosted by Anthropic"
-        : "Official"),
+    (server.url === undefined
+      ? "Official"
+      : server.url.includes(".caseyjhand.com/")
+        ? "Community"
+        : /https:\/\/(hcls|pubmed)\.mcp\.claude\.com\//.test(server.url)
+          ? "Hosted by Anthropic"
+          : "Official"),
   ...(server.paidPlan ? { paidPlan: true } : {}),
   ...(server.beta ? { beta: true } : {}),
   ...(server.accessNote ? { accessNote: server.accessNote } : {}),
@@ -1281,8 +1321,10 @@ export const curatedDiscoverEntry = (
   categories: [...server.categories],
   websiteUrl: server.websiteUrl,
   iconUrl: server.icon,
-  remotes: [
-    { type: "streamable-http", url: server.url, requiresInput: server.address !== undefined },
-  ],
+  remotes:
+    server.url === undefined
+      ? []
+      : [{ type: "streamable-http", url: server.url, requiresInput: server.address !== undefined }],
+  ...(server.localPackage ? { localPackage: server.localPackage } : {}),
   installable: true,
 });

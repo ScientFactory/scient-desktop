@@ -11,6 +11,7 @@ import {
   ConnectorId,
   ConnectorServerName,
   ConnectorSource,
+  ConnectorAgents,
   ConnectorStatus,
   CredentialStrategy,
   ExtensionsError,
@@ -107,6 +108,8 @@ export const ConnectorRecord = Schema.Struct({
   authRevision: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** Projects whose sessions receive this connector; an empty list means none. */
   availability: GrantScope,
+  /** Agents whose sessions receive it; absent means every agent. */
+  agents: Schema.optional(ConnectorAgents),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyString),

@@ -31,6 +31,7 @@ import type {
   ExtensionsDiagnostic,
   ExtensionsError,
   ProjectId,
+  ProviderInstanceId,
   ProviderPluginActionInput,
   ProviderPluginActionResult,
   ScientPluginInstallInput,
@@ -178,11 +179,14 @@ export interface ConnectorRuntimeShape {
   /** Connectors a new session in this project may receive, plus user-facing skips. */
   readonly resolveDelivery: (input: {
     readonly projectId: ProjectId | undefined;
+    /** The session's agent, for connectors given to chosen agents only. */
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) => Effect.Effect<ConnectorDeliveryResolution>;
   /** Live grant re-check for each proxied request. */
   readonly isGranted: (input: {
     readonly connectorId: ConnectorId;
     readonly projectId: ProjectId | undefined;
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) => Effect.Effect<boolean>;
   /** Forward one MCP HTTP exchange with the vendor credential applied. Never fails: errors become JSON-RPC responses. */
   readonly forward: (request: ConnectorForwardRequest) => Effect.Effect<ConnectorForwardResponse>;

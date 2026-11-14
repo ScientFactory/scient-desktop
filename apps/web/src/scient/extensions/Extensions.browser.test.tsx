@@ -679,6 +679,18 @@ const buttonIn = (scope: ParentNode, label: string) =>
   [...scope.querySelectorAll("button")].find(
     (item) => item.textContent === label || item.getAttribute("aria-label") === label,
   ) ?? null;
+/** The agent card a + opens; every agent starts chosen. */
+const agentCard = (name: string) =>
+  vi.waitFor(() => {
+    const card = document.querySelector(`[aria-label="Add ${name} for"]`);
+    if (card === null) throw new Error(`No agent card for ${name}`);
+    return card;
+  });
+/** Clicks +, then Add in the agent card, for every agent. */
+const addThroughCard = async (button: HTMLButtonElement | null, name: string) => {
+  await userEvent.click(button!);
+  await userEvent.click(buttonIn(await agentCard(name), "Add")!);
+};
 const linkIn = (scope: ParentNode, text: string) =>
   [...scope.querySelectorAll("a")].find((item) => item.textContent === text) ?? null;
 
@@ -840,6 +852,42 @@ describe("Discover", () => {
     });
   });
 
+  it("asks which agents get a server, adds it for those, and adds at once with one agent", async () => {
+    await using fixture = setup();
+    state.commands.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector: connector("notion0001", { displayName: "Notion" }), nextStep: "ready" },
+    });
+    await fixture.render(<DiscoverPage />);
+    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    const card = await agentCard("Notion");
+    expect([...card.querySelectorAll("label")].map((label) => label.textContent)).toEqual([
+      "Codex",
+      "Claude",
+    ]);
+    await userEvent.click(page.getByRole("checkbox").nth(1));
+    await userEvent.click(buttonIn(card, "Add")!);
+    expect(state.commands.add).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: expect.objectContaining({ displayName: "Notion", agents: [codex] }),
+    });
+
+    // With one agent that takes connectors there is nothing to choose.
+    state.providersByEnvironment = { local: [state.providersByEnvironment.local![0]!] };
+    state.inventory = {
+      ...inventory(),
+      providerSupport: inventory().providerSupport.filter(
+        (entry) => entry.providerInstanceId === codex,
+      ),
+    };
+    state.commands.add.mockClear();
+    await fixture.render(<DiscoverPage />);
+    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    expect(document.querySelector('[aria-label="Add Notion for"]')).toBeNull();
+    expect(state.commands.add).toHaveBeenCalledOnce();
+    expect(state.commands.add.mock.calls[0]![0].input).not.toHaveProperty("agents");
+  });
+
   it("adds with + and opens sign-in when the server asks for it", async () => {
     await using fixture = setup();
     const reserved = { opener: {}, location: { href: "" }, close: vi.fn(), closed: false };
@@ -862,7 +910,7 @@ describe("Discover", () => {
       },
     });
     await fixture.render(<DiscoverPage />);
-    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    await addThroughCard(buttonIn(fixture.row("Notion"), "Add Notion"), "Notion");
     expect(state.commands.add).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: {
@@ -900,7 +948,7 @@ describe("Discover", () => {
     const signIn = Promise.withResolvers<unknown>();
     state.commands.startSignIn.mockReturnValueOnce(signIn.promise);
     await fixture.render(<DiscoverPage />);
-    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    await addThroughCard(buttonIn(fixture.row("Notion"), "Add Notion"), "Notion");
     await act(async () => undefined);
     expect(state.commands.startSignIn).toHaveBeenCalledOnce();
 
@@ -981,7 +1029,7 @@ describe("Discover", () => {
     await using fixture = setup();
     state.commands.add.mockResolvedValueOnce(extensionsError("The server did not answer."));
     await fixture.render(<DiscoverPage />);
-    await userEvent.click(buttonIn(fixture.row("Notion"), "Add Notion")!);
+    await addThroughCard(buttonIn(fixture.row("Notion"), "Add Notion"), "Notion");
     expect(fixture.row("Notion").querySelector('[role="alert"]')?.textContent).toBe(
       "The server did not answer.",
     );
@@ -1152,7 +1200,8 @@ describe("Discover", () => {
     state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<CategoryPage category="papers" />);
     expect(fixture.rowNames()).toEqual(["Scite", "Zotero"]);
-    expect(fixture.container.textContent).toContain("Also add from Codex");
+    // The store versions are on the item's own page, not under its row.
+    expect(fixture.container.textContent).not.toContain("Also add from");
     expect(fixture.container.textContent).toContain("Not checked by Scient");
     // Each store has its own section, which says the agent once; the rows just say Add.
     expect(fixture.section("From Codex’s store").textContent).toContain("Codex only");
@@ -1750,6 +1799,36 @@ describe("Detail pages", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
+  it("chooses which agents get a connector, keeps one on, and gives it to all again", async () => {
+    await using fixture = setup();
+    state.commands.update.mockResolvedValue({ _tag: "Success", value: inventory() });
+    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    await userEvent.selectOptions(fixture.section("Agents").querySelector("select")!, "chosen");
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, agents: [codex, claude] },
+    });
+
+    state.inventory = inventory({
+      connectors: [connector("linear0001", { displayName: "Linear", agents: [codex] })],
+    });
+    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    const toggle = (label: string) =>
+      fixture.section("Agents").querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
+    // The last chosen agent stays on; the connector's own switch turns it off for everyone.
+    expect(toggle("Turn off for Codex").disabled).toBe(true);
+    await userEvent.click(toggle("Turn on for Claude"));
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, agents: [codex, claude] },
+    });
+    await userEvent.selectOptions(fixture.section("Agents").querySelector("select")!, "all");
+    expect(state.commands.update).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { connectorId: LINEAR, agents: null },
+    });
+  });
+
   it("sends the whole project list for each availability change", async () => {
     await using fixture = setup();
     state.projects = [
@@ -1948,7 +2027,7 @@ describe("Detail pages", () => {
       value: { connector: connector("notion0001", { displayName: "Notion" }), nextStep: "ready" },
     });
     await fixture.render(<ServerDetailPage name="io.notion/notion" />);
-    await userEvent.click(buttonIn(fixture.header(), "Add")!);
+    await addThroughCard(buttonIn(fixture.header(), "Add"), "Notion");
     expect(state.commands.add).toHaveBeenCalledOnce();
     expect(state.toast).toHaveBeenCalledWith({ type: "success", title: "Notion added" });
 
@@ -1966,7 +2045,7 @@ describe("Detail pages", () => {
       value: { connector: connector("echo000001", { displayName: "Echo" }), nextStep: "ready" },
     });
     await fixture.render(<ServerDetailPage name="io.github.acme/echo" />);
-    await userEvent.click(buttonIn(fixture.header(), "Add")!);
+    await addThroughCard(buttonIn(fixture.header(), "Add"), "Echo");
     expect(state.commands.add).toHaveBeenLastCalledWith({
       environmentId: "local",
       input: expect.objectContaining({

@@ -133,9 +133,14 @@ export const make = Effect.gen(function* () {
     readonly mcpInjection: boolean;
     readonly projectId: Effect.Effect<ProjectId | undefined>;
     readonly provider: Effect.Effect<ServerProvider | undefined>;
+    /** The session's agent: connectors given to other agents only are skipped. */
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) {
     if (Option.isNone(runtime)) return NO_CONNECTORS;
-    const resolution = yield* runtime.value.resolveDelivery({ projectId: yield* input.projectId });
+    const resolution = yield* runtime.value.resolveDelivery({
+      projectId: yield* input.projectId,
+      providerInstanceId: input.providerInstanceId,
+    });
     const support: ConnectorTransportSupport = input.mcpInjection
       ? connectorTransportSupport(input.driver)
       : { status: "unsupported", reason: "This session has no Scient MCP channel." };

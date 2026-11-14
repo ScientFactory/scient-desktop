@@ -173,7 +173,10 @@ export function WorksWithAgents({
   const support = audienceSupport(audience, providers, inventory?.providerSupport ?? []);
   const usable = worksWithCardAgents(audience, support);
   // Scient's own connectors and plugins reach every agent: say so, not eleven logos.
-  if (audience.layer === "scient" || (support.length > 1 && usable.length === support.length))
+  if (
+    (audience.layer === "scient" && audience.agents === undefined) ||
+    (support.length > 1 && usable.length === support.length)
+  )
     return <span className="text-sm text-muted-foreground">All agents</span>;
   if (usable.length === 0)
     return <span className="text-sm text-muted-foreground">{audienceLabel(audience)}</span>;

@@ -10,6 +10,7 @@ import {
   type ExtensionComponent,
   ExtensionsError,
   type ProjectId,
+  type ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProviderMcpServer,
   type ServerProviderPlugin,
@@ -32,6 +33,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { LocalSetupDialog } from "./LocalSetupFields";
 
 import { WorksWithValue } from "./WorksWith";
+import { AddForAgents, useConnectorAgents } from "./AgentPicker";
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
@@ -94,6 +96,7 @@ import {
   TEST_OUTCOME_LABELS,
   urlHost,
   workspaceLabel,
+  connectorAudience,
 } from "./extensionsView";
 import { providerInventoryMessage } from "./providerInventory";
 
@@ -746,6 +749,12 @@ function ConnectorDetail({
             locked={actions.locked}
             setAvailability={actions.setAvailability}
           />
+          <AgentRows
+            connector={connector}
+            name={name}
+            locked={actions.locked}
+            setAgents={actions.setAgents}
+          />
         </div>
         {problem !== undefined ? (
           <div className="flex min-w-0 items-center gap-2">
@@ -851,7 +860,10 @@ function ConnectorDetail({
             "Repository",
             entry?.repositoryUrl ? <ExternalLink href={entry.repositoryUrl} /> : null,
           ),
-          ["Works with", <WorksWithValue key="works-with" />],
+          [
+            "Works with",
+            <WorksWithValue key="works-with" audience={connectorAudience(connector)} />,
+          ],
           ...(connector.local === undefined
             ? ([
                 ["Sign-in used", connectorAuthLabel(connector.auth)],
@@ -931,7 +943,8 @@ function ServerDetail({
   onAddWithOptions,
 }: {
   readonly entry: DiscoverEntry;
-  readonly onAddWithOptions: () => void;
+  /** Opens the add form, for the chosen agents (absent: every agent). */
+  readonly onAddWithOptions: (agents?: ReadonlyArray<ProviderInstanceId>) => void;
 }) {
   const { catalog, providers, environmentId } = useExtensionsEnvironment();
   const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
@@ -950,16 +963,22 @@ function ServerDetail({
           tagline={tagline}
           actions={
             <>
-              <PrimaryAction
-                icon={PlusIcon}
+              <AddForAgents
+                name={name}
                 disabled={!actions.canAdd || actions.locked}
-                onClick={() => (entryNeedsSetup(entry) ? onAddWithOptions() : void actions.add())}
-              >
-                {actions.busy === "add" ? "Adding…" : "Add"}
-              </PrimaryAction>
+                onAdd={(agents) =>
+                  entryNeedsSetup(entry) ? onAddWithOptions(agents) : void actions.add(agents)
+                }
+                trigger={
+                  <Button size="sm" type="button" variant="ghost-primary" data-primary-action="">
+                    <PlusIcon aria-hidden />
+                    {actions.busy === "add" ? "Adding…" : "Add"}
+                  </Button>
+                }
+              />
               {actions.canAdd && entry.localBundle === undefined ? (
                 <MoreMenu label={`More for ${name}`}>
-                  <MenuItem disabled={actions.locked} onClick={onAddWithOptions}>
+                  <MenuItem disabled={actions.locked} onClick={() => onAddWithOptions()}>
                     Add with options…
                   </MenuItem>
                 </MoreMenu>
@@ -1052,13 +1071,81 @@ function ServerDetail({
 }
 
 /**
+ * Which agents get a connector: all of them, or the ones chosen here. An agent added later gets
+ * it only while "All agents" is set. The last chosen agent stays on; "Use with agents" turns the
+ * connector off for everyone.
+ */
+function AgentRows({
+  connector,
+  name,
+  locked,
+  setAgents,
+}: {
+  readonly connector: ConnectorSummary;
+  readonly name: string;
+  readonly locked: boolean;
+  readonly setAgents: ConnectorActionsState["setAgents"];
+}) {
+  const agents = useConnectorAgents();
+  if (agents.length <= 1 && connector.agents === undefined) return null;
+  const chosen = connector.agents ?? [];
+  const toggle = (instanceId: ProviderInstanceId, on: boolean) => {
+    const others = chosen.filter((id) => id !== instanceId);
+    void setAgents(on ? [...others, instanceId] : others);
+  };
+  return (
+    <div role="group" aria-label="Agents" className="divide-y divide-border">
+      <CardRow>
+        <span className="min-w-0 flex-1 text-sm text-foreground">Agents</span>
+        <span className="w-44">
+          <NativeSelect
+            size="sm"
+            aria-label={`Which agents get ${name}`}
+            value={connector.agents === undefined ? "all" : "chosen"}
+            disabled={locked}
+            onChange={(event) =>
+              void setAgents(
+                event.target.value === "all" ? null : agents.map((agent) => agent.instanceId),
+              )
+            }
+          >
+            <option value="all">All agents</option>
+            <option value="chosen">Selected agents</option>
+          </NativeSelect>
+        </span>
+      </CardRow>
+      {connector.agents !== undefined
+        ? agents.map((agent) => {
+            const on = chosen.includes(agent.instanceId);
+            return (
+              <NestedRow key={agent.instanceId}>
+                <span className="min-w-0 truncate text-foreground">{agent.label}</span>
+                <Switch
+                  size="sm"
+                  checked={on}
+                  disabled={locked || (on && chosen.length === 1)}
+                  aria-label={`${on ? "Turn off" : "Turn on"} for ${agent.label}`}
+                  onCheckedChange={(checked) => toggle(agent.instanceId, Boolean(checked))}
+                />
+              </NestedRow>
+            );
+          })
+        : null}
+    </div>
+  );
+}
+
+/**
  * Any catalog or registry server by its exact name, looked up on the server
  * so entries no preview lists still open. Once added it is its connector.
  * "Add with options" stays open across that switch, for its sign-in step.
  */
 function ServerDetailContent({ name }: { readonly name: string }) {
   const { environmentId, callbackOrigin, inventory } = useExtensionsEnvironment();
-  const [withOptions, setWithOptions] = useState(false);
+  // The add form, with the agents chosen for it (none chosen: every agent).
+  const [withOptions, setWithOptions] = useState<{
+    readonly agents?: ReadonlyArray<ProviderInstanceId>;
+  } | null>(null);
   const lookup = useEnvironmentQuery(extensionsDiscoverEntry({ environmentId, input: { name } }));
   const entry = lookup.data;
   if (entry === null) {
@@ -1086,17 +1173,21 @@ function ServerDetailContent({ name }: { readonly name: string }) {
           back="discover"
         />
       ) : (
-        <ServerDetail entry={entry} onAddWithOptions={() => setWithOptions(true)} />
+        <ServerDetail
+          entry={entry}
+          onAddWithOptions={(agents) => setWithOptions(agents === undefined ? {} : { agents })}
+        />
       )}
       {withOptions ? (
         <AddConnectorDialog
           open
           onOpenChange={(open) => {
-            if (!open) setWithOptions(false);
+            if (!open) setWithOptions(null);
           }}
           environmentId={environmentId}
           entry={entry}
           callbackOrigin={callbackOrigin}
+          agents={withOptions.agents}
         />
       ) : null}
     </>

@@ -10,6 +10,7 @@ import type {
   ServerProviderMcpServer,
   ServerProviderPlugin,
   ProviderStoreApp,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
@@ -38,6 +39,7 @@ import {
 import { ActionError, SignInBlockedNotice } from "./ExtensionsFeedback";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { ExtensionRow, type ExtensionTarget } from "./ExtensionRow";
+import { AddForAgents } from "./AgentPicker";
 import {
   providerExtensionAudience,
   providerServerConnectLabel,
@@ -50,6 +52,7 @@ import {
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
   TEST_OUTCOME_LABELS,
+  connectorAudience,
 } from "./extensionsView";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
@@ -277,6 +280,7 @@ export function ConnectorItem({
     <ExtensionRow
       target={target}
       name={entry ? entryName(entry) : connector.displayName}
+      audience={connectorAudience(connector)}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
       tagline={
         (entry ? entryTagline(entry) : undefined) ??
@@ -319,7 +323,10 @@ export function EntryItem({ entry }: { readonly entry: DiscoverEntry }) {
 
 function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
   const { environmentId, callbackOrigin } = useExtensionsEnvironment();
-  const [showToken, setShowToken] = useState(false);
+  // The add form, with the agents chosen for it (none chosen: every agent).
+  const [setup, setSetup] = useState<{
+    readonly agents?: ReadonlyArray<ProviderInstanceId>;
+  } | null>(null);
   const actions = useAddEntry(entry);
   const open = useOpenExtension();
   const target: ExtensionTarget = { kind: "server", name: entry.name };
@@ -334,21 +341,31 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
         status={actions.busy === "add" ? "Adding…" : null}
         trailing={
           entry.installedConnectorId === undefined ? (
-            <Button
-              size="icon-sm"
-              variant="ghost-muted"
-              aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
-              disabled={actions.canAdd && actions.locked}
-              onClick={() =>
-                entryNeedsSetup(entry)
-                  ? setShowToken(true)
-                  : actions.canAdd
-                    ? void actions.add()
-                    : open(target)
-              }
-            >
-              <PlusIcon aria-hidden />
-            </Button>
+            actions.canAdd || entryNeedsSetup(entry) ? (
+              <AddForAgents
+                name={name}
+                disabled={actions.locked}
+                onAdd={(agents) =>
+                  entryNeedsSetup(entry)
+                    ? setSetup(agents === undefined ? {} : { agents })
+                    : void actions.add(agents)
+                }
+                trigger={
+                  <Button size="icon-sm" variant="ghost-muted" aria-label={`Add ${name}`}>
+                    <PlusIcon aria-hidden />
+                  </Button>
+                }
+              />
+            ) : (
+              <Button
+                size="icon-sm"
+                variant="ghost-muted"
+                aria-label={`Why ${name} can't be added`}
+                onClick={() => open(target)}
+              >
+                <PlusIcon aria-hidden />
+              </Button>
+            )
           ) : null
         }
         feedback={
@@ -357,13 +374,16 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
           ) : null
         }
       />
-      {showToken ? (
+      {setup ? (
         <AddConnectorDialog
           open
-          onOpenChange={setShowToken}
+          onOpenChange={(next) => {
+            if (!next) setSetup(null);
+          }}
           environmentId={environmentId}
           callbackOrigin={callbackOrigin}
           entry={entry}
+          agents={setup.agents}
         />
       ) : null}
     </>

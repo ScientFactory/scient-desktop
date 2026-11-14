@@ -574,7 +574,6 @@ function StoreSection({
                 iconUrl={entry.iconUrl}
                 tagline={entry.description}
                 audience={audience}
-                worksWith={false}
                 trailing={
                   <StoreInstall provider={provider} entry={entry} refresh={refresh} compact />
                 }
@@ -675,31 +674,9 @@ function CategoryContents({
           {accountServicesFor(category, query).map((service) => (
             <AccountServiceItem key={`account:${service.id}`} service={service} />
           ))}
-          {visiblePicks.map((entry) => {
-            const equivalents = stores.filter((store) => storeMatches(store.entry, entry));
-            return equivalents.length ? (
-              <li key={entry.name}>
-                <ul>
-                  <EntryItem entry={entry} />
-                </ul>
-                <div className="flex flex-wrap gap-2 px-2 ps-15">
-                  {equivalents.map((store) => (
-                    <Link
-                      key={store.entry.id}
-                      to="/settings/extensions/item/store/$instanceId/$entryId"
-                      params={{ instanceId: store.provider.instanceId, entryId: store.entry.id }}
-                      className="text-xs text-muted-foreground underline"
-                    >
-                      Also add from{" "}
-                      {store.entry.kind === "codex" ? "Codex" : "Claude / Scient Agent"}’s store
-                    </Link>
-                  ))}
-                </div>
-              </li>
-            ) : (
-              <EntryItem key={entry.name} entry={entry} />
-            );
-          })}
+          {visiblePicks.map((entry) => (
+            <EntryItem key={entry.name} entry={entry} />
+          ))}
         </ExtensionGrid>
         {ready && !visiblePicks.length ? <MutedLine>No picks match this search.</MutedLine> : null}
       </ExtensionsSection>

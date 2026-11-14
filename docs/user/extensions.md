@@ -10,10 +10,10 @@ which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
 - **Discover** lists services you can add. Curated sections come first: **Most used**
-  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, PubMed and
-  Semantic Scholar), then one section per kind of work, such as Papers &
+  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, Playwright,
+  PubMed, Semantic Scholar, Vercel and Cloudflare), then one section per kind of work, such as Papers &
   literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
-  the shared plugin shelf, the Codex store, and **Browse all MCP servers**, which lists the public MCP Registry. Select a
+  each agent's store in its own section (**From Claude's store**, **From Codex's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
   section title to see the whole category. Search covers the catalog, the
   registry, and what you have already installed.
 - **Installed** lists what this environment already has, grouped by who manages
@@ -27,7 +27,10 @@ A connected service is a remote MCP server: a service that offers tools to AI
 agents over the internet.
 
 1. In **Discover**, choose **+** on a service's row, or **Add** on its page.
-2. If the service asks you to sign in, Scient opens its sign-in page in your
+2. When more than one of your agents can use it, a small card asks which agents
+   get it. Every agent is ticked; untick the ones that should not have it and
+   choose **Add**.
+3. If the service asks you to sign in, Scient opens its sign-in page in your
    browser. Complete it there, then return to Scient.
 
 To add a service that is not listed, open **Installed** and choose **Add by
@@ -138,6 +141,9 @@ its key. **Sign in** or **Reconnect** appears when signing in is possible; use
 - **Use with agents** turns the service on or off for every agent.
 - **Available in** chooses **All projects** or **Selected projects**. With
   selected projects, turn each project on or off in the list below.
+- **Agents** chooses **All agents** or **Selected agents**. With selected
+  agents, turn each agent on or off in the list below. An agent you add later
+  gets the service only while **All agents** is set.
 
 Turning a service off, or narrowing where it is available, applies to an
 agent's next call. A service you add or turn on reaches an agent when its next
@@ -153,9 +159,10 @@ the service and its stored sign-in or key. A key from Accounts stays in Accounts
 
 ## Works with
 
-The line on each row says who can use it: **Works with all your agents**,
-**Works with Claude and Scient Agent**, **Codex only**, or **Claude only**.
-Hover over it or select it to see the agents and any limits. Account apps use
+An item's page says who can use it: **Works with all your agents**, **Works
+with the agents you chose**, **Works with Claude and Scient Agent**, **Codex
+only**, or **Claude only**. Hover over it or select it to see the agents and
+any limits. On **Installed**, the **Works with** column shows the agents' logos. Account apps use
 their owning agent's account. A standalone server configured in Claude stays
 with Claude.
 

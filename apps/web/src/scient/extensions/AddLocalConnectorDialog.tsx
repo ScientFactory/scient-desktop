@@ -11,6 +11,7 @@ import type {
   ImportableSkill,
   PersonalSkillCandidate,
   PersonalSkillSource,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { VaultSecretRef } from "@t3tools/contracts";
 import { BotIcon, ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
@@ -207,7 +208,10 @@ export function AddLocalConnectorDialog({
   entry,
   onWebAddress,
   kind,
+  agents,
 }: {
+  /** The agents chosen when it was added from Discover; absent gives it to every agent. */
+  readonly agents?: ReadonlyArray<ProviderInstanceId> | undefined;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
@@ -424,6 +428,7 @@ export function AddLocalConnectorDialog({
         target,
         ...(name && target.type !== "local-import" ? { displayName: name } : {}),
         ...(description ? { description } : {}),
+        ...(agents === undefined ? {} : { agents }),
       },
     });
     setBusy(null);

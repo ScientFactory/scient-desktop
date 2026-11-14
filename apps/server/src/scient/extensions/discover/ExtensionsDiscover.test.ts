@@ -597,14 +597,16 @@ describe("curated Discover catalog", () => {
   it("ships a catalog that satisfies its own rules", () => {
     const ids = new Set(CURATED_SERVERS.map((server) => server.id));
     expect(ids.size).toBe(CURATED_SERVERS.length);
-    expect(new Set(CURATED_SERVERS.map((server) => canonicalConnectorUrl(server.url))).size).toBe(
-      CURATED_SERVERS.length,
-    );
+    const remote = CURATED_SERVERS.flatMap((server) => (server.url ? [server.url] : []));
+    expect(new Set(remote.map(canonicalConnectorUrl)).size).toBe(remote.length);
     for (const server of CURATED_SERVERS) {
       expect(server.tagline.length, server.id).toBeLessThanOrEqual(60);
-      expect(new URL(server.url.replace("<tenant>", "example-lab")).protocol, server.id).toBe(
-        "https:",
-      );
+      // Each server is reached at a web address or run from a pinned package, never both.
+      expect(server.url === undefined, server.id).toBe(server.localPackage !== undefined);
+      if (server.url)
+        expect(new URL(server.url.replace("<tenant>", "example-lab")).protocol, server.id).toBe(
+          "https:",
+        );
       expect(new URL(server.websiteUrl).protocol, server.id).toBe("https:");
       expect(
         server.categories.filter((category) => category !== "most-used").length,
@@ -612,7 +614,7 @@ describe("curated Discover catalog", () => {
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 6 : 40);
+      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 10 : 40);
       expect(size, category).toBeGreaterThan(0);
     }
   });
@@ -630,8 +632,12 @@ describe("curated Discover catalog", () => {
         expect(entry.address).toEqual(server.address);
         expect(entry.remotes[0]?.requiresInput).toBe(true);
       }
-      if (server.url.includes(".caseyjhand.com/")) expect(entry.hosting).toBe("Community");
-      if (server.url.includes(".mcp.claude.com/"))
+      if (server.localPackage) {
+        expect(entry.remotes).toEqual([]);
+        expect(entry.localPackage).toEqual(server.localPackage);
+      }
+      if (server.url?.includes(".caseyjhand.com/")) expect(entry.hosting).toBe("Community");
+      if (server.url?.includes(".mcp.claude.com/"))
         expect(entry.hosting).toBe("Hosted by Anthropic");
     }
   });

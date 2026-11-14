@@ -846,6 +846,7 @@ export const layerWithOptions = (
                     providers.find((snapshot) => snapshot.instanceId === providerInstanceId),
                   ),
                 ),
+                providerInstanceId,
               });
             // SCIENT-FORK:END
             if (options.configureMcp === false || adapter.mcpSessionInjection !== true) {
