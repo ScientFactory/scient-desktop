@@ -441,7 +441,7 @@ export function ExtensionGrid({
   return (
     <ul
       aria-label={label}
-      className="-mx-2 grid grid-cols-1 gap-x-6 gap-y-1 @min-[720px]/extensions:grid-cols-2"
+      className="-mx-2 grid grid-cols-1 gap-x-6 gap-y-3 @min-[720px]/extensions:grid-cols-2"
     >
       {children}
     </ul>
