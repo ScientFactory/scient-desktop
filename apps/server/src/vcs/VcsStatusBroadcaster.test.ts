@@ -983,9 +983,9 @@ describe("VcsStatusBroadcaster", () => {
         aheadCount: 2,
       };
       const refreshed = yield* broadcaster.refreshStatus("/repo");
-      // Explicit refresh publishes local state first, then reads it again because
-      // the remote fetch can move the comparison base.
-      assert.equal(state.localStatusCalls, 3);
+      // Explicit refresh publishes local state first and reads it again only when the
+      // remote fetch moved the refs, which it did not here.
+      assert.equal(state.localStatusCalls, 2);
       assert.equal(state.remoteStatusCalls, 2);
       const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
 
@@ -998,9 +998,9 @@ describe("VcsStatusBroadcaster", () => {
         ...state.currentLocalStatus,
         ...state.currentRemoteStatus,
       });
-      assert.equal(state.localStatusCalls, 3);
+      assert.equal(state.localStatusCalls, 2);
       assert.equal(state.remoteStatusCalls, 2);
-      assert.equal(state.localInvalidationCalls, 3);
+      assert.equal(state.localInvalidationCalls, 2);
       assert.equal(state.remoteInvalidationCalls, 3);
     }).pipe(Effect.provide(layerTestFor(state)));
   });

@@ -14045,16 +14045,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           ),
         );
+        const refusal =
+          "Claude Code exited before it started: --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
+        // SCIENT-FORK:START — the CLI can exit before Scient's start claims the query (the start
+        // fails) or after it (the exit settles the turn); either way the refusal is shown.
+        const terminals =
+          yield* Queue.unbounded<
+            Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+          >();
+        yield* harness.runtime.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "turn.terminal" ? Queue.offer(terminals, event) : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
         const started = yield* harness.runtime
           .startTurn(harness.turnInput("a", 1))
           .pipe(Effect.exit);
-        assert.isTrue(Exit.isFailure(started));
         if (Exit.isFailure(started)) {
           assert.strictEqual(
             makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
-            "Claude Code exited before it started: --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons",
+            refusal,
           );
+        } else {
+          const terminal = yield* Queue.take(terminals);
+          assert.equal(terminal.status, "failed");
+          assert.strictEqual(terminal.failure?.message, refusal);
         }
+        // SCIENT-FORK:END
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

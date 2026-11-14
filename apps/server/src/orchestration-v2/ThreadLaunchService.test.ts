@@ -196,13 +196,14 @@ function makeHarness(options: HarnessOptions = {}) {
   const generateThreadTitle = vi.fn(
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
+  const layerCheckpointStore = Layer.mock(CheckpointStore.CheckpointStore)({
+    isGitRepository: options.isGitRepository ?? (() => Effect.succeed(true)),
+  });
   const layerExternalServices = Layer.mergeAll(
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
-    Layer.mock(CheckpointStore.CheckpointStore)({
-      isGitRepository: options.isGitRepository ?? (() => Effect.succeed(true)),
-    }),
+    layerCheckpointStore,
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
       bootstrap: () => Effect.die("unused"),
@@ -263,6 +264,8 @@ function makeHarness(options: HarnessOptions = {}) {
         layerThreadManagement,
         layerReceipts,
         layerOrchestrator,
+        // SCIENT-FORK: Scient's replay harness also provides a real checkpoint store.
+        layerCheckpointStore,
         IdAllocator.layer,
         options.getLaunchSettings === undefined
           ? Layer.empty

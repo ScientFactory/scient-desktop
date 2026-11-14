@@ -3517,7 +3517,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const preview = yield* driver.getReviewDiffPreview({ cwd });
         assert.deepStrictEqual(
           preview.sources.find((source) => source.kind === "working-tree")!.files,
-          [{ path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 }],
+          [
+            {
+              path: "untracked.txt",
+              previousPath: null,
+              changeType: "new",
+              additions: 1,
+              deletions: 0,
+            },
+          ],
         );
         assert.strictEqual(yield* fs.readFileString(path.join(cwd, ".git/filter-runs")), "");
         assert.deepStrictEqual(yield* fs.readFile(indexPath), originalIndex);
@@ -3564,8 +3572,20 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const preview = yield* driver.getReviewDiffPreview({ cwd });
         const dirty = preview.sources.find((source) => source.kind === "working-tree")!;
         assert.deepStrictEqual(dirty.files, [
-          { path: "tracked.txt", previousPath: null, additions: 1, deletions: 1 },
-          { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
+          {
+            path: "tracked.txt",
+            previousPath: null,
+            changeType: "change",
+            additions: 1,
+            deletions: 1,
+          },
+          {
+            path: "untracked.txt",
+            previousPath: null,
+            changeType: "new",
+            additions: 1,
+            deletions: 0,
+          },
         ]);
         assert.include(dirty.diff, "-before");
         assert.include(dirty.diff, "+after!");
