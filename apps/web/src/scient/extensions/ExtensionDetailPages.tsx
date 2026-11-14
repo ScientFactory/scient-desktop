@@ -65,7 +65,7 @@ import { ErrorNote } from "./ExtensionsFeedback";
 import { siteHost } from "./LocalSetupFields";
 import { useSignIn } from "../accounts/useSignIn";
 import {
-  BackLink,
+  BackToList,
   ExtensionsPage,
   GHOST_LINK_CLASS,
   MutedLine,
@@ -104,11 +104,12 @@ const isExtensionsError = Schema.is(ExtensionsError);
 
 type BackTo = "discover" | "installed";
 
+/** Back to the list the page was opened from; `to` is used when it was opened directly. */
 function DetailBack({ to }: { readonly to: BackTo }) {
   return to === "discover" ? (
-    <BackLink to="/settings/extensions">Discover</BackLink>
+    <BackToList fallback="/settings/extensions" fallbackLabel="Discover" />
   ) : (
-    <BackLink to="/settings/extensions/installed">Installed</BackLink>
+    <BackToList fallback="/settings/extensions/installed" fallbackLabel="Installed" />
   );
 }
 

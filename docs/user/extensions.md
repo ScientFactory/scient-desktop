@@ -10,8 +10,8 @@ which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
 - **Discover** lists services you can add. Curated sections come first: **Most used**
-  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, Playwright,
-  PubMed, Semantic Scholar, Vercel and Cloudflare), then one section per kind of work, such as Papers &
+  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, Telegram,
+  PubMed, Semantic Scholar, Exa, Playwright, Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
   literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
   each agent's store in its own section (**From Claude's store**, **From Codex's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
   section title to see the whole category. Search covers the catalog, the
@@ -19,7 +19,8 @@ extensions.
 - **Installed** lists what this environment already has, grouped by who manages
   it.
 
-Select any row to open its page.
+Select any row to open its page. Its back link returns to the list you opened it
+from.
 
 ## Add a connected service
 

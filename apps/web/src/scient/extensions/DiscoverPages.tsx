@@ -10,7 +10,7 @@ import { AccountServiceItem, accountServicesFor } from "./AccountServicePages";
 import { isAccountServiceStoreEntry } from "./accountServices";
 import { Link, Navigate } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
-import { useContext, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 
 import {
   SettingsSearchTarget,
@@ -36,6 +36,7 @@ import {
   SECTION_TITLE_LINK_CLASS,
   SectionTitleChevron,
   useExtensionsEnvironment,
+  useRememberListPage,
 } from "./ExtensionsPage";
 import { ExtensionGrid, ExtensionRow } from "./ExtensionRow";
 import { extensionsDiscoverPage, extensionsProviderStorePage } from "./extensionsState";
@@ -223,6 +224,7 @@ function DiscoverPager({
 
 function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const { environmentId, catalog, catalogError, inventory, providers } = useExtensionsEnvironment();
+  const prefetchCategory = usePrefetchCategory();
   const builtIns = inventory?.plugins.filter((plugin) => plugin.origin === "built-in") ?? [];
   return (
     <SettingsSearchTarget
@@ -249,6 +251,8 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                     to="/settings/extensions/category/$category"
                     params={{ category: section.category }}
                     className={SECTION_TITLE_LINK_CLASS}
+                    onPointerEnter={() => prefetchCategory(section.category)}
+                    onFocus={() => prefetchCategory(section.category)}
                   >
                     {section.title}
                     <SectionTitleChevron />
@@ -278,6 +282,8 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                   to="/settings/extensions/category/$category"
                   params={{ category: section.category }}
                   className={SECTION_TITLE_LINK_CLASS}
+                  onPointerEnter={() => prefetchCategory(section.category)}
+                  onFocus={() => prefetchCategory(section.category)}
                 >
                   {section.title}{" "}
                   <span className="text-xs text-muted-foreground">{section.total}</span>
@@ -393,6 +399,7 @@ function SkillSearchResults({ query }: { readonly query: string }) {
 }
 
 function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
+  useRememberListPage("Discover");
   const searchTargetId = useSettingsSearchTargetId();
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), 300);
@@ -503,6 +510,7 @@ interface StorePage {
 function StoreSection({
   group,
   ready,
+  slow,
   pages,
   rows,
   more,
@@ -510,6 +518,8 @@ function StoreSection({
 }: {
   readonly group: StoreGroup;
   readonly ready: boolean;
+  /** Loading has taken long enough to say so. */
+  readonly slow: boolean;
   readonly pages: ReadonlyArray<StorePage>;
   readonly rows: ReadonlyArray<{
     provider: ServerProvider;
@@ -542,7 +552,7 @@ function StoreSection({
     ...new Set(
       pages.flatMap(({ provider, result }) => {
         const label = provider.displayName ?? provider.driver;
-        if (AsyncResult.isInitial(result)) return [`Checking ${label}’s store…`];
+        if (AsyncResult.isInitial(result)) return slow ? [`Checking ${label}’s store…`] : [];
         if (result._tag === "Failure") return [`Could not read ${label}’s store.`];
         const data = Option.getOrNull(AsyncResult.value(result));
         return [
@@ -595,6 +605,75 @@ function StoreSection({
   );
 }
 
+/** The agents whose own stores a category page lists. Most used lists only Scient's picks. */
+function categoryStoreTargets(
+  providers: ReadonlyArray<ServerProvider>,
+  category: ExtensionCategory,
+): ReadonlyArray<ServerProvider> {
+  return providers.filter(
+    (provider) =>
+      category !== "most-used" &&
+      storeAvailable(provider) &&
+      ["codex", "claudeAgent", "scient"].includes(provider.driver),
+  );
+}
+
+function categoryStoreInput(
+  provider: ServerProvider,
+  category: ExtensionCategory,
+  query: string,
+  cursor: string | undefined,
+) {
+  return {
+    instanceId: provider.instanceId,
+    category,
+    ...(query ? { query } : {}),
+    limit: 50,
+    ...(cursor ? { cursor } : {}),
+  };
+}
+
+/** How long a prefetched category stays held before its normal idle time applies. */
+const CATEGORY_PREFETCH_HOLD_MS = 30_000;
+
+/**
+ * Starts loading a category's picks and first store pages when its link is
+ * pointed at or focused, so the page opens already filled.
+ */
+function usePrefetchCategory(): (category: ExtensionCategory) => void {
+  const { environmentId, providers } = useExtensionsEnvironment();
+  const registry = useContext(RegistryContext);
+  return (category) => {
+    const atoms = [
+      extensionsDiscoverPage({ environmentId, input: { scope: "curated", category } }),
+      ...categoryStoreTargets(providers, category).map((provider) =>
+        extensionsProviderStorePage({
+          environmentId,
+          input: categoryStoreInput(provider, category, "", undefined),
+        }),
+      ),
+    ];
+    for (const atom of atoms) {
+      const release = registry.mount(atom as Atom.Atom<unknown>);
+      setTimeout(release, CATEGORY_PREFETCH_HOLD_MS);
+    }
+  };
+}
+
+/** True once `ms` have passed since mount: loading notes wait, so a quick load shows none. */
+function useAfterDelay(ms: number): boolean {
+  const [passed, setPassed] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer: loading notes appear only after a delay
+  useEffect(() => {
+    const timer = setTimeout(() => setPassed(true), ms);
+    return () => clearTimeout(timer);
+  }, [ms]);
+  return passed;
+}
+
+/** A note about loading appears only when loading takes longer than this. */
+const LOADING_NOTE_DELAY_MS = 700;
+
 function CategoryContents({
   category,
   query,
@@ -602,30 +681,20 @@ function CategoryContents({
   readonly category: ExtensionCategory;
   readonly query: string;
 }) {
-  const { environmentId, providers } = useExtensionsEnvironment();
+  const { environmentId, providers, catalog } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
+  const slow = useAfterDelay(LOADING_NOTE_DELAY_MS);
   const picks = useEnvironmentQuery(
     extensionsDiscoverPage({ environmentId, input: { scope: "curated", category } }),
   );
-  const targets = providers.filter(
-    (provider) =>
-      category !== "most-used" &&
-      storeAvailable(provider) &&
-      ["codex", "claudeAgent", "scient"].includes(provider.driver),
-  );
+  const targets = categoryStoreTargets(providers, category);
   const [more, setMore] = useState<Readonly<Record<string, readonly string[]>>>({});
   const storeAtom = Atom.make((get) =>
     targets.flatMap((provider) =>
       [undefined, ...(more[provider.instanceId] ?? [])].map((cursor) => {
         const atom = extensionsProviderStorePage({
           environmentId,
-          input: {
-            instanceId: provider.instanceId,
-            category,
-            ...(query ? { query } : {}),
-            limit: 50,
-            ...(cursor ? { cursor } : {}),
-          },
+          input: categoryStoreInput(provider, category, query, cursor),
         });
         return { provider, atom, cursor, result: get(atom) };
       }),
@@ -647,7 +716,11 @@ function CategoryContents({
       stores.push({ provider, entry, refresh: () => registry.refresh(atom) });
     }
   }
-  const curated = picks.data?.entries ?? [];
+  // Until the full list arrives, the picks the Discover page already showed stand in for it.
+  const curated =
+    picks.data?.entries ??
+    catalog?.sections.find((section) => section.category === category)?.entries ??
+    [];
   const visiblePicks = curated.filter((entry) =>
     matchesQuery(query, [entry.title, entry.description, entry.name]),
   );
@@ -667,7 +740,7 @@ function CategoryContents({
       >
         {picks.error ? (
           <MutedLine>{picks.error}</MutedLine>
-        ) : !ready ? (
+        ) : !ready && slow && curated.length === 0 ? (
           <MutedLine>Loading picks…</MutedLine>
         ) : null}
         <ExtensionGrid label="Scient’s picks">
@@ -687,6 +760,7 @@ function CategoryContents({
               key={group.key}
               group={group}
               ready={ready}
+              slow={slow}
               pages={pages.filter(({ provider }) => group.providers.includes(provider))}
               rows={stores.filter(
                 ({ provider, entry }) =>
@@ -734,6 +808,9 @@ function Category({ category }: { readonly category: string }) {
   const { catalog } = useExtensionsEnvironment();
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), 300);
+  const section = catalog?.sections.find((candidate) => candidate.category === category);
+  const title = section?.title ?? category.charAt(0).toUpperCase() + category.slice(1);
+  useRememberListPage(title);
   if (!isExtensionCategory(category))
     return (
       <>
@@ -741,8 +818,6 @@ function Category({ category }: { readonly category: string }) {
         <MutedLine>This category does not exist.</MutedLine>
       </>
     );
-  const section = catalog?.sections.find((candidate) => candidate.category === category);
-  const title = section?.title ?? category.charAt(0).toUpperCase() + category.slice(1);
   return (
     <>
       <BackLink to="/settings/extensions">Discover</BackLink>
@@ -766,6 +841,7 @@ export function CategoryPage({ category }: { readonly category: string }) {
 }
 
 function AllServers() {
+  useRememberListPage("All MCP servers");
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), 300);
   return (

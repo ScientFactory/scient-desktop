@@ -614,7 +614,7 @@ describe("curated Discover catalog", () => {
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 10 : 40);
+      expect(size, category).toBeLessThanOrEqual(category === "most-used" ? 12 : 40);
       expect(size, category).toBeGreaterThan(0);
     }
   });

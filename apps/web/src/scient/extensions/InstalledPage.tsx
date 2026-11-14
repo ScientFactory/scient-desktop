@@ -28,6 +28,7 @@ import {
   SectionShowAllToggle,
   MutedLine,
   useExtensionsEnvironment,
+  useRememberListPage,
 } from "./ExtensionsPage";
 import { ExtensionTable } from "./ExtensionRow";
 import {
@@ -289,6 +290,7 @@ const CHATGPT_APPS_PAGE = "https://chatgpt.com/apps";
 const CLAUDE_CONNECTORS_PAGE = "https://claude.ai/customize/connectors";
 
 function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
+  useRememberListPage("Installed");
   const {
     environmentId,
     inventory,

@@ -433,9 +433,15 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     <span data-navigate={to} data-hash={hash} />
   ),
   useNavigate: () => state.navigate,
+  useRouter: () => ({ history: { push: (href: string) => state.navigate({ href }) } }),
   useLocation: ({ select }: { select: (location: unknown) => unknown }) => {
     useStateVersion();
-    return select({ pathname: "/settings/extensions", hash: state.hash, state: {} });
+    return select({
+      pathname: "/settings/extensions",
+      href: "/settings/extensions",
+      hash: state.hash,
+      state: {},
+    });
   },
 }));
 vi.mock("../../components/chat/providerIconUtils", () => ({
@@ -542,6 +548,7 @@ import {
 } from "./ExtensionDetailPages";
 import { ProviderStoreDetailPage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
+import { forgetListPage } from "./ExtensionsPage";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claude");
@@ -714,6 +721,8 @@ function setup() {
       }),
     );
   state.projects = [];
+  // Item pages go back to the list last shown; each test starts with none, as a new window does.
+  forgetListPage();
   state.providersByEnvironment = {
     local: [
       provider(codex, "codex", {
@@ -1274,6 +1283,25 @@ describe("Discover", () => {
     const redirect = fixture.container.querySelector<HTMLElement>("[data-navigate]");
     expect(redirect?.dataset.navigate).toBe("/settings/extensions/installed");
     expect(redirect?.dataset.hash).toBe("extensions-connected-services");
+  });
+
+  it("opens a category with the picks Discover had, and its items go back to it", async () => {
+    await using fixture = setup();
+    state.discoverOutcomes = {
+      [JSON.stringify({ scope: "curated", category: "most-used" })]: "pending",
+    };
+    await fixture.render(<CategoryPage category="most-used" />);
+    expect(fixture.rowNames(fixture.section("Scient’s picks")).slice(-3)).toEqual([
+      "Linear",
+      "Notion",
+      "Local tool",
+    ]);
+    expect(fixture.container.textContent).not.toContain("Loading picks…");
+
+    await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
+    expect(linkIn(fixture.container, "Installed")).toBeNull();
+    await userEvent.click(buttonIn(fixture.container, "Popular")!);
+    expect(state.navigate).toHaveBeenLastCalledWith({ href: "/settings/extensions" });
   });
 
   it("lists a category with a way back, and rejects unknown categories", async () => {

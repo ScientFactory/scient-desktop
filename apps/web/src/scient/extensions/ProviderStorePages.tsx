@@ -25,6 +25,7 @@ import {
   SECTION_TITLE_LINK_CLASS,
   SectionTitleChevron,
   useExtensionsEnvironment,
+  useRememberListPage,
 } from "./ExtensionsPage";
 import { ExtensionGrid, ExtensionRow } from "./ExtensionRow";
 import {
@@ -382,16 +383,13 @@ function Store({ instanceId }: { readonly instanceId: string }) {
   const act = useAtomCommand(actOnProviderPlugin);
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
   const lock = useActionLock(JSON.stringify(["refresh-store", instanceId]));
+  const title =
+    provider?.driver === "codex" ? "From the Codex store" : "Plugins for Claude and Scient Agent";
+  useRememberListPage(title);
   return (
     <>
       <BackLink to="/settings/extensions">Discover</BackLink>
-      <ExtensionsSection
-        title={
-          provider?.driver === "codex"
-            ? "From the Codex store"
-            : "Plugins for Claude and Scient Agent"
-        }
-      >
+      <ExtensionsSection title={title}>
         <Input
           aria-label="Search plugins"
           placeholder="Search plugins"

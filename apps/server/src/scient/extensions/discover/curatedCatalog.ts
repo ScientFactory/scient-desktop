@@ -22,9 +22,12 @@ export const MOST_USED_SERVER_IDS = [
   "github",
   "slack",
   "notion",
-  "playwright",
+  "telegram",
   "pubmed",
   "semantic-scholar",
+  "exa",
+  "playwright",
+  "context7",
   "vercel",
   "cloudflare",
 ] as const;
@@ -505,7 +508,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
       "Fetch current, version-specific documentation and code examples for libraries and frameworks. Helps agents avoid outdated APIs.",
     url: "https://mcp.context7.com/mcp",
     registry: { name: "io.github.upstash/context7", version: "4.4.4" },
-    categories: ["code"],
+    categories: ["most-used", "code"],
     websiteUrl: "https://context7.com",
     icon: CURATED_ICONS["context7"],
   },
@@ -568,6 +571,33 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["most-used", "code"],
     websiteUrl: "https://playwright.dev",
     icon: CURATED_ICONS["playwright"],
+  },
+  {
+    // local: npx @ghostpaw/telegram 0.7.9 mcp, 4 tools, no dependencies; MCP Registry
+    // io.github.GhostPawJS/telegram (verified 2026-11-14). Telegram has no official server.
+    id: "telegram",
+    accountRequired: true,
+    displayName: "Telegram",
+    tagline: "Send, read and search messages through your Telegram bot",
+    description:
+      "Lets agents send, edit and pin messages, read and search the chats your bot is in, and moderate groups it runs. It works through a bot: create one by messaging @BotFather in Telegram, send /newbot, and paste the token it gives you. Runs on your computer and keeps a copy of the bot's messages there.",
+    localPackage: {
+      runner: "npx",
+      identifier: "@ghostpaw/telegram",
+      version: "0.7.9",
+      args: ["mcp"],
+      environment: [
+        {
+          name: "TELEGRAM_BOT_TOKEN",
+          description: "The bot token from @BotFather (send /newbot in Telegram)",
+          required: true,
+          secret: true,
+        },
+      ],
+    },
+    categories: ["most-used", "communication"],
+    websiteUrl: "https://github.com/GhostPawJS/telegram",
+    icon: CURATED_ICONS["telegram"],
   },
   {
     // open: 200 "docs-ai-search" 0.4.14
@@ -1263,7 +1293,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     description:
       "Search the wider web and fetch pages for research. Web results are not peer-review certification; vendor limits and third-party content rights apply.",
     url: "https://mcp.exa.ai/mcp",
-    categories: ["papers", "code"],
+    categories: ["most-used", "papers", "code"],
     websiteUrl: "https://exa.ai",
     accountRequired: false,
     icon: CURATED_ICONS["exa"],

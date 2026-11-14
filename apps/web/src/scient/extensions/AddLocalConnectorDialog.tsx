@@ -559,7 +559,11 @@ export function AddLocalConnectorDialog({
         ? "A skill you add is on for every agent from your next message. You can turn it off or undo the change in Skills."
         : step.name === "choose" && pkg === undefined
           ? "A skill, connector or plugin. Every agent can use it."
-          : "This runs a program on the computer running this environment. Every agent can use its tools.";
+          : `This runs a program on the computer running this environment. ${
+              agents === undefined
+                ? "Every agent can use its tools."
+                : "The agents you chose can use its tools."
+            }`;
   const choosing = step.name === "choose" && pkg === undefined;
   const importCount = skillsFirst ? importableSkills.length : importable.length;
 
