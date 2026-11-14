@@ -263,7 +263,10 @@ const add = metadata(
         accountId: AccountId,
         name: Schema.String,
       }),
-      Schema.Struct({ status: Schema.Literals(["declined", "cancelled", "timed_out"]) }),
+      Schema.Struct({
+        status: Schema.Literals(["declined", "cancelled", "timed_out"]),
+        note: Schema.String,
+      }),
       Schema.Struct({ status: Schema.Literal("unavailable"), message: Schema.String }),
       Schema.Struct({
         status: Schema.Literal("choose").annotate({
@@ -390,7 +393,8 @@ const connectorAdd = metadata(
 const connectorControl = metadata(
   Tool.make("scient_connector_control", {
     failure: AccountsError,
-    dependencies: common.dependencies,
+    // A restart starts the connector once, with only what the chat's project may use.
+    dependencies: connectorDependencies,
     description:
       "Turn a connector on or off, restart a local one, or sign in: a hosted connector's sign-in opens in this chat's browser as the user's own tab, which your preview tools don't see, for them to finish. Removing stays the user's.",
     parameters: Schema.Struct({

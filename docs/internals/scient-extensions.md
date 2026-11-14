@@ -440,6 +440,17 @@ become `_`, a leading digit gains a `_` prefix, and a name that is too long or
 already taken becomes its first 55 characters plus `_` and 8 hex digits of
 SHA-256(`<server>\0<tool>`). Calls use the original tool name.
 
+Scient Agent 0.1.4 with OMP 18.18.0 or newer registers connector tools as
+discoverable `xd://` devices. Native `read` lists their schemas and `write`
+calls them; Scient's own tools, including discovery and turn controls, stay
+essential. Desktop gates this on the executable's verified `--runtime-info`,
+then passes the mode to the extension through `SCIENT_AGENT_CONNECTOR_LOAD_MODE`.
+Earlier versions and external OMP keep all tools essential. Custom tools were
+already discoverable in Scient Agent 0.1.0; the later gate also requires the
+mounted-tool restoration fixes for revived subagents. Runtime settings can
+still expose discoverable tools top-level (`tools.xdev: false`) or inline their
+documentation (`tools.xdevDocs: inline`), increasing request cost.
+
 Reserved server names: `scient`, `t3-code`, `t3_code`, `t3code`. Connector names
 are `[a-z0-9_-]{1,48}`, unique, and suffixed `_2`, `_3` on collision. Planning
 skips a connector whose name the provider instance last reported as one of its

@@ -12,7 +12,7 @@ import { ConnectorRuntime } from "../../extensions/ExtensionsServices.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey } from "./accountAdd.ts";
+import { askForAccountKey, cardEndedNote } from "./accountAdd.ts";
 import { authorize } from "./accountUse.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
@@ -103,7 +103,11 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
             ? `${field.title}: its key lives in the user's password manager; they update it there`
             : asked.status === "unavailable"
               ? `${field.title}: ${asked.message}`
-              : `${field.title}: the user did not enter it`,
+              : asked.status === "declined" ||
+                  asked.status === "cancelled" ||
+                  asked.status === "timed_out"
+                ? `${field.title}: ${cardEndedNote(asked.status)}`
+                : `${field.title}: the user did not enter it`,
       );
     }
   }

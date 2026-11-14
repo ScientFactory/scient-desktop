@@ -1659,7 +1659,7 @@ describe("connector proxy", () => {
         const control = yield* controlConnector(
           { connector: added.connector.serverName, action: "sign-in" },
           () => Effect.die("must not open"),
-          codex,
+          location,
         ).pipe(Effect.provideService(ConnectorRuntime, harness.runtime), Effect.flip);
         expect(control.message).toContain("not available to this agent");
         expect((yield* harness.runtime.test({ connectorId, location })).outcome).toBe("error");
@@ -2289,6 +2289,41 @@ describe("connector disconnect", () => {
       expect(yield* readJson(response)).toMatchObject({ id: 9, error: { code: -32001 } });
       expect(vendor.upstream).toHaveLength(calls);
       expect(yield* connectorSecrets(harness.config)).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("answers discovery for a removed connector as an empty server, never an error", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const connectorId = yield* harness.connectSecure();
+      const hosted = yield* readJson(
+        yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      );
+      const host = new URL(vendor.base).host;
+      expect(hosted).toMatchObject({
+        result: { tools: [{ description: expect.stringContaining(`(Hosted by ${host}.)`) }] },
+      });
+
+      yield* harness.runtime.remove({ connectorId });
+      const calls = vendor.upstream.length;
+      expect(yield* readJson(yield* harness.proxy(connectorId, initialize(3)))).toMatchObject({
+        id: 3,
+        result: {
+          protocolVersion: "2025-11-25",
+          instructions: expect.stringContaining("offers no tools"),
+        },
+      });
+      const notified = yield* harness.proxy(connectorId, {
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+      expect(notified.status).toBe(202);
+      expect(
+        yield* readJson(
+          yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 4, method: "tools/list" }),
+        ),
+      ).toEqual({ jsonrpc: "2.0", id: 4, result: { tools: [] } });
+      expect(vendor.upstream).toHaveLength(calls);
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -3337,14 +3372,40 @@ describe("local connectors", () => {
           args: [script],
           env: { MODE: "crash" },
         });
+        // Discovery meets an empty server that says why, so the agent's session survives;
+        // its lists are empty and a tool call is still refused.
         const answered = yield* readEvents(yield* harness.proxy(connectorId, initialize(7)));
         expect(answered).toMatchObject([
-          { id: 7, error: { message: "Crasher could not start: boom: missing config." } },
+          {
+            id: 7,
+            result: {
+              instructions:
+                "Crasher could not start: boom: missing config. It offers no tools in this chat.",
+            },
+          },
         ]);
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 8, method: "tools/list" }),
+          ),
+        ).toEqual({ jsonrpc: "2.0", id: 8, result: { tools: [] } });
+        expect(yield* readJson(yield* harness.proxy(connectorId, toolCall(9)))).toMatchObject({
+          id: 9,
+          error: { code: -32001 },
+        });
         const row = (yield* harness.runtime.list()).connectors.find(
           (connector) => connector.connectorId === connectorId,
         );
         expect(row?.lastError).toBe("Crasher could not start: boom: missing config.");
+        // A restart starts it once and says it still does not start, never a blind "ready".
+        const restarted = yield* controlConnector(
+          { connector: connectorId, action: "restart" },
+          () => Effect.succeed(false),
+        ).pipe(Effect.provideService(ConnectorRuntime, harness.runtime));
+        expect(restarted).toMatchObject({
+          status: "error",
+          message: expect.stringContaining("did not start: Crasher could not start"),
+        });
       }).pipe(Effect.provide(testLayer)),
   );
 
@@ -4255,6 +4316,7 @@ describe("connectors agents make and fix", () => {
       const copied = yield* harness.runtime.copyForAgent({
         workingFolder: chat,
         connector: added.connector.serverName,
+        owner: "thread-a",
       });
       expect(copied).toMatchObject({
         folder: NodePath.join(chat, "connectors", "agent-made"),
@@ -4262,8 +4324,33 @@ describe("connectors agents make and fix", () => {
         missing: ["API key"],
         manifest: { name: "agent-made", version: "2.0.0", runtime: "node" },
       });
-      // A later copy of the same connector replaces this one; other files are never touched.
-      yield* harness.runtime.copyForAgent({ workingFolder: chat, connector: connectorId });
+      // The same chat's later copy replaces its draft; another chat's copy goes beside it and
+      // never touches the first chat's edits.
+      yield* writeConnectorFolder(copied.folder, { version: "2.0.1-draft" });
+      const theirs = yield* harness.runtime.copyForAgent({
+        workingFolder: chat,
+        connector: connectorId,
+        owner: "thread-b",
+      });
+      expect(theirs.folder).toBe(NodePath.join(chat, "connectors", "agent-made-2"));
+      expect(yield* versionOf(copied.folder)).toBe("2.0.1-draft");
+      const again = yield* harness.runtime.copyForAgent({
+        workingFolder: chat,
+        connector: connectorId,
+        owner: "thread-a",
+      });
+      expect(again.folder).toBe(copied.folder);
+      // An installed connector's name is not a new connector's name.
+      const confused = yield* Effect.flip(
+        harness.runtime.copyForAgent({ workingFolder: chat, name: "Agent Made" }),
+      );
+      expect(confused.message).toContain(`{"connector":"${added.connector.serverName}"}`);
+      // Saving its copy without naming it would install a duplicate: refused, with the fix call.
+      const duplicate = yield* Effect.flip(
+        harness.runtime.saveFolder({ folder: copied.folder }, undefined),
+      );
+      expect(duplicate.message).toContain(`"connector":"${added.connector.serverName}"`);
+      expect((yield* harness.runtime.list()).connectors).toHaveLength(1);
       const other = NodePath.join(chat, "connectors", "elsewhere");
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(other, { recursive: true });

@@ -16,7 +16,7 @@ import { AgentInvocationContext } from "../../operations/AgentInvocationContext.
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { addSignIn, askForAccountKey } from "./accountAdd.ts";
+import { addSignIn, askForAccountKey, cardEndedNote } from "./accountAdd.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
 
 const signIns = vi.hoisted(() => ({
@@ -104,6 +104,13 @@ it.effect("keeps a new key as an API-key account and never returns its value", (
     });
     expect(cards).toHaveLength(1);
     expect(cards[0]?.label).toBe("Anthropic API key");
+    // A name that already ends in "token" or "key" is the label, even after an underscore.
+    const token = yield* run(fakeAccounts(), {
+      name: "Drive GOOGLE_ACCESS_TOKEN",
+      reason: "r",
+      sites: ["googleapis.com"],
+    });
+    expect(token.cards[0]?.label).toBe("Drive GOOGLE_ACCESS_TOKEN");
     expect(cards[0]?.clientRequestId).toMatch(/^scient-account:/);
     expect(fake.saves[0]).toMatchObject({
       name: "Anthropic",
@@ -192,7 +199,11 @@ it.effect("asks no one when nobody can answer, and keeps nothing when declined",
     expect(off.result.status).toBe("unavailable");
     const fake = fakeAccounts();
     const declined = yield* run(fake, input, { status: "declined" });
-    expect(declined.result).toEqual({ status: "declined" });
+    expect(declined.result).toEqual({ status: "declined", note: cardEndedNote("declined") });
+    // A timeout is not the user's answer, but the card is closed and stays closed this turn.
+    const late = yield* run(fake, input, { status: "timed_out" });
+    expect(late.result).toEqual({ status: "timed_out", note: cardEndedNote("timed_out") });
+    expect(cardEndedNote("timed_out")).toContain("Don't open it again this turn");
     expect(fake.saves).toHaveLength(0);
   }),
 );
@@ -326,11 +337,14 @@ it.effect("asks no one in an unattended run, and passes on a cancel or a timeout
     );
     expect(signIns.calls).toEqual([]);
     signIns.outcome = { outcome: "needs-user", message: "The user cancelled the sign-in." };
-    expect(yield* signInWith(fakeAccounts(), input)).toEqual({ status: "cancelled" });
+    expect(yield* signInWith(fakeAccounts(), input)).toMatchObject({ status: "cancelled" });
     signIns.outcome = {
       outcome: "needs-user",
       message: "The user did not finish signing in within 15 minutes.",
     };
-    expect(yield* signInWith(fakeAccounts(), input)).toEqual({ status: "timed_out" });
+    expect(yield* signInWith(fakeAccounts(), input)).toMatchObject({
+      status: "timed_out",
+      note: expect.stringContaining("Don't open it again this turn"),
+    });
   }),
 );

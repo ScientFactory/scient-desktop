@@ -77,7 +77,6 @@ import { ExtensionIcon, type ExtensionTarget } from "./ExtensionRow";
 import { extensionsDiscoverEntry } from "./extensionsState";
 import {
   type ProviderExtensionGroup,
-  catalogEntries,
   providerExtensionAudience,
   collectProviderExtensionGroups,
   connectorActions,
@@ -99,6 +98,7 @@ import {
   workspaceLabel,
   connectorAudience,
 } from "./extensionsView";
+import { useInstalledEntries } from "./installedEntries";
 import { providerInventoryMessage } from "./providerInventory";
 
 const isExtensionsError = Schema.is(ExtensionsError);
@@ -900,9 +900,9 @@ function ConnectorDetail({
  * entries carry its id, registry connectors are looked up by registry name.
  */
 function ConnectorDetailContent({ connectorId }: { readonly connectorId: string }) {
-  const { environmentId, inventory, inventoryError, catalog } = useExtensionsEnvironment();
+  const { environmentId, inventory, inventoryError } = useExtensionsEnvironment();
   const connector = inventory?.connectors.find((item) => item.connectorId === connectorId);
-  const fromCatalog = catalogEntries(catalog).find(
+  const fromCatalog = useInstalledEntries().find(
     (item) => item.installedConnectorId === connectorId,
   );
   const registryName =

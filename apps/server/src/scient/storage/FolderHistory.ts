@@ -95,6 +95,41 @@ export async function latestHistory(
   return last === undefined ? undefined : readEntry(folder, last);
 }
 
+/** When a change happened, read from its stamp (`2026-11-13T21-23-41-098Z`, maybe `~001`). */
+const stampedAt = (name: string): number | undefined => {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/u.exec(name);
+  if (match === null) return undefined;
+  const at = Date.parse(`${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`);
+  return Number.isNaN(at) ? undefined : at;
+};
+
+/**
+ * Forgets folders that were removed and never brought back: the history of each key whose
+ * newest change is a removal older than `olderThanMs`, unless `live` still names the key.
+ * Returns how many keys were forgotten.
+ */
+export async function sweepRemovedHistory(
+  historyRoot: string,
+  input: {
+    readonly now: number;
+    readonly olderThanMs: number;
+    readonly live: (key: string) => boolean;
+  },
+): Promise<number> {
+  let forgotten = 0;
+  for (const key of await NodeFSP.readdir(historyRoot).catch(() => [] as string[])) {
+    if (input.live(key)) continue;
+    const folder = NodePath.join(historyRoot, key);
+    const last = (await entryNames(folder)).at(-1);
+    if (last === undefined || !last.endsWith("-removed")) continue;
+    const at = stampedAt(last);
+    if (at === undefined || input.now - at < input.olderThanMs) continue;
+    await NodeFSP.rm(folder, { recursive: true, force: true });
+    forgotten += 1;
+  }
+  return forgotten;
+}
+
 /** Bytes of files under `path`, links not followed. */
 async function sizeOf(path: string): Promise<number> {
   const info = await NodeFSP.lstat(path).catch(() => undefined);

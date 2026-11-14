@@ -27,7 +27,7 @@ import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey, askInCard } from "./accountAdd.ts";
+import { askForAccountKey, askInCard, cardEndedNote } from "./accountAdd.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
 
@@ -94,12 +94,14 @@ export const copyConnector = Effect.fn("AccountsAgent.connectorCopy")(function* 
 ) {
   const where = yield* workspace;
   const connectors = yield* runtime;
+  const { threadId, providerInstanceId } = yield* AgentInvocationContext;
   return yield* connectors
     .copyForAgent({
       workingFolder: where.folder,
       connector: input.connector,
       name: input.name,
-      providerInstanceId: (yield* AgentInvocationContext).providerInstanceId,
+      providerInstanceId,
+      owner: threadId,
     })
     .pipe(Effect.mapError(toAccountsError));
 });
@@ -118,7 +120,9 @@ const keptOr = <A>(asked: Effect.Effect<A | { readonly problem: string }, Accoun
   asked.pipe(Effect.catch((error) => Effect.succeed({ problem: error.message })));
 
 const cardProblem = (status: string) =>
-  status === "declined" ? "the user did not enter it." : `the card ended (${status}).`;
+  status === "declined" || status === "cancelled" || status === "timed_out"
+    ? cardEndedNote(status)
+    : `the card ended (${status}).`;
 
 /** The add's private cards: the key goes to Accounts, a sign-in app to the connector itself. */
 const addAsks = Effect.gen(function* () {
@@ -209,12 +213,11 @@ export const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url
 export const controlConnector = Effect.fn("AccountsAgent.connectorControl")(function* (
   input: Input<"scient_connector_control">,
 ) {
-  const invocation = yield* AgentInvocationContext;
   const context = yield* Effect.context<AgentInvocationContext>();
   return yield* controlFor(
     input,
     (url) => openForUser(url).pipe(Effect.provide(context)),
-    invocation.providerInstanceId,
+    yield* callerLocation,
   ).pipe(Effect.mapError(toAccountsError));
 });
 

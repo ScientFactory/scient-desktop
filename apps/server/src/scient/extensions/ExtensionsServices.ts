@@ -198,6 +198,8 @@ export interface ConnectorRuntimeShape {
     readonly name?: string | undefined;
     /** The calling agent: a connector given to other agents only is not there for it. */
     readonly providerInstanceId?: ProviderInstanceId | undefined;
+    /** The chat making the copy: it reuses only its own earlier draft. */
+    readonly owner?: string | undefined;
   }) => Effect.Effect<
     Omit<Effect.Success<ReturnType<LocalConnectorAuthoring["copy"]>>, "variant">,
     ExtensionsError

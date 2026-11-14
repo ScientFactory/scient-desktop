@@ -74,6 +74,17 @@ export const askInCard = Effect.fn("AccountsAgent.askInCard")(function* (
 });
 
 /**
+ * What a card that ended without a value means for the agent. A timeout or a closed card is not
+ * the user's answer, but the card is gone: it is not opened again this turn unless they ask.
+ */
+export const cardEndedNote = (status: "declined" | "cancelled" | "timed_out"): string =>
+  status === "declined"
+    ? "The user chose not to enter it. Don't ask again this turn or in chat."
+    : status === "timed_out"
+      ? "The card got no answer in time and is closed. Don't open it again this turn unless the user asks."
+      : "The card closed before the user answered. Don't open it again this turn unless the user asks.";
+
+/**
  * Asks for a key in upstream's private secret card and keeps the answer as an API-key account.
  * The value moves from the card's one-use store into Accounts and never reaches the agent.
  */
@@ -117,14 +128,14 @@ export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
   const asked = yield* askInCard(scope, {
     label: replacing
       ? `New key for “${replacing.name}”`
-      : /\b(?:key|token)$/i.test(input.name)
+      : /(?:^|[^a-z])(?:key|token)$/i.test(input.name)
         ? input.name
         : `${input.name} API key`,
     reason: input.reason,
     ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
     notKept,
   });
-  if (asked.status !== "saved") return { status: asked.status };
+  if (asked.status !== "saved") return { status: asked.status, note: cardEndedNote(asked.status) };
   // Access may have changed while the card waited.
   const current = yield* accounts.forSession(scope);
   const target = replacing
@@ -201,9 +212,16 @@ const signInHere = Effect.fn("AccountsAgent.addSignIn")(function* (
       usage: signedIn ? accountUsage(signedIn) : [],
     };
   }
-  if (result.message === "The user cancelled the sign-in.") return { status: "cancelled" as const };
+  if (result.message === "The user cancelled the sign-in.")
+    return {
+      status: "cancelled" as const,
+      note: "The user cancelled the sign-in. Don't open it again this turn unless the user asks.",
+    };
   if (result.message?.startsWith("The user did not finish signing in"))
-    return { status: "timed_out" as const };
+    return {
+      status: "timed_out" as const,
+      note: `${result.message} Don't open it again this turn unless the user asks.`,
+    };
   return {
     status: "unavailable" as const,
     message: result.message ?? "The sign-in did not finish.",

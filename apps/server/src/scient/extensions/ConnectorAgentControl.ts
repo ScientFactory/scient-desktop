@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../../config.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import { agentStatusOf, oneLine, type AgentConnectorStatus } from "./connectors/agentStatus.ts";
+import { connectorHostOf } from "./connectors/ConnectorDiscovery.ts";
 import { observeFeature } from "./connectors/observedFeature.ts";
 import {
   type ConnectorLocation,
@@ -77,11 +78,8 @@ const forThisAgent = (
 const notForThisAgent = (asked: string) =>
   `${asked} is not available to this agent. The person can choose this agent on its page in Settings → Extensions.`;
 
-/** Who runs a hosted connector, and so sees what passes through it. */
-const hostOf = (url: string) => (URL.canParse(url) ? new URL(url).host : undefined);
-
 const rowOf = (summary: ConnectorSummary) => {
-  const host = summary.local === undefined ? hostOf(summary.url) : undefined;
+  const host = summary.local === undefined ? connectorHostOf(summary.url) : undefined;
   const missing = [
     ...(summary.local?.missing ?? []),
     ...(summary.status === "needs-credential" ? ["its key"] : []),
@@ -164,7 +162,8 @@ const foundRow = (
   const forOthers =
     entry.installedConnectorId !== undefined && elsewhere.has(entry.installedConnectorId);
   const description = entry.tagline ?? entry.description;
-  const host = "target" in choice && "url" in choice.target ? hostOf(choice.target.url) : undefined;
+  const host =
+    "target" in choice && "url" in choice.target ? connectorHostOf(choice.target.url) : undefined;
   return {
     name: entry.name,
     ...(entry.title === undefined ? {} : { title: entry.title }),
@@ -218,6 +217,9 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
       ])
         if (!byName.has(entry.name)) byName.set(entry.name, entry);
       const entries = [...byName.values()];
+      const cut =
+        entries.length > MAX_FOUND ||
+        (registry._tag === "Success" && registry.success.message !== undefined);
       return {
         connectors: rows,
         found: entries.slice(0, MAX_FOUND).map((entry) => foundRow(entry, mine, elsewhere)),
@@ -225,7 +227,9 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
           ? {
               message: "The MCP Registry could not be searched just now; these are Scient's picks.",
             }
-          : {}),
+          : cut
+            ? { message: `Showing the first ${MAX_FOUND} matches. Narrow the query to see others.` }
+            : {}),
       };
     }),
     (listed) => ({
@@ -492,13 +496,14 @@ export type ControlAction = "on" | "off" | "restart" | "sign-in";
 export const controlConnector = Effect.fn("ConnectorAgentControl.control")(function* (
   input: { readonly connector: string; readonly action: ControlAction },
   open: (url: string) => Effect.Effect<boolean>,
-  providerInstanceId?: ProviderInstanceId,
+  /** The caller: its agent choice, and its project for a restart's start check. */
+  location?: ConnectorLocation | undefined,
 ) {
   const { runtime, observed } = yield* services;
   return yield* observed("connectors.agent.control", { variant: input.action })(
     Effect.gen(function* () {
       const summary = yield* requireSummary(input.connector);
-      if (!forThisAgent(summary, providerInstanceId))
+      if (!forThisAgent(summary, location?.providerInstanceId))
         return yield* invalid(notForThisAgent(input.connector));
       const name = summary.displayName;
       const server = summary.serverName;
@@ -533,9 +538,21 @@ export const controlConnector = Effect.fn("ConnectorAgentControl.control")(funct
               `${name} runs online, so there is nothing to restart. scient_connector_check {"connector":"${server}"} tests it.`,
             );
           yield* runtime.update({ connectorId: summary.connectorId, restart: true });
+          // Start it once, so "restarted" reports whether its current files actually start.
+          const before = yield* now;
+          if (agentStatusOf(before) !== "ready")
+            return result(before, `${name} restarted. ${nextStep(before, agentStatusOf(before))}`);
+          const started = yield* testedTools(before, location);
+          const current = yield* now;
+          if (started.problem !== undefined)
+            return {
+              ...result(current, ""),
+              status: "error" as const,
+              message: `${name} restarted, but it did not start: ${oneLine(started.problem)} scient_connector_check {"connector":"${server}"} shows more; scient_connector_copy fixes it.`,
+            };
           return result(
-            yield* now,
-            `${name} restarted: its next call starts a fresh copy with its current files and setup.`,
+            current,
+            `${name} restarted and started with ${started.tools.length} tool${started.tools.length === 1 ? "" : "s"}${started.tools.length === 0 ? "" : ` (${started.tools.slice(0, 8).join(", ")}${started.tools.length > 8 ? ", …" : ""})`}.`,
           );
         }
         case "sign-in": {

@@ -57,6 +57,14 @@ import {
 } from "../ExtensionsServices.ts";
 import { PluginConnectorEligibility } from "../plugins/PluginConnectorEligibility.ts";
 import { extractToolParameters } from "./toolParameters.ts";
+import {
+  connectorHostOf,
+  discoveryFinisher,
+  discoveryRequestOf,
+  KNOWN_PROTOCOL_VERSIONS,
+  unavailableDiscoveryAnswer,
+} from "./ConnectorDiscovery.ts";
+import { sweepRemovedHistory } from "../../storage/FolderHistory.ts";
 import { ConnectorCredentialStore } from "./ConnectorCredentialStore.ts";
 import {
   applySignIn,
@@ -131,6 +139,8 @@ const TOKEN_REFRESH_LEEWAY_MS = 60_000;
  * instead of queueing.
  */
 export const MAX_IN_FLIGHT_PER_CONNECTOR = 32;
+/** Days a removed connector can still be brought back with Undo. */
+const REMOVED_HISTORY_DAYS = 30;
 const MAX_SERVER_NAME_BASE = 44;
 /** Source Control is followed at most this often, from listings and session starts. */
 const FOLLOW_SOURCE_CONTROL_MS = 60_000;
@@ -387,15 +397,37 @@ const errorMessageFor = (body: Uint8Array | undefined, message: string): string 
 const jsonBody = (value: unknown) => Stream.make(new TextEncoder().encode(JSON.stringify(value)));
 
 /**
- * A server-owned refusal. Agents must never see HTTP 401 from a connector
- * endpoint (it would start an OAuth flow against Scient), so POST gets a
- * JSON-RPC error and GET/DELETE get `status` with a JSON body.
+ * A server-owned refusal, never HTTP 401 (it would start OAuth against Scient): POST gets a
+ * JSON-RPC error, GET/DELETE `status` with JSON. Discovery meets an empty server instead, so one
+ * unavailable connector never fails an agent's whole session.
  */
 const refusal = (
   request: Pick<ConnectorForwardRequest, "method" | "body">,
   message: string,
   status: number,
   error: string,
+): ConnectorForwardResponse => {
+  if (request.method !== "POST")
+    return {
+      status,
+      headers: { "content-type": "application/json" },
+      body: jsonBody({ error, message }),
+    };
+  const discovery = unavailableDiscoveryAnswer(discoveryRequestOf(request.body), message);
+  if (discovery?.status === 202) return { status: 202, headers: {}, body: Stream.empty };
+  return {
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: Stream.make(
+      new TextEncoder().encode(discovery?.json ?? errorMessageFor(request.body, message)),
+    ),
+  };
+};
+
+/** The vendor refused the credential: every request fails, discovery too. */
+const credentialRefusal = (
+  request: Pick<ConnectorForwardRequest, "method" | "body">,
+  message: string,
 ): ConnectorForwardResponse =>
   request.method === "POST"
     ? {
@@ -404,9 +436,9 @@ const refusal = (
         body: Stream.make(new TextEncoder().encode(errorMessageFor(request.body, message))),
       }
     : {
-        status,
+        status: 403,
         headers: { "content-type": "application/json" },
-        body: jsonBody({ error, message }),
+        body: jsonBody({ error: "connector_unavailable", message }),
       };
 
 export const connectorUnavailableResponse = (
@@ -425,14 +457,6 @@ const sessionNotFound: ConnectorForwardResponse = {
 
 const cancelBody = (response: Response) =>
   Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
-
-/** The only protocol versions passed back to the agent; anything else is dropped. */
-const KNOWN_PROTOCOL_VERSIONS: Readonly<Record<string, true>> = {
-  "2024-11-05": true,
-  "2025-03-26": true,
-  "2025-06-18": true,
-  "2025-11-25": true,
-};
 
 export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function* (
   options: ConnectorRuntimeOptions,
@@ -670,6 +694,21 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     unusableIn,
     ...(options.onConnectorLock === undefined ? {} : { onLock: options.onConnectorLock }),
   });
+
+  // Undo copies of connectors removed over 30 days ago, and never brought back, are forgotten.
+  yield* Effect.gen(function* () {
+    const live = new Set<string>(
+      (yield* store.read).connectors.map((record) => record.connectorId),
+    );
+    const now = yield* Clock.currentTimeMillis;
+    yield* Effect.promise(() =>
+      sweepRemovedHistory(localConnectors.historyRoot, {
+        now,
+        olderThanMs: REMOVED_HISTORY_DAYS * 24 * 60 * 60 * 1000,
+        live: (key) => live.has(key),
+      }),
+    );
+  }).pipe(Effect.ignore, Effect.forkScoped);
 
   /** Marks whether signing in again needs the person; the connector page shows Sign in. */
   const markNeedsUser = (connectorId: string, needsUser: boolean) =>
@@ -2378,7 +2417,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           });
         }
         yield* recordToolUse(outcome.type === "lost" ? "denied" : "allowed", "error");
-        return connectorUnavailableResponse(request, outcome.message);
+        // A rejected credential is the user's to fix, so the agent's session hears it fail;
+        // a lost grant or a failed transport meets the empty server.
+        return outcome.type === "rejected"
+          ? credentialRefusal(request, outcome.message)
+          : connectorUnavailableResponse(request, outcome.message);
       }
       const response = outcome.response;
       yield* recordToolUse("allowed", response.ok ? "ok" : "error");
@@ -2445,6 +2488,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           request.body,
           `${record.displayName} sent a response Scient could not verify, so it was withheld.`,
         ),
+        finish: discoveryFinisher(discoveryRequestOf(request.body), {
+          displayName: record.displayName,
+          host: record.local === undefined ? connectorHostOf(record.url) : undefined,
+        }),
       };
       return {
         status: response.status,
