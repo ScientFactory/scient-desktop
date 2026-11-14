@@ -1671,7 +1671,7 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    expect(fixture.headerButtons()).toEqual(["Remove"]);
+    expect(fixture.headerButtons()).toEqual(["Remove from Codex"]);
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
     );
@@ -2378,7 +2378,7 @@ describe("Detail pages", () => {
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={workspace} />
     );
     await fixture.render(page("/work/a"));
-    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove from Codex")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: {
@@ -2387,11 +2387,11 @@ describe("Detail pages", () => {
         cwd: "/work/a",
       },
     });
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(true);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(true);
     await fixture.render(page("/work/b"));
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(false);
     await fixture.render(page(undefined));
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(false);
 
     await act(async () => pending.resolve(extensionsError("Codex refused.")));
     await fixture.render(page("/work/a"));
@@ -2409,7 +2409,7 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove from Codex")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { instanceId: codex, action: { type: "uninstall", pluginId: "plugin-1" } },
@@ -2453,9 +2453,10 @@ describe("Codex store connection", () => {
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
     await expect.element(page.getByRole("button", { name: "Added", exact: true })).toBeDisabled();
-    await expect
-      .element(page.getByRole("button", { name: "Connect Sample", exact: true }))
-      .toBeVisible();
+    // Each agent with its own step; this Codex has no ChatGPT sign-in, so it signs in first.
+    await vi.waitFor(() =>
+      expect(fixture.section("Apps 1").textContent).toContain("Sign in to Codex with ChatGPT"),
+    );
     state.storeEntry = {
       ...state.storeEntry,
       apps: [{ name: "Sample", connected: true, enabled: true }],
