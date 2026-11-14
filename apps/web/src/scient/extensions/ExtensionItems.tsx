@@ -1,6 +1,7 @@
 import { usePluginKeys, pluginKeyStatusLabel } from "./PluginKeys";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import type {
+  ExtensionAudience,
   ConnectorSummary,
   ConnectorTestResult,
   DiscoverEntry,
@@ -520,12 +521,15 @@ export function ProviderServerItem({
   label,
   server,
   serviceId,
+  audience,
 }: {
   readonly provider: ServerProvider;
   readonly label: string;
   readonly server: ServerProviderMcpServer;
   /** The account service this row is one agent's side of; the row opens its page. */
   readonly serviceId?: string | undefined;
+  /** Who can use it, when that is wider than this agent (a service several agents reach). */
+  readonly audience?: ExtensionAudience | undefined;
 }) {
   const actions = useProviderServerActions(provider, label, server);
   const target: ExtensionTarget = serviceId
@@ -535,7 +539,7 @@ export function ProviderServerItem({
     <ExtensionRow
       target={target}
       name={providerServerDisplayName(server)}
-      audience={providerExtensionAudience(provider, server)}
+      audience={audience ?? providerExtensionAudience(provider, server)}
       tagline={server.error ?? mcpServerSummary(server)}
       status={MCP_SERVER_STATUS_TEXT[server.status]}
       trailing={

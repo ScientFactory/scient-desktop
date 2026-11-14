@@ -38,7 +38,12 @@ import {
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AccountServiceItem, connectedAccountServices } from "./AccountServicePages";
-import { accountServiceOfServer } from "./accountServices";
+import {
+  type AccountService,
+  accountServiceAudience,
+  accountServiceOfServer,
+  accountServiceRoutes,
+} from "./accountServices";
 import { AgentSkills } from "../skills/AgentSkills";
 import { PersonalSkillsSection } from "../skills/PersonalSkillsSection";
 import { ProjectSkills } from "../skills/ProjectSkills";
@@ -55,7 +60,11 @@ function ProviderSection({
   readonly kind: ExtensionKind | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { environmentId, canWrite } = useExtensionsEnvironment();
+  const { environmentId, canWrite, providerInventory } = useExtensionsEnvironment();
+  const serviceAudience = (service: AccountService | undefined) =>
+    service
+      ? accountServiceAudience(accountServiceRoutes(service, providerInventory.providers))
+      : undefined;
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   const waitingForConnection = useRef(false);
   useWindowFocusRefresh(() => {
@@ -96,6 +105,7 @@ function ProviderSection({
           server={server}
           // Gmail, Calendar and Drive open their one page, which shows every agent.
           serviceId={accountServiceOfServer(group.provider, server)?.id}
+          audience={serviceAudience(accountServiceOfServer(group.provider, server))}
         />
       )),
   ];
@@ -180,10 +190,11 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
     selected?.instanceId ?? null,
   );
   const curated = catalogEntries(catalog);
-  const accountServices =
-    providerInventory.phase === "ready"
-      ? connectedAccountServices(providerInventory.providers, selected?.instanceId ?? null)
-      : [];
+  // Each agent's inventory counts as it arrives; one that never reports holds nothing back.
+  const accountServices = connectedAccountServices(
+    providerInventory.providers,
+    selected?.instanceId ?? null,
+  );
   const plugins = [
     ...(inventory?.plugins.filter((plugin) => plugin.origin === "bundle") ?? []),
     ...(inventory?.plugins.filter((plugin) => plugin.origin === "built-in") ?? []),
