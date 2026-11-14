@@ -34,6 +34,7 @@ export class AppleSignInRevocationFailed extends Schema.TaggedError<AppleSignInR
       "client-not-allowed",
       "client-secret",
       "redeem-code",
+      "subject-mismatch",
       "revoke-token",
     ]),
     status: Schema.optional(Schema.Number),
@@ -53,6 +54,8 @@ export class AppleSignInRevocation extends Context.Service<
     readonly revoke: (input: {
       readonly authorizationCode: string;
       readonly clientId: string;
+      /** The deleting user's Apple IDs; a code for any other Apple account is never revoked. */
+      readonly expectedSubjects: ReadonlyArray<string>;
     }) => Effect.Effect<void, AppleSignInRevocationFailed>;
   }
 >()("t3code-relay/account/AppleSignInRevocation") {}
@@ -60,10 +63,24 @@ export class AppleSignInRevocation extends Context.Service<
 const TokenResponse = Schema.Struct({
   access_token: Schema.optional(Schema.String),
   refresh_token: Schema.optional(Schema.String),
+  id_token: Schema.optional(Schema.String),
 });
 const ErrorResponse = Schema.Struct({ error: Schema.String });
 const decodeTokenResponse = Schema.decodeUnknownOption(Schema.fromJsonString(TokenResponse));
 const decodeErrorResponse = Schema.decodeUnknownOption(Schema.fromJsonString(ErrorResponse));
+
+// The ID token comes straight from Apple's token endpoint over TLS, so its claims are read as is.
+const IdTokenClaims = Schema.Struct({ sub: Schema.String });
+const decodeIdTokenClaims = Schema.decodeUnknownOption(Schema.fromJsonString(IdTokenClaims));
+
+const idTokenSubject = (idToken: string | undefined): string | undefined => {
+  const payload = idToken?.split(".")[1];
+  if (!payload) return undefined;
+  const json = Base64Url.decode(payload);
+  if (!Result.isSuccess(json)) return undefined;
+  const claims = decodeIdTokenClaims(new TextDecoder().decode(json.success));
+  return claims._tag === "Some" ? claims.value.sub : undefined;
+};
 
 const appleErrorOf = (body: string): { readonly appleError?: string } => {
   const error = decodeErrorResponse(body);
@@ -179,6 +196,11 @@ export const make = Effect.gen(function* () {
           : undefined;
       if (!token) {
         return yield* new AppleSignInRevocationFailed({ stage: "redeem-code", status: 200 });
+      }
+      // The phone may be signed in to a different Apple account than the one being deleted.
+      const subject = tokens._tag === "Some" ? idTokenSubject(tokens.value.id_token) : undefined;
+      if (subject === undefined || !input.expectedSubjects.includes(subject)) {
+        return yield* new AppleSignInRevocationFailed({ stage: "subject-mismatch" });
       }
 
       yield* postForm("revoke-token", "/auth/revoke", {

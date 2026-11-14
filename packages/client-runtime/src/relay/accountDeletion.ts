@@ -40,7 +40,8 @@ export class ManagedRelayAccountDeletionError extends Schema.TaggedError<Managed
  * Deletes the signed-in account on the relay. The caller signs out locally afterwards.
  *
  * With `appleSignInRevocation` (a fresh Sign in with Apple authorization code), the relay first
- * revokes the account's Apple tokens. A failed revocation is logged and never blocks deletion.
+ * revokes the account's Apple tokens. A failed revocation never blocks deletion; the result's
+ * `appleSignInRevoked` is false then, so the caller can tell the person to remove it by hand.
  */
 export const deleteManagedRelayAccount = Effect.fn(
   "clientRuntime.managedRelaySession.deleteAccount",
@@ -67,22 +68,23 @@ export const deleteManagedRelayAccount = Effect.fn(
   }
   const relay = yield* ManagedRelay.ManagedRelayClient;
   const client = yield* HttpApiClient.make(RelayApi, { baseUrl: relay.relayUrl });
-  if (input.appleSignInRevocation) {
-    yield* client.account
-      .revokeAppleSignIn({
-        headers: { authorization: `Bearer ${clerkToken}` },
-        payload: input.appleSignInRevocation,
-      })
-      .pipe(
-        withRelayClientTracing,
-        Effect.timeout(Duration.millis(ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS)),
-        Effect.catch((error) =>
-          Effect.logWarning("Sign in with Apple revocation failed; deleting the account anyway", {
-            error,
-          }),
-        ),
-      );
-  }
+  const appleSignInRevoked = input.appleSignInRevocation
+    ? yield* client.account
+        .revokeAppleSignIn({
+          headers: { authorization: `Bearer ${clerkToken}` },
+          payload: input.appleSignInRevocation,
+        })
+        .pipe(
+          withRelayClientTracing,
+          Effect.timeout(Duration.millis(ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS)),
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.logWarning("Sign in with Apple revocation failed; deleting the account anyway", {
+              error,
+            }).pipe(Effect.as(false)),
+          ),
+        )
+    : undefined;
   yield* client.account.deleteAccount({ headers: { authorization: `Bearer ${clerkToken}` } }).pipe(
     withRelayClientTracing,
     Effect.mapError(
@@ -98,5 +100,6 @@ export const deleteManagedRelayAccount = Effect.fn(
       orElse: () => Effect.fail(new ManagedRelayAccountDeletionError({ reason: "timed-out" })),
     }),
   );
+  return { appleSignInRevoked };
 });
 // SCIENT-FORK:END account-deletion

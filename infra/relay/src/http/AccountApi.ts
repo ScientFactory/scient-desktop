@@ -5,6 +5,7 @@ import { RelayApi, RelayClientPrincipal, RelayInternalError } from "@t3tools/con
 
 import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as AppleSignInRevocation from "../account/AppleSignInRevocation.ts";
+import * as ClerkUsers from "../account/ClerkUsers.ts";
 
 const internalReason = (
   stage: AccountDeletion.AccountDeletionFailed["stage"],
@@ -28,22 +29,32 @@ export const layerAccountApi = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const deletion = yield* AccountDeletion.AccountDeletion;
     const appleSignIn = yield* AppleSignInRevocation.AppleSignInRevocation;
+    const clerkUsers = yield* ClerkUsers.ClerkUsers;
     return handlers
       .handle(
         "revokeAppleSignIn",
         Effect.fn("relay.api.account.revokeAppleSignIn")(function* ({ payload }) {
-          yield* RelayClientPrincipal;
-          yield* appleSignIn.revoke(payload).pipe(
+          const { userId, token } = yield* RelayClientPrincipal;
+          yield* clerkUsers.appleSubjects({ userId, token }).pipe(
+            Effect.flatMap((expectedSubjects) =>
+              appleSignIn.revoke({ ...payload, expectedSubjects }),
+            ),
             Effect.tapError((error) =>
-              Effect.logWarning("Sign in with Apple revocation failed", {
-                stage: error.stage,
-                status: error.status,
-                appleError: error.appleError,
-                cause: error.cause,
-              }),
+              Effect.logWarning(
+                "Sign in with Apple revocation failed",
+                error._tag === "AppleSignInRevocationFailed"
+                  ? {
+                      stage: error.stage,
+                      status: error.status,
+                      appleError: error.appleError,
+                      cause: error.cause,
+                    }
+                  : { stage: "read-clerk-user", cause: error.cause },
+              ),
             ),
             Effect.catchTags({
               AppleSignInRevocationFailed: () => failWithTrace("upstream_unavailable"),
+              ClerkUserLookupFailed: () => failWithTrace("upstream_unavailable"),
             }),
           );
           return { ok: true };

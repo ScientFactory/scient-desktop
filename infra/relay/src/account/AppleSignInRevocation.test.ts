@@ -72,11 +72,20 @@ const layerWith = (
     ),
   );
 
-const revokeWith = (input: { readonly authorizationCode: string; readonly clientId: string }) =>
+const revokeWith = (input: {
+  readonly authorizationCode: string;
+  readonly clientId: string;
+  readonly expectedSubjects: ReadonlyArray<string>;
+}) =>
   Effect.gen(function* () {
     const service = yield* AppleSignInRevocation.AppleSignInRevocation;
     return yield* service.revoke(input);
   });
+
+const idTokenFor = (sub: string) =>
+  `${Base64Url.encode(new TextEncoder().encode("{}"))}.${Base64Url.encode(
+    new TextEncoder().encode(JSON.stringify({ sub })),
+  )}.signature`;
 
 const decodeSegment = (segment: string) =>
   JSON.parse(new TextDecoder().decode(Result.getOrThrow(Base64Url.decode(segment))));
@@ -86,7 +95,11 @@ describe("Sign in with Apple revocation", () => {
     const seen: Array<SeenRequest> = [];
     return Effect.gen(function* () {
       const service = yield* AppleSignInRevocation.AppleSignInRevocation;
-      yield* service.revoke({ authorizationCode: "code-1", clientId: "com.example.mobile" });
+      yield* service.revoke({
+        authorizationCode: "code-1",
+        clientId: "com.example.mobile",
+        expectedSubjects: ["apple-user-1"],
+      });
 
       expect(seen.map((request) => request.url)).toEqual([
         "https://appleid.apple.com/auth/token",
@@ -121,8 +134,35 @@ describe("Sign in with Apple revocation", () => {
           settings(),
           (request) =>
             request.url.endsWith("/auth/token")
-              ? Response.json({ access_token: "access-1", refresh_token: "refresh-1" })
+              ? Response.json({
+                  access_token: "access-1",
+                  refresh_token: "refresh-1",
+                  id_token: idTokenFor("apple-user-1"),
+                })
               : new Response("", { status: 200 }),
+          seen,
+        ),
+      ),
+    );
+  });
+
+  it.effect("never revokes a code for another Apple account", () => {
+    const seen: Array<SeenRequest> = [];
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        revokeWith({
+          authorizationCode: "code-2",
+          clientId: "com.example.mobile",
+          expectedSubjects: ["apple-user-1"],
+        }),
+      );
+      expect(error.stage).toBe("subject-mismatch");
+      expect(seen.map((request) => request.url)).toEqual(["https://appleid.apple.com/auth/token"]);
+    }).pipe(
+      Effect.provide(
+        layerWith(
+          settings(),
+          () => Response.json({ refresh_token: "refresh-2", id_token: idTokenFor("apple-user-2") }),
           seen,
         ),
       ),
@@ -134,7 +174,11 @@ describe("Sign in with Apple revocation", () => {
     return Effect.gen(function* () {
       const service = yield* AppleSignInRevocation.AppleSignInRevocation;
       const error = yield* Effect.flip(
-        service.revoke({ authorizationCode: "stale", clientId: "com.example.mobile" }),
+        service.revoke({
+          authorizationCode: "stale",
+          clientId: "com.example.mobile",
+          expectedSubjects: ["apple-user-1"],
+        }),
       );
       expect(error).toMatchObject({
         stage: "redeem-code",
@@ -159,17 +203,21 @@ describe("Sign in with Apple revocation", () => {
     const respond = () => new Response("", { status: 200 });
     return Effect.gen(function* () {
       const notAllowed = yield* Effect.flip(
-        revokeWith({ authorizationCode: "code", clientId: "com.other.app" }).pipe(
-          Effect.provide(layerWith(settings(), respond, seen)),
-        ),
+        revokeWith({
+          authorizationCode: "code",
+          clientId: "com.other.app",
+          expectedSubjects: ["apple-user-1"],
+        }).pipe(Effect.provide(layerWith(settings(), respond, seen))),
       );
       expect(notAllowed.stage).toBe("client-not-allowed");
 
       const { appleSignIn: _omitted, ...withoutApple } = settings();
       const notConfigured = yield* Effect.flip(
-        revokeWith({ authorizationCode: "code", clientId: "com.example.mobile" }).pipe(
-          Effect.provide(layerWith(withoutApple, respond, seen)),
-        ),
+        revokeWith({
+          authorizationCode: "code",
+          clientId: "com.example.mobile",
+          expectedSubjects: ["apple-user-1"],
+        }).pipe(Effect.provide(layerWith(withoutApple, respond, seen))),
       );
       expect(notConfigured.stage).toBe("not-configured");
       expect(seen).toHaveLength(0);

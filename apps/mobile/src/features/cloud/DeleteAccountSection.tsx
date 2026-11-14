@@ -22,6 +22,10 @@ const CONFIRM_MESSAGE =
 const APPLE_CONFIRM_NOTE =
   "\n\nYou signed in with Apple, so Apple asks you to confirm once. That also removes Scient from your Apple Account.";
 
+// Apple asks apps to direct people to revoke by hand when revoking fails (TN3194).
+const APPLE_MANUAL_REVOKE =
+  "Your Scient account was deleted, but Scient could not remove it from your Apple Account. To finish, open Settings, tap your name, then Sign-In & Security, Sign in with Apple, Scient, and stop using it.";
+
 /**
  * Apple requires that deleting an account also revokes its Sign in with Apple tokens (TN3194).
  * Clerk keeps no Apple refresh token, so this gets a fresh authorization code for the relay to
@@ -84,6 +88,12 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
       appleSignInRevocation ? { accountId, appleSignInRevocation } : { accountId },
     );
     if (result._tag === "Success") {
+      if (usesAppleSignIn && result.value.appleSignInRevoked !== true) {
+        Dialog.alert("Account deleted", APPLE_MANUAL_REVOKE, [
+          { text: "OK", onPress: () => void signOutDeletedAccount() },
+        ]);
+        return;
+      }
       await signOutDeletedAccount();
       return;
     }
