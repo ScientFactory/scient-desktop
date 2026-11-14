@@ -41,3 +41,17 @@ export {
   resolveMarkdownDocumentRelativePath,
   type MarkdownDocumentInspection,
 } from "./documentResources.ts";
+export {
+  DOCUMENT_FONT_SIZES,
+  MARKDOWN_FONT_FAMILIES,
+  MARKDOWN_FONT_SIZES,
+  MARKDOWN_FONT_SPAN_CLOSE,
+  markdownFontSpanOpen,
+  markdownFontSpanStyle,
+  parseMarkdownFontSpanOpen,
+  parseMarkdownFontSpanStyle,
+  type DocumentFontSize,
+  type MarkdownFontFamilyName,
+  type MarkdownFontSizeName,
+  type MarkdownFontSpan,
+} from "./fontSpans.ts";

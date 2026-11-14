@@ -87,7 +87,9 @@ import {
   type InsertMenuAction,
   type InsertMenuLayout,
 } from "../../writing/InsertMenu";
+import { FontMenuItems } from "../../writing/FontMenuItems";
 import { TextMenu, TextMenuItems } from "../../writing/TextMenu";
+import { MarkdownDocumentSettings } from "./MarkdownDocumentSettings";
 import { DockCommandCheckboxItem } from "../../writing/dockChrome";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
 
@@ -355,6 +357,15 @@ function markdownTextContents(
   return {
     paragraphStyle: <StyleMenuItems controller={controller} snapshot={snapshot} />,
     formatting: <FormattingMenuItems controller={controller} snapshot={snapshot} />,
+    font: (
+      <FontMenuItems
+        family={snapshot.fontFamily}
+        size={snapshot.fontSize}
+        disabled={!snapshot.editable}
+        onFamily={(family) => controller.execute(`font-family-${family ?? "default"}`)}
+        onSize={(size) => controller.execute(`font-size-${size ?? "default"}`)}
+      />
+    ),
     direction: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
     directionLabel: snapshot.inTable ? "Table direction" : "Direction",
   };
@@ -1185,6 +1196,35 @@ function SelectionToolbar({
   );
 }
 
+function DocumentSettingsMenu({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <MenuSub open={open} onOpenChange={setOpen}>
+      <MenuSubTrigger disabled={!snapshot.editable}>Document settings</MenuSubTrigger>
+      <MenuSubPopup
+        className="w-96 max-w-[calc(100vw-2rem)]"
+        aria-label="Document settings"
+        finalFocus={false}
+      >
+        {open ? (
+          <MarkdownDocumentSettings
+            font={snapshot.documentFont}
+            disabled={!snapshot.editable || !snapshot.documentFontEditable}
+            onApply={(font) => controller.setDocumentFont(font)}
+            onClose={() => setOpen(false)}
+          />
+        ) : null}
+      </MenuSubPopup>
+    </MenuSub>
+  );
+}
+
 export function ScientMarkdownControls({
   controller,
   expanded,
@@ -1385,6 +1425,8 @@ export function ScientMarkdownControls({
         overflowItems={
           <>
             <BlockActionsMenuItems controller={controller} snapshot={snapshot} />
+            <MenuSeparator />
+            <DocumentSettingsMenu controller={controller} snapshot={snapshot} />
             {documentActions ? (
               <>
                 <MenuSeparator />

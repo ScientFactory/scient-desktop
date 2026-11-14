@@ -2,6 +2,8 @@ import type { Editor } from "@tiptap/core";
 import { createContext, useState, useSyncExternalStore } from "react";
 import { NodeSelection, type EditorState } from "@tiptap/pm/state";
 import { countSelectedWords } from "../writing/caretStatus";
+import type { FontFamilyName, FontSizeName } from "../writing/fontChoices";
+import { latexFontState } from "./latexFontCommands";
 
 export const LatexInlineOwnerContext = createContext<Editor | null>(null);
 
@@ -137,11 +139,14 @@ interface EditingPresentation {
   bold: boolean;
   italic: boolean;
   code: boolean;
+  fontFamily: FontFamilyName | null;
+  fontSize: FontSizeName | null;
   selectedWords: number | null;
 }
 
 function editingPresentation(editor: Editor | null): EditingPresentation {
   const selection = editor?.state.selection;
+  const font = latexFontState(editor);
   return {
     formattingAvailable: Boolean(
       editor?.isEditable &&
@@ -152,6 +157,8 @@ function editingPresentation(editor: Editor | null): EditingPresentation {
     bold: editor?.isActive("bold") ?? false,
     italic: editor?.isActive("italic") ?? false,
     code: editor?.isActive("code") ?? false,
+    fontFamily: font.family,
+    fontSize: font.size,
     selectedWords: editor ? countSelectedWords(editor.state) : null,
   };
 }
@@ -161,6 +168,8 @@ const sameEditingPresentation = (before: EditingPresentation, after: EditingPres
   before.bold === after.bold &&
   before.italic === after.italic &&
   before.code === after.code &&
+  before.fontFamily === after.fontFamily &&
+  before.fontSize === after.fontSize &&
   before.selectedWords === after.selectedWords;
 
 /** Typing at a collapsed caret need not render unchanged controls. Selection,
