@@ -1890,14 +1890,28 @@ it.live(
               commandId: CommandId.make(`${threadId}:send:${label}`),
               threadId,
               messageId: MessageId.make(`${threadId}:message:${label}`),
-              text: label,
+              // Resume sends no text of its own.
+              text: label === "continuation" ? "" : label,
               attachments: [],
               createdBy: "user",
               creationSource: "web",
               ...start,
             });
+            if (label === "continuation") {
+              // This driver has no native resume, so Resume is refused without a prompt.
+              yield* waitFor((projection) =>
+                projection.runs.some(
+                  (run) =>
+                    run.userMessageId === MessageId.make(`${threadId}:message:${label}`) &&
+                    run.status === "failed",
+                ),
+              );
+              yield* assertHeld(`${label} refused`);
+              continue;
+            }
             const started = yield* takeOffer;
-            assert.equal(started.input.message.text, label);
+            // The refused Resume never reached the provider, so the next prompt carries it.
+            assert.isTrue(started.input.message.text.endsWith(label), label);
             yield* assertHeld(`${label} started`);
             yield* started.settle("completed");
             yield* waitFor(
@@ -1907,12 +1921,10 @@ it.live(
             );
             yield* assertHeld(`${label} completed`);
           }
-          assert.deepEqual(offers, [
-            "foreground",
-            "continuation",
-            "queue-fallback",
-            "steer-fallback",
-          ]);
+          assert.deepEqual(
+            offers.map((offer) => offer.split("\n").at(-1)),
+            ["foreground", "queue-fallback", "steer-fallback"],
+          );
         }),
     ),
 );

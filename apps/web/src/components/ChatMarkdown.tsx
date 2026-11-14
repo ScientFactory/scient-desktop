@@ -29,7 +29,10 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
 } from "../scient/markdown/scientMarkdownPipeline";
 // SCIENT-FORK:END
-import { remarkAssistantInsights } from "@t3tools/shared/markdownPipeline";
+import {
+  decodeMarkdownLinkEscapes,
+  remarkAssistantInsights,
+} from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -584,6 +587,7 @@ function fileLinkSourcesKey(
 ): string {
   const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
     .filter((href) => !parseComposerContextHref(href))
+    .map(decodeMarkdownLinkEscapes)
     .map(normalizeMarkdownLinkHrefKey)
     .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd, workspaceRoot));
   const spans = extractInlineCodeSpans(text).filter((span) =>

@@ -756,11 +756,11 @@ describe("ssh tunnel scripts", () => {
       port: 2222,
     } as const;
     // The install runs long enough that only the archive budget (900s) would
-    // outlast it; the pinned package must still give up at 306s: the 90s
-    // launch budget, the wait for the remote home's launch lock, and the
-    // desktop update wait.
+    // outlast it; the pinned package must still give up at 432s: the 90s
+    // launch budget, the wait for the remote home's launch lock, the desktop
+    // update wait, and the wait for a server that already holds the home.
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 400_000)),
+      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 600_000)),
     );
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.mergeAll(
@@ -777,13 +777,13 @@ describe("ssh tunnel scripts", () => {
         }),
       );
       yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.seconds(310));
+      yield* TestClock.adjust(Duration.seconds(440));
 
       const outcome = yield* Effect.result(Fiber.join(fiber));
       assert.isTrue(Result.isFailure(outcome));
       if (Result.isFailure(outcome)) {
         assert.instanceOf(outcome.failure, SshCommandError);
-        assert.equal(outcome.failure.message, "SSH command timed out after 306000ms.");
+        assert.equal(outcome.failure.message, "SSH command timed out after 432000ms.");
       }
     }).pipe(Effect.provide(processLayer));
   });
@@ -2479,6 +2479,33 @@ describe("SSH launch during desktop update", () => {
       assert.isAtMost(result.now, 61_000);
       assert.isTrue(result.markerExists, "an expired marker is ignored, not deleted");
       assert.equal(result.events.filter((event) => event.startsWith("start ")).length, 1);
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "waits for a boot service between two servers (archive: %s)",
+    (archive) =>
+      Effect.gen(function* () {
+        const script = yield* archive
+          ? captureLauncherFor({ archiveVersion: "1.2.3" })
+          : captureLauncher;
+        const result = runLauncher(script, { archive, serviceServing: true, readyAt: 5_000 });
+        assert.deepEqual(result.output, { remotePort: 4888, serverKind: "external" });
+        assert.equal(result.now, 5_000);
+        assert.isFalse(result.events.some((event) => event.startsWith("start ")));
+      }),
+  );
+
+  it.effect("fails without starting a second server when the home's owner never answers", () =>
+    Effect.gen(function* () {
+      const result = runLauncher(yield* captureLauncher, {
+        serviceServing: true,
+        allowFailure: true,
+      });
+      assert.equal(result.status, 1);
+      assert.include(result.stderr, "no second server was started");
+      assert.equal(result.now, 60_000);
+      assert.isFalse(result.events.some((event) => event.startsWith("start ")));
     }),
   );
 

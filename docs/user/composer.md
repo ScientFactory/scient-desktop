@@ -421,10 +421,15 @@ edit or remove it.
 After Stop, a failed turn, or a server restart, queued messages keep their order and are held.
 While the agent is idle, every held message shows **Send now**, on mobile too. Send now starts
 that message, and the rest of the queue continues after it in order. Sending a new message
-directly also continues the held queue after that message. On web or desktop, **Resume** in an
-empty composer continues the queue too, as does **Resume queue** on mobile. You can edit or remove held messages without starting
-them. If the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an
-empty composer on web or desktop to continue the thread, and the queue follows.
+directly also continues the held queue after that message, unless it steers a turn that is
+already running. On web or desktop, **Resume** in an empty composer continues the queue too, as
+does **Resume queue** on mobile. You can edit or remove held messages without starting them. If
+the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an empty
+composer on web or desktop to continue the thread, and the queue follows.
+
+Resume and Resume thread continue a stopped run through the agent's own continuation, without
+sending a new prompt. If the agent does not support it, send a message to continue instead. If
+the original request never reached the agent, Resume sends that request again.
 
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's

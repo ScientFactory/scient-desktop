@@ -34,6 +34,8 @@ export interface ProcessRunInput {
     | ((chunk: Uint8Array) => Effect.Effect<void, ProcessReadError>)
     | undefined;
   // SCIENT-FORK:END
+  /** Runs after successful spawn, before cancellation can interrupt acquisition. */
+  readonly onSpawn?: (() => void) | undefined;
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
@@ -307,7 +309,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       cause,
     });
 
-  const child = yield* spawner
+  const spawn = spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
@@ -326,6 +328,12 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       // Synchronous spawn throws arrive as defects; recover them too so callers see typed spawn failures.
       Effect.catchDefect((cause) => Effect.fail(toSpawnError(cause))),
     );
+  const child = yield* input.onSpawn === undefined
+    ? spawn
+    : spawn.pipe(
+        Effect.tap(() => Effect.sync(() => input.onSpawn?.())),
+        Effect.uninterruptible,
+      );
 
   // SCIENT-FORK:START — text or binary stdin, and an awaited stdout consumer.
   const stdin = input.stdin ?? input.stdinBytes;

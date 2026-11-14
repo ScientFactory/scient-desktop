@@ -10,14 +10,12 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { usageLimitBlockedRun } from "./orchestrationV2ThreadError.ts";
+import { type FailureScanTurnItem, usageLimitBlockedRun } from "./orchestrationV2ThreadError.ts";
 
 type Projection = OrchestrationV2ThreadProjection;
 
-export type QueueUsageLimitProjection = Pick<
-  Projection,
-  "runs" | "turnItems" | "providerSessions"
-> & {
+export type QueueUsageLimitProjection = Pick<Projection, "runs" | "providerSessions"> & {
+  readonly turnItems: ReadonlyArray<FailureScanTurnItem>;
   readonly thread: Pick<Projection["thread"], "providerInstanceId" | "modelSelection">;
 };
 

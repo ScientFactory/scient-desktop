@@ -24,7 +24,11 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
+import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
+import { compareSemverVersions } from "@t3tools/shared/semver";
+import * as Option from "effect/Option";
 import { applyPiModelSelection } from "./modelSelection.ts";
+import { MINIMUM_PI_VERSION, runPiVersionCommand } from "./status.ts";
 import { resolvePiModelSlug } from "./rpc.ts";
 import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "./rpcClient.ts";
 
@@ -82,6 +86,27 @@ export const makePiRunJson = (run: {
       Effect.gen(function* () {
         if (input.operation === "generateReviewGuide")
           return yield* investigationUnsupported(input.operation, "Pi");
+        const thinking =
+          getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel") ??
+          getModelSelectionStringOptionValue(input.modelSelection, "thinking");
+        // Earlier Pi saves a background thinking change as the user's global default. A named
+        // model also changes thinking: a fresh session picks that model's preferred level.
+        if (thinking !== undefined || input.modelSelection.model !== "default") {
+          const output = yield* runPiVersionCommand(settings, environment, input.cwd).pipe(
+            Effect.timeoutOption(4_000),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.orElseSucceed(() => Option.none()),
+          );
+          const version =
+            Option.isSome(output) && output.value.code === 0
+              ? parseGenericCliVersion(`${output.value.stdout}\n${output.value.stderr}`)
+              : null;
+          if (version === null || compareSemverVersions(version, MINIMUM_PI_VERSION) < 0)
+            return yield* new TextGenerationError({
+              operation: input.operation,
+              detail: `Pi ${MINIMUM_PI_VERSION} or newer is required for text generation model and thinking options. Update Pi and try again.`,
+            });
+        }
         const resolved = resolvePiLaunchArgs(settings.launchArgs);
         if (!resolved.ok)
           return yield* new TextGenerationError({
@@ -242,9 +267,6 @@ export const makePiRunJson = (run: {
           Effect.asVoid,
           Effect.forkScoped,
         );
-        const thinking =
-          getModelSelectionStringOptionValue(input.modelSelection, "thinkingLevel") ??
-          getModelSelectionStringOptionValue(input.modelSelection, "thinking");
         const before = yield* client.getState();
         if (selected !== undefined || thinking !== undefined) {
           const effectiveModel =

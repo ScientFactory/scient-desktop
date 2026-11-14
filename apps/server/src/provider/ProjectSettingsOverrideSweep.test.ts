@@ -33,17 +33,10 @@ it.effect("removes a deleted project's whole entry, including keys a null reset 
           },
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({
-          listShells: () =>
+          // The sweep reads only identity and deletion.
+          list: () =>
             Effect.succeed([
-              {
-                id: liveProjectId,
-                title: "Live",
-                workspaceRoot: "/work/live",
-                defaultModelSelection: null,
-                scripts: [],
-                createdAt: "2026-01-01T00:00:00.000Z",
-                updatedAt: "2026-01-01T00:00:00.000Z",
-              },
+              { projectId: liveProjectId, deletedAt: null } as unknown as ProjectStore.ProjectRow,
             ]),
         }),
       ),

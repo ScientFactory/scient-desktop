@@ -30,6 +30,7 @@ import {
   serviceUnitLogPathOf,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_LOCK_FILE,
+  SERVICE_SERVING_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -51,6 +52,9 @@ const HANDOFF_DELAY_MS = 2_000;
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
+// Keep SQLite startup and journaling from turning a full filesystem into a restart loop.
+const MIN_SERVICE_START_FREE_BYTES = 64 * 1024 ** 2;
+const DISK_SPACE_RETRY_MS = 30_000;
 // A replacement started by a handoff waits up to two minutes for the stopping launcher.
 const LOCK_RETRY_MS = 500;
 const LOCK_ATTEMPTS = 240;
@@ -751,11 +755,12 @@ export const serviceLauncherLockPath = (baseDir: string) =>
 // An exclusive SQLite transaction, like the server's owner lock: the OS drops it when the holder dies.
 async function tryAcquireSqliteLock(
   lockPath: string,
+  busyTimeoutMs = 0,
 ): Promise<{ readonly close: () => void } | undefined> {
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(lockPath);
   try {
-    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; BEGIN EXCLUSIVE;`);
     return db;
   } catch (cause) {
     db.close();
@@ -770,6 +775,13 @@ export async function serviceLauncherIsRunning(lockPath: string): Promise<boolea
   lock?.close();
   return lock === undefined;
 }
+
+const servingLockPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_SERVING_LOCK_FILE);
+
+/** Whether a launcher has, or is about to start, a server for this home. An idle one does not. */
+export const serviceLauncherIsServing = (baseDir: string): Promise<boolean> =>
+  serviceLauncherIsRunning(servingLockPath(baseDir)).catch(() => false);
 
 /** Resolves once no launcher holds the lock; the caller bounds the wait through `signal`. */
 export async function waitForServiceLauncherExit(
@@ -848,6 +860,7 @@ export class Launcher {
   #stateDirFreeProbes = 0;
   readonly #output: number | undefined;
   readonly #lockPath: string | undefined;
+  #servingLock: { readonly close: () => void } | undefined;
   readonly #stopChildOverIpc: boolean;
 
   constructor(
@@ -901,6 +914,7 @@ export class Launcher {
         }
       }
     } finally {
+      this.#releaseServing();
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
     }
@@ -919,13 +933,29 @@ export class Launcher {
     return undefined;
   }
 
+  // Advisory: without it an SSH launch may start its own server, as it does beside no service.
+  async #claimServing(): Promise<void> {
+    // An SSH launch probes this lock for a moment; wait out that probe.
+    this.#servingLock ??= await tryAcquireSqliteLock(servingLockPath(this.#baseDir), 250).catch(
+      () => undefined,
+    );
+  }
+
+  #releaseServing(): void {
+    this.#servingLock?.close();
+    this.#servingLock = undefined;
+  }
+
   #terminate(child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
     return terminateChild(child, signal, this.#stopChildOverIpc);
   }
 
+  // Diagnostics are best-effort: a full log filesystem must not stop the launcher waiting for space.
   #log(line: string): void {
-    if (this.#output === undefined) process.stderr.write(line);
-    else NodeFS.writeSync(this.#output, line);
+    try {
+      if (this.#output === undefined) process.stderr.write(line);
+      else NodeFS.writeSync(this.#output, line);
+    } catch {}
   }
 
   #enqueue(transition: () => Promise<void>): void {
@@ -978,6 +1008,55 @@ export class Launcher {
     this.#timer = undefined;
   }
 
+  async #serviceStartDiskSpaceBlocker(): Promise<string | undefined> {
+    const databasePath =
+      this.#state.update?.status === "pending"
+        ? this.#state.update.dbPath
+        : NodePath.join(this.#baseDir, "userdata", "statev2.sqlite");
+    const resolvedDatabasePath = await restoreTarget(databasePath).catch(() => databasePath);
+    const freeBytes = async (directory: string): Promise<number> => {
+      try {
+        return await filesystemBackupSpaceProbe.readFreeBytes(directory);
+      } catch (cause) {
+        const parent = NodePath.dirname(directory);
+        if ((cause as NodeJS.ErrnoException).code === "ENOENT" && parent !== directory) {
+          return freeBytes(parent);
+        }
+        return Number.POSITIVE_INFINITY;
+      }
+    };
+    const available = await Promise.all([
+      freeBytes(this.#baseDir),
+      freeBytes(NodePath.dirname(resolvedDatabasePath)),
+    ]);
+    const free = Math.min(...available);
+    return free < MIN_SERVICE_START_FREE_BYTES
+      ? `Scient needs at least ${MIN_SERVICE_START_FREE_BYTES} bytes free before starting the server; ${free} bytes available.`
+      : undefined;
+  }
+
+  async #deferForDiskSpace(retry: () => Promise<void>): Promise<boolean> {
+    const reason = await this.#serviceStartDiskSpaceBlocker();
+    if (reason === undefined) return false;
+    // A stop during the probe must not arm a retry that outlives it.
+    if (this.#stopRequested) return true;
+    this.#clearTimer();
+    this.#releaseServing();
+    this.#log(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);
+    this.#timer = setInterval(
+      () =>
+        this.#enqueue(async () => {
+          if (this.#child !== null || this.#stopping) return;
+          if ((await this.#serviceStartDiskSpaceBlocker()) !== undefined) return;
+          this.#clearTimer();
+          await this.#claimServing();
+          await retry();
+        }),
+      DISK_SPACE_RETRY_MS,
+    );
+    return true;
+  }
+
   async #selectState(next: ServiceState): Promise<void> {
     const release = await acquireServiceSelectionLock(this.#statePath);
     try {
@@ -999,6 +1078,7 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
+    await this.#claimServing();
     // Clear old stop markers so a future update handoff retains its tunnel.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     // A restart between marker and state publication still runs the old version.
@@ -1054,6 +1134,7 @@ export class Launcher {
   }
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
+    if (await this.#deferForDiskSpace(() => this.#startTrial(pending))) return;
     try {
       await backupDatabaseOnce(this.#baseDir, pending, this.#stopSignal.signal);
     } catch {
@@ -1072,6 +1153,14 @@ export class Launcher {
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
+    if (
+      await this.#deferForDiskSpace(() =>
+        role === "trial" && update?.status === "pending"
+          ? this.#startTrial(update)
+          : this.#startChild(version, role, update),
+      )
+    )
+      return;
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
@@ -1331,6 +1420,12 @@ export class Launcher {
       await this.#startTrial(pending);
       return;
     }
+    if (
+      await this.#deferForDiskSpace(() =>
+        this.#startChild(child.version, "active", this.#state.update),
+      )
+    )
+      return;
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
@@ -1356,6 +1451,7 @@ export class Launcher {
         await this.#repointServiceUnit(next.activeVersion);
       }
     }
+    this.#releaseServing();
     this.#log(
       "[service-launcher] Another Scient server owns this data directory. This service starts again once it stops.\n",
     );
@@ -1380,6 +1476,7 @@ export class Launcher {
     this.#stateDirFreeProbes = owned ? 0 : this.#stateDirFreeProbes + 1;
     if (this.#stateDirFreeProbes < 2) return;
     this.#clearTimer();
+    await this.#claimServing();
     this.#log("[service-launcher] The data directory is free again. Starting the server.\n");
     const update = this.#state.update;
     if (update?.status === "pending") await this.#startTrial(update);
@@ -1396,6 +1493,8 @@ export class Launcher {
       this.#child = null;
       await this.#terminate(child.process);
     }
+    if (await this.#deferForDiskSpace(() => this.#returnToPrevious(pending, status, reason)))
+      return;
     await restoreDatabaseBackup(this.#baseDir, pending);
     const outcome = terminalUpdate({ pending, status, reason });
     const next: ServiceState = {
@@ -1430,6 +1529,8 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const windows = process.platform === "win32";
   let logTimer: NodeJS.Timeout | undefined;
+  // A failed stderr write (ENOSPC on a redirected log) is emitted asynchronously; without a listener it is fatal.
+  process.stderr.on("error", () => undefined);
   try {
     // What the service manager started the launcher with. It locates the unit; service.env
     // changes only what the server gets.

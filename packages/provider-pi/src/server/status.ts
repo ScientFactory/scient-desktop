@@ -68,13 +68,8 @@ const PI_PRESENTATION = {
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
 const PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS = 5_000;
-/**
- * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
- * Version 0.80.5 was the first published package containing both hooks.
- */
-export const MINIMUM_PI_VERSION = "0.80.5";
-/** `pi auth check --json --no-refresh` arrived in 0.84.1. */
-const PI_AUTH_CHECK_VERSION = "0.84.1";
+// Earlier releases persist background set_thinking_level requests as the user's global default.
+export const MINIMUM_PI_VERSION = "0.84.3";
 
 const decodePiAuthCheck = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ reason: Schema.optional(Schema.String) })),
@@ -385,9 +380,10 @@ export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
   },
 );
 
-const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
+export const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
+  cwd?: string,
 ) {
   const command = piSettings.binaryPath || "pi";
   const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
@@ -398,13 +394,14 @@ const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(fu
     ChildProcess.make(spawnCommand.command, spawnCommand.args, {
       env: environment,
       shell: spawnCommand.shell,
+      ...(cwd === undefined ? {} : { cwd }),
     }),
   );
 });
 
 /**
- * Explains why Pi's active model cannot start a turn. On Pi versions with `auth check`, asks it
- * whether credentials are missing, without refreshing or printing them. That command cannot see
+ * Explains why Pi's active model cannot start a turn. Asks `pi auth check` whether credentials
+ * are missing, without refreshing or printing them. That command cannot see
  * extension providers or a runtime --api-key, so it only refines Pi's own unavailable verdict,
  * and is skipped when launch args supply the key.
  */
@@ -412,16 +409,12 @@ const describeUnavailablePiModel = Effect.fn("PiProviderStatus.describeUnavailab
   function* (
     piSettings: PiSettings,
     environment: NodeJS.ProcessEnv,
-    version: string,
     launchArgs: ReadonlyArray<string>,
     model: { readonly provider: string; readonly id: string },
   ) {
     const label = `Pi default (${model.provider}/${model.id})`;
     const unavailable = `${label} uses ${model.provider}, which has no available models in Pi. Choose another model, or check that provider's setup and the Pi launch arguments.`;
-    if (
-      compareSemverVersions(version, PI_AUTH_CHECK_VERSION) < 0 ||
-      launchArgs.includes("--api-key")
-    ) {
+    if (launchArgs.includes("--api-key")) {
       return unavailable;
     }
     const command = piSettings.binaryPath || "pi";
@@ -680,7 +673,6 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       : yield* describeUnavailablePiModel(
           piSettings,
           probeEnvironment,
-          version,
           resolvedLaunchArgs.args,
           discovery.unavailableActiveModel,
         );

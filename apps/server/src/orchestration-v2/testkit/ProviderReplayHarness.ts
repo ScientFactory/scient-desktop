@@ -772,6 +772,7 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
         layerThreadManagementProvided,
         conversationForkProvided,
+        layerStores,
       ),
     ),
   );

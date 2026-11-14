@@ -33,6 +33,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { deletedProjectOverridePatch } from "../provider/ProjectSettingsOverrideSweep.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
@@ -551,9 +552,20 @@ export const make = Effect.gen(function* () {
 
   // Best-effort cleanup releases disabled instances kept alive by overrides; crashes have no replay to revisit deletion.
   const clearProjectSettingsOverrides = (projectId: ProjectId) =>
-    // SCIENT-FORK:START — a `null` patch entry keeps title instructions for released clients, so
-    // deletion uses the server-only removal.
-    serverSettings.removeProjectSettingsOverrides([projectId]).pipe(
+    // SCIENT-FORK:START — a merged patch keeps title instructions for released clients, so
+    // deletion removes the entry server-side first, then writes only the policy it keeps.
+    serverSettings.getSettings.pipe(
+      Effect.flatMap(({ projectSettingsOverrides }) => {
+        const patch = deletedProjectOverridePatch(projectSettingsOverrides[projectId]);
+        const removal = serverSettings.removeProjectSettingsOverrides([projectId]);
+        return patch === null
+          ? removal
+          : removal.pipe(
+              Effect.andThen(
+                serverSettings.updateSettings({ projectSettingsOverrides: { [projectId]: patch } }),
+              ),
+            );
+      }),
       // SCIENT-FORK:END
       Effect.asVoid,
       Effect.catchCause((cause) =>

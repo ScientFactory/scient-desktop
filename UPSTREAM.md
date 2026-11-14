@@ -642,14 +642,14 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
-`4d5d5f89d418c92a1478e15dace1e428f0fc13e8` is recorded in
-[the 2026-11-14 4d5d5f89d4 receipt](docs/internals/t3-upstream-sync-20261114-4d5d5f89d4.md).
-Literal merge `74ba0d0dcda1b61ff6ab04a0bce9daee4b085dc8` has owned base
-`8f6972a1808b1aa12d6591688fd44fe2fa712b77` and the frozen official target as parents, retaining
-the 118 official commits after `6b47939e60`; PR #909 carries it. Connect device approval is
-taken off by default, its migrations run as Scient 094 and 095, and T3's theme tools are named
-`scient_theme_*`. Scient keeps its Node-server WSL runtime and its own release manifest merge.
-Release remains separate.
+`997b304dd65f8fee1e4912cbe656b459695aa8e9` is recorded in
+[the 2026-11-14 997b304dd6 receipt](docs/internals/t3-upstream-sync-20261114-997b304dd6.md).
+Literal merge `745632a426ff2bca9bec21a3d89e86f6aa3eb37c` has owned base
+`4a01db6ca4fa116eac8e7f0456f7a67fdd522d4f` and the frozen official target as parents, retaining
+the 150 official commits after `4d5d5f89d4`; PR #921 carries it. Stopped threads resume natively where the agent
+supports it, a new thread's first message travels in its creation command with Scient's skill
+selection, and Scient keeps its staging-repository checkpoint capture. A reply cut at the output
+token limit keeps Scient's completed-with-notice outcome. Release remains separate.
 
 The previous committed alignment through
 `f313d0a6cb843551fb60e57a454a71e71a3a8c04` is recorded in
