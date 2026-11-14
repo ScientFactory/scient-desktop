@@ -376,6 +376,16 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
           });
           expect(yield* bulk(w.checkout)).toBe("unlinked-unfinished-sync");
           expect(yield* bulk(other)).toBe("changed");
+          const relinked = { ...current, connectionId: "connection-relinked" };
+          yield* w.store.createConnection(relinked);
+          expect(yield* bulk(w.checkout)).toBe("changed");
+          yield* w.store.replaceConnection({
+            expectedRevision: relinked.revision,
+            next: { ...relinked, revision: relinked.revision + 1, state: "archived" },
+          });
+          expect(yield* bulk(w.checkout)).toBe("unlinked-unfinished-sync");
+          yield* Effect.promise(() => NodeFSP.rename(w.folder, `${w.folder}-moved`));
+          expect(yield* bulk(w.checkout)).toBe("changed");
         }),
       );
     },

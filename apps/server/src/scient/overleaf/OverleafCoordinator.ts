@@ -693,6 +693,36 @@ export class OverleafCoordinator extends Context.Service<
   }
 >()("t3/scient/overleaf/OverleafCoordinator") {}
 
+/**
+ * Whether linking an archive's folder again can still finish its unfinished apply:
+ * connecting revives an archive only for the very directory at its recorded place,
+ * and only while no standing link owns that directory.
+ */
+export const archiveFinishesByLinking = Effect.fn("OverleafCoordinator.archiveFinishesByLinking")(
+  function* <E>(input: {
+    readonly store: OverleafStateStore.OverleafStateStore["Service"];
+    readonly archived: OverleafConnectionDocument;
+    /** The directory now at the archive's recorded folder path. */
+    readonly found: Effect.Effect<OverleafConnectionDocument["folder"]["identity"] | null, E>;
+  }) {
+    const { archived, store } = input;
+    if (archived.activeApply === null && archived.stagingPaths.length === 0) return false;
+    const identity = yield* input.found;
+    if (identity === null || !platformFileIdentity.equal(identity, archived.folder.identity))
+      return false;
+    for (const connectionId of yield* store.listConnections) {
+      const read = yield* store.readConnection(connectionId);
+      if (
+        read._tag === "ready" &&
+        read.document.state === "active" &&
+        platformFileIdentity.equal(read.document.folder.identity, archived.folder.identity)
+      )
+        return false;
+    }
+    return true;
+  },
+);
+
 export const make = Effect.fn("OverleafCoordinator.make")(function* (
   options: OverleafCoordinatorOptions,
 ) {
@@ -2810,6 +2840,17 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       }),
     );
 
+  const canFinishByLinking = (archived: OverleafConnectionDocument) =>
+    archiveFinishesByLinking({
+      store,
+      archived,
+      found: overleafDirectoryIdentity(
+        folderOf(archived),
+        volumeUuid,
+        options.publicationHelper ?? undefined,
+      ),
+    });
+
   // A bulk checkout change first settles a pending apply when nothing else holds
   // that connection, otherwise it refuses. It fails closed: an unreadable record that
   // may hold an unfinished sync refuses changes to its own checkout, or to every
@@ -2855,7 +2896,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           .current(folderOf(connection))
           .pipe(Effect.mapError(() => blocked));
         if (!held.keys.includes(section.key)) continue;
-        if (connection.state !== "active") return yield* blocked;
+        if (connection.state !== "active") {
+          if (yield* canFinishByLinking(connection).pipe(Effect.mapError(() => blocked)))
+            return yield* blocked;
+          continue;
+        }
         // Structural source copies sit in the folder; a bulk change could erase them.
         if (connection.stagingPaths.length > 0) return yield* refuse;
         if (connection.activeApply === null) continue;

@@ -20,6 +20,7 @@ import {
   type OverleafConnectionDocument,
 } from "./OverleafConnectionState.ts";
 import {
+  archiveFinishesByLinking,
   OverleafConnectionNotReadyError,
   type OverleafReservations,
   reserveOverleafConnection,
@@ -880,17 +881,25 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       revision: document.revision,
       restored: false,
     };
-    if (document.state === "archived")
+    if (document.state === "archived") {
+      // What linking the folder again finishes; until then it holds off bulk changes.
+      const finishable = yield* archiveFinishesByLinking({
+        store,
+        archived: document,
+        found: identityOf(folderOf(document)),
+      }).pipe(Effect.orElseSucceed(() => true));
       return {
         ...base,
         availability: "disconnected",
-        // What linking the folder again finishes; until then it holds off bulk changes.
-        reasons: [
-          ...(document.activeApply === null ? [] : ["apply-pending" as const]),
-          ...(document.stagingPaths.length === 0 ? [] : ["staging" as const]),
-        ],
+        reasons: finishable
+          ? [
+              ...(document.activeApply === null ? [] : ["apply-pending" as const]),
+              ...(document.stagingPaths.length === 0 ? [] : ["staging" as const]),
+            ]
+          : [],
         local: null,
       } satisfies OverleafConnectionStatus;
+    }
 
     const reasons: OverleafStatusReason[] = [];
     const checkout = yield* identityOf(document.checkout.canonicalRoot);
