@@ -1,4 +1,4 @@
-import type { ProviderInstanceId } from "@t3tools/contracts";
+import type { ProviderInstanceId, ScientPluginSummary } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -25,7 +25,7 @@ import {
   MutedLine,
   useExtensionsEnvironment,
 } from "./ExtensionsPage";
-import { ExtensionGrid } from "./ExtensionRow";
+import { ExtensionTable } from "./ExtensionRow";
 import {
   catalogEntries,
   collectProviderExtensionGroups,
@@ -38,139 +38,186 @@ import {
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AccountServiceItem, connectedAccountServices } from "./AccountServicePages";
-import {
-  type AccountService,
-  accountServiceAudience,
-  accountServiceOfServer,
-  accountServiceRoutes,
-} from "./accountServices";
+import { type AccountService, accountServiceOfServer } from "./accountServices";
 import { AgentSkills } from "../skills/AgentSkills";
 import { PersonalSkillsSection } from "../skills/PersonalSkillsSection";
 import { ProjectSkills } from "../skills/ProjectSkills";
 import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLibrary";
 
-/** Rows a provider section shows before "Show all". */
-const PROVIDER_PREVIEW_ROWS = 6;
+/** Rows the table shows before "Show all". */
+const PREVIEW_ROWS = 24;
 
-function ProviderSection({
-  group,
-  kind,
+/** The row's kind for a provider's own server: a ChatGPT app, a claude.ai connector, or MCP. */
+const serverType = (scope: string | undefined) =>
+  scope === "chatgpt" ? "ChatGPT app" : scope === "claudeai" ? "claude.ai connector" : "MCP server";
+
+/**
+ * Everything this environment has, in one table like claude.ai's Connectors page: the services
+ * the agents reach through their accounts, Scient's connectors and plugins, then each agent's
+ * own plugins, apps and servers. A service several agents reach is one row naming them all.
+ */
+function YoursTable({
+  selected,
+  connectorsShown,
+  connectorsNote,
+  groups,
+  accountServices,
+  curated,
+  plugins,
 }: {
-  readonly group: ProviderExtensionGroup;
-  readonly kind: ExtensionKind | undefined;
+  readonly selected: ProviderInstanceId | null;
+  readonly connectorsShown: boolean;
+  readonly connectorsNote: string | undefined;
+  readonly groups: ReadonlyArray<ProviderExtensionGroup>;
+  readonly accountServices: ReadonlyArray<AccountService>;
+  readonly curated: ReturnType<typeof catalogEntries>;
+  readonly plugins: ReadonlyArray<ScientPluginSummary>;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { environmentId, canWrite, providerInventory } = useExtensionsEnvironment();
-  const serviceAudience = (service: AccountService | undefined) =>
-    service
-      ? accountServiceAudience(accountServiceRoutes(service, providerInventory.providers))
-      : undefined;
+  const { environmentId, canWrite, inventory, inventoryError, providerInventory } =
+    useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   const waitingForConnection = useRef(false);
+  const refreshAgents = () => {
+    for (const group of groups)
+      void act({
+        environmentId,
+        input: { instanceId: group.provider.instanceId, action: { type: "refresh-inventory" } },
+      });
+  };
   useWindowFocusRefresh(() => {
     if (!waitingForConnection.current) return;
     waitingForConnection.current = false;
-    void act({
-      environmentId,
-      input: { instanceId: group.provider.instanceId, action: { type: "refresh-inventory" } },
-    });
+    refreshAgents();
   });
+
   const rows = [
-    ...(showsKind(kind, "plugins") ? group.plugins : []).map(({ plugin, cwd }) => (
-      <ProviderPluginItem
-        key={`plugin:${cwd ?? ""}:${plugin.id}`}
-        provider={group.provider}
-        label={group.label}
-        plugin={plugin}
-        workspace={cwd}
+    ...accountServices.map((service) => (
+      <AccountServiceItem key={`account:${service.id}`} service={service} />
+    )),
+    ...(connectorsShown ? (inventory?.connectors ?? []) : []).map((connector) => (
+      <ConnectorItem
+        key={connector.connectorId}
+        connector={connector}
+        entry={curated.find((entry) => entry.installedConnectorId === connector.connectorId)}
       />
     )),
-    ...(showsKind(kind, "plugins") ? group.mcpServers : [])
-      // Codex already shows the apps its plugins bring inside those plugins' rows.
-      .filter(
-        (server) =>
-          !(
-            group.provider.driver === "codex" &&
-            server.scope === "chatgpt" &&
-            group.plugins.some(({ plugin }) =>
-              (plugin.apps ?? []).some((app) => app.name === server.name),
-            )
-          ),
-      )
-      .map((server) => (
-        <ProviderServerItem
-          key={`server:${server.name}`}
+    ...plugins.map((plugin) => <PluginItem key={plugin.pluginId} plugin={plugin} />),
+    ...groups.flatMap((group) => [
+      ...group.plugins.map(({ plugin, cwd }) => (
+        <ProviderPluginItem
+          key={`${group.provider.instanceId}:plugin:${cwd ?? ""}:${plugin.id}`}
           provider={group.provider}
           label={group.label}
-          server={server}
-          // Gmail, Calendar and Drive open their one page, which shows every agent.
-          serviceId={accountServiceOfServer(group.provider, server)?.id}
-          audience={serviceAudience(accountServiceOfServer(group.provider, server))}
+          plugin={plugin}
+          workspace={cwd}
         />
       )),
+      ...group.mcpServers
+        // A service several agents reach is its own row above, naming them all.
+        .filter((server) => accountServiceOfServer(group.provider, server) === undefined)
+        // Codex already shows the apps its plugins bring inside those plugins' rows.
+        .filter(
+          (server) =>
+            !(
+              group.provider.driver === "codex" &&
+              server.scope === "chatgpt" &&
+              group.plugins.some(({ plugin }) =>
+                (plugin.apps ?? []).some((app) => app.name === server.name),
+              )
+            ),
+        )
+        .map((server) => (
+          <ProviderServerItem
+            key={`${group.provider.instanceId}:server:${server.name}`}
+            provider={group.provider}
+            label={group.label}
+            server={server}
+            type={serverType(server.scope)}
+          />
+        )),
+    ]),
   ];
-  const title = `From ${group.label}`;
-  // Where the agent's own account adds apps: claude.ai for Claude, ChatGPT for Scient Agent.
-  const accountAppsPage =
-    group.provider.driver === "claudeAgent"
-      ? { url: "https://claude.ai/customize/connectors", label: "Add more on claude.ai" }
-      : group.provider.driver === "scient"
-        ? { url: "https://chatgpt.com/apps", label: "Add more on ChatGPT" }
-        : undefined;
+  // Where an agent's own account adds apps: ChatGPT for Codex and Scient Agent, claude.ai for Claude.
+  const chatGptApps = groups.some(
+    (group) =>
+      (group.provider.driver === "scient" && group.provider.accountAppsAvailable === true) ||
+      (group.provider.driver === "codex" && group.provider.auth.type === "chatgpt"),
+  );
+  const claudeConnectors = groups.some(
+    (group) =>
+      group.provider.driver === "claudeAgent" && group.provider.accountAppsAvailable === true,
+  );
+  const addMore = (url: string) => {
+    waitingForConnection.current = true;
+    void openAuthorizationPage(async () => url);
+  };
   return (
-    <ExtensionsSection
-      title={title}
-      action={
-        <div className="flex items-center gap-2">
-          <SectionAction
-            icon={RefreshCwIcon}
-            disabled={!canWrite}
-            onClick={() =>
-              void act({
-                environmentId,
-                input: {
-                  instanceId: group.provider.instanceId,
-                  action: { type: "refresh-inventory" },
-                },
-              })
-            }
-          >
-            Refresh
-          </SectionAction>
-          {rows.length > PROVIDER_PREVIEW_ROWS ? (
-            <SectionShowAllToggle
-              total={rows.length}
-              expanded={expanded}
-              onExpandedChange={setExpanded}
-            />
-          ) : null}
-        </div>
-      }
+    <SettingsSearchTarget
+      id={searchableSetting("extensions-connected-services").id}
+      className="outline-none"
     >
-      {group.provider.driver === "claudeAgent" && group.provider.accountAppsAvailable !== true ? (
-        <MutedLine>claude.ai connectors need a Claude account sign-in.</MutedLine>
-      ) : null}
-      {rows.length === 0 ? <MutedLine>None yet.</MutedLine> : null}
-      <ExtensionGrid label={title}>
-        {expanded ? rows : rows.slice(0, PROVIDER_PREVIEW_ROWS)}
-      </ExtensionGrid>
-      {accountAppsPage && group.provider.accountAppsAvailable === true ? (
-        <div>
-          <Button
-            variant="ghost-muted"
-            size="sm"
-            onClick={() => {
-              waitingForConnection.current = true;
-              void openAuthorizationPage(async () => accountAppsPage.url);
-            }}
-          >
-            {accountAppsPage.label}
-          </Button>
-        </div>
-      ) : null}
-    </ExtensionsSection>
+      <ExtensionsSection
+        title="Yours"
+        action={
+          <div className="flex items-center gap-2">
+            <SectionAction icon={RefreshCwIcon} disabled={!canWrite} onClick={refreshAgents}>
+              Refresh
+            </SectionAction>
+            {rows.length > PREVIEW_ROWS ? (
+              <SectionShowAllToggle
+                total={rows.length}
+                expanded={expanded}
+                onExpandedChange={setExpanded}
+              />
+            ) : null}
+          </div>
+        }
+      >
+        {inventory === null && inventoryError ? <MutedLine>Unavailable.</MutedLine> : null}
+        {connectorsNote ? <MutedLine>{connectorsNote}</MutedLine> : null}
+        {providerInventory.phase !== "ready" ? (
+          <MutedLine>{providerInventoryMessage(providerInventory)}</MutedLine>
+        ) : null}
+        {providerInventory.errors.map((error) => (
+          <MutedLine key={error}>{error}</MutedLine>
+        ))}
+        {rows.length === 0 ? (
+          <MutedLine>
+            {inventory === null
+              ? "Loading…"
+              : "Nothing yet. Find something in Discover, or add your own."}
+          </MutedLine>
+        ) : (
+          <ExtensionTable label={selected ? "Yours, for this agent" : "Yours"}>
+            {expanded ? rows : rows.slice(0, PREVIEW_ROWS)}
+          </ExtensionTable>
+        )}
+        {chatGptApps || claudeConnectors ? (
+          <div className="flex flex-wrap gap-2">
+            {chatGptApps ? (
+              <Button variant="ghost-muted" size="sm" onClick={() => addMore(CHATGPT_APPS_PAGE)}>
+                Add apps on ChatGPT
+              </Button>
+            ) : null}
+            {claudeConnectors ? (
+              <Button
+                variant="ghost-muted"
+                size="sm"
+                onClick={() => addMore(CLAUDE_CONNECTORS_PAGE)}
+              >
+                Add connectors on claude.ai
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </ExtensionsSection>
+    </SettingsSearchTarget>
   );
 }
+
+const CHATGPT_APPS_PAGE = "https://chatgpt.com/apps";
+const CLAUDE_CONNECTORS_PAGE = "https://claude.ai/customize/connectors";
 
 function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const {
@@ -243,78 +290,23 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
       ) : null}
 
       {showsKind(kind, "plugins") ? (
-        <ExtensionsSection
-          id={searchableSetting("extensions-connected-services").id}
-          title="Connected services"
-        >
-          {inventory === null ? (
-            <MutedLine>{inventoryError ? "Unavailable." : "Loading…"}</MutedLine>
-          ) : !connectorsReach(selected) && accountServices.length === 0 ? (
-            <MutedLine>
-              {selected?.support?.reason ??
-                `${selected?.label ?? "This agent"} does not support remote MCP servers.`}
-            </MutedLine>
-          ) : inventory.connectors.length === 0 && accountServices.length === 0 ? (
-            <MutedLine>None yet. Find one in Discover, or add your own.</MutedLine>
-          ) : (
-            <>
-              {selected?.support?.status === "conditional" && selected.support.reason ? (
-                <MutedLine>{selected.support.reason}</MutedLine>
-              ) : null}
-              <ExtensionGrid label="Connected services">
-                {accountServices.map((service) => (
-                  <AccountServiceItem key={`account:${service.id}`} service={service} />
-                ))}
-                {(connectorsReach(selected) ? inventory.connectors : []).map((connector) => (
-                  <ConnectorItem
-                    key={connector.connectorId}
-                    connector={connector}
-                    entry={curated.find(
-                      (entry) => entry.installedConnectorId === connector.connectorId,
-                    )}
-                  />
-                ))}
-              </ExtensionGrid>
-            </>
-          )}
-        </ExtensionsSection>
+        <YoursTable
+          selected={selected?.instanceId ?? null}
+          connectorsShown={connectorsReach(selected)}
+          connectorsNote={
+            !connectorsReach(selected)
+              ? (selected?.support?.reason ??
+                `${selected?.label ?? "This agent"} does not support remote MCP servers.`)
+              : selected?.support?.status === "conditional"
+                ? selected.support.reason
+                : undefined
+          }
+          groups={groups}
+          accountServices={accountServices}
+          curated={curated}
+          plugins={plugins}
+        />
       ) : null}
-
-      {showsKind(kind, "plugins") ? (
-        <ExtensionsSection
-          id={searchableSetting("extensions-scient-plugins").id}
-          title="Scient plugins"
-        >
-          {plugins.length === 0 ? (
-            <MutedLine>{inventory === null ? "Loading…" : "None."}</MutedLine>
-          ) : (
-            <ExtensionGrid label="Scient plugins">
-              {plugins.map((plugin) => (
-                <PluginItem key={plugin.pluginId} plugin={plugin} />
-              ))}
-            </ExtensionGrid>
-          )}
-        </ExtensionsSection>
-      ) : null}
-
-      {kind === "skills" ? null : (
-        <SettingsSearchTarget
-          id={searchableSetting("extensions-provider-plugins").id}
-          className="grid gap-10 outline-none"
-        >
-          {providerInventory.phase !== "ready" || groups.length === 0 ? (
-            <ExtensionsSection title="From your agents">
-              <MutedLine>{providerInventoryMessage(providerInventory)}</MutedLine>
-              {providerInventory.errors.map((error) => (
-                <MutedLine key={error}>{error}</MutedLine>
-              ))}
-            </ExtensionsSection>
-          ) : null}
-          {groups.map((group) => (
-            <ProviderSection key={group.provider.instanceId} group={group} kind={kind} />
-          ))}
-        </SettingsSearchTarget>
-      )}
 
       {showsKind(kind, "skills") ? (
         <>

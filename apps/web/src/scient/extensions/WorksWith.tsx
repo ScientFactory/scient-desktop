@@ -159,3 +159,57 @@ export function WorksWithValue({
     </Popover>
   );
 }
+
+/**
+ * The agents an item works with, as their logos, for a table cell. Every agent reads "All
+ * agents"; an agent one step away from it shows dimmed, its step in the tooltip.
+ */
+export function WorksWithAgents({
+  audience = SCIENT_AUDIENCE,
+}: {
+  readonly audience?: ExtensionAudience | undefined;
+}) {
+  const { inventory, providers } = useExtensionsEnvironment();
+  const support = audienceSupport(audience, providers, inventory?.providerSupport ?? []);
+  const usable = worksWithCardAgents(audience, support);
+  if (support.length > 1 && support.every((entry) => entry.status === "supported"))
+    return <span className="text-sm text-muted-foreground">All agents</span>;
+  if (usable.length === 0)
+    return <span className="text-sm text-muted-foreground">{audienceLabel(audience)}</span>;
+  const iconUrlOf = (entry: ConnectorProviderSupport) =>
+    providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
+  return (
+    <ul className="flex items-center gap-1.5" aria-label={audienceLabel(audience)}>
+      {usable.map((entry) => (
+        <li key={entry.providerInstanceId}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className={cn("flex", entry.status !== "supported" && "opacity-40")}
+                  aria-label={
+                    entry.status === "supported"
+                      ? entry.displayName
+                      : `${entry.displayName}: ${entry.reason ?? "Works with limits"}`
+                  }
+                />
+              }
+            >
+              <ProviderInstanceIcon
+                driverKind={entry.driver}
+                displayName={entry.displayName}
+                acpRegistryIconUrl={iconUrlOf(entry)}
+                iconClassName="size-5"
+              />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {entry.status === "supported"
+                ? entry.displayName
+                : `${entry.displayName}: ${entry.reason ?? "Works with limits"}`}
+            </TooltipPopup>
+          </Tooltip>
+        </li>
+      ))}
+    </ul>
+  );
+}

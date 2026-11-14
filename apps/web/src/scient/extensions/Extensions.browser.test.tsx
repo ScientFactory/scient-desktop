@@ -785,6 +785,15 @@ function setup() {
   };
 }
 
+/** The table's "Show all N" toggle, or null when everything already shows. */
+function showAllIn(section: Element | null): HTMLButtonElement | null {
+  return (
+    [...(section?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) =>
+      /^Show all \d+$/.test(button.textContent ?? ""),
+    ) ?? null
+  );
+}
+
 describe("Discover", () => {
   it("shows each catalog section with a link to its category, built-ins and Browse all", async () => {
     await using fixture = setup();
@@ -1258,11 +1267,11 @@ describe("Installed", () => {
       },
     );
     await fixture.render(<InstalledPage />);
-    await vi.waitFor(() =>
-      expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-    );
-    await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
-    expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
+    await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
+    await userEvent.click(showAllIn(fixture.section("Yours"))!);
+    expect(
+      fixture.rowNames(fixture.section("Yours")).filter((name) => name?.includes("/p-")),
+    ).toHaveLength(40);
     expect(fixture.rowNames()).toContain("Plugin /p-0");
     expect(fixture.rowNames()).toContain("Plugin /p-39");
     expect(
@@ -1326,9 +1335,7 @@ describe("Installed", () => {
         },
       );
       await fixture.render(<InstalledPage />);
-      await vi.waitFor(() =>
-        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-      );
+      await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
       const retired = { ...raw, workspaceSnapshots: snapshots };
       held = true;
       await act(async () => state.publishRevision("local", 2));
@@ -1349,11 +1356,11 @@ describe("Installed", () => {
       await fixture.render(<InstalledPage />);
       expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
       await act(async () => release.resolve({ _tag: "Success", value: { providers: [retired] } }));
-      await vi.waitFor(() =>
-        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-      );
-      await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
-      expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
+      await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
+      await userEvent.click(showAllIn(fixture.section("Yours"))!);
+      expect(
+        fixture.rowNames(fixture.section("Yours")).filter((name) => name?.includes("/p-")),
+      ).toHaveLength(40);
       expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
       expect(scanned.filter((entry) => entry.startsWith("old:"))).toHaveLength(40);
       expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
@@ -1454,8 +1461,7 @@ describe("Installed", () => {
     const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
     state.providersByEnvironment = { local: [raw] };
     await fixture.render(<InstalledPage />);
-    // Codex keeps its own section, even empty, so its store stays one click away.
-    await vi.waitFor(() => expect(fixture.section("From Codex")).not.toBeNull());
+    await vi.waitFor(() => expect(fixture.section("Yours")).not.toBeNull());
     const before = state.refreshInventory.mock.calls.length;
     state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
     state.inventory = inventory({ revision: 99 });
@@ -1481,22 +1487,20 @@ describe("Installed", () => {
     await using fixture = setup();
     state.projectsKnown = false;
     await fixture.render(<InstalledPage />);
-    expect(fixture.section("From your agents").textContent).toContain("not been checked");
+    expect(fixture.section("Yours").textContent).toContain("not been checked");
     expect(state.refreshInventory).not.toHaveBeenCalled();
     state.projectsKnown = true;
     const pending = Promise.withResolvers<unknown>();
     state.refreshInventory.mockReturnValue(pending.promise);
     await fixture.render(<InstalledPage />);
-    await vi.waitFor(() =>
-      expect(fixture.section("From your agents").textContent).toContain("Checking"),
-    );
+    await vi.waitFor(() => expect(fixture.section("Yours").textContent).toContain("Checking"));
     await act(async () =>
       pending.resolve({ _tag: "Failure", cause: Cause.fail(new Error("Inventory denied")) }),
     );
     await vi.waitFor(() =>
-      expect(fixture.section("From your agents").textContent).toContain("Inventory denied"),
+      expect(fixture.section("Yours").textContent).toContain("Inventory denied"),
     );
-    expect(fixture.section("From your agents").textContent).not.toContain("No agent plugins");
+    expect(fixture.section("Yours").textContent).not.toContain("No agent plugins");
     await fixture.reset();
     state.refreshInventory.mockClear();
     await fixture.render(<DiscoverPage />);
@@ -1505,9 +1509,7 @@ describe("Installed", () => {
     state.canRead = false;
     await fixture.render(<InstalledPage />);
     expect(state.refreshInventory).not.toHaveBeenCalled();
-    expect(fixture.section("From your agents").textContent).toContain(
-      "cannot read agent extensions",
-    );
+    expect(fixture.section("Yours").textContent).toContain("cannot read agent extensions");
   });
 
   it("groups connectors, Scient plugins and each agent's own items, six rows until Show all", async () => {
@@ -1538,35 +1540,16 @@ describe("Installed", () => {
       ],
     };
     await fixture.render(<InstalledPage />);
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual(["Linear"]);
-    expect(fixture.rowNames(fixture.section("Scient plugins"))).toEqual(["Lab kit", "Sources"]);
+    // One table: connected services, then Scient's plugins, then each agent's own items.
+    const names = fixture.rowNames(fixture.section("Yours"));
+    expect(names.slice(0, 3)).toEqual(["Linear", "Lab kit", "Sources"]);
+    expect(names).toEqual(expect.arrayContaining(["github", "claude-1", "claude-6"]));
+    expect(names.indexOf("github")).toBeLessThan(names.indexOf("claude-1"));
     expect(fixture.row("Lab kit").querySelector("[data-extension-status]")?.textContent).toBe(
       "Off",
     );
-
-    // The toggle sits in the section header, beside its heading.
-    const fromCodex = fixture.section("From Codex");
-    expect(fixture.rowNames(fromCodex)).toHaveLength(6);
-    const toggle = buttonIn(fromCodex, "Show all 8")!;
-    expect(toggle.closest("section")?.querySelector("h2")?.textContent).toBe("From Codex");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    await userEvent.click(toggle);
-    expect(fixture.rowNames(fromCodex)).toHaveLength(8);
-    expect(fixture.rowNames(fromCodex).at(-1)).toBe("github");
-    expect(toggle.textContent).toBe("Show less");
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    await userEvent.click(toggle);
-    expect(fixture.rowNames(fromCodex)).toHaveLength(6);
-    expect(toggle.textContent).toBe("Show all 8");
-
-    // Six or fewer: everything shows and there is nothing to toggle.
-    const fromClaude = fixture.section("From Claude");
-    expect(fixture.rowNames(fromClaude)).toHaveLength(6);
-    expect(
-      [...fromClaude.querySelectorAll("button")].some((button) =>
-        /^Show (all|less)/.test(button.textContent ?? ""),
-      ),
-    ).toBe(false);
+    // Fewer rows than the preview: everything shows and there is nothing to toggle.
+    expect(showAllIn(fixture.section("Yours"))).toBeNull();
   });
 
   it("filters by Works with and explains when an agent cannot use connected services", async () => {
@@ -1582,15 +1565,13 @@ describe("Installed", () => {
       "Pi",
     ]);
     await userEvent.selectOptions(worksWith, "claude");
-    expect(fixture.section("From Codex")).toBeNull();
-    expect(fixture.rowNames(fixture.section("From Claude"))).toEqual(["superpowers"]);
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual(["Linear"]);
+    const forClaude = fixture.rowNames(fixture.section("Yours"));
+    expect(forClaude).toEqual(expect.arrayContaining(["superpowers", "Linear"]));
+    expect(forClaude).not.toContain("github");
 
     await userEvent.selectOptions(worksWith, "pi");
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual([]);
-    expect(fixture.section("Connected services").textContent).toContain(
-      "Pi cannot reach remote MCP servers.",
-    );
+    expect(fixture.rowNames(fixture.section("Yours"))).not.toContain("Linear");
+    expect(fixture.section("Yours").textContent).toContain("Pi cannot reach remote MCP servers.");
   });
 
   it("runs row menu actions against the server and shows its refusal inline", async () => {

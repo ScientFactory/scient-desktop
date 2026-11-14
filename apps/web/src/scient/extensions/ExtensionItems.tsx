@@ -522,6 +522,7 @@ export function ProviderServerItem({
   server,
   serviceId,
   audience,
+  type,
 }: {
   readonly provider: ServerProvider;
   readonly label: string;
@@ -530,6 +531,8 @@ export function ProviderServerItem({
   readonly serviceId?: string | undefined;
   /** Who can use it, when that is wider than this agent (a service several agents reach). */
   readonly audience?: ExtensionAudience | undefined;
+  /** The table's Type column. */
+  readonly type?: string | undefined;
 }) {
   const actions = useProviderServerActions(provider, label, server);
   const target: ExtensionTarget = serviceId
@@ -540,6 +543,7 @@ export function ProviderServerItem({
       target={target}
       name={providerServerDisplayName(server)}
       audience={audience ?? providerExtensionAudience(provider, server)}
+      type={type}
       tagline={server.error ?? mcpServerSummary(server)}
       status={MCP_SERVER_STATUS_TEXT[server.status]}
       trailing={
