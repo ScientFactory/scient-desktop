@@ -13,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
+  baseSshArgs,
   parseSshResolveOutput,
   resolveRemoteT3CliPackageSpec,
   remoteStateKey,
@@ -104,6 +105,29 @@ describe("ssh command", () => {
       ),
     );
   });
+
+  it.effect("overrides an alias's RemoteCommand and RequestTTY", () =>
+    Effect.sync(() => {
+      assert.deepEqual(
+        baseSshArgs(
+          { alias: "devbox", hostname: "devbox", username: null, port: 2222 },
+          { batchMode: "yes" },
+        ),
+        [
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "ConnectTimeout=10",
+          "-o",
+          "RemoteCommand=none",
+          "-o",
+          "RequestTTY=no",
+          "-p",
+          "2222",
+        ],
+      );
+    }),
+  );
 
   // Remote servers store state under this key, so it must not change across releases.
   it.effect("derives a stable remote state key", () =>

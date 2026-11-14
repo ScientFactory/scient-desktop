@@ -396,7 +396,7 @@ import {
   DatabaseStorageStatus,
   ServerSettings,
   ServerSettingsError,
-  ServerSettingsPatch,
+  ClientServerSettingsPatch,
   ListTextGeneratorModelsInput,
   ListTextGeneratorModelsResult,
   TextGeneratorError,
@@ -1169,7 +1169,7 @@ const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, 
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
-    patch: ServerSettingsPatch,
+    patch: ClientServerSettingsPatch,
     providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
   }),
   success: ServerSettings,

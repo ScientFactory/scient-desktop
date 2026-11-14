@@ -54,6 +54,7 @@ import {
 } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as PortScanner from "../preview/PortScanner.ts";
 
 const encodeEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -429,6 +430,7 @@ it.live(
         ).pipe(
           Layer.provide(
             Layer.mergeAll(
+              PortScanner.layerTest,
               factoryLayer,
               Layer.succeed(ServerConfig.ServerConfig, config),
               allocatorLayer,

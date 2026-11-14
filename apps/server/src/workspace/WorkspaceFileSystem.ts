@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -56,6 +57,7 @@ import {
 } from "../scient/workspace/WorkspaceFileWatch.ts";
 // SCIENT-FORK:END
 import { fileHeaderMimeType } from "./fileHeaderMimeType.ts";
+import { toWslDrivePath } from "./wslDrivePath.ts";
 
 const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
@@ -228,6 +230,27 @@ export class WorkspaceFileSystem extends Context.Service<
   // SCIENT-FORK:END
 >()("t3/workspace/WorkspaceFileSystem") {}
 
+const UTF8_BOM = "\uFEFF";
+
+async function startsWithUtf8Bom(filePath: string): Promise<boolean> {
+  const handle = await NodeFSP.open(
+    filePath,
+    // O_NONBLOCK keeps a FIFO with no writer from hanging the save.
+    NodeFS.constants.O_RDONLY |
+      (NodeFS.constants.O_NOFOLLOW ?? 0) |
+      (NodeFS.constants.O_NONBLOCK ?? 0),
+  ).catch(() => null);
+  if (!handle) return false;
+  try {
+    const { bytesRead, buffer } = await handle.read(Buffer.alloc(3), 0, 3, 0);
+    return bytesRead === 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
+  } catch {
+    return false;
+  } finally {
+    await handle.close();
+  }
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -308,9 +331,18 @@ export const make = Effect.gen(function* () {
     return directory;
   };
   const isServerInternalPath = yield* makeIsServerInternalPath;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  const toHostPath = (requestedPath: string) =>
+    toWslDrivePath(requestedPath).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
-    const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
+    const expandedPath = expandHomePath(
+      yield* toHostPath(requestedPath),
+      yield* HostProcess.HomeDirectory,
+    );
     // Chips ask as soon as an agent's message renders, and touching a network
     // path makes Windows sign in to its host with the user's NTLM credentials.
     if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
@@ -427,11 +459,13 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // SCIENT-FORK:START — contained and viewer reads keep their host-path authority.
   /** Viewer reads may leave the project root, read-only.
    * Processing, save and rename require contained paths, including symlink targets. */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
     purpose: "view" | "contained",
+    mappedPath?: string,
   ) {
     // A path names one exact file, whitespace included, so it is used as given.
     const requestedPath = input.relativePath;
@@ -471,7 +505,7 @@ export const make = Effect.gen(function* () {
     });
     const hostPath = requestedPath.startsWith("~/")
       ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
-      : requestedPath;
+      : (mappedPath ?? (yield* toHostPath(requestedPath)));
     const resolvedHostPath = path.isAbsolute(hostPath)
       ? isNetworkPath(hostPath)
         ? path.resolve(hostPath)
@@ -547,12 +581,14 @@ export const make = Effect.gen(function* () {
       outsideWorkspace: false,
     };
   });
+  // SCIENT-FORK:END
 
   const readResolvedFile = Effect.fn("WorkspaceFileSystem.readResolvedFile")(function* (
     input: ProjectReadFileInput,
     purpose: "view" | "contained",
+    mappedPath?: string,
   ) {
-    const target = yield* resolveReadTarget(input, purpose);
+    const target = yield* resolveReadTarget(input, purpose, mappedPath);
     const absentResult = {
       relativePath: target.relativePath,
       contents: "",
@@ -642,24 +678,31 @@ export const make = Effect.gen(function* () {
             offset += bytesRead;
           }
           const fileBytes = buffer.subarray(0, offset);
-          if (fileBytes.includes(0)) {
-            return yield* new WorkspaceBinaryFileError({
+          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
+          const binaryFileError = () =>
+            new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
               relativePath: input.relativePath,
               resolvedPath: realTargetPath,
             });
-          }
-
-          const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
+          if (fileBytes.includes(0)) return yield* binaryFileError();
+          // Fatal decoding rejects invalid UTF-8, since U+FFFD contents would corrupt the file on save.
+          // Streaming decode drops a character the byte limit split, instead of rejecting it.
+          const contents = yield* Effect.try({
+            try: () =>
+              new TextDecoder("utf-8", { fatal: true }).decode(fileBytes, { stream: truncated }),
+            catch: binaryFileError,
+          });
           return {
             relativePath: target.relativePath,
-            // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
-            contents: new TextDecoder("utf-8").decode(fileBytes, { stream: truncated }),
+            contents,
             byteLength: stat.size,
             truncated,
+            // SCIENT-FORK:START — raw-byte revisions and viewer authority.
             revision: revisionForBytes(fileBytes),
             ...(target.readOnly ? { readOnly: true } : {}),
             ...(target.outsideWorkspace ? { outsideWorkspace: true } : {}),
+            // SCIENT-FORK:END
           };
         }),
       (handle) =>
@@ -713,27 +756,31 @@ export const make = Effect.gen(function* () {
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
     yield* assertNetworkPathWithinRoot(input);
-    if (!path.isAbsolute(input.relativePath)) {
+    const hostPath = yield* toHostPath(input.relativePath);
+    if (!path.isAbsolute(hostPath)) {
       yield* workspacePaths.resolveRelativePathWithinRoot({
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
       });
     }
-    return yield* (
-      path.isAbsolute(input.relativePath) ? withSettledWorkspaceRead : withSettledFileRead
-    )(input, (attention, settlement) =>
-      readResolvedFile(input, "contained").pipe(
-        Effect.map((result) =>
-          attention === null ? result : { ...result, publicationAttention: attention },
+    return yield* (path.isAbsolute(hostPath) ? withSettledWorkspaceRead : withSettledFileRead)(
+      { ...input, relativePath: hostPath },
+      (attention, settlement) =>
+        readResolvedFile(input, "contained", hostPath).pipe(
+          Effect.map((result) =>
+            attention === null ? result : { ...result, publicationAttention: attention },
+          ),
+          Effect.mapError((error) =>
+            settledReadFailure(error, attention, settlement.currentMissing),
+          ),
         ),
-        Effect.mapError((error) => settledReadFailure(error, attention, settlement.currentMissing)),
-      ),
     );
   });
   const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = Effect.fn(
     "WorkspaceFileSystem.viewFile",
   )(function* (input) {
     yield* assertNetworkPathWithinRoot(input);
+    const hostPath = yield* toHostPath(input.relativePath);
     const rootExists = yield* fileSystem.exists(input.cwd).pipe(
       Effect.mapError(
         (cause) =>
@@ -747,14 +794,18 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (!rootExists) return yield* readResolvedFile(input, "view");
-    return yield* withSettledWorkspaceRead(input, (attention, settlement) =>
-      readResolvedFile(input, "view").pipe(
-        Effect.map((result) =>
-          attention === null ? result : { ...result, publicationAttention: attention },
+    if (!rootExists) return yield* readResolvedFile(input, "view", hostPath);
+    return yield* withSettledWorkspaceRead(
+      { ...input, relativePath: hostPath },
+      (attention, settlement) =>
+        readResolvedFile(input, "view", hostPath).pipe(
+          Effect.map((result) =>
+            attention === null ? result : { ...result, publicationAttention: attention },
+          ),
+          Effect.mapError((error) =>
+            settledReadFailure(error, attention, settlement.currentMissing),
+          ),
         ),
-        Effect.mapError((error) => settledReadFailure(error, attention, settlement.currentMissing)),
-      ),
     );
   });
   // SCIENT-FORK:END
@@ -918,10 +969,31 @@ export const make = Effect.gen(function* () {
     yield* resolveWriteTarget(normalized);
     return normalized;
   });
-  const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = (input) =>
-    assertWritableTarget(input).pipe(
-      Effect.flatMap((target) => mutations.writeFile({ ...input, ...target })),
-    );
+  // A retried save keeps its first BOM decision, so it replays the same bytes even after
+  // another program changed the file; mutation receipts are matched by those bytes.
+  const bomDecisions = new Map<string, boolean>();
+  const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
+    "WorkspaceFileSystem.writeFile",
+  )(function* (input) {
+    const target = yield* assertWritableTarget(input);
+    const { realTargetPath } = yield* resolveWriteTarget(target);
+    const decided = input.mutationId === undefined ? undefined : bomDecisions.get(input.mutationId);
+    const replacesFile =
+      decided === undefined &&
+      (yield* fileSystem.exists(realTargetPath).pipe(Effect.orElseSucceed(() => false)));
+    // readFile decodes the BOM away, so an editor save would otherwise drop it from the file.
+    const keepsBom =
+      decided ??
+      (replacesFile &&
+        !input.contents.startsWith(UTF8_BOM) &&
+        (yield* Effect.promise(() => startsWithUtf8Bom(realTargetPath))));
+    if (input.mutationId !== undefined && decided === undefined) {
+      bomDecisions.set(input.mutationId, keepsBom);
+      if (bomDecisions.size > 512) bomDecisions.delete(bomDecisions.keys().next().value!);
+    }
+    const contents = keepsBom ? UTF8_BOM + input.contents : input.contents;
+    return yield* mutations.writeFile({ ...input, ...target, contents });
+  });
   const createBinaryFile: WorkspaceFileSystem["Service"]["createBinaryFile"] = (input) =>
     assertWritableTarget(input).pipe(
       Effect.flatMap((target) => mutations.createBinaryFile({ ...input, ...target })),

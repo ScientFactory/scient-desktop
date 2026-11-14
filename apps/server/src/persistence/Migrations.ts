@@ -125,6 +125,9 @@ import Migration0090 from "./Migrations/090_QueuedTurnInputIndex.ts";
 import Migration0091 from "./Migrations/091_ProjectionProjectsCustomTitle.ts";
 import Migration0092 from "./Migrations/092_TurnItemTypeStatusIndex.ts";
 import Migration0093 from "./Migrations/093_ShellThreadReadIndexes.ts";
+// T3's migrations 90-91 land at the next free IDs; Scient already recorded 090-093.
+import Migration0094 from "./Migrations/094_AuthConnectDevices.ts";
+import Migration0095 from "./Migrations/095_AuthConnectDeniedRequests.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -247,6 +250,9 @@ export const migrationEntries = [
   [91, "ProjectionProjectsCustomTitle", Migration0091],
   [92, "TurnItemTypeStatusIndex", Migration0092],
   [93, "ShellThreadReadIndexes", Migration0093],
+  // T3's migrations 90-91 follow Scient's immutable migration sequence.
+  [94, "AuthConnectDevices", Migration0094],
+  [95, "AuthConnectDeniedRequests", Migration0095],
   // SCIENT-FORK:END
 ] as const;
 

@@ -213,10 +213,12 @@ where the project runs. Sign in with
 `fj --host https://your-server auth add-token` or `tea login add`, then rescan
 **Settings → Source Control**.
 
-Scient prefers a matching `fj` login and falls back to `tea` when needed. Use a
-full repository URL when several servers are configured. Servers hosted below a
-URL subpath use `tea`, because `fj` 0.6 does not preserve that subpath while
-checking accounts. Git clone and push still require Git credentials or an SSH key.
+Scient prefers a matching `fj` login and falls back to `tea` when `fj` is unavailable
+or has no login for that server. Once an account is selected, failed actions stay on that
+account. Settings shows the detected CLI. Forgejo and Gitea share one integration entry.
+Servers hosted under a URL subpath, such as `https://example.com/forgejo`, use `tea` because
+fj does not preserve the subpath when checking its account. Use a full repository URL when several
+servers are configured. Git clone and push still require Git credentials or an SSH key.
 
 ### For Bitbucket
 

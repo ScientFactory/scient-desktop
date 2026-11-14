@@ -63,6 +63,10 @@
       "types": "./src/scientTextGenerationSelection.ts",
       "import": "./src/scientTextGenerationSelection.ts"
     },
+    "./png": {
+      "types": "./src/png.ts",
+      "import": "./src/png.ts"
+    },
     "./pullRequestAnchor": {
       "types": "./src/pullRequestAnchor.ts",
       "import": "./src/pullRequestAnchor.ts"
@@ -102,6 +106,10 @@
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
+    },
+    "./themeCss": {
+      "types": "./src/themeCss.ts",
+      "import": "./src/themeCss.ts"
     },
     "./themePreview": {
       "types": "./src/themePreview.ts",

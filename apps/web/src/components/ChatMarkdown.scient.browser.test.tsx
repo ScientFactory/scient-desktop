@@ -887,39 +887,41 @@ it.each([
     full: "/home/repo/reports/report.csv",
     relative: "reports/report.csv",
   },
-])("copies $name and shows the copied text", async ({ platform, cwd, href, full, relative }) => {
-  setup();
-  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
-  using _clipboardItem = stubGlobal("ClipboardItem", undefined);
-  using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
-  using toast = vi.spyOn(toastManager, "add");
-  const api = readLocalApi();
-  if (!api) throw new Error("Local API unavailable");
-  using choose = vi.spyOn(api.contextMenu, "show");
-  await using screen = await renderText(`[File](<${href}>)`, {
-    cwd,
-    environmentId: EnvironmentId.make("env-file-copy"),
-  });
-  const { container } = screen;
-  const link = container.querySelector(".chat-markdown-file-link");
-  if (!link) throw new Error("File link unavailable");
-  for (const [action, expected] of [
-    ["copy-full", full],
-    ...(relative === null ? [] : [["copy-relative", relative] as const]),
-  ] as const) {
-    choose.mockResolvedValue(action);
-    await act(async () => {
-      link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+])(
+  "copies $name without a success notification",
+  async ({ platform, cwd, href, full, relative }) => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    using _clipboardItem = stubGlobal("ClipboardItem", undefined);
+    using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    using toast = vi.spyOn(toastManager, "add");
+    const api = readLocalApi();
+    if (!api) throw new Error("Local API unavailable");
+    using choose = vi.spyOn(api.contextMenu, "show");
+    await using screen = await renderText(`[File](<${href}>)`, {
+      cwd,
+      environmentId: EnvironmentId.make("env-file-copy"),
     });
-    expect(writeText).toHaveBeenLastCalledWith(expected);
-    expect(choose.mock.lastCall?.[0].some((item) => item.id === "copy-relative")).toBe(
-      relative !== null,
-    );
-    expect(toast).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: "success", description: expected }),
-    );
-  }
-});
+    const { container } = screen;
+    const link = container.querySelector(".chat-markdown-file-link");
+    if (!link) throw new Error("File link unavailable");
+    for (const [action, expected] of [
+      ["copy-full", full],
+      ...(relative === null ? [] : [["copy-relative", relative] as const]),
+    ] as const) {
+      choose.mockResolvedValue(action);
+      await act(async () => {
+        link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+      });
+      expect(writeText).toHaveBeenLastCalledWith(expected);
+      expect(choose.mock.lastCall?.[0].some((item) => item.id === "copy-relative")).toBe(
+        relative !== null,
+      );
+    }
+    // Copying is routine, so it shows no notification.
+    expect(toast).not.toHaveBeenCalled();
+  },
+);
 
 describe("ChatMarkdown math", () => {
   const renderMath = async (

@@ -66,6 +66,8 @@ for (const previousId of [49, 50, 52, 71] as const) {
               [91, "ProjectionProjectsCustomTitle"],
               [92, "TurnItemTypeStatusIndex"],
               [93, "ShellThreadReadIndexes"],
+              [94, "AuthConnectDevices"],
+              [95, "AuthConnectDeniedRequests"],
             ]);
             assert.deepStrictEqual(
               yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`,

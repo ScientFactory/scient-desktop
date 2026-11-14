@@ -5,6 +5,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -137,6 +139,7 @@ const TIMEOUT_RESULT: ShellResult = {
   transportFailure: "timeout",
 };
 
+// SCIENT-FORK:START scient-wsl-runtime-cache
 const formatWslShellTransportFailureReason = (
   failure: ShellResult["transportFailure"],
 ): string | null => {
@@ -151,6 +154,7 @@ const formatWslShellTransportFailureReason = (
       return null;
   }
 };
+// SCIENT-FORK:END scient-wsl-runtime-cache
 
 const buildWslNodeEnvPreamble = (
   nodeEngineRange?: string | null,
@@ -158,37 +162,19 @@ const buildWslNodeEnvPreamble = (
 ensure_remote_node_path || true
 `;
 
-// wsl.exe re-escaping mangles quotes inside bash -lc scripts.
-const runWslShell = (
-  distro: string | null,
-  bashScript: string,
+const runWslProcess = (
+  args: ReadonlyArray<string>,
+  stdin: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
   timeout: Duration.Duration,
-  options: {
-    readonly nodeEngineRange?: string | null;
-    readonly resolveNode?: boolean;
-  } = {},
 ): Effect.Effect<ShellResult, never, ChildProcessSpawner.ChildProcessSpawner> => {
   const spawner = ChildProcessSpawner.ChildProcessSpawner;
-  const resolveNode = options.resolveNode !== false;
-  const command = ChildProcess.make(
-    "wsl.exe",
-    resolveNode
-      ? [...buildDistroArgs(distro), "--", "bash", "-l", "-s"]
-      : [...buildDistroArgs(distro), "--exec", "sh", "-s"],
-    {
-      stdin: Stream.encodeText(
-        Stream.make(
-          resolveNode
-            ? `${buildWslNodeEnvPreamble(options.nodeEngineRange)}${bashScript}`
-            : bashScript,
-        ),
-      ),
-      stdout: "pipe",
-      stderr: "pipe",
-      killSignal: "SIGTERM",
-      forceKillAfter: PROCESS_TERMINATE_GRACE,
-    },
-  );
+  const command = ChildProcess.make("wsl.exe", args, {
+    stdin,
+    stdout: "pipe",
+    stderr: "pipe",
+    killSignal: "SIGTERM",
+    forceKillAfter: PROCESS_TERMINATE_GRACE,
+  });
 
   return Effect.scoped(
     Effect.gen(function* () {
@@ -234,26 +220,53 @@ const runWslShell = (
   );
 };
 
+// wsl.exe re-escaping mangles quotes inside bash -lc scripts.
+const runWslShell = (
+  distro: string | null,
+  bashScript: string,
+  timeout: Duration.Duration,
+  options: {
+    readonly nodeEngineRange?: string | null;
+    readonly resolveNode?: boolean;
+  } = {},
+): Effect.Effect<ShellResult, never, ChildProcessSpawner.ChildProcessSpawner> => {
+  const resolveNode = options.resolveNode !== false;
+  return runWslProcess(
+    resolveNode
+      ? [...buildDistroArgs(distro), "--", "bash", "-l", "-s"]
+      : [...buildDistroArgs(distro), "--exec", "sh", "-s"],
+    Stream.encodeText(
+      Stream.make(
+        resolveNode
+          ? `${buildWslNodeEnvPreamble(options.nodeEngineRange)}${bashScript}`
+          : bashScript,
+      ),
+    ),
+    timeout,
+  );
+};
+
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
-// Holds the sha256 of the runtime's server entry, written when the install
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
 const WSL_RUNTIME_SELECTED_MARKER = ".t3code-wsl-runtime-selected";
 const WSL_RUNTIME_SELECTION_GRACE_MINUTES = 5;
 
 const sanitizeWslRuntimeId = (value: string): string => value.replace(/[^A-Za-z0-9._-]/g, "_");
 
+// A null archive path asks for a staging directory to copy the archive into, unless the cache is ready.
 export const buildWslRuntimeInstallScript = (
-  linuxArchivePath: string,
+  linuxArchivePath: string | null,
   runtimeId: string,
   archiveSha256: string,
 ): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
-  return [
+  const readyCheck = [
     "set -eu",
     'runtime_parent="$HOME/.t3/wsl-runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
+    // SCIENT-FORK:START scient-wsl-runtime-cache
     // A missing pty.node must invalidate readiness even when package.json survives.
     // Glob for payload presence; the launch probe decides architecture/loadability and revokes broken caches.
     "node_pty_payload_present() {",
@@ -273,6 +286,7 @@ export const buildWslRuntimeInstallScript = (
     '    [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&',
     '    [ -f "$runtime_root/node_modules/node-pty/package.json" ] &&',
     '    node_pty_payload_present "$runtime_root" &&',
+    // SCIENT-FORK:END scient-wsl-runtime-cache
     `    recorded_entry_digest=$(tr -d '[:space:]' < "$ready_marker" 2>/dev/null) &&`,
     '    [ -n "$recorded_entry_digest" ] &&',
     '    [ "$recorded_entry_digest" = "$(runtime_server_entry_digest "$runtime_root")" ]',
@@ -287,6 +301,17 @@ export const buildWslRuntimeInstallScript = (
     `  printf 'runtimeRoot:%s\\n' "$runtime_root"`,
     "  exit 0",
     "fi",
+  ];
+  if (linuxArchivePath === null) {
+    return [
+      ...readyCheck,
+      // The .tmp. name lets pruning collect a stage orphaned by a crash.
+      `archive_stage=$(mktemp -d "$runtime_parent/.${safeRuntimeId}.tmp.XXXXXX")`,
+      `printf 'archiveStage:%s\\n' "$archive_stage"`,
+    ].join("\n");
+  }
+  return [
+    ...readyCheck,
     `archive_sha=$(sha256sum ${shellQuote(linuxArchivePath)} | cut -d ' ' -f 1)`,
     `if [ "$archive_sha" != ${shellQuote(archiveSha256)} ]; then`,
     `  printf 'WSL runtime archive does not match its recorded SHA-256 (expected %s, got %s)\\n' ${shellQuote(archiveSha256)} "$archive_sha" >&2`,
@@ -318,6 +343,7 @@ export const buildWslRuntimeInstallScript = (
     `runtime_tmp=$(mktemp -d "$runtime_parent/.${safeRuntimeId}.tmp.XXXXXX")`,
     'cleanup_runtime_install() { rm -rf "$runtime_tmp"; }',
     "trap cleanup_runtime_install EXIT",
+    // SCIENT-FORK:START scient-wsl-runtime-cache
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp"`,
     // Windows-created tarballs cannot retain the Linux helpers' execute bits.
     // Repair only Cursor's executable helpers inside the verified new cache.
@@ -328,12 +354,12 @@ export const buildWslRuntimeInstallScript = (
     'test -f "$runtime_tmp/apps/server/dist/bin.mjs"',
     'test -f "$runtime_tmp/node_modules/node-pty/package.json"',
 
-    // Never write the ready marker over a tree that is missing the native
-    // payload. Failing here drops out to the mounted-tree fallback, which is
+    // Never write the ready marker over a tree that is missing the native payload.
     'if ! node_pty_payload_present "$runtime_tmp"; then',
     "  printf 'WSL runtime archive is missing its Linux node-pty binary\\n' >&2",
     "  exit 1",
     "fi",
+    // SCIENT-FORK:END scient-wsl-runtime-cache
     'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
     'if [ -z "$installed_entry_digest" ]; then',
     "  printf 'Could not hash the WSL runtime server entry\\n' >&2",
@@ -416,16 +442,22 @@ export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
   ].join("\n");
 };
 
-export const parseWslRuntimeRoot = (stdout: string): string | null => {
-  const prefix = "runtimeRoot:";
+const parseAbsolutePathField = (stdout: string, field: string): string | null => {
+  const prefix = `${field}:`;
   const line = stdout.split("\n").find((candidate) => candidate.startsWith(prefix));
   if (line === undefined) return null;
-  const runtimeRoot = line.slice(prefix.length).replace(/\r$/, "");
-  return runtimeRoot.startsWith("/") ? runtimeRoot : null;
+  const value = line.slice(prefix.length).replace(/\r$/, "");
+  return value.startsWith("/") ? value : null;
 };
 
-const NODE_PTY_PREBUILD_MISSING_EXIT_CODE = 4;
+export const parseWslRuntimeRoot = (stdout: string): string | null =>
+  parseAbsolutePathField(stdout, "runtimeRoot");
 
+// SCIENT-FORK:START scient-wsl-runtime-cache
+const NODE_PTY_PREBUILD_MISSING_EXIT_CODE = 4;
+// SCIENT-FORK:END scient-wsl-runtime-cache
+
+// SCIENT-FORK:START scient-wsl-runtime-cache
 const formatNodePtyProbeFailureReason = (exitCode: number): string | null =>
   exitCode === NODE_PTY_PREBUILD_MISSING_EXIT_CODE
     ? "WSL support is missing from this Scient build: the packaged Linux node-pty binary was not included. Rebuild the Windows artifact with `--wsl-prebuild <path-to-linux-pty.node>` or install a build that includes WSL support."
@@ -470,6 +502,7 @@ for (const key of Object.keys(expected)) {
   if (actual[key] !== expected[key]) process.exit(2);
 }
 NODE`;
+// SCIENT-FORK:END scient-wsl-runtime-cache
 
 const TOOLCHAIN_CHECK_SCRIPT = [
   "for tool in node make g++ python3; do",
@@ -481,6 +514,7 @@ const TOOLCHAIN_CHECK_SCRIPT = [
   "fi",
 ].join("\n");
 
+// SCIENT-FORK:START scient-wsl-runtime-cache
 const NODE_PTY_BUILD_SCRIPT = (linuxServerDir: string) =>
   [
     "set -e",
@@ -497,6 +531,7 @@ const NODE_PTY_BUILD_SCRIPT = (linuxServerDir: string) =>
     `printf '{"arch":"%s","modules":"%s","nodePtyVersion":"%s"}\\n' "$arch" "$modules" "$node_pty_version" > "$prebuild_dir/t3code-wsl-node-pty.json"`,
     `node -e 'require("node-pty")'`,
   ].join("\n");
+// SCIENT-FORK:END scient-wsl-runtime-cache
 
 export interface ToolchainReport {
   readonly missingTools: ReadonlyArray<string>;
@@ -753,25 +788,18 @@ const ensureNodePtyImpl = Effect.fn("DesktopWslEnvironment.ensureNodePtyImpl")(f
   } as const;
 });
 
-const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(function* (
+type WslRuntimeInstallOutcome =
+  | { readonly ok: true; readonly stdout: string }
+  | { readonly ok: false; readonly reason: string };
+
+const runWslRuntimeInstall = Effect.fn("desktop.wsl.runRuntimeInstall")(function* (
   distro: string | null,
   archive: WslRuntimeArchive,
-  windowsToWslPath: (
-    distro: string | null,
-    windowsPath: string,
-  ) => Effect.Effect<Option.Option<string>>,
-): Effect.fn.Return<PrepareWslRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> {
-  const linuxArchivePath = yield* windowsToWslPath(distro, archive.windowsPath);
-  if (Option.isNone(linuxArchivePath)) {
-    return {
-      ok: false,
-      reason: `wslpath conversion failed for ${archive.windowsPath}`,
-    } as const;
-  }
-
+  linuxArchivePath: string | null,
+): Effect.fn.Return<WslRuntimeInstallOutcome, never, ChildProcessSpawner.ChildProcessSpawner> {
   const install = yield* runWslShell(
     distro,
-    buildWslRuntimeInstallScript(linuxArchivePath.value, archive.runtimeId, archive.sha256),
+    buildWslRuntimeInstallScript(linuxArchivePath, archive.runtimeId, archive.sha256),
     RUNTIME_INSTALL_TIMEOUT,
     { resolveNode: false },
   );
@@ -791,14 +819,106 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
       reason: `WSL runtime installation failed (exit ${install.exitCode}): ${trimmedTail || "no stderr captured"}`,
     } as const;
   }
+  return { ok: true, stdout: install.stdout } as const;
+});
 
-  const linuxAppRoot = parseWslRuntimeRoot(install.stdout);
+const toPrepareWslRuntimeResult = (outcome: WslRuntimeInstallOutcome): PrepareWslRuntimeResult => {
+  if (!outcome.ok) return outcome;
+  const linuxAppRoot = parseWslRuntimeRoot(outcome.stdout);
   return linuxAppRoot === null
     ? {
         ok: false,
         reason: "WSL runtime installation completed without reporting its cache path.",
       }
     : { ok: true, linuxAppRoot };
+};
+
+// Without drive mounts (`[automount] enabled=false`) wslpath cannot reach the archive, so copy it in over stdin.
+const installWslRuntimeFromHostCopy = Effect.fn("desktop.wsl.installRuntimeFromHostCopy")(
+  function* (
+    distro: string | null,
+    archive: WslRuntimeArchive,
+    archiveBytes: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
+  ): Effect.fn.Return<PrepareWslRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> {
+    const staged = yield* runWslRuntimeInstall(distro, archive, null);
+    if (!staged.ok || parseWslRuntimeRoot(staged.stdout) !== null) {
+      return toPrepareWslRuntimeResult(staged);
+    }
+    const stage = parseAbsolutePathField(staged.stdout, "archiveStage");
+    if (stage === null) {
+      return {
+        ok: false,
+        reason: `wslpath conversion failed for ${archive.windowsPath}, and the distro did not provide a directory to copy the runtime archive into.`,
+      } as const;
+    }
+    const linuxArchivePath = `${stage}/runtime.tar.gz`;
+
+    const copyAndInstall = Effect.gen(function* () {
+      const readError = yield* Ref.make(Option.none<PlatformError.PlatformError>());
+      // dd reads fd 0 itself; reopening /dev/stdin fails when WSL relays stdin as a socket.
+      const copy = yield* runWslProcess(
+        [...buildDistroArgs(distro), "--exec", "dd", `of=${linuxArchivePath}`, "bs=65536"],
+        archiveBytes.pipe(
+          // Ending stdin on a read error lets dd exit instead of waiting out the timeout.
+          Stream.catch((error) =>
+            Stream.drain(Stream.fromEffect(Ref.set(readError, Option.some(error)))),
+          ),
+        ),
+        RUNTIME_INSTALL_TIMEOUT,
+      );
+      const failedRead = yield* Ref.get(readError);
+      if (Option.isSome(failedRead)) {
+        return {
+          ok: false,
+          reason: `Could not read the WSL runtime archive at ${archive.windowsPath}: ${failedRead.value.message}`,
+        } as const;
+      }
+      if (copy.transportFailure !== null || copy.exitCode !== 0) {
+        const trimmedTail = copy.stderr.trim().slice(-500);
+        return {
+          ok: false,
+          reason: `Could not copy the WSL runtime archive into the distro (exit ${copy.exitCode})${trimmedTail ? `: ${trimmedTail}` : ""}`,
+        } as const;
+      }
+      return toPrepareWslRuntimeResult(
+        yield* runWslRuntimeInstall(distro, archive, linuxArchivePath),
+      );
+    });
+
+    return yield* copyAndInstall.pipe(
+      Effect.ensuring(
+        runWslShell(distro, `rm -rf ${shellQuote(stage)}`, RUNTIME_INVALIDATE_TIMEOUT, {
+          resolveNode: false,
+        }),
+      ),
+    );
+  },
+);
+
+const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(function* (
+  distro: string | null,
+  archive: WslRuntimeArchive,
+  windowsToWslPath: (
+    distro: string | null,
+    windowsPath: string,
+  ) => Effect.Effect<Option.Option<string>>,
+): Effect.fn.Return<
+  PrepareWslRuntimeResult,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+> {
+  const linuxArchivePath = yield* windowsToWslPath(distro, archive.windowsPath);
+  if (Option.isNone(linuxArchivePath)) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* installWslRuntimeFromHostCopy(
+      distro,
+      archive,
+      fileSystem.stream(archive.windowsPath),
+    );
+  }
+  return toPrepareWslRuntimeResult(
+    yield* runWslRuntimeInstall(distro, archive, linuxArchivePath.value),
+  );
 });
 
 const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function* (
@@ -903,7 +1023,7 @@ const preWarmImpl = (
     }),
   ).pipe(Effect.timeoutOption(PRE_WARM_TIMEOUT), Effect.ignore);
 
-const windowsToWslPathImpl = (
+export const windowsToWslPathImpl = (
   distro: string | null,
   windowsPath: string,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> => {
@@ -914,7 +1034,8 @@ const windowsToWslPathImpl = (
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "wslpath", "-u", normalized],
+        // --exec skips the distro shell, which would expand `$`, `&` or `;` in folder names.
+        [...buildDistroArgs(distro), "--exec", "wslpath", "-u", normalized],
         {
           stdin: "ignore",
           stdout: "pipe",
@@ -1165,7 +1286,11 @@ export const layer = Layer.effect(
       getUserHome,
       getDistroIp,
       prepareRuntime: Effect.fn("desktop.wsl.prepareRuntime")(function (distro, archive) {
-        return provideSpawner(prepareWslRuntimeImpl(distro, archive, windowsToWslPath));
+        return provideSpawner(
+          prepareWslRuntimeImpl(distro, archive, windowsToWslPath).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          ),
+        );
       }),
       pruneRuntimes: Effect.fn("desktop.wsl.pruneRuntimes")(function (distro, runtimeId) {
         return provideSpawner(pruneWslRuntimesImpl(distro, runtimeId));

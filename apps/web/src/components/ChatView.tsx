@@ -339,6 +339,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { draftModelSelectionApplies, threadHasStarted } from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -463,6 +464,8 @@ import {
 import {
   buildLocalDraftThread,
   deriveCommittedServerUserMessageIds,
+  // SCIENT-FORK: Scient's timeline working row has its own deriveTimelineWorking.
+  deriveTimelineWorking as derivePhaseWorking,
   dismissBranchMismatchForSession,
   shouldRenderPreviewMiniPlayer,
   deriveLockedProvider,
@@ -812,15 +815,15 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerModelSelectionExplicit = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
+  );
   const composerSelectedModelSelection = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return draft?.activeProvider
       ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
       : null;
   });
-  const composerModelSelectionExplicit = useComposerDraftStore(
-    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
-  );
   const composerHasAttachments = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
@@ -929,7 +932,6 @@ function ChatViewContent(props: ChatViewProps) {
   ] = useState<Record<string, boolean>>({});
   const legendListRef = useRef<LegendListRef | null>(null);
   const conversationArea = workspaceAreaProps("conversation", 1, "Conversation");
-  const composerArea = workspaceAreaProps("composer", 2, "Message input");
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
   const composerTimelineInsetRef = useRef(0);
@@ -1636,7 +1638,11 @@ function ChatViewContent(props: ChatViewProps) {
       : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS,
     gitCwd,
   );
-  const selectedProviderByThreadId = composerActiveProvider ?? null;
+  const composerModelSelectionApplies = draftModelSelectionApplies(
+    { modelSelectionExplicit: composerModelSelectionExplicit },
+    threadHasStarted(activeThread),
+  );
+  const selectedProviderByThreadId = composerModelSelectionApplies ? composerActiveProvider : null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProjectDefaultModelSelection?.instanceId ??
@@ -1854,6 +1860,7 @@ function ChatViewContent(props: ChatViewProps) {
     backgroundSubmissionPending,
   } = useLocalDispatchState({
     routeThreadKey,
+    environmentId,
     activeThread,
     activeLatestRun,
     latestUserMessageId:
@@ -2051,8 +2058,11 @@ function ChatViewContent(props: ChatViewProps) {
     activeServerThread.id === routeThreadRef.threadId &&
     activeLatestRun === null &&
     liveWorktreeSetup?.phase === "running";
+  // SCIENT-FORK:START — a bootstrap turn stands in for upstream's runless work.
   const isOriginWorking =
-    phase === "running" || isSendBusy || isCompacting || awaitingBootstrapTurn;
+    derivePhaseWorking({ phase, isSendBusy, isCompacting, runlessWorkStartedAt: null }) ||
+    awaitingBootstrapTurn;
+  // SCIENT-FORK:END
   const isWorking = isOriginWorking || isForkingThread;
   const turnUnfinished = latestTurnUnfinished(activeRunningTurnId, activeLatestRun?.status);
   // The timeline's working row waits for the prompt being sent, and stays while its run starts
@@ -2128,6 +2138,8 @@ function ChatViewContent(props: ChatViewProps) {
   const revertFilesUnavailable =
     pendingRevertCheckpoint !== undefined &&
     !checkpointSupportsRewind(pendingRevertCheckpoint, true);
+  // The server refuses file restore outside an isolated worktree.
+  const revertFilesOutsideWorktree = (activeThread?.worktreePath ?? null) === null;
   // SCIENT-FORK:END
 
   const workspaceMutationId = deriveWorkspaceMutationId(
@@ -3226,7 +3238,9 @@ function ChatViewContent(props: ChatViewProps) {
       item.type === "user_message" &&
       (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
   );
-  const pendingHandoffSelection = composerSelectedModelSelection ?? activeThread?.modelSelection;
+  const pendingHandoffSelection =
+    (composerModelSelectionApplies ? composerSelectedModelSelection : null) ??
+    activeThread?.modelSelection;
   const pendingHandoffSelectionUsable = providerInstanceEntries.some(
     (entry) =>
       entry.instanceId === pendingHandoffSelection?.instanceId &&
@@ -4522,7 +4536,11 @@ function ChatViewContent(props: ChatViewProps) {
             </div>
 
             <div
-              {...composerArea}
+              {...workspaceAreaProps(
+                "composer",
+                2,
+                showProviderSubagentBar ? "Subagent" : undefined,
+              )}
               ref={setComposerOverlayElement}
               inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"
@@ -5124,7 +5142,9 @@ function ChatViewContent(props: ChatViewProps) {
               composer.
               {revertFilesUnavailable
                 ? " Your files stay as they are: Scient could not save a snapshot of them from before this message."
-                : null}
+                : revertFilesOutsideWorktree
+                  ? " Your files stay as they are."
+                  : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <ScientRevertDialogDiagnostics
@@ -5137,7 +5157,7 @@ function ChatViewContent(props: ChatViewProps) {
             >
               Cancel
             </AlertDialogClose>
-            {revertFilesUnavailable ? null : (
+            {revertFilesUnavailable || revertFilesOutsideWorktree ? null : (
               <Button
                 variant="destructive"
                 disabled={isRevertingCheckpoint}
@@ -5164,7 +5184,9 @@ function ChatViewContent(props: ChatViewProps) {
                 );
               }}
             >
-              {revertFilesUnavailable ? "Rewind chat" : "Revert and keep changes"}
+              {revertFilesUnavailable || revertFilesOutsideWorktree
+                ? "Rewind chat"
+                : "Revert and keep changes"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

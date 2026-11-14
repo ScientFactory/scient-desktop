@@ -440,7 +440,7 @@ describe("DesktopBackendConfiguration", () => {
       );
 
       assert.equal(config.runningDistro, "Ubuntu");
-      assert.deepEqual(config.args.slice(0, 2), ["-d", "Ubuntu"]);
+      assert.deepEqual(config.args.slice(0, 5), ["-d", "Ubuntu", "--cd", "~", "--exec"]);
       assert.deepEqual(observedDistros, ["Ubuntu", "Ubuntu", "Ubuntu"]);
       assert.isTrue(Option.isNone(config.preflightFailure));
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -501,7 +501,19 @@ describe("DesktopBackendConfiguration", () => {
             config.entryPath,
             path.join(baseDir, "server.asar/apps/server/dist/bin.mjs"),
           );
-          assert.include(config.args, `${linuxAppRoot}/apps/server/dist/bin.mjs`);
+          assert.deepEqual(config.args, [
+            "-d",
+            "Ubuntu",
+            "--cd",
+            "~",
+            "--exec",
+            "env",
+            "PATH=/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/bin:/bin",
+            "/usr/bin/node",
+            `${linuxAppRoot}/apps/server/dist/bin.mjs`,
+            "--bootstrap-fd",
+            "0",
+          ]);
           // SCIENT-FORK:END scient-backend-launch
           assert.equal(config.wslRuntimeId, `sha256-${archiveHash}`);
           assert.equal(legacyCleanupCount, 1);
@@ -847,6 +859,8 @@ describe("DesktopBackendConfiguration", () => {
         assert.deepEqual(config.args, [
           "-d",
           "Ubuntu",
+          "--cd",
+          "~",
           "--exec",
           "env",
           "PATH=/home/test user's/.nvm/versions/node/v22.0.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/test user/bin:/opt/test's tools/bin:/usr/bin:/bin",
@@ -1031,6 +1045,43 @@ describe("DesktopBackendConfiguration", () => {
   );
   // SCIENT-FORK:END scient-backend-launch
 
+  it.effect("gives the Windows and WSL backends one host scope that survives a restart", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const launch = Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const primary = yield* configuration.resolvePrimary;
+        const wsl = yield* configuration.resolveWsl({ port: 5050, distro: null });
+        assert.equal(wsl.env.T3CODE_DESKTOP_HOST_SCOPE, primary.env.T3CODE_DESKTOP_HOST_SCOPE);
+        assert.include((wsl.env.WSLENV ?? "").split(":"), "T3CODE_DESKTOP_HOST_SCOPE");
+        return primary.env.T3CODE_DESKTOP_HOST_SCOPE;
+      }).pipe(
+        Effect.provide(
+          layerBackendConfiguration().pipe(
+            Layer.provideMerge(layerServerExposure),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+          ),
+        ),
+      );
+
+      const first = yield* launch;
+      assert.match(first ?? "", /^[0-9a-f]{32}$/);
+      assert.equal(yield* launch, first);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("resolveWsl carries the kill switch and resource attributes into the distro", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1101,7 +1152,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");
         assert.equal(
           config.env.WSLENV,
-          "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:SCIENT_ANALYTICS_APP_VERSION:SCIENT_ANALYTICS_BUILD_CHANNEL:SCIENT_ANALYTICS_ENABLED:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_DEVELOPMENT_STATE:SCIENT_NEXT_SAFETY_ENVELOPE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
+          "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:SCIENT_ANALYTICS_APP_VERSION:SCIENT_ANALYTICS_BUILD_CHANNEL:SCIENT_ANALYTICS_ENABLED:T3CODE_HOME:SCIENT_NEXT_HOME:SCIENT_NEXT_DEVELOPMENT_STATE:SCIENT_NEXT_SAFETY_ENVELOPE:T3CODE_DESKTOP_HOST_SCOPE:ANTHROPIC_API_KEY:T3CODE_OTLP_HEADERS:T3CODE_OTLP_PROTOCOL",
           // SCIENT-FORK:END scient-backend-launch
         );
       }).pipe(
@@ -1545,6 +1596,9 @@ describe("DesktopBackendConfiguration", () => {
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           readFileString: () => Effect.fail(cause),
+          // The desktop host scope is created beside the settings it cannot read.
+          makeDirectory: () => Effect.void,
+          writeFileString: () => Effect.void,
         }),
       );
 

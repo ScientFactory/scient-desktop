@@ -30,6 +30,7 @@ import { OPENCODE_PROVIDER } from "@t3tools/provider-opencode/testing";
 import { buildOpenCodeRuntimeGuidance } from "../../provider/OpenCodeDriverComposition.ts";
 import { buildScientOrchestrationSystemPrompt } from "../../provider/ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
+import { scientAgentCopy } from "../../provider/ScientAgentCopy.ts";
 import {
   OpenCodeReplayController,
   OpenCodeReplayTranscriptDecodeError,
@@ -359,6 +360,7 @@ const makeReplayAdapter = (
       runtimeGuidance: buildOpenCodeRuntimeGuidance,
       orchestrationSystemPrompt: buildScientOrchestrationSystemPrompt,
       runtimeInstructions: buildScientRuntimeInstructions,
+      agentCopy: scientAgentCopy,
     }).pipe(Effect.provideService(OpenCode2Server.OpenCode2Server, server));
   });
 

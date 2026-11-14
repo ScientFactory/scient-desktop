@@ -469,20 +469,32 @@ describe("PiAdapterV2 Extensions", () => {
           ? [event.turnItem]
           : [],
       );
-      assert.lengthOf(commands, 3);
+      // Running shell output arrives as output deltas, not as a stored row per update.
+      assert.lengthOf(commands, 2);
       assert.lengthOf(edits, 3);
       for (const items of [commands, edits]) {
         assert.equal(new Set(items.map((item) => item.id)).size, 1);
         assert.equal(new Set(items.map((item) => item.ordinal)).size, 1);
-        assert.deepEqual(
-          items.map((item) => item.status),
-          ["running", "running", items === edits && failedEdit ? "failed" : "completed"],
-        );
       }
+      assert.deepEqual(
+        commands.map((item) => item.status),
+        ["running", "completed"],
+      );
+      assert.deepEqual(
+        edits.map((item) => item.status),
+        ["running", "running", failedEdit ? "failed" : "completed"],
+      );
+      assert.deepEqual(
+        observed.flatMap((event) =>
+          event.type === "command_output.delta" && event.itemId === commands[0]?.id
+            ? [event.chunk]
+            : [],
+        ),
+        [output],
+      );
       assert.isTrue(commands.every((item) => item.input === command));
       assert.equal(commands[1]?.output, output);
-      assert.equal(commands[2]?.output, output);
-      assert.equal(commands[2]?.exitCode, 0);
+      assert.equal(commands[1]?.exitCode, 0);
       assert.isTrue(edits.every((item) => item.fileName === "src/app.ts"));
       assert.isTrue(edits.every((item) => item.oldStr === "old" && item.newStr === "new"));
       assert.deepEqual(edits[2]?.changes, [{ operation: "edit", path: "src/app.ts" }]);

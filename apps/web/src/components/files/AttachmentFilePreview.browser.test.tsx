@@ -1450,6 +1450,56 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
 
 // Scient PDF rendering/asset guards live in scient/pdf/pdfRendering.scient.browser.test.tsx and pdfAssetDelivery.scient.test.ts.
 
+// SCIENT-FORK:START — upstream's renewed-URL test on Scient's watcher-driven viewer: the frame keeps its URL until
+// the re-minted one arrives, then loads it.
+it("loads an edited HTML file outside the workspace from a renewed URL", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const preview = (refreshKey: number) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/tmp/report.html"
+      relativePath="/tmp/report.html"
+      title="Report"
+      refreshKey={refreshKey}
+    />
+  );
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,original",
+    expiresAt: 0,
+    refresh,
+  });
+  await using screen = await render(preview(0));
+  const opened = screen.container.querySelector("iframe");
+  expect(opened?.getAttribute("src")).toMatch(/^data:text\/html,original/);
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,original",
+    expiresAt: 0,
+    waiting: true,
+    refresh,
+  });
+  await screen.rerender(preview(1));
+  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "1");
+  expect(screen.container.querySelector("iframe")).toBe(opened);
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,edited",
+    expiresAt: 0,
+    refresh,
+  });
+  await screen.rerender(preview(1));
+  expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
+    /^data:text\/html,edited/,
+  );
+});
+// SCIENT-FORK:END
+
 it("unwraps one text attachment without turning off the word wrap setting", async () => {
   const file = new Blob(["a long line"], { type: "text/plain" });
   await using screen = await render(

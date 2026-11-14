@@ -77,6 +77,8 @@ describe("V2 preview upgrade", () => {
         [91, "ProjectionProjectsCustomTitle"],
         [92, "TurnItemTypeStatusIndex"],
         [93, "ShellThreadReadIndexes"],
+        [94, "AuthConnectDevices"],
+        [95, "AuthConnectDeniedRequests"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -208,6 +210,8 @@ describe("V2 preview upgrade", () => {
         [91, "ProjectionProjectsCustomTitle"],
         [92, "TurnItemTypeStatusIndex"],
         [93, "ShellThreadReadIndexes"],
+        [94, "AuthConnectDevices"],
+        [95, "AuthConnectDeniedRequests"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

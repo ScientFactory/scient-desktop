@@ -1,16 +1,24 @@
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 
+import { RegistryContext } from "@effect/atom-react";
 import { expect, it, vi } from "vite-plus/test";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import * as DateTime from "effect/DateTime";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { EnvironmentId, MessageId, NodeId, RunId, ThreadId } from "@t3tools/contracts";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { useAcknowledgeAnswer } from "./useAcknowledgeAnswer";
 
-const { markThreadVisited, visit } = vi.hoisted(() => ({
+const { markThreadVisited, visit, sessionGeneration } = vi.hoisted(() => ({
   markThreadVisited: vi.fn(),
   visit: vi.fn(),
+  sessionGeneration: { atom: undefined as unknown },
 }));
+vi.mock("../../connection/catalog", async () => {
+  const { Atom } = await import("effect/reactivity");
+  sessionGeneration.atom = Atom.make(0);
+  return { environmentCatalog: { sessionGenerationAtom: () => sessionGeneration.atom } };
+});
 vi.mock("../../state/threads", () => ({ threadEnvironment: { visit: Symbol("visit") } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => visit }));
 vi.mock("../../uiStateStore", () => ({
@@ -336,6 +344,31 @@ it("retries a failed server visit on the next focus signal without spinning", as
       visitedAt: DateTime.formatIso(completedAt),
     },
   });
+});
+
+it("retries a failed server visit after the environment reconnects", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+
+  const registry = AtomRegistry.make();
+  const generation = sessionGeneration.atom as Atom.Writable<number>;
+  const probe = (
+    <RegistryContext value={registry}>
+      <Probe value={thread()} />
+    </RegistryContext>
+  );
+  focused = true;
+  visit.mockResolvedValueOnce({ _tag: "Failure" });
+  await act(async () => await _fixture.root0.rerender(probe));
+  expect(visit).toHaveBeenCalledTimes(1);
+  await act(async () => await _fixture.root0.rerender(probe));
+  expect(visit).toHaveBeenCalledTimes(1);
+  await act(() => registry.set(generation, 1));
+  expect(visit).toHaveBeenCalledTimes(2);
+  // A visit the server accepted is not sent again on a later reconnect.
+  await act(() => registry.set(generation, 2));
+  expect(visit).toHaveBeenCalledTimes(2);
 });
 
 it("acknowledges a reopened answer after navigating through an answerless conversation", async () => {

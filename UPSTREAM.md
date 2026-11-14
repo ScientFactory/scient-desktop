@@ -642,13 +642,14 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
-`6b47939e606b17fc6fab278eec3fcbde65995514` is recorded in
-[the 2026-11-14 6b47939e60 receipt](docs/internals/t3-upstream-sync-20261114-6b47939e60.md).
-Literal merge `1ca684c4e8f8e2b44666fe5b60cd8ad3cda2763c` has owned base
-`4c2096097a783f32868dd2ccada06b724259be7d` and the frozen official target as parents, retaining
-the 113 official commits after `f313d0a6cb`. Follow-up delegated tasks wait as T3's do, Scient's
-tool list declares T3's `send_to_user`, and Scient cleanup keeps any local file in a No project
-folder. AppImages keep Scient's versioned names. Release remains separate.
+`4d5d5f89d418c92a1478e15dace1e428f0fc13e8` is recorded in
+[the 2026-11-14 4d5d5f89d4 receipt](docs/internals/t3-upstream-sync-20261114-4d5d5f89d4.md).
+Literal merge `74ba0d0dcda1b61ff6ab04a0bce9daee4b085dc8` has owned base
+`8f6972a1808b1aa12d6591688fd44fe2fa712b77` and the frozen official target as parents, retaining
+the 118 official commits after `6b47939e60`; PR #909 carries it. Connect device approval is
+taken off by default, its migrations run as Scient 094 and 095, and T3's theme tools are named
+`scient_theme_*`. Scient keeps its Node-server WSL runtime and its own release manifest merge.
+Release remains separate.
 
 The previous committed alignment through
 `f313d0a6cb843551fb60e57a454a71e71a3a8c04` is recorded in

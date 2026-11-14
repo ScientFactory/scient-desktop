@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { useLayoutEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../../test/render";
@@ -8,6 +9,7 @@ it("keeps dispatch state and late callbacks scoped to their environment and thre
   function Owner({ threadKey }: { threadKey: string }) {
     const state = useLocalDispatchState({
       routeThreadKey: threadKey,
+      environmentId: EnvironmentId.make(threadKey.split(":")[0] ?? "environment"),
       activeThread: undefined,
       activeLatestRun: null,
       latestUserMessageId: null,

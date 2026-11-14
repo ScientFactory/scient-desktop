@@ -6,12 +6,14 @@ import "~/index.css";
 import { act, render } from "../../../test/render";
 import { SidebarProvider } from "../ui/sidebar";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import type { UpdateEverythingRow } from "./updateEverything.logic";
 
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   return {
     update: null as DesktopUpdateState | null,
     hasUpdates: false,
+    rows: [] as ReadonlyArray<UpdateEverythingRow>,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -40,7 +42,7 @@ vi.mock("./useUpdateEverything", () => ({
     summary: "Update everything",
     version: null,
     providerCount: 0,
-    rows: [],
+    rows: mocks.rows,
     restarts: [],
     otherServers: [],
     run: vi.fn(),
@@ -83,9 +85,16 @@ const RELEASE_NOTES: DesktopUpdateState["releaseNotes"] = [
   { version: "0.0.50-nightly.2", items: ["Faster sidebar."], totalItems: 1 },
 ];
 
-function setup(update: DesktopUpdateState | null, { hasUpdates = false } = {}) {
+function setup(
+  update: DesktopUpdateState | null,
+  {
+    hasUpdates = false,
+    rows = [],
+  }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow> } = {},
+) {
   mocks.update = update;
   mocks.hasUpdates = hasUpdates;
+  mocks.rows = rows;
 }
 
 function publish(update: DesktopUpdateState | null) {

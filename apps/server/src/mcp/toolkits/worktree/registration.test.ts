@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
+import { EnvironmentThemeService } from "../../../environmentTheme.ts";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
@@ -71,6 +72,7 @@ const StubServicesLive = Layer.mergeAll(
   AccountsTestkit.layer,
   // SCIENT-FORK:END
   Layer.mock(PreviewBrowser.PreviewBrowser)({}),
+  Layer.mock(EnvironmentThemeService)({}),
   Layer.mock(ProviderSessionManagerV2)({
     resolveMcpInvocationPolicy: () => Effect.die("Tool listing cannot grant mutation authority."),
   }),

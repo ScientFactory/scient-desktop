@@ -17,6 +17,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
 
@@ -144,6 +145,8 @@ const htmlDocumentDependencies = [
   ServerConfig.ServerConfig,
   ServerSecretStore.ServerSecretStore,
   WorkspacePaths.WorkspacePaths,
+  // Asset links map a Windows drive path under WSL with wslpath.
+  ChildProcessSpawner.ChildProcessSpawner,
 ];
 
 const latexDependencies = [...sharedDocumentDependencies, LatexBuildService.LatexBuildService];

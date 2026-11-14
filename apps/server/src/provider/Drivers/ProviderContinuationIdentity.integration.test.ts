@@ -37,6 +37,7 @@ import { ScientAgentDriver } from "./ScientAgentDriver.ts";
 import { DroidDriver } from "./DroidDriver.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
 import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 
 const noProcess = () => Effect.die("Continuation identity must not start a provider process");
 const baseLayer = ServerConfig.layerTest(process.cwd(), {
@@ -67,6 +68,7 @@ const providerDependenciesLayer = baseLayer.pipe(
   Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(baseLayer))),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ResetCreditCoordinator.layerTest),
+  Layer.provideMerge(PortScanner.layerTest),
   Layer.provideMerge(
     Layer.mock(CodexInstallation.CodexInstallation)({
       managedDirectory: "unused-managed-installation",

@@ -41,6 +41,7 @@ import { CodexDriver } from "./CodexDriver.ts";
 import { ClaudeDriver } from "./ClaudeDriver.ts";
 import { GrokDriver } from "../AppProviderDriverComposition.ts";
 import { layerConfigConsistentTestProviderHost } from "../testUtils/providerHost.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 
 const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "scient-managed-native-execution-",
@@ -53,6 +54,7 @@ const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ResetCreditCoordinator.layerTest),
+  Layer.provideMerge(PortScanner.layerTest),
   Layer.provideMerge(ProviderInstallationGate.layer),
   Layer.provideMerge(
     Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "unused" }),

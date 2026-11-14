@@ -166,6 +166,7 @@ it("repairs a remembered draft after catalog refresh and retains the native ID t
   store.clearComposerContent(threadRef);
   const state = deriveEffectiveComposerModelState({
     draft: useComposerDraftStore.getState().draftsByThreadKey[key],
+    threadStarted: false,
     providers: [provider],
     selectedProvider: provider.driver,
     selectedInstanceId: id,

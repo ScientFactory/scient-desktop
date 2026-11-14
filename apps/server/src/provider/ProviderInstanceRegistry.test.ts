@@ -266,8 +266,9 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
   const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
-  const testLayer = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
-    Layer.provide(Layer.merge(PortScanner.layerTest, SqlitePersistence.layerMemory)),
+  const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provideMerge(PortScanner.layerTest),
     Layer.provideMerge(layerBase),
   );
 
@@ -352,7 +353,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(rebuiltPersonal).toBeDefined();
       expect(rebuiltPersonal).not.toBe(personal);
       expect(unchangedWork).toBe(work);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["replacement", "removal", "creation failure"] as const)(
@@ -427,7 +428,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           Effect.ensuring(Scope.close(parent, Exit.void)),
         );
         expect(closes).toBe(creates);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["replacement", "removal"] as const)(
@@ -482,7 +483,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect((yield* registry.getInstance(nextId))?.displayName).toBe("Second");
         expect(yield* registry.getInstance(siblingId)).toBe(sibling);
         expect(closed).toBe(1);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
@@ -506,7 +507,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("reports Codex's answer when a redemption changed nothing", () =>
@@ -542,7 +543,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(codex).toBeDefined();
       yield* codex!.snapshot.refresh;
       expect(yield* codex!.consumeResetCredit!(undefined)).toBe("alreadyRedeemed");
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("lists a blocked driver's instances as unavailable without running them", () =>
@@ -560,7 +561,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.availability).toBe("unavailable");
       expect(unavailable?.unavailableReason).toBe(reason);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
@@ -614,7 +615,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         installed: true,
         version: "2.1.219",
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("runs Claude instance probes in the server state dir, not the server cwd", () =>
@@ -647,7 +648,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         version: "2.1.219",
         auth: { status: "authenticated" },
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("applies the lowest maxEffortLevel across Claude's settings sources", () =>
@@ -696,7 +697,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             : [],
         )[0]?.label;
       expect(maxLabel).toBe("Max (capped to High)");
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("keeps usage and uncapped efforts when the CLI rejects get_settings", () =>
@@ -734,7 +735,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(effortLabels.some((label) => label.includes("capped"))).toBe(false);
       expect(snapshot.auth).toMatchObject({ status: "authenticated", email: "test@example.com" });
       expect(snapshot.usageLimits?.windows[0]?.usedPercent).toBe(100);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>
@@ -874,7 +875,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
       );
       expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
@@ -943,7 +944,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provide(testLayer),
+      Effect.provide(layerTest),
     );
 
   it.live.skipIf(windowsHost)("refreshes Claude usage after redeeming a reset", () =>
@@ -1023,7 +1024,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(first.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
       expect(second.usageLimits).toEqual(first.usageLimits);
       expect(query.mock.calls).toHaveLength(1);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   for (const state of ["signed-out", "usage-failed"] as const) {
@@ -1048,7 +1049,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           expect(after.auth.status).toBe("authenticated");
           expect(after.usageLimits?.unavailable).toBeUndefined();
           expect(after.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
-        }).pipe(Effect.provide(testLayer)),
+        }).pipe(Effect.provide(layerTest)),
     );
   }
 
@@ -1089,7 +1090,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(ghost.driver).toBe("ghostDriver");
         expect(ghost.availability).toBe("unavailable");
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 });
 
@@ -1139,7 +1140,8 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
   const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
   const layerWithAcpRegistry = AcpRegistrySupport.layerFromHost.pipe(Layer.provideMerge(layerBase));
   const testLayer = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
-    Layer.provide(Layer.merge(PortScanner.layerTest, SqlitePersistence.layerMemory)),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provideMerge(PortScanner.layerTest),
     Layer.provideMerge(layerWithAcpRegistry),
     Layer.provideMerge(ProviderLifecycleCoordinator.layer),
   );
