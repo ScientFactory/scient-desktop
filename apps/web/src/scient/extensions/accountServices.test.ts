@@ -82,9 +82,18 @@ describe("account services", () => {
     ]);
 
     // Before the agents are read nothing is claimed and nothing is offered.
-    const unread = accountServiceRoutes(gmail, [scient(false), codex, claude(false)], false);
-    expect(unread.map((route) => route.state)).toEqual(["checking", "checking", "checking"]);
-    expect(nextAccountServiceStep(unread)).toBeUndefined();
+    // An agent whose inventory has not arrived is checking; one that arrived is not held back.
+    const claudeRead = claude(false);
+    const unread = accountServiceRoutes(
+      gmail,
+      [scient(false), codex, claudeRead],
+      (agent) => agent === claudeRead,
+    );
+    expect(unread.map((route) => route.state)).toEqual(["checking", "checking", "connect"]);
+    expect(nextAccountServiceStep(unread)?.family).toBe("claude");
+    expect(accountServiceAudience(unread).pending.map((agent) => agent.instanceId)).toEqual([
+      claudeRead.instanceId,
+    ]);
 
     const all = accountServiceRoutes(gmail, [scient(true), codex, claude(true)]);
     expect(nextAccountServiceStep(all)).toBeUndefined();

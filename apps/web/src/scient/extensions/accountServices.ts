@@ -164,14 +164,15 @@ function codexApp(provider: ServerProvider, service: AccountService): "on" | "of
 export function accountServiceRoutes(
   service: AccountService,
   providers: ReadonlyArray<ServerProvider>,
-  /** False before the agents' inventories are read: an agent without evidence is `checking`. */
-  inventoriesRead = true,
+  /** Whether an agent's inventory has been read; one not read yet without evidence is `checking`. */
+  inventoryRead: (provider: ServerProvider) => boolean = () => true,
 ): ReadonlyArray<AccountServiceRoute> {
-  return accountServiceRoutesFromInventory(service, providers).map((route) =>
-    !inventoriesRead && route.state === "connect"
+  return accountServiceRoutesFromInventory(service, providers).map((route) => {
+    const provider = providers.find((entry) => entry.instanceId === route.instanceId);
+    return route.state === "connect" && provider && !inventoryRead(provider)
       ? { ...route, state: "checking", reason: "Checking its account…" }
-      : route,
-  );
+      : route;
+  });
 }
 
 function accountServiceRoutesFromInventory(
@@ -259,7 +260,7 @@ export function accountServiceAudience(
       .filter((route) => route.state === "connected")
       .map(({ instanceId, label }) => ({ instanceId, label })),
     pending: routes.flatMap((route) =>
-      route.state !== "connected" && route.reason
+      route.state !== "connected" && route.state !== "checking" && route.reason
         ? [{ instanceId: route.instanceId, reason: route.reason }]
         : [],
     ),

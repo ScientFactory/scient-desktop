@@ -35,11 +35,12 @@ function useAccountService(service: AccountService) {
   const { environmentId, canWrite, providers, providerInventory } = useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   const waiting = useRef(false);
-  const read = providerInventory.phase === "ready";
+  // Each agent counts once its own inventory arrives; a slow one never holds the others back.
+  const finished = ["ready", "partial", "error"].includes(providerInventory.phase);
   const routes = accountServiceRoutes(
     service,
-    read ? providerInventory.providers : providers,
-    read,
+    providerInventory.providers.length > 0 ? providerInventory.providers : providers,
+    (provider) => finished || provider.mcpServers !== undefined,
   );
   const step = nextAccountServiceStep(routes);
   useWindowFocusRefresh(() => {
@@ -58,11 +59,7 @@ function useAccountService(service: AccountService) {
   return {
     routes,
     step,
-    // Before the agents' inventories are read (Discover reads none), nothing is claimed.
-    audience:
-      providerInventory.phase === "ready"
-        ? accountServiceAudience(routes)
-        : ({ layer: "account", connected: [], pending: [] } as const),
+    audience: accountServiceAudience(routes),
     connect: step && canWrite ? () => open(step.page) : undefined,
     open,
   };
@@ -163,9 +160,7 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
           name={service.name}
           tagline={service.tagline}
           actions={
-            routes.some((route) => route.state === "checking") ? (
-              <span className="text-sm text-muted-foreground">Checking your agents…</span>
-            ) : step ? (
+            step ? (
               <PrimaryAction
                 icon={PlusIcon}
                 disabled={connect === undefined}
