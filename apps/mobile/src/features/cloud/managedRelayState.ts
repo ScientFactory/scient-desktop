@@ -45,7 +45,7 @@ export const deleteManagedRelayAccountCommand = createRuntimeCommand(managedRela
   scheduler: managedRelayMutationScheduler,
   concurrency: {
     mode: "serial",
-    key: (input: { readonly accountId: string }) => input.accountId,
+    key: (input: Parameters<typeof deleteManagedRelayAccount>[1]) => input.accountId,
   },
   execute: (input, registry) => deleteManagedRelayAccount(registry, input),
 });
