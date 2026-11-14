@@ -318,13 +318,20 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
       ),
     );
 
-  const findConnector = Effect.fn("LocalConnectorAuthoring.find")(function* (name: string) {
+  const findConnector = Effect.fn("LocalConnectorAuthoring.find")(function* (
+    name: string,
+    // Given: connectors the person gave to other agents only are not found.
+    providerInstanceId?: ProviderInstanceId,
+  ) {
     const wanted = name.trim().toLowerCase();
     const named = (yield* deps.records).filter(
       (item) =>
-        item.serverName === name.trim() ||
-        item.connectorId === name.trim() ||
-        item.displayName.toLowerCase() === wanted,
+        (providerInstanceId === undefined ||
+          item.agents === undefined ||
+          item.agents.includes(providerInstanceId)) &&
+        (item.serverName === name.trim() ||
+          item.connectorId === name.trim() ||
+          item.displayName.toLowerCase() === wanted),
     );
     const record = named.find((item) => item.local !== undefined);
     if (record !== undefined) return record;
@@ -358,10 +365,14 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     readonly workingFolder: string;
     readonly connector?: string | undefined;
     readonly name?: string | undefined;
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) {
     if (input.connector === undefined && input.name === undefined)
       return yield* invalid("Give connector (to fix one) or name (to make one).");
-    const found = input.connector === undefined ? undefined : yield* findConnector(input.connector);
+    const found =
+      input.connector === undefined
+        ? undefined
+        : yield* findConnector(input.connector, input.providerInstanceId);
     if (found === undefined) return yield* copyInto(input, undefined);
     return yield* exclusive(found.connectorId)(
       Effect.flatMap(recordNow(found.connectorId), (record) => copyInto(input, record)),

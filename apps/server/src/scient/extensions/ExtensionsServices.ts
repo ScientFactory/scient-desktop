@@ -196,6 +196,8 @@ export interface ConnectorRuntimeShape {
     readonly workingFolder: string;
     readonly connector?: string | undefined;
     readonly name?: string | undefined;
+    /** The calling agent: a connector given to other agents only is not there for it. */
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) => Effect.Effect<
     Omit<Effect.Success<ReturnType<LocalConnectorAuthoring["copy"]>>, "variant">,
     ExtensionsError

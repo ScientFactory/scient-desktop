@@ -1823,6 +1823,7 @@ describe("connector proxy", () => {
             entries: scope === "curated" ? [entry] : [],
             fetchedAt: "2026-11-15T00:00:00.000Z",
           }),
+        entry: () => Effect.succeed(entry),
       });
       const list = (providerInstanceId: ProviderInstanceId) =>
         listConnectors({ query: "search-choice", providerInstanceId }).pipe(
@@ -1842,6 +1843,29 @@ describe("connector proxy", () => {
       const chosen = yield* list(claude);
       if (!("found" in chosen)) throw new Error("Expected discovery results");
       expect(chosen.found?.[0]?.added).toBe(added.connector.serverName);
+
+      // Adding it by its catalog name, or copying it, tells the excluded agent no more.
+      const addAs = (providerInstanceId: ProviderInstanceId) =>
+        addConnector({
+          from: entry.name,
+          location: { projectId: PROJECT, worktreePath: null, providerInstanceId },
+        }).pipe(Effect.provideService(ConnectorRuntime, harness.runtime), Effect.provide(discover));
+      const refusedAdd = yield* addAs(codex).pipe(Effect.flip);
+      expect(refusedAdd.message).toContain("already added for other agents");
+      expect(refusedAdd.message).not.toContain(added.connector.serverName);
+      expect(yield* addAs(claude)).toMatchObject({ connector: added.connector.serverName });
+      const copyAs = (providerInstanceId: ProviderInstanceId) =>
+        harness.runtime
+          .copyForAgent({
+            workingFolder: harness.config.stateDir,
+            connector: added.connector.serverName,
+            providerInstanceId,
+          })
+          .pipe(Effect.flip);
+      // The excluded agent finds nothing by that name; the chosen one learns it runs online.
+      expect((yield* copyAs(codex)).message).toContain("No local connector is named");
+      expect((yield* copyAs(claude)).message).toContain("runs online");
+      expect((yield* harness.runtime.list()).connectors).toHaveLength(1);
     }).pipe(Effect.provide(testLayer)),
   );
 

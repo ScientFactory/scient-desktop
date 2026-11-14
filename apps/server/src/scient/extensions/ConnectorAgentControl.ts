@@ -344,6 +344,16 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
           entry.installedConnectorId === undefined
             ? undefined
             : findSummary((yield* runtime.list()).connectors, entry.installedConnectorId);
+        // Given to other agents only: this agent learns no more than that, and adds no second copy.
+        const caller = input.location?.providerInstanceId;
+        if (
+          existing?.agents !== undefined &&
+          caller !== undefined &&
+          !existing.agents.includes(caller)
+        )
+          return yield* invalid(
+            `${entry.title ?? entry.name} is already added for other agents. The person can choose this agent on its page in Settings → Extensions.`,
+          );
         if (existing !== undefined) {
           const status = agentStatusOf(existing);
           return {

@@ -95,7 +95,12 @@ export const copyConnector = Effect.fn("AccountsAgent.connectorCopy")(function* 
   const where = yield* workspace;
   const connectors = yield* runtime;
   return yield* connectors
-    .copyForAgent({ workingFolder: where.folder, connector: input.connector, name: input.name })
+    .copyForAgent({
+      workingFolder: where.folder,
+      connector: input.connector,
+      name: input.name,
+      providerInstanceId: (yield* AgentInvocationContext).providerInstanceId,
+    })
     .pipe(Effect.mapError(toAccountsError));
 });
 
