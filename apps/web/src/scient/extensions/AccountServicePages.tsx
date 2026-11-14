@@ -2,6 +2,7 @@ import { CheckIcon, ExternalLinkIcon, PlusIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { ScientAgentAccounts } from "../providerConnection/ScientAgentAccounts";
+import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 
 import { Button } from "../../components/ui/button";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -217,6 +218,13 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
               return (
                 <div key={route.instanceId}>
                   <CardRow>
+                    <ProviderInstanceIcon
+                      driverKind={route.driver}
+                      displayName={route.label}
+                      acpRegistryIconUrl={provider?.iconUrl}
+                      iconClassName="size-6"
+                      indicatorBackground="var(--card)"
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{route.label}</span>
                       <span className="block truncate text-xs text-muted-foreground">
