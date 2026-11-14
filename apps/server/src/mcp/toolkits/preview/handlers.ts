@@ -8,6 +8,7 @@ import {
 } from "../../../scient/accounts/agent/previewProfileAccess.ts";
 import type { AccountsError } from "@t3tools/contracts";
 import { previewProfileFallback } from "../../../scient/accounts/agent/previewProfileFallback.ts";
+import * as Clock from "effect/Clock";
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -82,7 +83,7 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
   // SCIENT-FORK:START — Scient Accounts: recheck existing-tab profile access before every action.
-  const request = () =>
+  const request = (budgetMs = timeoutMs) =>
     broker.invoke<A>({
       onTargetTab: (resolvedTabId) => {
         targetTabId = resolvedTabId;
@@ -90,23 +91,29 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
       scope,
       operation,
       input,
-      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(budgetMs === undefined ? {} : { timeoutMs: budgetMs }),
       ...(tabId === undefined ? {} : { tabId }),
     });
   const result = yield* operation === "status" || operation === "open"
     ? request()
     : withPreviewAccounts(request(), (accountScope) =>
         Effect.gen(function* () {
+          // The check spends the action's budget, so the call still ends when the agent asked.
+          const budgetMs =
+            timeoutMs ?? PreviewAutomationBroker.PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS;
+          const startedAt = yield* Clock.currentTimeMillis;
           const status = yield* broker.invoke<PreviewAutomationStatus>({
             scope,
             operation: "status",
             input: {},
+            timeoutMs: budgetMs,
             updateCurrentTab: false,
             ...(tabId === undefined ? {} : { tabId }),
           });
           yield* authorizePreviewTab(accountScope, status, tabId);
+          const spentMs = (yield* Clock.currentTimeMillis) - startedAt;
           // An omitted tab stays omitted, so the browser still resolves it the usual way.
-          return yield* request();
+          return yield* request(Math.max(1, budgetMs - spentMs));
         }),
       );
   // SCIENT-FORK:END

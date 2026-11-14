@@ -1,11 +1,21 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import {
+  EnvironmentId,
+  PreviewAutomationExecutionError,
+  PreviewAutomationTimeoutError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { McpSchema } from "effect/ai";
+import * as Effect from "effect/Effect";
 
 import {
   BrowserToolCallLedger,
   closedErrorCode,
+  noteToolFailure,
   scientMcpAnalyticsInput,
   scientToolOutcome,
+  ToolFailureNote,
+  type ToolFailureFacts,
 } from "./ScientMcpAnalytics.ts";
 import { toolOutcome } from "./ProviderDimensions.ts";
 
@@ -116,6 +126,68 @@ describe("Scient MCP analytics input", () => {
       ),
     ).toEqual({ outcome: "ok" });
   });
+
+  it.effect(
+    "tells a page that never got ready from a host that never answered, and a thrown script",
+    () =>
+      Effect.gen(function* () {
+        const request = {
+          environmentId: EnvironmentId.make("analytics-environment"),
+          threadId: ThreadId.make("analytics-thread"),
+          clientId: "server-browser",
+          connectionId: "analytics-connection",
+          requestId: "preview-1",
+          timeoutMs: 15_000,
+        };
+        const answered = {
+          remoteTag: "PreviewAutomationTimeoutError",
+          remoteMessageLength: 0,
+          cause: null,
+        };
+        const messageOnly = new McpSchema.CallToolResult({
+          isError: true,
+          content: [{ type: "text", text: "A browser failure written for the agent." }],
+        });
+        const recorded = Effect.fn(function* (error: unknown) {
+          const facts: ToolFailureFacts = {};
+          yield* noteToolFailure(error).pipe(Effect.provideService(ToolFailureNote, facts));
+          return scientToolOutcome(messageOnly, facts);
+        });
+        expect(
+          yield* recorded(
+            new PreviewAutomationTimeoutError({ ...request, ...answered, operation: "click" }),
+          ),
+        ).toEqual({
+          outcome: "error",
+          errorCode: "timeout",
+          failureClass: "page_not_ready",
+          failureOwner: "external",
+        });
+        expect(
+          yield* recorded(new PreviewAutomationTimeoutError({ ...request, operation: "click" })),
+        ).toEqual({
+          outcome: "error",
+          errorCode: "timeout",
+          failureClass: "host_overrun",
+          failureOwner: "scient",
+        });
+        expect(
+          yield* recorded(
+            new PreviewAutomationExecutionError({
+              ...request,
+              ...answered,
+              remoteTag: "PreviewAutomationExecutionError",
+              operation: "evaluate",
+            }),
+          ),
+        ).toEqual({
+          outcome: "error",
+          errorCode: "execution",
+          failureClass: "agent_script_error",
+          failureOwner: "code",
+        });
+      }),
+  );
 
   it("counts a thread's browser calls up to its turn's end and keeps later ones for the next", () => {
     const ledger = new BrowserToolCallLedger();

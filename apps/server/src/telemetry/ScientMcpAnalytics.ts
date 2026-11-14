@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import type { FailureOwner } from "@scientfactory/analytics";
+
 import { toolFailureAttribution } from "./FailureAttribution.ts";
 import { toolOutcome } from "./ProviderDimensions.ts";
 
@@ -90,15 +92,44 @@ const stringOf = (value: unknown, key: string) =>
     ? ((value as Record<string, unknown>)[key] as string)
     : undefined;
 
+/**
+ * A browser host that answered a timeout found the page not ready; one that never answered
+ * overran. A script the agent evaluated that threw on the page is the agent's code.
+ */
+function browserFailureClass(error: unknown): string | undefined {
+  const tag = stringOf(error, "_tag");
+  const answered = stringOf(error, "remoteTag") !== undefined;
+  if (tag === "PreviewAutomationTimeoutError") return answered ? "page_not_ready" : "host_overrun";
+  return tag === "PreviewAutomationExecutionError" &&
+    answered &&
+    stringOf(error, "operation") === "evaluate"
+    ? "agent_script_error"
+    : undefined;
+}
+
+const CLASS_OWNERS: Readonly<Record<string, FailureOwner>> = {
+  page_not_ready: "external",
+  host_overrun: "scient",
+  agent_script_error: "code",
+};
+
 export const noteToolFailure = Effect.fn("ScientMcpAnalytics.noteToolFailure")(function* (
   error: unknown,
 ) {
   const note = yield* ToolFailureNote;
   if (note === undefined) return;
   const tag = stringOf(error, "code") ?? stringOf(error, "_tag");
-  const failureClass = stringOf(error, "failureClass");
+  const failureClass = stringOf(error, "failureClass") ?? browserFailureClass(error);
   if (tag !== undefined) note.tag = tag;
   if (failureClass !== undefined) note.failureClass = failureClass;
+});
+
+/** Keeps a failure's own closed reason where a handler folds it into a broader code. */
+export const noteToolFailureClass = Effect.fn("ScientMcpAnalytics.noteToolFailureClass")(function* (
+  failureClass: string,
+) {
+  const note = yield* ToolFailureNote;
+  if (note !== undefined) note.failureClass = closedErrorCode(failureClass);
 });
 
 /**
@@ -124,8 +155,12 @@ export function scientToolOutcome(
           errorCode: facts.unresulted,
           failureOwner: toolFailureAttribution(facts.unresulted).failureOwner,
         };
-  const tag = stringOf(result?.structuredContent, "_tag") ?? facts.tag;
-  const reported = outcome.errorCode === "unknown" ? tag : outcome.errorCode;
+  // The note was written from the typed failure, which a wrapper's tag may only generalize.
+  const reported =
+    facts.tag ??
+    (outcome.errorCode === "unknown"
+      ? stringOf(result?.structuredContent, "_tag")
+      : outcome.errorCode);
   const errorCode = reported === undefined ? "unknown" : closedErrorCode(reported);
   return {
     outcome: "error",
@@ -136,6 +171,8 @@ export function scientToolOutcome(
 }
 
 function toolFailureOwner(errorCode: string, failureClass: string | undefined): string {
+  const owned = failureClass === undefined ? undefined : CLASS_OWNERS[failureClass];
+  if (owned !== undefined) return owned;
   const fromCode = toolFailureAttribution(errorCode).failureOwner;
   return fromCode === "unknown" && failureClass !== undefined
     ? toolFailureAttribution(failureClass).failureOwner

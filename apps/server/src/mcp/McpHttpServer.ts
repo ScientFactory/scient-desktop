@@ -822,11 +822,17 @@ const imageToolFailure =
       typeof failureText === "string" || failures[0] === undefined
         ? undefined
         : failureText(failures[0].error);
+    // SCIENT-FORK:START — a declared failure's closed code reaches the agent and analytics.
+    const code = isOrchestratorMcpFailure(firstFailure) ? firstFailure.code : undefined;
+    // SCIENT-FORK:END
     const result = new McpSchema.CallToolResult({
       isError: true,
       structuredContent: {
         error: {
           _tag: errorTag,
+          // SCIENT-FORK:START — a declared failure's closed code reaches the agent and analytics.
+          ...(code === undefined ? {} : { code }),
+          // SCIENT-FORK:END
           operation,
           failureCount: failures.length,
           ...(message === undefined ? {} : { message }),
@@ -840,11 +846,13 @@ const imageToolFailure =
         },
       ],
     });
+    // SCIENT-FORK:START — a declared failure's closed code reaches the agent and analytics.
     return Effect.logWarning(`${toolName} failed`, {
       operation,
       errorTag,
       failureCount: failures.length,
-    }).pipe(Effect.as(result));
+    }).pipe(Effect.andThen(noteToolFailure(firstFailure)), Effect.as(result));
+    // SCIENT-FORK:END
   };
 
 // SCIENT-FORK:START — Request authority and catalogue-checked operations share the MCP boundary.

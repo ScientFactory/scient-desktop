@@ -3,13 +3,16 @@ import {
   AccountId,
   EnvironmentId,
   ProjectId,
+  PreviewAutomationTimeoutError,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationOperation,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ServerConfig from "../../../config.ts";
-import { Effect, Layer, Stream } from "effect";
+import { Deferred, Duration, Effect, Fiber, Layer, Stream } from "effect";
+import { TestClock } from "effect/testing";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { AccountsService } from "../../../scient/accounts/AccountsService.ts";
 import { makeHarness } from "../../../scient/accounts/Accounts.testkit.ts";
@@ -20,7 +23,11 @@ import {
   liveThreadShell,
   liveThreadsLayer,
 } from "../../McpToolAccess.testkit.ts";
-import { PreviewAutomationBroker } from "../../PreviewAutomationBroker.ts";
+import {
+  PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS,
+  PreviewAutomationBroker,
+  type PreviewAutomationInvokeInput,
+} from "../../PreviewAutomationBroker.ts";
 import { layerStandard, layerSnapshot } from "./handlers.ts";
 import { PreviewStandardToolkit, PreviewSnapshotToolkit } from "./tools.ts";
 
@@ -371,4 +378,103 @@ it.effect(
       expect(yield* refused).toHaveLength(reads.length);
       expect(reached).toEqual(["snapshot"]);
     }).pipe(Effect.scoped),
+);
+
+it.effect("the account check before an action spends the action's budget, not its own", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("accounts-budget-thread");
+    const shell = liveThreadShell(threadId);
+    const environmentId = EnvironmentId.make("accounts-budget-environment");
+    const status: PreviewAutomationStatus = {
+      available: true,
+      visible: true,
+      tabId: "work-tab",
+      url: "https://example.com",
+      title: "Page",
+      loading: false,
+      profiles: [{ id: "work", name: "Work" }],
+      tabs: [{ tabId: "work-tab", url: "https://example.com", profileId: "work" }],
+    };
+    const { service } = yield* makeHarness();
+    // How long each operation takes in the browser; one that runs past its budget times out then.
+    const takes: Partial<Record<PreviewAutomationOperation, number>> = {};
+    let reached = Deferred.makeUnsafe<void>();
+    const dependencies = Layer.mergeAll(
+      liveThreadsLayer,
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "accounts-budget-test-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+      Layer.succeed(McpInvocationContext, {
+        environmentId,
+        requestNamespace: "accounts-budget",
+        issuedAt: 0,
+        client: undefined,
+        capabilities: new Set(["preview"] as const),
+        thread: {
+          threadId,
+          providerSessionId: "accounts-budget",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+      }),
+      Layer.mock(PreviewAutomationBroker)({
+        invoke: <A>(request: PreviewAutomationInvokeInput) => {
+          const budgetMs = request.timeoutMs ?? PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS;
+          const spentMs = takes[request.operation] ?? 0;
+          // Signalled just before the browser's timer starts, so the clock moves past it.
+          const sleep = (ms: number) =>
+            Deferred.succeed(reached, undefined).pipe(Effect.andThen(Effect.sleep(ms)));
+          return spentMs <= budgetMs
+            ? sleep(spentMs).pipe(Effect.as(status as A))
+            : sleep(budgetMs).pipe(
+                Effect.andThen(
+                  new PreviewAutomationTimeoutError({
+                    operation: request.operation,
+                    environmentId,
+                    threadId,
+                    clientId: "server-browser",
+                    connectionId: "accounts-budget-connection",
+                    requestId: "preview-1",
+                    timeoutMs: budgetMs,
+                  }),
+                ),
+              );
+        },
+      }),
+      Layer.succeed(AccountsService, service),
+      Layer.mock(ProjectionStoreV2)({
+        getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
+      }),
+    );
+    const toolkit = yield* PreviewStandardToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(layerStandard).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    yield* service.setControls({ target: { type: "profile", profileId: "work" }, access: "ask" });
+    const waitFor = Effect.fn(function* (ms: Partial<Record<PreviewAutomationOperation, number>>) {
+      Object.assign(takes, ms);
+      reached = Deferred.makeUnsafe<void>();
+      const call = yield* Effect.timed(
+        toolkit
+          .handle("preview_wait_for", { selector: "#done", timeoutMs: 5_000 })
+          .pipe(Stream.unwrap, Stream.runDrain, Effect.flip),
+      ).pipe(Effect.provide(dependencies), Effect.forkChild);
+      // The handler reads real files before it reaches the browser; move the clock once it has.
+      yield* Deferred.await(reached);
+      yield* TestClock.adjust("20 minutes");
+      const [took, error] = yield* Fiber.join(call);
+      return { tookMs: Duration.toMillis(took), error: error._tag };
+    });
+    // A slow check leaves the wait what remains; a stuck one ends with the agent's budget.
+    for (const timing of [
+      { status: 2_000, waitFor: Number.POSITIVE_INFINITY },
+      { status: Number.POSITIVE_INFINITY },
+    ]) {
+      expect(yield* waitFor(timing)).toEqual({
+        tookMs: 5_000,
+        error: "PreviewAutomationTimeoutError",
+      });
+    }
+  }).pipe(Effect.scoped),
 );
