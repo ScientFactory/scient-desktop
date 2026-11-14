@@ -2523,12 +2523,10 @@ describe("storage cleanup reports and local file policies", () => {
         const fixture = yield* cleanupFixture();
         const scratchRoot = `${fixture.config.baseDir}/scratch`;
         const folder = `${scratchRoot}/quiet-otter`;
-        yield* fixture.fs.makeDirectory(folder, { recursive: true });
-        yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+        // SCIENT-FORK: Scient cleanup always keeps local files, so only an empty folder goes.
+        yield* fixture.fs.makeDirectory(`${folder}/node_modules`, { recursive: true });
         fixture.setProjectRoots([scratchRoot]);
         fixture.setStoredWorktreePaths([]);
-        // Only this rule lets cleanup delete untracked files, which is all a scratch folder has.
-        fixture.setPolicy("tracked-changes");
         fixture.setThreads([
           shell({ worktreePath: folder, settledAt: at(-20 * DAY_MS), status: "completed" }),
         ]);
@@ -2540,39 +2538,37 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  // SCIENT-FORK:START — Scient cleanup always keeps local files, a repository among them.
   it.effect.each([
     {
       name: "a Git repository in a subfolder",
-      policy: "tracked-changes",
       repository: "clone/.git",
-      reason: "Contains a nested Git repository",
+      reason: "Has local files (clone)",
     },
+    { name: "a Git repository of its own", repository: ".git", reason: "Has local files (.git)" },
     {
-      name: "a Git repository of its own",
+      name: "files under any keep rule",
       policy: "tracked-changes",
-      repository: ".git",
-      reason: "Contains a nested Git repository",
+      files: true,
+      reason: "Has local files (notes.md)",
     },
-    { name: "files under the default keep rule", reason: "Has local files (notes.md)" },
-    {
-      name: "a scheduled task",
-      policy: "tracked-changes",
-      scheduled: true,
-      reason: "Thread has a scheduled task",
-    },
+    { name: "a scheduled task", scheduled: true, reason: "Thread has a scheduled task" },
   ] as const)(
     "keeps an idle No project thread's scratch folder with $name",
     ({
       policy,
       repository,
+      files,
       scheduled,
       reason,
     }: {
       readonly policy?: WorktreeKeepWhen;
       readonly repository?: string;
+      readonly files?: boolean;
       readonly scheduled?: boolean;
       readonly reason: string;
     }) =>
+      // SCIENT-FORK:END
       runCleanupTest(
         Effect.gen(function* () {
           yield* TestClock.setTime(NOW_MS);
@@ -2583,7 +2579,7 @@ describe("storage cleanup reports and local file policies", () => {
             repository === undefined ? folder : `${folder}/${repository}`,
             { recursive: true },
           );
-          yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+          if (files) yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
           // No thread owns this one, so it is listed and never removed.
           const leftover = `${scratchRoot}/leftover`;
           yield* fixture.fs.makeDirectory(leftover);
@@ -2602,7 +2598,7 @@ describe("storage cleanup reports and local file policies", () => {
             { path: leftover, outcome: "kept", reason: "No thread uses this folder" },
             { path: folder, outcome: "kept", reason },
           ]);
-          expect(yield* fixture.fs.exists(`${folder}/notes.md`)).toBe(true);
+          expect(yield* fixture.fs.exists(folder)).toBe(true);
         }),
       ),
   );

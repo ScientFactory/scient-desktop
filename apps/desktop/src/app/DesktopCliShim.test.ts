@@ -130,11 +130,13 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
         "a b",
         "",
       ]);
-      NodeChildProcess.spawnSync("sh", [
+      // The mount ends with its mounter, which records only its PID, never a late write.
+      const mounter = NodeFS.readFileSync(NodePath.join(root, "mounter.pid"), "utf8").trim();
+      const unmounted = NodeChildProcess.spawnSync("sh", [
         "-c",
-        `i=0; while [ ! -e '${root}/unmounted' ] && [ $i -lt 40 ]; do sleep 0.05; i=$((i+1)); done`,
+        `i=0; while kill -0 ${mounter} 2>/dev/null && [ $i -lt 40 ]; do sleep 0.05; i=$((i+1)); done; ! kill -0 ${mounter} 2>/dev/null`,
       ]);
-      expect(NodeFS.existsSync(NodePath.join(root, "unmounted"))).toBe(true);
+      expect(unmounted.status).toBe(0);
     },
   );
 

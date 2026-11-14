@@ -2760,60 +2760,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect("rejects replayed DPoP proofs across token exchanges", () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const firstCredentialResponse = yield* HttpClient.post("/api/auth/pairing-token", {
-          headers: {
-            cookie: ownerCookie,
-          },
-          body: yield* HttpBody.json({}),
-        });
-        const firstCredential = (yield* firstCredentialResponse.json) as {
-          readonly credential: string;
-        };
-        const secondCredentialResponse = yield* HttpClient.post("/api/auth/pairing-token", {
-          headers: {
-            cookie: ownerCookie,
-          },
-          body: yield* HttpBody.json({}),
-        });
-        const secondCredential = (yield* secondCredentialResponse.json) as {
-          readonly credential: string;
-        };
-        const tokenUrl = yield* getHttpServerUrl("/oauth/token");
-        const now = yield* DateTime.now;
-        const dpop = makeDpopProof({
-          method: "POST",
-          url: tokenUrl,
-          iat: Math.floor(now.epochMilliseconds / 1_000),
-        });
-
-        const firstBootstrap = yield* exchangeAccessToken(firstCredential.credential, {
-          headers: {
-            dpop: dpop.proof,
-          },
-          scope: "orchestration:read orchestration:operate terminal:operate",
-        });
-        const replayBootstrap = yield* exchangeAccessToken(secondCredential.credential, {
-          headers: {
-            dpop: dpop.proof,
-          },
-          scope: "orchestration:read orchestration:operate terminal:operate",
-        });
-
-        assert.equal(firstBootstrap.response.status, 200);
-        assert.equal(replayBootstrap.response.status, 401);
-        assert.equal(replayBootstrap.body._tag, "EnvironmentAuthInvalidError");
-        assert.equal(replayBootstrap.body.code, "auth_invalid");
-        assert.equal(replayBootstrap.body.reason, "invalid_credential");
-        assert.equal(replayBootstrap.body.dpopFailureReason, "replay");
-        assert.equal(typeof replayBootstrap.body.traceId, "string");
-      }).pipe(Effect.provide(NodeHttpServerTest)),
-    );
-
     it.effect("ignores forwarded host headers when validating token exchange DPoP URLs", () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest();

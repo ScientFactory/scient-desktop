@@ -341,12 +341,12 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       commands.push(command);
       invocations.push(input);
       timeouts.set(command, input.timeout);
-      if (command === "systemctl --user reset-failed t3code.service") control.startLimitHit = false;
+      if (command === "systemctl --user reset-failed scient.service") control.startLimitHit = false;
       const refusedStart = control.startLimitHit && command.startsWith("systemctl --user restart ");
       // `--no-block` only queues the job, so systemd reports success even when it refuses it.
       const failed =
         command === control.failCommand ||
-        (refusedStart && command === "systemctl --user restart t3code.service");
+        (refusedStart && command === "systemctl --user restart scient.service");
       if (!failed && command.startsWith("loginctl enable-linger --no-ask-password ")) {
         control.linger = "yes";
         control.managerReachable ||= control.lingerStartsManager;
@@ -1398,6 +1398,7 @@ process.disconnect();
         "systemctl --user stop scient.service",
         "systemctl --user daemon-reload",
         "systemctl --user enable scient.service",
+        "systemctl --user reset-failed scient.service",
         "systemctl --user restart scient.service",
       ]);
     }),
@@ -1449,6 +1450,7 @@ process.disconnect();
       ).toEqual([
         "systemctl --user stop scient.service",
         "systemctl --user daemon-reload",
+        "systemctl --user reset-failed scient.service",
         "systemctl --user restart scient.service",
       ]);
     }),

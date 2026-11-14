@@ -3080,7 +3080,7 @@ describe("UsageService", () => {
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               version: number;
             };
-            assert.strictEqual(document.version, 15);
+            assert.strictEqual(document.version, 16);
             assert.strictEqual(await NodeFSP.readFile(priorPath, "utf8"), priorText);
             assert.strictEqual(await NodeFSP.readFile(v4Path, "utf8"), v4Text);
           });
@@ -3200,7 +3200,7 @@ describe("UsageService", () => {
           await NodeFSP.writeFile(v4Path, v4Text);
           await NodeFSP.rm(transcript);
         });
-        for (const version of [16, "unknown", undefined]) {
+        for (const version of [17, "unknown", undefined]) {
           yield* Effect.promise(() =>
             NodeFSP.writeFile(cachePath, encodeUnknownJsonString({ ...document, version })),
           );
@@ -3325,7 +3325,7 @@ describe("UsageService", () => {
               const persisted = decodeUnknownJsonString(
                 await NodeFSP.readFile(cachePath, "utf8"),
               ) as { version: number };
-              assert.strictEqual(persisted.version, 15);
+              assert.strictEqual(persisted.version, 16);
               assert.strictEqual(await NodeFSP.readFile(legacyPath, "utf8"), legacy);
             }),
           );

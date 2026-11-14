@@ -1353,6 +1353,8 @@ describe("ChatMarkdown environment-owned file opening", () => {
         viewport: getBrowserDefaults().viewport,
         profileId: getBrowserDefaults().profileId,
         runtime: "server",
+        zoomFactor: getBrowserDefaults().zoomFactor,
+        colorScheme: getBrowserDefaults().appearance,
       },
     });
     expect(selectedFileOpeningSurface()).toMatchObject({

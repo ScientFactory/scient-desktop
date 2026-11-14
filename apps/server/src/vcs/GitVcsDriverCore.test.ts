@@ -495,7 +495,15 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
       { args: ["status", "--porcelain=2", "--branch", "-z"], language: "C" },
       { args: ["diff-index", "-M", "--numstat", "-z", "HEAD", "--"], language: "C" },
       // Status lookups that run beside `git status` are discarded for a non-repository.
-      { args: ["symbolic-ref", "refs/remotes/origin/HEAD"] },
+      {
+        args: [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          "--symbolic-full-name",
+          "refs/remotes/origin/HEAD",
+        ],
+      },
       { args: ["remote"] },
       // Without origin/HEAD, the default branch lookup lists remotes for another one.
       { args: ["remote"] },

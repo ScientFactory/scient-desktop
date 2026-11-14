@@ -1624,6 +1624,8 @@ export const hostMcpTools: ReadonlyArray<Tool.Any> = [
   ...Object.values(HtmlRenderToolkit.tools),
   ...Object.values(HtmlPreviewToolkit.tools),
   ...deviceTools,
+  // send_to_user acts only on the caller's own thread, so it needs no grant.
+  ...Object.values(MessageToolkit.tools),
   // A deferring client lists tool_search; it needs no grant.
   ...Object.values(ToolSearchToolkit.tools),
 ];

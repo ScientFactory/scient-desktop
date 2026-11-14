@@ -10470,7 +10470,15 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           yield* snooze;
           const snoozed = yield* orchestrator.getThreadProjection(threadId);
           assert.equal(DateTime.formatIso(snoozed.thread.snoozedUntil!), snoozedUntil);
-          assert.deepEqual(snoozed.runs, beforeSnooze.runs);
+          // SCIENT-FORK: Scient holds the queue behind a failed run; the hold lands when the
+          // snooze takes the thread's lock.
+          const expectedRuns =
+            kind === "limited-user"
+              ? beforeSnooze.runs.map((run) =>
+                  run.status === "queued" ? { ...run, queueHeld: true } : run,
+                )
+              : beforeSnooze.runs;
+          assert.deepEqual(snoozed.runs, expectedRuns);
           yield* orchestrator.dispatch({
             type: "thread.unsnooze",
             commandId: CommandId.make(`unsnooze:${threadId}`),
@@ -10479,7 +10487,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           });
           const awake = yield* orchestrator.getThreadProjection(threadId);
           assert.isNull(awake.thread.snoozedUntil);
-          assert.deepEqual(awake.runs, beforeSnooze.runs);
+          assert.deepEqual(awake.runs, expectedRuns);
         }
       }),
   );
