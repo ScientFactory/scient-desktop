@@ -278,7 +278,11 @@ export const ScientOverleafManageResult = Schema.Union([
     /** Disconnect finished an interrupted sync first, which may have written the folder. */
     finishedInterruptedSync: Schema.optional(Schema.Boolean),
   }),
-  Schema.TaggedStruct("refused", { reason: Schema.String }),
+  Schema.TaggedStruct("refused", {
+    reason: Schema.String,
+    /** Disconnect finished an interrupted sync before it was refused. */
+    finishedInterruptedSync: Schema.optional(Schema.Boolean),
+  }),
 ]);
 export type ScientOverleafManageResult = typeof ScientOverleafManageResult.Type;
 
@@ -384,6 +388,10 @@ export type ScientOverleafReview = typeof ScientOverleafReview.Type;
 export const ScientOverleafRefusal = Schema.Struct({
   reason: Schema.String,
   path: Schema.optional(ManuscriptPath),
+  /** Every name the refusal concerns, when it is more than one (two spellings of a name). */
+  paths: Schema.optional(Schema.Array(ManuscriptPath)),
+  /** The server's fixed sentence for a refusal raised after the folder was written. */
+  message: Schema.optional(Schema.String),
 });
 export type ScientOverleafRefusal = typeof ScientOverleafRefusal.Type;
 

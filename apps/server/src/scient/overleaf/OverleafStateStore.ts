@@ -183,7 +183,7 @@ export class OverleafRetentionUnavailableError extends Schema.TaggedError<Overle
       case "volatile-filesystem":
         return "Scient cannot keep recovery files on temporary memory storage.";
       case "sync-managed-folder":
-        return "Scient's state and kept files must be outside cloud-managed folders.";
+        return "Scient can't keep copies of replaced files in a folder a cloud service syncs. Move the project out of the cloud folder, then link it again.";
       case "unsupported-filesystem":
         return `This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as ${supportedFilesystems()}.`;
       case "read-only-parent":
@@ -366,6 +366,20 @@ export class OverleafStateStore extends Context.Service<
     }) => Effect.Effect<
       { readonly directory: string; readonly identity: OverleafVolumeFileIdentity },
       WriteError | OverleafRetentionUnavailableError
+    >;
+    /**
+     * Finds a recorded retention folder for reading, as `prepareRetention` does, without
+     * the write lease: it never creates one and writes nothing the lease protects.
+     */
+    readonly findRetention: (input: {
+      readonly environmentId: string;
+      readonly connectionId: string;
+      readonly checkoutRoot: string;
+      readonly publicationHelper: string | null;
+      readonly expected: OverleafVolumeFileIdentity;
+    }) => Effect.Effect<
+      { readonly directory: string; readonly identity: OverleafVolumeFileIdentity },
+      OverleafStateIoError | OverleafRetentionUnavailableError
     >;
   }
 >()("t3/scient/overleaf/OverleafStateStore") {}
@@ -833,28 +847,29 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
       }),
     );
 
+  const locateRetention = Effect.fnUntraced(function* (
+    input: Parameters<OverleafStateStore["Service"]["prepareRetention"]>[0],
+  ) {
+    const located = yield* io("prepare-retention", () => {
+      if (!isServerId(input.connectionId) || !isServerId(input.environmentId))
+        throw new Error("Invalid connection or environment id.");
+      return locateOverleafRetention({
+        stateRetained: retained,
+        environmentId: input.environmentId,
+        connectionId: input.connectionId,
+        checkoutRoot: input.checkoutRoot,
+        userId,
+        publicationHelper: input.publicationHelper,
+        expected: input.expected,
+        volumeUuid: options.volumeUuid ?? platformFileIdentity.volume,
+      });
+    });
+    if (located._tag === "refused")
+      return yield* new OverleafRetentionUnavailableError({ reason: located.reason });
+    return { directory: located.directory, identity: located.identity };
+  });
   const prepareRetention: OverleafStateStore["Service"]["prepareRetention"] = (input) =>
-    withLease(
-      Effect.gen(function* () {
-        const located = yield* io("prepare-retention", () => {
-          if (!isServerId(input.connectionId) || !isServerId(input.environmentId))
-            throw new Error("Invalid connection or environment id.");
-          return locateOverleafRetention({
-            stateRetained: retained,
-            environmentId: input.environmentId,
-            connectionId: input.connectionId,
-            checkoutRoot: input.checkoutRoot,
-            userId,
-            publicationHelper: input.publicationHelper,
-            expected: input.expected,
-            volumeUuid: options.volumeUuid ?? platformFileIdentity.volume,
-          });
-        });
-        if (located._tag === "refused")
-          return yield* new OverleafRetentionUnavailableError({ reason: located.reason });
-        return { directory: located.directory, identity: located.identity };
-      }),
-    );
+    withLease(locateRetention(input));
 
   return OverleafStateStore.of({
     readConnection,
@@ -866,6 +881,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     beginReceipt,
     finishReceipt,
     prepareRetention,
+    findRetention: locateRetention,
   });
 });
 

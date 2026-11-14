@@ -304,6 +304,7 @@ import {
 } from "./orchestration-v2/scient-fork/ConversationForkRpcHandlers.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import { ScientAgentBackgroundRuntime } from "./scient/providerLifecycle/ScientAgentBackgroundRuntime.ts";
 import * as ManagedRuntimeCatalog from "./scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 import {
   makeProviderConnectionRpcHandlers,
@@ -322,6 +323,8 @@ import { makeDocumentPdfRpcHandlers } from "./scient/documentExport/DocumentPdfR
 import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcHandlers.ts";
 // SCIENT-FORK:START — windows answer the server's editor flush requests.
 import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
+// SCIENT-FORK: voice calls with a thread's Scient Agent.
+import { makeLiveVoiceRpcHandlers } from "./scient/liveVoice/LiveVoiceRpcHandlers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
 import { makeScientConnectRpcHandlers } from "./scient/connect/ScientConnectRpcHandlers.ts";
@@ -1983,6 +1986,7 @@ export const layerWsRpc = (
       const managedRuntimeCatalog = yield* ManagedRuntimeCatalog.ManagedRuntimeCatalog;
       const providerConnectionManager = yield* ProviderConnectionManager.ProviderConnectionManager;
       const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
+      const scientAgentBackground = yield* ScientAgentBackgroundRuntime;
       const voiceTranscriptCorrection = makeVoiceTranscriptCorrection({
         registry: providerRegistry,
         serverSettings,
@@ -2206,6 +2210,14 @@ export const layerWsRpc = (
         // SCIENT-FORK:END
         // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash.
         ...makeWorkspaceEntryRpcHandlers({ observeRpcEffect, workspaceFileSystem }),
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — voice calls with a thread's Scient Agent.
+        ...makeLiveVoiceRpcHandlers({
+          observeRpcEffect,
+          observeRpcStream,
+          threadManagement,
+          providerSessions: providerSessionsV2,
+        }),
         // SCIENT-FORK:END
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
@@ -2824,7 +2836,7 @@ export const layerWsRpc = (
                 new ProjectMutationError({
                   commandId: mutation.commandId,
                   message:
-                    cause._tag === "ProjectNotEmptyError"
+                    cause._tag === "ProjectNotEmptyError" || cause._tag === "ProjectInvalidError"
                       ? cause.message
                       : "Failed to mutate project.",
                   cause,
@@ -3176,6 +3188,7 @@ export const layerWsRpc = (
           observeRpcEffect,
           providerConnectionManager,
           providerRuntimeManager,
+          scientAgentBackground,
         }),
         ...makeCustomModelRpcHandlers({
           observeRpcEffect,
@@ -3785,7 +3798,15 @@ export const layerWsRpc = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          gitWorkflow.removeWorktree(input).pipe(
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+            // Subscribers of the removed checkout learn it is no longer a repository.
+            Effect.tap(() =>
+              vcsStatusBroadcaster
+                .refreshLocalStatus(input.path)
+                .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid),
+            ),
+          ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsSwitchRef]: (input) =>

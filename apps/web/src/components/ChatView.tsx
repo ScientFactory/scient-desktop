@@ -1,3 +1,4 @@
+import { useComposerCitations } from "./chat/useComposerCitations";
 // SCIENT-FORK:START — Scient Accounts: mount approvals above the composer.
 import {
   ThreadAccountApprovals,
@@ -9,6 +10,10 @@ import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+// SCIENT-FORK:START — Scient Agent's other signed-in accounts on a usage limit.
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import { scientAgentAlternativeModel } from "@t3tools/shared/scientAgentModelFallback";
+// SCIENT-FORK:END
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
 import { Button } from "./ui/button";
@@ -118,6 +123,7 @@ import {
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { usePullRequestLinking } from "../hooks/usePullRequestLinking";
 import { useComposerSelection } from "./chat/useComposerSelection";
+import { useComposerFocus } from "./chat/useComposerFocus";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
 import {
@@ -161,7 +167,6 @@ import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type AssistantCitation,
-  type ResponseContextRecord,
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
   type EnvironmentId,
@@ -222,7 +227,15 @@ import { orchestrationV2WorktreePending } from "@t3tools/shared/orchestrationV2T
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
-import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  type SetStateAction,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -304,7 +317,6 @@ import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
-import { isModelPickerOpen } from "../modelPickerVisibility";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
@@ -534,7 +546,47 @@ type ChatViewProps =
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
+// SCIENT-FORK: a cached banner callback must not capture ChatView's render scope.
+function incrementDismissTick(setTick: (update: (tick: number) => number) => void) {
+  return () => setTick((tick) => tick + 1);
+}
+
 const ignoreComposerFocus = () => {};
+
+function useRouteGuardedSave<Id, Result>(
+  save: (id: Id, run: () => void) => Result,
+  currentRoute: { readonly current: string | null },
+  route: string | null,
+) {
+  return useStableCallback((id: Id, run: () => void) =>
+    save(id, () => {
+      if (currentRoute.current === route) run();
+    }),
+  );
+}
+
+// Fork commands may outlive a render; their reader must not retain its scope.
+function createLiveTimelineEntriesReader(
+  routeThreadDetailRef: ScopedThreadRef | null,
+  timelineEntries: ReturnType<typeof useIncrementalTimelineEntries>,
+  timelineEntriesInput: Omit<
+    Parameters<typeof deriveTimelineEntriesFromVisibleTurnItemsWithState>[0],
+    "visibleTurnItems"
+  >,
+) {
+  return () => {
+    if (!routeThreadDetailRef) return timelineEntries;
+    const live = readThreadProjection(routeThreadDetailRef)?.projection;
+    if (!live) return timelineEntries;
+    return deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      ...timelineEntriesInput,
+      visibleTurnItems: live.visibleTurnItems,
+      attempts: live.attempts,
+      nodes: live.nodes,
+      plans: live.plans,
+    }).entries;
+  };
+}
 
 function ChatViewContent(props: ChatViewProps) {
   const {
@@ -797,31 +849,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
-  const citeAssistantText = (
-    citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
-  ) => {
-    const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
-    if (!inserted) {
-      toastManager.add({
-        type: "warning",
-        title: "The composer is not ready",
-        description: "Try citing the selection after the connection or pending input is resolved.",
-      });
-    }
-    return inserted;
-  };
-  const replyToResponseStable = useStableCallback((response: ResponseContextRecord) => {
-    const accepted = composerRef.current?.replyToResponse(response) ?? false;
-    if (!accepted) {
-      toastManager.add({
-        type: "warning",
-        title: "The composer is not ready",
-        description: "Try replying after the connection or pending input is resolved.",
-      });
-    }
-    return accepted;
-  });
+  const { citeAssistantText, replyToResponseStable } = useComposerCitations(composerRef);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticBlobPreviews] = useState(createOptimisticBlobPreviews);
   const [heldOptimisticUserMessages, setHeldOptimisticUserMessages] = useState(() =>
@@ -1496,14 +1524,16 @@ function ChatViewContent(props: ChatViewProps) {
     pendingFileSurfaceIdsByProject,
     handleMarkdownAttention,
   });
-  const runAfterPendingSurfaceSave: typeof runAfterSurfaceSave = (ids, run) =>
-    runAfterSurfaceSave(ids, () => {
-      if (currentRouteThreadKeyRef.current === routeThreadKey) run();
-    });
-  const runAfterPendingFileSave: typeof runAfterFileSave = (id, run) =>
-    runAfterFileSave(id, () => {
-      if (currentRouteThreadKeyRef.current === routeThreadKey) run();
-    });
+  const runAfterPendingSurfaceSave = useRouteGuardedSave(
+    runAfterSurfaceSave,
+    currentRouteThreadKeyRef,
+    routeThreadKey,
+  );
+  const runAfterPendingFileSave = useRouteGuardedSave(
+    runAfterFileSave,
+    currentRouteThreadKeyRef,
+    routeThreadKey,
+  );
   // SCIENT-FORK:END
   const openProjectScriptPreview = useProjectScriptAutoPreview({
     activeThreadRef,
@@ -2070,18 +2100,11 @@ function ChatViewContent(props: ChatViewProps) {
     // SCIENT-FORK:END
   );
   // SCIENT-FORK:START — the composer's fork command.
-  const readLiveTimelineEntries = () => {
-    if (!routeThreadDetailRef) return timelineEntries;
-    const live = readThreadProjection(routeThreadDetailRef)?.projection;
-    if (!live) return timelineEntries;
-    return deriveTimelineEntriesFromVisibleTurnItemsWithState({
-      ...timelineEntriesInput,
-      visibleTurnItems: live.visibleTurnItems,
-      attempts: live.attempts,
-      nodes: live.nodes,
-      plans: live.plans,
-    }).entries;
-  };
+  const readLiveTimelineEntries = createLiveTimelineEntriesReader(
+    routeThreadDetailRef,
+    timelineEntries,
+    timelineEntriesInput,
+  );
   const onForkConversation = createForkConversationCommand({
     readTimelineEntries: readLiveTimelineEntries,
     timelineEntries,
@@ -2376,10 +2399,8 @@ function ChatViewContent(props: ChatViewProps) {
       if (composer) composer.focusAt(composer.readSnapshot().cursor);
     }
   }, [activeThreadKey, composerIdentity, composerRef]);
-  const focusComposer = () => {
-    composerRef.current?.focusAtEnd();
-  };
-  const focusComposerStable = useStableCallback(focusComposer);
+  const { focusComposer: focusComposerStable, scheduleComposerFocus: scheduleComposerFocusStable } =
+    useComposerFocus(composerRef);
   const canInterruptRunningThread =
     canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   // SCIENT-FORK:START — the owned acknowledgement composes the original interrupt command.
@@ -2421,13 +2442,6 @@ function ChatViewContent(props: ChatViewProps) {
     () => (embedded ? undefined : subscribeSnapShotComposerFocus(focusComposerStable)),
     [embedded, focusComposerStable],
   );
-  const scheduleComposerFocus = () => {
-    window.requestAnimationFrame(() => {
-      // The model picker stays open through its own changes, so it keeps focus.
-      if (!isModelPickerOpen()) focusComposer();
-    });
-  };
-  const scheduleComposerFocusStable = useStableCallback(scheduleComposerFocus);
   const insertArtifactTemplate = (template: CodexArtifactTemplate) => {
     const composer = composerRef.current;
     if (!composer) return;
@@ -2442,7 +2456,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
-    scheduleComposerFocus();
+    scheduleComposerFocusStable();
   };
   const insertArtifactTemplateStable = useStableCallback(insertArtifactTemplate);
   const sendAppMessage = async (text: string) => {
@@ -2482,7 +2496,7 @@ function ChatViewContent(props: ChatViewProps) {
       nativeQueueEditItem(run, message, serverProjection.thread),
       { runId: run.id, messageId: message.id, expectedUpdatedAt: updatedAt },
     )
-      .then(() => scheduleComposerFocus())
+      .then(() => scheduleComposerFocusStable())
       .catch((cause) => setThreadError(activeThread.id, chatActionErrorMessage(cause)));
   };
   const beginEditingQueuedRunStable = useStableCallback(beginEditingQueuedRun);
@@ -3172,7 +3186,7 @@ function ChatViewContent(props: ChatViewProps) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     // SCIENT-FORK:START — a restored branch returns focus through the composer's own path.
-    scheduleComposerFocus,
+    scheduleComposerFocus: scheduleComposerFocusStable,
     // SCIENT-FORK:END
     canOperateThread,
     clientSettingsHydrated,
@@ -3304,6 +3318,42 @@ function ChatViewContent(props: ChatViewProps) {
     });
     return item ? [item] : [];
   });
+  // SCIENT-FORK:START — the limit banner's "Continue with" resumes, so resume comes first.
+  const { onResume, onResumeWith, isResuming } = useComposerResume({
+    environmentId,
+    routeThreadKey,
+    currentRouteThreadKeyRef,
+    activeThread,
+    resumableRunId,
+    hasHeldQueuedRuns,
+    canResume,
+    isSendBusy,
+    isRevertingCheckpoint,
+    threadDetailLoading,
+    activeEnvironmentUnavailable,
+    runtimeMode,
+    localCheckoutBranchMismatch,
+    composerRef,
+    persistThreadSettingsForNextTurn,
+    clearUsageLimitsFor,
+    scrollToEnd,
+    setThreadError,
+  });
+  const failedModel = activeThread?.modelSelection;
+  const failedProvider = providerStatuses.find(
+    (provider) => provider.instanceId === failedModel?.instanceId,
+  );
+  const continueModel =
+    limitRecoveryRun !== null && canResume && failedModel
+      ? scientAgentAlternativeModel(
+          failedProvider,
+          failedModel.model,
+          (slug) =>
+            exhaustedUsageWindow(failedProvider, Date.parse(`${nowMinute}:00Z`), slug) !==
+            undefined,
+        )
+      : undefined;
+  // SCIENT-FORK:END
   const limitRecoveryBanner =
     limitRecoveryRun !== null && activeThreadShell !== null
       ? usageLimitRecoveryBannerItem({
@@ -3316,6 +3366,20 @@ function ChatViewContent(props: ChatViewProps) {
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
+          // SCIENT-FORK:START — continue at once with another signed-in model.
+          ...(continueModel && failedModel
+            ? {
+                continueWith: {
+                  modelName: continueModel.name,
+                  onContinue: () =>
+                    void onResumeWith({
+                      instanceId: failedModel.instanceId,
+                      model: continueModel.slug,
+                    }),
+                },
+              }
+            : {}),
+          // SCIENT-FORK:END
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
@@ -3342,7 +3406,7 @@ function ChatViewContent(props: ChatViewProps) {
     const tokenLimitItems = tokenLimitBannerItems({
       hasTokenLimitNotice,
       tokenLimitNoticeKey,
-      onDismissed: () => setThreadErrorBannerDismissTick((tick) => tick + 1),
+      onDismissed: incrementDismissTick(setThreadErrorBannerDismissTick),
     });
     // SCIENT-FORK:END
     const fallbackSelection = draftFallback?.selection;
@@ -3687,27 +3751,7 @@ function ChatViewContent(props: ChatViewProps) {
     canOverrideServerThreadEnvMode,
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
-    scheduleComposerFocus,
-  });
-  const { onResume, isResuming } = useComposerResume({
-    environmentId,
-    routeThreadKey,
-    currentRouteThreadKeyRef,
-    activeThread,
-    resumableRunId,
-    hasHeldQueuedRuns,
-    canResume,
-    isSendBusy,
-    isRevertingCheckpoint,
-    threadDetailLoading,
-    activeEnvironmentUnavailable,
-    runtimeMode,
-    localCheckoutBranchMismatch,
-    composerRef,
-    persistThreadSettingsForNextTurn,
-    clearUsageLimitsFor,
-    scrollToEnd,
-    setThreadError,
+    scheduleComposerFocus: scheduleComposerFocusStable,
   });
   const { onSend } = useComposerSend({
     queueEditsReady,
@@ -4193,6 +4237,7 @@ function ChatViewContent(props: ChatViewProps) {
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
         data-chat-column
         inert={rightPanelMaximized}
+        onMouseUp={preventMiddleClickPasteOutsideEditable}
       >
         {embedded ? null : (
           <header
@@ -5156,6 +5201,12 @@ function ChatViewContent(props: ChatViewProps) {
       {/* SCIENT-FORK:END */}
     </FileMetadataThreadProvider>
   );
+}
+
+// Chromium on Linux pastes PRIMARY into the focused editable unless the middle mouseup is cancelled.
+function preventMiddleClickPasteOutsideEditable(event: ReactMouseEvent) {
+  if (event.button !== 1 || isEditableFocused(event.target)) return;
+  event.preventDefault();
 }
 
 function PreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {

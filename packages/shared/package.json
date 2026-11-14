@@ -167,6 +167,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./envTrampoline": {
+      "types": "./src/envTrampoline.ts",
+      "import": "./src/envTrampoline.ts"
+    },
     "./semver": {
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"
@@ -382,6 +386,10 @@
     "./scientThreadLinks": {
       "types": "./src/scientThreadLinks.ts",
       "import": "./src/scientThreadLinks.ts"
+    },
+    "./scientAgentModelFallback": {
+      "types": "./src/scientAgentModelFallback.ts",
+      "import": "./src/scientAgentModelFallback.ts"
     },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",

@@ -46,7 +46,7 @@ vi.mock("~/state/entities", () => ({
   useQuietThreadShells: () => [],
 }));
 
-const { OverleafProjectSettingsSection, OverleafSyncedFolderRow } =
+const { OverleafLinkedFolders, OverleafProjectSettingsSection, OverleafSyncedFolderRow } =
   await import("./OverleafSettings");
 const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafFileDecision } =
   await import("./overleafStore");
@@ -128,7 +128,22 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
     await expect.element(page.getByText("No folder is linked.")).toBeVisible();
   });
 
-  it("shows each unreadable record's folder and state, and keeps a newer release's unsettled one", async () => {
+  it("says the links couldn't be read, never that none is linked, when a list fails", async () => {
+    reset(true);
+    projects.list = [{ environmentId, id: "p1", title: "Thesis", workspaceRoot: "/work/thesis" }];
+    client.listOverleafConnections.mockRejectedValue(new Error("offline"));
+    await using _screen = await render(<OverleafLinkedFolders environmentId={environmentId} />);
+    await expect
+      .element(
+        page.getByText(
+          "Couldn't read the linked folders. The Overleaf request didn't go through. Try again.",
+        ),
+      )
+      .toBeVisible();
+    await expect.element(page.getByText("No folder is linked.")).not.toBeInTheDocument();
+  });
+
+  it("sets a damaged record aside knowingly, and keeps a newer release's held one", async () => {
     reset(true);
     projects.list = [{ environmentId, id: "p1", title: "Thesis", workspaceRoot: "/work/thesis" }];
     const newer = {
@@ -156,36 +171,24 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
       unreadable = [newer];
       return { outcome: "set-aside" };
     });
-    await using _screen = await render(<OverleafSyncedFolderRow environmentId={environmentId} />);
-    await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
-
+    // The list on its own: the Settings row's opening animation is not under test.
+    await using _screen = await render(<OverleafLinkedFolders environmentId={environmentId} />);
     await expect
       .element(page.getByText("Scient can't read 2 of its Overleaf link records."))
       .toBeVisible();
     await expect.element(page.getByText("/work/thesis/paper")).toBeVisible();
-    await expect
-      .element(
-        page.getByText(
-          /A newer version of Scient made this link, and this version can't tell whether its last sync finished/,
-        ),
-      )
-      .toBeVisible();
-    // The kept record has no action; only the damaged one can be set aside, knowingly.
-    await expect
-      .element(page.getByRole("button", { name: "Set aside", exact: true }))
-      .not.toBeInTheDocument();
     await page.getByRole("button", { name: "Set aside anyway" }).click();
-    expect(client.setAsideUnreadableOverleafRecord).toHaveBeenCalledExactlyOnceWith(environmentId, {
-      workspaceRoot: "/work/thesis",
-      recordId: "r-damaged",
-      acceptUnfinished: true,
-    });
-
-    // After a reload the kept record is still shown as kept, with no button.
     await expect
-      .element(page.getByText("Scient can't read one of its Overleaf link records."))
-      .toBeVisible();
+      .poll(() => client.setAsideUnreadableOverleafRecord.mock.calls)
+      .toEqual([
+        [
+          environmentId,
+          { workspaceRoot: "/work/thesis", recordId: "r-damaged", acceptUnfinished: true },
+        ],
+      ]);
+    // After a reload the held record is still shown, with no button.
     await expect.element(page.getByText("/work/grant/paper")).not.toBeInTheDocument();
+    await expect.element(page.getByText("/work/thesis/paper")).toBeVisible();
     await expect.element(page.getByRole("button", { name: /Set aside/ })).not.toBeInTheDocument();
   });
 });

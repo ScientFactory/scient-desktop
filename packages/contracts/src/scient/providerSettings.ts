@@ -104,8 +104,17 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
           providerSettingsForm: { control: "switch" },
         }),
       ),
+      imageGeneration: Schema.Boolean.pipe(
+        Schema.withDecodingDefault(Effect.succeed(true)),
+        Schema.annotateKey({
+          title: "Image generation",
+          description:
+            "Lets Scient Agent make and edit pictures, such as figures and diagrams, with a signed-in ChatGPT or Google Antigravity account. It uses that account's quota.",
+          providerSettingsForm: { control: "switch" },
+        }),
+      ),
     },
-    { order: ["binaryPath", "computerControl"] },
+    { order: ["binaryPath", "computerControl", "imageGeneration"] },
   );
 
   const DroidSettings = makeProviderSettingsSchema(

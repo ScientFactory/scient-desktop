@@ -412,6 +412,7 @@ jobs:
             scripts/lib/cli-external-packages.ts \
             scripts/lib/managed-runtime-live-tests.ts \
             scripts/lib/public-config.ts \
+            scripts/lib/tagged-source-version.ts \
             apps/server/package.json \
             apps/server/src/testUtils \
             packages/effect-acp \
@@ -555,6 +556,7 @@ jobs:
             scripts/lib/cli-external-packages.ts \
             scripts/lib/managed-runtime-live-tests.ts \
             scripts/lib/public-config.ts \
+            scripts/lib/tagged-source-version.ts \
             apps/server/src/provider/pi \
             apps/server/src/customModels.ts \
             apps/server/src/customModelCapabilities.ts \

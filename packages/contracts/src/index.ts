@@ -168,6 +168,9 @@ export * from "./scientPdfEdits.ts";
 // SCIENT-FORK:START — Scient editor flush contracts (new file, no upstream edits).
 export * from "./scient/editorFlush.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Agent live voice contracts (new file, no upstream edits).
+export * from "./scient/liveVoice.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
 export * from "./scient/workspaceEntryChanges.ts";
 // SCIENT-FORK:END

@@ -59,6 +59,10 @@ function markdownDestination(src: string): string {
   return `<${escaped}>`;
 }
 
+function parseImageDimension(value: string | number | undefined): number {
+  return Number(typeof value === "string" ? value.trim().replace(/px$/i, "") : value);
+}
+
 /**
  * `maxHeightRem` folds a height cap into the width bound: `max-height` alone
  * would not feed back through `aspect-ratio` once `width` is definite, so a
@@ -69,8 +73,8 @@ export function authoredImageSizeStyle(
   height: string | number | undefined,
   maxHeightRem = 30,
 ): CSSProperties | undefined {
-  const parsedWidth = Number(width);
-  const parsedHeight = Number(height);
+  const parsedWidth = parseImageDimension(width);
+  const parsedHeight = parseImageDimension(height);
   const hasWidth = Number.isFinite(parsedWidth) && parsedWidth > 0;
   const hasHeight = Number.isFinite(parsedHeight) && parsedHeight > 0;
   if (hasWidth && hasHeight) {
@@ -329,19 +333,75 @@ export function ChatMarkdownVideo(props: {
   );
 }
 
+type ChatMarkdownAssetResource = Extract<
+  AssetResource,
+  {
+    readonly _tag:
+      | "attachment"
+      | "workspace-file"
+      | "media-file"
+      | typeof SOURCE_CONTROL_MEDIA_ASSET
+      | "tool-output-image";
+  }
+>;
+
+export function assetMediaActionsSource(input: {
+  readonly environmentId: EnvironmentId;
+  readonly resource: ChatMarkdownAssetResource;
+  readonly kind: "image" | "video";
+  readonly name: string;
+  readonly src: string | null;
+  readonly workspaceRoot?: string | undefined;
+  readonly originalUrl?: string | undefined;
+  readonly downloadable?: boolean | undefined;
+}): MediaActionSource {
+  const { environmentId, resource } = input;
+  // SCIENT-FORK:START — rooted file resources retain literal path identity.
+  const path =
+    resource._tag === "media-file"
+      ? resource.path
+      : resource._tag === "workspace-file"
+        ? resource.path && isAbsolutePath(resource.path)
+          ? resource.path
+          : resource.cwd && resource.relativePath
+            ? `${resource.cwd.replace(/[\\/]+$/, "")}/${resource.relativePath.replace(/^[\\/]+/, "")}`
+            : resource.path && input.workspaceRoot
+              ? `${input.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path.replace(/^[\\/]+/, "")}`
+              : resource.path
+        : undefined;
+  // SCIENT-FORK:END
+  const reference = path
+    ? mediaFileReference(path, input.workspaceRoot)
+    : input.originalUrl
+      ? mediaUrlReference(input.originalUrl)
+      : undefined;
+  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
+  // SCIENT-FORK:START — a workspace image card's resource may have no thread.
+  const threadId =
+    resource._tag === "workspace-file" || resource._tag === "media-file"
+      ? resource.threadId
+      : undefined;
+  // SCIENT-FORK:END
+  return {
+    kind: input.kind,
+    name: input.name,
+    src: input.src,
+    ...(input.downloadable === false ? {} : { asset: { environmentId, resource } }),
+    ...(reference ? { reference } : {}),
+    // SCIENT-FORK:START — a workspace image card's resource may have no thread.
+    ...(relativePath && threadId
+      ? {
+          onOpenFile: () =>
+            useRightPanelStore.getState().openFile({ environmentId, threadId }, relativePath),
+        }
+      : {}),
+    // SCIENT-FORK:END
+  };
+}
+
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
-  readonly resource: Extract<
-    AssetResource,
-    {
-      readonly _tag:
-        | "attachment"
-        | "workspace-file"
-        | "media-file"
-        | typeof SOURCE_CONTROL_MEDIA_ASSET
-        | "tool-output-image";
-    }
-  >;
+  readonly resource: ChatMarkdownAssetResource;
   readonly kind?: "image" | "video";
   readonly alt: string;
   readonly copyMarkdown?: string;
@@ -379,32 +439,6 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   // SCIENT-FORK:START — reopening retries a cached failure; a cached URL is kept.
   useRetryCachedAssetFailure(assetUrl);
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — rooted file resources retain literal path identity.
-  const path =
-    resource._tag === "media-file"
-      ? resource.path
-      : resource._tag === "workspace-file"
-        ? resource.path && isAbsolutePath(resource.path)
-          ? resource.path
-          : resource.cwd && resource.relativePath
-            ? `${resource.cwd.replace(/[\\/]+$/, "")}/${resource.relativePath.replace(/^[\\/]+/, "")}`
-            : resource.path && props.workspaceRoot
-              ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path.replace(/^[\\/]+/, "")}`
-              : resource.path
-        : undefined;
-  // SCIENT-FORK:END
-  const reference = path
-    ? mediaFileReference(path, props.workspaceRoot)
-    : props.originalUrl
-      ? mediaUrlReference(props.originalUrl)
-      : undefined;
-  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
-  // SCIENT-FORK:START — a workspace image card's resource may have no thread.
-  const threadId =
-    resource._tag === "workspace-file" || resource._tag === "media-file"
-      ? resource.threadId
-      : undefined;
-  // SCIENT-FORK:END
   // SCIENT-FORK:START — an unsignable web asset becomes a link card, not a direct fetch
   if (assetUrl._tag === "Failure" && props.failureFallback !== undefined) {
     return props.failureFallback;
@@ -426,25 +460,16 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : maxHeightRem !== 30
         ? { maxHeight: `${maxHeightRem}rem` }
         : undefined);
-  const actionsSource: MediaActionSource = {
+  const actionsSource = assetMediaActionsSource({
+    environmentId: props.environmentId,
+    resource,
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
     src,
-    ...(fallbackSrc === undefined
-      ? { asset: { environmentId: props.environmentId, resource } }
-      : {}),
-    ...(reference ? { reference } : {}),
-    // SCIENT-FORK:START — a workspace image card's resource may have no thread.
-    ...(relativePath && threadId
-      ? {
-          onOpenFile: () =>
-            useRightPanelStore
-              .getState()
-              .openFile({ environmentId: props.environmentId, threadId }, relativePath),
-        }
-      : {}),
-    // SCIENT-FORK:END
-  };
+    workspaceRoot: props.workspaceRoot,
+    originalUrl: props.originalUrl,
+    downloadable: fallbackSrc === undefined,
+  });
 
   if (props.kind === "video") {
     return (

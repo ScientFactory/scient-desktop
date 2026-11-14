@@ -3071,20 +3071,6 @@ describe("Codex restored CommandStop", () => {
           },
         },
         {
-          type: "expect_outbound",
-          label: "thread/backgroundTerminals/terminate/two",
-          frame: {
-            id: 6,
-            method: "thread/backgroundTerminals/terminate",
-            params: { threadId: INTERRUPT_NATIVE_THREAD, processId: "57681" },
-          },
-        },
-        {
-          type: "emit_inbound",
-          label: "thread/backgroundTerminals/terminate/two",
-          frame: { id: 6, result: { terminated: true } },
-        },
-        {
           type: "emit_inbound",
           label: "turn/completed/late",
           afterMs: 20_000,
@@ -3098,6 +3084,20 @@ describe("Codex restored CommandStop", () => {
               }),
             },
           },
+        },
+        {
+          type: "expect_outbound",
+          label: "thread/backgroundTerminals/terminate/two",
+          frame: {
+            id: 6,
+            method: "thread/backgroundTerminals/terminate",
+            params: { threadId: INTERRUPT_NATIVE_THREAD, processId: "57681" },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "thread/backgroundTerminals/terminate/two",
+          frame: { id: 6, result: { terminated: true } },
         },
         {
           type: "emit_inbound",
@@ -3136,115 +3136,136 @@ describe("Codex restored CommandStop", () => {
     });
     // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
-    it.effect("bounds interrupt settlement and drops late completion events", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const harness = yield* makeCodexReplayHarness(interruptTimeoutTranscript);
-          const now = yield* DateTime.now;
+    it.effect(
+      "keeps an unconfirmed Stop open until Codex completes it and drops later frames",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const harness = yield* makeCodexReplayHarness(interruptTimeoutTranscript);
+            const now = yield* DateTime.now;
 
-          yield* harness.runtime.startTurn(
-            makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make("attempt-codex-interrupt-timeout"),
-              text: INTERRUPT_PROMPT,
-            }),
-          );
-          yield* awaitUntil(
-            () =>
-              harness.events.filter(
+            yield* harness.runtime.startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make("attempt-codex-interrupt-timeout"),
+                text: INTERRUPT_PROMPT,
+              }),
+            );
+            yield* awaitUntil(
+              () =>
+                harness.events.filter(
+                  (event) =>
+                    event.type === "turn_item.updated" &&
+                    event.turnItem.type === "command_execution" &&
+                    event.turnItem.status === "running",
+                ).length === 1,
+              "running command item",
+            );
+            const providerTurnId = harness.events.find(
+              (
+                event,
+              ): event is Extract<ProviderAdapterV2Event, { type: "provider_turn.updated" }> =>
+                event.type === "provider_turn.updated",
+            )?.providerTurn.id;
+            assert.isDefined(providerTurnId);
+
+            const interruptFiber = yield* harness.runtime
+              .interruptTurn({
+                providerThread: harness.providerThread,
+                providerTurnId,
+              })
+              .pipe(Effect.result, Effect.forkScoped);
+            yield* awaitUntil(
+              () =>
+                harness.events.filter(
+                  (event) =>
+                    event.type === "turn_item.updated" &&
+                    event.turnItem.type === "command_execution" &&
+                    event.turnItem.status === "running",
+                ).length === 2,
+              "post-interrupt running command item",
+            );
+
+            yield* TestClock.adjust("10 seconds");
+            const stopped = yield* Fiber.join(interruptFiber);
+            assert.equal(
+              stopped._tag === "Failure" ? stopped.failure._tag : "confirmed",
+              "ProviderAdapterInterruptTimeoutError",
+            );
+            assert.deepEqual(harness.terminalEvents(), []);
+            assert.isFalse(
+              harness.events.some(
                 (event) =>
-                  event.type === "turn_item.updated" &&
-                  event.turnItem.type === "command_execution" &&
-                  event.turnItem.status === "running",
-              ).length === 1,
-            "running command item",
-          );
-          const providerTurnId = harness.events.find(
-            (event): event is Extract<ProviderAdapterV2Event, { type: "provider_turn.updated" }> =>
-              event.type === "provider_turn.updated",
-          )?.providerTurn.id;
-          assert.isDefined(providerTurnId);
-
-          const interruptFiber = yield* harness.runtime
-            .interruptTurn({
-              providerThread: harness.providerThread,
-              providerTurnId,
-            })
-            .pipe(Effect.forkScoped);
-          yield* awaitUntil(
-            () =>
-              harness.events.filter(
-                (event) =>
-                  event.type === "turn_item.updated" &&
-                  event.turnItem.type === "command_execution" &&
-                  event.turnItem.status === "running",
-              ).length === 2,
-            "post-interrupt running command item",
-          );
-
-          yield* TestClock.adjust("10 seconds");
-          yield* Fiber.join(interruptFiber);
-          yield* awaitUntil(() => harness.terminalEvents().length === 1, "timeout terminal");
-          assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
-          const terminalProviderTurnsBeforeLateEvents = harness.events.filter(
-            (event) =>
-              event.type === "provider_turn.updated" && event.providerTurn.status === "interrupted",
-          );
-          assert.lengthOf(terminalProviderTurnsBeforeLateEvents, 1);
-
-          const commandUpdatesBeforeLateEvents = harness.events.filter(
-            (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
-              event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
-          );
-          const terminalCommands = commandUpdatesBeforeLateEvents.filter(
-            (event) =>
-              event.turnItem.status === "interrupted" &&
-              event.turnItem.nativeItemRef?.nativeId !== INTERRUPT_TIMEOUT_BOUNDARY_ITEM,
-          );
-          assert.lengthOf(terminalCommands, 2);
-          const boundaryUpdates = commandUpdatesBeforeLateEvents.filter(
-            (event) => event.turnItem.nativeItemRef?.nativeId === INTERRUPT_TIMEOUT_BOUNDARY_ITEM,
-          );
-          const lastBoundaryUpdate = boundaryUpdates.at(-1);
-          assert.isDefined(lastBoundaryUpdate);
-          assert.equal(lastBoundaryUpdate.turnItem.status, "interrupted");
-          assert.isFalse(yield* harness.hasPendingBackgroundWork);
-
-          yield* TestClock.adjust("20 seconds");
-          for (let attempt = 0; attempt < 100; attempt++) {
-            yield* Effect.yieldNow;
-          }
-          assert.lengthOf(harness.terminalEvents(), 1);
-          assert.lengthOf(
-            harness.events.filter(
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.status === "interrupted",
+              ),
+            );
+            yield* TestClock.adjust("20 seconds");
+            yield* awaitUntil(
+              () => harness.terminalEvents().length === 1,
+              "Codex completion terminal",
+            );
+            assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+            const terminalProviderTurnsBeforeLateEvents = harness.events.filter(
               (event) =>
                 event.type === "provider_turn.updated" &&
                 event.providerTurn.status === "interrupted",
-            ),
-            terminalProviderTurnsBeforeLateEvents.length,
-            "late completion must not duplicate provider-turn finalization",
-          );
-          assert.lengthOf(
-            harness.events.filter(
-              (event) =>
+            );
+            assert.lengthOf(terminalProviderTurnsBeforeLateEvents, 1);
+
+            const commandUpdatesBeforeLateEvents = harness.events.filter(
+              (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
                 event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
-            ),
-            commandUpdatesBeforeLateEvents.length,
-            "late starts and completions must not project after timeout",
-          );
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              IdAllocator.layer,
-              NodeServices.layer,
-              NodeCrypto.layer,
-              McpProviderSessions.layer,
+            );
+            const terminalCommands = commandUpdatesBeforeLateEvents.filter(
+              (event) =>
+                event.turnItem.status === "interrupted" &&
+                event.turnItem.nativeItemRef?.nativeId !== INTERRUPT_TIMEOUT_BOUNDARY_ITEM,
+            );
+            assert.lengthOf(terminalCommands, 2);
+            const boundaryUpdates = commandUpdatesBeforeLateEvents.filter(
+              (event) => event.turnItem.nativeItemRef?.nativeId === INTERRUPT_TIMEOUT_BOUNDARY_ITEM,
+            );
+            const lastBoundaryUpdate = boundaryUpdates.at(-1);
+            assert.isDefined(lastBoundaryUpdate);
+            assert.equal(lastBoundaryUpdate.turnItem.status, "interrupted");
+            assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+            yield* TestClock.adjust("20 seconds");
+            for (let attempt = 0; attempt < 100; attempt++) {
+              yield* Effect.yieldNow;
+            }
+            assert.lengthOf(harness.terminalEvents(), 1);
+            assert.lengthOf(
+              harness.events.filter(
+                (event) =>
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.status === "interrupted",
+              ),
+              terminalProviderTurnsBeforeLateEvents.length,
+              "late completion must not duplicate provider-turn finalization",
+            );
+            assert.lengthOf(
+              harness.events.filter(
+                (event) =>
+                  event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+              ),
+              commandUpdatesBeforeLateEvents.length,
+              "late starts and completions must not project after timeout",
+            );
+          }).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                IdAllocator.layer,
+                NodeServices.layer,
+                NodeCrypto.layer,
+                McpProviderSessions.layer,
+              ),
             ),
           ),
         ),
-      ),
     );
 
     const interruptTerminationFailureTranscript = makeCodexReplayTranscript({
@@ -3666,11 +3687,18 @@ describe("Codex restored DescendantStop", () => {
             },
           },
         },
+        ...interruptSubagentCommandTranscript.entries
+          .slice(childTerminationResponseIndex + 1)
+          .map((entry) =>
+            entry.type === "emit_inbound" && entry.label === "turn/completed/root"
+              ? { ...entry, afterMs: 20_000 }
+              : entry,
+          ),
       ],
     });
     // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
-    it.effect("terminalizes timed-out descendants before the root", () =>
+    it.effect("keeps an unconfirmed Stop open then terminalizes descendants before the root", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeCodexReplayHarness(interruptSubagentTimeoutTranscript);
@@ -3704,7 +3732,7 @@ describe("Codex restored DescendantStop", () => {
 
           const interruptFiber = yield* harness.runtime
             .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
-            .pipe(Effect.forkScoped);
+            .pipe(Effect.result, Effect.forkScoped);
           yield* awaitUntil(
             () =>
               harness.events.some(
@@ -3718,13 +3746,53 @@ describe("Codex restored DescendantStop", () => {
             "child timeout boundary item",
           );
           yield* TestClock.adjust("10 seconds");
-          yield* Fiber.join(interruptFiber);
+          const stopped = yield* Fiber.join(interruptFiber);
+          assert.equal(
+            stopped._tag === "Failure" ? stopped.failure._tag : "confirmed",
+            "ProviderAdapterInterruptTimeoutError",
+          );
+          assert.deepEqual(harness.terminalEvents(), []);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.status === "interrupted",
+            ),
+          );
+          yield* TestClock.adjust("20 seconds");
 
           yield* awaitUntil(
             () => harness.terminalEvents().length === 1,
             "interrupted root terminal",
           );
           assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
+          yield* TestClock.adjust("1 second");
+          assert.lengthOf(harness.terminalEvents(), 1);
+          const interruptedTurns = harness.events.filter(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "interrupted",
+          );
+          assert.equal(
+            new Set(
+              interruptedTurns.map((event) =>
+                event.type === "provider_turn.updated" ? event.providerTurn.id : undefined,
+              ),
+            ).size,
+            interruptedTurns.length,
+            "late frames must not duplicate provider-turn finalization",
+          );
+          for (const nativeId of [
+            INTERRUPT_CHILD_COMMAND_ITEM,
+            INTERRUPT_CHILD_TIMEOUT_BOUNDARY_ITEM,
+          ]) {
+            const updates = harness.events.filter(
+              (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "command_execution" &&
+                event.turnItem.nativeItemRef?.nativeId === nativeId,
+            );
+            assert.equal(updates.at(-1)?.turnItem.status, "interrupted");
+          }
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(
@@ -3758,18 +3826,6 @@ describe("Codex restored DescendantStop", () => {
           },
         },
         {
-          type: "expect_outbound",
-          label: "turn/interrupt/late-child-1",
-          frame: {
-            id: 7,
-            method: "turn/interrupt",
-            params: {
-              threadId: INTERRUPT_CHILD_NATIVE_THREAD,
-              turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
-            },
-          },
-        },
-        {
           type: "emit_inbound",
           label: "turn/started/late-child-2",
           frame: {
@@ -3780,6 +3836,30 @@ describe("Codex restored DescendantStop", () => {
                 id: INTERRUPT_LATE_CHILD_2_NATIVE_TURN,
                 status: "inProgress",
               }),
+            },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "turn/completed/root",
+          afterMs: 20_000,
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: INTERRUPT_NATIVE_THREAD,
+              turn: makeCodexReplayTurn({ id: INTERRUPT_NATIVE_TURN, status: "interrupted" }),
+            },
+          },
+        },
+        {
+          type: "expect_outbound",
+          label: "turn/interrupt/late-child-1",
+          frame: {
+            id: 7,
+            method: "turn/interrupt",
+            params: {
+              threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+              turnId: INTERRUPT_LATE_CHILD_NATIVE_TURN,
             },
           },
         },
@@ -3805,7 +3885,7 @@ describe("Codex restored DescendantStop", () => {
           label: "turn/interrupt/late-child-2",
           frame: { id: 8, result: {} },
         },
-        { type: "runtime_exit", status: "success" },
+        ...interruptSubagentCommandTranscript.entries.slice(childTerminationResponseIndex + 2),
       ],
     });
     // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
@@ -3844,7 +3924,7 @@ describe("Codex restored DescendantStop", () => {
 
           const interruptFiber = yield* harness.runtime
             .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
-            .pipe(Effect.forkScoped);
+            .pipe(Effect.result, Effect.forkScoped);
           yield* awaitUntil(
             () =>
               harness.events.some(
@@ -3855,7 +3935,20 @@ describe("Codex restored DescendantStop", () => {
             "late child 1 provider turn",
           );
           yield* TestClock.adjust("10 seconds");
-          yield* Fiber.join(interruptFiber);
+          const stopped = yield* Fiber.join(interruptFiber);
+          assert.equal(
+            stopped._tag === "Failure" ? stopped.failure._tag : "confirmed",
+            "ProviderAdapterInterruptTimeoutError",
+          );
+          assert.deepEqual(harness.terminalEvents(), []);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.status === "interrupted",
+            ),
+          );
+          yield* TestClock.adjust("20 seconds");
 
           yield* awaitUntil(
             () => harness.terminalEvents().length === 1,
@@ -3899,6 +3992,30 @@ describe("Codex restored DescendantStop", () => {
             "late child 2 must terminalize before the root run",
           );
           assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
+          yield* TestClock.adjust("1 second");
+          assert.lengthOf(harness.terminalEvents(), 1);
+          const interruptedTurns = harness.events.filter(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "interrupted",
+          );
+          assert.equal(
+            new Set(
+              interruptedTurns.map((event) =>
+                event.type === "provider_turn.updated" ? event.providerTurn.id : undefined,
+              ),
+            ).size,
+            interruptedTurns.length,
+            "late frames must not duplicate provider-turn finalization",
+          );
+          for (const nativeId of [INTERRUPT_CHILD_COMMAND_ITEM]) {
+            const updates = harness.events.filter(
+              (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "command_execution" &&
+                event.turnItem.nativeItemRef?.nativeId === nativeId,
+            );
+            assert.equal(updates.at(-1)?.turnItem.status, "interrupted");
+          }
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(

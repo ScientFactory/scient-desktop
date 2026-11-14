@@ -53,6 +53,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "provider.lifecycle.completed",
   "provider.lifecycle.failed",
   "provider.lifecycle.cancelled",
+  "provider.runtime.first_pick",
   "project.added",
   "project.add.failed",
   "project.opened",
@@ -252,6 +253,9 @@ const LIFECYCLE_ACTIONS = new Set([
   "sign-out",
   "source-switch",
 ]);
+const LIFECYCLE_TRIGGERS = new Set(["user", "background"]);
+const DOWNLOAD_SOURCES = new Set(["primary", "fallback"]);
+const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
   "downloading",
@@ -344,6 +348,17 @@ const OPERATION_KINDS = new Set([
 ]);
 const TRIGGERS = new Set(["user", "agent", "automation", "other"]);
 const PROVIDER_STATES = new Set(["ready", "warning", "error", "disabled"]);
+const STATUS_CHECK_FAILURES = new Set([
+  "version_timeout",
+  "version_failed",
+  "start_failed",
+  "busy",
+  "command_timeout",
+  "command_failed",
+  "exit",
+  "parse",
+  "other",
+]);
 const DELIVERY_CLASSES = new Set([
   "idle",
   "delivered",
@@ -787,6 +802,23 @@ export function modelKey(model: unknown): string {
   return canonical === "" ? normalized : canonical;
 }
 
+function byteBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value === 0) return "0";
+  if (value < 10 * 1024 ** 2) return "under-10mb";
+  if (value < 50 * 1024 ** 2) return "10-50mb";
+  if (value < 100 * 1024 ** 2) return "50-100mb";
+  return "over-100mb";
+}
+
+function percentBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 25) return "0-24";
+  if (value < 50) return "25-49";
+  if (value < 75) return "50-74";
+  return "75-100";
+}
+
 export function durationBucket(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
   if (value < 1_000) return "under-1s";
@@ -914,6 +946,14 @@ function normalizeEvent(
           provider,
           from: normalizedEnum(property(input, "from"), PROVIDER_STATES),
           to: normalizedEnum(property(input, "to"), PROVIDER_STATES),
+          ...(property(input, "checkFailure") === undefined
+            ? {}
+            : {
+                checkFailure: normalizedEnum(
+                  property(input, "checkFailure"),
+                  STATUS_CHECK_FAILURES,
+                ),
+              }),
         },
       };
     case "provider.runtime.source.changed":
@@ -942,6 +982,28 @@ function normalizeEvent(
           stage: normalizedEnum(property(input, "stage"), LIFECYCLE_STAGES),
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
+          trigger: normalizedEnum(property(input, "trigger"), LIFECYCLE_TRIGGERS, "user"),
+          ...optionalProperties(input, {
+            attempt: "count",
+            downloadSource: DOWNLOAD_SOURCES,
+            compressed: "boolean",
+          }),
+          ...(property(input, "resumedBytes") === undefined
+            ? {}
+            : { resumedBucket: byteBucket(property(input, "resumedBytes")) }),
+        },
+      };
+    case "provider.runtime.first_pick":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider,
+          state: normalizedEnum(property(input, "state"), FIRST_PICK_STATES),
+          ...(property(input, "percent") === undefined
+            ? {}
+            : { percentBucket: percentBucket(property(input, "percent")) }),
         },
       };
     case "scient.operation.started":

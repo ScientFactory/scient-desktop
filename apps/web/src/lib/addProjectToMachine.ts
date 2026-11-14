@@ -26,6 +26,9 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
 const isWritableFilePath = Schema.is(ProjectWriteFileInput.fields.relativePath);
 
+/** The server lists at most this many ignored files, so one pick never exceeded it. */
+export const COPIED_FILES_MAX_COUNT = 200;
+
 function isCopyRelativePath(path: string): boolean {
   return (
     isWritableFilePath(path) &&

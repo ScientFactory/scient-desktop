@@ -1653,6 +1653,14 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
       },
     }),
+    observeProviderRuntimePick: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:observe-provider-runtime-pick",
+      tag: WS_METHODS.serverObserveProviderRuntimePick,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
     updateServer,
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",

@@ -16,6 +16,7 @@ import {
   OverleafGitExecutor,
   type OverleafGitExecuteInput,
   isRateLimited,
+  isRefusedBeforeSending,
   newOverleafId,
 } from "./OverleafGitExecutor.ts";
 import { type ManuscriptTreeProblem, manuscriptTreeProblem } from "./manuscriptPaths.ts";
@@ -283,6 +284,18 @@ export class OverleafRepository extends Context.Service<
       readonly limit: number;
     }) => Effect.Effect<
       ReadonlyArray<{ readonly commit: string; readonly tree: string }>,
+      OverleafRepositoryError | OverleafGitError
+    >;
+    /**
+     * The oldest commit after `after` on `head`'s first-parent line, with its tree and first
+     * parent; null when `head` is `after` or nothing follows it.
+     */
+    readonly firstAfter: (input: {
+      readonly repo: string;
+      readonly after: string;
+      readonly head: string;
+    }) => Effect.Effect<
+      { readonly commit: string; readonly tree: string; readonly parent: string | null } | null,
       OverleafRepositoryError | OverleafGitError
     >;
     /** Scient's own references, under `refs/scient/`, which keep snapshots alive: all are written or none. */
@@ -699,10 +712,10 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.map((result) => parsePushPorcelain(text(result.stdout), result.stderr)),
         // A timeout or a broken connection says nothing about what Overleaf did.
-        // A rate limit does: it refused the request before anything was sent.
+        // A rate limit or a refused advertisement does: nothing was sent.
         Effect.catchTags({
           OverleafGitError: (error) =>
-            isRateLimited(error)
+            isRateLimited(error) || isRefusedBeforeSending(error)
               ? Effect.fail(error)
               : Effect.succeed<PushOutcome>({
                   _tag: "unknown",
@@ -738,6 +751,30 @@ export const make = Effect.gen(function* () {
       out.push({ commit: commitId, tree });
     }
     return out;
+  });
+
+  const firstAfter: OverleafRepository["Service"]["firstAfter"] = Effect.fn(
+    "OverleafRepository.firstAfter",
+  )(function* (input) {
+    const result = yield* run(input.repo, [
+      "log",
+      "--first-parent",
+      "--reverse",
+      "--format=%H %T %P",
+      `${input.after}..${input.head}`,
+    ]);
+    const first = text(result.stdout).split("\n")[0] ?? "";
+    if (first === "") return null;
+    const [commit, tree, parent] = first.split(" ");
+    if (
+      commit === undefined ||
+      tree === undefined ||
+      !OID.test(commit) ||
+      !OID.test(tree) ||
+      (parent !== undefined && !OID.test(parent))
+    )
+      return yield* unreadable("git log returned an unreadable result");
+    return { commit, tree, parent: parent ?? null };
   });
 
   const setRefs: OverleafRepository["Service"]["setRefs"] = Effect.fn("OverleafRepository.setRefs")(
@@ -803,6 +840,7 @@ export const make = Effect.gen(function* () {
     push,
     isAncestor,
     treesSince,
+    firstAfter,
     setRefs,
     readRef,
     deleteRef,

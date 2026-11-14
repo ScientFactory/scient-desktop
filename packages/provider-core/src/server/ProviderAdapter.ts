@@ -48,6 +48,10 @@ import type {
 import type { ScientTextSnapshotRuntime } from "./scientTextSnapshots.ts";
 export * from "./scientTextSnapshots.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Agent live voice lives in a Scient module.
+import type { ScientLiveVoiceRuntime } from "./scientLiveVoice.ts";
+export * from "./scientLiveVoice.ts";
+// SCIENT-FORK:END
 
 export const ProviderAdapterV2RuntimePolicy = OrchestrationV2ProviderRuntimePolicy;
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
@@ -444,6 +448,8 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    /** Set when T3 closed the session because this thread detached from it, not the provider. */
+    detachedThreadId: Schema.optional(ThreadId),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -542,6 +548,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly rootNodeId: NodeId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly message: ProviderAdapterV2TurnMessage;
+  /** Leading characters of `message.text` that are inline handoff context, not the user's words. */
+  readonly inlineContextLength?: number;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   /** Recheck after native preparation and immediately before the prompt write. */
@@ -833,6 +841,9 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
   }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
   /** Absent means non-interactive apps with plain tool rows. */
   readonly mcpApps?: ProviderAdapterV2McpApps;
+  // SCIENT-FORK:START — a spoken conversation with the running session; absent means none.
+  readonly liveVoice?: ScientLiveVoiceRuntime;
+  // SCIENT-FORK:END
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

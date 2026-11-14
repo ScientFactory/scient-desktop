@@ -23,6 +23,7 @@ import * as ManagedRuntimeCatalog from "./ManagedRuntimeCatalog.ts";
 import { reconcileManagedRuntimeProviders } from "./ManagedRuntimeCatalogReconciler.ts";
 import type * as ProviderConnectionManager from "./ProviderConnectionManager.ts";
 import type * as ProviderRuntimeManager from "./ProviderRuntimeManager.ts";
+import type { ScientAgentBackgroundRuntime } from "./ScientAgentBackgroundRuntime.ts";
 
 const hasAuthorizationMaterial = (
   operation: ProviderConnectionOperation | null | undefined,
@@ -129,9 +130,11 @@ export const makeProviderConnectionRpcHandlers = ({
   observeRpcEffect,
   providerConnectionManager,
   providerRuntimeManager,
+  scientAgentBackground,
 }: Pick<ScientRpcObservers, "observeRpcEffect"> & {
   readonly providerConnectionManager: ProviderConnectionManager.ProviderConnectionManager["Service"];
   readonly providerRuntimeManager: ProviderRuntimeManager.ProviderRuntimeManager["Service"];
+  readonly scientAgentBackground: ScientAgentBackgroundRuntime["Service"];
 }) =>
   ({
     [WS_METHODS.serverStartProviderConnection]: (input) =>
@@ -178,6 +181,12 @@ export const makeProviderConnectionRpcHandlers = ({
         providerRuntimeManager.cancel(input),
         { "rpc.aggregate": "server" },
       ),
+    [WS_METHODS.serverObserveProviderRuntimePick]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.serverObserveProviderRuntimePick,
+        scientAgentBackground.observePick(input.instanceId),
+        { "rpc.aggregate": "server" },
+      ),
   }) satisfies ScientRpcHandlerSubset<
     typeof WsServerManagementRpcGroup,
     | typeof WS_METHODS.serverStartProviderConnection
@@ -188,4 +197,5 @@ export const makeProviderConnectionRpcHandlers = ({
     | typeof WS_METHODS.serverPlanProviderRuntime
     | typeof WS_METHODS.serverStartProviderRuntime
     | typeof WS_METHODS.serverCancelProviderRuntime
+    | typeof WS_METHODS.serverObserveProviderRuntimePick
   >;

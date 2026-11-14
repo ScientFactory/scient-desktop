@@ -869,6 +869,7 @@
         "stage": "unknown",
         "failureClass": "unknown",
         "durationBucket": "unknown",
+        "trigger": "user",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -886,6 +887,11 @@
         "stage": "downloading",
         "failureClass": "permission",
         "durationBucket": "5-15s",
+        "trigger": "agent",
+        "attempt": 2,
+        "downloadSource": "fallback",
+        "compressed": true,
+        "resumedBucket": "10-50mb",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -903,6 +909,7 @@
         "stage": "unknown",
         "failureClass": "unknown",
         "durationBucket": "unknown",
+        "trigger": "user",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -920,6 +927,11 @@
         "stage": "downloading",
         "failureClass": "permission",
         "durationBucket": "5-15s",
+        "trigger": "agent",
+        "attempt": 2,
+        "downloadSource": "fallback",
+        "compressed": true,
+        "resumedBucket": "10-50mb",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -937,6 +949,7 @@
         "stage": "unknown",
         "failureClass": "unknown",
         "durationBucket": "unknown",
+        "trigger": "user",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -954,6 +967,11 @@
         "stage": "downloading",
         "failureClass": "permission",
         "durationBucket": "5-15s",
+        "trigger": "agent",
+        "attempt": 2,
+        "downloadSource": "fallback",
+        "compressed": true,
+        "resumedBucket": "10-50mb",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -971,6 +989,7 @@
         "stage": "unknown",
         "failureClass": "unknown",
         "durationBucket": "unknown",
+        "trigger": "user",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -988,6 +1007,38 @@
         "stage": "downloading",
         "failureClass": "permission",
         "durationBucket": "5-15s",
+        "trigger": "agent",
+        "attempt": 2,
+        "downloadSource": "fallback",
+        "compressed": true,
+        "resumedBucket": "10-50mb",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "provider.runtime.first_pick:fallbacks",
+      "name": "provider.runtime.first_pick",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "provider": "other",
+        "state": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "provider.runtime.first_pick:representative",
+      "name": "provider.runtime.first_pick",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "provider": "antigravity",
+        "state": "ready",
+        "percentBucket": "50-74",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -2410,6 +2461,11 @@
         "stage": "downloading",
         "failureClass": "permission",
         "durationBucket": "5-15s",
+        "trigger": "agent",
+        "attempt": 2,
+        "downloadSource": "fallback",
+        "compressed": true,
+        "resumedBucket": "10-50mb",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -2514,6 +2570,11 @@
         "stage": "downloading",
         "failureClass": "permission",
         "durationBucket": "5-15s",
+        "trigger": "agent",
+        "attempt": 2,
+        "downloadSource": "fallback",
+        "compressed": true,
+        "resumedBucket": "10-50mb",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -2618,6 +2679,11 @@
         "stage": "downloading",
         "failureClass": "permission",
         "durationBucket": "5-15s",
+        "trigger": "agent",
+        "attempt": 2,
+        "downloadSource": "fallback",
+        "compressed": true,
+        "resumedBucket": "10-50mb",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
@@ -2722,6 +2788,11 @@
         "stage": "downloading",
         "failureClass": "permission",
         "durationBucket": "5-15s",
+        "trigger": "agent",
+        "attempt": 2,
+        "downloadSource": "fallback",
+        "compressed": true,
+        "resumedBucket": "10-50mb",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"

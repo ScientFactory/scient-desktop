@@ -51,6 +51,7 @@ function Row({
         onBack={vi.fn()}
         onForward={vi.fn()}
         onRefresh={vi.fn()}
+        onStopLoading={vi.fn()}
         onSubmit={onSubmit}
       />
     </>

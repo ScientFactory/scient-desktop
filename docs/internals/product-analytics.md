@@ -301,6 +301,13 @@ count user turns.
 
 Scient Agent uses the existing installation observations, installed-state
 changes, lifecycle operations, submissions, terminal outcomes and token usage.
+`provider.lifecycle.*` says who started a runtime change (`trigger`: `user` or
+`background`), the background `attempt`, and for a finished download
+`resumedBucket`, `downloadSource` (`primary` is Scient's copy) and `compressed`.
+`provider.runtime.first_pick` is sent once per installation when the user first
+picks Scient Agent in the composer: `state` is `ready`, `in_progress` (with
+`percentBucket`), `failed` or `not_started`. Its `ready` share is the headline
+for background installs.
 Latest observed installed profiles, successful install operations, and profiles
 that submitted prompts are separate measures, not unique people or all-time
 installation totals. The gateway's `analytics:insights` report exposes these

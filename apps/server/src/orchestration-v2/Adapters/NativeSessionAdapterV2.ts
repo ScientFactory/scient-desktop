@@ -98,6 +98,17 @@ export type NativeSubagentStep =
     }
   | { readonly kind: "notice"; readonly id: string; readonly message: string };
 
+/** SCIENT-FORK: a tool call shown as the typed row Codex and Claude produce, not a generic one. */
+type NativeToolRowItem = Extract<
+  OrchestrationV2TurnItem,
+  { readonly type: "command_execution" | "file_change" | "web_search" }
+>;
+export type NativeToolRow = NativeToolRowItem extends infer Item
+  ? Item extends NativeToolRowItem
+    ? Omit<Item, Exclude<keyof Item, "type"> & keyof OrchestrationV2TurnItem>
+    : never
+  : never;
+
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
   | {
@@ -116,6 +127,8 @@ export type NativeSessionUpdate =
   | { readonly type: "accepted"; readonly nativeTurnId: string }
   | { readonly type: "offered"; readonly nativeTurnId: string }
   | { readonly type: "rejected"; readonly nativeTurnId: string }
+  /** SCIENT-FORK: the native conversation entry the running turn's message became. */
+  | { readonly type: "turn-entry"; readonly entryId: string }
   | {
       readonly type: "text";
       readonly id: string;
@@ -148,6 +161,7 @@ export type NativeSessionUpdate =
       readonly toolSource?: ToolActivitySource;
       readonly toolIcon?: ToolActivityIcon;
       readonly permissionsNeeded?: ReadonlyArray<ToolHostPermission>;
+      readonly row?: NativeToolRow;
     }
   | {
       readonly type: "subagent";
@@ -257,6 +271,16 @@ export interface NativeSession {
     input: ProviderAdapter.ProviderAdapterV2SteerInput,
     validateOwner?: () => Effect.Effect<void, NativeSessionOperationError>,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /**
+   * SCIENT-FORK: moves the conversation to just before the message `entryId` recorded
+   * (a `turn-entry`), and returns where the conversation now lives.
+   */
+  readonly rewindBefore?: (
+    entryId: string,
+  ) => Effect.Effect<
+    { readonly nativeId: string; readonly resumeCursor?: unknown },
+    NativeSessionOperationError
+  >;
   // SCIENT-FORK: compaction uses the same turn ownership and receipt path as send.
   readonly compact?: NativeSession["send"];
   // SCIENT-FORK: child cancellation never uses the parent interrupt path.
@@ -265,6 +289,8 @@ export interface NativeSession {
   ) => Effect.Effect<void, NativeSessionOperationError>;
   /** The user's likely next message after a completed turn; null when the agent has no guess. */
   readonly predictNextMessage?: Effect.Effect<string | null, NativeSessionOperationError>;
+  // SCIENT-FORK: a spoken conversation with this session; see ScientLiveVoiceRuntime.
+  readonly liveVoice?: ProviderAdapter.ScientLiveVoiceRuntime;
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
   // SCIENT-FORK:START — bounded graceful Stop can still require destructive fallback.
@@ -875,6 +901,7 @@ export function makeNativeSessionAdapterV2(
                 update.type === "accepted" ||
                 update.type === "offered" ||
                 update.type === "rejected" ||
+                update.type === "turn-entry" ||
                 update.type === "question-resolved" ||
                 update.type === "native-thread" ||
                 (update.type === "model" &&
@@ -920,6 +947,21 @@ export function makeNativeSessionAdapterV2(
                     driver,
                     threadId: running.input.threadId,
                     providerTurn: running.turn,
+                  });
+                  return;
+                }
+                if (update.type === "turn-entry") {
+                  if (active === undefined) return;
+                  active.turn = {
+                    ...active.turn,
+                    nativeTurnRef: ref(update.entryId),
+                  };
+                  turns.set(active.turn.id, active.turn);
+                  yield* emit({
+                    type: "provider_turn.updated",
+                    driver,
+                    threadId: active.input.threadId,
+                    providerTurn: active.turn,
                   });
                   return;
                 }
@@ -1376,6 +1418,18 @@ export function makeNativeSessionAdapterV2(
                   } else if (content.type === "compaction")
                     item = { ...common, ...content, driver };
                   else item = { ...common, ...content };
+                } else if (update.type === "tool" && update.row !== undefined) {
+                  // SCIENT-FORK: typed tool rows.
+                  item = {
+                    ...base,
+                    ...update.row,
+                    title: update.title ?? null,
+                    status:
+                      running.interrupted && update.status === "failed"
+                        ? "interrupted"
+                        : update.status,
+                    completedAt: update.status === "running" ? null : now,
+                  };
                 } else if (update.type === "tool") {
                   const images = update.images ?? [];
                   item = {
@@ -1669,7 +1723,10 @@ export function makeNativeSessionAdapterV2(
                           ? "approval_request"
                           : item.type === "user_input_request"
                             ? "user_input_request"
-                            : item.type === "dynamic_tool"
+                            : item.type === "dynamic_tool" ||
+                                item.type === "command_execution" ||
+                                item.type === "file_change" ||
+                                item.type === "web_search"
                               ? "tool_call"
                               : item.type === "subagent"
                                 ? "subagent"
@@ -1775,6 +1832,54 @@ export function makeNativeSessionAdapterV2(
           yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
           return thread;
         });
+        // SCIENT-FORK:START — the first later turn's message is where the kept conversation ends.
+        const rewind = Effect.fn("NativeSessionAdapterV2.rewind")(function* (
+          rewindBefore: NonNullable<NativeSession["rewindBefore"]>,
+          request: ProviderAdapter.ProviderAdapterV2RollbackThreadInput,
+        ) {
+          if (active) return yield* protocolError("A running turn cannot be rewound.");
+          // A rewind whose file restore failed left this process on its new file; a retry
+          // starts again from the conversation Scient still has on record.
+          if (
+            thread?.id !== request.providerThread.id ||
+            thread.nativeThreadRef?.nativeId !== request.providerThread.nativeThreadRef?.nativeId
+          ) {
+            const nativeId = request.providerThread.nativeThreadRef?.nativeId;
+            if (!nativeId) return yield* protocolError("The native thread reference is missing.");
+            yield* native.resume(nativeId, request.providerThread.nativeMetadata?.resumeCursor);
+            yield* register(
+              request.providerThread.appThreadId ?? input.threadId,
+              request.providerThread,
+            );
+          }
+          const kept =
+            request.target.type === "thread_start" ? 0 : request.target.providerTurn.ordinal;
+          const boundary = request.providerThreadTurns
+            .filter((turn) => turn.ordinal > kept)
+            .sort((a, b) => a.ordinal - b.ordinal)[0];
+          if (boundary !== undefined) {
+            const entry = boundary.nativeTurnRef;
+            if (entry?.strength !== "strong" || !entry.nativeId)
+              return yield* protocolError(
+                "This conversation was recorded before Scient could rewind it here. Fork it instead.",
+              );
+            const moved = yield* rewindBefore(entry.nativeId);
+            // Unpublished: the rollback service records it once the files are restored too.
+            thread = {
+              ...thread!,
+              nativeThreadRef: ref(moved.nativeId),
+              nativeMetadata: { ...thread!.nativeMetadata, resumeCursor: moved.resumeCursor },
+              updatedAt: yield* DateTime.now,
+            };
+          }
+          return {
+            providerThread: thread!,
+            providerTurns: [...turns.values()],
+            messages: [...messages.values()],
+            runtimeRequests: [...requests.values()].map((entry) => entry.request),
+          };
+        });
+        // SCIENT-FORK:END
         const steer = native.steer;
         const compact = native.compact;
         const startTurn = Effect.fn("NativeSessionAdapterV2.startTurn")(
@@ -1901,6 +2006,8 @@ export function makeNativeSessionAdapterV2(
           ...(native.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: native.getModelContextWindow }),
+          // SCIENT-FORK: live voice passes straight through to the session owner.
+          ...(native.liveVoice === undefined ? {} : { liveVoice: native.liveVoice }),
           ...(options.eventQueueStorage ? { eventConsumer: events.consumer } : {}),
           events: events.events.pipe(
             Stream.mapError(
@@ -2236,14 +2343,28 @@ export function makeNativeSessionAdapterV2(
                     cause: "The native protocol does not expose conversation history.",
                   }),
                 ),
+          // SCIENT-FORK:START — rewind through the native conversation tree.
           rollbackThread: (request) =>
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                driver,
-                providerThreadId: request.providerThread.id,
-                cause: "The native protocol does not expose conversation rollback.",
-              }),
-            ),
+            native.rewindBefore === undefined
+              ? Effect.fail(
+                  new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                    driver,
+                    providerThreadId: request.providerThread.id,
+                    cause: "The native protocol does not expose conversation rollback.",
+                  }),
+                )
+              : rewind(native.rewindBefore, request).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                        driver,
+                        providerThreadId: request.providerThread.id,
+                        checkpointId: request.target.checkpointId,
+                        cause,
+                      }),
+                  ),
+                ),
+          // SCIENT-FORK:END
           forkThread: (request) =>
             Effect.fail(
               new ProviderAdapter.ProviderAdapterForkThreadError({

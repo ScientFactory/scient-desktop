@@ -94,6 +94,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverStartProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelProviderRuntime]: AuthProvidersManageScope,
+  [WS_METHODS.serverObserveProviderRuntimePick]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallRemove]: AuthProvidersManageScope,
   [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,
@@ -362,6 +363,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.editorsFlushResolve]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — a voice call drives the thread's agent like a sent message.
+  [WS_METHODS.liveVoiceCall]: AuthOrchestrationOperateScope,
+  [WS_METHODS.liveVoiceMute]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash write files.
   [WS_METHODS.projectsChangeEntries]: AuthFilesystemWriteScope,

@@ -7,6 +7,7 @@ import { assert, it } from "@effect/vitest";
 import {
   OmpSettings,
   ChatAttachmentId,
+  CheckpointId,
   EnvironmentId,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   MessageId,
@@ -108,6 +109,7 @@ const harness = Effect.fnUntraced(function* (
     readonly shutdownSignalConfirmed?: boolean;
     readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
     readonly promptSuggestions?: boolean;
+    readonly onAccountSignedOut?: Effect.Effect<void>;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -147,6 +149,7 @@ const harness = Effect.fnUntraced(function* (
     interactionMode: "default" as const,
   };
   const adapter = yield* makeOmpAdapterV2({
+    ...(behavior?.onAccountSignedOut ? { onAccountSignedOut: behavior.onAccountSignedOut } : {}),
     target,
     instanceId,
     settings: yield* decodeOmpSettings({
@@ -486,6 +489,22 @@ const ordinaryToolsHarness = Effect.fnUntraced(function* (
   ];
   const tool = (id: string) =>
     latestTools().find((item) => item.nativeItemRef?.nativeId?.endsWith(`:${id}`));
+  const isCall = (item: OrchestrationV2TurnItem, id: string) =>
+    item.nativeItemRef?.nativeId?.endsWith(`:${id}`) === true;
+  /** The call's latest row, typed or generic. */
+  const row = (id: string) =>
+    h.recorded
+      .flatMap((event) =>
+        event.type === "turn_item.updated" && isCall(event.turnItem, id) ? [event.turnItem] : [],
+      )
+      .at(-1);
+  const untilRow = (id: string, status: string) =>
+    h.takeUntil(
+      (event) =>
+        event.type === "turn_item.updated" &&
+        isCall(event.turnItem, id) &&
+        event.turnItem.status === status,
+    );
   const untilTool = (id: string, status?: string) =>
     h.takeUntil(
       (event) =>
@@ -504,7 +523,7 @@ const ordinaryToolsHarness = Effect.fnUntraced(function* (
     });
     return yield* h.takeUntil((event) => event.type === "turn.terminal");
   });
-  return { ...h, tool, latestTools, untilTool, stop: () => stop };
+  return { ...h, tool, row, untilRow, latestTools, untilTool, stop: () => stop };
 });
 const nativeToolStart = (id: string, name: string, args: unknown) => ({
   type: "tool_execution_start",
@@ -1972,7 +1991,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               data: row.entry?.toolData,
             }));
           yield* h.peer.emit([
-            nativeToolStart("shell", "bash", { command: "printf synthetic" }),
+            nativeToolStart("shell", "find", { pattern: "*.synthetic" }),
             nativeToolStart("file", "read", { path: "note.txt" }),
             { type: "tool_stream_update", toolCallId: "shell", update: { text: "first line" } },
             { type: "tool_stream_update", toolCallId: "file", update: { text: "file text" } },
@@ -2014,9 +2033,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             {
               id: shell.id,
               kind: "work",
-              title: "bash",
+              title: "find",
               status: "inProgress",
-              data: { input: { command: "printf synthetic" }, output: "first line" },
+              data: { input: { pattern: "*.synthetic" }, output: "first line" },
             },
             {
               id: file.id,
@@ -2027,7 +2046,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             },
           ]);
           yield* h.peer.emit([
-            nativeToolEnd("shell", "bash", { content: [{ type: "text", text: "final line" }] }),
+            nativeToolEnd("shell", "find", { content: [{ type: "text", text: "final line" }] }),
             nativeToolEnd("file", "read", {}),
           ]);
           yield* h.untilTool("file", "completed");
@@ -2035,9 +2054,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             {
               id: shell.id,
               kind: "work",
-              title: "bash",
+              title: "find",
               status: "completed",
-              data: { input: { command: "printf synthetic" }, output: "final line" },
+              data: { input: { pattern: "*.synthetic" }, output: "final line" },
             },
             {
               id: file.id,
@@ -2070,7 +2089,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       Effect.gen(function* () {
         const h = yield* ordinaryToolsHarness();
         yield* h.peer.emit([
-          nativeToolStart("shell", "bash", { command: "sleep 10" }),
+          nativeToolStart("shell", "find", { pattern: "*.slow" }),
           { type: "tool_stream_update", toolCallId: "shell", update: { text: "partial text" } },
         ]);
         yield* h.takeUntil(
@@ -2095,7 +2114,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(finalTools.length, 1);
         assert.isBelow(finalTools[0]!.index, terminal);
         assert.equal(h.tool("shell")?.status, trigger === "stop" ? "interrupted" : "failed");
-        assert.deepEqual(h.tool("shell")?.input, { command: "sleep 10" });
+        assert.deepEqual(h.tool("shell")?.input, { pattern: "*.slow" });
         assert.equal(h.tool("shell")?.output, "partial text");
         assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
       }),
@@ -2107,10 +2126,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       Effect.gen(function* () {
         const h = yield* ordinaryToolsHarness();
         yield* h.peer.emit([
-          nativeToolStart("shell", "bash", { command: "false" }),
+          nativeToolStart("shell", "find", { pattern: "*.missing" }),
           nativeToolEnd(
             "shell",
-            "bash",
+            "find",
             { content: [{ type: "text", text: "exit code 1" }] },
             true,
           ),
@@ -2118,8 +2137,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.untilTool("shell", "failed");
         yield* h.peer.emit([
           { type: "tool_stream_update", toolCallId: "shell", update: { text: "late" } },
-          nativeToolStart("shell", "bash", { command: "echo late" }),
-          nativeToolEnd("shell", "bash", {}),
+          nativeToolStart("shell", "find", { pattern: "*.late" }),
+          nativeToolEnd("shell", "find", {}),
           nativeToolStart("barrier", "read", { path: "barrier.txt" }),
         ]);
         yield* h.untilTool("barrier", "running");
@@ -2133,7 +2152,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           2,
         );
         assert.equal(h.tool("shell")?.status, "failed");
-        assert.deepEqual(h.tool("shell")?.input, { command: "false" });
+        assert.deepEqual(h.tool("shell")?.input, { pattern: "*.missing" });
         assert.equal(h.tool("shell")?.output, "exit code 1");
       }),
     ),
@@ -2155,15 +2174,19 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         const event = yield* h.takeUntil(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.type === "command_execution" &&
             typeof event.turnItem.output === "string",
         );
         assert.isBelow(Buffer.byteLength(encodeDiagnostic(event)), 16 * 1024);
-        assert.deepEqual(h.tool("shell")?.input, { command: "printf large" });
+        const running = h.row("shell");
+        assert.ok(running?.type === "command_execution");
+        assert.equal(running.input, "printf large");
         assert.equal(h.runtime.providerSession.status, "running");
         yield* h.stop();
-        assert.equal(h.tool("shell")?.status, "interrupted");
-        assert.deepEqual(h.tool("shell")?.input, { command: "printf large" });
+        const stopped = h.row("shell");
+        assert.ok(stopped?.type === "command_execution");
+        assert.equal(stopped.status, "interrupted");
+        assert.equal(stopped.input, "printf large");
       }),
     ),
   );
@@ -2190,15 +2213,15 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.takeUntil(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.type === "command_execution" &&
             typeof event.turnItem.output === "string",
         );
-        const encoded = encodeDiagnostic(h.latestTools());
+        const encoded = encodeDiagnostic(h.row("shell"));
         assert.notInclude(encoded, secret.slice(0, -1));
         assert.include(encoded, "[REDACTED]");
         assert.isBelow(Buffer.byteLength(encoded), 16 * 1024);
         yield* h.stop();
-        assert.notInclude(encodeDiagnostic(h.latestTools()), secret.slice(0, -1));
+        assert.notInclude(encodeDiagnostic(h.row("shell")), secret.slice(0, -1));
       }),
     ),
   );
@@ -2263,6 +2286,98 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.stop();
       }),
     ),
+  );
+
+  it.effect(
+    "shows native OMP shell, file and search calls as typed rows and images from any tool",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* ordinaryToolsHarness();
+          const missing = "ls: missing: No such file or directory";
+          yield* h.peer.emit([
+            nativeToolStart("shell", "bash", { command: "ls missing" }),
+            { type: "tool_stream_update", toolCallId: "shell", update: { text: missing } },
+          ]);
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.output === missing,
+          );
+          const png = Buffer.from("synthetic image bytes").toString("base64");
+          yield* h.peer.emit([
+            nativeToolEnd(
+              "shell",
+              "bash",
+              {
+                content: [{ type: "text", text: `${missing}\nExit code 1` }],
+                details: { exitCode: 1 },
+              },
+              true,
+            ),
+            nativeToolStart("change", "edit", { path: "notes.md" }),
+            nativeToolEnd("change", "edit", {
+              content: [{ type: "text", text: "Updated notes.md" }],
+              details: {
+                path: "/work/notes.md",
+                diff: "-1|old",
+                oldText: "old\n",
+                newText: "new\n",
+              },
+            }),
+            nativeToolStart("search", "web_search", { query: "dna origami" }),
+            nativeToolEnd("search", "web_search", {
+              content: [{ type: "text", text: "1 source" }],
+              details: {
+                response: {
+                  provider: "synthetic",
+                  sources: [{ title: "Folding DNA", url: "https://example.org/a", snippet: "x" }],
+                },
+              },
+            }),
+            nativeToolStart("picture", "generate_image", { subject: "a cell" }),
+            nativeToolEnd("picture", "generate_image", {
+              content: [{ type: "text", text: "Generated 1 image(s)" }],
+              details: { images: [{ mimeType: "image/png", data: png }] },
+            }),
+          ]);
+          yield* h.untilRow("picture", "completed");
+          const shell = h.row("shell");
+          assert.ok(shell?.type === "command_execution");
+          assert.deepInclude(shell, {
+            status: "failed",
+            title: null,
+            input: "ls missing",
+            exitCode: 1,
+          });
+          assert.equal(shell.output, `${missing}\nExit code 1`);
+          const change = h.row("change");
+          assert.ok(change?.type === "file_change");
+          assert.equal(change.fileName, "/work/notes.md");
+          assert.include(change.diffStr, "-old\n+new");
+          const search = h.row("search");
+          assert.ok(search?.type === "web_search");
+          assert.deepEqual(search.patterns, ["dna origami"]);
+          assert.deepEqual(search.results, [
+            { title: "Folding DNA", url: "https://example.org/a", snippet: "x" },
+          ]);
+          const picture = h.row("picture");
+          assert.ok(picture?.type === "dynamic_tool");
+          assert.deepInclude(picture.output, {
+            content: [
+              { type: "text", text: "Generated 1 image(s)" },
+              { type: "image", mimeType: "image/png", data: png },
+            ],
+          });
+          const node = h.recorded.findLast(
+            (event) => event.type === "node.updated" && event.node.id === shell.nodeId,
+          );
+          assert.ok(node?.type === "node.updated");
+          assert.equal(node.node.kind, "tool_call");
+          yield* h.stop();
+        }),
+      ),
   );
 
   it.effect(
@@ -2525,6 +2640,142 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect("records each turn's message entry and rewinds by branching before a later one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Each turn adds its user message and a reply; `since` lists only what came after.
+        const listed: Array<{ id: string; parentId: string | null; role: string }> = [];
+        const branched: Array<string> = [];
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          responseData: (frame) => {
+            if (frame.type === "get_entries") {
+              const since = Reflect.get(frame, "since");
+              const ordinal = listed.length / 2 + 1;
+              const parentId = listed.at(-1)?.id ?? null;
+              listed.push(
+                { id: `user-${ordinal}`, parentId, role: "user" },
+                { id: `reply-${ordinal}`, parentId: `user-${ordinal}`, role: "assistant" },
+              );
+              const from = since === undefined ? 0 : listed.findIndex((e) => e.id === since) + 1;
+              return {
+                entries: listed.slice(from).map((entry) => ({
+                  type: "message",
+                  id: entry.id,
+                  parentId: entry.parentId,
+                  // Later than any send: the test clock starts at the epoch.
+                  timestamp: "2999-01-01T00:00:00.000Z",
+                  message: { role: entry.role },
+                })),
+                leafId: listed.at(-1)!.id,
+              };
+            }
+            if (frame.type === "switch_session") {
+              const sessionPath = String(Reflect.get(frame, "sessionPath"));
+              peer.state.sessionFile = sessionPath;
+              peer.state.sessionOrdinal = Number(/models-session-(\d+)/u.exec(sessionPath)?.[1]);
+              return { cancelled: false };
+            }
+            if (frame.type === "branch") {
+              branched.push(String(Reflect.get(frame, "entryId")));
+              peer.state.sessionOrdinal++;
+              peer.state.sessionFile = undefined;
+              return { text: "", cancelled: false };
+            }
+            return undefined;
+          },
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        const turns = () => [
+          ...new Map(
+            h.recorded.flatMap((event) =>
+              event.type === "provider_turn.updated"
+                ? [[event.providerTurn.id, event.providerTurn] as const]
+                : [],
+            ),
+          ).values(),
+        ];
+        for (const ordinal of [1, 2]) {
+          yield* h.runtime.startTurn({
+            ...h.input,
+            runId: RunId.make(`rewind-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`rewind-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`rewind-root-${ordinal}`),
+          });
+          yield* peer.finish();
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+        }
+        const [first, second] = turns();
+        assert.ok(first && second);
+        assert.deepInclude(first.nativeTurnRef, { nativeId: "user-1", strength: "strong" });
+        assert.deepInclude(second.nativeTurnRef, { nativeId: "user-2", strength: "strong" });
+        assert.deepEqual(
+          peer.state.frames.flatMap((frame) =>
+            frame.type === "get_entries" ? [Reflect.get(frame, "since") ?? null] : [],
+          ),
+          [null, "reply-1"],
+        );
+        const before = h.recorded.findLast((event) => event.type === "provider_thread.updated");
+        assert.ok(before?.type === "provider_thread.updated");
+        const snapshot = yield* h.runtime.rollbackThread({
+          providerThread: before.providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("rewind-checkpoint"),
+            appRunOrdinal: 1,
+            providerTurn: first,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(branched, ["user-2"]);
+        assert.notEqual(
+          snapshot.providerThread.nativeThreadRef?.nativeId,
+          before.providerThread.nativeThreadRef?.nativeId,
+        );
+        const unrecorded = yield* h.runtime
+          .rollbackThread({
+            providerThread: snapshot.providerThread,
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("start"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [
+              { ...first, nativeTurnRef: { ...first.nativeTurnRef!, strength: "weak" } },
+            ],
+          })
+          .pipe(Effect.flip);
+        assert.equal(unrecorded._tag, "ProviderAdapterRollbackThreadError");
+        assert.deepEqual(branched, ["user-2"]);
+        // A retry after a failed file restore starts from the conversation still on record.
+        const retried = yield* h.runtime.rollbackThread({
+          providerThread: before.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("retry"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(branched, ["user-2", "user-1"]);
+        assert.includeMembers(
+          peer.state.frames.map((frame) => frame.type),
+          ["switch_session"],
+        );
+        assert.notEqual(
+          retried.providerThread.nativeThreadRef?.nativeId,
+          before.providerThread.nativeThreadRef?.nativeId,
+        );
+      }),
+    ),
+  );
+
   it.effect.each(
     ([true, false] as const).map((accepted) => ({
       caseTitle: `retains an unknown native OMP outcome on process loss with accepted=${accepted}`,
@@ -2543,7 +2794,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* peer.promptDelivered();
         yield* peer.emit([
           { type: "agent_start" },
-          nativeToolStart("unconfirmed-tool", "bash", { command: "could still have run" }),
+          nativeToolStart("unconfirmed-tool", "find", { pattern: "could still have run" }),
         ]);
         yield* h.takeUntil(
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
@@ -4404,6 +4655,43 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
           ),
         );
         assert.isFalse(items.some((item) => item.type === "dynamic_tool"));
+      }),
+    ),
+  );
+
+  it.effect("says how to sign a signed-out account in again, and has its list read again", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshed = yield* Deferred.make<void>();
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          onAccountSignedOut: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([
+          { type: "agent_start" },
+          {
+            type: "notice",
+            level: "warning",
+            source: "auth",
+            message:
+              "ChatGPT account a@example.invalid was signed out automatically. Run /login to sign in again.",
+          },
+        ]);
+        const notice = yield* h.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        );
+        assert.isTrue(
+          notice.type === "turn_item.updated" &&
+            notice.turnItem.type === "system_notice" &&
+            notice.turnItem.message ===
+              "ChatGPT account a@example.invalid was signed out automatically. Sign in again with Reconnect in the composer, or in Settings › Providers.",
+        );
+        yield* Deferred.await(refreshed);
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
       }),
     ),
   );

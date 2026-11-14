@@ -414,7 +414,7 @@ Each publication attempt records its operation, request, plan digest,
 workspace authority, parent, candidate and base generation; those never
 change, and only its classification may move forward: `unknown` to
 `accepted`, `out-of-date`, `not-sent` or `superseded-unresolved`, and
-`superseded-unresolved` to `accepted`. Each outcome needs its kind of evidence.
+`superseded-unresolved` to `accepted` or `not-sent`. Each outcome needs its kind of evidence.
 A new attempt takes a fresh number and is recorded `unknown` on the current
 base, before any send. Acceptance adopts exactly the candidate on the base it
 was built for; a rejection or `not-sent` leaves the base alone. A base change
@@ -674,7 +674,13 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
 - **Bulk changes.** The coordinator registers the barrier's settler: a bulk
   change of a checkout with a pending apply recovers it inline when the
   reservation is free, and is refused otherwise. Structural copies in the
-  folder always refuse it, including any the inline recovery finds.
+  folder always refuse it, including any the inline recovery finds. An unlinked
+  record with a pending apply or structural copies refuses it too
+  (`unlinked-unfinished-sync`) until the folder is linked again, which finishes
+  it; its status reports them as reasons. It holds nothing back once linking can
+  no longer finish it: its folder is gone from its recorded place or replaced
+  there, or a standing link owns that folder. Only records holding something are
+  looked up, so an idle link whose folder can't be examined holds nothing back.
 - **Listing kept copies** compares each copy by its stamp and reads again only
   a changed or extra version. One listing reads at most one inventory's total;
   a file past that budget, or larger than a restore reads (a kept copy or the
@@ -826,8 +832,12 @@ section 9):
    of the checkout does not wait for the network. `accepted` makes the
    publication tree the base in the same replacement. `out-of-date` keeps the adopted
    base. Overleaf's rate limit answers before anything is sent, so after the waits
-   below it records `not-sent` (`send-refused`). Anything else stays `unknown`, as
-   does an attempt whose finalizing write fails.
+   below it records `not-sent` (`send-refused`), as does a push Git gave up on before
+   any pack went out: Git missing, or a failed ref advertisement (exit 128 with that
+   step's own message: access refused, project not found, Overleaf unreachable). The
+   result carries the reason. A failure after the pack went out exits 1 with no ref
+   status and stays `unknown`, as does anything else and an attempt whose finalizing
+   write fails.
 
 **Rate limit.** Overleaf answers about 40 Git requests a minute, then refuses for up
 to 30 s with `no git access` and `Rate-limit exceeded` (measured 2026-10-31). Its
@@ -846,8 +856,12 @@ only:
 - the candidate commit is reachable from the head.
 
 An unknown attempt on the current base becomes the base when accepted. A
-superseded one is only marked accepted, and the later base stays. Absent
-evidence changes nothing, including when Overleaf still holds the parent. The
+superseded one is only marked accepted, and the later base stays. An attempt
+with no such evidence whose parent the head has moved on from, without the
+candidate, is recorded `not-sent`: Overleaf's branch only moves forward and a
+push applies only on the head it was sent against, so it never landed and never
+can. Otherwise absent evidence changes nothing, including when Overleaf still
+holds the parent. The
 review warns about each unresolved attempt (`unresolved-publication`), and the
 confirmation must acknowledge it. Nothing is ever resent.
 
