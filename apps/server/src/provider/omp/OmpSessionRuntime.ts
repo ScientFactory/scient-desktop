@@ -1512,7 +1512,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       return;
     }
     // SCIENT-FORK: the goal row and plan card follow the agent's goal and proposed plan.
-    if (event.type === "goal_updated" || event.type === "plan_proposed") {
+    if (
+      event.type === "goal_updated" ||
+      event.type === "plan_proposed" ||
+      event.type === "plan_updated"
+    ) {
       yield* publish({ type: "observation", event });
       return;
     }

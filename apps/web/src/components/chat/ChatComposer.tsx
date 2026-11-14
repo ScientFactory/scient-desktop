@@ -243,6 +243,14 @@ import {
   ComposerCommandMenu,
   composerSuggestionOptionId,
 } from "./ComposerCommandMenu";
+// SCIENT-FORK: Goal and Plan chips beside the attach button.
+import {
+  COMPOSER_MODE_PLACEHOLDERS,
+  type ComposerMode,
+  ComposerModeChips,
+  type ComposerModeChipsThreadState,
+  composerModePrompt,
+} from "./ComposerModeChips";
 import {
   ComposerAttachButton,
   ComposerAttachmentFileList,
@@ -524,6 +532,8 @@ export interface ChatComposerProps {
   onInterrupt: () => void;
   // SCIENT-FORK:START
   onForkConversation: (options?: { readonly preserveComposerDraft?: boolean }) => void;
+  /** The thread's goal and plan state, for the Goal and Plan chips. */
+  modeChips?: ComposerModeChipsThreadState;
   // SCIENT-FORK:END
   onSelectActivePendingUserInputOption: (questionId: string, optionValue: string) => void;
   onAdvanceActivePendingUserInput: () => void;
@@ -1063,6 +1073,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
+  // SCIENT-FORK:START — Goal and Plan chips: the mode the next message is sent in, per draft.
+  const [composerModeState, setComposerModeState] = useState<{
+    readonly key: string;
+    readonly mode: ComposerMode;
+  } | null>(null);
+  const composerMode =
+    composerModeState?.key === attachmentTargetKey ? composerModeState.mode : null;
+  const setComposerMode = (mode: ComposerMode | null) =>
+    setComposerModeState(mode === null ? null : { key: attachmentTargetKey, mode });
+  const supportsComposerMode = (name: ComposerMode) =>
+    props.modeChips !== undefined &&
+    selectedProviderSlashCommands.some((command) => command.name === name);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient skills join the provider's for menus and chips.
   const effectiveSelectedProviderSkills = mergeEffectiveProviderSkills({
     provider: selectedProvider,
@@ -2145,6 +2168,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
+      // SCIENT-FORK:START — picking /goal or /plan turns its chip on instead of typing it.
+      const chipMode =
+        item.command.name === "goal" || item.command.name === "plan" ? item.command.name : null;
+      if (chipMode !== null && supportsComposerMode(chipMode)) {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          setComposerMode(chipMode);
+        }
+        return;
+      }
+      // SCIENT-FORK:END
       const replacement = `/${item.command.name} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
@@ -2356,6 +2393,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onResume();
       return true;
     }
+    // SCIENT-FORK:START — a Goal or Plan chip sends the message as that command.
+    const promptBeforeMode = promptRef.current;
+    const modePrompt =
+      composerMode !== null && !activePendingProgress
+        ? composerModePrompt(composerMode, promptBeforeMode)
+        : promptBeforeMode;
+    if (modePrompt !== promptBeforeMode) {
+      promptRef.current = modePrompt;
+      setComposerDraftPrompt(composerDraftTarget, modePrompt);
+    }
+    // SCIENT-FORK:END
     const submission = submitComposerDraft({
       prompt: promptRef.current,
       submissionTarget,
@@ -2379,6 +2427,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
     });
     setComposerSubmissionError(submission.validationMessage);
+    // SCIENT-FORK:START — a sent message ends the mode; an unsent one gets its text back.
+    if (modePrompt !== promptBeforeMode) {
+      if (submission.didDispatch) setComposerMode(null);
+      else if (promptRef.current === modePrompt) {
+        promptRef.current = promptBeforeMode;
+        setComposerDraftPrompt(composerDraftTarget, promptBeforeMode);
+      }
+    }
+    // SCIENT-FORK:END
     if (!submission.didDispatch) return false;
     onTypingGuardSend();
     if (shouldBlurMobileComposerOnSubmit()) {
@@ -3965,16 +4022,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             ? "Choose a project above to start a thread"
                             : showProviderUnavailable
                               ? "Enable a provider in Settings to send a message"
-                              : phase === "disconnected"
-                                ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                : // SCIENT-FORK:START — busy-state placeholder while the agent works.
-                                  (offeredPromptSuggestion ??
-                                  composerWorkingPlaceholder ??
-                                  DEFAULT_COMPOSER_PLACEHOLDER)
+                              : // SCIENT-FORK:START — a Goal or Plan chip names what to write.
+                                composerMode !== null
+                                ? COMPOSER_MODE_PLACEHOLDERS[composerMode]
+                                : // SCIENT-FORK:END
+                                  phase === "disconnected"
+                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                  : // SCIENT-FORK:START — busy-state placeholder while the agent works.
+                                    (offeredPromptSuggestion ??
+                                    composerWorkingPlaceholder ??
+                                    DEFAULT_COMPOSER_PLACEHOLDER)
                       // SCIENT-FORK:END
                     }
                     placeholderSuffix={
-                      offeredPromptSuggestion !== null ? (
+                      // SCIENT-FORK: a Goal or Plan chip's placeholder takes no suggestion.
+                      offeredPromptSuggestion !== null && composerMode === null ? (
                         <span className="ml-2 inline-flex align-[1px]">
                           <Kbd variant="outline">⇥ Tab</Kbd>
                         </span>
@@ -4052,6 +4114,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     {composerAttachButton}
                   </div>
                 ) : null}
+                {/* SCIENT-FORK:START — Goal and Plan chips beside the attach button. */}
+                {props.modeChips !== undefined &&
+                !dictationTakesFooter &&
+                !voiceBusy &&
+                !activePendingProgress &&
+                !isComposerApprovalState ? (
+                  <ComposerModeChips
+                    supportsGoal={supportsComposerMode("goal")}
+                    supportsPlan={supportsComposerMode("plan")}
+                    mode={composerMode}
+                    onModeChange={setComposerMode}
+                    goal={props.modeChips.goal}
+                    working={phase === "running" || phase === "connecting"}
+                    planMode={props.modeChips.planMode}
+                    onSendCommand={props.modeChips.onSendCommand}
+                  />
+                ) : null}
+                {/* SCIENT-FORK:END */}
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"
