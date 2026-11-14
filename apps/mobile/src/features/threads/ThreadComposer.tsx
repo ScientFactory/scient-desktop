@@ -1,3 +1,5 @@
+import { readRoomDirect } from "./thread-room-state";
+import { RoomAgentSwitch, useRoomPost } from "./ThreadRoomComposer";
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -454,6 +456,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
+  const roomPost = useRoomPost(
+    props.isDraft
+      ? null
+      : { environmentId: props.environmentId, threadId: props.selectedThread.id },
+    composerOwnerKey,
+    composerDraftKey,
+  );
+  const toPeople = !props.isDraft && queuedEdit === null && roomPost.toPeople;
   const hasContent =
     draftMessage.trim().length > 0 ||
     draftAttachments.length > 0 ||
@@ -482,13 +492,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     });
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
-    running: props.activeThreadBusy,
-    canSteer: props.canSteerActiveTurn,
+    running: toPeople ? false : props.activeThreadBusy,
+    canSteer: toPeople ? false : props.canSteerActiveTurn,
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:
-      props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
+      props.connectionState !== "connected" ||
+      (!toPeople && props.queueCount > 0) ||
+      attachmentsUploading,
   });
-  const sendLabel = sendPresentation.label;
+  const sendLabel = toPeople ? "Post to people" : sendPresentation.label;
   const currentModelSelection = props.selectedThread.modelSelection;
   const modelUnavailable =
     props.connectionState === "connected" &&
@@ -582,7 +594,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onChangeSelection: composerMenu.onSelectionChange,
   });
   const isSubmissionLocked =
-    props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
+    props.interactionLocked === true ||
+    queuedEdit?.saving === true ||
+    voiceInput.blocksSubmission ||
+    roomPost.posting;
   const voicePresentation = resolveVoiceComposerPresentation(
     voiceInput.state,
     voiceInput.elapsedSeconds,
@@ -613,6 +628,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
     (queuedEdit?.saving === true ? "Saving…" : null) ??
+    (toPeople && props.connectionState !== "connected" ? "Connect to post to people" : null) ??
     props.sendBlockedReason ??
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
     attachmentBlockReason;
@@ -622,7 +638,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     !contextImports[composerDraftKey] &&
     !isSubmissionLocked &&
     sendBlockedReason === null &&
-    !modelUnavailable;
+    (toPeople || !modelUnavailable);
 
   // A pending sheet presentation or focus restore has no composer left to act on.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes the pending settings sheet presentation and focus restore on unmount
@@ -676,7 +692,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       pendingNativeImagePasteCountRef.current > 0
     )
       return;
-    if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
+    if (
+      !toPeople &&
+      usageLimitsOffered &&
+      isUsageLimitsCommand(draftMessage) &&
+      draftAttachments.length === 0
+    ) {
       if (openUsageLimits()) onChangeDraftMessage("");
       return;
     }
@@ -691,12 +712,25 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         pendingPastedTextAttachmentCountRef.current === 0 &&
         pendingNativeImagePasteCountRef.current === 0 &&
         draft.text === draftAtSend.text &&
+        draft.context === draftAtSend.context &&
+        (!roomPost.hasPeople ||
+          queuedEdit !== null ||
+          readRoomDirect(composerOwnerKey) === roomPost.direct) &&
         draft.attachments.length === draftAtSend.attachments.length &&
         draft.attachments.every(
           (attachment, index) => attachment.id === draftAtSend.attachments[index]?.id,
         )
       );
     };
+    if (!stillSendable()) {
+      inFlightThreadIdsRef.current.delete(threadKey);
+      return;
+    }
+    if (toPeople) {
+      await settlePromise(() => roomPost.send(stillSendable));
+      inFlightThreadIdsRef.current.delete(threadKey);
+      return;
+    }
     const sent = await settlePromise(() => onSendMessage(followUp, stillSendable));
     inFlightThreadIdsRef.current.delete(threadKey);
     if (AsyncResult.isFailure(sent)) {
@@ -881,6 +915,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           />
         ) : null}
 
+        {!props.isDraft && queuedEdit === null && roomPost.hasPeople ? (
+          <RoomAgentSwitch threadKey={composerOwnerKey} disabled={isSubmissionLocked} />
+        ) : null}
         <ComposerSurface
           animateLayout={false}
           style={{

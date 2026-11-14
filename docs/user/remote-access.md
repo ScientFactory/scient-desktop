@@ -107,28 +107,10 @@ A computer is reachable only while Scient runs on it: the desktop app, or
 is the same on macOS, Windows and Linux; Scient does not install a background
 service.
 
-### Share a thread with a guest
+### Share a thread with people
 
-A guest link lets one person without Scient watch a thread live in their
-browser and suggest messages. It works on a computer with Scient Connect on and
-reachable.
-
-1. Open the thread's menu, from the thread title or by right-clicking it in the
-   sidebar, and choose **Share with guest**. The command palette has it too.
-2. Select **Create link** and send the link to your guest. It works in one
-   browser and expires after 24 hours. A new link ends the current one.
-3. The guest enters a name and sees the thread as you do, including command
-   output and the agent's reasoning. Each message they send, with up to four
-   files, waits above your composer until you **Send** or **Dismiss** it.
-
-The header shows who is watching. **Stop sharing** there ends the link at once,
-and so do archiving or deleting the thread. Guest links are a beta, on unless
-you turn them off: **Settings → Labs → Guest links** off stops every link on
-that computer.
-
-If Scient says other devices can't reach the computer, **Settings → Sharing &
-access** shows why; see
-[Scient Connect troubleshooting](./scient-connect-troubleshooting.md).
+People without Scient can join a thread in their browser, talk with you there and,
+if you allow it, with the agent. See [Invite people to a thread](./thread-rooms.md).
 
 ## Direct and private-network access
 

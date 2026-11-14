@@ -1056,6 +1056,9 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return item.summary ?? `${item.strategy} handoff to ${item.toProviderInstanceId}`;
     case "fork":
       return `Forked to thread ${item.targetThreadId}.`;
+    // SCIENT-FORK: what people say to each other in a room never reaches an agent.
+    case "room_message":
+      return null;
     case "thread_created":
       return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
     case "secret_request":

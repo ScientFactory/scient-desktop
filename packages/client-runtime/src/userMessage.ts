@@ -7,6 +7,8 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2IdleCompaction,
   type OrchestrationV2UserMessageInputIntent,
+  // SCIENT-FORK: thread rooms.
+  type RoomMessageAttribution,
   ScheduledTaskId,
 } from "@t3tools/contracts";
 import {
@@ -65,7 +67,13 @@ export function resolveUserMessagePresentation(message: {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
-  readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
+  readonly context?:
+    | {
+        readonly guest?: GuestMessageAttribution | undefined;
+        // SCIENT-FORK: a message sent from a thread room.
+        readonly room?: RoomMessageAttribution | undefined;
+      }
+    | undefined;
 }): {
   readonly text: string;
   readonly attribution: "automation" | "agent" | "t3code" | "guest" | null;
@@ -76,6 +84,12 @@ export function resolveUserMessagePresentation(message: {
   if (message.role !== "user") {
     return { text: message.text, attribution: null, scheduledTaskId: undefined };
   }
+  // SCIENT-FORK:START — the agent got attributed words; people see what was written.
+  const room = message.context?.room;
+  if (room?.text !== undefined && message.context?.guest === undefined) {
+    return { text: room.text, attribution: null, scheduledTaskId: undefined };
+  }
+  // SCIENT-FORK:END
   // The stored text names the guest for the agent; people see the guest's own words.
   const guest = message.context?.guest;
   if (guest !== undefined) {

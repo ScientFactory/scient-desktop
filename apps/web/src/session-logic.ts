@@ -265,6 +265,8 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "secret_request",
   "link_request",
   "subagent",
+  // SCIENT-FORK: a thread room message the agent has not been given.
+  "room_message",
 ]);
 
 const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -698,6 +700,15 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       continue;
     }
 
+    // SCIENT-FORK:START — a thread room message leaves the thread once deleted or sent to the
+    // agent; the agent's message stands in for it.
+    if (
+      item.type === "room_message" &&
+      (item.deletedAt !== undefined ||
+        item.deliveries?.some((delivery) => delivery.status === "sent") === true)
+    )
+      continue;
+    // SCIENT-FORK:END
     if (STANDALONE_V2_ITEM_TYPES.has(item.type)) {
       entries.push({
         id: item.id,

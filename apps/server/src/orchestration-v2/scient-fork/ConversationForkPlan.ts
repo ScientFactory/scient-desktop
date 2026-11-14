@@ -396,6 +396,8 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
     }
     if (item.type === "user_input_request" && item.questionAnswer !== undefined)
       share(Object.values(item.questionAnswer.attachmentsByQuestionId).flat());
+    // A room message the fork shows keeps its files.
+    if (item.type === "room_message") share(item.attachments);
     const system = readHistoricalSystemMessage(item);
     if (Option.isSome(system)) share(system.value.attachments);
   }

@@ -3,6 +3,8 @@ import {
   applyOrchestrationV2ThreadVisit,
   checkpointSupportsRewind,
   pendingGuestMessageCount,
+  // SCIENT-FORK: thread rooms.
+  roomWaitingCount,
 } from "@t3tools/contracts";
 // SCIENT-FORK:START — retained-source adapters and fixture selection.
 import { ContextHandoffId, type OrchestrationV2ContextHandoff } from "@t3tools/contracts";
@@ -2026,7 +2028,10 @@ function shellFromState(input: {
     lastErrorCode: input.state.lastErrorCode,
     usageLimitResetAt: input.state.usageLimitResetAt,
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
-    pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
+    pendingGuestMessageCount:
+      pendingGuestMessageCount(input.state.thread.guestShare) +
+      // SCIENT-FORK: guests' room messages the owner has not seen yet.
+      roomWaitingCount(input.state.thread.room),
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
@@ -6709,11 +6714,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       WHERE thread.thread_id = ${threadId}
         AND json_extract(message.value, '$.status') = 'pending'
     `,
+        // SCIENT-FORK: files posted to a thread's room are held by their room messages.
+        sql<{ id: string }>`
+      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+      FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.roomMessage.attachments') AS attachment
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'room_message'
+        ${exceptShownByLiveFork ? sql`AND NOT ${shownByLiveFork(threadId, "item.run_id")}` : sql``}
+      UNION
+      SELECT held.value AS id
+      FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.roomMessage.heldFileIds') AS held
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'room_message'
+        ${exceptShownByLiveFork ? sql`AND NOT ${shownByLiveFork(threadId, "item.run_id")}` : sql``}
+    `,
       ]).pipe(
-        Effect.map(([messages, renders, answerFiles, guestFiles]) => [
+        Effect.map(([messages, renders, answerFiles, guestFiles, roomFiles]) => [
           ...new Set([
             ...messages.map((row) => row.id),
             ...guestFiles.map((row) => row.id),
+            ...roomFiles.map((row) => row.id),
             ...answerFiles.map((row) => row.id),
             ...threadHtmlRenderAttachmentIds(
               threadId,
@@ -8841,7 +8863,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
-                  pendingGuestMessageCount: pendingGuestMessageCount(thread.guestShare),
+                  pendingGuestMessageCount:
+                    pendingGuestMessageCount(thread.guestShare) +
+                    // SCIENT-FORK: guests' room messages the owner has not seen yet.
+                    roomWaitingCount(thread.room),
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:
                       latestRunId === null || status === "idle"

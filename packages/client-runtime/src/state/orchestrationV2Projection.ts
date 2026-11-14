@@ -150,6 +150,8 @@ function shouldDropMissingPartialTurnItem(
   if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
     return false;
   }
+  // SCIENT-FORK: a room message is always new when it arrives; it joins a run's range by time.
+  if (item.type === "room_message") return false;
   if (item.runId === null) {
     return isBelowPartialWindow(projection, item, latestLocalTurnOrdinal);
   }

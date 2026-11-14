@@ -168,7 +168,8 @@ export function startThreadNotifications(
             : status === "failed"
               ? "Thread failed"
               : status === "request"
-                ? "Guest request"
+                ? // Scient: a room's guests write to the owner as well as asking.
+                  "Guest message"
                 : "Input needed");
     // SCIENT-FORK:END
     // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.

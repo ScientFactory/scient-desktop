@@ -251,6 +251,8 @@ import {
 } from "./ComposerAttachmentStrip";
 import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+// SCIENT-FORK: thread rooms.
+import { OwnerRoomAgentToggle } from "~/scient/room/roomComposer";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
@@ -4122,6 +4124,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       keepFullHistory={props.keepFullHistory}
                       onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                     >
+                      {/* SCIENT-FORK: in a shared thread, "straight to the agent". */}
+                      <OwnerRoomAgentToggle
+                        threadRef={
+                          activeThreadId ? { environmentId, threadId: activeThreadId } : null
+                        }
+                      />
                       {speechInput.available ? (
                         <>
                           <ComposerSpeechRecordingPill

@@ -144,6 +144,9 @@ import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
+// SCIENT-FORK: thread rooms.
+import * as ThreadRoomService from "./scient/room/ThreadRoomService.ts";
+import { RoomInviteError } from "@t3tools/contracts";
 import {
   bufferShellLiveStream,
   coalesceShellApplicationEvents,
@@ -1608,6 +1611,8 @@ export const layerWsRpc = (
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
+      // SCIENT-FORK: thread rooms.
+      const threadRooms = yield* ThreadRoomService.ThreadRoomService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -2215,6 +2220,22 @@ export const layerWsRpc = (
           threadManagement,
           providerSessions: providerSessionsV2,
         }),
+        // SCIENT-FORK:END
+        // SCIENT-FORK:START — thread rooms.
+        [WS_METHODS.threadRoomInvite]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(
+              requireReachableGuestHost().pipe(
+                Effect.mapError(() => new RoomInviteError({ reason: "connect_unavailable" })),
+              ),
+            ),
+            Effect.andThen(threadRooms.invite(input)),
+          ),
+        [WS_METHODS.threadRoomInviteLink]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(threadRooms.inviteLink(input)),
+          ),
+        [WS_METHODS.threadRoomPresence]: (input) => threadRooms.presence(input),
         // SCIENT-FORK:END
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),

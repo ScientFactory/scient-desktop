@@ -12,6 +12,8 @@ import * as ThreadFileRelease from "./scient-fork/ThreadFileRelease.ts";
 // SCIENT-FORK:END
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
+// SCIENT-FORK: thread rooms.
+import * as ThreadRoomService from "../scient/room/ThreadRoomService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -480,6 +482,16 @@ export const layerProduction = Layer.mergeAll(
   layerSecretRequestsProvided,
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
+  ),
+  // SCIENT-FORK: thread rooms, beside T3's single-guest links.
+  ThreadRoomService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerOrchestratorProvided,
+        layerCommandOutputHubProvided,
+        layerThreadManagementProvided,
+      ),
+    ),
   ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(

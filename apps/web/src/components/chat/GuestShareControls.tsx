@@ -45,6 +45,8 @@ function useThreadGuestShare(threadRef: ScopedThreadRef | null): ThreadGuestShar
   return useQuietThreadProjection(threadRef)?.projection.thread.guestShare ?? null;
 }
 
+// SCIENT-FORK: dormant; Scient's share commands open the room dialog (scient/room/RoomDialog.tsx).
+/** @public */
 export function GuestShareDialogHost() {
   const threadRef = useAtomValue(guestShareDialogThreadAtom);
   if (threadRef === null) return null;

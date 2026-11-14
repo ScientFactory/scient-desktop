@@ -137,6 +137,14 @@ merge resolution.
   `ChatView.tsx`. If upstream reworks the composer or task items, that is a new
   decision for the owner.
 
+- **Rooms replace T3's guest links (decided 2026-11-13).** Scient's thread rooms
+  (several people, roles, people-only messages kept in place, sending a message to the
+  agent later) are built beside T3's guest share, which stays unchanged and dormant:
+  Scient's share commands open the room dialog, and T3's own routes and page still
+  serve a share opened before the upgrade. Port T3 fixes to guest read routes
+  (`apps/server/src/guest/GuestShareService.ts`) into `ThreadRoomService.ts` when they
+  apply. See [Thread rooms](./thread-rooms.md).
+
 ## Native V2 reliability model
 
 The message-boundary RPC enters

@@ -212,6 +212,50 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         ),
       );
   }
+  // SCIENT-FORK:START — files posted to a room are claimed as a message's are.
+  if (
+    command.type === "thread.room" &&
+    command.action.type === "post" &&
+    command.action.attachments.length > 0
+  ) {
+    const action = command.action;
+    const roomClaim = yield* AttachmentClaims.claimPendingAttachments({
+      threadId: command.threadId,
+      attachments: action.attachments,
+    });
+    yield* roomClaim.bindReceipt({
+      kind: "command",
+      threadId: command.threadId,
+      commandId: command.commandId,
+      commandType: command.type,
+      target: { type: "room-message", roomMessageId: action.roomMessageId },
+    });
+    return yield* threads
+      .dispatch({ ...command, action: { ...action, attachments: roomClaim.attachments } })
+      .pipe(
+        Effect.onExit(() =>
+          reconcileReservationsBestEffort(roomClaim.attachments.map((a) => a.id)),
+        ),
+        Effect.tap((result) =>
+          releaseUnusedClaims(
+            roomClaim.claimedPaths,
+            result.storedEvents.flatMap(({ event }) =>
+              event.type === "turn-item.updated" && event.payload.type === "room_message"
+                ? (event.payload.attachments ?? [])
+                : [],
+            ),
+          ).pipe(Effect.andThen(roomClaim.releasePins)),
+        ),
+        Effect.tapError((error) =>
+          dispatchWasNotAccepted(error)
+            ? AttachmentClaims.releaseClaimedAttachments(roomClaim.claimedPaths).pipe(
+                Effect.andThen(roomClaim.releasePins),
+              )
+            : Effect.void,
+        ),
+      );
+  }
+  // SCIENT-FORK:END
   if (
     command.type !== "message.dispatch" &&
     (command.type !== "queued-run.edit" || command.attachments === undefined)
