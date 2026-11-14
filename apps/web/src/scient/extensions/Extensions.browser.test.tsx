@@ -2436,9 +2436,9 @@ describe("Codex store connection", () => {
     };
     state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     state.storeEntry = {
       ...state.storeEntry,
       installed: true,
@@ -2462,14 +2462,14 @@ describe("Codex store connection", () => {
       apps: [{ name: "Sample", connected: true, enabled: true }],
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     expect(fixture.section("Apps 1").textContent).toContain("Connected");
     state.storeEntry = {
       ...state.storeEntry,
       apps: [{ name: "Sample", connected: true, enabled: false }],
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     expect(fixture.section("Apps 1").textContent).toContain("Disabled");
   });
 });

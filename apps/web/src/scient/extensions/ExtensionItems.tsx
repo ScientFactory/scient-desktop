@@ -609,7 +609,7 @@ export function ProviderAppConnect({
           )
         }
       >
-        Connect {app.name}
+        Connect in ChatGPT
       </Button>
       <ActionFeedback feedback={lock.feedback} />
     </>
