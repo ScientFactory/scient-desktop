@@ -508,6 +508,36 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, publication
     );
   });
 
+  it.live("never takes a send Overleaf rewrote, then buried, for one never sent", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A", "other.tex": "O" },
+          remote: { "main.tex": "A", "other.tex": "O" },
+          // The push lands; its answer is lost.
+          push: (send) => send.pipe(Effect.as({ _tag: "unknown" as const, detail: "timed out" })),
+        });
+        yield* write(w.folder, { "main.tex": "A, sent" });
+        yield* w.sync("request-1");
+        const [attempt] = (yield* w.connection).attempts;
+        expect(attempt).toMatchObject({ outcome: "unknown" });
+        // Overleaf replaces the landed commit with its own of the same files on the same
+        // parent, then far more edits than the bounded history looks at.
+        yield* w.replaceHead(attempt!.parentCommit, { "main.tex": "A, sent", "other.tex": "O" });
+        for (let edit = 0; edit < 70; edit++)
+          yield* w.collaborate({ "main.tex": "A, sent", "other.tex": `O${edit}` });
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect((yield* w.connection).attempts[0]).toMatchObject({
+          attemptNumber: 1,
+          outcome: "accepted",
+          evidence: "remote-history",
+        });
+      }),
+    ),
+  );
+
   it.live("finds the retention folder once for a sync that applies and sends", () =>
     run(
       Effect.gen(function* () {

@@ -1554,9 +1554,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
 
   /**
    * Settles earlier sends against Overleaf's `head` (contract section 6): accepted by
-   * its tree, its bounded history, or the candidate's reachability; not sent when the
-   * head moved on from the attempt's parent without the candidate, which Overleaf's
-   * branch, only ever moving forward, can never take again. Never sends.
+   * its tree, its bounded history, the candidate's reachability, or the first commit after
+   * its parent; not sent when that first commit is something else. Never sends.
    */
   const checkAttempts = Effect.fn("OverleafCoordinator.checkAttempts")(function* (
     repo: string,
@@ -1595,8 +1594,21 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         head.commit !== attempt.parentCommit &&
         (yield* ancestor(attempt.parentCommit)) === true &&
         (yield* ancestor(attempt.candidateCommit)) === false
-      )
-        passed.add(attempt.attemptNumber);
+      ) {
+        // Overleaf takes only a fast-forward, so the attempt could only ever have landed as
+        // the first commit after its parent: that commit, by identity or tree, decides it.
+        const first = yield* repos
+          .firstAfter({ repo, after: attempt.parentCommit, head: head.commit })
+          .pipe(Effect.orElseSucceed(() => null));
+        if (first === null || first.parent !== attempt.parentCommit) continue;
+        if (first.commit === attempt.candidateCommit || first.tree === attempt.candidateTree) {
+          if (
+            attempt.outcome !== "unknown" ||
+            attempt.baseGeneration === connection.base.generation
+          )
+            evidence.set(attempt.attemptNumber, "remote-history");
+        } else passed.add(attempt.attemptNumber);
+      }
     }
     const settled = (
       attempt: OverleafPublicationAttempt,
