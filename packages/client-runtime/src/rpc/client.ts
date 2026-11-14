@@ -82,6 +82,9 @@ export type EnvironmentSubscriptionRpcTag =
   // SCIENT-FORK:START — the server's editor flush requests to each window.
   | typeof WS_METHODS.editorsFlushConnect
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
+  | typeof WS_METHODS.scientConnectStatus
+  // SCIENT-FORK:END
   | typeof WS_METHODS.filesystemSubscribeFileChanges
   | typeof WS_METHODS.projectsSubscribeFileChanges
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes

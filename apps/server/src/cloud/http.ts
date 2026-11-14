@@ -26,6 +26,9 @@ import * as ConnectReachability from "./ConnectReachability.ts";
 import { canLinkHere } from "./linkChecks.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
+// SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+import { ScientConnectHost } from "../scient/connect/ScientConnectHost.ts";
+// SCIENT-FORK:END
 
 // SCIENT-FORK:START — cloud routes follow Scient Connect's identity switch or an explicit opt-in.
 export const isScientCloudIntegrationDisabled = (
@@ -156,6 +159,17 @@ export const layer = HttpApiBuilder.group(
 
     const cloudLink = yield* CloudLink.CloudLink;
     const reachability = yield* ConnectReachability.ConnectReachability;
+    // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+    const connectHost = yield* Effect.serviceOption(ScientConnectHost);
+    const refuseWhileTurnedOff = Effect.gen(function* () {
+      if (connectHost._tag === "Some" && (yield* connectHost.value.isOff)) {
+        return yield* new EnvironmentHttpConflictError({
+          message:
+            "Scient Connect is turned off on this computer. Turn it on in Settings > Sharing & access.",
+        });
+      }
+    });
+    // SCIENT-FORK:END
     // SCIENT-FORK:START — the computer left the account, so it stops copying to it; copies stay.
     const settings = yield* Effect.serviceOption(ServerSettingsService);
     const stopCloudCopy =
@@ -175,6 +189,9 @@ export const layer = HttpApiBuilder.group(
       )
       .handle("relayConfig", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
+          // SCIENT-FORK:START — a computer turned off in Scient Connect takes no late links.
+          Effect.andThen(refuseWhileTurnedOff),
+          // SCIENT-FORK:END
           Effect.andThen(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload))),
         ),
       )

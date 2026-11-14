@@ -241,6 +241,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer (authorize also requires
+  // the desktop's own session, checked by its handler).
+  [WS_METHODS.scientConnectStatus]: AuthRelayReadScope,
+  [WS_METHODS.scientConnectAuthorize]: AuthRelayWriteScope,
+  [WS_METHODS.scientConnectTurnOff]: AuthRelayWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsFilterOptions]: AuthOrchestrationReadScope,

@@ -624,6 +624,14 @@ import {
   WsDocumentsReleaseDocumentPdfRpc,
 } from "./scient/documentPdfRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Connect on the desktop's own computer.
+import {
+  SCIENT_CONNECT_HOST_WS_METHODS,
+  WsScientConnectAuthorizeRpc,
+  WsScientConnectStatusRpc,
+  WsScientConnectTurnOffRpc,
+} from "./scient/connectHost.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient editor flush RPCs.
 import {
   SCIENT_EDITOR_FLUSH_WS_METHODS,
@@ -692,6 +700,9 @@ export const WS_METHODS = {
   assetsCreateUrl: "assets.createUrl",
   // SCIENT-FORK:START — Scient document PDF export methods.
   ...SCIENT_DOCUMENT_PDF_WS_METHODS,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
+  ...SCIENT_CONNECT_HOST_WS_METHODS,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush methods.
   ...SCIENT_EDITOR_FLUSH_WS_METHODS,
@@ -2580,6 +2591,11 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
+  WsScientConnectStatusRpc,
+  WsScientConnectAuthorizeRpc,
+  WsScientConnectTurnOffRpc,
+  // SCIENT-FORK:END
 );
 
 export const WsRepositoryRpcGroup = RpcGroup.make(

@@ -113,6 +113,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.guestShareCreate]: "guest-share",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
   [WS_METHODS.cloudInstallRelayClient]: "cloud",
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
+  [WS_METHODS.scientConnectStatus]: "cloud",
+  [WS_METHODS.scientConnectAuthorize]: "cloud",
+  [WS_METHODS.scientConnectTurnOff]: "cloud",
+  // SCIENT-FORK:END
   [WS_METHODS.pullRequestsList]: "pull-requests",
   [WS_METHODS.pullRequestsListStats]: "pull-requests",
   [WS_METHODS.pullRequestsFilterOptions]: "pull-requests",

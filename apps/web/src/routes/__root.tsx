@@ -42,6 +42,9 @@ import { DevReplayHost } from "../components/DevReplayHost";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
+// SCIENT-FORK:START — on the desktop, signing in sets up Scient Connect.
+import { ScientConnectBridge } from "../scient/connect/ScientConnectBridge";
+// SCIENT-FORK:END
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
@@ -214,7 +217,9 @@ function RootRouteBranch() {
       ) : null}
       {isElectron ? <RunningThreadKeepAlive /> : null}
       <RelayClientInstallDialog />
-      <ConnectOnboardingDialog />
+      {/* SCIENT-FORK:START — on the desktop, signing in sets up Scient Connect; no wizard. */}
+      {isElectron ? <ScientConnectBridge /> : <ConnectOnboardingDialog />}
+      {/* SCIENT-FORK:END */}
       <SshPasswordPromptDialog />
       <SnapShotCoordinator />
       <ScientAnswerBadgeCoordinator />

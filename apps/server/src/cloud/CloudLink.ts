@@ -510,6 +510,23 @@ export class CloudLink extends Context.Service<
       | CliTokenManager.CloudCliTokenManagerError
       | HttpClientError.HttpClientError
     >;
+    // SCIENT-FORK:START — scient/connect: the desktop app links its own computer with a token its
+    // window lends, moving it from another account if needed. `stillWanted` runs just before the
+    // credentials apply; false abandons the link and leaves this computer as it was.
+    readonly linkWithAccessToken: (input: {
+      readonly localOrigin: string;
+      readonly accessToken: string;
+      readonly stillWanted: Effect.Effect<boolean>;
+    }) => Effect.Effect<
+      "linked" | "abandoned",
+      | CloudLinkBackgroundError
+      | CloudLinkAccountMismatchError
+      | CloudLinkRelayConfigInvalidError
+      | CloudLinkTunnelSupersededError
+      | EnvironmentAuth.ServerAuthInternalError
+      | ManagedLimits.ManagedPolicyRefusedError
+    >;
+    // SCIENT-FORK:END
   }
 >()("t3/cloud/CloudLink") {}
 
@@ -757,11 +774,17 @@ const make = Effect.gen(function* () {
     options?: {
       readonly lockHeld?: boolean;
       readonly confirmedOrigin?: RelayManagedEndpointOrigin;
+      // SCIENT-FORK:START — scient/connect: a desktop sign-in moves the computer to its account.
+      readonly replaceLinkedAccount?: boolean;
+      // SCIENT-FORK:END
     },
   ) {
     const apply = Effect.gen(function* () {
       yield* validateRelayConfigPayload(payload);
-      yield* validateLinkedCloudUser(payload.cloudUserId);
+      // SCIENT-FORK:START — scient/connect: a desktop sign-in moves the computer to its account.
+      if (options?.replaceLinkedAccount !== true)
+        // SCIENT-FORK:END
+        yield* validateLinkedCloudUser(payload.cloudUserId);
       yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
       // Reject unsupported runtimes before they can stop a healthy tunnel.
       if (
@@ -925,6 +948,74 @@ const make = Effect.gen(function* () {
       }),
     );
   });
+
+  // SCIENT-FORK:START — scient/connect: the desktop app links its own computer with a token its
+  // window lends. Same transaction as the CLI link above, without the CLI's stored sign-in.
+  const linkWithAccessToken = Effect.fn("environment.cloud.linkWithAccessToken")(function* (input: {
+    readonly localOrigin: string;
+    readonly accessToken: string;
+    readonly stillWanted: Effect.Effect<boolean>;
+  }) {
+    const parsedOrigin = yield* Effect.try({
+      try: () => parseManagedEndpointLocalOrigin(input.localOrigin),
+      catch: () => new CloudLinkOriginInvalidError({ origin: "local" }),
+    });
+    const relayUrl = yield* requireRelayUrl;
+    return yield* endpointRuntime.withLinkStateLock(
+      Effect.gen(function* () {
+        const challenge = yield* relayClientRequest({
+          url: `${relayUrl}/v1/client/environment-link-challenges`,
+          token: input.accessToken,
+          payload: {
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: true,
+          },
+          schema: RelayEnvironmentLinkChallengeResponse,
+        });
+        const proof = yield* makeCloudLinkProof(
+          {
+            challenge: challenge.challenge,
+            relayIssuer: relayUrl,
+            endpoint: {
+              httpBaseUrl: parsedOrigin.httpBaseUrl,
+              wsBaseUrl: parsedOrigin.wsBaseUrl,
+              providerKind: "cloudflare_tunnel",
+            },
+            origin: parsedOrigin.origin,
+          },
+          parsedOrigin.httpBaseUrl,
+        );
+        const link = yield* relayClientRequest({
+          url: `${relayUrl}/v1/client/environment-links`,
+          token: input.accessToken,
+          payload: {
+            proof,
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: true,
+          },
+          schema: RelayEnvironmentLinkResponse,
+          timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
+        });
+        // A newer link for this computer replaces this one at the relay, and Off removes it there.
+        if (!(yield* input.stillWanted)) return "abandoned" as const;
+        yield* applyCloudRelayConfig(
+          {
+            relayUrl,
+            relayIssuer: link.relayIssuer,
+            cloudUserId: link.cloudUserId,
+            environmentCredential: link.environmentCredential,
+            cloudMintPublicKey: link.cloudMintPublicKey,
+            endpointRuntime: link.endpointRuntime,
+          },
+          { lockHeld: true, confirmedOrigin: parsedOrigin.origin, replaceLinkedAccount: true },
+        );
+        return "linked" as const;
+      }),
+    );
+  });
+  // SCIENT-FORK:END
 
   const makeManagedTunnelRecoveryProof = Effect.fn(
     "environment.cloud.makeManagedTunnelRecoveryProof",
@@ -1662,6 +1753,9 @@ const make = Effect.gen(function* () {
       recoverManagedTunnel: notStarted,
       startManagedTunnelIfOriginConfirmed: notStarted,
       releaseManagedTunnelOnShutdown,
+      // SCIENT-FORK:START — scient/connect
+      linkWithAccessToken: refused,
+      // SCIENT-FORK:END
     });
   }
 
@@ -1678,6 +1772,9 @@ const make = Effect.gen(function* () {
     recoverManagedTunnel,
     startManagedTunnelIfOriginConfirmed,
     releaseManagedTunnelOnShutdown,
+    // SCIENT-FORK:START — scient/connect
+    linkWithAccessToken,
+    // SCIENT-FORK:END
   });
 });
 
