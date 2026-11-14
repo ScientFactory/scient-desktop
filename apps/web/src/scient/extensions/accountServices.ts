@@ -61,7 +61,9 @@ export const ACCOUNT_SERVICES: ReadonlyArray<AccountService> = [
   },
 ];
 
-const CLAUDE_CONNECTORS_PAGE = "https://claude.ai/customize/connectors";
+/** claude.ai's own page for one connector, where it connects or is managed. */
+const claudeConnectorPage = (service: AccountService) =>
+  `https://claude.ai/customize/connectors/id/${slug(service.claudeConnector)}`;
 
 /** ChatGPT's page for the service's app, where the browser's ChatGPT account connects it. */
 function chatGptServicePage(service: AccountService): string {
@@ -307,7 +309,7 @@ function accountServiceRoutesFromInventory(
       ];
     }
     if (provider.driver === "claudeAgent") {
-      const claude = { ...base, family: "claude" as const, page: CLAUDE_CONNECTORS_PAGE };
+      const claude = { ...base, family: "claude" as const, page: claudeConnectorPage(service) };
       if (provider.accountAppsAvailable !== true)
         return [
           { ...claude, state: "sign-in", reason: "Needs Claude signed in with a Claude plan" },
