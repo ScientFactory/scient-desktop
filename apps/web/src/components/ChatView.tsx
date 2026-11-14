@@ -1,3 +1,4 @@
+import { useComposerCitations } from "./chat/useComposerCitations";
 // SCIENT-FORK:START — Scient Accounts: mount approvals above the composer.
 import {
   ThreadAccountApprovals,
@@ -162,7 +163,6 @@ import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type AssistantCitation,
-  type ResponseContextRecord,
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
   type EnvironmentId,
@@ -542,6 +542,11 @@ type ChatViewProps =
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
+// SCIENT-FORK: a cached banner callback must not capture ChatView's render scope.
+function incrementDismissTick(setTick: (update: (tick: number) => number) => void) {
+  return () => setTick((tick) => tick + 1);
+}
+
 const ignoreComposerFocus = () => {};
 
 function ChatViewContent(props: ChatViewProps) {
@@ -805,31 +810,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
-  const citeAssistantText = (
-    citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
-  ) => {
-    const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
-    if (!inserted) {
-      toastManager.add({
-        type: "warning",
-        title: "The composer is not ready",
-        description: "Try citing the selection after the connection or pending input is resolved.",
-      });
-    }
-    return inserted;
-  };
-  const replyToResponseStable = useStableCallback((response: ResponseContextRecord) => {
-    const accepted = composerRef.current?.replyToResponse(response) ?? false;
-    if (!accepted) {
-      toastManager.add({
-        type: "warning",
-        title: "The composer is not ready",
-        description: "Try replying after the connection or pending input is resolved.",
-      });
-    }
-    return accepted;
-  });
+  const { citeAssistantText, replyToResponseStable } = useComposerCitations(composerRef);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticBlobPreviews] = useState(createOptimisticBlobPreviews);
   const [heldOptimisticUserMessages, setHeldOptimisticUserMessages] = useState(() =>
@@ -3341,7 +3322,7 @@ function ChatViewContent(props: ChatViewProps) {
     const tokenLimitItems = tokenLimitBannerItems({
       hasTokenLimitNotice,
       tokenLimitNoticeKey,
-      onDismissed: () => setThreadErrorBannerDismissTick((tick) => tick + 1),
+      onDismissed: incrementDismissTick(setThreadErrorBannerDismissTick),
     });
     // SCIENT-FORK:END
     const fallbackSelection = draftFallback?.selection;
