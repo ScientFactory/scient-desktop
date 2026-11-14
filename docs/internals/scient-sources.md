@@ -3159,6 +3159,60 @@ styles remain the document's own choice.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
 
+## Rules the stores keep
+
+Whatever happened before (any order of actions, a killed process, a full disk),
+a Library and its projects keep these rules. `src/testing/libraryRules.ts` in
+`@scientfactory/scient-sources` checks them against an expected state kept
+apart from the stores (`libraryModel.ts`).
+
+1. Published files decode, belong to this Library or project, and are plain
+   files inside their roots.
+2. Project keys are unique and cite the right work, through a live record or
+   the saved copy; aliases end and never pick another work.
+3. PDFs of live and trashed sources keep their exact bytes.
+4. Recovery and hydration never bring back a source deleted for good.
+5. A merge keeps both sources' evidence; an eligible Undo brings the merged
+   source back and keeps later edits.
+6. Notes are current, and earlier project notes are in the kept versions.
+7. An interrupted action leaves every source and key as before it or as after
+   it; once the next process has recovered, the whole Library is one or the
+   other; doing the action again finishes it.
+
+Limits, by design: an import keeps the items it finished; importing a deleted
+paper again on purpose brings it back; Undo keeps newer edits and stops being
+available once the Trash is emptied; history is bounded (50 revisions per
+source, 20 project note versions and the first).
+
+**What a write guarantees.** JSON and PDF files are written to a temporary
+file, flushed, then published by a rename or an exclusive link, so a killed
+process leaves each published file whole: as it was, or as written. The
+containing directory is not flushed: after a power cut a journaling file system
+may drop the last seconds of changes, never tear a file. Temporary files of a
+killed write (`*.tmp-<uuid>`) are ignored by every reader; nothing removes
+them, and a crash leaves at most one per interrupted write.
+
+**How the rules are tested.**
+
+- `libraryRules.random.test.ts`: seeded random sequences of adds, edits, notes,
+  Trash, restore, delete for good, project keys and notes, refreshes, merges
+  and Undos on a Library with three projects, checked after every step. A long
+  hunt: `LIBRARY_RULES_SEEDS=300 LIBRARY_RULES_STEPS=150`.
+- `libraryRules.crash.test.ts`: each action is stopped at its file changes in a
+  child process (`libraryWorker.ts`) by a real SIGKILL, plainly or with half of
+  a file written, or by a disk that is full from that change on
+  (`fileFaults.ts` instruments `node:fs/promises`, including the handles `open`
+  returns). A fresh process checks rule 7 before and after recovery, repeats
+  the action and checks again; the action also runs once on a volume that
+  refuses hard links. The default run samples each action's changes;
+  `LIBRARY_CRASH_SWEEP=full` runs every one, and is the run to make after
+  changing a store's write order.
+- `libraryRules.cases.test.ts`: the short sequences those runs found, kept as
+  regressions.
+
+This is bounded coverage of process death on one machine's file system, not a
+proof of every schedule and not a power-cut test.
+
 ## Verification boundary
 
 Package regressions cover schema diagnostics, duplicate strength, project
