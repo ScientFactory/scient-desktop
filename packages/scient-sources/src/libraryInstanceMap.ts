@@ -13,6 +13,7 @@ import {
   resolveScientLibraryAlias,
   type ScientLibraryAliases,
 } from "./libraryAliases.ts";
+import { readScientLibraryExclusions, type ScientLibraryExclusions } from "./libraryExclusions.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   listScientLibraryInstances,
@@ -303,6 +304,22 @@ async function readRemovedSources(
   return { libraryId, records };
 }
 
+/**
+ * The records this Library keeps in the Trash or as deleted markers, by their exact ID. A
+ * project's saved copy of a removed source that disagrees with its own record here is replaced
+ * by it: a merge since undone may have left another work's data in the copy.
+ */
+export async function readScientRemovedLibraryRecords(
+  library: ScientLibraryLocation,
+): Promise<ReadonlyMap<string, ScientSourceRecord>> {
+  const [entries, deleted] = await Promise.all([
+    readScientSourceTrashEntries(library),
+    readScientSourceTombstones(library),
+  ]);
+  // A source both trashed and marked deleted was stopped mid-deletion: the Trash copy is whole.
+  return new Map([...deleted, ...entries].map((entry) => [entry.sourceId, entry.record]));
+}
+
 /** The removed records a project source names: by ID, alias or hydration identity, else its work. */
 function removedIdsFor(
   removed: RemovedSources,
@@ -450,6 +467,24 @@ async function resolveAt(
     return removedIdsFor(await removedSources, aliases, request);
   };
 
+  // Read only when a saved copy matched a record: receipts are one file per merge.
+  let exclusions: Promise<ScientLibraryExclusions> | undefined;
+  const idsHeldApart = async (own: ReadonlyArray<string>, candidates: ReadonlyArray<string>) => {
+    const { isDistinct, keptApart } = await (exclusions ??= readScientLibraryExclusions(
+      root,
+      live,
+    ));
+    return new Set(
+      candidates.filter((candidate) =>
+        own.some(
+          (id) =>
+            id !== candidate &&
+            (isDistinct(id, candidate) || keptApart(id, candidate) === "merge-undone"),
+        ),
+      ),
+    );
+  };
+
   const results: ScientProjectSourceResolution[] = [];
   for (const request of input.sources) {
     const { projectSourceId } = request;
@@ -478,14 +513,22 @@ async function resolveAt(
       ]),
     );
     const found = request.work ? matchWork(request.work, records, projectSourceId) : null;
+    // The Library's own decisions bind too: a record held apart from this source (Not
+    // duplicates, or a merge that was undone) never resolves it, whatever the saved copy says.
+    const heldApart = found
+      ? await idsHeldApart([projectSourceId, ...(mapped ? [mapped.sourceId] : [])], found.ids)
+      : new Set<string>();
     // Keep separate holds until withdrawn: a rejected source never resolves this ID again.
     const match =
-      separate && request.work && found
+      (separate || heldApart.size > 0) && request.work && found
         ? (matchWork(
             request.work,
-            records.filter((candidate) => !rejected.has(candidate.sourceId)),
+            records.filter(
+              (candidate) =>
+                !rejected.has(candidate.sourceId) && !heldApart.has(candidate.sourceId),
+            ),
             projectSourceId,
-          ) ?? { by: "contradicted" as const, ids: found.ids })
+          ) ?? (separate ? { by: "contradicted" as const, ids: found.ids } : null))
         : found;
     if (match && match.by !== "contradicted" && match.ids.length === 1) {
       const sourceId = match.ids[0]!;
@@ -525,6 +568,17 @@ async function resolveAt(
         projectSourceId,
         reason: "removed",
         candidateIds: removed,
+      });
+      continue;
+    }
+    // Only records held apart matched, and nothing says the source was removed: its saved copy
+    // describes one of them, so it is never hydrated into a twin.
+    if (heldApart.size > 0) {
+      results.push({
+        kind: "unresolved",
+        projectSourceId,
+        reason: "contradicted",
+        candidateIds: [...heldApart],
       });
       continue;
     }

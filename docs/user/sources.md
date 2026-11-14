@@ -241,7 +241,11 @@ those that can no longer be undone, with the reason. **Undo** brings the other
 copy back; changes you made to the kept copy after the merge stay, and Scient
 says which. Scient never merges those two again on its own, not even when
 another project moves in or when Undo stopped halfway; the pair is listed
-again, and you can still merge them or mark them as not duplicates. After a
+again, and you can still merge them or mark them as not duplicates. A project
+that cites the copy you brought back cites that paper again, never the kept
+one, also after you remove the copy: the project then cites it from its own
+saved citation details. If Scient stopped in the middle of a merge or an Undo,
+it finishes it the next time it opens your Library. After a
 project moves into your Library, its summary line offers **Review** when some
 merges kept different values.
 

@@ -231,8 +231,11 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
         ...model,
         pins: model.pins.map((pin) => {
           if (pin.project !== step.project) return pin;
+          // The saved copy follows the live source the key reaches; with none, the key's own
+          // removed source, so a copy a merge left there never outlives the merge's Undo.
           const target = targetOf(model, pin.work);
-          return target.state === "live" ? { ...pin, snapshotTitle: target.title } : pin;
+          const own = workOf(model, pin.work);
+          return { ...pin, snapshotTitle: (target.state === "live" ? target : own).title };
         }),
       };
     case "merge": {

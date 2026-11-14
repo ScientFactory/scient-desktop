@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 
 import { readScientSourcesOrganization } from "./collections.ts";
 import {
+  readScientRemovedLibraryRecords,
   resolveScientProjectSources,
   scientSourceTypeFromSnapshot,
   type ScientProjectSourceResolution,
@@ -22,6 +23,7 @@ import {
   type ScientSourceRecord,
 } from "./model.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
+import { scientLibraryIdentityProblem } from "./sourceIdentity.ts";
 import { listScientSourceRecords, scientSourceStoreInternals } from "./store.ts";
 import { assertSafeIdentifier, atomicWriteJson, snapshot } from "./storeFiles.ts";
 import {
@@ -974,6 +976,7 @@ export async function refreshScientLibraryReviewSnapshot(input: {
     }
     const now = new Date().toISOString();
     const entries = new Map<string, StoredWork>();
+    let removed: Promise<ReadonlyMap<string, ScientSourceRecord>> | undefined;
     for (const sourceId of named) {
       const stored = document.entries.get(sourceId);
       const record = libraryRecordFor(resolved, sourceId);
@@ -981,7 +984,16 @@ export async function refreshScientLibraryReviewSnapshot(input: {
         const work = refreshedWork(stored.work, record, now);
         entries.set(sourceId, work === stored.work ? stored : { ...stored, work });
       } else if (stored) {
-        entries.set(sourceId, stored);
+        // As for a project key: a removed source's saved copy must describe that source.
+        const own = wasRemoved(resolved.resolutions.get(sourceId))
+          ? (await (removed ??= readScientRemovedLibraryRecords(input.library))).get(sourceId)
+          : undefined;
+        entries.set(
+          sourceId,
+          own && scientLibraryIdentityProblem(stored.work, own) !== null
+            ? { ...stored, work: scientReviewWorkFromRecord(own, now) }
+            : stored,
+        );
       } else if (record) {
         entries.set(sourceId, { work: scientReviewWorkFromRecord(record, now), extra: {} });
       }

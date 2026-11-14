@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { assignCitationKey, citationKeyComparisonValue } from "./citationKeys.ts";
 import { readScientLibraryAliases, resolveScientLibraryAlias } from "./libraryAliases.ts";
 import {
+  readScientRemovedLibraryRecords,
   resolveScientProjectSources,
   scientSourceTypeFromSnapshot,
   type ScientProjectSourceResolution,
@@ -43,6 +44,7 @@ import {
   readScientSourceRecord,
   scientSourceStoreInternals,
 } from "./store.ts";
+import { scientLibraryIdentityProblem } from "./sourceIdentity.ts";
 import { atomicWriteJson, snapshot } from "./storeFiles.ts";
 
 const SCIENT_PROJECT_LIBRARY_PATH = [".scient", "library"] as const;
@@ -883,17 +885,35 @@ export async function refreshScientProjectPinSnapshots(input: {
     const records = new Map(
       (await listScientSourceRecords(input.library)).map((record) => [record.sourceId, record]),
     );
-    const pins = document.pins.map((stored, index) => {
+    let removed: Promise<ReadonlyMap<string, ScientSourceRecord>> | undefined;
+    const pins: StoredPin[] = [];
+    for (const [index, stored] of document.pins.entries()) {
       const resolution = resolutions[index]!;
       const record = resolution.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
-      if (!record) return stored;
-      const work = scientPinWorkKeepingUnknown(
-        stored.pin.work,
-        scientPinWorkFromRecord(withKnownPinCitationValues(record, stored.pin.work)),
-        record,
+      if (record) {
+        const work = scientPinWorkKeepingUnknown(
+          stored.pin.work,
+          scientPinWorkFromRecord(withKnownPinCitationValues(record, stored.pin.work)),
+          record,
+        );
+        pins.push({ ...stored, pin: { ...stored.pin, work } });
+        continue;
+      }
+      // A removed source is cited from its saved copy, which must describe that source. One that
+      // disagrees with the source's own record (a merge since undone can leave another work's
+      // data there) is taken whole from that record, never filled in from the copy.
+      const own =
+        resolution.kind === "unresolved" && resolution.reason === "removed"
+          ? (await (removed ??= readScientRemovedLibraryRecords(input.library))).get(
+              stored.pin.sourceId,
+            )
+          : undefined;
+      pins.push(
+        own && scientLibraryIdentityProblem(stored.pin.work, own) !== null
+          ? { ...stored, pin: { ...stored.pin, work: scientPinWorkFromRecord(own) } }
+          : stored,
       );
-      return { ...stored, pin: { ...stored.pin, work } };
-    });
+    }
     const changed = await writePinsDocument(root, document, pins);
     return { changed, pins: pins.map(({ pin }) => pin).toSorted(comparePins) };
   });

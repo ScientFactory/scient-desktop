@@ -616,7 +616,14 @@ sources in `<project>/.scient/library/pins.json`:
   known snapshot value when the resolving record lacks it
   (`withKnownPinCitationValues`; a bare year, or a year with no stored date, is
   less than a full date of that year), unless the record's provenance shows a person or agent edit of that
-  field (a deliberate correction). A refresh from a record hydrated from an
+  field (a deliberate correction). A pin that is `removed` keeps its snapshot,
+  with one repair: when this Library still has the pin's own record (by exact
+  ID, in the Trash or as a tombstone, `readScientRemovedLibraryRecords`) and
+  the snapshot disagrees with it about which work it is
+  (`scientLibraryIdentityProblem`), the snapshot is taken whole from that
+  record, never filled in from the old snapshot: a merge since undone can
+  leave the survivor's data there, and a hybrid of two works is worse than a
+  sparse citation of the right one. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not
   know is read as `other`.
 - `listScientProjectPinnedWorks` returns the pins under the project's keys for
@@ -653,6 +660,15 @@ ID with its snapshot (a pin's `work`, later a review's record snapshot):
    conflicting identifier). More than one corroborated match is `ambiguous`;
    matches of which none corroborates are `contradicted` (for example a
    Library record carrying the work's DOI by mistake). Both stay unresolved.
+   A record the Library holds apart from the project source ID or from its
+   mapped ID (Not duplicates, or a merge that was undone:
+   `readScientLibraryExclusions`, read only when a snapshot matched) is never
+   a candidate. A refresh while a merge stood may have left the survivor's
+   data in the snapshot, so after the Undo the snapshot is no evidence for
+   that record. With only such matches the source is `removed` when its own
+   record is gone, else `contradicted` with those records as candidates, and
+   it is never hydrated. A damaged merge receipt does not block resolution;
+   only decisions that can be read do.
 4. Otherwise unresolved: `no-match`, or `removed` when the map named a record
    that is gone and nothing else matched. Only a corroborated match in the
    trash counts as removed.
@@ -812,7 +828,10 @@ without the author's library can still list, screen and count:
   survives), `capturedAt` and `capturedRevision` change only with the content,
   entries the review no longer names anywhere (searches, records, duplicates,
   distinct pairs, screening, retrieval) are dropped, and nothing is written
-  when nothing changed.
+  when nothing changed. A removed record's entry gets the same repair as a
+  removed pin's snapshot: when it disagrees with the record's own Trash entry
+  or tombstone about which work it is, it is taken whole from that record (a
+  tombstone has no abstract, so the entry then has none).
 - Recovery: entries the review does not name (a crash after the snapshot, before
   the review) are ignored by readers and reused by a retry. A file that does not
   decode is read as empty; a `write` call renames it to
