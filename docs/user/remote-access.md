@@ -73,17 +73,25 @@ connecting.
 ## Scient Connect
 
 Scient Connect reaches your computers from anywhere without opening ports or
-setting up a VPN. Sign in once, turn it on for a computer, and that computer
-appears in Scient on your other devices and at
+setting up a VPN. Sign in to Scient on a computer and Scient Connect turns on
+for it: that computer appears in Scient on your other devices and at
 [app.scientfactory.com](https://app.scientfactory.com) in any browser.
 
 1. On the computer to share, open **Settings → Sharing & access** and sign in
-   to Scient Connect with Google, Microsoft, GitHub or email.
-2. Turn on **Scient Connect** for that environment. The first time, Scient
-   asks to download the relay client (`cloudflared`) and checks it against a
-   pinned checksum before installing it.
+   with Google, Microsoft, GitHub or email.
+2. That's all. The first time, Scient downloads the tunnel program
+   (`cloudflared`) in the background, checks it against a pinned checksum,
+   installs it and connects. **Sharing & access** shows each step, and so does
+   the invite dialog if you are waiting to share a thread. If the network is
+   down or the relay is busy, Scient keeps trying.
 3. On another device, sign in with the same account. The computer is listed
    under Scient Connect; select it to connect.
+
+To keep a computer off Scient Connect, turn **Scient Connect** off in
+**Sharing & access**. Scient remembers that for the computer, also after you
+sign out and back in, until you turn it on again. Signing out leaves the
+computer reachable for your account; turn Scient Connect off to stop that.
+Signing in with another account moves the computer to that account.
 
 On a server without a screen, run `scient connect` and open the printed link on
 any device to sign in. `scient connect status` checks the connection from that
@@ -99,8 +107,14 @@ any site behind Cloudflare. A computer that stays offline for a while loses its
 tunnel and gets a new one, at the same address, when it comes back.
 
 Each account can link a limited number of computers at once. **Settings →
-Sharing & access** shows how many are in use. To free a place, select **Manage
-tunnels**, then **Deregister** a computer you no longer use.
+Sharing & access** shows how many are in use, and says so when a new computer
+doesn't fit. To free a place, select **Manage tunnels**, then **Deregister** a
+computer you no longer use, and turn Scient Connect on again.
+
+Scient Connect runs on macOS (Apple Silicon and Intel), Windows (x64, and ARM on
+Windows 11, which runs the x64 tunnel program) and Linux (x64 and arm64). A
+network that blocks GitHub downloads stops the first setup; **Sharing &
+access** shows the reason.
 
 A computer is reachable only while Scient runs on it: the desktop app, or
 `scient serve` on a server (see [headless server](background-service.md)). This

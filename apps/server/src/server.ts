@@ -263,6 +263,9 @@ import {
   ScientSkillsLayerLive,
   WorkspaceBindingResolverLayerLive,
 } from "./scient/ScientServerLayers.ts";
+// SCIENT-FORK:START — Scient Connect on the desktop's own computer.
+import * as ScientConnectHost from "./scient/connect/ScientConnectHost.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Cloud state shared with turn admission.
 import * as CloudSyncState from "./scient/cloud/CloudSyncState.ts";
 // SCIENT-FORK:END
@@ -1423,7 +1426,13 @@ const layerMakeServer = Layer.unwrap(
     );
 
     return layerServerApplication.pipe(
-      Layer.provide(CloudLink.layer.pipe(Layer.provideMerge(ConnectReachability.layer))),
+      // SCIENT-FORK:START — Scient Connect sets up the desktop's own computer at sign-in.
+      Layer.provide(
+        ScientConnectHost.layer.pipe(
+          Layer.provideMerge(CloudLink.layer.pipe(Layer.provideMerge(ConnectReachability.layer))),
+        ),
+      ),
+      // SCIENT-FORK:END
       Layer.provideMerge(layerRuntimeServices),
       Layer.provideMerge(
         McpSessionRegistry.layer.pipe(
