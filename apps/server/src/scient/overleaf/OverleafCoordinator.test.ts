@@ -1494,4 +1494,19 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
       }),
     ),
   );
+
+  it.live("lists kept copies while another server holds the writable lease", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "A" } });
+        const other = yield* OverleafStateStore.make({
+          publicationHelper: yield* Effect.promise(filePublicationTestHelper),
+          root: w.stateRoot,
+          volumeUuid: w.volumeUuid,
+        });
+        const reader = yield* w.coordinatorWith(other);
+        expect(yield* reader.keptCopies({ connectionId: CONNECTION })).toEqual([]);
+      }),
+    ),
+  );
 });

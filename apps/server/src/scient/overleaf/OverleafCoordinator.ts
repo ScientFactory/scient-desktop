@@ -767,6 +767,13 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     connection.folder.relativePath === ""
       ? connection.checkout.canonicalRoot
       : NodePath.join(connection.checkout.canonicalRoot, connection.folder.relativePath);
+  const retentionInput = (connection: OverleafConnectionDocument) => ({
+    environmentId: connection.environmentId,
+    connectionId: connection.connectionId,
+    checkoutRoot: connection.checkout.canonicalRoot,
+    publicationHelper: options.publicationHelper,
+    expected: connection.retention.vaultIdentity,
+  });
 
   /** The checkout and folder are still the physical folders the connection recorded. */
   const verifyFolders = Effect.fn("OverleafCoordinator.verifyFolders")(function* (
@@ -2162,13 +2169,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
 
   const vaultOf = (connection: OverleafConnectionDocument) =>
     store
-      .prepareRetention({
-        environmentId: connection.environmentId,
-        connectionId: connection.connectionId,
-        checkoutRoot: connection.checkout.canonicalRoot,
-        publicationHelper: options.publicationHelper,
-        expected: connection.retention.vaultIdentity,
-      })
+      .prepareRetention(retentionInput(connection))
       .pipe(Effect.map((retention) => retention.directory));
   const revisionOf = (read: FileRead) => (read._tag === "read" ? read.revision : null);
 
@@ -2176,7 +2177,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     "OverleafCoordinator.keptCopies",
   )(function* (input) {
     const connection = yield* readActive(input.connectionId);
-    const vault = yield* vaultOf(connection);
+    const vault = (yield* store.findRetention(retentionInput(connection))).directory;
     const folder = folderOf(connection);
     // A late writer can grow kept files, so one listing reads within a budget; a
     // file past it, or larger than a restore reads back, is listed unread.
