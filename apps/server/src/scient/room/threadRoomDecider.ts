@@ -1,6 +1,7 @@
 import {
   GuestMessageId,
   GuestShareId,
+  ROOM_ACCESS_DURATION_MS,
   ROOM_MESSAGE_MAX_ATTACHMENTS,
   ROOM_MESSAGE_MAX_LENGTH,
   ROOM_PARTICIPANT_LIMIT,
@@ -291,6 +292,7 @@ export function decideOwnerRoomAction(
       });
     }
     case "set-role":
+    case "renew":
     case "remove": {
       if (room === null) return Result.fail(ROOM_FAILURE.closed);
       const participant = room.participants.find((p) => p.id === action.participantId);
@@ -299,7 +301,18 @@ export function decideOwnerRoomAction(
         action.type === "remove"
           ? room.participants.filter((p) => p.id !== action.participantId)
           : room.participants.map((p) =>
-              p.id === action.participantId ? { ...p, role: action.role } : p,
+              p.id !== action.participantId
+                ? p
+                : action.type === "set-role"
+                  ? { ...p, role: action.role }
+                  : {
+                      ...p,
+                      expiresAt: DateTime.formatIso(
+                        DateTime.add(now, {
+                          milliseconds: ROOM_ACCESS_DURATION_MS[action.duration],
+                        }),
+                      ),
+                    },
             );
       // Removing the last person, or the last unopened link, ends sharing: there is no
       // separate Stop sharing step.

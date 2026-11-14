@@ -79,6 +79,16 @@ export const ThreadRoom = Schema.Struct({
 });
 export type ThreadRoom = typeof ThreadRoom.Type;
 
+/** Someone who has joined a room, as the sidebar shows them. */
+export const RoomPerson = Schema.Struct({ id: RoomParticipantId, name: TrimmedNonEmptyString });
+export type RoomPerson = typeof RoomPerson.Type;
+
+/** The people who have joined a room, for the thread's sidebar card. */
+export const roomPeople = (room: ThreadRoom | null | undefined): ReadonlyArray<RoomPerson> =>
+  (room?.participants ?? []).flatMap((participant) =>
+    participant.name === null ? [] : [{ id: participant.id, name: participant.name }],
+  );
+
 /** How many guest messages a room waits on the owner for, as the sidebar counts them. */
 export const roomWaitingCount = (room: ThreadRoom | null | undefined): number =>
   room?.waiting?.length ?? 0;
@@ -264,6 +274,12 @@ export const ThreadRoomOwnerAction = Schema.Union([
     role: RoomRole,
   }),
   Schema.Struct({ type: Schema.Literal("remove"), participantId: RoomParticipantId }),
+  /** Gives someone access again from now, as long as asked, keeping their permission. */
+  Schema.Struct({
+    type: Schema.Literal("renew"),
+    participantId: RoomParticipantId,
+    duration: RoomAccessDuration,
+  }),
   Schema.Struct({ type: Schema.Literal("close") }),
 ]);
 export type ThreadRoomOwnerAction = typeof ThreadRoomOwnerAction.Type;

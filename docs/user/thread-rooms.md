@@ -7,7 +7,7 @@ agent. It works on a computer with Scient Connect on and reachable.
 ## Invite someone
 
 1. Choose **Share** in the thread header, or **Invite people…** in the thread's menu
-   or the command palette.
+   or the command palette. Share only makes links.
 2. Pick what the person can do and for how long (1, 7 or 30 days), then **Copy
    link** and send it to them. Each link works for one person; copy another for
    each person.
@@ -21,11 +21,12 @@ Everyone sees the same thread. What differs is what each person can do:
   your computer with your files and accounts, so give this only to people you trust
   with that.
 
-Once someone joins, their faces appear beside **Share** in the header. Open it to
-change what someone can do, remove someone, or cancel links nobody has opened yet. A
-change applies at once. Removing the last person and link ends sharing, as does
-archiving the thread. Removing someone stops their access; it cannot take back what
-they already saw.
+Once someone joins, their faces appear before **Share** in the thread header and on
+the thread's card in the sidebar. Click the faces to open **People**: change what
+someone can do, **Renew** their access from now (1, 7 or 30 days, also after it has
+expired), remove someone, or cancel links nobody has opened yet. A change applies at
+once. Removing the last person and link ends sharing, as does archiving the thread.
+Removing someone stops their access; it cannot take back what they already saw.
 
 To share a read-only copy that people can open without your computer being on, use
 **Share › Link…** in the thread's menu.

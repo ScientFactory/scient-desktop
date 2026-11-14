@@ -52,7 +52,10 @@ guest's send as the `message.dispatch` it becomes under the same thread lock.
 are signed claims checked against the live room on every request: the room is open,
 the participant is in it and unexpired, their role allows the action, Connect still
 serves the host, and guest links are on in Labs. Removing the last participant (joined or not)
-closes the room, so the web dialog has no Stop sharing step. Removing someone or
+closes the room, so there is no Stop sharing step. `renew` sets a participant's
+`expiresAt` from now, keeping the role; sessions are checked against it live, so no new
+link is needed. The thread shell carries `roomPeople` (who has joined) for the sidebar
+card's faces; the header's faces open the People dialog and Share only makes links. Removing someone or
 changing their role applies on their next request; their open stream ends when the room changes.
 Presence is in memory: open guest streams per participant.
 

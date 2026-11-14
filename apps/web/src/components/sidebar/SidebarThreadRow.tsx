@@ -118,6 +118,8 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+// SCIENT-FORK: thread rooms.
+import { RoomFaces } from "~/scient/room/RoomFaces";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
@@ -1208,6 +1210,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
         className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
       >
         {remoteMachineIcon}
+        {/* SCIENT-FORK: the people a shared thread is shared with. */}
+        <RoomFaces people={thread.roomPeople ?? []} size="sm" />
         <SidebarProviderStack
           thread={thread}
           providerEntryByInstanceId={props.providerEntryByInstanceId}
@@ -1218,6 +1222,8 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
   const titleLineIcons = metaLineEmpty ? (
     <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
       {remoteMachineIcon}
+      {/* SCIENT-FORK: the people a shared thread is shared with. */}
+      <RoomFaces people={thread.roomPeople ?? []} size="sm" />
       <SidebarProviderStack
         thread={thread}
         providerEntryByInstanceId={props.providerEntryByInstanceId}

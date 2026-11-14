@@ -13,6 +13,7 @@ import type {
   PlanId,
   ProjectId,
   ProviderInstanceId,
+  RoomPerson,
   RunId,
   ScientCompletedAnswer,
   ThreadId,
@@ -176,6 +177,8 @@ export interface EnvironmentThreadShell {
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
+  // SCIENT-FORK: who has joined the thread's room, for its sidebar card.
+  readonly roomPeople?: ReadonlyArray<RoomPerson>;
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
@@ -333,6 +336,8 @@ export function presentThreadShell(
         : null,
     pendingSubagentRequest,
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
+    // SCIENT-FORK: thread rooms.
+    roomPeople: thread.roomPeople ?? [],
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
