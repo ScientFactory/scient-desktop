@@ -136,7 +136,7 @@ function StoreRemove({
         disabled={actions.locked}
         onClick={() => void actions.uninstall().then(refresh)}
       >
-        {actions.busy ? "Removing…" : "Remove"}
+        {actions.busy ? "Removing…" : `Remove from ${provider.displayName ?? "this agent"}`}
       </Button>
       <ActionFeedback feedback={actions.feedback} />
     </>

@@ -18,7 +18,7 @@ export interface AccountService {
   readonly tagline: string;
   readonly description: string;
   readonly categories: ReadonlyArray<ExtensionCategory>;
-  readonly websiteUrl: string;
+  readonly websiteUrl?: string | undefined;
   /** ChatGPT's id for the app, the same for every account. */
   readonly chatgptAppId: string;
   /** The claude.ai connector's name, without Claude's "claude.ai " prefix. */
@@ -75,20 +75,81 @@ function chatGptServicePage(service: AccountService): string {
 const claudeName = (server: Pick<ServerProviderMcpServer, "name">) =>
   server.name.replace(/^claude\.ai[ :·-]*/i, "");
 
+const slug = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+/** The ChatGPT app id at the end of a `chatgpt.com/apps/<slug>/<id>` page. */
+const appIdOf = (url: string | undefined) => url?.match(/\/apps\/[^/]+\/([A-Za-z0-9_-]+)/)?.[1];
+
+/**
+ * Any other ChatGPT app is a service too: Codex and Scient Agent reach it through ChatGPT, and
+ * Claude through a claude.ai connector of the same name, if it has one.
+ */
+export function accountServiceForApp(app: {
+  readonly id?: string | undefined;
+  readonly name: string;
+  readonly description?: string | undefined;
+  readonly installUrl?: string | undefined;
+}): AccountService | undefined {
+  const known = ACCOUNT_SERVICES.find(
+    (service) => service.chatgptAppId === app.id || service.name === app.name,
+  );
+  if (known) return known;
+  const id = app.id ?? appIdOf(app.installUrl);
+  if (!id) return undefined;
+  return {
+    id: slug(app.name),
+    name: app.name,
+    tagline: app.description?.split("\n")[0]?.slice(0, 80) ?? "A ChatGPT app",
+    description: `Your agents use ${app.name} through the ChatGPT or Claude account they use. Connect it once on ChatGPT or claude.ai; Scient never holds that sign-in.`,
+    categories: [],
+    chatgptAppId: id,
+    claudeConnector: app.name,
+  };
+}
+
+/** Every service the agents' inventories mention: the curated ones, then each ChatGPT app. */
+export function accountServicesFrom(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<AccountService> {
+  const services = new Map(ACCOUNT_SERVICES.map((service) => [service.id, service]));
+  for (const provider of providers) {
+    const apps = [
+      ...(provider.mcpServers ?? [])
+        .filter((server) => server.scope === "chatgpt")
+        .map((server) => ({ name: server.name, installUrl: server.connectUrl })),
+      ...(provider.plugins ?? []).flatMap((plugin) => plugin.apps ?? []),
+    ];
+    for (const app of apps) {
+      const service = accountServiceForApp(app);
+      if (service && !services.has(service.id)) services.set(service.id, service);
+    }
+  }
+  return [...services.values()];
+}
+
+/** Whether an agent's own row (a ChatGPT app or claude.ai connector) is `service`. */
+function serverIsService(
+  provider: Pick<ServerProvider, "driver">,
+  server: Pick<ServerProviderMcpServer, "name" | "scope" | "connectUrl">,
+  service: AccountService,
+): boolean {
+  if ((provider.driver === "scient" || provider.driver === "codex") && server.scope === "chatgpt")
+    return appIdOf(server.connectUrl) === service.chatgptAppId || server.name === service.name;
+  if (provider.driver === "claudeAgent" && server.scope === "claudeai")
+    return claudeName(server) === service.claudeConnector;
+  return false;
+}
+
 /** The service a ChatGPT app row or claude.ai connector row of an agent belongs to. */
 export function accountServiceOfServer(
   provider: Pick<ServerProvider, "driver">,
   server: Pick<ServerProviderMcpServer, "name" | "scope" | "connectUrl">,
 ): AccountService | undefined {
-  if ((provider.driver === "scient" || provider.driver === "codex") && server.scope === "chatgpt")
-    return ACCOUNT_SERVICES.find(
-      (service) =>
-        server.connectUrl?.endsWith(`/${service.chatgptAppId}`) === true ||
-        server.name === service.name,
-    );
-  if (provider.driver === "claudeAgent" && server.scope === "claudeai")
-    return ACCOUNT_SERVICES.find((service) => service.claudeConnector === claudeName(server));
-  return undefined;
+  return ACCOUNT_SERVICES.find((service) => serverIsService(provider, server, service));
 }
 
 /** A Codex store entry that is only one of these services' apps, which Scient lists itself. */
@@ -134,8 +195,7 @@ const chatGptEmail = (provider: ServerProvider): string | undefined => {
 
 function scientHas(provider: ServerProvider, service: AccountService): boolean {
   return (provider.mcpServers ?? []).some(
-    (server) =>
-      server.status === "connected" && accountServiceOfServer(provider, server) === service,
+    (server) => server.status === "connected" && serverIsService(provider, server, service),
   );
 }
 
@@ -151,7 +211,7 @@ function codexApp(provider: ServerProvider, service: AccountService): "on" | "of
       ),
     ),
     ...(provider.mcpServers ?? [])
-      .filter((server) => accountServiceOfServer(provider, server) === service)
+      .filter((server) => serverIsService(provider, server, service))
       .map((server) => ({ enabled: server.status !== "disabled" })),
   ];
   if (apps.some((app) => app.enabled === false)) return "off";
@@ -253,8 +313,7 @@ function accountServiceRoutesFromInventory(
           { ...claude, state: "sign-in", reason: "Needs Claude signed in with a Claude plan" },
         ];
       const connected = (provider.mcpServers ?? []).some(
-        (server) =>
-          server.status === "connected" && accountServiceOfServer(provider, server) === service,
+        (server) => server.status === "connected" && serverIsService(provider, server, service),
       );
       return [
         connected

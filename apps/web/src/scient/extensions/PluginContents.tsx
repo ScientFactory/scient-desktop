@@ -23,6 +23,8 @@ import { useTryComposerSkill } from "../skills/composerSkills";
 import { CardRow, DetailSection, GroupsCard } from "./ExtensionDetailPages";
 import { ExtensionIcon } from "./ExtensionRow";
 import { ProviderAppConnect } from "./ExtensionItems";
+import { accountServiceForApp } from "./accountServices";
+import { ServiceAgents } from "./ServiceAgents";
 import { useExtensionsEnvironment, MutedLine } from "./ExtensionsPage";
 import {
   extensionsPluginContents,
@@ -126,44 +128,50 @@ function PluginContentsView({
     <>
       {contents.apps.length ? (
         <DetailSection title="Apps" count={contents.apps.length}>
-          <div>
-            {contents.apps.map((app) => (
-              <div
-                key={app.id ?? app.name}
-                className="flex items-center gap-3 rounded-lg px-3 hover:bg-muted/50 focus-within:bg-muted/50"
-              >
-                <button
-                  type="button"
-                  aria-label={`View ${app.name} app`}
-                  onClick={() => setAppDialog(app)}
-                  className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-3 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-                >
-                  <ExtensionIcon name={app.name} iconUrl={app.iconUrl} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">{app.name}</p>
-                    {app.description ? (
-                      <p className="truncate text-sm text-muted-foreground">{app.description}</p>
-                    ) : null}
+          <div className="grid gap-3">
+            {contents.apps.map((app) => {
+              const service = accountServiceForApp(app);
+              return (
+                <div key={app.id ?? app.name} className="grid gap-2">
+                  <div className="flex items-center gap-3 rounded-lg px-3 hover:bg-muted/50 focus-within:bg-muted/50">
+                    <button
+                      type="button"
+                      aria-label={`View ${app.name} app`}
+                      onClick={() => setAppDialog(app)}
+                      className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-3 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                    >
+                      <ExtensionIcon name={app.name} iconUrl={app.iconUrl} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">{app.name}</p>
+                        {app.description ? (
+                          <p className="truncate text-sm text-muted-foreground">
+                            {app.description}
+                          </p>
+                        ) : null}
+                      </div>
+                    </button>
+                    {!app.enabled ? (
+                      <span className="text-sm text-muted-foreground">Disabled</span>
+                    ) : app.connected ? (
+                      <span className="text-sm text-muted-foreground">Connected</span>
+                    ) : !canConnectApps ? (
+                      <span className="text-sm text-muted-foreground">Install to connect</span>
+                    ) : service ? null : provider?.driver === "codex" && app.installUrl ? (
+                      <ProviderAppConnect
+                        provider={provider}
+                        pluginId={pluginId}
+                        app={app}
+                        onConnectionChange={onConnectionChange}
+                      />
+                    ) : (
+                      <span className="text-sm text-muted-foreground">Not connected</span>
+                    )}
                   </div>
-                </button>
-                {!app.enabled ? (
-                  <span className="text-sm text-muted-foreground">Disabled</span>
-                ) : app.connected ? (
-                  <span className="text-sm text-muted-foreground">Connected</span>
-                ) : !canConnectApps ? (
-                  <span className="text-sm text-muted-foreground">Install to connect</span>
-                ) : provider?.driver === "codex" && app.installUrl ? (
-                  <ProviderAppConnect
-                    provider={provider}
-                    pluginId={pluginId}
-                    app={app}
-                    onConnectionChange={onConnectionChange}
-                  />
-                ) : (
-                  <span className="text-sm text-muted-foreground">Not connected</span>
-                )}
-              </div>
-            ))}
+                  {/* Which agents reach this app through their accounts, each with its step. */}
+                  {service ? <ServiceAgents service={service} /> : null}
+                </div>
+              );
+            })}
           </div>
         </DetailSection>
       ) : null}

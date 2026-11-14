@@ -42,7 +42,11 @@ import {
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AccountServiceItem, connectedAccountServices } from "./AccountServicePages";
-import { type AccountService, accountServiceOfServer } from "./accountServices";
+import {
+  type AccountService,
+  accountServiceForApp,
+  accountServiceOfServer,
+} from "./accountServices";
 import { AgentSkills } from "../skills/AgentSkills";
 import { PersonalSkillsSection } from "../skills/PersonalSkillsSection";
 import { ProjectSkills } from "../skills/ProjectSkills";
@@ -111,6 +115,9 @@ function agentRows(
         label={first.group.label}
         server={first.server}
         type="ChatGPT app"
+        serviceId={
+          accountServiceForApp({ name: first.server.name, installUrl: first.server.connectUrl })?.id
+        }
         audience={{
           layer: "account",
           connected: list

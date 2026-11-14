@@ -1345,7 +1345,7 @@ function ProviderPluginDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.uninstall()}
                 >
-                  Remove
+                  Remove from {group.label}
                 </Button>
               ) : (
                 <MutedLine>
