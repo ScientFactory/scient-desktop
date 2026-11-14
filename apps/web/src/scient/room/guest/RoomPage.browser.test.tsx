@@ -15,6 +15,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../../test/render";
 import { makeThreadProjectionFixture } from "~/test-fixtures";
+import { useRoomDirectStore } from "../roomDirectStore";
 import { RoomPage } from "./RoomPage";
 
 const participantId = RoomParticipantId.make("participant-1");
@@ -103,8 +104,9 @@ function fakeStream(events: ReadonlyArray<RoomStreamEvent>, sources: Array<Event
 }
 const send = (sources: Array<EventTarget>, event: RoomStreamEvent) =>
   sources.at(-1)!.dispatchEvent(new MessageEvent("message", { data: encode(event) }));
-// Wide enough that the chat sits beside the thread.
 const wide = () => page.viewport(1100, 800);
+// The "straight to the agent" switch is remembered per person; each test starts with it off.
+const switchOff = () => useRoomDirectStore.getState().setDirect(`guest:${participantId}`, false);
 const container = () => {
   const element = document.createElement("div");
   element.style.cssText = "height: 800px; width: 900px; display: flex; flex-direction: column;";
@@ -138,15 +140,16 @@ describe("RoomPage", () => {
     expect(window.location.hash).toBe("");
     await screen.rerender(<RoomPage key="reload" />);
     await expect
-      .element(screen.getByRole("textbox", { name: "Message people", exact: true }))
+      .element(screen.getByRole("textbox", { name: "Message everyone", exact: true }))
       .toBeVisible();
     expect(screen.container.querySelector("#room-name")).toBeNull();
     expect(requests.mock.calls.filter(([url]) => url === "/api/room/join")).toHaveLength(1);
   });
 
-  it("sends where it is typed and follows live permission changes", async () => {
+  it("posts for everyone, goes straight to the agent when switched on, and follows permissions", async () => {
     using _page = visit(`/guest?room=${participantId}`);
     await wide();
+    switchOff();
     const sources: Array<EventTarget> = [];
     const posts: Array<FormData> = [];
     using _requests = vi.spyOn(window, "fetch").mockImplementation(async (url, init) => {
@@ -158,29 +161,36 @@ describe("RoomPage", () => {
       .spyOn(window, "EventSource")
       .mockImplementation(fakeStream(opening("agent"), sources) as never);
     await using screen = await render(<RoomPage />, { container: container() });
-    const chatBox = () => screen.getByRole("textbox", { name: "Message people", exact: true });
+    const everyoneBox = () =>
+      screen.getByRole("textbox", { name: "Message everyone", exact: true });
     const agentBox = () => screen.getByRole("textbox", { name: "Message the agent", exact: true });
-    await userEvent.fill(chatBox(), "Hello people");
+    const agentSwitch = () => screen.getByRole("button", { name: "Send straight to the agent" });
+    await userEvent.fill(everyoneBox(), "Hello people");
     await userEvent.keyboard("{Enter}");
-    await expect.element(chatBox()).toHaveValue("");
+    await expect.element(everyoneBox()).toHaveValue("");
     expect(posts[0]?.get("to")).toBe("people");
+    await userEvent.click(agentSwitch());
+    await expect.element(agentSwitch()).toHaveAttribute("aria-pressed", "true");
     await userEvent.fill(agentBox(), "Run it");
     await userEvent.keyboard("{Enter}");
     await expect.element(agentBox()).toHaveValue("");
     expect(posts[1]?.get("to")).toBe("agent");
+    // Without the agent permission, everything is for everyone, whatever the switch said.
     send(sources, viewEvent("discuss"));
-    await expect.element(agentBox()).not.toBeInTheDocument();
-    await expect.element(chatBox()).toBeVisible();
+    await expect.element(agentSwitch()).not.toBeInTheDocument();
+    await expect.element(everyoneBox()).toBeVisible();
     send(sources, viewEvent("watch"));
-    await expect.element(chatBox()).not.toBeInTheDocument();
+    await expect.element(everyoneBox()).not.toBeInTheDocument();
     await expect.element(screen.getByText(roomItem.text)).toBeVisible();
     send(sources, viewEvent("agent"));
     await expect.element(agentBox()).toBeVisible();
+    switchOff();
   });
 
-  it("keeps chat out of the thread and surfaces a rejected send to the agent", async () => {
+  it("shows a message in the thread until sent, and surfaces a rejected send", async () => {
     using _page = visit(`/guest?room=${participantId}`);
     await wide();
+    switchOff();
     using _requests = vi.spyOn(window, "fetch").mockImplementation(async (url, init) => {
       if (String(url).includes("/send?")) {
         const body = JSON.parse(String(init?.body));
@@ -195,14 +205,9 @@ describe("RoomPage", () => {
       .spyOn(window, "EventSource")
       .mockImplementation(fakeStream(opening("agent"), []) as never);
     await using screen = await render(<RoomPage />, { container: container() });
-    const chat = screen.getByRole("complementary", { name: "Chat" });
-    await expect.element(chat.getByText(roomItem.text)).toBeVisible();
-    expect(screen.getByRole("region", { name: "Thread" }).element().textContent).not.toContain(
-      roomItem.text,
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Send Owner's message to the agent" }),
-    );
+    const thread = screen.getByRole("region", { name: "Thread" });
+    await expect.element(thread.getByText(roomItem.text)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Send Owner's message to agent" }));
     await expect.element(screen.getByRole("alert")).toHaveTextContent("The agent is unavailable");
   });
 
@@ -223,7 +228,7 @@ describe("RoomPage", () => {
       .spyOn(window, "EventSource")
       .mockImplementation(fakeStream(opening("discuss"), sources) as never);
     await using screen = await render(<RoomPage />, { container: container() });
-    const chatBox = () => screen.getByRole("textbox", { name: "Message people", exact: true });
+    const chatBox = () => screen.getByRole("textbox", { name: "Message everyone", exact: true });
     await expect.element(chatBox()).toBeVisible();
     await userEvent.fill(chatBox(), "Attached notes");
     await userEvent.upload(
@@ -274,14 +279,14 @@ describe("RoomPage", () => {
       .mockImplementation(fakeStream(opening("discuss"), sources) as never);
     await using screen = await render(<RoomPage />, { container: container() });
     await expect
-      .element(screen.getByRole("textbox", { name: "Message people", exact: true }))
+      .element(screen.getByRole("textbox", { name: "Message everyone", exact: true }))
       .toBeVisible();
     send(sources, { type: "ended", reason: "expired" });
     await expect
       .element(screen.getByRole("status"))
       .toHaveTextContent("Your access to this room has expired.");
     await expect
-      .element(screen.getByRole("textbox", { name: "Message people", exact: true }))
+      .element(screen.getByRole("textbox", { name: "Message everyone", exact: true }))
       .not.toBeInTheDocument();
     await expect.element(screen.getByText(roomItem.text)).not.toBeInTheDocument();
   });

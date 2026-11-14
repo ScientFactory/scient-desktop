@@ -41,11 +41,6 @@ const OverleafReviewPanel = lazy(() =>
     default: module.OverleafReviewPanel,
   })),
 );
-const OwnerRoomChat = lazy(() =>
-  import("../room/OwnerRoomChat").then((module) => ({
-    default: module.OwnerRoomChat,
-  })),
-);
 const ComputePanel = lazy(() =>
   import("../compute/ComputePanel").then((module) => ({
     default: module.ComputePanel,
@@ -171,11 +166,6 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
         root={activeWorkspaceRoot}
         sourceId={renderedRightPanelSurface.sourceId}
       />
-    </Suspense>
-  ) : renderedRightPanelSurface?.kind === "scient" &&
-    renderedRightPanelSurface.module === "room-chat" ? (
-    <Suspense fallback={null}>
-      <OwnerRoomChat threadRef={activeThreadRef} />
     </Suspense>
   ) : renderedRightPanelSurface?.kind === "scient" &&
     renderedRightPanelSurface.module === "sources" &&

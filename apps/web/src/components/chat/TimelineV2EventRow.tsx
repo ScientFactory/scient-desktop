@@ -22,6 +22,8 @@ import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
 import { subagentGroupTiming } from "./TimelineV2EventRow.logic";
+// SCIENT-FORK: thread rooms.
+import { RoomMessageRow } from "~/scient/room/RoomMessageRow";
 
 export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -35,6 +37,9 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     // SCIENT-FORK:END
     return <V2SubagentGroup key={row.id} row={row} />;
   }
+  // SCIENT-FORK:START — thread rooms.
+  if (item.type === "room_message") return <RoomMessageRow item={item} />;
+  // SCIENT-FORK:END
   if (item.type === "secret_request") {
     return (
       <SecretRequestCard

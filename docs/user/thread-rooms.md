@@ -1,6 +1,6 @@
 # Invite people to a thread
 
-A thread can have people in it as well as the agent. People you invite watch the
+A thread can have people in it as well as the agent. People you invite follow the
 thread live in their browser, talk with you there, and, if you allow it, talk to the
 agent. It works on a computer with Scient Connect on and reachable.
 
@@ -16,11 +16,10 @@ agent. It works on a computer with Scient Connect on and reachable.
 
 Everyone sees the same thread. What differs is what each person can do:
 
-- **Can view** sees the thread and the chat live.
-- **Can chat** also writes in the chat.
-- **Can use agent** also messages the agent, sends chat messages to it, and stops
-  it. The agent runs on your computer with your files and accounts, so give this
-  only to people you trust with that.
+- **Can chat** sees the thread live and writes in it for everyone.
+- **Can use agent** also sends messages to the agent and stops it. The agent runs on
+  your computer with your files and accounts, so give this only to people you trust
+  with that.
 
 Once someone joins, their faces appear beside **Share** in the header. Open it to
 change what someone can do, remove someone, or cancel links nobody has opened yet. A
@@ -31,23 +30,24 @@ they already saw.
 To share a read-only copy that people can open without your computer being on, use
 **Share › Link…** in the thread's menu.
 
-## The thread and the chat
+## Talking in a shared thread
 
-Where you type decides who hears you:
+Once someone has joined, a message is for people first. Everyone sees it in the
+thread, in its writer's colour with a dashed edge, but the agent doesn't. Anyone who
+can use the agent can choose **Send to agent** on it; the message then moves to the
+end of the thread as a normal message from its writer, and the agent answers. If
+someone else sent it on, it says who.
 
-- **The thread's composer** talks to the agent, as always.
-- **The chat** (the speech-bubble button in the header, which opens beside the
-  thread) is for people. The agent never sees it.
+To talk to the agent directly, turn on the robot button next to Send in the composer.
+Your messages then go straight to the agent, as when nobody else is in the thread. It
+is remembered for that thread, and only people who can use the agent have it.
 
-To give the agent something from the chat, hover the message and choose **Send to
-agent**. The agent gets it as a new message in the thread, naming who wrote it and
-who sent it, and the chat message is marked "Sent to agent". The chat button shows a
-dot while guests' messages wait for you, and so does the thread in the sidebar.
+The thread shows a dot in the sidebar while guests' messages wait for you.
 
-Chat messages, and the files attached to them, stay with the thread after sharing stops.
-They are not part of what the agent remembers unless someone sends them to it, and
-copies of the thread (sync, share links, continuing on another computer) leave them
-out.
+Messages for people, and the files attached to them, stay with the thread after
+sharing stops. They are not part of what the agent remembers unless someone sends
+them to it, and copies of the thread (sync, share links, continuing on another
+computer) leave them out.
 
 Guest links are a beta, on unless you turn them off: **Settings → Labs → Guest
 links** off stops every room on that computer. If Scient says other devices can't

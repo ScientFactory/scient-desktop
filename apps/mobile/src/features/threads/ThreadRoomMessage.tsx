@@ -9,14 +9,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import {
-  roomAuthorLabel,
-  roomDeliveryLabel,
-  roomReplyTarget,
-  type RoomMessageItem,
-} from "./thread-room.logic";
+import { roomAuthorLabel, type RoomMessageItem } from "./thread-room.logic";
 import { roomCommandSucceeded } from "./room-command-result";
-import { replyInRoom, useThreadRoom } from "./thread-room-state";
 
 export function ThreadRoomMessage(props: {
   readonly threadRef: ScopedThreadRef;
@@ -25,16 +19,13 @@ export function ThreadRoomMessage(props: {
   readonly renderAttachments: (attachments: ReadonlyArray<ChatAttachment>) => ReactNode;
 }) {
   const { threadRef, item } = props;
-  const room = useThreadRoom(threadRef);
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const send = useAtomCommand(threadEnvironment.sendRoomMessage, { reportFailure: false });
   const action = useAtomCommand(threadEnvironment.roomAction, { reportFailure: false });
   const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
-  const deleted = item.deletedAt !== undefined;
-  const delivery = roomDeliveryLabel(item);
   const run = async (kind: "send" | "delete") => {
-    if (inFlight.current || !canOperate || deleted) return;
+    if (inFlight.current || !canOperate) return;
     inFlight.current = true;
     setBusy(true);
     const perform = async () => {
@@ -56,55 +47,26 @@ export function ThreadRoomMessage(props: {
     inFlight.current = false;
     setBusy(false);
   };
+  // Like a queued message: dashed and unfilled until someone sends it to the agent.
   return (
-    <View className="items-start gap-1 pb-5">
-      <Text className="text-xs text-foreground-muted">
-        {roomAuthorLabel(item.author)} · To people
-      </Text>
+    <View className="items-end gap-1 pb-5">
+      <Text className="text-xs text-foreground-muted">{roomAuthorLabel(item.author)}</Text>
       <View
-        className="min-w-0 gap-2 rounded-[20px] border border-border px-3.5 py-2.5"
+        className="min-w-0 gap-2 rounded-[20px] border border-dashed border-border px-3.5 py-2.5"
         style={{ maxWidth: props.bubbleMaxWidth }}
       >
-        {deleted ? (
-          <Text className="text-sm italic text-foreground-muted">Message deleted</Text>
-        ) : (
-          <>
-            {item.replyTo ? (
-              <Text className="border-l-2 border-border pl-2 text-xs text-foreground-muted">
-                {roomAuthorLabel(item.replyTo.author)}: {item.replyTo.excerpt}
-              </Text>
-            ) : null}
-            {item.text ? (
-              <Text selectable className="text-base text-foreground">
-                {item.text}
-              </Text>
-            ) : null}
-            {props.renderAttachments(item.attachments ?? [])}
-          </>
-        )}
+        {item.text ? (
+          <Text selectable className="text-base text-foreground-muted">
+            {item.text}
+          </Text>
+        ) : null}
+        {props.renderAttachments(item.attachments ?? [])}
       </View>
-      {!deleted && item.suggested ? (
-        <Text className="text-xs text-foreground-muted">Suggested for the agent</Text>
-      ) : null}
-      {delivery ? <Text className="text-xs text-foreground-muted">{delivery}</Text> : null}
-      {!deleted && canOperate ? (
-        <View className="flex-row flex-wrap gap-1">
-          {room !== null ? (
-            <Button
-              size="compact"
-              label="Reply"
-              tone="text"
-              disabled={busy}
-              onPress={() => replyInRoom(threadRef, roomReplyTarget(item))}
-            />
-          ) : null}
+      {canOperate ? (
+        <View className="flex-row gap-1">
           <Button
             size="compact"
-            label={
-              item.deliveries?.some((entry) => entry.status === "sent")
-                ? "Send again"
-                : "Send to agent"
-            }
+            label="Send to agent"
             tone="text"
             disabled={busy}
             onPress={() => void run("send")}
@@ -117,7 +79,7 @@ export function ThreadRoomMessage(props: {
             onPress={() =>
               Dialog.confirm({
                 title: "Delete this message?",
-                message: "The message text and files will be removed from the room.",
+                message: "The message text and files will be removed for everyone.",
                 confirmText: "Delete",
                 destructive: true,
                 onConfirm: () => void run("delete"),

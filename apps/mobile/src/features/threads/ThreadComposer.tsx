@@ -1,5 +1,5 @@
-import { readRoomComposerState } from "./thread-room-state";
-import { RoomDestination, useRoomPost } from "./ThreadRoomComposer";
+import { readRoomDirect } from "./thread-room-state";
+import { RoomAgentSwitch, useRoomPost } from "./ThreadRoomComposer";
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -730,9 +730,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         pendingNativeImagePasteCountRef.current === 0 &&
         draft.text === draftAtSend.text &&
         draft.context === draftAtSend.context &&
-        (!roomPost.hasRoom ||
+        (!roomPost.hasPeople ||
           queuedEdit !== null ||
-          readRoomComposerState(composerOwnerKey).to === (toPeople ? "people" : "agent")) &&
+          readRoomDirect(composerOwnerKey) === roomPost.direct) &&
         draft.attachments.length === draftAtSend.attachments.length &&
         draft.attachments.every(
           (attachment, index) => attachment.id === draftAtSend.attachments[index]?.id,
@@ -958,8 +958,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           />
         ) : null}
 
-        {!props.isDraft && queuedEdit === null && (roomPost.hasRoom || toPeople) ? (
-          <RoomDestination threadKey={composerOwnerKey} disabled={isSubmissionLocked} />
+        {!props.isDraft && queuedEdit === null && roomPost.hasPeople ? (
+          <RoomAgentSwitch threadKey={composerOwnerKey} disabled={isSubmissionLocked} />
         ) : null}
         <ComposerSurface
           animateLayout={false}
