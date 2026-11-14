@@ -93,6 +93,11 @@ function useOpenExtension() {
           to: "/settings/extensions/item/provider/$instanceId/server/$serverName",
           params: { instanceId: target.instanceId, serverName: target.serverName },
         });
+      case "account":
+        return void navigate({
+          to: "/settings/extensions/item/account/$serviceId",
+          params: { serviceId: target.serviceId },
+        });
     }
   };
 }

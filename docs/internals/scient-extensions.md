@@ -18,6 +18,27 @@ Discover prefers Scient's connector where the curated catalog's `agentStores`
 mapping identifies the same service in an agent store. Google's account apps
 remain in the account layer; Scient does not add Google's official MCP servers.
 
+**Account services** (`apps/web/src/scient/extensions/accountServices.ts`) are
+the services that exist only as account apps: Gmail, Google Calendar and Google
+Drive, each mapped to its ChatGPT app id and its claude.ai connector name. Each
+shows as one row, in Discover's categories and search and, once any agent has
+it, in Installed → Connected services. Each agent's route comes from its own
+inventory:
+
+- Scient Agent: its `chatgpt` server rows.
+- Claude: its `claudeai` rows.
+- Codex: its plugins' apps. A Scient Agent signed in to the same ChatGPT email
+  also speaks for Codex, since apps belong to the account.
+
+"Works with" lists the agents that have the service, with the step each other
+agent still needs (connect, or sign in). **Connect** opens the next provider
+page in the system browser: ChatGPT's page for the app first, since one
+ChatGPT connection serves Codex and Scient Agent, then claude.ai's connector
+settings. Returning refreshes the agents' inventories. The provider sections
+no longer repeat these services' rows, and a category's store list hides a
+Codex store entry for one of them. Adding a service is a data change in that
+file.
+
 The library is a **projection**, never a new owner. Each entry is read from its
 owning system, and every change is dispatched back to that owner and re-read
 before the UI updates. The UI never predicts success.

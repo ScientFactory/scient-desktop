@@ -37,6 +37,8 @@ import {
 } from "./extensionsView";
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
+import { AccountServiceItem, connectedAccountServices } from "./AccountServicePages";
+import { accountServiceOfServer } from "./accountServices";
 import { AgentSkills } from "../skills/AgentSkills";
 import { PersonalSkillsSection } from "../skills/PersonalSkillsSection";
 import { ProjectSkills } from "../skills/ProjectSkills";
@@ -74,14 +76,17 @@ function ProviderSection({
         workspace={cwd}
       />
     )),
-    ...(showsKind(kind, "plugins") ? group.mcpServers : []).map((server) => (
-      <ProviderServerItem
-        key={`server:${server.name}`}
-        provider={group.provider}
-        label={group.label}
-        server={server}
-      />
-    )),
+    // A ChatGPT app or claude.ai connector for a service Scient lists on its own is shown there.
+    ...(showsKind(kind, "plugins") ? group.mcpServers : [])
+      .filter((server) => accountServiceOfServer(group.provider, server) === undefined)
+      .map((server) => (
+        <ProviderServerItem
+          key={`server:${server.name}`}
+          provider={group.provider}
+          label={group.label}
+          server={server}
+        />
+      )),
   ];
   const title = `From ${group.label}`;
   // Where the agent's own account adds apps: claude.ai for Claude, ChatGPT for Scient Agent.
@@ -164,6 +169,10 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
     selected?.instanceId ?? null,
   );
   const curated = catalogEntries(catalog);
+  const accountServices =
+    providerInventory.phase === "ready"
+      ? connectedAccountServices(providerInventory.providers, selected?.instanceId ?? null)
+      : [];
   const plugins = [
     ...(inventory?.plugins.filter((plugin) => plugin.origin === "bundle") ?? []),
     ...(inventory?.plugins.filter((plugin) => plugin.origin === "built-in") ?? []),
@@ -218,12 +227,12 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
         >
           {inventory === null ? (
             <MutedLine>{inventoryError ? "Unavailable." : "Loading…"}</MutedLine>
-          ) : !connectorsReach(selected) ? (
+          ) : !connectorsReach(selected) && accountServices.length === 0 ? (
             <MutedLine>
               {selected?.support?.reason ??
                 `${selected?.label ?? "This agent"} does not support remote MCP servers.`}
             </MutedLine>
-          ) : inventory.connectors.length === 0 ? (
+          ) : inventory.connectors.length === 0 && accountServices.length === 0 ? (
             <MutedLine>None yet. Find one in Discover, or add your own.</MutedLine>
           ) : (
             <>
@@ -231,7 +240,10 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
                 <MutedLine>{selected.support.reason}</MutedLine>
               ) : null}
               <ExtensionGrid label="Connected services">
-                {inventory.connectors.map((connector) => (
+                {accountServices.map((service) => (
+                  <AccountServiceItem key={`account:${service.id}`} service={service} />
+                ))}
+                {(connectorsReach(selected) ? inventory.connectors : []).map((connector) => (
                   <ConnectorItem
                     key={connector.connectorId}
                     connector={connector}
