@@ -115,7 +115,7 @@ export interface AccountServiceRoute {
    * `off`: the agent has it but the person turned it off there. `checking`: the agent's
    * inventory is not read yet, so nothing is claimed.
    */
-  readonly state: "connected" | "connect" | "sign-in" | "off" | "checking";
+  readonly state: "connected" | "connect" | "sign-in" | "off" | "checking" | "update";
   /** Why the agent does not have it yet. */
   readonly reason?: string;
   /** The page that connects it, or manages it once connected. */
@@ -198,8 +198,29 @@ function accountServiceRoutesFromInventory(
     };
     const chatgpt = { ...base, family: "chatgpt" as const, page: chatGptServicePage(service) };
     if (provider.driver === "scient") {
-      if (provider.accountAppsAvailable !== true)
-        return [{ ...chatgpt, state: "sign-in", reason: "Sign in to ChatGPT in Scient Agent" }];
+      const chatGptSignedIn = (provider.connection?.accounts ?? []).some(
+        (account) => account.connected && account.id === "openai-codex",
+      );
+      if (chatGptSignedIn && provider.accountAppsAvailable !== true)
+        return [
+          { ...chatgpt, state: "update", reason: "This Scient Agent version has no ChatGPT apps" },
+        ];
+      if (provider.accountAppsAvailable !== true) {
+        // Scient Agent reaches account apps only through ChatGPT, whatever else it signed in to.
+        const others = (provider.connection?.accounts ?? [])
+          .filter((account) => account.connected && account.sameAccountAs === undefined)
+          .map((account) => account.name);
+        return [
+          {
+            ...chatgpt,
+            state: "sign-in",
+            reason:
+              others.length > 0
+                ? `Signed in with ${others.slice(0, 2).join(" and ")}${others.length > 2 ? " and others" : ""}; ${service.name} needs its ChatGPT sign-in`
+                : "Not signed in",
+          },
+        ];
+      }
       return [
         scientHas(provider, service)
           ? { ...chatgpt, state: "connected" }

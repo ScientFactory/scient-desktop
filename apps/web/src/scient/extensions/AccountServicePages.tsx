@@ -1,6 +1,7 @@
 import { CheckIcon, ExternalLinkIcon, PlusIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { ScientAgentAccounts } from "../providerConnection/ScientAgentAccounts";
 
 import { Button } from "../../components/ui/button";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -59,6 +60,13 @@ function useAccountService(service: AccountService) {
   return {
     routes,
     step,
+    environmentId,
+    /** The agents as last read, for an inline sign-in. */
+    providers: providerInventory.providers.length > 0 ? providerInventory.providers : providers,
+    /** A sign-in finishes in the browser; returning re-reads the agents. */
+    expectReturn: () => {
+      waiting.current = true;
+    },
     audience: accountServiceAudience(routes),
     connect: step && canWrite ? () => open(step.page) : undefined,
     open,
@@ -121,20 +129,30 @@ const ROUTE_STATE_TEXT = {
   "sign-in": "Sign-in needed",
   off: "Off in Codex",
   checking: "Checking…",
+  update: "Update needed",
 };
 
 /** What a person can do for one agent: connect on the provider's page, or sign the agent in. */
 function RouteAction({
   route,
   open,
+  onSignIn,
 }: {
   readonly route: ReturnType<typeof accountServiceRoutes>[number];
   readonly open: (page: string) => void;
+  /** Signs the agent in where it is, when it can be; otherwise Settings → Providers. */
+  readonly onSignIn?: (() => void) | undefined;
 }) {
   if (route.state === "connect")
     return (
       <Button variant="ghost-primary" size="sm" onClick={() => open(route.page)}>
         {route.family === "chatgpt" ? "Connect in ChatGPT" : "Connect on claude.ai"}
+      </Button>
+    );
+  if (route.state === "sign-in" && onSignIn)
+    return (
+      <Button variant="ghost-primary" size="sm" onClick={onSignIn}>
+        {route.reason === "Not signed in" ? "Sign in with ChatGPT" : "Add ChatGPT"}
       </Button>
     );
   if (route.state === "sign-in")
@@ -149,7 +167,9 @@ function RouteAction({
 }
 
 function AccountServiceDetail({ service }: { readonly service: AccountService }) {
-  const { routes, step, audience, connect, open } = useAccountService(service);
+  const { routes, step, audience, connect, open, environmentId, providers, expectReturn } =
+    useAccountService(service);
+  const [signingIn, setSigningIn] = useState<string | null>(null);
   const chatgptPage = routes.find((route) => route.family === "chatgpt")?.page;
   const claudePage = routes.find((route) => route.family === "claude")?.page;
   return (
@@ -190,21 +210,52 @@ function AccountServiceDetail({ service }: { readonly service: AccountService })
           <MutedLine>None of your agents reaches {service.name} through its account.</MutedLine>
         ) : (
           <div className="divide-y divide-border overflow-hidden rounded-xl border bg-card">
-            {routes.map((route) => (
-              <CardRow key={route.instanceId}>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{route.label}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {route.state === "connected"
-                      ? route.family === "chatgpt"
-                        ? "Through its ChatGPT account"
-                        : "Through its Claude account"
-                      : route.reason}
-                  </span>
-                </span>
-                <RouteAction route={route} open={open} />
-              </CardRow>
-            ))}
+            {routes.map((route) => {
+              const provider = providers.find((entry) => entry.instanceId === route.instanceId);
+              // Scient Agent signs in to ChatGPT right here; the agent runs the sign-in.
+              const inline = route.driver === "scient" && provider?.connection?.accounts;
+              return (
+                <div key={route.instanceId}>
+                  <CardRow>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{route.label}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {route.state === "connected"
+                          ? route.family === "chatgpt"
+                            ? "Through its ChatGPT account"
+                            : "Through its Claude account"
+                          : route.reason}
+                      </span>
+                    </span>
+                    <RouteAction
+                      route={route}
+                      open={open}
+                      onSignIn={
+                        inline
+                          ? () => {
+                              expectReturn();
+                              setSigningIn(
+                                signingIn === route.instanceId ? null : route.instanceId,
+                              );
+                            }
+                          : undefined
+                      }
+                    />
+                  </CardRow>
+                  {signingIn === route.instanceId && provider && route.state === "sign-in" ? (
+                    <div className="px-4 pb-4">
+                      <ScientAgentAccounts
+                        environmentId={environmentId}
+                        provider={provider}
+                        only={(account) =>
+                          account.id === "openai-codex" || account.sameAccountAs === "openai-codex"
+                        }
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         )}
         <div className="flex flex-wrap gap-2">

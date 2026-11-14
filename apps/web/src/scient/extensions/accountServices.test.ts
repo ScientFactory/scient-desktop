@@ -108,6 +108,29 @@ describe("account services", () => {
       accountServiceRoutes(gmail, [scient(true), other, signedOut]).map((route) => route.state),
     ).toEqual(["connected", "connect", "sign-in"]);
     expect(accountServiceRoutes(gmail, [provider("cursor")])).toEqual([]);
+    // Scient Agent says what it is signed in with, and when only its version is missing.
+    const withClaude = provider("scient", {
+      connection: {
+        methods: [],
+        canDisconnect: false,
+        operation: null,
+        accounts: [
+          {
+            id: "anthropic" as never,
+            name: "Claude",
+            kind: "account",
+            connected: true,
+            canDisconnect: true,
+          },
+        ],
+      },
+    });
+    expect(accountServiceRoutes(gmail, [withClaude])[0]?.reason).toBe(
+      "Signed in with Claude; Gmail needs its ChatGPT sign-in",
+    );
+    expect(
+      accountServiceRoutes(gmail, [{ ...scient(false), accountAppsAvailable: false }])[0]?.state,
+    ).toBe("update");
     // Turned off in Codex stays off, whatever its ChatGPT account has.
     const off = {
       ...codex,
