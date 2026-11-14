@@ -240,6 +240,8 @@ export const OmpRpcEvent = Schema.Struct({
   to: maybeString,
   reason: maybeString,
   usage: maybeUnknown,
+  // SCIENT-FORK: Scient Agent's confirmed prompt-cache entry, for idle compaction.
+  promptCache: maybeUnknown,
 });
 export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
@@ -287,6 +289,8 @@ export const OmpMessageEndEvent = Schema.Struct({
   type: Schema.Literal("message_end"),
   messageId: maybeString,
   message: OmpAgentMessage,
+  // SCIENT-FORK: Scient Agent's confirmed prompt-cache entry, for idle compaction.
+  promptCache: maybeUnknown,
 });
 export type OmpMessageEndEvent = typeof OmpMessageEndEvent.Type;
 
