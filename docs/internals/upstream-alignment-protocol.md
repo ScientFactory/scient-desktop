@@ -109,9 +109,14 @@ their callers; a clean merge can mount the same behavior twice.
 Look beyond overlaps when upstream changes a shared API or a quality gate. Trace its untouched
 Scient consumers and the affected server, web, desktop, or mobile entry points. For example, a lint
 rule changing from advisory to mandatory can fail Scient-only files even when Git reports no
-conflict. If a previous receipt records an upstream deprecation, warning ceiling, or migration
-debt, check whether this range enforces it; record the scope and stable replacement API before
-starting a broad rewrite. An impact signal is a prompt for this review, not an instruction to run
+conflict. When upstream narrows what a shared read loads, give each Scient caller that needed the
+dropped data its own source, and remember that a thread created earlier in the same command exists
+only as pending events, not in the store. Scient fields on an upstream record travel wherever
+upstream copies that record; the field table in
+`apps/server/src/orchestration-v2/scient-fork/DelegatedTaskFromFork.test.ts` fails typecheck until
+each new thread field is classified for subagents. If a previous receipt records an upstream
+deprecation, warning ceiling, or migration debt, check whether this range enforces it; record the
+scope and stable replacement API before starting a broad rewrite. An impact signal is a prompt for this review, not an instruction to run
 every possible test or to accept an upstream policy without composition.
 
 Git's recorded conflict resolutions (`rerere`) may fill a working-tree file, but `start` leaves
