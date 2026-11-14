@@ -645,6 +645,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`2bee33eb193a0430c9a0d8e24f8f684163f045a4` is recorded in
+[the 2026-11-14 2bee33eb19 receipt](docs/internals/t3-upstream-sync-20261114-2bee33eb19.md).
+Literal merge `1235ed4b9a21f02197748810dd2f1a3678a450df` has owned base
+`253ef0edc14f8d6d7c20506fd97aaef57176ae4e` and the frozen official target as parents, retaining
+the 104 official commits after `997b304dd6`; PR #PRNUM carries it. Node moves to 26.13.1 with its
+SQLite 3.54.1, renaming a thread renames the Claude session, and provider switches on portable
+forks keep the inherited conversation. Scient keeps its lazy Files tree and pdf.js find. Release
+remains separate.
+
+The previous committed alignment through
 `997b304dd65f8fee1e4912cbe656b459695aa8e9` is recorded in
 [the 2026-11-14 997b304dd6 receipt](docs/internals/t3-upstream-sync-20261114-997b304dd6.md).
 Literal merge `745632a426ff2bca9bec21a3d89e86f6aa3eb37c` has owned base
