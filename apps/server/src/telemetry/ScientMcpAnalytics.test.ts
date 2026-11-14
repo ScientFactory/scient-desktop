@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
+import { it as effectIt } from "@effect/vitest";
+import { ExtensionsError } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import { McpSchema } from "effect/ai";
+
+import { toAccountsError } from "../scient/accounts/agent/connectorAuthoring.ts";
 
 import {
   BrowserToolCallLedger,
   closedErrorCode,
   scientMcpAnalyticsInput,
+  noteToolFailure,
   scientToolOutcome,
+  type ToolFailureFacts,
+  ToolFailureNote,
 } from "./ScientMcpAnalytics.ts";
 import { toolOutcome } from "./ProviderDimensions.ts";
 
@@ -116,6 +124,29 @@ describe("Scient MCP analytics input", () => {
       ),
     ).toEqual({ outcome: "ok" });
   });
+
+  effectIt.effect(
+    "keeps a connector tool's own reason through the Accounts failure it travels in",
+    () =>
+      Effect.gen(function* () {
+        const facts: ToolFailureFacts = {};
+        const unreachable = toAccountsError(
+          new ExtensionsError({ reason: "unreachable", message: "The service did not answer." }),
+        );
+        yield* noteToolFailure(unreachable).pipe(Effect.provideService(ToolFailureNote, facts));
+        const result = new McpSchema.CallToolResult({
+          isError: true,
+          content: [{ type: "text", text: unreachable.message }],
+        });
+        // regression: every connector failure read as `accounts`, owner unknown.
+        expect(scientToolOutcome(result, facts)).toEqual({
+          outcome: "error",
+          errorCode: "accounts",
+          failureClass: "unreachable",
+          failureOwner: "external",
+        });
+      }),
+  );
 
   it("counts a thread's browser calls up to its turn's end and keeps later ones for the next", () => {
     const ledger = new BrowserToolCallLedger();

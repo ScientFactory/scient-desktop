@@ -5,7 +5,11 @@
  */
 import * as NodePath from "node:path";
 
-import { AccountsError, type ExtensionsError } from "@t3tools/contracts";
+import {
+  AccountsError,
+  type ConnectorToolFailureClass,
+  type ExtensionsError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
@@ -35,13 +39,27 @@ type Input<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.T
   (typeof ScientAccountsToolkit.tools)[K]["parametersSchema"]
 >;
 
-const toAccountsError = (error: ExtensionsError) =>
+const FAILURE_CLASS = {
+  "not-found": "not_found",
+  "invalid-input": "invalid_input",
+  unreachable: "unreachable",
+  "not-an-mcp-server": "not_an_mcp_server",
+  "sign-in-failed": "sign_in_failed",
+  "registration-unsupported": "registration_unsupported",
+  "limit-reached": "limit_reached",
+  "state-unavailable": "state_unavailable",
+  unsupported: "unsupported",
+  "provider-rejected": "provider_rejected",
+} as const satisfies Record<ExtensionsError["reason"], ConnectorToolFailureClass>;
+
+export const toAccountsError = (error: ExtensionsError) =>
   new AccountsError({
     reason:
       error.reason === "invalid-input" || error.reason === "not-found"
         ? "invalid-input"
         : "unavailable",
     message: error.message,
+    failureClass: FAILURE_CLASS[error.reason],
   });
 
 const runtime = Effect.gen(function* () {

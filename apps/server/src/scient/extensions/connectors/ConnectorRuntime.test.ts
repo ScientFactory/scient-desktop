@@ -3409,6 +3409,52 @@ describe("local connectors", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("keeps discovery answering after the program dies with its session open", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const script = NodePath.join(harness.config.stateDir, "..", "dies.mjs");
+      // Starts, then exits on the first message: its session was issued and is gone.
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          script,
+          `import { createInterface } from "node:readline";
+createInterface({ input: process.stdin }).on("line", () => process.exit(4));`,
+        ),
+      );
+      const added = yield* harness.runtime.add({
+        target: {
+          type: "local-command",
+          command: process.execPath,
+          args: [script],
+          environment: [],
+        },
+        displayName: "Dies",
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      const opened = yield* harness.proxy(connectorId, initialize(1));
+      const session = opened.headers.get("mcp-session-id") ?? undefined;
+      expect(session).toBeDefined();
+      // Its answer stream ends when the program's exit ends the session.
+      yield* readEvents(opened);
+      // regression: the agent's next list on that session met HTTP 404, and Antigravity ended
+      // the whole turn ("MCP load failed … responded with HTTP 404").
+      // The second list finds the session already forgotten by Scient, not only by the program.
+      for (const id of [2, 4]) {
+        const listed = yield* harness.proxy(
+          connectorId,
+          { jsonrpc: "2.0", id, method: "tools/list" },
+          { session: session! },
+        );
+        expect(listed.status).toBe(200);
+        expect(yield* readJson(listed)).toEqual({ jsonrpc: "2.0", id, result: { tools: [] } });
+      }
+      // A tool call on it still hears that the session is gone, so the agent starts a new one.
+      const called = yield* harness.proxy(connectorId, toolCall(3), { session: session! });
+      expect(called.status).toBe(404);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("refuses a bundle that puts its key on the command line", () =>
     Effect.gen(function* () {
       const accounts = fakeKeyAccounts();
@@ -3724,6 +3770,12 @@ describe("connectors agents run", () => {
           Effect.provideService(ConnectorRuntime, harness.runtime),
           Effect.provide(discover),
         );
+
+      // A name that is not exact adds nothing: the agent hears the closest names to choose from.
+      const missed = yield* Effect.flip(agent(addConnector({ from: "echo server" })));
+      expect(missed.reason).toBe("not-found");
+      expect(missed.message).toContain(`Closest: ${echo.name}, ${docker.name}.`);
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
 
       const added = yield* agent(addConnector({ from: echo.name }));
       expect(added).toMatchObject({ status: "needs-setup", missing: ["API key"], tools: [] });

@@ -8,7 +8,11 @@
 import { extractWWWAuthenticateParams } from "@modelcontextprotocol/sdk/client/auth.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 
-import { type ConnectorFetch, describeEgressFailure } from "./ConnectorOutbound.ts";
+import {
+  CONNECTOR_CONTROL_TIMEOUT_MS,
+  type ConnectorFetch,
+  describeEgressFailure,
+} from "./ConnectorOutbound.ts";
 import { MAX_SSE_EVENT_BYTES } from "./ConnectorRedaction.ts";
 import { makeSseParser, type SseSink } from "./ConnectorSse.ts";
 
@@ -65,6 +69,7 @@ const isProbeResponse = (message: object): message is JsonRpcInitializeResponse 
  */
 const readEventStreamReply = async (
   body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
 ): Promise<JsonRpcInitializeResponse | undefined> => {
   const reader = body.getReader();
   const parser = makeSseParser(MAX_SSE_EVENT_BYTES);
@@ -84,7 +89,7 @@ const readEventStreamReply = async (
   };
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await untilAborted(signal, reader.read());
       const feed = done ? parser.end(sink) : parser.push(value, sink);
       if (done || feed !== "continue") return reply;
     }
@@ -93,15 +98,66 @@ const readEventStreamReply = async (
   }
 };
 
+/** Ending a session the probe opened is a courtesy: it never holds up the answer for long. */
+const PROBE_CLEANUP_TIMEOUT_MS = 5_000;
+
+/** The probe's whole answer was not in within its budget: say so, and that trying again helps. */
+const notAnsweredIn = (timeoutMs: number): ConnectorProbeResult => ({
+  type: "unreachable",
+  message: `The service did not answer within ${Math.round(timeoutMs / 1000)} seconds. Hosted servers sometimes take a while to wake up: try once more in a minute.`,
+});
+
+/** The fetch's own deadline (the same budget) can fire a moment before the probe's. */
+const timedOut = (error: unknown): boolean =>
+  error instanceof Error &&
+  (error.name === "TimeoutError" ||
+    (error.cause instanceof Error && error.cause.name === "TimeoutError"));
+
+/** `work` settles, or rejects once `signal` aborts, whichever comes first. */
+const untilAborted = <A>(signal: AbortSignal, work: Promise<A>): Promise<A> =>
+  signal.aborted
+    ? Promise.reject(signal.reason)
+    : new Promise<A>((resolve, reject) => {
+        const abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+      });
+
+/** The initialize reply in `response`'s body, read under `signal`. */
+const readReply = async (
+  response: Response,
+  signal: AbortSignal,
+): Promise<JsonRpcInitializeResponse | undefined> => {
+  const body = response.body;
+  if (body === null) return undefined;
+  if ((response.headers.get("content-type") ?? "").includes("text/event-stream"))
+    return await readEventStreamReply(body, signal);
+  const message = parseObject(
+    await untilAborted(signal, response.text()).catch(async (error: unknown) => {
+      await body.cancel().catch(() => undefined);
+      throw error;
+    }),
+  );
+  return message !== undefined && isProbeResponse(message) ? message : undefined;
+};
+
+/**
+ * One MCP `initialize`. `timeoutMs` bounds all of it (connecting, 429/503 waits, reading the
+ * reply), and `signal` ends it early when the caller stops waiting.
+ */
 export const probeConnector = async (input: {
   readonly url: string;
   readonly fetch: ConnectorFetch;
   /** Credential headers for API-key servers; absent for the unauthenticated probe. */
   readonly headers?: Readonly<Record<string, string>>;
+  readonly signal?: AbortSignal | undefined;
+  readonly timeoutMs?: number | undefined;
 }): Promise<ConnectorProbeResult> => {
-  let response: Response;
+  const timeoutMs = input.timeoutMs ?? CONNECTOR_CONTROL_TIMEOUT_MS;
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const signal = input.signal === undefined ? deadline : AbortSignal.any([deadline, input.signal]);
   const started = Date.now();
-  const signal = AbortSignal.timeout(5_000);
+  let response: Response;
   let temporary = false;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -125,6 +181,7 @@ export const probeConnector = async (input: {
         }),
       });
     } catch (error) {
+      if (deadline.aborted || timedOut(error)) return notAnsweredIn(timeoutMs);
       return temporary
         ? { type: "busy", message: "The service is busy right now." }
         : { type: "unreachable", message: describeEgressFailure(error) };
@@ -136,11 +193,18 @@ export const probeConnector = async (input: {
       response.headers.get("retry-after"),
       attempt,
       Date.now(),
-      5_000 - (Date.now() - started),
+      timeoutMs - (Date.now() - started),
     );
     await response.body?.cancel().catch(() => undefined);
     if (delay === undefined) return { type: "busy", message: "The service is busy right now." };
-    await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    const waited = await untilAborted(
+      signal,
+      new Promise<void>((resolve) => setTimeout(resolve, delay)),
+    ).then(
+      () => true,
+      () => false,
+    );
+    if (!waited) return notAnsweredIn(timeoutMs);
   }
   if (response.status === 401) {
     await response.body?.cancel().catch(() => undefined);
@@ -155,25 +219,16 @@ export const probeConnector = async (input: {
     };
   }
   const sessionId = response.headers.get("mcp-session-id");
-  const contentType = response.headers.get("content-type") ?? "";
-  let reply: JsonRpcInitializeResponse | undefined;
-  try {
-    if (contentType.includes("text/event-stream")) {
-      reply = response.body ? await readEventStreamReply(response.body) : undefined;
-    } else {
-      const message = parseObject(await response.text());
-      reply = message !== undefined && isProbeResponse(message) ? message : undefined;
-    }
-  } catch (error) {
-    reply = undefined;
-    if (error instanceof Error && error.name === "TimeoutError") {
-      return { type: "unreachable", message: describeEgressFailure(error) };
-    }
-  }
+  const reply = await readReply(response, signal).then(
+    (read) => ({ read }),
+    () => undefined,
+  );
   if (sessionId !== null) {
-    await input
+    // Not awaited: a server slow to end the session must not hold up the add.
+    void input
       .fetch(input.url, {
         method: "DELETE",
+        signal: AbortSignal.timeout(PROBE_CLEANUP_TIMEOUT_MS),
         headers: {
           ...input.headers,
           "mcp-session-id": sessionId,
@@ -183,7 +238,8 @@ export const probeConnector = async (input: {
       .then((deleted) => deleted.body?.cancel())
       .catch(() => undefined);
   }
-  const result = reply?.result;
+  if (reply === undefined && deadline.aborted) return notAnsweredIn(timeoutMs);
+  const result = reply?.read?.result;
   if (result === undefined || typeof result.protocolVersion !== "string") {
     return {
       type: "not-an-mcp-server",

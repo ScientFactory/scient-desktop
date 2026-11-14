@@ -1445,8 +1445,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             : `Source Control has no GitHub sign-in for ${input.account}.`,
         );
       }
-      const probe = yield* Effect.promise(() =>
+      const probe = yield* Effect.promise((signal) =>
         probeConnector({
+          signal,
           url: input.url,
           fetch: controlFetch(input.policy),
           headers: { authorization: `Bearer ${Redacted.value(lent.value.token)}` },
@@ -1692,8 +1693,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         !enteredSecrets(entered.strategy, value).every(isProtectableCredential)
       )
         return yield* tooShort("credential");
-      const probe = yield* Effect.promise(() =>
+      const probe = yield* Effect.promise((signal) =>
         probeConnector({
+          signal,
           url,
           fetch,
           headers: credentialHeadersFor(credentialAuth, value),
@@ -1712,7 +1714,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       auth = { ...credentialAuth, credentialRef };
       status = "connected";
     } else {
-      const probe = yield* Effect.promise(() => probeConnector({ url, fetch }));
+      const probe = yield* Effect.promise((signal) => probeConnector({ url, fetch, signal }));
       if (probe.type === "open") {
         auth = { type: "none" };
         status = "connected";
@@ -1867,7 +1869,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       return yield* extensionsError("invalid-input", `${record.displayName} does not use sign-in.`);
     }
     const fetch = controlFetch(policyOf(record), lifetimeOf(record.connectorId));
-    const probe = yield* Effect.promise(() => probeConnector({ url: record.url, fetch }));
+    const probe = yield* Effect.promise((signal) =>
+      probeConnector({ url: record.url, fetch, signal }),
+    );
     if (probe.type === "open") {
       yield* updateRecord(record.connectorId, (current, updatedAt) => ({
         ...current,
@@ -2316,6 +2320,32 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }),
   );
 
+  /**
+   * The agent's session is gone. A program Scient runs takes its session down when it stops, so
+   * the agent's discovery meets the empty server, as on a new session (some agents end the whole
+   * turn on a 404 here); anything else hears the session is gone and starts a new one.
+   */
+  const sessionGone = Effect.fn("ConnectorRuntime.sessionGone")(function* (
+    record: ConnectorRecord,
+    request: Pick<ConnectorForwardRequest, "body">,
+  ) {
+    const stopped =
+      record.local === undefined
+        ? undefined
+        : unavailableDiscoveryAnswer(
+            discoveryRequestOf(request.body),
+            (yield* summaryOf(record)).local?.problem ?? `${record.displayName} stopped running.`,
+          );
+    if (stopped === undefined) return sessionNotFound;
+    return stopped.status === 202
+      ? ({ status: 202, headers: {}, body: Stream.empty } satisfies ConnectorForwardResponse)
+      : ({
+          status: 200,
+          headers: { "content-type": "application/json" },
+          body: Stream.make(new TextEncoder().encode(stopped.json)),
+        } satisfies ConnectorForwardResponse);
+  });
+
   const forward: ConnectorRuntimeShape["forward"] = Effect.fn("ConnectorRuntime.forward")(
     function* (request) {
       const state = yield* store.read;
@@ -2359,7 +2389,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       let upstreamSessionId: string | undefined;
       if (proxySessionId !== undefined) {
         upstreamSessionId = sessions.resolve(proxySessionId, record.connectorId, providerSessionId);
-        if (upstreamSessionId === undefined) return sessionNotFound;
+        if (upstreamSessionId === undefined) return yield* sessionGone(record, request);
       }
 
       const permits = semaphoreFor(inFlight, record.connectorId, MAX_IN_FLIGHT_PER_CONNECTOR);
@@ -2430,7 +2460,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
       if (response.status === 404 && proxySessionId !== undefined) {
         sessions.drop(proxySessionId);
-        return yield* settle(sessionNotFound);
+        return yield* settle(yield* sessionGone(record, request));
       }
       if (request.method === "DELETE" && response.ok && proxySessionId !== undefined) {
         sessions.drop(proxySessionId);

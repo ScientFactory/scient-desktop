@@ -1,11 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Card request ids use the operating system CSPRNG.
 import * as NodeCrypto from "node:crypto";
-import { AccountsError, DEFAULT_BROWSER_PROFILE_ID, type AccountSummary } from "@t3tools/contracts";
+import {
+  AccountsError,
+  DEFAULT_BROWSER_PROFILE_ID,
+  type AccountSummary,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 import { FetchHttpClient } from "effect/http";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
+import { personWaitMs } from "../../../provider/ScientPersonWaitTools.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { ACCOUNT_SECRET_REQUEST_PREFIX } from "@t3tools/shared/scientAccountSecretRequest";
@@ -40,6 +48,16 @@ const existingKey = (accounts: ReadonlyArray<AccountSummary>, input: Input) => {
   )?.account;
 };
 
+/** The calling agent's driver, when the registry knows its instance. */
+const callerDriver = Effect.fn("AccountsAgent.callerDriver")(function* (
+  instanceId: ProviderInstanceId | undefined,
+) {
+  const registry = yield* Effect.serviceOption(ProviderRegistry);
+  if (instanceId === undefined || Option.isNone(registry)) return undefined;
+  const providers = yield* registry.value.getProviders;
+  return providers.find((provider) => provider.instanceId === instanceId)?.driver;
+});
+
 /**
  * One value from the user through upstream's private secret card, read once on the server: it
  * never reaches the agent. Any status but `saved` is the user's answer (declined, timed out…).
@@ -55,12 +73,15 @@ export const askInCard = Effect.fn("AccountsAgent.askInCard")(function* (
   },
 ) {
   if (scope.projectId === undefined) return yield* fail(card.notKept);
+  const invocation = yield* McpInvocationContext;
   const asked = yield* (yield* OrchestratorMcpService)
-    .requestSecret(yield* McpInvocationContext, {
+    .requestSecret(invocation, {
       label: card.label,
       reason: card.reason,
       ...(card.placeholder === undefined ? {} : { placeholder: card.placeholder }),
       clientRequestId: `${ACCOUNT_SECRET_REQUEST_PREFIX}${NodeCrypto.randomUUID()}`,
+      // The card ends before the calling agent would drop this call.
+      timeoutMs: personWaitMs(yield* callerDriver(invocation.thread?.providerInstanceId)),
     })
     .pipe(Effect.mapError((error) => fail(error.message)));
   if (asked.status !== "saved") return { status: asked.status };

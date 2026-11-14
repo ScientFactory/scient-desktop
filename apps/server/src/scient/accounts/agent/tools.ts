@@ -289,7 +289,7 @@ const connectorSetup = metadata(
       SecretRequests,
     ],
     description:
-      "When a local connector says it needs setup: saves settings you asked the user in chat, and asks for each missing key in a private card (or links their saved key). Then call its tool again. replaceKeys asks again for a key the program rejected.",
+      "When a connector says it needs setup. A local one: saves settings you asked the user in chat, and asks for each missing key in a private card (or links their saved key); then call its tool again. replaceKeys asks again for a key the program rejected. A hosted one: says what it needs and who gives it.",
     parameters: Schema.Struct({
       connector: TrimmedNonEmptyString.annotate({ description: "Its MCP server name." }),
       settings: Schema.optional(
@@ -314,7 +314,7 @@ const connectorSetup = metadata(
     }),
   }),
   "connector-setup",
-  "Set up a local connector",
+  "Set up a connector",
 );
 const connectorDependencies = [
   ...common.dependencies,

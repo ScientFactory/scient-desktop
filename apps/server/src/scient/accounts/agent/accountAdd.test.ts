@@ -15,6 +15,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
+import { ProviderRegistry } from "../../../provider/ProviderRegistry.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { addSignIn, askForAccountKey, cardEndedNote } from "./accountAdd.ts";
 import { fakeAccounts } from "../Accounts.testkit.ts";
@@ -91,6 +92,44 @@ const run = (
     Effect.map((result) => ({ result, cards })),
   );
 };
+
+it.effect("closes the card before the calling agent would drop the call", () =>
+  Effect.gen(function* () {
+    const waitFor = (driver: string | undefined) => {
+      const cards: Array<OrchestratorMcpRequestSecretInput> = [];
+      return askForAccountKey(scope, { name: "Brave", reason: "r", sites: ["brave.com"] }).pipe(
+        Effect.provideService(AccountsService, fakeAccounts().service),
+        Effect.provideService(McpInvocationContext, {
+          thread: { providerInstanceId: "agent-1" },
+        } as never),
+        Effect.provideService(OrchestratorMcpService, {
+          requestSecret: (_scope: unknown, card: OrchestratorMcpRequestSecretInput) =>
+            Effect.sync(() => {
+              cards.push(card);
+              return { status: "timed_out" as const };
+            }),
+        } as never),
+        Effect.provideService(SecretRequests, {} as never),
+        driver === undefined
+          ? (effect) => effect
+          : Effect.provideService(ProviderRegistry, {
+              getProviders: Effect.succeed([{ instanceId: "agent-1", driver }]),
+            } as never),
+        Effect.map((result) => ({ result, timeoutMs: cards[0]?.timeoutMs })),
+      );
+    };
+    // regression: Antigravity ends a tool call at 180 s while the card waited 10 minutes, so
+    // the call ended with no result.
+    const antigravity = yield* waitFor("antigravity");
+    expect(antigravity.timeoutMs).toBeLessThan(180_000);
+    expect(antigravity.result).toMatchObject({ status: "timed_out" });
+    // An agent whose client may cut a silent call at 300 s gets a card that ends before that.
+    for (const driver of ["codex", "claudeAgent", "someNewAgent", undefined])
+      expect((yield* waitFor(driver)).timeoutMs).toBeLessThan(300_000);
+    // Scient Agent's bridge keeps the call open (no Bun deadline, a 65-minute signal).
+    expect((yield* waitFor("scient")).timeoutMs).toBeLessThan(65 * 60_000);
+  }),
+);
 
 it.effect("keeps a new key as an API-key account and never returns its value", () =>
   Effect.gen(function* () {

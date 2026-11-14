@@ -185,7 +185,8 @@ const TOOL_INPUT =
   /(^|_)(invalid|validation|bad_request|not_found|unknown_session|session_not_found|selector|missing_argument|unsupported|conflict|stale)($|_)/u;
 const TOOL_ENVIRONMENT =
   /(^|_)(permission|denied|forbidden|not_installed|missing_runtime|unauthorized|auth)($|_)/u;
-const TOOL_EXTERNAL = /(^|_)(network|http|fetch|dns|offline|remote|upstream|page)($|_)/u;
+const TOOL_EXTERNAL =
+  /(^|_)(network|http|fetch|dns|offline|remote|upstream|unreachable|page)($|_)/u;
 const TOOL_SCIENT =
   /(^|_)(exception|internal|defect|persistence|no_host|unavailable|storage)($|_)/u;
 

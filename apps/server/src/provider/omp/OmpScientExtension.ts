@@ -52,6 +52,9 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     const response = await fetch(endpoint, {
       method: "POST",
       redirect: "error",
+      // Bun cuts a request whose answer is still pending after about 300 s; the signal below is
+      // the only deadline. Node's fetch ignores this option.
+      timeout: false,
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",

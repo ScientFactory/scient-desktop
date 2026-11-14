@@ -19,13 +19,19 @@ import * as Option from "effect/Option";
 
 import * as ServerConfig from "../../config.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
-import { agentStatusOf, oneLine, type AgentConnectorStatus } from "./connectors/agentStatus.ts";
+import {
+  agentStatusOf,
+  oneLine,
+  setupAdvice,
+  type AgentConnectorStatus,
+} from "./connectors/agentStatus.ts";
 import { connectorHostOf } from "./connectors/ConnectorDiscovery.ts";
 import { observeFeature } from "./connectors/observedFeature.ts";
 import {
   type ConnectorLocation,
   ConnectorRuntime,
   ExtensionsDiscover,
+  type ExtensionsDiscoverShape,
 } from "./ExtensionsServices.ts";
 
 const MAX_FOUND = 10;
@@ -182,6 +188,56 @@ const foundRow = (
   };
 };
 
+/** Scient's picks, then the Registry's, for a query; each name once. */
+const searchEntries = Effect.fn("ConnectorAgentControl.search")(function* (
+  discover: ExtensionsDiscoverShape,
+  query: string,
+) {
+  const [curated, registry] = yield* Effect.all(
+    [
+      discover.search({ scope: "curated", query }),
+      discover.search({ scope: "registry", query, limit: MAX_FOUND }).pipe(Effect.result),
+    ],
+    { concurrency: 2 },
+  );
+  const byName = new Map<string, DiscoverEntry>();
+  for (const entry of [
+    ...curated.entries,
+    ...(registry._tag === "Success" ? registry.success.entries : []),
+  ])
+    if (!byName.has(entry.name)) byName.set(entry.name, entry);
+  return { entries: [...byName.values()], registry };
+});
+
+/** How many names a missed add offers in its place. */
+const MAX_CANDIDATES = 3;
+
+/**
+ * An add names a connector exactly. A miss offers the closest names this agent may add, for
+ * the agent to choose from: a guess is never added for it.
+ */
+const missedName = Effect.fn("ConnectorAgentControl.missedName")(function* (
+  discover: ExtensionsDiscoverShape,
+  from: string,
+  elsewhere: ReadonlySet<string>,
+) {
+  const { entries } = yield* searchEntries(discover, from).pipe(
+    Effect.orElseSucceed(() => ({ entries: [] as ReadonlyArray<DiscoverEntry> })),
+  );
+  const names = entries
+    .filter(
+      (entry) =>
+        entry.installedConnectorId === undefined || !elsewhere.has(entry.installedConnectorId),
+    )
+    .slice(0, MAX_CANDIDATES)
+    .map((entry) => entry.name);
+  return notFound(
+    names.length === 0
+      ? `Discover has nothing named ${from}. scient_connector_list {"query":"…"} finds its name.`
+      : `Discover has nothing named exactly ${from}. Closest: ${names.join(", ")}. Add one by that name, or scient_connector_list {"query":"${from.replaceAll('"', "")}"} shows more.`,
+  );
+});
+
 /** The user's connectors and, for a query, ones Scient can add (its own picks, then the Registry). */
 export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* (input: {
   readonly query?: string | undefined;
@@ -203,20 +259,7 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
       if (query === undefined) return { connectors: rows };
       if (Option.isNone(discover))
         return { connectors: rows, found: [], message: "Discover is unavailable here." };
-      const [curated, registry] = yield* Effect.all(
-        [
-          discover.value.search({ scope: "curated", query }),
-          discover.value.search({ scope: "registry", query, limit: MAX_FOUND }).pipe(Effect.result),
-        ],
-        { concurrency: 2 },
-      );
-      const byName = new Map<string, DiscoverEntry>();
-      for (const entry of [
-        ...curated.entries,
-        ...(registry._tag === "Success" ? registry.success.entries : []),
-      ])
-        if (!byName.has(entry.name)) byName.set(entry.name, entry);
-      const entries = [...byName.values()];
+      const { entries, registry } = yield* searchEntries(discover.value, query);
       const cut =
         entries.length > MAX_FOUND ||
         (registry._tag === "Success" && registry.success.message !== undefined);
@@ -239,14 +282,14 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
   );
 });
 
-const nextStep = (summary: ConnectorSummary, status: AgentConnectorStatus) => {
+/** What the agent does next with a connector in this state. */
+export const nextStep = (summary: ConnectorSummary, status: AgentConnectorStatus) => {
   const name = summary.displayName;
   const server = summary.serverName;
   switch (status) {
     case "needs-setup":
-      return `${name} still needs ${rowOf(summary).missing?.join(", ") ?? "setup"}: call scient_connector_setup {"connector":"${server}"}.`;
     case "needs-sign-in":
-      return `${name} needs the user to sign in: call scient_connector_control {"connector":"${server}","action":"sign-in"}.`;
+      return setupAdvice(summary);
     case "error":
       return `${name} has a problem: ${oneLine(summary.local?.problem ?? summary.lastError ?? "it did not start")} scient_connector_check {"connector":"${server}"} shows more${summary.local === undefined ? "" : "; scient_connector_copy fixes it"}.`;
     case "off":
@@ -341,21 +384,20 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
         request = { target: { type: "local-bundle", path, settings: {}, keys: {} } };
       } else {
         if (Option.isNone(discover)) return yield* invalid("Discover is unavailable here.");
-        const entry = yield* discover.value
-          .entry({ name: from })
-          .pipe(
-            Effect.mapError((error) =>
-              error.reason === "not-found"
-                ? notFound(
-                    `Discover has nothing named ${from}. scient_connector_list {"query":"…"} finds its name.`,
-                  )
-                : error,
-            ),
-          );
+        const { connectors } = yield* runtime.list();
+        const elsewhere = new Set(
+          connectors.flatMap((item) => (forThisAgent(item, caller) ? [] : [item.connectorId])),
+        );
+        const found = yield* discover.value.entry({ name: from }).pipe(Effect.result);
+        if (found._tag === "Failure")
+          return yield* found.failure.reason === "not-found"
+            ? yield* missedName(discover.value, from, elsewhere)
+            : found.failure;
+        const entry = found.success;
         const existing =
           entry.installedConnectorId === undefined
             ? undefined
-            : findSummary((yield* runtime.list()).connectors, entry.installedConnectorId);
+            : findSummary(connectors, entry.installedConnectorId);
         // Given to other agents only: this agent learns no more than that, and adds no second copy.
         if (existing !== undefined && !forThisAgent(existing, caller))
           return yield* invalid(
