@@ -43,9 +43,9 @@ export const RoomRole = Schema.Literals(["watch", "discuss", "agent"]);
 export type RoomRole = typeof RoomRole.Type;
 
 export const ROOM_ROLE_LABEL: Record<RoomRole, string> = {
-  watch: "Can watch",
-  discuss: "Can talk with people",
-  agent: "Can also message the agent",
+  watch: "Can view",
+  discuss: "Can chat",
+  agent: "Can use agent",
 };
 
 export const RoomAccessDuration = Schema.Literals(["day", "week", "month"]);

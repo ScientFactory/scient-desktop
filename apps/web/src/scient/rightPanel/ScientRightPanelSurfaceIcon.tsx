@@ -6,6 +6,7 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   Library,
+  MessagesSquare,
   Sigma,
 } from "lucide-react";
 
@@ -34,6 +35,8 @@ export function ScientRightPanelSurfaceIcon(props: { readonly surface: ScientRig
   switch (props.surface.module) {
     case "sources":
       return <Library className="size-3 shrink-0" />;
+    case "room-chat":
+      return <MessagesSquare className="size-3 shrink-0" />;
     case "new-tab":
       return <LayoutGrid className="size-3 shrink-0" />;
     case "compute":

@@ -60,7 +60,7 @@ import {
 
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 // SCIENT-FORK: thread rooms.
-import { RoomSentLine } from "~/scient/room/RoomMessageRow";
+import { RoomSentLine } from "~/scient/room/RoomChat";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";

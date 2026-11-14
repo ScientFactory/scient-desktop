@@ -21,8 +21,14 @@ and a T3 share already open at upgrade keeps working until it ends.
   imported copy's history can reach an agent; messages sent to the agent travel as
   usual.
 - **Position**: the EventSink places a room message in the position range of
-  `anchorRunOrdinal`, the latest run that had started when it was posted. It sorts after
-  what the thread showed then and before any later run; work folding skips it.
+  `anchorRunOrdinal`, the latest run that had started when it was posted; work folding
+  skips it.
+- **Drawing**: the web clients never draw room messages in the thread. The timeline
+  derivation (`session-logic.ts`) drops them, and `scient/room/RoomChat.tsx` shows them
+  as the people chat: the owner's `scient:room-chat` side-panel tab, and the guest
+  page's chat beside the thread (over it on a phone). The thread's composer always
+  talks to the agent; the chat's always talks to people. The phone app still shows them
+  in the thread with a destination switch.
 - **Sending to the agent** is `message.dispatch` with `roomItemId`. The orchestrator
   builds the agent's words from the stored item (who wrote it, who sent it, what it
   replies to), records a delivery on the item in the same commit, and dispatches
@@ -44,8 +50,10 @@ serves the host, and guest links are on in Labs. Removing someone or changing th
 role applies on their next request; their open stream ends when the room changes.
 Presence is in memory: open guest streams per participant.
 
-Roles: Watch reads; Discuss posts to people and can mark a post suggested for the
-agent; Agent also sends to the agent, sends any room message, and stops the run.
+Roles (shown as Can view, Can chat, Can use agent): Watch reads; Discuss also chats;
+Agent also sends to the agent, sends any chat message to it, and stops the run. The
+`suggested` and `replyTo` fields remain in the contract; the web chat no longer sets
+or shows them.
 Approvals, model and runtime settings and room administration stay with the owner.
 A guest's send runs with the thread's own permissions: one session mixes everyone's
 instructions, so a narrower mode for guests would not hold.
