@@ -1,6 +1,7 @@
 import { usePluginKeys, pluginKeyStatusLabel } from "./PluginKeys";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import type {
+  ExtensionAudience,
   ConnectorSummary,
   ConnectorTestResult,
   DiscoverEntry,
@@ -45,8 +46,6 @@ import {
   connectorStatusText,
   entryName,
   entryNeedsSetup,
-  connectorFacts,
-  entryFacts,
   entryTagline,
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
@@ -285,9 +284,6 @@ export function ConnectorItem({
         connector.local?.commandLine ??
         connector.url
       }
-      facts={connectorFacts(entry, connector)
-        .map(([, value]) => value)
-        .join(" · ")}
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>
@@ -335,9 +331,6 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
         name={name}
         iconUrl={entry.iconUrl}
         tagline={entryTagline(entry)}
-        facts={entryFacts(entry)
-          .map(([, value]) => value)
-          .join(" · ")}
         status={actions.busy === "add" ? "Adding…" : null}
         trailing={
           entry.installedConnectorId === undefined ? (
@@ -519,22 +512,30 @@ export function ProviderServerItem({
   provider,
   label,
   server,
+  serviceId,
+  audience,
+  type,
 }: {
   readonly provider: ServerProvider;
   readonly label: string;
   readonly server: ServerProviderMcpServer;
+  /** The account service this row is one agent's side of; the row opens its page. */
+  readonly serviceId?: string | undefined;
+  /** Who can use it, when that is wider than this agent (a service several agents reach). */
+  readonly audience?: ExtensionAudience | undefined;
+  /** The table's Type column. */
+  readonly type?: string | undefined;
 }) {
   const actions = useProviderServerActions(provider, label, server);
-  const target: ExtensionTarget = {
-    kind: "provider-server",
-    instanceId: provider.instanceId,
-    serverName: server.name,
-  };
+  const target: ExtensionTarget = serviceId
+    ? { kind: "account", serviceId }
+    : { kind: "provider-server", instanceId: provider.instanceId, serverName: server.name };
   return (
     <ExtensionRow
       target={target}
       name={providerServerDisplayName(server)}
-      audience={providerExtensionAudience(provider, server)}
+      audience={audience ?? providerExtensionAudience(provider, server)}
+      type={type}
       tagline={server.error ?? mcpServerSummary(server)}
       status={MCP_SERVER_STATUS_TEXT[server.status]}
       trailing={
@@ -600,7 +601,7 @@ export function ProviderAppConnect({
           )
         }
       >
-        Connect {app.name}
+        Connect in ChatGPT
       </Button>
       <ActionFeedback feedback={lock.feedback} />
     </>

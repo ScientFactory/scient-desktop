@@ -81,6 +81,20 @@ describe("account services", () => {
       { instanceId: claude(false).instanceId, reason: "Connect Gmail on claude.ai" },
     ]);
 
+    // Before the agents are read nothing is claimed and nothing is offered.
+    // An agent whose inventory has not arrived is checking; one that arrived is not held back.
+    const claudeRead = claude(false);
+    const unread = accountServiceRoutes(
+      gmail,
+      [scient(false), codex, claudeRead],
+      (agent) => agent === claudeRead,
+    );
+    expect(unread.map((route) => route.state)).toEqual(["checking", "checking", "connect"]);
+    expect(nextAccountServiceStep(unread)?.family).toBe("claude");
+    expect(accountServiceAudience(unread).pending.map((agent) => agent.instanceId)).toEqual([
+      claudeRead.instanceId,
+    ]);
+
     const all = accountServiceRoutes(gmail, [scient(true), codex, claude(true)]);
     expect(nextAccountServiceStep(all)).toBeUndefined();
   });
@@ -94,6 +108,29 @@ describe("account services", () => {
       accountServiceRoutes(gmail, [scient(true), other, signedOut]).map((route) => route.state),
     ).toEqual(["connected", "connect", "sign-in"]);
     expect(accountServiceRoutes(gmail, [provider("cursor")])).toEqual([]);
+    // Scient Agent says what it is signed in with, and when only its version is missing.
+    const withClaude = provider("scient", {
+      connection: {
+        methods: [],
+        canDisconnect: false,
+        operation: null,
+        accounts: [
+          {
+            id: "anthropic" as never,
+            name: "Claude",
+            kind: "account",
+            connected: true,
+            canDisconnect: true,
+          },
+        ],
+      },
+    });
+    expect(accountServiceRoutes(gmail, [withClaude])[0]?.reason).toBe(
+      "Signed in with Claude; Gmail needs its ChatGPT sign-in",
+    );
+    expect(
+      accountServiceRoutes(gmail, [{ ...scient(false), accountAppsAvailable: false }])[0]?.state,
+    ).toBe("update");
     // Turned off in Codex stays off, whatever its ChatGPT account has.
     const off = {
       ...codex,

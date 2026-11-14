@@ -1004,8 +1004,10 @@ rejected with a named reason.
 **Curated catalog.** `apps/server/src/scient/extensions/discover/curatedCatalog.ts`
 lists remote MCP servers chosen for a research-focused audience, each with an
 https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
-a short description, categories (`featured`, `research`, `data`, `code`,
-`writing`, `communication`, `design`), a website, the MCP Registry entry when
+a short description, categories (`most-used`, then `papers`, `biology`,
+`code`, `data`, `physics-math`, `files`, `communication`, `projects`,
+`figures`, `chemistry`, `earth`, `social-science`, in that home-page order),
+a website, the MCP Registry entry when
 the registry publishes that exact remote, and a bundled icon. Every
 URL is verified live before it is added (a POST `initialize` answered 200 with
 an initialize result, or 401 with `WWW-Authenticate`); the verification date
@@ -1015,7 +1017,7 @@ named `scient.curated/<id>` with the verification date as its version; clients
 install it by URL.
 
 `extensions.discover.catalog` returns the non-empty categories in that order,
-each with up to 6 preview entries (entries whose first non-featured category is
+each with up to 6 preview entries (entries whose first category other than `most-used` is
 the section come first, then the rest, in catalog order) and its `total`.
 `extensions.discover.search` takes a required `scope`, so local results never
 wait on the network:

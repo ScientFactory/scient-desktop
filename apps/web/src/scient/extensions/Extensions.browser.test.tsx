@@ -595,7 +595,7 @@ function entry(name: string, patch: Partial<DiscoverEntry> = {}): DiscoverEntry 
       { type: "streamable-http", url: `https://${name}.example.com/mcp`, requiresInput: false },
     ],
     installable: true,
-    categories: ["featured"],
+    categories: ["most-used"],
     ...patch,
   };
 }
@@ -652,7 +652,7 @@ const catalog: DiscoverCatalog = {
   fetchedAt: "2026-10-21T00:00:00.000Z",
   sections: [
     {
-      category: "featured",
+      category: "most-used",
       title: "Popular",
       total: 3,
       entries: [
@@ -785,15 +785,32 @@ function setup() {
   };
 }
 
+/** The table's "Show all N" toggle, or null when everything already shows. */
+function showAllIn(section: Element | null): HTMLButtonElement | null {
+  return (
+    [...(section?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) =>
+      /^Show all \d+$/.test(button.textContent ?? ""),
+    ) ?? null
+  );
+}
+
 describe("Discover", () => {
   it("shows each catalog section with a link to its category, built-ins and Browse all", async () => {
     await using fixture = setup();
     await fixture.render(<DiscoverPage />);
     const popular = fixture.section("Popular");
     expect(linkIn(fixture.container, "Popular")?.getAttribute("href")).toBe(
-      "/settings/extensions/category/featured",
+      "/settings/extensions/category/most-used",
     );
-    expect(fixture.rowNames(popular)).toEqual(["Linear", "Notion", "Local tool"]);
+    // Most used leads with the account services, then the catalog's picks.
+    expect(fixture.rowNames(popular)).toEqual([
+      "Gmail",
+      "Google Calendar",
+      "Google Drive",
+      "Linear",
+      "Notion",
+      "Local tool",
+    ]);
     expect(fixture.rowNames(fixture.section("Built into Scient"))).toEqual(["Sources"]);
     expect(linkIn(fixture.container, "Browse all MCP servers")?.getAttribute("href")).toBe(
       "/settings/extensions/all",
@@ -1037,7 +1054,7 @@ describe("Discover", () => {
     state.discoverPages = {
       [curatedKey]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
-        entries: [entry("scient.curated/granola", { title: "Granola", categories: ["writing"] })],
+        entries: [entry("scient.curated/granola", { title: "Granola", categories: ["files"] })],
       },
     };
     state.discoverOutcomes = { [registryKey]: "pending" };
@@ -1141,7 +1158,7 @@ describe("Discover", () => {
     const granola = entry("scient.curated/granola", {
       title: "Granola",
       tagline: "Meeting notes",
-      categories: ["writing"],
+      categories: ["files"],
     });
     state.discoverPages = {
       [JSON.stringify({ scope: "registry" })]: {
@@ -1178,17 +1195,23 @@ describe("Discover", () => {
   it("lists a category with a way back, and rejects unknown categories", async () => {
     await using fixture = setup();
     state.discoverPages = {
-      [JSON.stringify({ scope: "curated", category: "featured" })]: {
+      [JSON.stringify({ scope: "curated", category: "most-used" })]: {
         fetchedAt: "2026-10-21T00:00:00.000Z",
         entries: [entry("io.notion/notion", { title: "Notion" })],
         nextCursor: "page-2",
       },
     };
-    await fixture.render(<CategoryPage category="featured" />);
+    await fixture.render(<CategoryPage category="most-used" />);
     expect(linkIn(fixture.container, "Discover")?.getAttribute("href")).toBe(
       "/settings/extensions",
     );
-    expect(fixture.rowNames(fixture.section("Scient’s picks"))).toEqual(["Notion"]);
+    // The account services lead Most used, then the curated picks.
+    expect(fixture.rowNames(fixture.section("Scient’s picks"))).toEqual([
+      "Gmail",
+      "Google Calendar",
+      "Google Drive",
+      "Notion",
+    ]);
     expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
     expect(fixture.container.textContent).not.toContain("From your agents’ stores");
 
@@ -1244,11 +1267,11 @@ describe("Installed", () => {
       },
     );
     await fixture.render(<InstalledPage />);
-    await vi.waitFor(() =>
-      expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-    );
-    await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
-    expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
+    await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
+    await userEvent.click(showAllIn(fixture.section("Yours"))!);
+    expect(
+      fixture.rowNames(fixture.section("Yours")).filter((name) => name?.includes("/p-")),
+    ).toHaveLength(40);
     expect(fixture.rowNames()).toContain("Plugin /p-0");
     expect(fixture.rowNames()).toContain("Plugin /p-39");
     expect(
@@ -1312,9 +1335,7 @@ describe("Installed", () => {
         },
       );
       await fixture.render(<InstalledPage />);
-      await vi.waitFor(() =>
-        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-      );
+      await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
       const retired = { ...raw, workspaceSnapshots: snapshots };
       held = true;
       await act(async () => state.publishRevision("local", 2));
@@ -1335,11 +1356,11 @@ describe("Installed", () => {
       await fixture.render(<InstalledPage />);
       expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
       await act(async () => release.resolve({ _tag: "Success", value: { providers: [retired] } }));
-      await vi.waitFor(() =>
-        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
-      );
-      await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
-      expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
+      await vi.waitFor(() => expect(showAllIn(fixture.section("Yours"))).not.toBeNull());
+      await userEvent.click(showAllIn(fixture.section("Yours"))!);
+      expect(
+        fixture.rowNames(fixture.section("Yours")).filter((name) => name?.includes("/p-")),
+      ).toHaveLength(40);
       expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
       expect(scanned.filter((entry) => entry.startsWith("old:"))).toHaveLength(40);
       expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
@@ -1440,8 +1461,7 @@ describe("Installed", () => {
     const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
     state.providersByEnvironment = { local: [raw] };
     await fixture.render(<InstalledPage />);
-    // Codex keeps its own section, even empty, so its store stays one click away.
-    await vi.waitFor(() => expect(fixture.section("From Codex")).not.toBeNull());
+    await vi.waitFor(() => expect(fixture.section("Yours")).not.toBeNull());
     const before = state.refreshInventory.mock.calls.length;
     state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
     state.inventory = inventory({ revision: 99 });
@@ -1467,22 +1487,20 @@ describe("Installed", () => {
     await using fixture = setup();
     state.projectsKnown = false;
     await fixture.render(<InstalledPage />);
-    expect(fixture.section("From your agents").textContent).toContain("not been checked");
+    expect(fixture.section("Yours").textContent).toContain("not been checked");
     expect(state.refreshInventory).not.toHaveBeenCalled();
     state.projectsKnown = true;
     const pending = Promise.withResolvers<unknown>();
     state.refreshInventory.mockReturnValue(pending.promise);
     await fixture.render(<InstalledPage />);
-    await vi.waitFor(() =>
-      expect(fixture.section("From your agents").textContent).toContain("Checking"),
-    );
+    await vi.waitFor(() => expect(fixture.section("Yours").textContent).toContain("Checking"));
     await act(async () =>
       pending.resolve({ _tag: "Failure", cause: Cause.fail(new Error("Inventory denied")) }),
     );
     await vi.waitFor(() =>
-      expect(fixture.section("From your agents").textContent).toContain("Inventory denied"),
+      expect(fixture.section("Yours").textContent).toContain("Inventory denied"),
     );
-    expect(fixture.section("From your agents").textContent).not.toContain("No agent plugins");
+    expect(fixture.section("Yours").textContent).not.toContain("No agent plugins");
     await fixture.reset();
     state.refreshInventory.mockClear();
     await fixture.render(<DiscoverPage />);
@@ -1491,9 +1509,7 @@ describe("Installed", () => {
     state.canRead = false;
     await fixture.render(<InstalledPage />);
     expect(state.refreshInventory).not.toHaveBeenCalled();
-    expect(fixture.section("From your agents").textContent).toContain(
-      "cannot read agent extensions",
-    );
+    expect(fixture.section("Yours").textContent).toContain("cannot read agent extensions");
   });
 
   it("groups connectors, Scient plugins and each agent's own items, six rows until Show all", async () => {
@@ -1524,35 +1540,17 @@ describe("Installed", () => {
       ],
     };
     await fixture.render(<InstalledPage />);
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual(["Linear"]);
-    expect(fixture.rowNames(fixture.section("Scient plugins"))).toEqual(["Lab kit", "Sources"]);
+    // One table of yours: connected services, then each agent's own items; what is built
+    // into Scient follows in its own table.
+    const names = fixture.rowNames(fixture.section("Yours"));
+    expect(names[0]).toBe("Linear");
+    expect(names).toEqual(expect.arrayContaining(["github", "claude-1", "claude-6"]));
+    expect(fixture.rowNames(fixture.section("Built into Scient"))).toEqual(["Lab kit", "Sources"]);
     expect(fixture.row("Lab kit").querySelector("[data-extension-status]")?.textContent).toBe(
       "Off",
     );
-
-    // The toggle sits in the section header, beside its heading.
-    const fromCodex = fixture.section("From Codex");
-    expect(fixture.rowNames(fromCodex)).toHaveLength(6);
-    const toggle = buttonIn(fromCodex, "Show all 8")!;
-    expect(toggle.closest("section")?.querySelector("h2")?.textContent).toBe("From Codex");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    await userEvent.click(toggle);
-    expect(fixture.rowNames(fromCodex)).toHaveLength(8);
-    expect(fixture.rowNames(fromCodex).at(-1)).toBe("github");
-    expect(toggle.textContent).toBe("Show less");
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    await userEvent.click(toggle);
-    expect(fixture.rowNames(fromCodex)).toHaveLength(6);
-    expect(toggle.textContent).toBe("Show all 8");
-
-    // Six or fewer: everything shows and there is nothing to toggle.
-    const fromClaude = fixture.section("From Claude");
-    expect(fixture.rowNames(fromClaude)).toHaveLength(6);
-    expect(
-      [...fromClaude.querySelectorAll("button")].some((button) =>
-        /^Show (all|less)/.test(button.textContent ?? ""),
-      ),
-    ).toBe(false);
+    // Fewer rows than the preview: everything shows and there is nothing to toggle.
+    expect(showAllIn(fixture.section("Yours"))).toBeNull();
   });
 
   it("filters by Works with and explains when an agent cannot use connected services", async () => {
@@ -1568,15 +1566,13 @@ describe("Installed", () => {
       "Pi",
     ]);
     await userEvent.selectOptions(worksWith, "claude");
-    expect(fixture.section("From Codex")).toBeNull();
-    expect(fixture.rowNames(fixture.section("From Claude"))).toEqual(["superpowers"]);
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual(["Linear"]);
+    const forClaude = fixture.rowNames(fixture.section("Yours"));
+    expect(forClaude).toEqual(expect.arrayContaining(["superpowers", "Linear"]));
+    expect(forClaude).not.toContain("github");
 
     await userEvent.selectOptions(worksWith, "pi");
-    expect(fixture.rowNames(fixture.section("Connected services"))).toEqual([]);
-    expect(fixture.section("Connected services").textContent).toContain(
-      "Pi cannot reach remote MCP servers.",
-    );
+    expect(fixture.rowNames(fixture.section("Yours"))).not.toContain("Linear");
+    expect(fixture.section("Yours").textContent).toContain("Pi cannot reach remote MCP servers.");
   });
 
   it("runs row menu actions against the server and shows its refusal inline", async () => {
@@ -1675,7 +1671,7 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    expect(fixture.headerButtons()).toEqual(["Remove"]);
+    expect(fixture.headerButtons()).toEqual(["Remove from Codex"]);
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
     );
@@ -2001,7 +1997,7 @@ describe("Detail pages", () => {
         version: "3.1.0",
         websiteUrl: "https://www.full.example/docs",
         repositoryUrl: "https://github.com/acme/full",
-        categories: ["featured", "papers"],
+        categories: ["most-used", "papers"],
       }),
       "scient.curated/bare": entry("scient.curated/bare", {
         title: "Bare",
@@ -2382,7 +2378,7 @@ describe("Detail pages", () => {
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={workspace} />
     );
     await fixture.render(page("/work/a"));
-    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove from Codex")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: {
@@ -2391,11 +2387,11 @@ describe("Detail pages", () => {
         cwd: "/work/a",
       },
     });
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(true);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(true);
     await fixture.render(page("/work/b"));
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(false);
     await fixture.render(page(undefined));
-    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove from Codex")?.disabled).toBe(false);
 
     await act(async () => pending.resolve(extensionsError("Codex refused.")));
     await fixture.render(page("/work/a"));
@@ -2413,7 +2409,7 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove from Codex")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { instanceId: codex, action: { type: "uninstall", pluginId: "plugin-1" } },
@@ -2440,9 +2436,9 @@ describe("Codex store connection", () => {
     };
     state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     state.storeEntry = {
       ...state.storeEntry,
       installed: true,
@@ -2457,22 +2453,23 @@ describe("Codex store connection", () => {
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
     await expect.element(page.getByRole("button", { name: "Added", exact: true })).toBeDisabled();
-    await expect
-      .element(page.getByRole("button", { name: "Connect Sample", exact: true }))
-      .toBeVisible();
+    // Each agent with its own step; this Codex has no ChatGPT sign-in, so it signs in first.
+    await vi.waitFor(() =>
+      expect(fixture.section("Apps 1").textContent).toContain("Sign in to Codex with ChatGPT"),
+    );
     state.storeEntry = {
       ...state.storeEntry,
       apps: [{ name: "Sample", connected: true, enabled: true }],
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     expect(fixture.section("Apps 1").textContent).toContain("Connected");
     state.storeEntry = {
       ...state.storeEntry,
       apps: [{ name: "Sample", connected: true, enabled: false }],
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(buttonIn(fixture.container, "Connect in ChatGPT")).toBeNull();
     expect(fixture.section("Apps 1").textContent).toContain("Disabled");
   });
 });

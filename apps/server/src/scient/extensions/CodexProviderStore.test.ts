@@ -162,7 +162,7 @@ describe("Codex provider store", () => {
         expect(page.total).toBe(1);
         expect(page.entries[0]).toMatchObject({ name: "warehouse", category: "Data & Analytics" });
         expect(
-          (yield* store.search({ category: "writing" })).entries.map((entry) => entry.name),
+          (yield* store.search({ category: "papers" })).entries.map((entry) => entry.name),
         ).toEqual(["zotero"]);
       }),
     ),

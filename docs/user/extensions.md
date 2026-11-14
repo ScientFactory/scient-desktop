@@ -9,8 +9,10 @@ Open **Settings → Extensions**. The picker at the top, **Tools on**, chooses
 which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
-- **Discover** lists services you can add. Curated sections such as Featured
-  and Research come first, followed by the features built into Scient and
+- **Discover** lists services you can add. Curated sections come first: **Most used**
+  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, PubMed and
+  Semantic Scholar), then one section per kind of work, such as Papers &
+  literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
   the shared plugin shelf, the Codex store, and **Browse all MCP servers**, which lists the public MCP Registry. Select a
   section title to see the whole category. Search covers the catalog, the
   registry, and what you have already installed.
@@ -259,7 +261,7 @@ when any agent has them, in Installed → Connected services. Your agents reach
 them through the ChatGPT or Claude account they use, so Scient never holds your
 Google sign-in. **Connect** opens ChatGPT's page for the app in your browser;
 one connection there serves both Codex and Scient Agent. If Claude still needs
-it, Connect then opens claude.ai's connector settings. "Works with" shows which
+it, Connect then opens claude.ai's Connectors page (Customize → Connectors). "Works with" shows which
 agents have it and what the others still need.
 
 **From Scient Agent** lists the ChatGPT apps you connected in ChatGPT, such as
@@ -271,7 +273,7 @@ afterwards and the list updates.
 
 **From Claude** can list claude.ai connectors without starting a conversation.
 Choose **Connect on claude.ai**, then return after signing in. **Add more on
-claude.ai** opens the account's connector settings. These connectors are
+claude.ai** opens the account's Connectors page (Customize → Connectors). These connectors are
 **Claude only**. Google's account apps remain available through Codex, Scient
 Agent or Claude; Scient does not add Google's official MCP servers itself.
 

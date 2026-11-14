@@ -5,14 +5,36 @@ import {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { PlugIcon, type LucideIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 
 import { extensionMarkLayout } from "./extensionIconLayout";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { useOptionalExtensionsEnvironment } from "./ExtensionsPage";
 import { extensionsBrandIcon, extensionsProviderStoreEntry } from "./extensionsState";
-import { WorksWithValue } from "./WorksWith";
+import { WorksWithAgents, WorksWithValue } from "./WorksWith";
+
+/** How rows lay out: two columns of cards, or one table like claude.ai's Connectors page. */
+const RowLayout = createContext<"grid" | "table">("grid");
+
+/** What kind of thing a row is, for the table's Type column. */
+function rowType(target: ExtensionTarget, audience: ExtensionAudience | undefined): string {
+  switch (target.kind) {
+    case "connector":
+    case "server":
+      return "Connector";
+    case "plugin":
+      return "Built in";
+    case "account":
+      return "Account app";
+    case "provider-plugin":
+      return audience?.layer === "agent" ? `${audience.label} plugin` : "Plugin";
+    case "provider-store":
+      return "Store plugin";
+    case "provider-server":
+      return "MCP server";
+  }
+}
 
 /** Every place an extension row or button can open. */
 export type ExtensionTarget =
@@ -126,13 +148,14 @@ function ExtensionLink({
   }
 }
 
-type ExtensionIconSize = "row" | "large" | "avatar";
+type ExtensionIconSize = "row" | "large" | "avatar" | "small";
 
 /** Avatar icons share the row size and use a round frame. */
 const ICON_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
   row: "size-10 rounded-[25%]",
   large: "size-16 rounded-[25%]",
   avatar: "size-10 rounded-full",
+  small: "size-8 rounded-[25%]",
 };
 
 const renderedIcons = new Map<string, string>();
@@ -280,25 +303,72 @@ export function ExtensionRow({
   iconUrl,
   glyph,
   tagline,
-  facts,
   status,
   trailing,
   feedback,
   audience,
+  type,
 }: {
   readonly audience?: ExtensionAudience;
+  /** The table's Type column, when the target alone does not say it. */
+  readonly type?: string | undefined;
   readonly target: ExtensionTarget;
   readonly name: string;
   readonly iconUrl?: string | undefined;
   readonly glyph?: LucideIcon | undefined;
   readonly tagline?: string | undefined;
-  readonly facts?: string | undefined;
   /** "Needs sign-in", "Off": plain muted text after the name. */
   readonly status?: string | null | undefined;
   readonly trailing?: ReactNode;
   /** Errors and notices from this row's last action. */
   readonly feedback?: ReactNode;
 }) {
+  const layout = useContext(RowLayout);
+  if (layout === "table")
+    return (
+      // Rows divide by a line; a hovered row turns into a rounded tile and the lines on both
+      // sides of it give way, as on claude.ai's Connectors page.
+      <li
+        className="group/row min-w-0 border-b border-border/70 transition-colors last:border-b-0 hover:border-transparent has-[+li:hover]:border-transparent"
+        data-extension-row={name}
+      >
+        <div className="relative grid min-h-14 grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-x-4 rounded-xl px-2 py-2 transition-colors group-hover/row:bg-foreground/[0.045] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring @min-[720px]/extensions:grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem]">
+          <div className="flex min-w-0 items-center gap-3">
+            <ExtensionIcon
+              name={name}
+              iconUrl={iconUrl}
+              glyph={glyph}
+              size="small"
+              providerPlugin={target.kind === "provider-plugin" ? target : undefined}
+            />
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-baseline gap-1.5">
+                <ExtensionLink
+                  target={target}
+                  className="truncate text-sm font-medium text-foreground outline-none after:absolute after:inset-0 after:rounded-xl"
+                >
+                  {name}
+                </ExtensionLink>
+                {status ? (
+                  <span className="shrink-0 text-xs text-muted-foreground" data-extension-status="">
+                    {status}
+                  </span>
+                ) : null}
+              </div>
+              {tagline ? <p className="truncate text-xs text-muted-foreground">{tagline}</p> : null}
+            </div>
+          </div>
+          <span className="hidden truncate text-sm text-muted-foreground @min-[720px]/extensions:block">
+            {type ?? rowType(target, audience)}
+          </span>
+          <div className="relative z-10 hidden min-w-0 overflow-hidden @min-[720px]/extensions:block">
+            <WorksWithAgents audience={audience} />
+          </div>
+          <div className="relative z-10 flex shrink-0 justify-end">{trailing}</div>
+        </div>
+        {feedback ? <div className="grid gap-1 px-2 pb-2 ps-13">{feedback}</div> : null}
+      </li>
+    );
   return (
     <li className="flex min-w-0 flex-col" data-extension-row={name}>
       <div className="relative flex items-center gap-3 rounded-xl p-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring">
@@ -323,7 +393,6 @@ export function ExtensionRow({
             ) : null}
           </div>
           {tagline ? <p className="truncate text-xs text-muted-foreground">{tagline}</p> : null}
-          {facts ? <p className="text-xs text-muted-foreground">{facts}</p> : null}
         </div>
         {trailing ? <div className="relative z-10 shrink-0">{trailing}</div> : null}
       </div>
@@ -332,6 +401,32 @@ export function ExtensionRow({
       </div>
       {feedback ? <div className="grid gap-1 px-2 pb-1 ps-15">{feedback}</div> : null}
     </li>
+  );
+}
+
+/** One table of rows: name, type, the agents that use each, and its action. */
+export function ExtensionTable({
+  label,
+  children,
+}: {
+  readonly label: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <RowLayout.Provider value="table">
+      <div className="-mx-2 min-w-0 overflow-hidden">
+        <div
+          aria-hidden
+          className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_2.5rem] gap-x-4 border-b border-border/70 px-2 pb-2 text-xs text-muted-foreground transition-colors @min-[720px]/extensions:grid [&:has(+ul>li:first-child:hover)]:border-transparent"
+        >
+          <span>Name</span>
+          <span>Type</span>
+          <span>Works with</span>
+          <span />
+        </div>
+        <ul aria-label={label}>{children}</ul>
+      </div>
+    </RowLayout.Provider>
   );
 }
 
