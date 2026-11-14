@@ -74,6 +74,7 @@ import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolv
 import { appendBoundedAnalysisOutput, makeHeldAnalysisOutput } from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
 import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
+import { isComputeCaptureReason } from "../compute/ComputeCaptureStatus.ts";
 import { ComputeProjectOutputObserver } from "../compute/ComputeProjectOutputObserver.ts";
 import { makeRunTableAdapters } from "./RunTableAdapter.ts";
 
@@ -308,11 +309,19 @@ const make = Effect.gen(function* () {
     const capture = run.artifactReceipt.status;
     if (capture === "not-requested") return;
     if (!isNewRun && capture === "pending" && !isTerminal(receipt.status)) return;
+    // Runs recorded before coverage was kept read as complete, as they were reported then.
+    const facts = run.artifactReceipt.coverage;
+    const rejected = facts?.rejectedCount ?? 0;
+    const coverage = facts?.coverage ?? "complete";
+    const reason = (value: string | undefined) =>
+      isComputeCaptureReason(value) ? value : undefined;
     const status =
       capture === "succeeded"
-        ? run.artifacts.length > 0
-          ? "completed"
-          : "skipped"
+        ? rejected > 0
+          ? "failed"
+          : run.artifacts.length > 0
+            ? "completed"
+            : "skipped"
         : capture === "failed"
           ? "failed"
           : receipt.cancellationRequested
@@ -335,26 +344,33 @@ const make = Effect.gen(function* () {
               captureSource: "run-file" as const,
               captureOutcome:
                 capture === "succeeded"
-                  ? run.artifacts.length > 0
-                    ? ("retained" as const)
-                    : ("none" as const)
+                  ? rejected > 0
+                    ? run.artifacts.length > 0
+                      ? ("partial" as const)
+                      : ("failed" as const)
+                    : run.artifacts.length > 0
+                      ? ("retained" as const)
+                      : coverage === "complete"
+                        ? ("none" as const)
+                        : ("unobserved" as const)
                   : run.artifacts.length > 0
                     ? ("partial" as const)
                     : status === "cancelled"
                       ? ("unobserved" as const)
                       : ("failed" as const),
-              captureCoverage:
-                capture === "succeeded" ? ("complete" as const) : ("unavailable" as const),
+              captureCoverage: capture === "succeeded" ? coverage : ("unavailable" as const),
               captureReason:
                 capture === "succeeded"
-                  ? ("none" as const)
+                  ? (reason(facts?.rejectionReason) ?? reason(facts?.coverageReason) ?? "none")
                   : status === "cancelled"
                     ? ("observation-unavailable" as const)
                     : ("artifact-collection-failed" as const),
               retainedOutputCount: run.artifacts.length,
-              ...(capture === "succeeded" || status === "cancelled"
-                ? { rejectedOutputCount: 0 }
-                : {}),
+              ...(capture === "succeeded"
+                ? { rejectedOutputCount: rejected }
+                : status === "cancelled"
+                  ? { rejectedOutputCount: 0 }
+                  : {}),
             },
           }),
     });
@@ -922,6 +938,12 @@ const make = Effect.gen(function* () {
           absoluteSourcePath,
           artifactStagingDirectory,
         };
+        const releaseRun = adapter.releaseRun;
+        if (releaseRun) {
+          yield* Effect.addFinalizer(() =>
+            Effect.promise(() => releaseRun(runContext)).pipe(Effect.ignoreCause({ log: true })),
+          );
+        }
         const prepareRun = adapter.prepareRun;
         if (prepareRun) {
           yield* Effect.tryPromise({
@@ -1095,6 +1117,7 @@ const make = Effect.gen(function* () {
               artifacts,
               writtenFiles: collected.writtenFiles ?? [],
               failureMessage: collected.failureMessage,
+              coverage: collected.coverage,
             };
           }).pipe(
             Effect.catchCause((cause) =>
@@ -1108,6 +1131,7 @@ const make = Effect.gen(function* () {
                   artifacts: [],
                   writtenFiles: [],
                   failureMessage: `${profile.label} finished, but Scient could not collect its generated figures.`,
+                  coverage: undefined,
                 };
               }),
             ),
@@ -1121,6 +1145,7 @@ const make = Effect.gen(function* () {
             artifactReceipt: {
               status: collection.status,
               failureMessage: collection.failureMessage,
+              ...(collection.coverage === undefined ? {} : { coverage: collection.coverage }),
             },
           }));
         } else {

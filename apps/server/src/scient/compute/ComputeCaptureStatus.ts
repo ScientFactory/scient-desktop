@@ -1,19 +1,27 @@
 /** Closed, content-free observations. Warning text and file identities stay local. */
-export type ComputeCaptureReason =
-  | "scan-timeout"
-  | "scan-entry-limit"
-  | "scan-depth-limit"
-  | "scan-unreadable"
-  | "observation-unavailable"
-  | "output-limit"
-  | "image-limit"
-  | "unsafe-image"
-  | "invalid-image"
-  | "image-changed"
-  | "missing-resource"
-  | "resource-mismatch"
-  | "persistence-failed"
-  | "artifact-collection-failed";
+const COMPUTE_CAPTURE_REASONS = [
+  "scan-timeout",
+  "scan-entry-limit",
+  "scan-depth-limit",
+  "scan-unreadable",
+  "watch-unavailable",
+  "watch-overflow",
+  "observation-unavailable",
+  "output-limit",
+  "image-limit",
+  "unsafe-image",
+  "invalid-image",
+  "image-changed",
+  "missing-resource",
+  "resource-mismatch",
+  "persistence-failed",
+  "artifact-collection-failed",
+] as const;
+export type ComputeCaptureReason = (typeof COMPUTE_CAPTURE_REASONS)[number];
+
+const CAPTURE_REASONS: ReadonlySet<string> = new Set(COMPUTE_CAPTURE_REASONS);
+export const isComputeCaptureReason = (value: unknown): value is ComputeCaptureReason =>
+  typeof value === "string" && CAPTURE_REASONS.has(value);
 
 export interface ComputeProjectCaptureStatus {
   readonly coverage: "complete" | "partial" | "unavailable";

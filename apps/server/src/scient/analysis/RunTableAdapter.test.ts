@@ -13,8 +13,10 @@ import {
   computeRunRoutesForPath,
   isSqliteScript,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import type { ComputeProjectOutputObserverPort } from "../compute/ComputeProjectOutputObserver.ts";
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
 import {
   beside,
@@ -792,5 +794,64 @@ describe("a Stan model", () => {
     );
     model("eight.data.json", '{"J": 8}');
     expect(adapter.validateSource?.(source)).toBeNull();
+  });
+});
+
+describe("file-run project outputs", () => {
+  it("watches the project from before the program starts until the run is released", async () => {
+    const events: string[] = [];
+    const observer: ComputeProjectOutputObserverPort = {
+      watch: (projectRoot) =>
+        Effect.acquireRelease(
+          Effect.sync(() => events.push(`watch ${projectRoot}`)),
+          () => Effect.sync(() => events.push("released")),
+        ).pipe(
+          Effect.as({
+            ready: Effect.sync(() => events.push("ready")),
+            begin: Effect.sync(() => {
+              events.push("begin");
+              return { projectRoot, startedAt: 1, mark: null };
+            }),
+            collect: () =>
+              Effect.succeed({
+                images: [],
+                tables: ["results/table.csv"],
+                warnings: [],
+                capture: {
+                  coverage: "partial" as const,
+                  coverageReason: "watch-overflow" as const,
+                  rejectedCount: 0,
+                },
+              }),
+          }),
+        ),
+    };
+    const adapter = makeRunTableAdapters({
+      tools: async () => new Map(),
+      environment: { PATH: "/usr/bin" },
+      platform: "linux",
+      observer,
+    }).find((candidate) => candidate.kind === "bash")!;
+    const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-run-outputs-"));
+    const context = {
+      runId: ExecutionRunId.make("run"),
+      projectId: "project",
+      runtime: await inspect(adapter),
+      source: { cwd: folder, relativePath: "analysis.sh", revision: "1" as never },
+      absoluteSourcePath: NodePath.join(folder, "analysis.sh"),
+      artifactStagingDirectory: NodePath.join(folder, ".staging"),
+    };
+    await adapter.prepareRun?.(context);
+    expect(events).toEqual([`watch ${folder}`, "ready", "begin"]);
+    const collection = await adapter.collectArtifacts!(context);
+    expect(collection).toMatchObject({
+      writtenFiles: ["results/table.csv"],
+      coverage: { coverage: "partial", coverageReason: "watch-overflow", rejectedCount: 0 },
+    });
+    await adapter.releaseRun?.(context);
+    await adapter.releaseRun?.(context);
+    expect(events.at(-1)).toBe("released");
+    expect(events.filter((event) => event === "released")).toHaveLength(1);
+    NodeFS.rmSync(folder, { recursive: true, force: true });
   });
 });

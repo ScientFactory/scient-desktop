@@ -323,6 +323,18 @@ export const ComputeTransportResourceEvent = Schema.Struct({
 export type ComputeTransportResourceEvent = typeof ComputeTransportResourceEvent.Type;
 
 /**
+ * Files a runtime saw one execution write, at any depth. They are candidates for the server to
+ * authorize and read, never permission to read them. Incomplete when the record overflowed.
+ */
+export const ComputeRuntimeWriteReport = Schema.Struct({
+  paths: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(Schema.isMaxLength(256)),
+  complete: Schema.Boolean,
+  /** The run started another process, whose writes the runtime cannot see. */
+  spawnedProcess: Schema.Boolean,
+});
+export type ComputeRuntimeWriteReport = typeof ComputeRuntimeWriteReport.Type;
+
+/**
  * Null requestId is session output, never whichever cell happens to run. Store transient
  * image/resources before appending references. Keep language errors raw for adapter normalization
  * with their original sequence/time; transports cannot infer language diagnostics.
@@ -360,6 +372,7 @@ export const ComputeTransportEvent = Schema.Union([
     outcome: ComputeExecutionOutcome,
     /** The kernel's number for this run, for kernels that report one. */
     executionCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    writes: Schema.optional(ComputeRuntimeWriteReport),
   }),
   Schema.TaggedStruct("restarted", {
     generation: ComputeSessionGeneration,

@@ -159,6 +159,8 @@ const CAPTURE_OWNERS: Readonly<Record<ComputeCaptureReason, FailureOwner>> = {
   "scan-entry-limit": "scient",
   "scan-depth-limit": "scient",
   "scan-unreadable": "environment",
+  "watch-unavailable": "scient",
+  "watch-overflow": "environment",
   "observation-unavailable": "scient",
   "output-limit": "scient",
   "image-limit": "scient",

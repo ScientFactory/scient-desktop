@@ -82,6 +82,23 @@ Kernels publish MIME bundles. Inline Matplotlib figures carry PNG and PDF, so a 
 kept as vector graphics; `compute.saveOutput` copies a stored figure or resource into the project
 without replacing an existing file.
 
+Figures a run saves into the project are found from what the run wrote, never by scanning the
+project before and after it (`ComputeProjectOutputObserver`):
+
+- Python kernels carry an audit-hook recorder that notes figure and table files each cell opens for
+  writing, renames or copies. The bridge reads it after the reply and sends it as `writes` on
+  `execution-complete`. It is a list of candidates; the observer authorizes each one (inside the
+  project, regular file, changed since the run began) and reads it with the safe-read checks.
+- Everything else — other languages, processes a cell starts, file runs — uses one
+  `@parcel/watcher` subscription per project folder (`ComputeProjectWriteWatch`), held for the
+  session's runtime scope or one file run. `begin` only records a journal position, so admission
+  never touches the disk. `collect` writes a sync file and waits for its event, which proves every
+  earlier change was delivered. On Linux, files inside newly created folders are listed, because
+  inotify watches a new folder only after it appears.
+- A watch that is not ready, failed, or reported dropped events gives `watch-unavailable` or
+  `watch-overflow`: the observer then searches for recently changed files without a baseline, and
+  coverage is `partial`. `complete` coverage with no output means the run wrote no figure.
+
 ## Agents
 
 The `compute` grant gives every provider session these MCP tools

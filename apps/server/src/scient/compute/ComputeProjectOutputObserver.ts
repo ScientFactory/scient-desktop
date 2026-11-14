@@ -4,67 +4,43 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import type { ComputeImageMediaType } from "@scientfactory/compute";
+import type { ComputeImageMediaType, ComputeRuntimeWriteReport } from "@scientfactory/compute";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 
 import { inspectComputeStaticImage } from "./ComputeStaticImage.ts";
 import type { ComputeCaptureReason, ComputeProjectCaptureStatus } from "./ComputeCaptureStatus.ts";
+import {
+  ENVIRONMENT_MARKERS,
+  IGNORED_DIRECTORY_NAMES,
+  OUTPUT_FILE,
+  makeProjectWriteWatches,
+  type ProjectWatchBackend,
+  type ProjectWriteMark,
+  type ProjectWriteWatch,
+  type ProjectWriteWatches,
+} from "./ComputeProjectWriteWatch.ts";
 
-const SCAN_REASONS = {
-  "time limit": "scan-timeout",
-  "entry limit": "scan-entry-limit",
-  "depth limit": "scan-depth-limit",
-  "unreadable directory": "scan-unreadable",
-  "unreadable file": "scan-unreadable",
-} as const;
-
-const MAXIMUM_SCANNED_ENTRIES = 4_096;
-const MAXIMUM_DIRECTORY_DEPTH = 8;
 const MAXIMUM_IMAGES_PER_EXECUTION = 32;
 const MAXIMUM_IMAGE_BYTES = 8 * 1024 * 1024;
-// Return partial coverage before the service's one-second baseline admission timeout.
-const OBSERVATION_TIMEOUT_MS = 750;
+// File clocks lag the wall clock by up to a kernel tick, and FAT keeps times to two seconds.
+const FINE_TIME_SLACK_NS = 50_000_000n;
+const COARSE_TIME_SLACK_NS = 2_000_000_000n;
+const FALLBACK_SCAN_ENTRIES = 16_384;
+const FALLBACK_SCAN_TIME_MS = 750;
+const CREATED_DIRECTORY_ENTRIES = 1_024;
+const MAXIMUM_REMEMBERED_OUTPUTS = 1_024;
 
-const IGNORED_DIRECTORIES = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".scient",
-  ".scient-next",
-  ".t3",
-  ".venv",
-  "__pycache__",
-  "node_modules",
-]);
-
-class ProjectOutputObservationFailure extends Schema.TaggedError<ProjectOutputObservationFailure>()(
-  "ProjectOutputObservationFailure",
-  { cause: Schema.Defect() },
-) {}
-
-interface ProjectImageState {
-  readonly device: bigint;
-  readonly inode: bigint;
-  readonly size: bigint;
-  readonly modifiedAt: bigint;
-  readonly changedAt: bigint;
-}
-
-interface ProjectImageSnapshot {
-  readonly files: ReadonlyMap<string, ProjectImageState>;
-  readonly directories: ReadonlyMap<string, ReadonlySet<string>>;
-  readonly warnings: ReadonlyArray<string>;
-  readonly coverageReason?: ComputeCaptureReason;
-}
+const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(IGNORED_DIRECTORY_NAMES);
 
 export interface ComputeProjectOutputObservation {
   readonly projectRoot: string;
-  readonly baseline: ProjectImageSnapshot | null;
-  readonly warnings: ReadonlyArray<string>;
-  readonly coverageReason?: ComputeCaptureReason;
+  readonly startedAt: number;
+  /** Where this execution's window starts in the project watch; null without a watch. */
+  readonly mark: ProjectWriteMark | null;
 }
 
 export interface ObservedComputeProjectImage {
@@ -89,12 +65,24 @@ export interface ComputeProjectOutputLimits {
   readonly maximumBytes: number;
 }
 
-export interface ComputeProjectOutputObserverPort {
-  readonly begin: (projectRoot: string) => Effect.Effect<ComputeProjectOutputObservation>;
+/** Outputs of one session or file run in one project folder, held for its scope. */
+export interface ComputeProjectOutputWatch {
+  /** Settles once the project watch is listening or has failed. */
+  readonly ready: Effect.Effect<void>;
+  /** Touches no files, so it can sit on the execution admission path. */
+  readonly begin: Effect.Effect<ComputeProjectOutputObservation>;
+  /** `writes` is what the runtime saw the execution write; it is checked, never trusted. */
   readonly collect: (
     observation: ComputeProjectOutputObservation,
     limits: ComputeProjectOutputLimits,
+    writes?: ComputeRuntimeWriteReport,
   ) => Effect.Effect<ComputeProjectOutputCollection>;
+}
+
+export interface ComputeProjectOutputObserverPort {
+  readonly watch: (
+    projectRoot: string,
+  ) => Effect.Effect<ComputeProjectOutputWatch, never, Scope.Scope>;
 }
 
 function imageMediaType(name: string): ComputeImageMediaType | null {
@@ -109,6 +97,14 @@ function imageMediaType(name: string): ComputeImageMediaType | null {
 }
 
 const TABLE_FILE = /\.(csv|tsv|parquet|xlsx)$/iu;
+
+interface ProjectImageState {
+  readonly device: bigint;
+  readonly inode: bigint;
+  readonly size: bigint;
+  readonly modifiedAt: bigint;
+  readonly changedAt: bigint;
+}
 
 function sameState(left: ProjectImageState | undefined, right: ProjectImageState): boolean {
   return (
@@ -141,117 +137,102 @@ function imageState(metadata: NodeFS.BigIntStats): ProjectImageState {
   };
 }
 
-/** Absence is evidence only inside an inventoried parent, including a new subtree. */
-function wasAbsent(snapshot: ProjectImageSnapshot, path: string): boolean {
-  const parts = path.split("/");
-  for (let index = 0; index < parts.length; index += 1) {
-    const names = snapshot.directories.get(parts.slice(0, index).join("/"));
-    if (names === undefined) return false;
-    if (!names.has(parts[index]!)) return true;
-  }
-  return false;
-}
+const skippedDirectory = (name: string) => name.startsWith(".") || IGNORED_DIRECTORIES.has(name);
 
-async function snapshotProjectImages(
+/**
+ * Without a trustworthy watch, look for outputs changed since the run began, shallow folders
+ * first. No baseline is needed: a file the run did not touch keeps its older times.
+ */
+async function scanRecentOutputs(
   projectRoot: string,
+  since: bigint,
   signal: AbortSignal,
   now: () => number,
-): Promise<ProjectImageSnapshot> {
-  const deadline = now() + OBSERVATION_TIMEOUT_MS;
-  const files = new Map<string, ProjectImageState>();
-  const inventories = new Map<string, ReadonlySet<string>>();
-  const reasons = new Set<keyof typeof SCAN_REASONS>();
-  const directories = [{ absolutePath: projectRoot, relativePath: "", depth: 0 }];
-  let scannedEntries = 0;
-
-  while (directories.length > 0) {
-    if (signal.aborted || now() >= deadline) {
-      reasons.add("time limit");
-      break;
-    }
-    const directory = directories.pop();
-    if (directory === undefined) break;
-    const remaining = MAXIMUM_SCANNED_ENTRIES - scannedEntries;
-    if (remaining <= 0) {
-      reasons.add("entry limit");
-      break;
-    }
-    const entries: NodeFS.Dirent[] = [];
-    let directoryIncomplete = false;
+): Promise<{ readonly files: ReadonlyArray<string>; readonly limited: string | null }> {
+  const deadline = now() + FALLBACK_SCAN_TIME_MS;
+  const files: string[] = [];
+  const queue = [projectRoot];
+  let scanned = 0;
+  let unreadable = false;
+  for (let index = 0; index < queue.length; index += 1) {
+    if (signal.aborted || now() >= deadline) return { files, limited: "time limit" };
+    let entries: NodeFS.Dirent[];
     try {
-      const handle = await NodeFSP.opendir(directory.absolutePath);
-      for await (const entry of handle) {
-        if (signal.aborted || now() >= deadline) {
-          reasons.add("time limit");
-          directoryIncomplete = true;
-          break;
-        }
-        if (entries.length >= remaining) {
-          reasons.add("entry limit");
-          directoryIncomplete = true;
-          break;
-        }
-        entries.push(entry);
-      }
+      entries = await NodeFSP.readdir(queue[index]!, { withFileTypes: true });
     } catch {
-      reasons.add("unreadable directory");
+      unreadable = true;
       continue;
     }
-    if (!directoryIncomplete)
-      inventories.set(directory.relativePath, new Set(entries.map((entry) => entry.name)));
-    entries.sort((left, right) => left.name.localeCompare(right.name));
+    scanned += entries.length;
+    if (scanned > FALLBACK_SCAN_ENTRIES) return { files, limited: "entry limit" };
+    const environment = entries.some((entry) =>
+      (ENVIRONMENT_MARKERS as ReadonlyArray<string>).includes(entry.name),
+    );
     for (const entry of entries) {
-      scannedEntries += 1;
-      if (signal.aborted || now() >= deadline) {
-        reasons.add("time limit");
-        break;
-      }
-      const relativePath = directory.relativePath
-        ? `${directory.relativePath}/${entry.name}`
-        : entry.name;
-      const absolutePath = NodePath.join(directory.absolutePath, entry.name);
+      const path = NodePath.join(queue[index]!, entry.name);
       if (entry.isDirectory()) {
-        if (
-          directory.depth >= MAXIMUM_DIRECTORY_DEPTH &&
-          !entry.name.startsWith(".") &&
-          !IGNORED_DIRECTORIES.has(entry.name)
-        )
-          reasons.add("depth limit");
-        if (
-          directory.depth < MAXIMUM_DIRECTORY_DEPTH &&
-          !entry.name.startsWith(".") &&
-          !IGNORED_DIRECTORIES.has(entry.name)
-        ) {
-          directories.push({
-            absolutePath,
-            relativePath,
-            depth: directory.depth + 1,
-          });
-        }
-        continue;
-      }
-      if (!entry.isFile() || (imageMediaType(entry.name) === null && !TABLE_FILE.test(entry.name)))
-        continue;
-      try {
-        const metadata = await NodeFSP.lstat(absolutePath, { bigint: true });
-        if (!metadata.isFile()) continue;
-        files.set(relativePath, imageState(metadata));
-      } catch {
-        reasons.add("unreadable file");
+        if (!environment && !skippedDirectory(entry.name)) queue.push(path);
+      } else if (entry.isFile() && OUTPUT_FILE.test(entry.name)) {
+        const metadata = await NodeFSP.lstat(path, { bigint: true }).catch(() => null);
+        if (metadata !== null && changedSince(metadata, since)) files.push(path);
       }
     }
-    if (directoryIncomplete) break;
   }
-  return {
-    files,
-    directories: inventories,
-    ...(reasons.size === 0 ? {} : { coverageReason: SCAN_REASONS[[...reasons][0]!] }),
-    warnings:
-      reasons.size === 0
-        ? []
-        : [`Some project files could not be checked (${[...reasons].join(", ")}).`],
-  };
+  return { files, limited: unreadable ? "unreadable directory" : null };
 }
+
+/** Output files inside folders created during the window, which inotify may not have reported. */
+async function filesInCreatedEntries(
+  created: ReadonlyArray<string>,
+  signal: AbortSignal,
+): Promise<ReadonlyArray<string>> {
+  const files: string[] = [];
+  const queue: string[] = [];
+  for (const path of created) {
+    const metadata = await NodeFSP.lstat(path).catch(() => null);
+    if (metadata?.isDirectory()) queue.push(path);
+  }
+  let listed = 0;
+  for (let index = 0; index < queue.length && listed < CREATED_DIRECTORY_ENTRIES; index += 1) {
+    if (signal.aborted) break;
+    const entries = await NodeFSP.readdir(queue[index]!, { withFileTypes: true }).catch(() => []);
+    listed += entries.length;
+    for (const entry of entries) {
+      const path = NodePath.join(queue[index]!, entry.name);
+      if (entry.isDirectory() && !skippedDirectory(entry.name)) queue.push(path);
+      else if (entry.isFile() && OUTPUT_FILE.test(entry.name)) files.push(path);
+    }
+  }
+  return files;
+}
+
+/** Whole-second times come from a coarse file system; others are near the wall clock. */
+function changedSince(metadata: NodeFS.BigIntStats, startedAt: bigint): boolean {
+  const changed = (time: bigint) =>
+    time >= startedAt - (time % 1_000_000_000n === 0n ? COARSE_TIME_SLACK_NS : FINE_TIME_SLACK_NS);
+  return changed(metadata.mtimeNs) || changed(metadata.ctimeNs);
+}
+
+/** A reported path becomes a project output only if it is a fresh regular file in the project. */
+async function authorizeCandidate(
+  projectRoot: string,
+  path: string,
+  since: bigint,
+): Promise<{ readonly relativePath: string; readonly state: ProjectImageState } | null> {
+  if (!NodePath.isAbsolute(path) || !OUTPUT_FILE.test(path)) return null;
+  const parent = await NodeFSP.realpath(NodePath.dirname(path)).catch(() => null);
+  if (parent === null) return null;
+  const canonical = NodePath.join(parent, NodePath.basename(path));
+  if (!isInsideProjectRoot(projectRoot, canonical)) return null;
+  const segments = NodePath.relative(projectRoot, canonical).split(NodePath.sep);
+  if (segments.slice(0, -1).some(skippedDirectory)) return null;
+  const metadata = await NodeFSP.lstat(canonical, { bigint: true }).catch(() => null);
+  if (metadata === null || !metadata.isFile() || !changedSince(metadata, since)) return null;
+  return { relativePath: segments.join("/"), state: imageState(metadata) };
+}
+
+const stateKey = (state: ProjectImageState) =>
+  `${String(state.device)}:${String(state.inode)}:${String(state.size)}:${String(state.modifiedAt)}:${String(state.changedAt)}`;
 
 async function readObservedImage(
   projectRoot: string,
@@ -360,19 +341,123 @@ async function readObservedImage(
   }
 }
 
+const unavailableCollection = (
+  coverageReason: ComputeCaptureReason,
+  warning: string | null,
+): ComputeProjectOutputCollection => ({
+  images: [],
+  tables: [],
+  warnings: warning === null ? [] : [warning],
+  capture: { coverage: "unavailable", coverageReason, rejectedCount: 0 },
+});
+
+async function collectProjectOutputs(input: {
+  readonly projectRoot: string;
+  readonly projectWatch: ProjectWriteWatch | null;
+  readonly observation: ComputeProjectOutputObservation;
+  readonly limits: ComputeProjectOutputLimits;
+  readonly writes: ComputeRuntimeWriteReport | undefined;
+  /** Outputs this holder already showed, so a late watch event cannot show one twice. */
+  readonly shown: Map<string, string>;
+  readonly signal: AbortSignal;
+  readonly now: () => number;
+}): Promise<ComputeProjectOutputCollection> {
+  const { projectRoot, observation, writes, signal } = input;
+  const since = BigInt(observation.startedAt) * 1_000_000n;
+  const exact = writes?.complete === true;
+  const reported = new Set(writes?.paths ?? []);
+  const warnings: string[] = [];
+  let coverageReason: ComputeCaptureReason | undefined;
+  // A runtime's record is exact for its own process; anything it started is only watched.
+  if (!exact || writes.spawnedProcess) {
+    const window =
+      input.projectWatch === null || observation.mark === null
+        ? ({ healthy: false, reason: "watch-unavailable" } as const)
+        : await input.projectWatch.read(observation.mark, signal);
+    if (window.healthy) {
+      for (const path of window.files) reported.add(path);
+      for (const path of await filesInCreatedEntries(window.created, signal)) reported.add(path);
+    } else {
+      coverageReason = window.reason;
+      const scan = await scanRecentOutputs(projectRoot, since, signal, input.now);
+      for (const path of scan.files) reported.add(path);
+      if (scan.limited !== null)
+        warnings.push(`Some project files could not be checked (${scan.limited}).`);
+    }
+  }
+  const written = new Map<string, ProjectImageState>();
+  for (const path of reported) {
+    signal.throwIfAborted();
+    const candidate = await authorizeCandidate(projectRoot, path, since);
+    if (candidate === null) continue;
+    if (input.shown.get(candidate.relativePath) === stateKey(candidate.state)) continue;
+    written.set(candidate.relativePath, candidate.state);
+  }
+  const paths = [...written.keys()].toSorted();
+  const tables = paths
+    .filter((path) => TABLE_FILE.test(path))
+    .slice(0, MAXIMUM_IMAGES_PER_EXECUTION);
+  const changed = paths.filter((path) => !TABLE_FILE.test(path));
+  const countLimited = changed.slice(0, MAXIMUM_IMAGES_PER_EXECUTION);
+  const limited: string[] = [];
+  let plannedBytes = 0n;
+  const maximumBytes = BigInt(Math.max(0, Math.floor(input.limits.maximumBytes)));
+  for (const path of countLimited) {
+    const size = written.get(path)!.size;
+    if (plannedBytes + size > maximumBytes) continue;
+    limited.push(path);
+    plannedBytes += size;
+  }
+  const results = [];
+  for (const path of limited)
+    results.push(await readObservedImage(projectRoot, path, written.get(path)!, signal));
+  const images = results.filter(
+    (result): result is ObservedComputeProjectImage => !("warning" in result),
+  );
+  const rejected = results.filter((result) => "warning" in result);
+  for (const result of rejected) warnings.push(result.warning);
+  const rejectionReason =
+    rejected[0]?.reason ??
+    (changed.length > countLimited.length
+      ? "image-limit"
+      : countLimited.length > limited.length
+        ? "output-limit"
+        : undefined);
+  if (changed.length > countLimited.length)
+    warnings.push(
+      `Only the first ${String(MAXIMUM_IMAGES_PER_EXECUTION)} generated figures were retained.`,
+    );
+  if (countLimited.length > limited.length)
+    warnings.push(
+      "Some generated figures were not retained because the execution output limit was reached.",
+    );
+  for (const path of [...images.map((image) => image.relativePath), ...tables]) {
+    input.shown.delete(path);
+    input.shown.set(path, stateKey(written.get(path)!));
+    if (input.shown.size > MAXIMUM_REMEMBERED_OUTPUTS)
+      input.shown.delete(input.shown.keys().next().value!);
+  }
+  return {
+    images,
+    tables,
+    capture: {
+      coverage: coverageReason === undefined ? "complete" : "partial",
+      ...(coverageReason === undefined ? {} : { coverageReason }),
+      rejectedCount: rejected.length + changed.length - limited.length,
+      ...(rejectionReason === undefined ? {} : { rejectionReason }),
+    },
+    warnings: [...new Set(warnings)],
+  };
+}
+
+const disabledWatch = (projectRoot: string): ComputeProjectOutputWatch => ({
+  ready: Effect.void,
+  begin: Effect.succeed({ projectRoot, startedAt: 0, mark: null }),
+  collect: () => Effect.succeed(unavailableCollection("observation-unavailable", null)),
+});
+
 const disabledObserver: ComputeProjectOutputObserverPort = {
-  begin: (projectRoot) => Effect.succeed({ projectRoot, baseline: null, warnings: [] }),
-  collect: () =>
-    Effect.succeed({
-      images: [],
-      tables: [],
-      warnings: [],
-      capture: {
-        coverage: "unavailable",
-        coverageReason: "observation-unavailable",
-        rejectedCount: 0,
-      },
-    }),
+  watch: (projectRoot) => Effect.succeed(disabledWatch(projectRoot)),
 };
 
 export class ComputeProjectOutputObserver extends Context.Service<
@@ -380,188 +465,80 @@ export class ComputeProjectOutputObserver extends Context.Service<
   ComputeProjectOutputObserverPort
 >()("t3/scient/compute/ComputeProjectOutputObserver") {}
 
-const liveObserver: ComputeProjectOutputObserverPort = {
-  begin: (projectRoot) =>
-    Effect.clockWith((clock) =>
-      Effect.tryPromise({
-        try: async (signal) => {
-          const canonicalProjectRoot = await NodeFSP.realpath(projectRoot);
+export function makeComputeProjectOutputObserver(
+  watches: ProjectWriteWatches,
+): ComputeProjectOutputObserverPort {
+  return {
+    watch: (projectRoot) =>
+      Effect.acquireRelease(
+        Effect.promise(async () => {
+          const canonicalRoot = await NodeFSP.realpath(projectRoot).catch(() => null);
           return {
-            canonicalProjectRoot,
-            baseline: await snapshotProjectImages(canonicalProjectRoot, signal, () =>
-              clock.currentTimeMillisUnsafe(),
-            ),
+            projectRoot: canonicalRoot ?? projectRoot,
+            projectWatch: canonicalRoot === null ? null : watches.acquire(canonicalRoot),
           };
-        },
-        catch: (cause) => new ProjectOutputObservationFailure({ cause }),
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: "3 seconds",
-          orElse: () => Effect.fail(new ProjectOutputObservationFailure({ cause: "time limit" })),
         }),
-        Effect.match({
-          onFailure: () => ({
-            projectRoot,
-            baseline: null,
-            warnings: [
-              "Some project files could not be checked (initial observation unavailable).",
-            ],
-          }),
-          onSuccess: ({ canonicalProjectRoot, baseline }) => ({
-            projectRoot: canonicalProjectRoot,
-            baseline,
-            warnings: [],
-          }),
-        }),
-      ),
-    ),
-  collect: (observation, limits) =>
-    observation.baseline === null
-      ? Effect.succeed({
-          images: [],
-          tables: [],
-          warnings: observation.warnings,
-          capture: {
-            coverage: "unavailable" as const,
-            coverageReason: observation.coverageReason ?? ("observation-unavailable" as const),
-            rejectedCount: 0,
-          },
-        })
-      : Effect.clockWith((clock) =>
-          Effect.tryPromise({
-            try: (signal) =>
-              snapshotProjectImages(observation.projectRoot, signal, () =>
-                clock.currentTimeMillisUnsafe(),
-              ),
-            catch: (cause) => new ProjectOutputObservationFailure({ cause }),
-          }).pipe(
-            Effect.flatMap((after) => {
-              const written = [...after.files.entries()]
-                .filter(([path, state]) => {
-                  const baseline = observation.baseline!;
-                  const before = baseline.files.get(path);
-                  return before === undefined
-                    ? wasAbsent(baseline, path)
-                    : !sameState(before, state);
-                })
-                .map(([path]) => path)
-                .toSorted();
-              const tables = written
-                .filter((path) => TABLE_FILE.test(path))
-                .slice(0, MAXIMUM_IMAGES_PER_EXECUTION);
-              const changed = written.filter((path) => !TABLE_FILE.test(path));
-              const countLimited = changed.slice(0, MAXIMUM_IMAGES_PER_EXECUTION);
-              const limited: string[] = [];
-              let plannedBytes = 0n;
-              const maximumBytes = BigInt(Math.max(0, Math.floor(limits.maximumBytes)));
-              for (const path of countLimited) {
-                const size = after.files.get(path)?.size;
-                if (size === undefined || plannedBytes + size > maximumBytes) continue;
-                limited.push(path);
-                plannedBytes += size;
-              }
-              return Effect.forEach(limited, (path) =>
+        ({ projectWatch }) => Effect.promise(() => projectWatch?.close() ?? Promise.resolve()),
+      ).pipe(
+        Effect.map(({ projectRoot, projectWatch }): ComputeProjectOutputWatch => {
+          const shown = new Map<string, string>();
+          return {
+            ready: Effect.promise(() => projectWatch?.ready() ?? Promise.resolve()),
+            begin: Effect.clockWith((clock) =>
+              Effect.sync(() => ({
+                projectRoot,
+                startedAt: clock.currentTimeMillisUnsafe(),
+                mark: projectWatch?.mark() ?? null,
+              })),
+            ),
+            collect: (observation, limits, writes) =>
+              Effect.clockWith((clock) =>
                 Effect.tryPromise({
                   try: (signal) =>
-                    readObservedImage(
-                      observation.projectRoot,
-                      path,
-                      after.files.get(path)!,
+                    collectProjectOutputs({
+                      projectRoot,
+                      projectWatch,
+                      observation,
+                      limits,
+                      writes,
+                      shown,
                       signal,
+                      now: () => clock.currentTimeMillisUnsafe(),
+                    }),
+                  catch: () => "failed" as const,
+                }).pipe(
+                  Effect.timeoutOrElse({
+                    duration: "3 seconds",
+                    orElse: () =>
+                      Effect.succeed(
+                        unavailableCollection(
+                          "scan-timeout",
+                          "Some project files could not be checked (time limit).",
+                        ),
+                      ),
+                  }),
+                  Effect.orElseSucceed(() =>
+                    unavailableCollection(
+                      "observation-unavailable",
+                      "Scient could not finish observing generated project figures.",
                     ),
-                  catch: (cause) => new ProjectOutputObservationFailure({ cause }),
-                }),
-              ).pipe(
-                Effect.map((results) => {
-                  const images = results.filter(
-                    (result): result is ObservedComputeProjectImage => !("warning" in result),
-                  );
-                  const rejected = results.filter((result) => "warning" in result);
-                  const warnings = rejected.map((result) => result.warning);
-                  const coverageReason =
-                    observation.baseline!.coverageReason ?? after.coverageReason;
-                  const rejectionReason =
-                    rejected[0]?.reason ??
-                    (changed.length > countLimited.length
-                      ? "image-limit"
-                      : countLimited.length > limited.length
-                        ? "output-limit"
-                        : undefined);
-                  if (changed.length > countLimited.length) {
-                    warnings.push(
-                      `Only the first ${String(MAXIMUM_IMAGES_PER_EXECUTION)} generated figures were retained.`,
-                    );
-                  }
-                  if (countLimited.length > limited.length) {
-                    warnings.push(
-                      "Some generated figures were not retained because the execution output limit was reached.",
-                    );
-                  }
-                  return {
-                    images,
-                    tables,
-                    capture: {
-                      coverage:
-                        coverageReason === undefined ? ("complete" as const) : ("partial" as const),
-                      ...(coverageReason === undefined ? {} : { coverageReason }),
-                      rejectedCount: rejected.length + changed.length - limited.length,
-                      ...(rejectionReason === undefined ? {} : { rejectionReason }),
-                    },
-                    warnings: [
-                      ...new Set([
-                        ...observation.warnings,
-                        ...observation.baseline!.warnings,
-                        ...after.warnings,
-                        ...warnings,
-                      ]),
-                    ],
-                  };
-                }),
-                Effect.orElseSucceed(() => ({
-                  images: [],
-                  tables,
-                  capture: {
-                    coverage: "unavailable" as const,
-                    coverageReason: "observation-unavailable" as const,
-                    rejectedCount: 0,
-                  },
-                  warnings: [
-                    ...observation.warnings,
-                    "Scient could not safely retain generated project figures.",
-                  ],
-                })),
-              );
-            }),
-            Effect.timeoutOrElse({
-              duration: "3 seconds",
-              orElse: () =>
-                Effect.succeed({
-                  images: [],
-                  tables: [],
-                  capture: {
-                    coverage: "unavailable" as const,
-                    coverageReason: "scan-timeout" as const,
-                    rejectedCount: 0,
-                  },
-                  warnings: ["Some project files could not be checked (time limit)."],
-                }),
-            }),
-            Effect.orElseSucceed(() => ({
-              images: [],
-              tables: [],
-              capture: {
-                coverage: "unavailable" as const,
-                coverageReason: "observation-unavailable" as const,
-                rejectedCount: 0,
-              },
-              warnings: [
-                ...observation.warnings,
-                "Scient could not finish observing generated project figures.",
-              ],
-            })),
-          ),
-        ),
-};
+                  ),
+                ),
+              ),
+          };
+        }),
+      ),
+  };
+}
+
+const loadNativeWatch = (): Promise<ProjectWatchBackend> => import("@parcel/watcher");
 
 export const disabledLayer = Layer.succeed(ComputeProjectOutputObserver, disabledObserver);
-export const liveLayer = Layer.succeed(ComputeProjectOutputObserver, liveObserver);
+export const liveLayer = Layer.effect(
+  ComputeProjectOutputObserver,
+  Effect.map(HostProcess.Platform, (platform) =>
+    makeComputeProjectOutputObserver(
+      makeProjectWriteWatches({ backend: loadNativeWatch, platform }),
+    ),
+  ),
+);

@@ -582,6 +582,28 @@ describe("jupyter bridge output mapping", () => {
     ),
   );
 
+  it.effect("hands the kernel's record of written files to the completed event", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, channel, reader } = yield* harness();
+        yield* reader.next;
+        yield* channel.execute({
+          requestId: request("run-1"),
+          expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          code: "savefig('out/a.png')",
+        });
+        const writes = { paths: ["/project/out/a.png"], complete: true, spawnedProcess: false };
+        yield* bridge.say({
+          type: "execution-complete",
+          payload: { outcome: "succeeded", writes },
+          requestId: "run-1",
+        });
+        const completed = (yield* reader.until("completed")).at(-1);
+        expect(completed).toMatchObject({ _tag: "completed", writes });
+      }),
+    ),
+  );
+
   it.effect("reduces a text/plain representation to stream text", () =>
     Effect.scoped(
       Effect.gen(function* () {

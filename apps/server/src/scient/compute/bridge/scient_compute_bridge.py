@@ -45,6 +45,9 @@ FRAME_HEADER = struct.Struct(">I")
 
 MAX_FRAME = 16 * 1024 * 1024
 MAX_CODE = 1024 * 1024
+MAX_WRITE_RECORD_PATHS = 256
+MAX_WRITE_RECORD_PATH = 4096
+WRITE_RECORD_TIMEOUT = 2.0
 MAX_STREAM_TEXT = 256 * 1024
 MAX_TRACEBACK_LINES = 200
 MAX_TRACEBACK_LINE = 4096
@@ -258,7 +261,93 @@ _scient_shell.events.register("post_run_cell", lambda _result: _scient_restore_s
 
 # Inline figures also carry a PDF, so a shown figure can be saved as vector graphics.
 _scient_shell.config.InlineBackend.figure_formats = {"png", "pdf"}
+
+# Note which figure and table files each cell writes, at any depth and through any library, so
+# the server need not scan the project. Paths are hints the server checks; the hook never raises.
+def _scient_install_write_recorder():
+    import types
+    if not hasattr(sys, "addaudithook"):
+        return
+    extensions = frozenset({".png", ".svg", ".csv", ".tsv", ".parquet", ".xlsx"})
+    write_flags = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+    destination_events = frozenset({"os.rename", "shutil.copyfile", "os.link"})
+    spawn_events = frozenset({
+        "subprocess.Popen", "os.system", "os.posix_spawn", "os.spawn", "os.exec",
+        "os.fork", "os.forkpty", "os.startfile",
+    })
+    record = {"depth": 0, "paths": {}, "overflow": False, "spawned": False}
+    fspath, fsdecode, abspath, splitext = os.fspath, os.fsdecode, os.path.abspath, os.path.splitext
+
+    def note(path):
+        if isinstance(path, int):
+            return
+        path = fsdecode(fspath(path))
+        if splitext(path)[1].lower() not in extensions:
+            return
+        path = abspath(path)
+        paths = record["paths"]
+        if path in paths:
+            return
+        if len(paths) >= 256:
+            record["overflow"] = True
+            return
+        paths[path] = None
+
+    def hook(event, args):
+        if record["depth"] == 0:
+            return
+        try:
+            if event == "open":
+                mode, flags = args[1], args[2]
+                if (isinstance(flags, int) and flags & write_flags) or (
+                    isinstance(mode, str) and any(c in mode for c in "wax+")
+                ):
+                    note(args[0])
+            elif event in destination_events:
+                note(args[1])
+            elif event in spawn_events:
+                record["spawned"] = True
+        except Exception:
+            pass
+
+    def clear():
+        record["paths"] = {}
+        record["overflow"] = False
+        record["spawned"] = False
+
+    def pre_run(_info):
+        if record["depth"] == 0:
+            clear()
+        record["depth"] += 1
+
+    # IPython skips pre_run_cell for a blank cell but still sends post_run_cell.
+    def post_run(_result):
+        record["depth"] = max(0, record["depth"] - 1)
+
+    def take():
+        taken = json.dumps({
+            "paths": list(record["paths"]),
+            "complete": not record["overflow"],
+            "spawnedProcess": record["spawned"],
+        })
+        clear()
+        return taken
+
+    module = types.ModuleType("_scient_compute_writes")
+    module.take = take
+    sys.modules["_scient_compute_writes"] = module
+    sys.addaudithook(hook)
+    _scient_shell.events.register("pre_run_cell", pre_run)
+    _scient_shell.events.register("post_run_cell", post_run)
+
+try:
+    _scient_install_write_recorder()
+except Exception:
+    pass
 """
+
+# Read after each Python cell; the module is absent when the recorder could not be installed.
+WRITE_RECORD_EXPRESSION = '__import__("sys").modules["_scient_compute_writes"].take()'
 
 
 # A single expression keeps inspection out of the user's history and namespace.
@@ -955,6 +1044,7 @@ class ScientBridge:
         self._variables_expression: Optional[str] = VARIABLE_INSPECTION_EXPRESSION
         # Table pages are read by Python source, so only the default ipykernel serves them.
         self._serves_tables = True
+        self._records_writes = False
         self._startup_timeout: int = STARTUP_TIMEOUT
         self._working_directory = os.path.realpath(os.getcwd())
         self._execution_task: Optional[asyncio.Task[None]] = None
@@ -1365,6 +1455,7 @@ class ScientBridge:
             VARIABLE_INSPECTION_EXPRESSION if python_features else kernel["variablesExpression"]
         )
         self._serves_tables = python_features
+        self._records_writes = python_features
         self._mapping.interrupted_reply_is_ok = bool((kernel or {}).get("interruptedReplyIsOk"))
         # Kernels that compile on first start (IJulia) ask for longer than ipykernel needs.
         self._startup_timeout = (kernel or {}).get("startupTimeoutSeconds") or STARTUP_TIMEOUT
@@ -1841,14 +1932,14 @@ class ScientBridge:
                         return
                 await asyncio.sleep(IDLE_POLL_INTERVAL)
 
-            self._send(
-                "execution-complete",
-                {
-                    "outcome": self._mapping.outcome(),
-                    "executionCount": self._mapping.execution_count(),
-                },
-                request_id,
-            )
+            completion: dict[str, Any] = {
+                "outcome": self._mapping.outcome(),
+                "executionCount": self._mapping.execution_count(),
+            }
+            writes = await self._read_write_record()
+            if writes is not None:
+                completion["writes"] = writes
+            self._send("execution-complete", completion, request_id)
             self._mapping.reset()
             self._execution_task = None
             await self._flush()
@@ -1856,6 +1947,31 @@ class ScientBridge:
             raise
         except Exception as error:  # noqa: BLE001 - reported as session loss
             await self._fail_fatal(f"Kernel communication failed: {error}")
+
+    async def _read_write_record(self) -> Optional[dict[str, Any]]:
+        """What the finished cell wrote, or None so the server watches the project instead."""
+        if not self._records_writes:
+            return None
+        try:
+            result = await self._evaluate_silently(
+                "writes", WRITE_RECORD_EXPRESSION, WRITE_RECORD_TIMEOUT
+            )
+            record = self._expression_value(result) if result.get("status") == "ok" else None
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
+        except Exception:  # noqa: BLE001 - a missing record only widens what the server checks
+            return None
+        if not isinstance(record, dict):
+            return None
+        paths = record.get("paths")
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            return None
+        kept = [path for path in paths if len(path) <= MAX_WRITE_RECORD_PATH][:MAX_WRITE_RECORD_PATHS]
+        return {
+            "paths": kept,
+            "complete": record.get("complete") is True and len(kept) == len(paths),
+            "spawnedProcess": record.get("spawnedProcess") is not False,
+        }
 
     async def _drain_iopub(self, request_id: str, msg_id: str) -> bool:
         drained = 0
