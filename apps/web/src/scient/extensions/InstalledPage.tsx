@@ -79,6 +79,17 @@ function ProviderSection({
     // A ChatGPT app or claude.ai connector for a service Scient lists on its own is shown there.
     ...(showsKind(kind, "plugins") ? group.mcpServers : [])
       .filter((server) => accountServiceOfServer(group.provider, server) === undefined)
+      // Codex already shows the apps its plugins bring inside those plugins' rows.
+      .filter(
+        (server) =>
+          !(
+            group.provider.driver === "codex" &&
+            server.scope === "chatgpt" &&
+            group.plugins.some(({ plugin }) =>
+              (plugin.apps ?? []).some((app) => app.name === server.name),
+            )
+          ),
+      )
       .map((server) => (
         <ProviderServerItem
           key={`server:${server.name}`}

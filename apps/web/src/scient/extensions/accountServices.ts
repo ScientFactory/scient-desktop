@@ -80,7 +80,7 @@ export function accountServiceOfServer(
   provider: Pick<ServerProvider, "driver">,
   server: Pick<ServerProviderMcpServer, "name" | "scope" | "connectUrl">,
 ): AccountService | undefined {
-  if (provider.driver === "scient" && server.scope === "chatgpt")
+  if ((provider.driver === "scient" || provider.driver === "codex") && server.scope === "chatgpt")
     return ACCOUNT_SERVICES.find((service) =>
       server.connectUrl?.endsWith(`/${service.chatgptAppId}`),
     );
@@ -134,13 +134,21 @@ function scientHas(provider: ServerProvider, service: AccountService): boolean {
   );
 }
 
-/** What Codex's plugins say about the service's app: on, turned off in Codex, or nothing. */
+/**
+ * What Codex says about the service's app, from its account's apps and its plugins' apps: on,
+ * turned off in Codex, or nothing.
+ */
 function codexApp(provider: ServerProvider, service: AccountService): "on" | "off" | undefined {
-  const apps = (provider.plugins ?? []).flatMap((plugin) =>
-    (plugin.apps ?? []).filter(
-      (app) => app.connected && (app.id === service.chatgptAppId || app.name === service.name),
+  const apps = [
+    ...(provider.plugins ?? []).flatMap((plugin) =>
+      (plugin.apps ?? []).filter(
+        (app) => app.connected && (app.id === service.chatgptAppId || app.name === service.name),
+      ),
     ),
-  );
+    ...(provider.mcpServers ?? [])
+      .filter((server) => accountServiceOfServer(provider, server) === service)
+      .map((server) => ({ enabled: server.status !== "disabled" })),
+  ];
   if (apps.some((app) => app.enabled === false)) return "off";
   return apps.length > 0 ? "on" : undefined;
 }

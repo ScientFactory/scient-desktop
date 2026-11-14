@@ -839,12 +839,19 @@ function scientRows(provider: ServerProvider, servers: NonNullable<ServerProvide
     }));
 }
 
-function codexRows(provider: ServerProvider, plugins: NonNullable<ServerProvider["plugins"]>) {
+function codexRows(
+  provider: ServerProvider,
+  plugins: NonNullable<ServerProvider["plugins"]>,
+  servers: ServerProvider["mcpServers"],
+) {
+  // Apps of Codex's ChatGPT account, whether or not a plugin brought them; one row per app.
   const apps = new Map(
-    plugins
-      .flatMap((plugin) => plugin.apps ?? [])
-      .filter((app) => app.connected)
-      .map((app) => [app.id ?? app.name, app]),
+    [
+      ...plugins.flatMap((plugin) => plugin.apps ?? []).filter((app) => app.connected),
+      ...(servers ?? [])
+        .filter((server) => server.scope === "chatgpt" && server.status === "connected")
+        .map((server) => ({ name: server.name })),
+    ].map((app) => [app.name, app]),
   );
   return [...apps].map(([id, app]) => ({
     kind: "codex" as const,
@@ -887,7 +894,7 @@ export function providerManagedAccounts(
     const rows =
       provider.driver === "codex"
         ? known?.plugins
-          ? codexRows(provider, known.plugins)
+          ? codexRows(provider, known.plugins, known.mcpServers)
           : kept
         : !known?.mcpServers
           ? kept

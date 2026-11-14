@@ -107,6 +107,17 @@ describe("account services", () => {
         },
       ],
     };
+    // Codex's own ChatGPT account apps count without any plugin.
+    const viaAccount = {
+      ...codex,
+      auth: { status: "authenticated" as const, type: "chatgpt", email: "other@example.com" },
+      mcpServers: [
+        { name: "Gmail", status: "connected" as const, scope: "chatgpt", connectUrl: GMAIL_PAGE },
+      ],
+    };
+    expect(accountServiceRoutes(gmail, [viaAccount]).map((route) => route.state)).toEqual([
+      "connected",
+    ]);
     const routes = accountServiceRoutes(gmail, [scient(true), off]);
     expect(routes.map((route) => route.state)).toEqual(["connected", "off"]);
     expect(nextAccountServiceStep(routes)).toBeUndefined();

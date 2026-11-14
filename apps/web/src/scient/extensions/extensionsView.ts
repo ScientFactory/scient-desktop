@@ -408,7 +408,9 @@ export function providerExtensionAudience(
           ? "Uses Claude's own Claude account"
           : provider.driver === "scient" && "scope" in entry && entry.scope === "chatgpt"
             ? "Uses Scient Agent's own ChatGPT account"
-            : "Managed by this agent",
+            : provider.driver === "codex" && "scope" in entry && entry.scope === "chatgpt"
+              ? "Uses Codex's own ChatGPT account"
+              : "Managed by this agent",
   };
 }
 
