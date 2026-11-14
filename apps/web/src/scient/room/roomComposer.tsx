@@ -40,6 +40,7 @@ export function OwnerRoomAgentToggle({
   if (threadRef === null || !canOperate || !hasPeople(room)) return null;
   return (
     <RoomAgentToggle
+      size="icon-sm"
       on={on}
       onChange={(next) => useRoomDirectStore.getState().setDirect(key, next)}
     />
