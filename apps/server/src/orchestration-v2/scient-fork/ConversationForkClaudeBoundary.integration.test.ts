@@ -104,6 +104,7 @@ it.live(
                     ? "Root answer at the exact native boundary"
                     : "Native destination answer";
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -177,6 +178,7 @@ it.live(
                 return { sessionId: targetSession };
               }),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, processSpawner));

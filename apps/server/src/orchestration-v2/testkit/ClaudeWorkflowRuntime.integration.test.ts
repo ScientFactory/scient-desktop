@@ -60,6 +60,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
           allocateSessionId: Effect.succeed(nativeSession),
           open: () =>
             Effect.succeed({
+              renameSession: () => Effect.void,
               stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
               backgroundTasks: () => Effect.succeed(false),
               mcpServerStatus: Effect.succeed([]),
@@ -85,6 +86,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
             }),
           forkSession: () => Effect.die("unused native workflow fork"),
           subagentLaunchToolUseId: () => Effect.succeed(null),
+          subagentModel: () => Effect.succeed(null),
           assertComplete: Effect.void,
         },
       });

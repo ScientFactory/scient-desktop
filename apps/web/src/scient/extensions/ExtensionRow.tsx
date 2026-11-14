@@ -26,7 +26,8 @@ export type ExtensionTarget =
       readonly pluginId: string;
       readonly workspace: string | undefined;
     }
-  | { readonly kind: "provider-server"; readonly instanceId: string; readonly serverName: string };
+  | { readonly kind: "provider-server"; readonly instanceId: string; readonly serverName: string }
+  | { readonly kind: "account"; readonly serviceId: string };
 
 /** The detail page of `target`, carrying the settings scope like every settings link. */
 function ExtensionLink({
@@ -107,6 +108,17 @@ function ExtensionLink({
           className={className}
           to="/settings/extensions/item/provider/$instanceId/server/$serverName"
           params={{ instanceId: target.instanceId, serverName: target.serverName }}
+        >
+          {children}
+        </Link>
+      );
+    case "account":
+      return (
+        <Link
+          {...props}
+          className={className}
+          to="/settings/extensions/item/account/$serviceId"
+          params={{ serviceId: target.serviceId }}
         >
           {children}
         </Link>

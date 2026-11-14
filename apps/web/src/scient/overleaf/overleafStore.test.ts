@@ -35,11 +35,14 @@ const {
   pendingOverleafDecisions,
   setOverleafFileDecision,
   setOverleafConflictChoices,
+  setOverleafTokenSaved,
   beginOverleafPreview,
   finishOverleafPreview,
   recordOverleafSync,
   loadOverleafWorkspace,
+  loadOverleafTokenStatus,
   noteOverleafAgentRuns,
+  readOverleafTokenState,
   readOverleafWorkspace,
   refreshOverleafStatus,
   reloadOverleafWorkspaces,
@@ -331,6 +334,94 @@ describe("overleafStore", () => {
     beginOverleafPreview(environmentId, "c1");
     shown = readOverleafWorkspace(environmentId, ROOT);
     expect(shown.outdated.has("c1")).toBe(false);
+  });
+
+  it("after a sync that didn't bring everything in, drops its review and asks Overleaf again", async () => {
+    resetOverleafStoreForTests();
+    client.listOverleafConnections
+      .mockReset()
+      .mockResolvedValue({ connections: [{ ...link, linkedHere: true }] });
+    client.readOverleafStatus.mockReset().mockResolvedValue(status(false));
+    client.readOverleafRemoteState.mockReset().mockResolvedValue({ state: "changed" });
+    const review = {
+      reviewId: "r1",
+      digest: "d",
+      remoteTree: "a".repeat(40),
+      upToDate: false,
+      needsDecision: false,
+      incoming: [{ kind: "modified" as const, path: "a.tex" }],
+      outgoing: [],
+      conflicts: [],
+      warnings: [],
+      unresolvedMarkers: [],
+      heldWithMarked: [],
+      released: [],
+      collisions: [],
+      selectedAdditions: [],
+      additions: [],
+      localOnly: [],
+    };
+    const result = {
+      _tag: "synced" as const,
+      settled: null,
+      review,
+      interrupted: 0,
+      markerPaths: [],
+      retried: false,
+      activity: [],
+      linkedElsewhere: false,
+    };
+    recordOverleafSync(environmentId, "c1", {
+      ...result,
+      outcome: "complete",
+      publication: { _tag: "none" },
+    });
+    let shown = readOverleafWorkspace(environmentId, ROOT);
+    expect(shown.remoteStates.get("c1")).toBe("same");
+    expect(shown.reviews.get("c1")?.applied).toBe(true);
+    recordOverleafSync(environmentId, "c1", {
+      ...result,
+      outcome: "replan",
+      publication: { _tag: "blocked", reason: "attention" },
+    });
+    shown = readOverleafWorkspace(environmentId, ROOT);
+    expect(shown.remoteStates.has("c1")).toBe(false);
+    expect(shown.reviews.has("c1")).toBe(false);
+    await loadOverleafWorkspace(environmentId, ROOT, { force: true });
+    await vi.waitFor(() =>
+      expect(readOverleafWorkspace(environmentId, ROOT).remoteStates.get("c1")).toBe("changed"),
+    );
+  });
+
+  it("a list that fails says nothing about the links; only a folder that isn't a project has none", async () => {
+    resetOverleafStoreForTests();
+    client.listOverleafConnections.mockReset().mockRejectedValue(new Error("offline"));
+    await loadOverleafWorkspace(environmentId, ROOT);
+    expect(readOverleafWorkspace(environmentId, ROOT)).toMatchObject({
+      loaded: false,
+      error: "The Overleaf request didn't go through. Try again.",
+    });
+    client.listOverleafConnections.mockRejectedValue({
+      _tag: "ScientOverleafOperationError",
+      reason: "workspace-not-authorized",
+      message: "This Overleaf link does not belong to this project.",
+    });
+    await loadOverleafWorkspace(environmentId, ROOT, { force: true });
+    expect(readOverleafWorkspace(environmentId, ROOT)).toMatchObject({
+      loaded: true,
+      error: null,
+      connections: [],
+    });
+  });
+
+  it('a token status that can\'t be read stays as last known, never "no token saved"', async () => {
+    resetOverleafStoreForTests();
+    client.readOverleafToken.mockReset().mockRejectedValue(new Error("offline"));
+    await loadOverleafTokenStatus(environmentId);
+    expect(readOverleafTokenState(environmentId)).toEqual({ loaded: false, saved: false });
+    setOverleafTokenSaved(environmentId, true);
+    await loadOverleafTokenStatus(environmentId);
+    expect(readOverleafTokenState(environmentId)).toEqual({ loaded: true, saved: true });
   });
 
   it("reads the links again once each time the settled agent runs change", async () => {

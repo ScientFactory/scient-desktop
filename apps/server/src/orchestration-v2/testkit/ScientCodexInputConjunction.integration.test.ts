@@ -237,6 +237,10 @@ const runConjunction = (refusal = false) =>
                 reasoningEffort: "medium",
               };
               break;
+            // T3 12b29eb71d: Codex reads its configured reasoning summary before turn/start.
+            case "config/read":
+              result = { config: {}, origins: {} };
+              break;
             case "turn/start": {
               const params = yield* decodeTurnStart(frame.params);
               nativeOffers.push(params);
@@ -484,7 +488,13 @@ const runConjunction = (refusal = false) =>
           assert.deepEqual(yield* fs.readFile(location), index === 0 ? fileBytes : imageBytes);
         }
         const params = yield* Deferred.await(offered).pipe(Effect.timeout("15 seconds"));
-        assert.deepEqual(methods, ["initialize", "initialized", "thread/start", "turn/start"]);
+        assert.deepEqual(methods, [
+          "initialize",
+          "initialized",
+          "thread/start",
+          "config/read",
+          "turn/start",
+        ]);
         const textItem = params.input.find((item) => item.type === "text");
         assert.ok(textItem && textItem.type === "text");
         const text = textItem.text;

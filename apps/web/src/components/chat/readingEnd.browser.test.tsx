@@ -582,8 +582,11 @@ it("never pulls the reader back during a scrollbar drag that spans several frame
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
   await advanceClock(_fixture, 160);
-  // A press on the scroll node itself (its scrollbar), then movement over frames.
-  node(_fixture).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  // A press on the scroll node's scrollbar, at its trailing edge, then movement over frames.
+  const scrollbarX = node(_fixture).getBoundingClientRect().right - 2;
+  node(_fixture).dispatchEvent(
+    new PointerEvent("pointerdown", { bubbles: true, clientX: scrollbarX }),
+  );
   for (let step = 0; step < 3; step++) {
     node(_fixture).scrollTop -= 40;
     await advanceClock(_fixture, 16);

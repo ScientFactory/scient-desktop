@@ -246,25 +246,34 @@ export function createComposerImageThumbnail(
   );
 }
 
-/** Preserve each placeholder's crop mode when its source becomes a prepared attachment. */
-export function inheritComposerImageThumbnail(source: File, target: File): void {
+/**
+ * Pasted images are re-encoded after their placeholder already shows the source's thumbnail.
+ * Reusing it keeps the tile from flashing back to its fallback while the new file is decoded.
+ * Resolves once the target's thumbnail is readable, so a tile swapped to it paints at once even
+ * when compression finished before the source's thumbnail did.
+ */
+export async function inheritComposerImageThumbnail(source: File, target: File): Promise<void> {
   if (source === target) return;
-  for (const mode of ["square", "snapshot"] as const) {
-    const thumbnail = composerThumbnails.get(source)?.[mode];
-    if (!thumbnail || composerThumbnails.get(target)?.[mode]) continue;
-    const settled = readComposerImageThumbnail(source, mode);
-    if (settled !== undefined) {
-      settledComposerThumbnails.set(target, {
-        ...settledComposerThumbnails.get(target),
-        [mode]: settled,
-      });
-    }
-    cacheComposerImageThumbnail(
-      target,
-      mode,
-      thumbnail.then((src) => src ?? renderComposerImageThumbnail(target, mode)),
-    );
-  }
+  // SCIENT-FORK:START — each crop mode the placeholder started carries over.
+  await Promise.all(
+    (["square", "snapshot"] as const).map(async (mode) => {
+      const sourceThumbnail = composerThumbnails.get(source)?.[mode];
+      if (!sourceThumbnail || composerThumbnails.get(target)?.[mode]) return;
+      cacheComposerImageThumbnail(
+        target,
+        mode,
+        sourceThumbnail.then((src) => src ?? renderComposerImageThumbnail(target, mode)),
+      );
+      const src = await sourceThumbnail;
+      if (src) {
+        settledComposerThumbnails.set(target, {
+          ...settledComposerThumbnails.get(target),
+          [mode]: src,
+        });
+      }
+    }),
+  );
+  // SCIENT-FORK:END
 }
 
 async function renderComposerImageThumbnail(

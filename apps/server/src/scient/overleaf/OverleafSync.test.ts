@@ -19,9 +19,11 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 
+import type { StoredFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import { OverleafReservationOwner } from "./OverleafCoordinator.ts";
 import { hasPrivateFoldersAndIdentity } from "./OverleafCoordinator.testkit.ts";
 import {
+  linkedPaper as linked,
   OTHER_PROJECT,
   overleafSyncWorld as world,
   PROJECT,
@@ -298,6 +300,9 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
           reason: "token-missing",
         });
         expect(yield* w.service.tokenStatus).toEqual({ saved: false });
+        expect(yield* Effect.flip(w.service.saveToken("olp_first half"))).toMatchObject({
+          reason: "token-invalid",
+        });
         yield* w.service.saveToken(` ${TOKEN} `);
         expect(yield* w.service.tokenStatus).toEqual({ saved: true });
         expect(
@@ -1341,7 +1346,10 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
           yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
         ).toMatchObject({
           _tag: "refused",
-          refusal: { reason: "authority-changed" },
+          refusal: {
+            reason: "authority-changed",
+            message: "This project's workspace changed during the Overleaf operation. Try again.",
+          },
           settled: { outcome: "complete" },
         });
         expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");
@@ -1569,81 +1577,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
             }),
           ),
         ).toMatchObject({ _tag: "OverleafRequestReusedError" });
-      }),
-    ),
-  );
-  it.live("keeps a new file only here when asked, and lists what the rule skips", () =>
-    run(
-      Effect.gen(function* () {
-        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
-        const connected = yield* w.service.connect({
-          caller: w.at(w.main),
-          folder: "paper",
-          create: true,
-          project: PROJECT,
-          requestId: "c1",
-        });
-        if (connected._tag !== "connected") return yield* Effect.die(connected);
-        const id = connected.connection.connectionId;
-        yield* write(NodePath.join(w.main, "paper"), {
-          "notes.txt": "mine",
-          "fig.tex": "F",
-          ".latexmkrc": "x",
-        });
-        const kept = yield* w.service.sync({
-          caller: w.at(w.main),
-          connectionId: id,
-          requestId: "s1",
-          files: { keepOnlyHere: ["notes.txt"] },
-        });
-        if (kept._tag !== "synced") return yield* Effect.die(kept);
-        expect(kept.publication).toMatchObject({ _tag: "accepted" });
-        expect(Object.keys(yield* w.overleafNow(PROJECT)).sort()).toEqual(["fig.tex", "main.tex"]);
-        expect(kept.review.additions).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              path: ".latexmkrc",
-              selected: false,
-              skippedBecause: "hidden",
-            }),
-          ]),
-        );
-      }),
-    ),
-  );
-
-  it.live("sends a file kept only here and a file the rule skips when asked", () =>
-    run(
-      Effect.gen(function* () {
-        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
-        const connected = yield* w.service.connect({
-          caller: w.at(w.main),
-          folder: "paper",
-          create: true,
-          project: PROJECT,
-          requestId: "c1",
-        });
-        if (connected._tag !== "connected") return yield* Effect.die(connected);
-        const id = connected.connection.connectionId;
-        yield* write(NodePath.join(w.main, "paper"), { "notes.txt": "mine", ".latexmkrc": "x" });
-        yield* w.service.sync({
-          caller: w.at(w.main),
-          connectionId: id,
-          requestId: "s1",
-          files: { keepOnlyHere: ["notes.txt"] },
-        });
-        const sent = yield* w.service.sync({
-          caller: w.at(w.main),
-          connectionId: id,
-          requestId: "s2",
-          files: { send: ["notes.txt", ".latexmkrc"] },
-        });
-        expect(sent).toMatchObject({ _tag: "synced", publication: { _tag: "accepted" } });
-        expect(Object.keys(yield* w.overleafNow(PROJECT)).sort()).toEqual([
-          ".latexmkrc",
-          "main.tex",
-          "notes.txt",
-        ]);
       }),
     ),
   );
@@ -2217,3 +2150,44 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
     );
   });
 });
+
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux" || !hasPrivateFoldersAndIdentity)(
+  "a Linux link recorded before generations were read",
+  () => {
+    it.live("still matches its folder and is given the folder's generation", () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const connectionId = yield* linked(w);
+          const caller = w.at(w.main);
+          const strip = (identity: StoredFileIdentity): StoredFileIdentity => {
+            if (identity.platform !== "linux") return identity;
+            const { generation: _, ...legacy } = identity;
+            return legacy;
+          };
+          const before = yield* w.store.readConnection(connectionId);
+          if (before._tag !== "ready") return yield* Effect.die(before);
+          const document = before.document;
+          expect(document.folder.identity).toMatchObject({ generation: expect.any(String) });
+          yield* w.store.replaceConnection({
+            expectedRevision: document.revision,
+            next: {
+              ...document,
+              revision: document.revision + 1,
+              checkout: { ...document.checkout, identity: strip(document.checkout.identity) },
+              folder: { ...document.folder, identity: strip(document.folder.identity) },
+            },
+          });
+          expect(yield* w.service.status({ caller, connectionId })).toMatchObject({
+            availability: "ready",
+          });
+          yield* w.service.recordGenerations;
+          const after = yield* w.store.readConnection(connectionId);
+          if (after._tag !== "ready") return yield* Effect.die(after);
+          expect(after.document.checkout.identity).toEqual(document.checkout.identity);
+          expect(after.document.folder.identity).toEqual(document.folder.identity);
+        }),
+      ),
+    );
+  },
+);

@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import * as TextGenerators from "./TextGenerators.ts";
@@ -88,7 +89,9 @@ const noTextGenerators = Layer.mock(TextGenerators.TextGenerators)({
 
 const makeGeneration = (instances: ReadonlyArray<ProviderInstance>) =>
   TextGeneration.make.pipe(
-    Effect.provide(Layer.merge(ServerSettings.layerTest(), noTextGenerators)),
+    Effect.provide(
+      Layer.mergeAll(ServerSettings.layerTest(), noTextGenerators, ProviderInstallationGate.layer),
+    ),
     Effect.provideService(
       ProviderInstanceRegistry.ProviderInstanceRegistry,
       makeStubRegistry(instances),
@@ -374,7 +377,13 @@ describe("TextGeneration.make", () => {
         }),
       );
       const generation = yield* TextGeneration.make.pipe(
-        Effect.provide(Layer.merge(ServerSettings.layerTest(), noTextGenerators)),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest(),
+            noTextGenerators,
+            ProviderInstallationGate.layer,
+          ),
+        ),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([instance]),
@@ -421,7 +430,13 @@ describe("TextGeneration.make", () => {
       );
 
       const tg = yield* TextGeneration.make.pipe(
-        Effect.provide(Layer.merge(ServerSettings.layerTest(), noTextGenerators)),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest(),
+            noTextGenerators,
+            ProviderInstallationGate.layer,
+          ),
+        ),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([personal, work]),
@@ -449,7 +464,13 @@ describe("TextGeneration.make", () => {
   it.effect("fails with TextGenerationError when the instance is unknown", () =>
     Effect.gen(function* () {
       const tg = yield* TextGeneration.make.pipe(
-        Effect.provide(Layer.merge(ServerSettings.layerTest(), noTextGenerators)),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest(),
+            noTextGenerators,
+            ProviderInstallationGate.layer,
+          ),
+        ),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([]),

@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { canSendQueuedRun, isQueueUsageLimitProven } from "@t3tools/shared/scientQueuedRunSend";
 import { CircleAlertIcon, PencilIcon } from "lucide-react";
@@ -13,11 +14,12 @@ import { useRef, useState } from "react";
 import { ComposerBanner } from "../../components/chat/ComposerBanner";
 import { Button } from "../../components/ui/button";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
-import { useThreadProjection, useThreadShell } from "../../state/entities";
+import { useThreadShell } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-type Projection = NonNullable<ReturnType<typeof useThreadProjection>>["projection"];
+// The quiet structure: queue rules read no streamed text.
+type Projection = ThreadStructure;
 
 /** Most admissions settle well before this, so their row never says "Queuing…". */
 export const QUEUE_ADMISSION_STATUS_DELAY_MS = 700;

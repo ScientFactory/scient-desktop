@@ -73,17 +73,25 @@ connecting.
 ## Scient Connect
 
 Scient Connect reaches your computers from anywhere without opening ports or
-setting up a VPN. Sign in once, turn it on for a computer, and that computer
-appears in Scient on your other devices and at
+setting up a VPN. Sign in to Scient on a computer and Scient Connect turns on
+for it: that computer appears in Scient on your other devices and at
 [app.scientfactory.com](https://app.scientfactory.com) in any browser.
 
 1. On the computer to share, open **Settings → Sharing & access** and sign in
-   to Scient Connect with Google, Microsoft, GitHub or email.
-2. Turn on **Scient Connect** for that environment. The first time, Scient
-   asks to download the relay client (`cloudflared`) and checks it against a
-   pinned checksum before installing it.
+   with Google, Microsoft, GitHub or email.
+2. That's all. The first time, Scient downloads the tunnel program
+   (`cloudflared`) in the background, checks it against a pinned checksum,
+   installs it and connects. **Sharing & access** shows each step, and so does
+   the invite dialog if you are waiting to share a thread. If the network is
+   down or the relay is busy, Scient keeps trying.
 3. On another device, sign in with the same account. The computer is listed
    under Scient Connect; select it to connect.
+
+To keep a computer off Scient Connect, turn **Scient Connect** off in
+**Sharing & access**. Scient remembers that for the computer, also after you
+sign out and back in, until you turn it on again. Signing out leaves the
+computer reachable for your account; turn Scient Connect off to stop that.
+Signing in with another account moves the computer to that account.
 
 On a server without a screen, run `scient connect` and open the printed link on
 any device to sign in. `scient connect status` checks the connection from that
@@ -99,13 +107,44 @@ any site behind Cloudflare. A computer that stays offline for a while loses its
 tunnel and gets a new one, at the same address, when it comes back.
 
 Each account can link a limited number of computers at once. **Settings →
-Sharing & access** shows how many are in use. To free a place, select **Manage
-tunnels**, then **Deregister** a computer you no longer use.
+Sharing & access** shows how many are in use, and says so when a new computer
+doesn't fit. To free a place, select **Manage tunnels**, then **Deregister** a
+computer you no longer use, and turn Scient Connect on again.
+
+Scient Connect runs on macOS (Apple Silicon and Intel), Windows (x64, and ARM on
+Windows 11, which runs the x64 tunnel program) and Linux (x64 and arm64). A
+network that blocks GitHub downloads stops the first setup; **Sharing &
+access** shows the reason.
 
 A computer is reachable only while Scient runs on it: the desktop app, or
 `scient serve` on a server (see [headless server](background-service.md)). This
 is the same on macOS, Windows and Linux; Scient does not install a background
 service.
+
+### Approve new devices
+
+By default, any device signed in to your Scient Connect account can open a linked
+machine. To require approval instead, turn on **Require approval for new
+devices** with the Scient Connect settings in **Settings → Sharing & access** on the
+host, or when you first set up Scient Connect. Then someone who takes over your
+Scient Connect account cannot reach the machine from a new device without your
+approval. Review the devices that are already approved, described below.
+
+A new device waits and shows a code such as `K7QM-2XFD`. Approve it from a
+device that is already connected, using the prompt or **Settings → Sharing &
+access**. Check that the code matches the one on the waiting device. On a
+headless host, run `scient auth connect-device list` and then
+`scient auth connect-device approve K7QM-2XFD`. A request expires after 10 minutes,
+and the device asks again when it retries. Deny keeps that device out until its
+request expires.
+
+Each device is approved once. Revoke it from **Scient Connect devices** in the same
+settings page, or with `scient auth connect-device revoke <code>`. With approval on,
+it has to ask again. With approval off, it can connect again on its own, so
+revoking in the app offers to turn approval on first. Devices that connected through
+Scient Connect while approval was off stay approved and appear in that list for you to
+review. A device that has not connected since you updated Scient asks for approval like
+a new one. Older apps cannot show the code, so update them before you turn approval on.
 
 ### Share a thread with a guest
 
@@ -375,8 +414,10 @@ the full path of the desktop app's `scient` launcher or of the Node runtime and
 server it runs from, so it works even where `scient` is not on your `PATH`. It
 keeps your `PATH` when Node is installed only for your user. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries and system fonts with apt; pages that load without text
-can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
-reports what it would change.
+can mean the host has no fonts. It is safe to run again, and each run reloads
+the AppArmor profile: run it again if the browser reports a blocked sandbox on a
+host restored from an image or snapshot, where the profile can be on disk
+without being loaded. Without `sudo`, it only reports what it would change.
 
 The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
 as root. If your Scient server runs as root, run it as a nonroot user to keep

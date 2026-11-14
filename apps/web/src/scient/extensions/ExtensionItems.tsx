@@ -39,6 +39,7 @@ import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { ExtensionRow, type ExtensionTarget } from "./ExtensionRow";
 import {
   providerExtensionAudience,
+  providerServerConnectLabel,
   providerServerDisplayName,
   connectorActions,
   connectorStatusText,
@@ -91,6 +92,11 @@ function useOpenExtension() {
         return void navigate({
           to: "/settings/extensions/item/provider/$instanceId/server/$serverName",
           params: { instanceId: target.instanceId, serverName: target.serverName },
+        });
+      case "account":
+        return void navigate({
+          to: "/settings/extensions/item/account/$serviceId",
+          params: { serviceId: target.serviceId },
         });
     }
   };
@@ -535,7 +541,7 @@ export function ProviderServerItem({
         <ItemMenu name={server.name} target={target}>
           {server.canStartSignIn === true || server.connectUrl ? (
             <MenuItem disabled={actions.locked} onClick={() => void actions.signIn()}>
-              {server.connectUrl ? "Connect on claude.ai" : "Sign in"}
+              {providerServerConnectLabel(server) ?? "Sign in"}
             </MenuItem>
           ) : null}
         </ItemMenu>

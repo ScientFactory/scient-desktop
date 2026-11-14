@@ -1,12 +1,13 @@
-// SCIENT-FORK:START Scient Extensions connectors
 import type {
   EnvironmentId,
+  // SCIENT-FORK: Scient Extensions connectors
   ExtensionDeliverySkipReason,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
+// SCIENT-FORK:START Scient Extensions connectors
 /**
  * A Scient connector delivered to one provider session. `url` is the Scient
  * connector proxy endpoint for this connector; the agent authenticates to it
@@ -82,6 +83,8 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /** True while a delegated task this thread started will wake it with its result. */
+  readonly hasPendingWake?: Effect.Effect<boolean>;
 }
 
 export function withAgentDeviceEnvironment(

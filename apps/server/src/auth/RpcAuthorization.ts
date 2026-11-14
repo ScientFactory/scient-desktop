@@ -94,6 +94,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverPlanProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverStartProviderRuntime]: AuthProvidersManageScope,
   [WS_METHODS.serverCancelProviderRuntime]: AuthProvidersManageScope,
+  [WS_METHODS.serverObserveProviderRuntimePick]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.providerInstallRemove]: AuthProvidersManageScope,
   [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,
@@ -241,6 +242,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer (authorize also requires
+  // the desktop's own session, checked by its handler).
+  [WS_METHODS.scientConnectStatus]: AuthRelayReadScope,
+  [WS_METHODS.scientConnectAuthorize]: AuthRelayWriteScope,
+  [WS_METHODS.scientConnectTurnOff]: AuthRelayWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsFilterOptions]: AuthOrchestrationReadScope,
@@ -261,6 +268,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReportState]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
@@ -355,6 +363,13 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.editorsFlushResolve]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — a voice call drives the thread's agent like a sent message.
+  [WS_METHODS.liveVoiceCall]: AuthOrchestrationOperateScope,
+  [WS_METHODS.liveVoiceMute]: AuthOrchestrationOperateScope,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — ChatGPT dictation runs the agent with its sign-in, like transcript correction.
+  [WS_METHODS.voiceDictateWithChatGpt]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — the Files panel's moves, copies, new folders and Trash write files.
   [WS_METHODS.projectsChangeEntries]: AuthFilesystemWriteScope,

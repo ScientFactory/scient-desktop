@@ -63,6 +63,18 @@ describe("Oh My Pi command policy", () => {
     expect(ompCommandDecision("/compact", expanded)).toBe("mutator");
   });
 
+  it("runs Scient's own extension commands", () => {
+    const scient = compileOmpCommandCatalog([
+      { name: "scient-status", source: "extension" },
+      { name: "scient-models-refresh", source: "extension" },
+    ]);
+    expect(ompCommandDecision("/scient-status", scient)).toBe("allowed");
+    expect(ompCommandDecision("/scient-models-refresh", scient)).toBe("allowed");
+    // Only an extension command carries Scient's names; a skill or prompt of the same name does not.
+    const skill = compileOmpCommandCatalog([{ name: "scient-status", source: "skill" }]);
+    expect(ompCommandDecision("/scient-status", skill)).toBe("mutator");
+  });
+
   it("treats a path-like first word as text even when discovery failed", () => {
     const undiscovered = compileOmpCommandCatalog([]);
     expect(ompCommandDecision("/Users/alice/notes.md", undiscovered)).toBe("not-a-command");

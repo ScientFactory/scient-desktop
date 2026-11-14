@@ -62,6 +62,8 @@ export const makeApplierFiles = Effect.fn("WorkspaceApplier.makeApplierFiles")(f
     readFile,
     retainedHooks,
     fileHistoryDirectory: NodePath.join(root, "file-history"),
+    // A killed child's temporary file is a leftover at once: no other process saves here.
+    leftoverTemporaryAgeMs: 0,
     nativeSaves: input.nativeSaves ?? false,
     ...(helper === undefined ? {} : { nativePublicationHelper: helper }),
     resolveRetentionStorageDirectory: async () => NodePath.join(root, "shared-retention"),

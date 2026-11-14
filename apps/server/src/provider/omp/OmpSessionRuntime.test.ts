@@ -2040,7 +2040,10 @@ it.effect("a background wake-up after an uncertain outcome opens a continuation"
       _tag: "Event",
       event: { type: "agent_end", messages: [], isTerminal: true },
     });
-    expect(yield* h.next("turn-outcome")).toMatchObject({ outcome: "unknown" });
+    expect(yield* h.next("turn-outcome")).toMatchObject({
+      outcome: "unknown",
+      failureCode: "idle_confirmation_failed",
+    });
     // The process is still alive, so its background work can wake it.
     yield* Queue.offer(h.events, { _tag: "Event", event: { type: "agent_start" } });
     expect(yield* h.next("turn-started")).toEqual({
@@ -2069,7 +2072,10 @@ it.effect("a message whose prompt_result never arrives settles as uncertain", ()
       yield* TestClock.adjust("250 millis");
       for (let hop = 0; hop < 20; hop++) yield* Effect.yieldNow;
     }
-    expect(yield* Fiber.join(fiber)).toMatchObject({ outcome: "unknown" });
+    expect(yield* Fiber.join(fiber)).toMatchObject({
+      outcome: "unknown",
+      failureCode: "prompt_result_timeout",
+    });
     yield* Scope.close(h.scope, Exit.void);
   }).pipe(Effect.scoped),
 );

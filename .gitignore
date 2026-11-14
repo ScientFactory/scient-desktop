@@ -55,3 +55,4 @@ node_modules/
 
 # Host-compiled file-exchange helper; source is versioned.
 native/file-exchange/*/
+/packages/ssh/.ssh-launcher-test-*/

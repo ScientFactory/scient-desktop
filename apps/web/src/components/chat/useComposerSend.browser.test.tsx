@@ -192,6 +192,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       insertTextAtEnd: () => true,
       pasteTextAtEnd: () => true,
       citeAssistantText: () => true,
+      replyToResponse: () => true,
       citeText: () => true,
       openModelPicker: noop,
       stepReasoningEffort: noop,
@@ -280,7 +281,13 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       openUsageLimits: () => false,
       clearUsageLimitsFor: noop,
       needsLoadBalancing: false,
-      loadBalancing: { pending: false, failed: false, environmentId, refresh: noop },
+      loadBalancing: {
+        pending: false,
+        failed: false,
+        environmentId,
+        refresh: noop,
+        refreshSelection: async () => null,
+      },
       readPendingEnvironmentChange: () => null,
       pendingApprovals: [],
       respondingRequestIds: [],
@@ -302,6 +309,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       handleNewThreadInActiveProject: noop,
       persistThreadSettingsForNextTurn: async () => AsyncResult.success(undefined),
       linkCheckoutPullRequest: noop,
+      refreshBeforeSend: () => null,
       ...overrides,
     };
     let send: ReturnType<typeof useComposerSend>["onSend"] | undefined;
@@ -359,6 +367,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       const { onResume } = useComposerResume({
         ...input,
         resumableRunId: RunId.make("resume"),
+        canResume: true,
         runtimeMode: "full-access",
         scrollToEnd: noop,
       });
@@ -443,7 +452,9 @@ function fanoutInput(fixture: Awaited<ReturnType<typeof setup>>) {
       reviewComments: [],
       threadContexts: [],
       environmentContexts: [],
+      replyTo: null,
       messageText: fixture.context.prompt,
+      draftText: fixture.context.prompt,
     },
     createdAt: "2026-10-20T00:00:00Z",
     attachmentsPromise: Promise.resolve([]),

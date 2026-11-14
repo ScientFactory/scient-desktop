@@ -1,6 +1,7 @@
 /** Portable history a provider turn start reads before its native offer, and the start of a
  * frozen conversation fork that falls back to its portable prefix when native fork fails. */
 import type {
+  NodeId,
   OrchestrationV2ContextTransfer,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
@@ -69,7 +70,7 @@ export const makeTurnStartHistory =
  * `providerThread` is undefined when the last start attempt already failed the run. */
 export const startFrozenConversationFork = Effect.fn(
   "PortableTurnStart.startFrozenConversationFork",
-)(function* <ELoad, RLoad, EHistory, RHistory>(input: {
+)(function* <ELoad, RLoad, EHistory, RHistory, EStarting, RStarting>(input: {
   readonly nativeForkTransfer: OrchestrationV2ContextTransfer;
   readonly session: ProviderAdapterV2SessionRuntime;
   readonly threadId: ThreadId;
@@ -87,6 +88,11 @@ export const startFrozenConversationFork = Effect.fn(
     RHistory
   >;
   readonly startError: (cause: string) => ProviderTurnStartError;
+  readonly stillStarting: Effect.Effect<boolean, EStarting, RStarting>;
+  /** The redacted failure text the fallback notice shows. */
+  readonly nativeForkFailureMessage: (failure: ProviderAdapterV2Error) => string;
+  readonly rootNodeId: NodeId;
+  readonly noticeOrdinal: number;
   readonly projectionStore: ProjectionStoreV2Shape;
   readonly contextHandoffService: ContextHandoffServiceV2Shape;
   readonly eventSink: EventSinkV2Shape;
@@ -106,6 +112,7 @@ export const startFrozenConversationFork = Effect.fn(
     idAllocator,
   } = input;
   const frozen = nativeForkTransfer.frozenSource;
+  let nativeForkFailure: string | undefined;
   let portableReason = frozenForkPortableReason({
     frozenSource: frozen,
     sourceRunId: nativeForkTransfer.sourcePoint.runId,
@@ -131,7 +138,10 @@ export const startFrozenConversationFork = Effect.fn(
     );
     if (forked._tag === "Success")
       return { providerThread: forked.success, portableHandoff: undefined };
+    if (!(yield* input.stillStarting))
+      return { providerThread: undefined, portableHandoff: undefined };
     portableReason = `The native fork failed: ${forked.failure.message}`;
+    nativeForkFailure = input.nativeForkFailureMessage(forked.failure);
   }
   if (!session.providerSession.capabilities.context.canConsumeHandoffSummaries) {
     return yield* input.startError(
@@ -210,6 +220,40 @@ export const startFrozenConversationFork = Effect.fn(
           consumedAt: createdAt,
         },
       },
+      // The thread says the native fork failed and the session started fresh.
+      ...(nativeForkFailure === undefined
+        ? []
+        : [
+            {
+              id: yield* idAllocator.allocate.event({ threadId: input.threadId }),
+              type: "turn-item.updated" as const,
+              threadId: input.threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: createdAt,
+              payload: {
+                id: idAllocator.derive.runSignalTurnItem({
+                  runId: run.id,
+                  signal: "native-fork-fallback",
+                }),
+                threadId: input.threadId,
+                runId: run.id,
+                nodeId: input.rootNodeId,
+                providerThreadId: providerThread.id,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: input.noticeOrdinal,
+                status: "completed" as const,
+                title: "Native fork failed",
+                startedAt: createdAt,
+                completedAt: createdAt,
+                updatedAt: createdAt,
+                type: "system_notice" as const,
+                message: `Could not fork the source conversation natively (${nativeForkFailure}). Started a fresh session with its history.`,
+              },
+            },
+          ]),
     ],
   });
   return {

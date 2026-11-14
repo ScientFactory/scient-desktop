@@ -77,6 +77,9 @@ import * as HookInboxObject from "./hooks/HookInboxObject.ts";
 import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 // SCIENT-FORK:START account-deletion
 import * as AccountDeletion from "./account/AccountDeletion.ts";
+// SCIENT-FORK:START account-deletion
+import * as AppleSignInRevocation from "./account/AppleSignInRevocation.ts";
+// SCIENT-FORK:END account-deletion
 import * as AccountRecords from "./account/AccountRecords.ts";
 import * as LinkSupersession from "./environments/LinkSupersession.ts";
 import * as ClerkUsers from "./account/ClerkUsers.ts";
@@ -194,6 +197,38 @@ export const layer = Api.make(
         ? { secretKey: clerkLegacySecretKey, publishableKey: clerkLegacyPublishableKey.trim() }
         : undefined;
     // SCIENT-FORK:END clerk-legacy-instance
+    // SCIENT-FORK:START account-deletion — the Sign in with Apple key; revocation is off without it.
+    const appleSignInPrivateKey = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.Redacted("APPLE_SIGN_IN_PRIVATE_KEY")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
+    );
+    const appleSignInKeyId = (yield* Config.String("APPLE_SIGN_IN_KEY_ID").pipe(
+      Config.withDefault(""),
+    )).trim();
+    const appleSignInTeamId = (yield* Config.String("APPLE_SIGN_IN_TEAM_ID").pipe(
+      Config.withDefault(""),
+    )).trim();
+    const appleSignInClientIds = (yield* Config.String("APPLE_SIGN_IN_CLIENT_IDS").pipe(
+      Config.withDefault(""),
+    ))
+      .split(",")
+      .map((clientId) => clientId.trim())
+      .filter((clientId) => clientId.length > 0);
+    const appleSignIn =
+      appleSignInPrivateKey &&
+      appleSignInKeyId &&
+      appleSignInTeamId &&
+      appleSignInClientIds.length > 0
+        ? {
+            teamId: appleSignInTeamId,
+            keyId: appleSignInKeyId,
+            privateKey: appleSignInPrivateKey,
+            clientIds: appleSignInClientIds,
+          }
+        : undefined;
+    // SCIENT-FORK:END account-deletion
     const t3ChatLinkSecret = Option.getOrUndefined(
       Option.filter(
         yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
@@ -282,6 +317,9 @@ export const layer = Api.make(
         ...(t3ChatLinkSecret
           ? { t3Chat: { baseUrl: t3ChatBaseUrl, linkSecret: t3ChatLinkSecret } }
           : {}),
+        // SCIENT-FORK:START account-deletion
+        ...(appleSignIn ? { appleSignIn } : {}),
+        // SCIENT-FORK:END account-deletion
       });
     });
 
@@ -321,7 +359,12 @@ export const layer = Api.make(
     // SCIENT-FORK:START account-deletion — heads the runtime chain, which is at pipe's arity limit.
     const layerAccountDeletion = AccountDeletion.layer.pipe(
       Layer.provideMerge(
-        Layer.mergeAll(AccountRecords.layer, ClerkUsers.layer, LinkSupersession.layer),
+        Layer.mergeAll(
+          AccountRecords.layer,
+          ClerkUsers.layer,
+          LinkSupersession.layer,
+          AppleSignInRevocation.layer,
+        ),
       ),
     );
     const layerRuntime = layerAccountDeletion.pipe(

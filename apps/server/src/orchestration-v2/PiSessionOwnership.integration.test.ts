@@ -39,6 +39,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Ingestor from "./ProviderEventIngestor.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import { layerSingle as makeSingleLayer } from "./ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2, layerWithOptions } from "./ProviderSessionManager.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -193,6 +194,7 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
             makeSingleLayer(adapter),
             Layer.succeed(ProviderRegistry.ProviderRegistry, makeProviderRegistryMock()),
             Layer.mock(McpRegistry.McpSessionRegistry)({}),
+            ProviderInstallationGate.layer,
             Ingestor.layer.pipe(
               Layer.provide(dependencies),
               Layer.provide(

@@ -29,6 +29,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeNativeSessionAdapterV2 } from "./Adapters/NativeSessionAdapterV2.ts";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -227,6 +228,7 @@ it.effect(
           listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),
           countThreads: () => Effect.die("unused countThreads"),
           listActiveShellIndex: () => Effect.die("unused listActiveShellIndex"),
+          listActiveThreads: () => Effect.die("unused listActiveThreads"),
           listOlderSettledThreads: () => Effect.die("unused listOlderSettledThreads"),
           readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
@@ -257,6 +259,8 @@ it.effect(
           getThreadHistoryPage: () => Effect.die("unused"),
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),
+          getTranscriptByteFloor: () => Effect.die("unused transcript byte floor"),
+          hasPendingDelegatedCompletion: () => Effect.die("unused hasPendingDelegatedCompletion"),
           getSubagentCount: () => Effect.die("unused subagent count"),
           listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
@@ -325,6 +329,7 @@ it.effect(
             McpProviderSessions.layer,
             layerProjection,
             layerSessionManager,
+            Layer.mock(EventSink.EventSinkV2)({}),
             ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
               Layer.provideMerge(NodeServices.layer),
             ),
@@ -448,6 +453,7 @@ it.effect(
       };
       const dependencies = Layer.mergeAll(
         Layer.succeed(McpProviderSessions.McpProviderSessions, mcpSessions),
+        Layer.mock(EventSink.EventSinkV2)({}),
         ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
           Layer.provideMerge(NodeServices.layer),
         ),
@@ -793,6 +799,11 @@ it.effect.each([
           }));
         const dependencies = Layer.mergeAll(
           McpProviderSessions.layer,
+          // The fixture projection never ingests the stop, so Stop's settle wait ends at once.
+          Layer.mock(EventSink.EventSinkV2)({
+            latestSequence: () => Effect.succeed(0),
+            stream: () => Stream.empty,
+          }),
           ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
             Layer.provideMerge(NodeServices.layer),
           ),

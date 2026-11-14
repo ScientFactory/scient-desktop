@@ -15,7 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 
 import {
-  type CheckoutLookupError,
+  CheckoutLookupError,
   type CheckoutRecoveryRequiredError,
   type makeCheckoutBarrier,
 } from "../workspace/CheckoutBarrier.ts";
@@ -330,6 +330,65 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
         expect(mutated).toBe(false);
       }),
     ),
+  );
+
+  it.live(
+    "holds bulk changes back for an unlinked folder's unfinished sync, never for an idle link it can't examine",
+    () => {
+      let unexaminable: string | null = null;
+      return run(
+        Effect.gen(function* () {
+          const w = yield* world({
+            synced: { "main.tex": "A" },
+            remote: { "main.tex": "A" },
+            barrier: (real) => ({
+              ...real,
+              current: (path) =>
+                path === unexaminable
+                  ? Effect.fail(new CheckoutLookupError({ path, cause: new Error("EACCES") }))
+                  : real.current(path),
+            }),
+          });
+          const other = NodePath.join(NodePath.dirname(w.checkout), "other");
+          yield* Effect.promise(() =>
+            NodeFSP.mkdir(NodePath.join(other, ".git"), { recursive: true }),
+          );
+          const bulk = (checkout: string) =>
+            w.barrier.bulk(checkout, Effect.void).pipe(
+              Effect.as("changed" as const),
+              Effect.catchTags({
+                CheckoutRecoveryRequiredError: (error) => Effect.succeed(error.reason ?? "recover"),
+              }),
+            );
+          unexaminable = w.folder;
+          expect(yield* bulk(other)).toBe("changed");
+          unexaminable = null;
+          const current = yield* w.connection;
+          yield* w.store.replaceConnection({
+            expectedRevision: current.revision,
+            next: {
+              ...current,
+              revision: current.revision + 1,
+              state: "archived",
+              stagingPaths: [".scient-overleaf-apply-earlier-1"],
+              updatedAt: "2026-10-22T12:00:00.000Z",
+            },
+          });
+          expect(yield* bulk(w.checkout)).toBe("unlinked-unfinished-sync");
+          expect(yield* bulk(other)).toBe("changed");
+          const relinked = { ...current, connectionId: "connection-relinked" };
+          yield* w.store.createConnection(relinked);
+          expect(yield* bulk(w.checkout)).toBe("changed");
+          yield* w.store.replaceConnection({
+            expectedRevision: relinked.revision,
+            next: { ...relinked, revision: relinked.revision + 1, state: "archived" },
+          });
+          expect(yield* bulk(w.checkout)).toBe("unlinked-unfinished-sync");
+          yield* Effect.promise(() => NodeFSP.rename(w.folder, `${w.folder}-moved`));
+          expect(yield* bulk(w.checkout)).toBe("changed");
+        }),
+      );
+    },
   );
 
   it.live(
@@ -1432,6 +1491,21 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, local half"
         const blocked = yield* w.coordinatorWith(other);
         const refused = yield* Effect.exit(blocked.prepare({ connectionId: CONNECTION }));
         expect(String(refused)).toContain("OverleafStateLockedError");
+      }),
+    ),
+  );
+
+  it.live("lists kept copies while another server holds the writable lease", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "A" } });
+        const other = yield* OverleafStateStore.make({
+          publicationHelper: yield* Effect.promise(filePublicationTestHelper),
+          root: w.stateRoot,
+          volumeUuid: w.volumeUuid,
+        });
+        const reader = yield* w.coordinatorWith(other);
+        expect(yield* reader.keptCopies({ connectionId: CONNECTION })).toEqual([]);
       }),
     ),
   );

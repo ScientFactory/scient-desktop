@@ -504,6 +504,7 @@ const CALLBACK_ORIGIN = "http://127.0.0.1:4777";
 const existingProject = (projectId: ProjectId): ProjectRow => ({
   projectId,
   title: projectId,
+  hasCustomTitle: false,
   workspaceRoot: `/work/${projectId}`,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,

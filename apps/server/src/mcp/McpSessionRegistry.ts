@@ -78,10 +78,17 @@ export class McpSessionRegistry extends Context.Service<
   McpSessionRegistryShape
 >()("t3/mcp/McpSessionRegistry") {}
 
+interface AliveMark {
+  readonly wallMs: number;
+  readonly monotonicMs: number;
+}
+
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
-  readonly lastAliveAt: number;
+  readonly lastAlive: AliveMark;
+  /** Set when a request finds the token idle; only `touch` clears it, whatever the clocks do. */
+  readonly expired: boolean;
 }
 
 interface RegistryState {
@@ -90,6 +97,7 @@ interface RegistryState {
 
 export interface McpSessionRegistryOptions {
   readonly livenessWindowMs?: number;
+  /** Drives both the wall and monotonic readings. */
   readonly now?: () => number;
 }
 
@@ -104,6 +112,11 @@ const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
+
+// The larger elapsed reading wins: stepping the wall clock back cannot extend a token,
+// and wall time that passes while the host sleeps still counts.
+const idleMs = (since: AliveMark, now: AliveMark): number =>
+  Math.max(now.wallMs - since.wallMs, now.monotonicMs - since.monotonicMs);
 
 const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
   NetAddress.isUnspecified(address)
@@ -149,7 +162,18 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       { discard: true },
     );
   // SCIENT-FORK:END
-  const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
+  const { now } = options;
+  const currentAliveMark: Effect.Effect<AliveMark> = now
+    ? Effect.sync(() => {
+        const timestamp = now();
+        return { wallMs: timestamp, monotonicMs: timestamp };
+      })
+    : Effect.all({
+        wallMs: Clock.currentTimeMillis,
+        monotonicMs: Clock.monotonicTimeNanos.pipe(
+          Effect.map((nanos) => Number(nanos / 1_000_000n)),
+        ),
+      });
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
   const endpoint = NetAddress.isInetAddress(httpServer.address)
     ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
@@ -162,7 +186,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
-      const issuedAt = yield* currentTimeMillis;
+      const issuedAlive = yield* currentAliveMark;
       const providerSessionId = yield* random.uuidV4();
       const rawToken = yield* random.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
@@ -199,11 +223,11 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         // SCIENT-FORK:START — Scient skills: credentials carry the turn's exact skill scope.
         ...(request.skillScope ? { skillScope: copySkillScope(request.skillScope) } : {}),
         // SCIENT-FORK:END
-        issuedAt,
+        issuedAt: issuedAlive.wallMs,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
-        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
+        next.set(tokenHash, { tokenHash, scope, lastAlive: issuedAlive, expired: false });
         return { records: next };
       });
       return {
@@ -230,29 +254,28 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     function* (rawToken) {
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
-      const timestamp = yield* currentTimeMillis;
-      // SCIENT-FORK:START — expiry is a credential exit, not just a failed lookup.
+      const alive = yield* currentAliveMark;
+      // SCIENT-FORK: expiry is a credential exit, not just a failed lookup.
       let expired: string | undefined;
       const resolved = yield* SynchronizedRef.modify(state, ({ records }) => {
         const record = records.get(tokenHash);
-        if (!record) return [undefined, { records }] as const;
-        if (timestamp - record.lastAliveAt > livenessWindowMs) {
+        if (!record || record.expired) return [undefined, { records }] as const;
+        if (idleMs(record.lastAlive, alive) > livenessWindowMs) {
+          // SCIENT-FORK: the session's secrets are released below; touch can still revive the record.
           expired = record.scope.thread.providerSessionId;
-          // Preserve touch-based revival of the authority record; only its cached
-          // secret material is discarded when the bearer is currently expired.
-          return [undefined, { records }] as const;
+          const next = new Map(records);
+          next.set(tokenHash, { ...record, expired: true });
+          return [undefined, { records: next }] as const;
         }
-        // SCIENT-FORK:END
         const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        // SCIENT-FORK:START — callers receive copies of the authorization record.
+        next.set(tokenHash, { ...record, lastAlive: alive });
+        // SCIENT-FORK:START — callers receive copies of the authorization record, Scient
+        // Extensions connector ids and skill scope included.
         return [
           {
             ...record.scope,
             capabilities: new Set(record.scope.capabilities),
-            // SCIENT-FORK:START Scient Extensions connectors
             connectorIds: new Set(record.scope.connectorIds),
-            // SCIENT-FORK:END
             ...(record.scope.skillScope
               ? {
                   skillScope: {
@@ -274,12 +297,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
-      const timestamp = yield* currentTimeMillis;
+      const alive = yield* currentAliveMark;
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(records);
         for (const [tokenHash, record] of records) {
           if (record.scope.thread.threadId === threadId) {
-            next.set(tokenHash, { ...record, lastAliveAt: timestamp });
+            next.set(tokenHash, { ...record, lastAlive: alive, expired: false });
           }
         }
         return { records: next };

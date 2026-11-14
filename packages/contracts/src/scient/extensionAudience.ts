@@ -16,6 +16,18 @@ export const ExtensionAudience = Schema.Union([
     label: TrimmedNonEmptyString,
     reason: TrimmedNonEmptyString,
   }),
+  /** A service each agent reaches through its own account: a ChatGPT app or claude.ai connector. */
+  Schema.Struct({
+    layer: Schema.Literal("account"),
+    /** Agents whose own account has the service connected. */
+    connected: Schema.Array(
+      Schema.Struct({ instanceId: ProviderInstanceId, label: TrimmedNonEmptyString }),
+    ),
+    /** Agents that can have it after a step, and the step. */
+    pending: Schema.Array(
+      Schema.Struct({ instanceId: ProviderInstanceId, reason: TrimmedNonEmptyString }),
+    ),
+  }),
 ]);
 export type ExtensionAudience = typeof ExtensionAudience.Type;
 

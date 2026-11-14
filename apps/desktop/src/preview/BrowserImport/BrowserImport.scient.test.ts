@@ -150,6 +150,7 @@ const importerOn = Effect.fnUntraced(function* (platform: NodeJS.Platform) {
               isPartition: () => false,
               getSession: () => Effect.die("a blocked source must not reach a session"),
               clearCookies: () => Effect.die("unreachable"),
+              cookiesCleared: () => Effect.die("unreachable"),
               clearCache: () => Effect.die("unreachable"),
             }),
           ),

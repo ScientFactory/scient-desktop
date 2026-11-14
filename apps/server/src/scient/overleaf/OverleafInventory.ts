@@ -13,7 +13,7 @@ import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
 
 import { SCIENT_AGENTS_FILE, SCIENT_PROJECT_FILE } from "@scientfactory/project-init";
 
-import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
+import { bytesRevision, isPlainTemporaryName } from "../workspace/RetainedFileMutation.ts";
 import { assertOverleafHostPath, OverleafFilesystemError } from "./overleafHostPaths.ts";
 import {
   overleafFilesAvailability,
@@ -87,7 +87,8 @@ const isDroppedFile = (name: string) =>
   name.startsWith(".#") ||
   name.endsWith("~") ||
   /\.sw[a-p]$/u.test(name);
-const isStaging = (name: string) => name.toLowerCase().startsWith(".scient-overleaf-apply-");
+const isStaging = (name: string) =>
+  name.toLowerCase().startsWith(".scient-overleaf-apply-") || isPlainTemporaryName(name);
 const BUILD_OUTPUT = [
   ".aux",
   ".log",

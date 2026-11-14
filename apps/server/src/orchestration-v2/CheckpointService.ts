@@ -45,6 +45,9 @@ export const rootScopeWorkspaceMatches = (scope: OrchestrationV2CheckpointScope)
     NodePath.isAbsolute(scope.cwd) &&
     scope.id ===
       `checkpoint-scope:thread:${encodeURIComponent(scope.threadId)}:name:${rootWorkspaceScopeName(scope.cwd)}`);
+// The provider turn waits on the baseline, so a workspace too slow for this starts without one.
+// It bounds only the snapshot: waiting on the lock lets an in-flight capture finish the same ref.
+const BASELINE_CAPTURE_BUDGET = "5 seconds";
 
 export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
   "CheckpointRootScopePrepareError",
@@ -348,6 +351,7 @@ export const layer: Layer.Layer<
               checkpointRef,
             })
             .pipe(
+              Effect.timeout(BASELINE_CAPTURE_BUDGET),
               Effect.catchTags({
                 VcsUnsupportedOperationError: () => Effect.void,
               }),
@@ -469,6 +473,7 @@ export const layer: Layer.Layer<
             .captureCheckpoint({
               cwd: input.scope.cwd,
               checkpointRef,
+              ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
             })
             .pipe(
               Effect.as("ready" as const),

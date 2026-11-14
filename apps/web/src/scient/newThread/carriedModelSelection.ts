@@ -1,6 +1,7 @@
 import type { ModelSelection } from "@t3tools/contracts";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
+import { draftModelSelectionApplies, threadHasStarted } from "../../lib/chatThreadActions";
 import { readThreadShell } from "../../state/entities";
 import type { ThreadRouteTarget } from "../../threadRoutes";
 
@@ -17,10 +18,13 @@ export function readCarriedModelSelection(
   const composer = useComposerDraftStore
     .getState()
     .getComposerDraft(target.kind === "server" ? target.threadRef : target.draftId);
-  const activeProvider = composer?.activeProvider ?? null;
+  const shell = target.kind === "server" ? readThreadShell(target.threadRef) : null;
+  // A started thread's own selection wins over a seeded draft.
+  const activeProvider = draftModelSelectionApplies(composer, threadHasStarted(shell))
+    ? (composer?.activeProvider ?? null)
+    : null;
   const composerSelection = activeProvider
     ? (composer?.modelSelectionByProvider[activeProvider] ?? null)
     : null;
-  const shell = target.kind === "server" ? readThreadShell(target.threadRef) : null;
   return composerSelection ?? shell?.modelSelection ?? null;
 }

@@ -17,18 +17,21 @@ describe("Scient split seams", () => {
     expect(rightPanelHandle).not.toContain("ResizeSeparator");
     for (const visualToken of [
       "cursor-platform-col-resize",
-      "inset-y-0 left-1/2 w-px",
       "group-hover:bg-border",
       "group-active:bg-primary/60",
     ]) {
       expect(separator).toContain(visualToken);
       expect(rightPanelHandle).toContain(visualToken);
     }
+    // Both draw one 1px line on the split boundary. The separator's hit area straddles the
+    // boundary; the panel handle's sits inside the panel so it never covers the chat
+    // scrollbar, and shifts its line back half a pixel onto the boundary.
+    expect(separator).toContain("inset-y-0 left-1/2 w-px");
+    expect(rightPanelHandle).toContain("inset-y-0 left-0 w-px -translate-x-1/2");
     expect(separator).toContain("cursor-platform-row-resize");
     expect(separator).toContain("inset-x-0 top-1/2 h-px");
     expect(separator).not.toContain("-translate-x-1/2");
     expect(separator).not.toContain("-translate-y-1/2");
-    expect(rightPanelHandle).not.toContain("-translate-x-1/2");
   });
 
   // regression: 017821d992 fix(web): improve platform cursor behavior (#301)

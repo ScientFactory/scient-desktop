@@ -26,6 +26,7 @@ export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
   antigravity: "Antigravity",
   pi: "Pi",
   muse: "Muse Code",
+  scient: "Scient Agent",
 };
 
 export function useProviderColors(): Record<UsageProviderKind, string> {
@@ -39,6 +40,7 @@ export function useProviderColors(): Record<UsageProviderKind, string> {
     antigravity: "#8c7bd1",
     pi: "#4d9f8a",
     muse: "#0866ff",
+    scient: "#5ba2c2",
   };
 }
 

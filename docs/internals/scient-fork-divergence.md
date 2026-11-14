@@ -436,13 +436,18 @@ transport schemas. Preserve public encoding, endpoint registration and current e
 
 #### Keep-awake
 
-The server answers which threads are working (`apps/server/src/scient/keepAwake/`), from the
-thread shells and `isLive`, with no upstream changes. The desktop process polls its primary backend
-and owns the one sleep request (`apps/desktop/src/scient/keepAwake/`), so closing a window doesn't
-end it. The setting is the client setting `keepComputerAwake`; "until done" choices stay in memory,
-because quitting ends the work they cover. Upstream files only carry marked mounts: the HTTP group,
-the client setting, `main.ts`, `DesktopIpcHandlers.ts`, `DesktopLocalEnvironmentAuth.ts`,
-`preload.ts`, `channels.ts`, `SettingsPanels.tsx`, `settingsSearch.ts`, `Sidebar.tsx` and `threadActionMenu.logic.ts`.
+The app-wide hold is T3's `apps/server/src/background/KeepAwake.ts` and its server setting
+`keepAwakeWhileAgentsWork`. One marked seam there swaps T3's run-status query for Scient's work
+(`apps/server/src/scient/keepAwake/`: executing threads with a live provider session or inside the
+start grace, not monitors, PR watches or threads waiting on a person or another thread), re-read on
+any thread event (batched) and each minute; another names the inhibitor "Scient". `server.ts` wires
+the service in. The per-thread "Keep computer awake until done" stays on the desktop
+(`apps/desktop/src/scient/keepAwake/`): it polls the same work endpoint and holds Electron's
+`powerSaveBlocker` for chosen threads only; choices stay in memory, because quitting ends the work
+they cover, and the menu item hides while the app-wide setting is on. Upstream files only carry
+marked mounts: `KeepAwake.ts`, `server.ts`, the HTTP group, `main.ts`, `DesktopIpcHandlers.ts`,
+`DesktopLocalEnvironmentAuth.ts`, `preload.ts`, `channels.ts`, `Sidebar.tsx` and
+`threadActionMenu.logic.ts`.
 
 #### Web and desktop surfaces
 

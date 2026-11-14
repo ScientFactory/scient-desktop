@@ -8,15 +8,36 @@ Companion feature: **Accounts** (see [Secrets integration](#secrets-integration)
 One place where a user sees and manages everything that extends what Scient and
 its agents can do, regardless of who owns it:
 
-| Layer                                                   | Owner                                | Who can use it                                     |
-| ------------------------------------------------------- | ------------------------------------ | -------------------------------------------------- |
-| Scient connectors and Scient plugins                    | Scient                               | All agents, subject to connector transport support |
-| Claude Code-format shared plugins                       | The installing agent's plugin system | Claude Code and Scient Agent                       |
-| Account apps: Codex store apps and claude.ai connectors | The provider account                 | Codex only or Claude only                          |
+| Layer                                                                 | Owner                                | Who can use it                                              |
+| --------------------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------- |
+| Scient connectors and Scient plugins                                  | Scient                               | All agents, subject to connector transport support          |
+| Claude Code-format shared plugins                                     | The installing agent's plugin system | Claude Code and Scient Agent                                |
+| Account apps: Codex store apps, ChatGPT apps and claude.ai connectors | The provider account                 | Codex, Scient Agent or Claude, each through its own sign-in |
 
 Discover prefers Scient's connector where the curated catalog's `agentStores`
 mapping identifies the same service in an agent store. Google's account apps
 remain in the account layer; Scient does not add Google's official MCP servers.
+
+**Account services** (`apps/web/src/scient/extensions/accountServices.ts`) are
+the services that exist only as account apps: Gmail, Google Calendar and Google
+Drive, each mapped to its ChatGPT app id and its claude.ai connector name. Each
+shows as one row, in Discover's categories and search and, once any agent has
+it, in Installed → Connected services. Each agent's route comes from its own
+inventory:
+
+- Scient Agent: its `chatgpt` server rows.
+- Claude: its `claudeai` rows.
+- Codex: its plugins' apps. A Scient Agent signed in to the same ChatGPT email
+  also speaks for Codex, since apps belong to the account.
+
+"Works with" lists the agents that have the service, with the step each other
+agent still needs (connect, or sign in). **Connect** opens the next provider
+page in the system browser: ChatGPT's page for the app first, since one
+ChatGPT connection serves Codex and Scient Agent, then claude.ai's connector
+settings. Returning refreshes the agents' inventories. The provider sections
+no longer repeat these services' rows, and a category's store list hides a
+Codex store entry for one of them. Adding a service is a data change in that
+file.
 
 The library is a **projection**, never a new owner. Each entry is read from its
 owning system, and every change is dispatched back to that owner and re-read
@@ -751,6 +772,20 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   and uninstall are re-read and verified. Foreign Claude installs are read-only
   from this section. No configuration, environment, or credentials from an MCP
   definition are projected into the UI.
+- **Scient Agent's ChatGPT apps**: the apps its own ChatGPT sign-in has
+  connected, from `apps --json` through the same executable, root and gate.
+  The command runs only when `--runtime-info` lists it in `hostCommands`; an
+  older agent would read the word as a prompt. Rows carry scope `chatgpt`,
+  the tool count and the app's `chatgpt.com/apps/<slug>/<id>` page, and read
+  "Scient Agent only" with the reason "Uses Scient Agent's own ChatGPT account".
+  A signed-out agent reports none. The agent calls ChatGPT's apps server
+  (`chatgpt.com/backend-api/ps/mcp`, the one the Codex apps use) itself; Scient
+  never holds the token. Conversations, and not title or other one-off runs,
+  start with `SCIENT_AGENT_CHATGPT_APPS=all`: the agent then registers every
+  connected app's tools as discoverable `<app>__<tool>` tools under `xd://`,
+  leaving out ChatGPT's own `connector_openai_*` features. **Add more on
+  ChatGPT** opens `chatgpt.com/apps`. When the same service is also a delivered
+  Scient connector, the agent currently receives both.
 
 ### Shared plugins source
 

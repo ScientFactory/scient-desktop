@@ -15,7 +15,7 @@ it.live("two concurrent last deletions release shared files", () =>
       let decisions = 0;
       const runtime = nativeImportRuntimeTestLayer(inertRegistry, {
         ...runtimeOptions,
-        decorateProjectionStore: (store) => ({
+        wrapProjectionStore: (store) => ({
           ...store,
           getReleasableFiles: (threadId) =>
             store.getReleasableFiles(threadId).pipe(

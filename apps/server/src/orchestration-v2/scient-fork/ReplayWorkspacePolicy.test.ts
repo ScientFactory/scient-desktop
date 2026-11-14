@@ -52,6 +52,7 @@ const thread = (now: DateTime.Utc, worktreePath: string | null): OrchestrationV2
 const project = (workspaceRoot: string) => ({
   projectId,
   title: "Project",
+  hasCustomTitle: false,
   workspaceRoot,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,

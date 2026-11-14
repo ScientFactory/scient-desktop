@@ -251,7 +251,7 @@ const withNativeQueue = <A, E, R>(
     readonly controlStartupFailures?: boolean;
     readonly nativeSteering?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
-    readonly decorateProjectionStore?: (
+    readonly wrapProjectionStore?: (
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
     readonly providerEnabled?: (instanceId: ProviderInstanceId) => boolean;
@@ -624,6 +624,7 @@ const withNativeQueue = <A, E, R>(
                             Effect.succeedSome({
                               projectId,
                               title: name,
+                              hasCustomTitle: false,
                               workspaceRoot: cwd,
                               defaultModelSelection: modelSelection,
                               defaultThreadEnvMode: null,
@@ -643,9 +644,9 @@ const withNativeQueue = <A, E, R>(
                   ),
                 }
               : {}),
-          ...(options.decorateProjectionStore === undefined
+          ...(options.wrapProjectionStore === undefined
             ? {}
-            : { decorateProjectionStore: options.decorateProjectionStore }),
+            : { wrapProjectionStore: options.wrapProjectionStore }),
           ...(decorateEventSink === undefined ? {} : { decorateEventSink }),
         },
       ).pipe(
@@ -1889,14 +1890,28 @@ it.live(
               commandId: CommandId.make(`${threadId}:send:${label}`),
               threadId,
               messageId: MessageId.make(`${threadId}:message:${label}`),
-              text: label,
+              // Resume sends no text of its own.
+              text: label === "continuation" ? "" : label,
               attachments: [],
               createdBy: "user",
               creationSource: "web",
               ...start,
             });
+            if (label === "continuation") {
+              // This driver has no native resume, so Resume is refused without a prompt.
+              yield* waitFor((projection) =>
+                projection.runs.some(
+                  (run) =>
+                    run.userMessageId === MessageId.make(`${threadId}:message:${label}`) &&
+                    run.status === "failed",
+                ),
+              );
+              yield* assertHeld(`${label} refused`);
+              continue;
+            }
             const started = yield* takeOffer;
-            assert.equal(started.input.message.text, label);
+            // The refused Resume never reached the provider, so the next prompt carries it.
+            assert.isTrue(started.input.message.text.endsWith(label), label);
             yield* assertHeld(`${label} started`);
             yield* started.settle("completed");
             yield* waitFor(
@@ -1906,12 +1921,10 @@ it.live(
             );
             yield* assertHeld(`${label} completed`);
           }
-          assert.deepEqual(offers, [
-            "foreground",
-            "continuation",
-            "queue-fallback",
-            "steer-fallback",
-          ]);
+          assert.deepEqual(
+            offers.map((offer) => offer.split("\n").at(-1)),
+            ["foreground", "queue-fallback", "steer-fallback"],
+          );
         }),
     ),
 );
@@ -2987,7 +3000,7 @@ it.live(
       {
         // The stored workspace no longer matches the checkpoint scope's identity,
         // a precondition the capture checks before it touches Git.
-        decorateProjectionStore: (store) => ({
+        wrapProjectionStore: (store) => ({
           ...store,
           getCheckpointCaptureContext: (threadId, target) =>
             store.getCheckpointCaptureContext(threadId, target).pipe(
@@ -3069,7 +3082,7 @@ it.live.each(
         assert.deepEqual(offers, ["foreground", "first"]);
       }),
     {
-      decorateProjectionStore: (store) => ({
+      wrapProjectionStore: (store) => ({
         ...store,
         getCheckpointCaptureContext: (threadId, target) =>
           Effect.suspend(() => {
@@ -5113,42 +5126,17 @@ it.live.each(["failed", "interrupted"] as const)(
             assert.equal(next.input.runId, queued.id);
             assert.equal(next.input.runtimePolicy.cwd, preparedCwd);
           } else {
-            // An ordinary newly admitted user Send is a later release boundary.
-            // The older interrupted preparation must not rehold that new run.
-            yield* send(orchestrator, threadId, "explicit new checkout turn");
+            // A new Send after the interrupted setup waits behind it as well, rather than
+            // starting in the project checkout with no worktree, as upstream does.
+            yield* send(orchestrator, threadId, "sent after the interrupted setup");
             yield* worker.drain();
-            const direct = yield* takeOffer;
-            // Context handoff remains part of the production provider input.
-            // Decide the exact new user payload and identity beneath that context.
-            assert.match(direct.input.message.text, /^Context handoff \(/);
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(after.thread.worktreePath, null);
+            assert.deepEqual(offers, []);
+            assert.deepEqual(after.providerTurns, []);
             assert.isTrue(
-              direct.input.message.text.endsWith("User message:\nexplicit new checkout turn"),
+              after.runs.every((run) => run.id === preparing.id || run.status === "queued"),
             );
-            assert.equal(
-              direct.input.message.messageId,
-              MessageId.make(`${threadId}:message:explicit new checkout turn`),
-            );
-            assert.notEqual(direct.input.runId, preparing.id);
-            yield* direct.settle("completed");
-            yield* waitFor((projection) =>
-              projection.runs.some(
-                (run) => run.id === direct.input.runId && run.status === "waiting",
-              ),
-            );
-            yield* worker.drain();
-            // The terminal listener commits queue promotion after checkpoint
-            // finalization. Wait for that persisted start before draining its
-            // newly published effect; this fixture has no background daemon.
-            yield* waitFor((projection) =>
-              projection.runs.some(
-                (run) =>
-                  run.id === queued.id && (run.status === "starting" || run.status === "running"),
-              ),
-            );
-            yield* worker.drain();
-            const next = yield* takeOffer;
-            assert.equal(next.input.runId, queued.id);
-            assert.equal(next.input.runtimePolicy.cwd, direct.input.runtimePolicy.cwd);
           }
         }),
       { runEffectWorker: false, honorPreparedWorktree: true },

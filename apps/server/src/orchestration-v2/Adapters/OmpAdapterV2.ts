@@ -8,6 +8,8 @@ import {
   type ModelSelection,
   type OmpSettings,
 } from "@t3tools/contracts";
+// SCIENT-FORK: /goal drives Scient Agent's goal command.
+import { parseGoalCommand } from "@t3tools/contracts";
 import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
@@ -47,7 +49,21 @@ import {
   ompDashboardProgress,
 } from "../../provider/omp/OmpDashboardPage.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
+import { OmpToolRows } from "../../provider/omp/OmpToolRows.ts";
+import { OmpSessionTree, branchBefore } from "../../provider/omp/OmpSessionTree.ts";
 import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
+import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
+// SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
+import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK: /goal drives Scient Agent's goal command.
+import { ompGoalUpdate, runOmpGoalTurn } from "../../provider/omp/OmpGoal.ts";
+// SCIENT-FORK: /plan drives Scient Agent's plan mode.
+import {
+  ompPlanMode,
+  ompProposedPlan,
+  parseOmpPlanCommand,
+  runOmpPlanTurn,
+} from "../../provider/omp/OmpPlan.ts";
 import {
   assertReadableOmpSessionFile,
   ompSessionFilesEqual,
@@ -121,6 +137,8 @@ import {
   retainedComputerPresentation,
 } from "../../provider/omp/OmpComputerPresentation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+// SCIENT-FORK: Scient's wording for an account the agent signed out.
+import { scientAgentSignedOutNotice } from "../../provider/scient/ScientAgentSignedOut.ts";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
   makeNativeSessionAdapterV2,
@@ -151,6 +169,8 @@ export interface OmpAdapterV2Options extends Pick<
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly eventQueueByteLimit?: number;
   readonly eventQueueItemLimit?: number;
+  // SCIENT-FORK: a model account the agent signed out refreshes the provider's account list.
+  readonly onAccountSignedOut?: Effect.Effect<void>;
 }
 const JsonString = Schema.fromJsonString(Schema.String);
 const decodeSubagentCancellation = Schema.decodeUnknownEffect(
@@ -213,11 +233,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
     capabilities: {
       ...AcpProviderCapabilitiesV2,
       sessions: { ...AcpProviderCapabilitiesV2.sessions, supportsModelSwitchInSession: true },
-      threads: { ...AcpProviderCapabilitiesV2.threads, canRollbackThread: false },
+      threads: { ...AcpProviderCapabilitiesV2.threads, canRollbackThread: true },
       turns: {
         ...AcpProviderCapabilitiesV2.turns,
         supportsActiveSteering: true,
         supportsQueuedMessages: true,
+        // SCIENT-FORK: /goal drives Scient Agent's goal command.
+        supportsNativeGoals: target.driverKind === "scient",
       },
       streaming: {
         ...AcpProviderCapabilitiesV2.streaming,
@@ -225,10 +247,19 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         streamsToolOutput: true,
       },
       tools: { ...AcpProviderCapabilitiesV2.tools, supportsMcpTools: true },
+      // The agent runs with --approval-mode yolo, so it never asks before a command or file change.
+      approvals: {
+        ...AcpProviderCapabilitiesV2.approvals,
+        supportsCommandApproval: false,
+        supportsFileReadApproval: false,
+        supportsFileChangeApproval: false,
+      },
       planning: {
         ...AcpProviderCapabilitiesV2.planning,
         emitsPlanUpdated: false,
         emitsTodoList: true,
+        // SCIENT-FORK: /plan drives Scient Agent's plan mode.
+        emitsProposedPlan: target.driverKind === "scient",
       },
       subagents: {
         ...AcpProviderCapabilitiesV2.subagents,
@@ -237,8 +268,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
       },
       checkpointing: {
         ...AcpProviderCapabilitiesV2.checkpointing,
-        providerCanRollbackConversation: false,
-        providerRollbackReturnsSnapshot: false,
+        providerCanRollbackConversation: true,
+        providerRollbackReturnsSnapshot: true,
       },
     },
     open: Effect.fn("OmpAdapterV2.open")(function* (input, onUpdate) {
@@ -638,6 +669,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           usageLimitNotice = usageLimit;
         });
         let nextWarningOrdinal = 0;
+        // SCIENT-FORK: each plan the agent proposes is its own card.
+        let proposedPlans = 0;
         let retrySequence = 0;
         let retryId: string | undefined;
         let retryProgress:
@@ -665,6 +698,23 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
 
         const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
         const waitRows = new OmpWaitRows();
+        const toolRows = new OmpToolRows((text) => client.redaction.text(text));
+        const sessionTree = new OmpSessionTree();
+        /** When this process last sent the user's message; its turn's entry is found from it. */
+        let promptSentAt: number | undefined;
+        const recordTurnEntry = Effect.suspend(() => {
+          const sentAt = promptSentAt;
+          promptSentAt = undefined;
+          return sentAt === undefined
+            ? Effect.void
+            : sessionTree
+                .turnStart(client.command, nativeId, sentAt)
+                .pipe(
+                  Effect.flatMap((entryId) =>
+                    entryId === undefined ? Effect.void : onUpdate({ type: "turn-entry", entryId }),
+                  ),
+                );
+        });
         // Native subagents' own steps, read from the conversation OMP saves for each:
         // at most once a second while one runs, then twice after it ends, since its last
         // record can land after its ending frame. Two reads run at a time per session.
@@ -856,13 +906,38 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 };
                 return onUpdate({
                   type: "usage",
-                  tokenUsage: usage,
+                  // SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
+                  tokenUsage: withOmpPromptCacheExpiry(usage, event),
                   contextUsage,
                   ...(request === undefined ? {} : { request }),
                 });
               }
               if (event.type === "cache_warming_end")
                 return event.usage === undefined ? Effect.void : refreshUsage(false);
+              // SCIENT-FORK: the thread's goal row follows the agent's goal.
+              if (event.type === "goal_updated") {
+                const update = ompGoalUpdate(event);
+                return update === undefined ? Effect.void : onUpdate({ type: "goal", ...update });
+              }
+              // SCIENT-FORK: the plan the agent proposes shows as a plan card.
+              if (event.type === "plan_proposed") {
+                const markdown = ompProposedPlan(event);
+                return markdown === undefined
+                  ? Effect.void
+                  : onUpdate({
+                      type: "item",
+                      id: `proposed-plan-${++proposedPlans}`,
+                      status: "completed",
+                      item: { type: "proposed_plan", markdown: client.redaction.text(markdown) },
+                    });
+              }
+              // SCIENT-FORK: the thread shows whether the agent is planning.
+              if (event.type === "plan_updated") {
+                const enabled = ompPlanMode(event);
+                return enabled === undefined
+                  ? Effect.void
+                  : onUpdate({ type: "plan-mode", enabled });
+              }
               if (event.type === "todo_auto_clear") return publishTodos([]);
               if (event.type === "auto_retry_start" || event.type === "auto_retry_end") {
                 const starting = event.type === "auto_retry_start";
@@ -914,6 +989,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 return notice(
                   `${target.name} switched from ${event.from ?? "the requested model"} to ${event.to ?? "a fallback model"}${event.reason ? `: ${event.reason}` : "."}`,
                 );
+              // SCIENT-FORK: the agent's "Run /login" advice becomes Scient's, and the accounts refresh.
+              const signedOut =
+                event.type === "notice" ? scientAgentSignedOutNotice(event) : undefined;
+              if (signedOut !== undefined)
+                return Effect.andThen(options.onAccountSignedOut ?? Effect.void, notice(signedOut));
               if (event.type === "notice" || event.method === "notify")
                 return notice(
                   `${event.source ? `${event.source}: ` : ""}${event.message ?? `${target.name} notification.`}`,
@@ -972,16 +1052,27 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   update.data,
                   client.redaction.text,
                 ) ?? retainedComputerPresentation(previous);
-              const images = computer ? ompToolImages(update.data) : [];
+              const images = ompToolImages(update.data);
               const permissionsNeeded = computer
                 ? ompComputerPermissionsNeeded(
                     [rawOutput, ...ompComputerStatusErrors(update.data)].join("\n"),
                   )
                 : [];
+              const status = update.status === "inProgress" ? "running" : update.status;
+              const row =
+                computer || images.length > 0 || previous?.images !== undefined
+                  ? undefined
+                  : toolRows.row(update.toolCallId, name, {
+                      input: update.input,
+                      data: update.data,
+                      output: rawOutput,
+                      status,
+                    });
               const item: Extract<NativeSessionUpdate, { type: "tool" }> = {
                 type: "tool",
                 id: update.toolCallId,
                 name,
+                ...(row === undefined ? {} : { row }),
                 ...(waitTitle === undefined ? {} : { title: waitTitle }),
                 ...computer,
                 ...(images.length > 0
@@ -994,7 +1085,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   : previous?.permissionsNeeded === undefined
                     ? {}
                     : { permissionsNeeded: previous.permissionsNeeded }),
-                status: update.status === "inProgress" ? "running" : update.status,
+                status,
                 ...(update.input === undefined
                   ? previous?.input === undefined
                     ? {}
@@ -1122,6 +1213,10 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                       ? {}
                       : { failureClass: update.failureClass }),
                     ...(update.resetAt === undefined ? {} : { resetAt: update.resetAt }),
+                    ...(update.failureCode === undefined
+                      ? {}
+                      : { failureCode: update.failureCode }),
+                    ...(update.httpStatus === undefined ? {} : { httpStatus: update.httpStatus }),
                     ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
                     broken,
                   }),
@@ -1136,6 +1231,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 ? publishProcessLoss(publish)
                 : refreshUsage().pipe(
                     Effect.andThen(refreshSettledState()),
+                    Effect.andThen(recordTurnEntry),
                     Effect.andThen(publish),
                   );
             }
@@ -1147,6 +1243,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     status: "failed",
                     detail: `${processLossDescription} Its turn outcome is unknown.`,
                     failureClass: "unknown",
+                    failureCode: "process_exit",
                     broken: true,
                   }),
                 ),
@@ -1325,6 +1422,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             case "turn-started":
               manualCompaction = false;
               ordinaryTools.clear();
+              toolRows.clear();
               waitRows.reset();
               return onUpdate({ type: "continuation-started" });
             case "model-changed":
@@ -1332,10 +1430,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               return update.model ? onUpdate({ type: "model", model: update.model }) : Effect.void;
           }
         };
+        // SCIENT-FORK: live voice frames bypass the turn machine.
+        const liveVoice = makeOmpLiveVoice(client);
         const runtime = yield* makeOmpSessionRuntime({
           target,
           client,
           scope,
+          liveVoice,
           continuationIdPrefix: yield* options.random.uuidV4(),
           onUpdate: applyUpdate,
           ...(options.nativeEventLogger
@@ -1653,6 +1754,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 });
             }
             yield* settled;
+            yield* recordTurnEntry;
             yield* onUpdate({ type: "background", pending: false });
           });
           // Bound command acknowledgement and event settlement together. A hung RPC
@@ -1772,7 +1874,16 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             function* (turnInput, nativeTurnId) {
               manualCompaction = false;
               dashboardRequested = ompDashboardCommand(turnInput.message.text);
-              const refusal = commandRefusal(turnInput.message.text);
+              // SCIENT-FORK:START - /goal drives Scient Agent's goal command.
+              const goalCommand =
+                target.driverKind === "scient" ? parseGoalCommand(turnInput.message) : null;
+              const planCommand =
+                target.driverKind === "scient" ? parseOmpPlanCommand(turnInput.message.text) : null;
+              const refusal =
+                goalCommand === null && planCommand === null
+                  ? commandRefusal(turnInput.message.text)
+                  : undefined;
+              // SCIENT-FORK:END
               if (refusal !== undefined) {
                 yield* onUpdate({ type: "offered", nativeTurnId });
                 yield* onUpdate({ type: "accepted", nativeTurnId });
@@ -1801,10 +1912,16 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 });
               if (model.provider.startsWith("scient_") && client.refreshModels)
                 yield* client.refreshModels();
-              const prompt = yield* payload(turnInput.message, {
-                provider: model.provider,
-                id: model.modelId,
-              });
+              // SCIENT-FORK: a /plan message sends its task as the prompt.
+              const prompt = yield* payload(
+                planCommand?.type === "enter"
+                  ? { ...turnInput.message, text: planCommand.task }
+                  : turnInput.message,
+                {
+                  provider: model.provider,
+                  id: model.modelId,
+                },
+              );
               const selected = getModelSelectionStringOptionValue(
                 turnInput.modelSelection,
                 "thinkingLevel",
@@ -1969,6 +2086,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 ),
               );
               const admission = yield* runtime.begin(nativeTurnId);
+              promptSentAt = DateTime.toEpochMillis(yield* DateTime.now);
               if (admission.steering) {
                 yield* restore;
                 return yield* new NativeSessionOperationError({
@@ -1977,6 +2095,49 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 });
               }
               fresh = false;
+              // SCIENT-FORK:START - /goal drives Scient Agent's goal command.
+              if (goalCommand !== null)
+                return yield* runOmpGoalTurn({
+                  client,
+                  command: goalCommand,
+                  nativeTurnId,
+                  runtime,
+                  onUpdate,
+                  notice: (message) => notice(message),
+                  redact: (text) => client.redaction.text(text),
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new NativeSessionOperationError({
+                        detail: client.redaction.text(cause.message),
+                        cause,
+                      }),
+                  ),
+                );
+              // SCIENT-FORK:END
+              // SCIENT-FORK:START - /plan drives Scient Agent's plan mode.
+              if (
+                planCommand !== null &&
+                (yield* runOmpPlanTurn({
+                  client,
+                  command: planCommand,
+                  nativeTurnId,
+                  runtime,
+                  onUpdate,
+                  notice: (message) => notice(message),
+                  redact: (text) => client.redaction.text(text),
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new NativeSessionOperationError({
+                        detail: client.redaction.text(cause.message),
+                        cause,
+                      }),
+                  ),
+                ))
+              )
+                return;
+              // SCIENT-FORK:END
               yield* onUpdate({ type: "offered", nativeTurnId });
               yield* client.prompt({ ...prompt, streamingBehavior: "steer" }).pipe(
                 // send() only writes/schedules the command. The correlated native
@@ -2008,8 +2169,18 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                             ? client.redaction.text(cause.message)
                             : `${client.redaction.text(cause.message)} ${target.name} did not confirm this turn; its outcome is unknown.`,
                         ...(cause._tag === "OmpRpcCommandError"
-                          ? {}
-                          : { failureClass: "unknown" as const }),
+                          ? {
+                              failureCode:
+                                cause.code === "timeout" ? "command_timeout" : "command_rejected",
+                            }
+                          : {
+                              failureClass: "unknown" as const,
+                              // A pending prompt whose process exited is a process loss.
+                              failureCode:
+                                cause._tag === "OmpRpcProcessExitedError"
+                                  ? "process_exit"
+                                  : "rpc_failed",
+                            }),
                         broken: cause._tag !== "OmpRpcCommandError",
                       }),
                     ),
@@ -2028,6 +2199,16 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           ),
           steer: Effect.fn("OmpAdapterV2.steer")(
             function* (steerInput, validateOwner) {
+              // SCIENT-FORK: /plan switches plan mode, which never joins a running turn.
+              if (
+                target.driverKind === "scient" &&
+                parseOmpPlanCommand(steerInput.message.text) !== null
+              )
+                return yield* new NativeSessionOperationError({
+                  detail:
+                    "/plan must run as a separate turn. Queue it or wait for the active turn to finish.",
+                  breaksSession: false,
+                });
               const prompt = yield* payload(steerInput.message);
               // SCIENT-FORK: recheck the captured owner after payload preparation.
               yield* validateOwner?.() ?? Effect.void;
@@ -2062,8 +2243,27 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 ),
               }
             : {}),
+          // SCIENT-FORK: a spoken conversation through Scient Agent's ChatGPT sign-in.
+          ...(target.driverKind === "scient" ? { liveVoice: liveVoice.runtime } : {}),
           interrupt: interrupt().pipe(Effect.mapError(safeFailure)),
           resume,
+          rewindBefore: Effect.fn("OmpAdapterV2.rewindBefore")(
+            function* (entryId: string) {
+              if (yield* branchBefore(client.command, entryId))
+                return yield* new NativeSessionOperationError({
+                  detail: `${target.name} cancelled the rewind.`,
+                });
+              const state = yield* client.getState();
+              if (!state.sessionFile)
+                return yield* new NativeSessionOperationError({
+                  detail: `${target.name} did not save the rewound conversation.`,
+                });
+              yield* refreshCursor(state.sessionFile, state.sessionId);
+              sessionTree.reset(nativeId);
+              return { nativeId, ...(cursor === undefined ? {} : { resumeCursor: cursor }) };
+            },
+            (effect, _entryId) => effect.pipe(Effect.mapError(safeFailure)),
+          ),
           respond: Effect.fn("OmpAdapterV2.respond")(
             function* (id, response) {
               const question = runtime.lookupQuestion(id);

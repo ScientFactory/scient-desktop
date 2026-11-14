@@ -781,7 +781,7 @@ export function toggleScope(
 }
 
 type ProviderManagedAccount = {
-  kind: "claude" | "codex" | "droid";
+  kind: "claude" | "codex" | "droid" | "scient";
   id: string;
   instanceId: ProviderInstanceId;
   name: string;
@@ -851,12 +851,32 @@ function claudeRows(
     }));
 }
 
-function codexRows(provider: ServerProvider, plugins: NonNullable<ServerProvider["plugins"]>) {
+/** The ChatGPT apps Scient Agent's own ChatGPT sign-in reaches. */
+function scientRows(provider: ServerProvider, servers: NonNullable<ServerProvider["mcpServers"]>) {
+  return servers
+    .filter((server) => server.scope === "chatgpt" && server.status === "connected")
+    .map((server) => ({
+      kind: "scient" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      name: server.name,
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
+function codexRows(
+  provider: ServerProvider,
+  plugins: NonNullable<ServerProvider["plugins"]>,
+  servers: ServerProvider["mcpServers"],
+) {
+  // Apps of Codex's ChatGPT account, whether or not a plugin brought them; one row per app.
   const apps = new Map(
-    plugins
-      .flatMap((plugin) => plugin.apps ?? [])
-      .filter((app) => app.connected)
-      .map((app) => [app.id ?? app.name, app]),
+    [
+      ...plugins.flatMap((plugin) => plugin.apps ?? []).filter((app) => app.connected),
+      ...(servers ?? [])
+        .filter((server) => server.scope === "chatgpt" && server.status === "connected")
+        .map((server) => ({ name: server.name })),
+    ].map((app) => [app.name, app]),
   );
   return [...apps].map(([id, app]) => ({
     kind: "codex" as const,
@@ -893,19 +913,21 @@ export function providerManagedAccounts(
   const next = new Map<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>();
   for (const provider of providers) {
     if (!provider.enabled || !provider.installed) continue;
-    if (!["claudeAgent", "codex", "droid"].includes(provider.driver)) continue;
+    if (!["claudeAgent", "codex", "droid", "scient"].includes(provider.driver)) continue;
     const known = inventory.find((entry) => entry.instanceId === provider.instanceId);
     const kept = previous.get(provider.instanceId) ?? [];
     const rows =
       provider.driver === "codex"
         ? known?.plugins
-          ? codexRows(provider, known.plugins)
+          ? codexRows(provider, known.plugins, known.mcpServers)
           : kept
         : !known?.mcpServers
           ? kept
           : provider.driver === "claudeAgent"
             ? claudeRows(provider, known.mcpServers, kept)
-            : droidRows(provider, known.mcpServers);
+            : provider.driver === "scient"
+              ? scientRows(provider, known.mcpServers)
+              : droidRows(provider, known.mcpServers);
     next.set(provider.instanceId, rows);
   }
   // Agents signed in to one known account report the same connectors: one connection, one row.

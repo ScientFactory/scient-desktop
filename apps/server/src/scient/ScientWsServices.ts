@@ -18,6 +18,7 @@ import { EditorFlush } from "./editorFlush/EditorFlush.ts";
 import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
+import { ScientAgentBackgroundRuntime } from "./providerLifecycle/ScientAgentBackgroundRuntime.ts";
 
 // SCIENT-FORK:START — Scient Accounts: capture the shared owner for each client connection.
 import { AccountsService } from "./accounts/AccountsService.ts";
@@ -48,6 +49,7 @@ export const captureScientWsServices = Effect.gen(function* () {
   const providerLifecycleCoordinator =
     yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
   const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
+  const scientAgentBackground = yield* ScientAgentBackgroundRuntime;
   return Layer.mergeAll(
     // SCIENT-FORK:START — Scient Accounts: reuse the captured owner.
     Layer.succeed(AccountsService, accounts),
@@ -59,6 +61,7 @@ export const captureScientWsServices = Effect.gen(function* () {
     ),
     Layer.succeed(ProviderConnectionManager.ProviderConnectionManager, providerConnectionManager),
     Layer.succeed(ProviderRuntimeManager.ProviderRuntimeManager, providerRuntimeManager),
+    Layer.succeed(ScientAgentBackgroundRuntime, scientAgentBackground),
     Layer.succeed(AnalysisService.AnalysisService, analysis),
     Layer.succeed(BrowserHistory, browserHistory),
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),

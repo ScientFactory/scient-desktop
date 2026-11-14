@@ -17,6 +17,7 @@ import {
   type OfficeSessionSlot,
 } from "~/scient/office/officeSession";
 // SCIENT-FORK:END
+import { rasterize } from "./vector-pictures";
 import { createWorkerClient } from "./worker-rpc";
 import {
   layerFont,
@@ -51,8 +52,14 @@ function openWordSession(bytes: ArrayBuffer): OfficeSession<WordState> {
   worker.addEventListener("error", fail);
   worker.addEventListener("messageerror", fail);
   const buffer = bytes.slice(0);
-  const paint: PaintPage = async (index, canvas, scale, signal) => {
-    const bitmap = await engine.call(
+  const paint = async (
+    index: number,
+    canvas: HTMLCanvasElement,
+    scale: number,
+    signal: AbortSignal,
+    again = false,
+  ): Promise<void> => {
+    const painted = await engine.call(
       "paint",
       { index, scale, ratio: window.devicePixelRatio || 1 },
       { key: `paint:${index}`, signal },
@@ -60,15 +67,26 @@ function openWordSession(bytes: ArrayBuffer): OfficeSession<WordState> {
     void engine
       .call("build", { index: index + 1 }, { key: "build", signal })
       .catch(() => undefined);
-    if (!bitmap) return;
+    if (!painted) return;
     const context = canvas.getContext("bitmaprenderer");
     if (!context || signal.aborted) {
-      bitmap.close();
+      painted.bitmap.close();
       return;
     }
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    context.transferFromImageBitmap(bitmap);
+    canvas.width = painted.bitmap.width;
+    canvas.height = painted.bitmap.height;
+    context.transferFromImageBitmap(painted.bitmap);
+    if (again || !painted.vectors.length) return;
+    const bitmaps = await Promise.all(painted.vectors.map(rasterize));
+    if (signal.aborted) {
+      bitmaps.forEach((value) => value.bitmap?.close());
+      return;
+    }
+    await engine.call("vectors", bitmaps, {
+      transfer: bitmaps.flatMap((value) => (value.bitmap ? [value.bitmap] : [])),
+      signal,
+    });
+    if (!signal.aborted) await paint(index, canvas, scale, signal, true);
   };
   // Thumbnails leave the pages built around the view, and find waits for the
   // whole document's layout, which places every match on its page.
@@ -76,12 +94,13 @@ function openWordSession(bytes: ArrayBuffer): OfficeSession<WordState> {
   const reader: Opened["reader"] = {
     thumbnail: async (index, canvas, scale, signal) => {
       const ratio = window.devicePixelRatio || 1;
-      const bitmap = await engine.call(
+      const painted = await engine.call(
         "paint",
         { index, scale, ratio, thumbnail: true },
         { key: `thumbnail:${index}`, signal },
       );
-      if (bitmap) showBitmap(canvas, bitmap, signal);
+      // SVG pictures arrive with the page's own paint; a later thumbnail draws them.
+      if (painted) showBitmap(canvas, painted.bitmap, signal);
     },
     find: async (query, signal) => {
       await laidOut.promise;

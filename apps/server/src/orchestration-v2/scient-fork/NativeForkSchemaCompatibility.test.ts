@@ -50,7 +50,7 @@ it.effect.each(
       yield* sql`SELECT migration_id, name, created_at FROM scient_schema_migrations ORDER BY migration_id`,
       scient,
     );
-  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it.effect(
@@ -114,5 +114,5 @@ it.effect(
           created_at: "2026-07-02T12:00:00.000Z",
         },
       ]);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );

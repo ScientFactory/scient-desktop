@@ -138,7 +138,9 @@ export async function openUrlInPreview<E>(input: {
       url: input.url,
       viewport: defaults.viewport,
       profileId,
-      ...(runtime === undefined ? {} : { runtime }),
+      ...(runtime === undefined
+        ? {}
+        : { runtime, zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance }),
     },
   });
   // SCIENT-FORK:START — the user may have selected another surface during openPreview.

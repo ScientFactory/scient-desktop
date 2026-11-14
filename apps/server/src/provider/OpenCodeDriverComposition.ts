@@ -7,6 +7,7 @@ import {
 import { turnStartErrorKeepingReceipt } from "../orchestration-v2/scient-provider/NativeTurnReceipts.ts";
 import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "./ScientAwareness.ts";
+import { scientAgentCopy } from "./ScientAgentCopy.ts";
 import { buildScientOrchestrationSystemPrompt } from "./ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
 
@@ -28,5 +29,6 @@ export const OpenCodeDriver = makeOpenCodeDriver({
   runtimeGuidance: buildOpenCodeRuntimeGuidance,
   orchestrationSystemPrompt: buildScientOrchestrationSystemPrompt,
   runtimeInstructions: buildScientRuntimeInstructions,
+  agentCopy: scientAgentCopy,
   mapTurnStartError: mapOpenCodeTurnStartError,
 });

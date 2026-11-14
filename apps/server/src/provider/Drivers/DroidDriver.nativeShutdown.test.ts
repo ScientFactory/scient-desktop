@@ -60,6 +60,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
+import * as ProviderInstallationGate from "../ProviderInstallationGate.ts";
 import * as ProviderRegistry from "../ProviderRegistry.ts";
 import { DroidDriver } from "./DroidDriver.ts";
 
@@ -418,6 +419,7 @@ const managerLayer = Effect.fn("DroidShutdown.managerLayer")(function* (h: Harne
         ),
       ),
     ),
+    ProviderInstallationGate.layer,
     Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
   );
   return {

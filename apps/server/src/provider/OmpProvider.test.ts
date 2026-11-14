@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -299,6 +301,7 @@ describe("Oh My Pi provider discovery errors", () => {
       );
       expect(result.status).toBe("error");
       expect(result.message).toBe("Oh My Pi exited during the check: RPC stdout ended.");
+      expect(result.checkFailure).toBe("exit");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -319,6 +322,7 @@ describe("Oh My Pi provider discovery errors", () => {
       );
       expect(result.message).toBe("Oh My Pi did not answer get_available_models in time.");
       expect(result.installed).toBe(true);
+      expect(result.checkFailure).toBe("command_timeout");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -369,6 +373,7 @@ describe("Oh My Pi provider discovery errors", () => {
       expect(result.message).toBe(
         "Oh My Pi sent output Scient could not read: RPC emitted a second ready frame.",
       );
+      expect(result.checkFailure).toBe("parse");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
@@ -428,6 +433,7 @@ describe("Oh My Pi provider executable checks", () => {
       expect(result.message).toBe(
         `${target.name} is not installed or its executable could not be found.`,
       );
+      expect(result.checkFailure).toBe("start_failed");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
   );
 
@@ -464,6 +470,7 @@ describe("Oh My Pi provider executable checks", () => {
         expect(result.status).toBe("error");
         expect(result.installed).toBe(true);
         expect(result.message).toBe("Oh My Pi version verification failed.");
+        expect(result.checkFailure).toBe("version_failed");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
   );
 
@@ -492,6 +499,48 @@ describe("Oh My Pi provider executable checks", () => {
       expect(result.status).toBe("error");
       expect(result.installed).toBe(true);
       expect(result.message).toBe("Oh My Pi version verification failed.");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("names a version probe that outlived its limit, as a cold start on Windows can", () =>
+    Effect.gen(function* () {
+      const spawned = yield* Deferred.make<void>();
+      const hangingProbe = ChildProcessSpawner.make(() =>
+        Deferred.succeed(spawned, undefined).pipe(
+          Effect.as(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.never,
+              stderr: Stream.never,
+              all: Stream.never,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+      );
+      const check = yield* checkOmpProviderStatus(
+        ompTarget,
+        settings,
+        { PATH: "/usr/bin" },
+        yield* realProcess,
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, hangingProbe),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(spawned);
+      yield* TestClock.adjust("19 seconds");
+      expect(check.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("1 second");
+      const result = yield* Fiber.join(check);
+      expect(result.status).toBe("error");
+      expect(result.installed).toBe(true);
+      expect(result.checkFailure).toBe("version_timeout");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { ThreadWorktreeRestore } from "../../workspace/restoreMissingWorktree.ts";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -82,7 +83,10 @@ it.effect.each(
       ),
     ),
   );
-  const layer = ThreadManagement.layerWithLegacyImporter.pipe(Layer.provideMerge(services));
+  const layer = ThreadManagement.layerWithLegacyImporter.pipe(
+    Layer.provideMerge(services),
+    Layer.provide(Layer.succeed(ThreadWorktreeRestore, { restore: () => Effect.void })),
+  );
   return Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
     const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;

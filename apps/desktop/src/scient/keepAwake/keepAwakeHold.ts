@@ -18,7 +18,6 @@ export const NO_HOLD: KeepAwakeHold = { chosen: new Map(), lastWorkAt: null };
 export function observeWork(
   hold: KeepAwakeHold,
   work: KeepAwakeWork | null,
-  appSetting: boolean,
   now: number,
 ): KeepAwakeHold {
   const chosen = new Map(hold.chosen);
@@ -29,8 +28,8 @@ export function observeWork(
       else if (seenAt !== null && now - seenAt >= HOLD_AFTER_WORK_MS) chosen.delete(threadId);
     }
   }
-  if (!appSetting && chosen.size === 0) return NO_HOLD;
-  const needed = work?.working.some((id) => appSetting || chosen.has(id)) ?? false;
+  if (chosen.size === 0) return NO_HOLD;
+  const needed = work?.working.some((id) => chosen.has(id)) ?? false;
   return { chosen, lastWorkAt: needed ? now : hold.lastWorkAt };
 }
 

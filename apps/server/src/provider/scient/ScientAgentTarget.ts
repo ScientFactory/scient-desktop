@@ -21,6 +21,18 @@ const ScientAgentRuntimeInfo = Schema.Struct({
   rpcProtocolVersions: Schema.Array(Schema.Finite),
 });
 const decodeRuntimeInfo = Schema.decodeUnknownOption(Schema.fromJsonString(ScientAgentRuntimeInfo));
+const decodeHostCommands = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ hostCommands: Schema.Array(Schema.String) })),
+);
+
+/**
+ * Scient's own commands this executable says a host may run. An older one lists none and would
+ * read a command's word as a prompt.
+ */
+export const scientAgentHostCommands = (stdout: string): ReadonlyArray<string> => {
+  const info = decodeHostCommands(stdout.trim());
+  return info._tag === "Some" ? info.value.hostCommands : [];
+};
 
 const SCIENT_AGENT_UPSTREAM = "oh-my-pi";
 /**

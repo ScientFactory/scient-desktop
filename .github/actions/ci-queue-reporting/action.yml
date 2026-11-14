@@ -11,12 +11,15 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Preserve thread-transfer-result.json
+    - name: Preserve thread-transfer-result.json and its scenarios
       if: inputs.server_reports == 'true'
       uses: actions/upload-artifact@v7
       with:
         name: thread-transfer-results
-        path: ${{ runner.temp }}/ci-queue-reuse/thread-transfer-result.json
+        # Older source runs have no scenarios file; restore always stages the result.
+        path: |
+          ${{ runner.temp }}/ci-queue-reuse/thread-transfer-result.json
+          ${{ runner.temp }}/ci-queue-reuse/thread-transfer-scenarios.json
         if-no-files-found: error
         retention-days: 30
         overwrite: true

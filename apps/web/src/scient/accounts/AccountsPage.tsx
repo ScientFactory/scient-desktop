@@ -126,6 +126,7 @@ const MANAGED_IN = {
   codex: "Codex",
   droid: "Droid",
   extension: "Extensions",
+  scient: "Scient Agent",
 } as const;
 
 export function AccountRow({
@@ -382,7 +383,7 @@ function ManagedAccountRow({
   environmentId,
 }: {
   row: {
-    kind: "extension" | "claude" | "codex" | "droid";
+    kind: "extension" | "claude" | "codex" | "droid" | "scient";
     instanceId?: ProviderInstanceId;
     name: string;
     detail?: string | undefined;
@@ -395,7 +396,7 @@ function ManagedAccountRow({
   const logo = accountIconUrl(
     row.kind === "claude"
       ? ["anthropic.com"]
-      : row.kind === "codex"
+      : row.kind === "codex" || row.kind === "scient"
         ? ["openai.com"]
         : domain
           ? [domain]

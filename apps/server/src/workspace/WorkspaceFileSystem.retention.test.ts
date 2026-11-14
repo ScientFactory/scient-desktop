@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import { filePublicationTestHelper } from "../scient/workspace/fileExchange.testkit.ts";
+import { nativeFilePublicationHelper } from "../scient/workspace/NativeFilePublication.ts";
 import { revisionForBytes } from "../scient/workspace/WorkspaceFileMutations.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -96,6 +97,41 @@ describe("WorkspaceFileSystem canonical retention", () => {
         const history = yield* api.listFileVersions({ cwd, relativePath: "rich.md" });
         expect(history.attention).toBeNull();
       }),
+    );
+
+    it.effect.skipIf(helper === undefined)(
+      "keeps folders for Overleaf once a helper refused at startup passes",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.realPath(
+            yield* fs.makeTempDirectoryScoped({ prefix: "scient-helper-late-" }),
+          );
+          const cwd = path.join(root, "project");
+          yield* fs.makeDirectory(cwd);
+          const late = path.join(root, "install", path.basename(helper!));
+          const api = yield* WorkspaceFileSystem.make.pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                ServerConfig.layerTest(cwd, root, { filePublicationHelperPath: late }),
+                Layer.mock(KnownWorkspaces.KnownWorkspaces)({ assertContains: () => Effect.void }),
+              ),
+            ),
+          );
+          const kept = path.join(root, "kept");
+          yield* api.prepareRetainedDirectory({ cwd, retentionDirectory: kept }).pipe(Effect.flip);
+          yield* fs.makeDirectory(path.dirname(late));
+          yield* fs.copyFile(helper!, late);
+          yield* fs.chmod(late, 0o755);
+          yield* fs.copyFile(
+            path.join(path.dirname(helper!), "publication-artifact.json"),
+            path.join(path.dirname(late), "publication-artifact.json"),
+          );
+          // What Overleaf's own check does before each operation.
+          expect(yield* Effect.promise(() => nativeFilePublicationHelper(late))).toBe(late);
+          expect(yield* api.prepareRetainedDirectory({ cwd, retentionDirectory: kept })).toBe(kept);
+        }),
     );
 
     it.effect.each(["symlink", "public"] as const)(

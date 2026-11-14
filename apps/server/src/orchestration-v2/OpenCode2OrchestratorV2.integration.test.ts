@@ -364,7 +364,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         );
 
         assert.lengthOf(projection.providerThreads, 1);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("moves the session to the thread's new worktree before the next prompt", () =>
@@ -523,7 +523,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         ["completed", "completed", "completed"],
       );
       assert.lengthOf(projection.providerThreads, 1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("denies edits outside the plan directory in plan mode and lifts it after", () =>
@@ -565,7 +565,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         projection.runs.map((run) => run.status),
         ["completed", "completed"],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("forks from an earlier turn before the next turn's user message", () =>

@@ -163,6 +163,7 @@ function SettingsRouteLayout() {
     <SettingsScopeProvider
       search={settingsPageScopeSearch(pathname, rawSearch)}
       singleEnvironment={settingsPageChoosesOneEnvironment(pathname)}
+      deviceOnly={SETTINGS_DEVICE_ONLY_PATHS.has(pathname)}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target. A
         // server-only page keeps the project the other pages are set to.

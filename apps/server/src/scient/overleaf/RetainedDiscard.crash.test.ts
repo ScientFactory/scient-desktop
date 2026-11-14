@@ -8,10 +8,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import { createDiskImage, diskImagesAvailable } from "../workspace/diskImage.testkit.ts";
 import {
   filePublicationTestHelper,
   nativePublicationHost,
@@ -27,10 +27,6 @@ import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
 import { fixture as applierFixture } from "./WorkspaceApplier.testkit.ts";
 
 const canPublish = await nativePublicationHost();
-/** macOS can mount a disk image in a test. */
-const diskImages =
-  HostProcess.Platform.defaultValue() === "darwin" &&
-  NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
 const child = NodePath.join(import.meta.dirname, "RetainedDiscard.crash-child.ts");
 const exists = (path: string) =>
   NodeFSP.lstat(path).then(
@@ -457,33 +453,16 @@ describe.skipIf(!canPublish)("a discard after real process death", () => {
   );
 });
 
-describe.skipIf(!canPublish || !diskImages)("a discard beside a mounted volume", () => {
+describe.skipIf(!canPublish || !diskImagesAvailable)("a discard beside a mounted volume", () => {
   it.live.each(kinds)(
     "never removes anything on a volume mounted in a marked kept folder of a %s record",
     (kind) =>
       fixture(async (h) => {
         const helper = (await filePublicationTestHelper())!;
         const kept = await folderVersion(h, helper, kind);
-        const image = NodePath.join(h.root, "volume.dmg"),
-          volume = NodePath.join(kept.copy, "volume");
-        NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
-          "create",
-          "-size",
-          "8m",
-          "-fs",
-          "HFS+",
-          "-volname",
-          "SCTKEPT",
-          image,
-        ]);
-        await NodeFSP.mkdir(volume);
-        NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
-          "attach",
-          "-nobrowse",
-          "-mountpoint",
-          volume,
-          image,
-        ]);
+        const image = await createDiskImage("HFS+", { megabytes: 8, volumeName: "SCTKEPT" });
+        const volume = NodePath.join(kept.copy, "volume");
+        await image.attach(volume);
         try {
           await NodeFSP.writeFile(NodePath.join(volume, "external.tex"), "external\n");
           await markDiscard(kind, kept);
@@ -497,7 +476,7 @@ describe.skipIf(!canPublish || !diskImages)("a discard beside a mounted volume",
             "later\n",
           );
         } finally {
-          NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", volume]);
+          await image.dispose();
         }
       }),
   );

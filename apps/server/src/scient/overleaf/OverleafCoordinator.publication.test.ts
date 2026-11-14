@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
 import { OverleafGitError } from "./OverleafGitExecutor.ts";
+import type { OverleafRepositoryError, PushOutcome } from "./OverleafRepository.ts";
 import {
   CONNECTION,
   hasPrivateFoldersAndIdentity,
@@ -402,32 +403,45 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, publication
   });
 
   it.live("supersedes an unknown send; its late acceptance never moves the newer base", () => {
-    let report = true;
+    let delayed: Effect.Effect<PushOutcome, OverleafGitError | OverleafRepositoryError> | undefined;
+    let pushes = 0;
     return run(
       Effect.gen(function* () {
         const w = yield* world({
           overleaf: "git",
-          synced: { "main.tex": "A", "other.tex": "O" },
-          remote: { "main.tex": "A", "other.tex": "O" },
-          push: (send) =>
-            report ? Effect.succeed({ _tag: "unknown" as const, detail: "timed out" }) : send,
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "A" },
+          // The first send is held back with no answer; the second meets the rate limit.
+          push: (send) => {
+            pushes += 1;
+            if (pushes === 1) {
+              delayed = send;
+              return Effect.succeed({ _tag: "unknown" as const, detail: "timed out" });
+            }
+            return Effect.fail(
+              new OverleafGitError({
+                reason: "non-zero-exit",
+                exitCode: 128,
+                detail: "fatal: remote error: no git access\nRate-limit exceeded.",
+              }),
+            );
+          },
         });
         yield* write(w.folder, { "main.tex": "A, edited here" });
         expect(yield* w.sync()).toMatchObject({ publication: { _tag: "unknown" } });
         const [first] = (yield* w.connection).attempts;
-        // A collaborator's change, then an acknowledged sync bringing it in.
-        yield* w.collaborate({ "main.tex": "A", "other.tex": "O2" });
-        report = false;
+        // A later sync moves the base while Overleaf still holds the first send's parent.
+        yield* write(w.folder, { "main.tex": "A, edited again" });
         expect(yield* w.sync("request-2")).toMatchObject({
-          publication: { _tag: "accepted", attemptNumber: 2 },
+          publication: { _tag: "not-sent", attemptNumber: 2, reason: "rate-limited" },
         });
         const later = yield* w.connection;
         expect(later.attempts).toMatchObject([
           { attemptNumber: 1, outcome: "superseded-unresolved" },
-          { attemptNumber: 2, outcome: "accepted" },
+          { attemptNumber: 2, outcome: "not-sent" },
         ]);
-        // Evidence for the first send arrives late: Overleaf now holds its exact tree.
-        yield* w.collaborate({ "main.tex": "A, edited here", "other.tex": "O" });
+        // The first send arrives late.
+        expect(yield* delayed!).toEqual({ _tag: "accepted" });
         const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
         if (next._tag !== "review") return yield* Effect.die(next);
         const after = yield* w.connection;
@@ -437,10 +451,181 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafCoordinator, publication
         });
         expect(after.base).toEqual(later.base);
         expect(first!.candidateCommit).not.toBe(after.base.commit);
-        expect(w.pushes).toHaveLength(2);
       }),
     );
   });
+
+  it.live("settles sends Overleaf moved on from without them as never sent", () => {
+    let pushes = 0;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A", "other.tex": "O" },
+          remote: { "main.tex": "A", "other.tex": "O" },
+          // Never sent, never answered; the second send meets the rate limit.
+          push: () => {
+            pushes += 1;
+            return pushes === 2
+              ? Effect.fail(
+                  new OverleafGitError({
+                    reason: "non-zero-exit",
+                    exitCode: 128,
+                    detail: "fatal: remote error: no git access\nRate-limit exceeded.",
+                  }),
+                )
+              : Effect.succeed({ _tag: "unknown" as const, detail: "timed out" });
+          },
+        });
+        for (const [request, edit] of [
+          ["request-1", "A, first"],
+          ["request-2", "A, second"],
+          ["request-3", "A, third"],
+        ] as const) {
+          yield* write(w.folder, { "main.tex": edit });
+          yield* w.sync(request);
+        }
+        expect((yield* w.connection).attempts).toMatchObject([
+          { attemptNumber: 1, outcome: "superseded-unresolved" },
+          { attemptNumber: 2, outcome: "not-sent" },
+          { attemptNumber: 3, outcome: "unknown" },
+        ]);
+        // Overleaf still holds their parent: they could still arrive.
+        expect(yield* w.coordinator.recover({ connectionId: CONNECTION })).toMatchObject({
+          attempts: { unresolved: [1, 3] },
+        });
+        // Overleaf moves on without them: neither can ever be applied there.
+        yield* w.collaborate({ "main.tex": "A", "other.tex": "O2" });
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect((yield* w.connection).attempts).toMatchObject([
+          { attemptNumber: 1, outcome: "not-sent", evidence: "send-refused" },
+          { attemptNumber: 2, outcome: "not-sent" },
+          { attemptNumber: 3, outcome: "not-sent", evidence: "send-refused" },
+        ]);
+        expect(next.review.binding.acknowledgements).not.toContain("unresolved-publication");
+      }),
+    );
+  });
+
+  it.live("never takes a send Overleaf rewrote, then buried, for one never sent", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A", "other.tex": "O" },
+          remote: { "main.tex": "A", "other.tex": "O" },
+          // The push lands; its answer is lost.
+          push: (send) => send.pipe(Effect.as({ _tag: "unknown" as const, detail: "timed out" })),
+        });
+        yield* write(w.folder, { "main.tex": "A, sent" });
+        yield* w.sync("request-1");
+        const [attempt] = (yield* w.connection).attempts;
+        expect(attempt).toMatchObject({ outcome: "unknown" });
+        // Overleaf replaces the landed commit with its own of the same files on the same
+        // parent, then far more edits than the bounded history looks at.
+        yield* w.replaceHead(attempt!.parentCommit, { "main.tex": "A, sent", "other.tex": "O" });
+        for (let edit = 0; edit < 70; edit++)
+          yield* w.collaborate({ "main.tex": "A, sent", "other.tex": `O${edit}` });
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        if (next._tag !== "review") return yield* Effect.die(next);
+        expect((yield* w.connection).attempts[0]).toMatchObject({
+          attemptNumber: 1,
+          outcome: "accepted",
+          evidence: "remote-history",
+        });
+      }),
+    ),
+  );
+
+  it.live("finds the retention folder once for a sync that applies and sends", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A", "other.tex": "O" },
+          remote: { "main.tex": "A", "other.tex": "O2" },
+        });
+        let located = 0;
+        const coordinator = yield* w.coordinatorWith({
+          ...w.store,
+          prepareRetention: (input) => {
+            located += 1;
+            return w.store.prepareRetention(input);
+          },
+        });
+        yield* write(w.folder, { "main.tex": "A, edited here" });
+        const prepared = yield* coordinator.prepare({ connectionId: CONNECTION });
+        if (prepared._tag !== "review") return yield* Effect.die(prepared);
+        located = 0;
+        expect(
+          yield* coordinator.confirm({
+            connectionId: CONNECTION,
+            requestId: "request-1",
+            reviewId: prepared.review.id,
+            digest: prepared.review.digest,
+            acknowledgements: prepared.review.binding.acknowledgements,
+          }),
+        ).toMatchObject({
+          adopted: { outcome: "complete" },
+          publication: { _tag: "accepted", attemptNumber: 1 },
+        });
+        expect(located).toBe(1);
+      }),
+    ),
+  );
+
+  it.live("never applies into a retention folder replaced after the sync found it", () => {
+    let vault = "";
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          at: (point) =>
+            point === "linked"
+              ? Effect.promise(async () => {
+                  await NodeFSP.rename(vault, `${vault}-replaced`);
+                  await NodeFSP.mkdir(vault, { mode: 0o700 });
+                })
+              : Effect.void,
+        });
+        vault = w.vault;
+        expect(yield* Effect.flip(w.sync())).toMatchObject({
+          _tag: "OverleafRetentionUnavailableError",
+          reason: "vault-replaced",
+        });
+        expect(yield* read(w.folder, "main.tex")).toBe("A");
+      }),
+    );
+  });
+
+  it.live("records a send Git gave up on at Overleaf's ref advertisement as never sent", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "A" },
+          push: () =>
+            Effect.fail(
+              new OverleafGitError({
+                reason: "non-zero-exit",
+                exitCode: 128,
+                detail: "fatal: Authentication failed for 'https://git.overleaf.com/x/'",
+              }),
+            ),
+        });
+        yield* write(w.folder, { "main.tex": "A, edited here" });
+        expect(yield* w.sync()).toMatchObject({
+          publication: { _tag: "not-sent", attemptNumber: 1, reason: "access-denied" },
+        });
+        expect((yield* w.connection).attempts).toMatchObject([
+          { outcome: "not-sent", evidence: "send-refused" },
+        ]);
+      }),
+    ),
+  );
 
   it.live("records a send refused when the credential changed since the review", () => {
     let epoch = 0;

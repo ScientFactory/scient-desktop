@@ -91,15 +91,23 @@ async function _cleanupFixture0(_fixture: _Fixture) {
 }
 
 const CONTAINERS = [["onboarding popover", OnboardingPopover]] as const;
+const SIGNED_OUT = {
+  id: "openai-codex",
+  name: "ChatGPT",
+  kind: "account",
+  connected: false,
+  canDisconnect: false,
+} as const;
 const STATES = [
-  ["ready", true, "is ready"],
-  ["no models", false, "Connect a model provider"],
+  ["ready", true, "is ready", undefined],
+  ["no models", false, "Connect a model provider", undefined],
+  ["signed-out account", true, "ChatGPT is signed out", SIGNED_OUT],
 ] as const;
 
 describe.each(CONTAINERS)("Pi in the %s", (_label, Container) => {
   it.each(STATES)(
     "renders the %s state as one centered frame with a visible action",
-    async (_state, models, expectedTitle) => {
+    async (_state, models, expectedTitle, signedOutAccount) => {
       await using _fixture = _createFixture();
       _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -119,6 +127,7 @@ describe.each(CONTAINERS)("Pi in the %s", (_label, Container) => {
             icon={PiIcon}
             modelSetupHint="Add a custom model."
             provider={snapshot(models)}
+            signedOutAccount={signedOutAccount}
           />
         </Container>,
       );

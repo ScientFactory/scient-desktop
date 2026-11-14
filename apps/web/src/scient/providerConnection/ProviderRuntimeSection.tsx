@@ -41,6 +41,8 @@ import { describeProviderRuntimeCatalog } from "./providerRuntimeCatalogFreshnes
 import {
   cancelRuntimeActionLabel,
   isActiveProviderRuntimeOperation,
+  isUserFacingRuntimeFailure,
+  runtimeDownloadPercent,
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
@@ -261,13 +263,7 @@ export function ProviderRuntimeSection(props: {
       ? preparedPlan
       : null;
   const localError = runtime ? localRuntimeFailureMessage(localFailure, runtime) : null;
-  const progress =
-    activeOperation?.downloadedBytes !== undefined && activeOperation.totalBytes !== undefined
-      ? Math.min(
-          100,
-          Math.round((activeOperation.downloadedBytes / activeOperation.totalBytes) * 100),
-        )
-      : null;
+  const progress = runtimeDownloadPercent(activeOperation);
   const isWorking = pendingAction !== null || props.disabled === true;
   const row = !props.compact && props.presentation === "row";
   /** Padding of a settings row; a card frames itself instead. */
@@ -488,7 +484,11 @@ export function ProviderRuntimeSection(props: {
         <div className="flex items-start gap-3">
           <LoaderIcon className="mt-0.5 size-5 shrink-0 animate-spin text-primary" aria-hidden />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-foreground">{activeOperation.message}</p>
+            <p className="text-sm font-medium text-foreground">
+              {activeOperation.background
+                ? `Downloading in the background${progress === null ? "" : ` · ${progress}%`}`
+                : activeOperation.message}
+            </p>
             {!props.compact ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 You can keep using Scient. The previous working runtime remains available until the
@@ -628,7 +628,7 @@ export function ProviderRuntimeSection(props: {
       : null);
   const statusIcon =
     runtime.source === "missing" ||
-    terminalOperation?.status === "failed" ||
+    isUserFacingRuntimeFailure(terminalOperation) ||
     providerRuntimeError ? (
       <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
     ) : (

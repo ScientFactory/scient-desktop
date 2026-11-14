@@ -1,3 +1,4 @@
+import { useComposerCitations } from "./chat/useComposerCitations";
 // SCIENT-FORK:START — Scient Accounts: mount approvals above the composer.
 import {
   ThreadAccountApprovals,
@@ -9,6 +10,10 @@ import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+// SCIENT-FORK:START — Scient Agent's other signed-in accounts on a usage limit.
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import { scientAgentAlternativeModel } from "@t3tools/shared/scientAgentModelFallback";
+// SCIENT-FORK:END
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
 import { Button } from "./ui/button";
@@ -99,14 +104,18 @@ import {
 
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
-import { resolveDraftHeroState } from "./ChatView.logic";
+import { isThreadEnvironmentLocked, resolveDraftHeroState } from "./ChatView.logic";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 // SCIENT-FORK:START — thread links go through Scient's own origin, never T3's hosted app.
 import { scientHostedThreadOrigin } from "@t3tools/shared/scientThreadLinks";
 // SCIENT-FORK:END
-import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
+import { useFocusComposerOnThreadOpen } from "./chat/useFocusComposerOnThreadOpen";
+import {
+  announcedRun,
+  isDetailBehindShell,
+} from "@t3tools/client-runtime/state/thread-activity-announcement";
 import {
   deriveThreadPendingBackgroundTasks,
   presentThreadShellFromProjection,
@@ -114,6 +123,7 @@ import {
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { usePullRequestLinking } from "../hooks/usePullRequestLinking";
 import { useComposerSelection } from "./chat/useComposerSelection";
+import { useComposerFocus } from "./chat/useComposerFocus";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
 import {
@@ -159,7 +169,6 @@ import {
   type AssistantCitation,
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
-  orchestrationV2WorktreePending,
   type EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -174,6 +183,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  canResumeThread,
   deriveProviderSubagentStatus,
   deriveProviderExtensionStatuses,
   deriveReportedModelSelection,
@@ -213,10 +223,19 @@ import {
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { orchestrationV2WorktreePending } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
-import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  type SetStateAction,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -298,7 +317,6 @@ import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
-import { isModelPickerOpen } from "../modelPickerVisibility";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
@@ -320,7 +338,8 @@ import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations"
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { isPreviewFocused } from "../lib/previewFocus";
-import { focusTerminalOnThreadEnter, getTerminalFocusOwner } from "../lib/terminalFocus";
+import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { draftModelSelectionApplies, threadHasStarted } from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -346,6 +365,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { threadEnvironment } from "../state/threads";
+import { resolveProvidersForCwd } from "@t3tools/client-runtime/providerSkills";
 import { chatGitStatusAtom, NO_CHAT_GIT_STATUS_ATOM, vcsEnvironment } from "../state/vcs";
 import {
   type EnvironmentPresentation,
@@ -412,8 +432,9 @@ import {
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 import {
-  getProviderStatusBannerKey,
+  getProviderStatusDismissalKey,
   shouldShowProviderStatusBanner,
+  useProviderStatusBannerDismissed,
 } from "./chat/ProviderStatusBanner";
 import {
   getThreadErrorBannerKey,
@@ -443,6 +464,8 @@ import {
 import {
   buildLocalDraftThread,
   deriveCommittedServerUserMessageIds,
+  // SCIENT-FORK: Scient's timeline working row has its own deriveTimelineWorking.
+  deriveTimelineWorking as derivePhaseWorking,
   dismissBranchMismatchForSession,
   shouldRenderPreviewMiniPlayer,
   deriveLockedProvider,
@@ -453,6 +476,7 @@ import {
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   shouldRefocusComposerOnWindowFocus,
+  hasCompactableConversation,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
@@ -525,6 +549,48 @@ type ChatViewProps =
     };
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
+
+// SCIENT-FORK: a cached banner callback must not capture ChatView's render scope.
+function incrementDismissTick(setTick: (update: (tick: number) => number) => void) {
+  return () => setTick((tick) => tick + 1);
+}
+
+const ignoreComposerFocus = () => {};
+
+function useRouteGuardedSave<Id, Result>(
+  save: (id: Id, run: () => void) => Result,
+  currentRoute: { readonly current: string | null },
+  route: string | null,
+) {
+  return useStableCallback((id: Id, run: () => void) =>
+    save(id, () => {
+      if (currentRoute.current === route) run();
+    }),
+  );
+}
+
+// Fork commands may outlive a render; their reader must not retain its scope.
+function createLiveTimelineEntriesReader(
+  routeThreadDetailRef: ScopedThreadRef | null,
+  timelineEntries: ReturnType<typeof useIncrementalTimelineEntries>,
+  timelineEntriesInput: Omit<
+    Parameters<typeof deriveTimelineEntriesFromVisibleTurnItemsWithState>[0],
+    "visibleTurnItems"
+  >,
+) {
+  return () => {
+    if (!routeThreadDetailRef) return timelineEntries;
+    const live = readThreadProjection(routeThreadDetailRef)?.projection;
+    if (!live) return timelineEntries;
+    return deriveTimelineEntriesFromVisibleTurnItemsWithState({
+      ...timelineEntriesInput,
+      visibleTurnItems: live.visibleTurnItems,
+      attempts: live.attempts,
+      nodes: live.nodes,
+      plans: live.plans,
+    }).entries;
+  };
+}
 
 function ChatViewContent(props: ChatViewProps) {
   const {
@@ -750,15 +816,15 @@ function ChatViewContent(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerModelSelectionExplicit = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
+  );
   const composerSelectedModelSelection = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return draft?.activeProvider
       ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
       : null;
   });
-  const composerModelSelectionExplicit = useComposerDraftStore(
-    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
-  );
   const composerHasAttachments = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
@@ -787,20 +853,7 @@ function ChatViewContent(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
-  const citeAssistantText = (
-    citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
-  ) => {
-    const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
-    if (!inserted) {
-      toastManager.add({
-        type: "warning",
-        title: "The composer is not ready",
-        description: "Try citing the selection after the connection or pending input is resolved.",
-      });
-    }
-    return inserted;
-  };
+  const { citeAssistantText, replyToResponseStable } = useComposerCitations(composerRef);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticBlobPreviews] = useState(createOptimisticBlobPreviews);
   const [heldOptimisticUserMessages, setHeldOptimisticUserMessages] = useState(() =>
@@ -859,6 +912,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [isWorkspaceFileDragActive]);
   const prefersPlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
+  // Focusing the composer without a tap raises the on-screen keyboard on touch devices.
+  const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
@@ -878,7 +933,6 @@ function ChatViewContent(props: ChatViewProps) {
   ] = useState<Record<string, boolean>>({});
   const legendListRef = useRef<LegendListRef | null>(null);
   const conversationArea = workspaceAreaProps("conversation", 1, "Conversation");
-  const composerArea = workspaceAreaProps("composer", 2, "Message input");
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
   const composerTimelineInsetRef = useRef(0);
@@ -1003,6 +1057,9 @@ function ChatViewContent(props: ChatViewProps) {
     !isServerThread || serverProjection === null
       ? null
       : deriveResumableRunId(serverProjection, serverRuntime);
+  const canResume =
+    serverProjection !== null &&
+    canResumeThread(serverProjection, resumableRunId, hasHeldQueuedRuns);
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
@@ -1470,14 +1527,16 @@ function ChatViewContent(props: ChatViewProps) {
     pendingFileSurfaceIdsByProject,
     handleMarkdownAttention,
   });
-  const runAfterPendingSurfaceSave: typeof runAfterSurfaceSave = (ids, run) =>
-    runAfterSurfaceSave(ids, () => {
-      if (currentRouteThreadKeyRef.current === routeThreadKey) run();
-    });
-  const runAfterPendingFileSave: typeof runAfterFileSave = (id, run) =>
-    runAfterFileSave(id, () => {
-      if (currentRouteThreadKeyRef.current === routeThreadKey) run();
-    });
+  const runAfterPendingSurfaceSave = useRouteGuardedSave(
+    runAfterSurfaceSave,
+    currentRouteThreadKeyRef,
+    routeThreadKey,
+  );
+  const runAfterPendingFileSave = useRouteGuardedSave(
+    runAfterFileSave,
+    currentRouteThreadKeyRef,
+    routeThreadKey,
+  );
   // SCIENT-FORK:END
   const openProjectScriptPreview = useProjectScriptAutoPreview({
     activeThreadRef,
@@ -1568,11 +1627,23 @@ function ChatViewContent(props: ChatViewProps) {
     : (primaryEnvironment?.serverConfig ?? null);
   const providerEnvironmentId = (activeThread ? activeEnvironment : primaryEnvironment)
     ?.environmentId;
-  const providerStatuses =
+  const gitCwd = activeProject
+    ? projectScriptCwd({
+        project: { cwd: activeProject.workspaceRoot },
+        worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : null;
+  const providerStatuses = resolveProvidersForCwd(
     (providerEnvironmentId === undefined
       ? undefined
-      : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS;
-  const selectedProviderByThreadId = composerActiveProvider ?? null;
+      : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS,
+    gitCwd,
+  );
+  const composerModelSelectionApplies = draftModelSelectionApplies(
+    { modelSelectionExplicit: composerModelSelectionExplicit },
+    threadHasStarted(activeThread),
+  );
+  const selectedProviderByThreadId = composerModelSelectionApplies ? composerActiveProvider : null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProjectDefaultModelSelection?.instanceId ??
@@ -1596,7 +1667,13 @@ function ChatViewContent(props: ChatViewProps) {
     advertisedFileAttachmentBytes === null
       ? null
       : clampFileAttachmentUploadBytes(advertisedFileAttachmentBytes);
-  const envLocked = Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null));
+  const envLocked =
+    Boolean(activeThread) &&
+    isThreadEnvironmentLocked({
+      messageCount: activeMessageCount,
+      hasRuntime: activeRuntime !== null,
+      activeProviderThreadId: serverThread?.activeProviderThreadId ?? null,
+    });
   // onEnvironmentChange only retargets an unsent draft. envLocked alone does not
   // rule out a started thread: one whose machine is offline never loads its
   // messages, so it would otherwise be offered a machine picker that does nothing.
@@ -1784,6 +1861,7 @@ function ChatViewContent(props: ChatViewProps) {
     backgroundSubmissionPending,
   } = useLocalDispatchState({
     routeThreadKey,
+    environmentId,
     activeThread,
     activeLatestRun,
     latestUserMessageId:
@@ -1981,8 +2059,11 @@ function ChatViewContent(props: ChatViewProps) {
     activeServerThread.id === routeThreadRef.threadId &&
     activeLatestRun === null &&
     liveWorktreeSetup?.phase === "running";
+  // SCIENT-FORK:START — a bootstrap turn stands in for upstream's runless work.
   const isOriginWorking =
-    phase === "running" || isSendBusy || isCompacting || awaitingBootstrapTurn;
+    derivePhaseWorking({ phase, isSendBusy, isCompacting, runlessWorkStartedAt: null }) ||
+    awaitingBootstrapTurn;
+  // SCIENT-FORK:END
   const isWorking = isOriginWorking || isForkingThread;
   const turnUnfinished = latestTurnUnfinished(activeRunningTurnId, activeLatestRun?.status);
   // The timeline's working row waits for the prompt being sent, and stays while its run starts
@@ -2030,18 +2111,11 @@ function ChatViewContent(props: ChatViewProps) {
     // SCIENT-FORK:END
   );
   // SCIENT-FORK:START — the composer's fork command.
-  const readLiveTimelineEntries = () => {
-    if (!routeThreadDetailRef) return timelineEntries;
-    const live = readThreadProjection(routeThreadDetailRef)?.projection;
-    if (!live) return timelineEntries;
-    return deriveTimelineEntriesFromVisibleTurnItemsWithState({
-      ...timelineEntriesInput,
-      visibleTurnItems: live.visibleTurnItems,
-      attempts: live.attempts,
-      nodes: live.nodes,
-      plans: live.plans,
-    }).entries;
-  };
+  const readLiveTimelineEntries = createLiveTimelineEntriesReader(
+    routeThreadDetailRef,
+    timelineEntries,
+    timelineEntriesInput,
+  );
   const onForkConversation = createForkConversationCommand({
     readTimelineEntries: readLiveTimelineEntries,
     timelineEntries,
@@ -2065,6 +2139,8 @@ function ChatViewContent(props: ChatViewProps) {
   const revertFilesUnavailable =
     pendingRevertCheckpoint !== undefined &&
     !checkpointSupportsRewind(pendingRevertCheckpoint, true);
+  // The server refuses file restore outside an isolated worktree.
+  const revertFilesOutsideWorktree = (activeThread?.worktreePath ?? null) === null;
   // SCIENT-FORK:END
 
   const workspaceMutationId = deriveWorkspaceMutationId(
@@ -2072,12 +2148,6 @@ function ChatViewContent(props: ChatViewProps) {
     turnDiffSummaries.at(-1)?.completedAt ?? null,
   );
 
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusAtom =
     gitStatusCwd === null
@@ -2175,16 +2245,14 @@ function ChatViewContent(props: ChatViewProps) {
     null,
     DismissedFallbackWindowSchema,
   );
-  const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
-  const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
-    string | null
-  >(null);
-  if (providerStatusBannerKey === null && dismissedProviderStatusBannerKey !== null) {
-    setDismissedProviderStatusBannerKey(null);
-  }
+  const providerStatusDismissalKey = getProviderStatusDismissalKey(
+    providerEnvironmentId,
+    activeProviderStatus,
+  );
+  const providerStatusDismissed = useProviderStatusBannerDismissed(providerStatusDismissalKey);
   const visibleProviderStatus = shouldShowProviderStatusBanner(
     activeProviderStatus,
-    dismissedProviderStatusBannerKey,
+    providerStatusDismissed,
   )
     ? activeProviderStatus
     : null;
@@ -2306,6 +2374,7 @@ function ChatViewContent(props: ChatViewProps) {
   const {
     needsLoadBalancing,
     loadBalancing,
+    refreshBeforeSend,
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
     isEnvironmentChanging,
@@ -2343,10 +2412,8 @@ function ChatViewContent(props: ChatViewProps) {
       if (composer) composer.focusAt(composer.readSnapshot().cursor);
     }
   }, [activeThreadKey, composerIdentity, composerRef]);
-  const focusComposer = () => {
-    composerRef.current?.focusAtEnd();
-  };
-  const focusComposerStable = useStableCallback(focusComposer);
+  const { focusComposer: focusComposerStable, scheduleComposerFocus: scheduleComposerFocusStable } =
+    useComposerFocus(composerRef);
   const canInterruptRunningThread =
     canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   // SCIENT-FORK:START — the owned acknowledgement composes the original interrupt command.
@@ -2388,13 +2455,6 @@ function ChatViewContent(props: ChatViewProps) {
     () => (embedded ? undefined : subscribeSnapShotComposerFocus(focusComposerStable)),
     [embedded, focusComposerStable],
   );
-  const scheduleComposerFocus = () => {
-    window.requestAnimationFrame(() => {
-      // The model picker stays open through its own changes, so it keeps focus.
-      if (!isModelPickerOpen()) focusComposer();
-    });
-  };
-  const scheduleComposerFocusStable = useStableCallback(scheduleComposerFocus);
   const insertArtifactTemplate = (template: CodexArtifactTemplate) => {
     const composer = composerRef.current;
     if (!composer) return;
@@ -2409,7 +2469,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
-    scheduleComposerFocus();
+    scheduleComposerFocusStable();
   };
   const insertArtifactTemplateStable = useStableCallback(insertArtifactTemplate);
   const sendAppMessage = async (text: string) => {
@@ -2449,7 +2509,7 @@ function ChatViewContent(props: ChatViewProps) {
       nativeQueueEditItem(run, message, serverProjection.thread),
       { runId: run.id, messageId: message.id, expectedUpdatedAt: updatedAt },
     )
-      .then(() => scheduleComposerFocus())
+      .then(() => scheduleComposerFocusStable())
       .catch((cause) => setThreadError(activeThread.id, chatActionErrorMessage(cause)));
   };
   const beginEditingQueuedRunStable = useStableCallback(beginEditingQueuedRun);
@@ -2817,32 +2877,36 @@ function ChatViewContent(props: ChatViewProps) {
   });
   // SCIENT-FORK:END
 
-  // SCIENT-FORK:START — see the thread-open focus effect below.
+  // SCIENT-FORK:START — the same thread re-resolving (a reconnect) must not pull the caret out of
+  // a browser page or a document the person is typing in; opening a thread still focuses.
   const composerAutoFocusThreadIdRef = useRef<string | null>(null);
+  const focusComposerOnThreadOpen = useStableCallback(() => {
+    const opened = composerAutoFocusThreadIdRef.current !== (activeThread?.id ?? null);
+    composerAutoFocusThreadIdRef.current = activeThread?.id ?? null;
+    if (opened || shouldRefocusComposerOnWindowFocus(document.activeElement)) {
+      focusComposerStable();
+    }
+  });
   // SCIENT-FORK:END
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
-  useEffect(() => {
-    // SCIENT-FORK:START — opening a thread or closing its terminal focuses the composer. The
-    // same thread re-resolving (a reconnect) must not pull the caret out of a browser page or a
-    // document the person is typing in.
-    if (terminalUiState.terminalOpen) composerAutoFocusThreadIdRef.current = null;
-    if (embedded || !activeThread?.id || terminalUiState.terminalOpen) return;
-    const opened = composerAutoFocusThreadIdRef.current !== activeThread.id;
-    composerAutoFocusThreadIdRef.current = activeThread.id;
-    const frame = window.requestAnimationFrame(() => {
-      if (opened || shouldRefocusComposerOnWindowFocus(document.activeElement)) {
-        focusComposerStable();
-      }
-    });
-    // SCIENT-FORK:END
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [activeThread?.id, embedded, focusComposerStable, terminalUiState.terminalOpen]);
+  useFocusComposerOnThreadOpen(
+    activeThreadRef,
+    workspaceLayoutElement,
+    !embedded,
+    terminalUiState.terminalOpen,
+    isCoarsePointer ? ignoreComposerFocus : focusComposerOnThreadOpen,
+  );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus on a fine pointer
   useEffect(() => {
-    if (embedded || !activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
+    if (
+      embedded ||
+      !activeThread?.id ||
+      terminalUiState.terminalOpen ||
+      isMobileViewport ||
+      isCoarsePointer
+    ) {
+      return;
+    }
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -2869,6 +2933,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.id,
     embedded,
     focusComposerStable,
+    isCoarsePointer,
     isMobileViewport,
     terminalUiState.terminalOpen,
   ]);
@@ -3134,7 +3199,7 @@ function ChatViewContent(props: ChatViewProps) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     // SCIENT-FORK:START — a restored branch returns focus through the composer's own path.
-    scheduleComposerFocus,
+    scheduleComposerFocus: scheduleComposerFocusStable,
     // SCIENT-FORK:END
     canOperateThread,
     clientSettingsHydrated,
@@ -3149,6 +3214,8 @@ function ChatViewContent(props: ChatViewProps) {
     serverConfig,
     runtimeMode,
     isWorking,
+    // A waiting run is checkpoint drain; Stop there reaches its background work.
+    runIsLive: (isWorking && activeRuntime?.status !== "waiting") || phase === "connecting",
     pendingBackgroundTasks,
     turnItems: serverProjection?.turnItems ?? EMPTY_TURN_ITEMS,
     activePendingApproval,
@@ -3167,12 +3234,16 @@ function ChatViewContent(props: ChatViewProps) {
     scrollToEnd,
     persistThreadSettingsForNextTurn,
   });
-  const activeThreadHasCompactableConversation = serverVisibleTurnItems.some(
-    ({ item }) =>
-      item.type === "user_message" &&
-      (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
-  );
-  const pendingHandoffSelection = composerSelectedModelSelection ?? activeThread?.modelSelection;
+  // SCIENT-FORK: the Goal and Plan chips send their commands through the same path as the goal row.
+  const sendModeChipCommand = useStableCallback(sendStandaloneCommand);
+  const activeThreadHasCompactableConversation = hasCompactableConversation({
+    visibleTurnItems: serverVisibleTurnItems,
+    hasMoreHistory: serverThreadHistory.hasMoreHistory,
+    latestUserMessageAt: serverThread?.latestUserMessageAt ?? null,
+  });
+  const pendingHandoffSelection =
+    (composerModelSelectionApplies ? composerSelectedModelSelection : null) ??
+    activeThread?.modelSelection;
   const pendingHandoffSelectionUsable = providerInstanceEntries.some(
     (entry) =>
       entry.instanceId === pendingHandoffSelection?.instanceId &&
@@ -3200,8 +3271,10 @@ function ChatViewContent(props: ChatViewProps) {
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
   const compactDisabled = compactThreadUnavailable || composerHasDraftContent;
+  // The context window is the current conversation's, so a handoff destination never inherits it.
   const resumeCompactionTokens =
     activeContextWindow &&
+    pendingHandoff === null &&
     resolveIdleCompaction(
       settings,
       activeProviderInstanceId ?? ProviderInstanceId.make("claudeAgent"),
@@ -3262,6 +3335,42 @@ function ChatViewContent(props: ChatViewProps) {
     });
     return item ? [item] : [];
   });
+  // SCIENT-FORK:START — the limit banner's "Continue with" resumes, so resume comes first.
+  const { onResume, onResumeWith, isResuming } = useComposerResume({
+    environmentId,
+    routeThreadKey,
+    currentRouteThreadKeyRef,
+    activeThread,
+    resumableRunId,
+    hasHeldQueuedRuns,
+    canResume,
+    isSendBusy,
+    isRevertingCheckpoint,
+    threadDetailLoading,
+    activeEnvironmentUnavailable,
+    runtimeMode,
+    localCheckoutBranchMismatch,
+    composerRef,
+    persistThreadSettingsForNextTurn,
+    clearUsageLimitsFor,
+    scrollToEnd,
+    setThreadError,
+  });
+  const failedModel = activeThread?.modelSelection;
+  const failedProvider = providerStatuses.find(
+    (provider) => provider.instanceId === failedModel?.instanceId,
+  );
+  const continueModel =
+    limitRecoveryRun !== null && canResume && failedModel
+      ? scientAgentAlternativeModel(
+          failedProvider,
+          failedModel.model,
+          (slug) =>
+            exhaustedUsageWindow(failedProvider, Date.parse(`${nowMinute}:00Z`), slug) !==
+            undefined,
+        )
+      : undefined;
+  // SCIENT-FORK:END
   const limitRecoveryBanner =
     limitRecoveryRun !== null && activeThreadShell !== null
       ? usageLimitRecoveryBannerItem({
@@ -3274,6 +3383,20 @@ function ChatViewContent(props: ChatViewProps) {
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
+          // SCIENT-FORK:START — continue at once with another signed-in model.
+          ...(continueModel && failedModel
+            ? {
+                continueWith: {
+                  modelName: continueModel.name,
+                  onContinue: () =>
+                    void onResumeWith({
+                      instanceId: failedModel.instanceId,
+                      model: continueModel.slug,
+                    }),
+                },
+              }
+            : {}),
+          // SCIENT-FORK:END
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
@@ -3300,7 +3423,7 @@ function ChatViewContent(props: ChatViewProps) {
     const tokenLimitItems = tokenLimitBannerItems({
       hasTokenLimitNotice,
       tokenLimitNoticeKey,
-      onDismissed: () => setThreadErrorBannerDismissTick((tick) => tick + 1),
+      onDismissed: incrementDismissTick(setThreadErrorBannerDismissTick),
     });
     // SCIENT-FORK:END
     const fallbackSelection = draftFallback?.selection;
@@ -3413,14 +3536,6 @@ function ChatViewContent(props: ChatViewProps) {
     setTerminalUiLaunchContext(null);
   }
 
-  // Entering a thread with its drawer open focuses the drawer terminal; opening
-  // it from a handler requests focus there. A closed drawer leaves focus to the
-  // composer effect above.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the open drawer terminal when entering a thread
-  useEffect(() => {
-    if (activeThreadRef && !embedded) return focusTerminalOnThreadEnter(activeThreadRef);
-  }, [activeThreadRef, embedded]);
-
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
@@ -3432,7 +3547,7 @@ function ChatViewContent(props: ChatViewProps) {
       document.activeElement?.getAttribute("data-testid") === "composer-editor" &&
       isInSideChatPane(document.activeElement) === embedded,
     draftThreadRoute: routeKind === "draft",
-    turnRunning: phase === "running",
+    turnRunning: phase === "running" || phase === "connecting",
     composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, promptRef.current),
     isWeb: !isElectron,
     isDesktop: isElectron,
@@ -3653,26 +3768,7 @@ function ChatViewContent(props: ChatViewProps) {
     canOverrideServerThreadEnvMode,
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
-    scheduleComposerFocus,
-  });
-  const { onResume, isResuming } = useComposerResume({
-    environmentId,
-    routeThreadKey,
-    currentRouteThreadKeyRef,
-    activeThread,
-    resumableRunId,
-    hasHeldQueuedRuns,
-    isSendBusy,
-    isRevertingCheckpoint,
-    threadDetailLoading,
-    activeEnvironmentUnavailable,
-    runtimeMode,
-    localCheckoutBranchMismatch,
-    composerRef,
-    persistThreadSettingsForNextTurn,
-    clearUsageLimitsFor,
-    scrollToEnd,
-    setThreadError,
+    scheduleComposerFocus: scheduleComposerFocusStable,
   });
   const { onSend } = useComposerSend({
     queueEditsReady,
@@ -3723,6 +3819,7 @@ function ChatViewContent(props: ChatViewProps) {
     clearUsageLimitsFor,
     needsLoadBalancing,
     loadBalancing,
+    refreshBeforeSend,
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
@@ -3774,6 +3871,10 @@ function ChatViewContent(props: ChatViewProps) {
       .length ?? 0;
   // SCIENT-FORK:END
 
+  const onExpandTimelineImage = (preview: ExpandedImagePreview) => {
+    openExpandedImagePreview(routeThreadKey, preview);
+  };
+  const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
   const queuedRunsControl =
     isServerThread && activeThread ? (
       <>
@@ -3804,6 +3905,7 @@ function ChatViewContent(props: ChatViewProps) {
           })}
           timestampFormat={timestampFormat}
           onOpenThread={onOpenRelatedThreadStable}
+          onImageExpand={onExpandTimelineImageStable}
         />
       </>
     ) : null;
@@ -3849,10 +3951,6 @@ function ChatViewContent(props: ChatViewProps) {
     workLocallyResendReady,
   ]);
 
-  const onExpandTimelineImage = (preview: ExpandedImagePreview) => {
-    openExpandedImagePreview(routeThreadKey, preview);
-  };
-  const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
   // SCIENT-FORK:START — timeline row fork actions.
   const { onForkAssistantMessage, onForkUserMessage, onForkFromRun } = createForkMessageCommands({
     activeThreadId,
@@ -4157,6 +4255,7 @@ function ChatViewContent(props: ChatViewProps) {
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
         data-chat-column
         inert={rightPanelMaximized}
+        onMouseUp={preventMiddleClickPasteOutsideEditable}
       >
         {embedded ? null : (
           <header
@@ -4232,8 +4331,7 @@ function ChatViewContent(props: ChatViewProps) {
             <ChatBannerLane
               environmentId={activeThread.environmentId}
               providerStatus={visibleProviderStatus}
-              providerStatusBannerKey={providerStatusBannerKey}
-              setDismissedProviderStatusBannerKey={setDismissedProviderStatusBannerKey}
+              providerStatusDismissalKey={providerStatusDismissalKey}
               onOpenProviderSetup={openProviderSetupStable}
               threadId={activeThread.id}
               threadError={timelineThreadError}
@@ -4277,6 +4375,7 @@ function ChatViewContent(props: ChatViewProps) {
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
+                  onReplyToResponse={replyToResponseStable}
                   {...(activeProject
                     ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
                     : {})}
@@ -4298,6 +4397,7 @@ function ChatViewContent(props: ChatViewProps) {
                     activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
                   }
                   activeTurnStartedAt={activeWorkStartedAt}
+                  providerStartingLabel={activeActivityRun?.providerStartingLabel ?? null}
                   worktreeSetup={worktreeSetup}
                   onCancelWorktreeSetup={onCancelWorktreeSetupStable}
                   retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
@@ -4440,7 +4540,11 @@ function ChatViewContent(props: ChatViewProps) {
             </div>
 
             <div
-              {...composerArea}
+              {...workspaceAreaProps(
+                "composer",
+                2,
+                showProviderSubagentBar ? "Subagent" : undefined,
+              )}
               ref={setComposerOverlayElement}
               inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"
@@ -4593,7 +4697,7 @@ function ChatViewContent(props: ChatViewProps) {
                                   !queueEditsReady
                                   // SCIENT-FORK:END
                                 }
-                                canResume={resumableRunId !== null || hasHeldQueuedRuns}
+                                canResume={canResume}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
                                   !canOperateThread
@@ -4686,6 +4790,12 @@ function ChatViewContent(props: ChatViewProps) {
                                 onInterrupt={onInterruptStable}
                                 // SCIENT-FORK:START — conversation fork from the composer.
                                 onForkConversation={onForkConversation}
+                                // Goal and Plan chips beside the attach button.
+                                modeChips={{
+                                  goal: activeThreadShell?.goal ?? null,
+                                  planMode: activeProviderThread?.planMode === true,
+                                  onSendCommand: activeThread ? sendModeChipCommand : undefined,
+                                }}
                                 // SCIENT-FORK:END
                                 onSelectActivePendingUserInputOption={
                                   onSelectActivePendingUserInputOptionStable
@@ -4839,6 +4949,7 @@ function ChatViewContent(props: ChatViewProps) {
                   worktreePath={activeThread.worktreePath}
                   isServerThread={isServerThread}
                   {...(draftId ? { draftId } : {})}
+                  composerDraftTarget={composerDraftTarget}
                   activeProjectName={activeProject?.title}
                   activeProjectScripts={activeProject ? activeProjectScripts : undefined}
                   preferredScriptId={
@@ -5041,7 +5152,9 @@ function ChatViewContent(props: ChatViewProps) {
               composer.
               {revertFilesUnavailable
                 ? " Your files stay as they are: Scient could not save a snapshot of them from before this message."
-                : null}
+                : revertFilesOutsideWorktree
+                  ? " Your files stay as they are."
+                  : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <ScientRevertDialogDiagnostics
@@ -5054,7 +5167,7 @@ function ChatViewContent(props: ChatViewProps) {
             >
               Cancel
             </AlertDialogClose>
-            {revertFilesUnavailable ? null : (
+            {revertFilesUnavailable || revertFilesOutsideWorktree ? null : (
               <Button
                 variant="destructive"
                 disabled={isRevertingCheckpoint}
@@ -5081,7 +5194,9 @@ function ChatViewContent(props: ChatViewProps) {
                 );
               }}
             >
-              {revertFilesUnavailable ? "Rewind chat" : "Revert and keep changes"}
+              {revertFilesUnavailable || revertFilesOutsideWorktree
+                ? "Rewind chat"
+                : "Revert and keep changes"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -5118,6 +5233,12 @@ function ChatViewContent(props: ChatViewProps) {
       {/* SCIENT-FORK:END */}
     </FileMetadataThreadProvider>
   );
+}
+
+// Chromium on Linux pastes PRIMARY into the focused editable unless the middle mouseup is cancelled.
+function preventMiddleClickPasteOutsideEditable(event: ReactMouseEvent) {
+  if (event.button !== 1 || isEditableFocused(event.target)) return;
+  event.preventDefault();
 }
 
 function PreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {

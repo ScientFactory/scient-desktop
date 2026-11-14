@@ -28,6 +28,10 @@ import {
   compareExactServiceVersions,
   serviceStateActiveVersion,
 } from "./cloud/serviceProtocol.ts";
+import {
+  legacyOwnerStartedBeforeRecord,
+  legacyOwnerStartTimeCommand,
+} from "./legacyServerOwner.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -81,35 +85,22 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   if (!isProcessAlive(state.pid)) return false;
   const recordedAt = Date.parse(state.startedAt);
   if (!Number.isFinite(recordedAt)) return true;
-  const windows = (yield* HostProcess.Platform) === "win32";
+  const platform = yield* HostProcess.Platform;
   const runner = yield* ProcessRunner.ProcessRunner;
   const result = yield* runner
     .run({
-      command: windows ? "powershell.exe" : "ps",
-      args: windows
-        ? [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            // SCIENT-FORK:START — Get-Process has no StartTime for SYSTEM, elevated or
-            // other-user processes, which a stale record's reused PID often names; CIM
-            // reads their creation time without elevation.
-            `(Get-CimInstance Win32_Process -Filter 'ProcessId=${state.pid}' -ErrorAction Stop).CreationDate.ToUniversalTime().ToString('o')`,
-            // SCIENT-FORK:END
-          ]
-        : ["-p", String(state.pid), "-o", "lstart="],
-      env: { LC_ALL: "C", TZ: "UTC" },
+      ...legacyOwnerStartTimeCommand(state.pid, platform),
       // SCIENT-FORK:START — a cold PowerShell start can take most of 2s at login.
-      timeout: Duration.seconds(windows ? 5 : 2),
+      timeout: Duration.seconds(platform === "win32" ? 5 : 2),
       // SCIENT-FORK:END
       maxOutputBytes: 16_384,
     })
     .pipe(Effect.option);
-  if (Option.isNone(result) || result.value.code !== 0) return true;
-  const output = result.value.stdout.trim();
-  const startedAt = Date.parse(windows ? output : `${output} UTC`);
-  // ps reports whole seconds. Unknown identity stays conservative.
-  return !Number.isFinite(startedAt) || startedAt <= recordedAt + 1_000;
+  return legacyOwnerStartedBeforeRecord(
+    Option.isSome(result) && result.value.code === 0 ? result.value.stdout : undefined,
+    recordedAt,
+    platform,
+  );
 });
 
 // Pre-lock services become invisible when another server replaces their runtime
@@ -240,7 +231,8 @@ const openOwnershipLock = (stateDir: string) =>
       }
       const db = new NodeSqlite.DatabaseSync(lockPath);
       try {
-        db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+        // An idle service launcher probes this lock for a moment; wait out that probe.
+        db.exec("PRAGMA busy_timeout = 250; BEGIN EXCLUSIVE;");
         // SCIENT-FORK:START — holding the lock proves no repair is running; clear a stale marker.
         NodeFS.rmSync(maintenanceMarker(stateDir), { force: true });
         // SCIENT-FORK:END

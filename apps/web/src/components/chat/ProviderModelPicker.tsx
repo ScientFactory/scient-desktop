@@ -90,6 +90,7 @@ export const DockedPickerContext = createContext<{ modelLabel: string }>({ model
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
+  workspaceCwd?: string | null;
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
@@ -326,6 +327,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     <ModelPickerContent
       searchInputRef={searchInputRef}
       environmentId={props.environmentId}
+      workspaceCwd={props.workspaceCwd ?? null}
       activeInstanceId={activeInstanceId}
       model={props.model}
       {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
@@ -545,7 +547,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           >
             {props.effortColumn ? (
               <DockedPickerContext value={{ modelLabel: triggerTitle }}>
-                <div className="flex max-h-(--available-height) w-[min(28rem,calc(100vw-2rem))] flex-col">
+                <div className="flex max-h-(--available-height) w-[min(31rem,calc(100vw-2rem))] flex-col">
                   {/* One fixed height, so a model with more options never resizes the popup. Short
                       windows shrink it and keep the footer. */}
                   <div className="flex h-72 min-h-0 max-sm:h-auto max-sm:flex-col">

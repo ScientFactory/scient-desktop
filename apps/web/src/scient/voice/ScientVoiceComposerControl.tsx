@@ -31,6 +31,7 @@ import { useClientSettings } from "../../hooks/useSettings.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { buildVoiceWaveformLevels, VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
+import { useChatGptDictation } from "./chatGptDictation.ts";
 import { formatVoiceTimer, useScientVoiceController } from "./useScientVoiceController.ts";
 import {
   makeVoiceTranscriptCorrectionClient,
@@ -209,6 +210,8 @@ export function ScientVoiceComposerControl({
     (settings) => settings.voiceTranscriptCorrectionEnabled,
   );
   const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
+  const engine = useClientSettings((settings) => settings.voiceDictationEngine);
+  const chatGpt = useChatGptDictation(environmentId);
   const runVoiceTranscriptCorrection = useAtomCommand(voiceTranscriptCorrectionCommand, {
     reportFailure: false,
   });
@@ -218,6 +221,8 @@ export function ScientVoiceComposerControl({
     correctionClient,
     correctionEnabled,
     languagePreference,
+    engine,
+    chatGpt,
     ...(environmentId === undefined ? {} : { environmentId }),
     draftOrigin,
     localFieldKey,
@@ -242,8 +247,10 @@ export function ScientVoiceComposerControl({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports busy=false to the parent callback on unmount
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
+  // A surface that offers dictation only when it is ready hides it while its engine is not.
   const readyModelBecameUnavailable =
     readyModelOnly &&
+    engine === "local" &&
     (controller.phase === "setup-prompt" ||
       (controller.modelSnapshot !== null &&
         !hasReadySelectedVoiceModel(controller.modelSnapshot)) ||

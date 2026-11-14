@@ -1,7 +1,8 @@
 import { expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { watchFocusedFrameResizes } from "./readerScrolling";
+import { isScrollbarPress, watchFocusedFrameResizes } from "./readerScrolling";
 
 // Upstream tests this on attachTimelineViewport (timelineViewport.browser.test.tsx), which Scient
 // replaced; here the same frame-resize rule is checked on Scient's reader input owner.
@@ -45,4 +46,29 @@ it("reports a content resize only from the focused frame in the timeline", async
   stop();
   resize(800);
   expect(resized).toEqual([frame, frame]);
+});
+
+// Upstream's attachTimelineViewport test of the same rule, on Scient's reader input owner.
+it("counts a scrollbar press but not a click on the scroller's empty padding", async () => {
+  await using screen = await render(
+    <div
+      data-testid="timeline"
+      style={{ height: 300, width: 400, overflowY: "auto", padding: "0 42px" }}
+    >
+      <div style={{ height: 1200 }} />
+    </div>,
+    { router: false },
+  );
+  const timeline = screen.getByTestId("timeline").element() as HTMLElement;
+  const presses: boolean[] = [];
+  timeline.addEventListener("pointerdown", (event) =>
+    presses.push(isScrollbarPress(event, timeline)),
+  );
+
+  await userEvent.click(screen.getByTestId("timeline"), { position: { x: 10, y: 150 } });
+  await userEvent.click(screen.getByTestId("timeline"), {
+    position: { x: timeline.offsetWidth - 2, y: 150 },
+  });
+
+  expect(presses).toEqual([false, true]);
 });

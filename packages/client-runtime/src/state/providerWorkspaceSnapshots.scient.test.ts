@@ -71,18 +71,10 @@ it("drops cached A inventory on a same-ID B replacement with identical machine f
   ).toEqual([]);
 });
 
-it.each(["full", "cwd"] as const)("keeps the %s reply's machine provenance", (path) => {
+it("keeps a full reply's machine provenance", () => {
   const reply = inventoryProvider("B", [inventorySnapshot("/project", "reply")]);
   const current = { ...inventoryProvider("B"), slashCommands: [{ name: "new-machine-command" }] };
-  const fetched =
-    path === "full"
-      ? recordFetchedWorkspaceInventory([], [reply], [current])
-      : recordFetchedWorkspaceSnapshot(
-          [],
-          { instanceId: INVENTORY_PROVIDER, cwd: "/project", fresh: false },
-          [reply],
-          current,
-        );
+  const fetched = recordFetchedWorkspaceInventory([], [reply], [current]);
   expect(fetched).toHaveLength(1);
   expect(
     withFetchedWorkspaceSnapshots(inventoryConfig([current]), fetched).providers[0]
@@ -90,6 +82,22 @@ it.each(["full", "cwd"] as const)("keeps the %s reply's machine provenance", (pa
   ).toEqual([]);
   expect(
     withFetchedWorkspaceSnapshots(inventoryConfig([reply]), fetched).providers[0]
+      ?.workspaceSnapshots,
+  ).toEqual(reply.workspaceSnapshots);
+});
+
+it("merges a cwd reply, which leaves out the machine lists, into the config's provider", () => {
+  const current = { ...inventoryProvider("B"), slashCommands: [{ name: "machine-command" }] };
+  // The server answers a cwd refresh with its models, slash commands and skills left out.
+  const reply = inventoryProvider("B", [inventorySnapshot("/project", "reply")]);
+  const fetched = recordFetchedWorkspaceSnapshot(
+    [],
+    { instanceId: INVENTORY_PROVIDER, cwd: "/project", fresh: false },
+    [reply],
+    current,
+  );
+  expect(
+    withFetchedWorkspaceSnapshots(inventoryConfig([current]), fetched).providers[0]
       ?.workspaceSnapshots,
   ).toEqual(reply.workspaceSnapshots);
 });

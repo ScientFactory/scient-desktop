@@ -197,6 +197,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
         Effect.sync(() => {
           opened.push(input);
           return {
+            renameSession: () => Effect.void,
             stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
@@ -244,6 +245,7 @@ const makeFixture = Effect.fn("nativeReading.makeFixture")(function* (
         }),
       forkSession: () => Effect.die("No fork in reading preservation"),
       subagentLaunchToolUseId: () => Effect.succeed(null),
+      subagentModel: () => Effect.succeed(null),
       assertComplete: Effect.void,
     },
   });

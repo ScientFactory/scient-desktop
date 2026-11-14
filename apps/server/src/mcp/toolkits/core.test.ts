@@ -24,6 +24,7 @@ import {
   NodeId,
   RuntimeRequestId,
   OrchestratorMcpThreadReadResult,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
@@ -57,6 +58,7 @@ import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapter
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import type * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -95,6 +97,9 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
+const decodeThreadSearchResult = Schema.decodeUnknownEffect(
+  ThreadToolkit.tools.scient_thread_search.successSchema,
+);
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
@@ -337,6 +342,81 @@ it.effect("an answered question reports already answered instead of not found", 
   );
 });
 
+it.effect("a pending question read keeps option previews", () => {
+  const shell = McpToolAccessTestkit.liveThreadShell(threadId);
+  const requestId = RuntimeRequestId.make("previewed-question");
+  const projection = McpToolAccessTestkit.idleThreadProjection(shell);
+  const questions = [
+    {
+      id: "post",
+      header: "Review",
+      question: "Post it?",
+      options: [{ label: "Post", description: "Publish the draft", preview: "Full proposed text" }],
+    },
+  ];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "scient_pending_request", arguments: { action: "read", requestId } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.structuredContent).toEqual({ requestId, questions });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(shell),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                ...projection,
+                runtimeRequests: [
+                  {
+                    id: requestId,
+                    nodeId: NodeId.make("root"),
+                    providerTurnId: null,
+                    nativeRequestRef: null,
+                    kind: "user_input",
+                    status: "pending",
+                    responseCapability: { type: "message" },
+                    createdAt: shell.createdAt,
+                    resolvedAt: null,
+                  },
+                ],
+                turnItems: [
+                  {
+                    id: TurnItemId.make("previewed-question-item"),
+                    threadId,
+                    runId: null,
+                    nodeId: null,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 0,
+                    status: "running",
+                    title: null,
+                    startedAt: shell.createdAt,
+                    completedAt: null,
+                    updatedAt: shell.updatedAt,
+                    type: "user_input_request",
+                    requestId,
+                    questions,
+                  },
+                ],
+              }),
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it("bounds public command rejections and redacts internal dispatch causes", () => {
   const command = { commandId: CommandId.make("mcp-core-command"), commandType: "thread.settle" };
   expect(
@@ -535,6 +615,109 @@ it.effect("records only failed calls of tools that hand off no work", () => {
   );
 });
 // SCIENT-FORK:END
+
+// A thread read whose runs or messages are bounded by nothing but the thread.
+const historyReads = (reads: Array<string>) => {
+  const record = (
+    fields: ReadonlyArray<string>,
+    filter: ProjectionStore.ProjectionRecordFilter | undefined,
+  ) => {
+    if (
+      fields.includes("runs") &&
+      filter?.runIds === undefined &&
+      filter?.runStatuses === undefined
+    )
+      reads.push("every run");
+    if (
+      fields.includes("messages") &&
+      filter?.messageIds === undefined &&
+      filter?.messageRunIds === undefined
+    )
+      reads.push("every message");
+  };
+  const projection = McpToolAccessTestkit.idleThreadProjection(
+    McpToolAccessTestkit.liveThreadShell(threadId),
+  );
+  return Layer.mock(ThreadManagement.ThreadManagementService)({
+    getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+    getProjectThreadRecords: (_target, fields, filter) =>
+      Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
+    getThreadRecords: (_id, fields, filter) =>
+      Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
+    getMessagesById: () => Effect.succeed(new Map()),
+    dispatch: () => Effect.succeed({ sequence: 1 } as never),
+  });
+};
+
+it.effect("t3_queue list and read load only the queued runs and their messages", () => {
+  const reads: Array<string> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (args: Record<string, unknown>) =>
+      server
+        // SCIENT-FORK: Scient registers upstream's queue tool as `scient_queue`.
+        .callTool({ name: "scient_queue", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    yield* call({ action: "list" });
+    yield* call({ action: "read", queuedRunId: "run:queued" });
+    expect(reads).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        // SCIENT-FORK: Scient's caller tools also check the live owner's invocation policy.
+        Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
+        Layer.provide(historyReads(reads)),
+      ),
+    ),
+  );
+});
+
+it.effect("handoff analytics read only the caller's active run and its message", () => {
+  const reads: Array<string> = [];
+  const recorded = Deferred.makeUnsafe<void>();
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    yield* server
+      .callTool({
+        // SCIENT-FORK: Scient registers upstream's queue tool as `scient_queue`.
+        name: "scient_queue",
+        arguments: { action: "edit", queuedRunId: "run:queued", text: "Edited" },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    yield* Deferred.await(recorded);
+    expect(reads).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        // SCIENT-FORK: Scient's caller tools also check the live owner's invocation policy.
+        Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
+        Layer.provide(historyReads(reads)),
+        Layer.provide(
+          Layer.succeed(
+            AnalyticsService.AnalyticsService,
+            AnalyticsService.AnalyticsService.of({
+              // SCIENT-FORK: Scient's analytics service carries its controls too.
+              ...disabledAnalyticsService,
+              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.asVoid),
+              flush: Effect.void,
+              recordOwners: () => Effect.void,
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("rejects an unknown organize target instead of archiving the calling thread", () => {
   const dispatched: Array<unknown> = [];
@@ -882,6 +1065,59 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
   ),
 );
 
+it.effect("search names the calling thread, so an agent can tell its own match apart", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const search = (invocation: McpInvocationContext.McpInvocationScope) =>
+      server
+        .callTool({ name: "scient_thread_search", arguments: { query: "release notes" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const fromThread = yield* search(scope);
+    expect(fromThread.structuredContent).toMatchObject({
+      currentThreadId: threadId,
+      matches: [{ threadId }, { threadId: "earlier-thread" }],
+    });
+
+    const fromClient = yield* search(clientScope("auto"));
+    expect(fromClient.structuredContent).toMatchObject({ currentThreadId: null });
+
+    // A linked environment on an older version answers without the field.
+    const fromOlderPeer = yield* decodeThreadSearchResult({ matches: [] });
+    expect(fromOlderPeer).toEqual({ matches: [] });
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(ThreadSearch.ThreadSearch)({
+            searchThreads: () =>
+              Effect.succeed({
+                matches: [threadId, ThreadId.make("earlier-thread")].map((id) => ({
+                  threadId: id,
+                  projectId: ProjectId.make("project:mcp-test"),
+                  title: "Release notes",
+                  source: "title" as const,
+                  snippet: "",
+                  messageCreatedAt: null,
+                })),
+              }),
+          }),
+        ),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+      ),
+    ),
+  ),
+);
+
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -1013,6 +1249,11 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const fresh = yield* call("schedule_task", {
+      scheduledTaskId: "task-auto",
+      freshSession: true,
+    });
+    expect(fresh.structuredContent).toMatchObject({ freshSession: true });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
@@ -1276,7 +1517,8 @@ it.effect("discovers workflow stop targets and requires orchestration capability
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
             getProjectThreadRecords: () =>
               Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
-            getTimelinePage: () => Effect.succeed({ items: [row], totalItems: 1, hasMore: false }),
+            getTimelinePage: () =>
+              Effect.succeed({ items: [row], totalItems: 1, hasMore: false, hasEarlier: false }),
             stopWorkflow: (input) =>
               Effect.sync(() => {
                 stopped.push(input);
@@ -1424,6 +1666,7 @@ it.effect(
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
               listProjectThreads: () => Effect.succeed([unsettled, settled]),
+              getShellSnapshot: () => Effect.succeed({ threads: [unsettled, settled] } as never),
             }),
           ),
           Layer.provide(ServerSettings.layerTest()),
@@ -1431,7 +1674,21 @@ it.effect(
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
           Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (projectId) =>
+                Effect.succeedSome({
+                  id: projectId,
+                  title: "MCP test",
+                  workspaceRoot: "/repo",
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                }),
+            }),
+          ),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),

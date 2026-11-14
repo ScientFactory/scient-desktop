@@ -62,13 +62,20 @@ import type { OfficeWorkerResult } from "./officePreviewProtocol";
 describe("bounded binary previews", () => {
   it("preserves length-delimited local and global PAX attributes", async () => {
     const encode = (value: string) => new TextEncoder().encode(value);
-    const block = (name: string, content: Uint8Array, type = "0", size = content.length) => {
+    const block = (
+      name: string,
+      content: Uint8Array,
+      type = "0",
+      size = content.length,
+      linkname = "",
+    ) => {
       const bytes = new Uint8Array(512 + Math.ceil(content.length / 512) * 512);
       const write = (offset: number, value: string) => bytes.set(encode(value), offset);
       write(0, name);
       write(124, size.toString(8).padStart(11, "0") + "\0");
       bytes.fill(32, 148, 156);
       write(156, type);
+      write(157, linkname);
       write(
         148,
         bytes
@@ -100,6 +107,15 @@ describe("bounded binary previews", () => {
       block("Local", attributes({ size: "3", mtime: "-172800" }), "x"),
       block("short.txt", encode("bye"), "0", 0),
       block("again.txt", encode("again"), "0", 0),
+      block("Global", attributes({ size: "", mtime: "" }), "g"),
+      block("original.txt", encode("hello world")),
+      block("alias.txt", encode(""), "1", 0, "original.txt"),
+      block("chain.txt", encode(""), "1", 0, "alias.txt"),
+      block("Local", attributes({ linkpath: "original.txt" }), "x"),
+      block("pax-link.txt", encode(""), "1", 0, "wrong-target"),
+      block("LongLink", encode("original.txt\0"), "K"),
+      block("gnu-link.txt", encode(""), "1", 0, "wrong-target"),
+      block("original.txt", encode("replacement")),
       new Uint8Array(1024),
     ];
     const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
@@ -131,6 +147,14 @@ describe("bounded binary previews", () => {
         ["world.txt", 5, "1969-12-31T00:00:00.000Z"],
         ["short.txt", 3, "1969-12-30T00:00:00.000Z"],
         ["again.txt", 5, "1969-12-31T00:00:00.000Z"],
+        ...[
+          "original.txt",
+          "alias.txt",
+          "chain.txt",
+          "pax-link.txt",
+          "gnu-link.txt",
+          "original.txt",
+        ].map((path) => [path, 11, "1970-01-01T00:00:00.000Z"]),
       ]);
       const entry = await request({ type: "entry", path: "café\n9 size=1\nname.txt" });
       if (entry.type !== "entry") throw new Error("Expected entry");
@@ -141,6 +165,42 @@ describe("bounded binary previews", () => {
       if (reopened.type !== "entry") throw new Error("Expected entry");
       expect(new TextDecoder().decode(reopened.bytes)).toBe("hello");
       expect(reopened.bytes.buffer.byteLength).toBe(5);
+      for (const path of ["alias.txt", "chain.txt", "pax-link.txt", "gnu-link.txt"]) {
+        const linked = await request({ type: "entry", path });
+        if (linked.type !== "entry") throw new Error("Expected hard link entry");
+        expect(new TextDecoder().decode(linked.bytes)).toBe("hello world");
+      }
+      const unresolved = new Uint8Array(
+        await new Blob([
+          block("missing.txt", encode(""), "1", 0, "nowhere.txt"),
+          block("early.txt", encode(""), "1", 0, "later.txt"),
+          block("later.txt", encode("hello")),
+          block("folder/", encode(""), "5"),
+          block("to-folder.txt", encode(""), "1", 0, "folder/"),
+          block("replaced.txt", encode("stale")),
+          block("replaced.txt", encode(""), "2", 0, "elsewhere.txt"),
+          block("to-replaced.txt", encode(""), "1", 0, "replaced.txt"),
+          block("Local", attributes({ linkpath: "" }), "x"),
+          block("emptied.txt", encode(""), "1", 0, "later.txt"),
+          new Uint8Array(1024),
+        ]).arrayBuffer(),
+      );
+      const skipped = await request({
+        type: "open",
+        kind: "archive",
+        name: "links.tar",
+        bytes: unresolved.buffer,
+      });
+      if (skipped.type !== "archive") throw new Error("Expected archive");
+      expect(skipped.entries.map((entry) => entry.path)).toEqual([
+        "later.txt",
+        "folder/",
+        "replaced.txt",
+      ]);
+      expect(await request({ type: "entry", path: "replaced.txt" })).toEqual({
+        type: "error",
+        message: "This archive entry is unavailable.",
+      });
     } finally {
       worker.terminate();
     }
@@ -915,11 +975,14 @@ describe("standalone Mermaid previews", () => {
       .spyOn(HTMLImageElement.prototype, "src", "set")
       .mockImplementation(() => {});
     await using screen = await render(<MermaidFilePreview text={`flowchart LR\n${node}`} />);
-    await vi.waitFor(() =>
-      expect(
-        screen.container.querySelector(".scient-mermaid-inline svg") ??
-          screen.container.querySelector('[aria-label="Diagram error"][aria-busy="false"]'),
-      ).not.toBeNull(),
+    // The first case loads the Mermaid viewer chunk, which can take over a second on a slow runner.
+    await vi.waitFor(
+      () =>
+        expect(
+          screen.container.querySelector(".scient-mermaid-inline svg") ??
+            screen.container.querySelector('[aria-label="Diagram error"][aria-busy="false"]'),
+        ).not.toBeNull(),
+      { timeout: 10_000 },
     );
     expect(imageSource).not.toHaveBeenCalled();
     expect(
@@ -1317,6 +1380,23 @@ it("copies every indexed line rather than the mounted preview rows", async () =>
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
+it.each([
+  ["one.csv", "text/csv", "name\nAda\n", "1 row · 1 column ·"],
+  ["two.csv", "text/csv", "name,count\nAda,1\nGrace,2\n", "2 rows · 2 columns ·"],
+  ["one.tsv", "text/tab-separated-values", "name\nAda\n", "1 row · 1 column ·"],
+  ["one.txt", "text/plain", "a".repeat(1024 * 1024) + "\n", "1 line ·"],
+  ["two.txt", "text/plain", ("a".repeat(512 * 1024) + "\n").repeat(2), "2 lines ·"],
+] as const)("labels the counts of %s in the status line", async (name, mimeType, text, label) => {
+  const file = new Blob([text], { type: mimeType });
+  await using screen = await render(
+    <AttachmentFilePreview name={name} mimeType={mimeType} sizeBytes={file.size} file={file} />,
+  );
+  const status = () => screen.container.querySelector('[role="status"]')?.textContent ?? "";
+  // A cold large-text worker can take longer than waitFor's default to boot on CI.
+  await vi.waitFor(() => expect(status()).toMatch(/ [KM]?B$/), { timeout: 10_000 });
+  expect(status()).toContain(label);
+});
+
 it.each(["archive", "sqlite"] as const)(
   "reauthorizes and retries a failed %s attachment",
   async (kind) => {
@@ -1429,6 +1509,56 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
 });
 
 // Scient PDF rendering/asset guards live in scient/pdf/pdfRendering.scient.browser.test.tsx and pdfAssetDelivery.scient.test.ts.
+
+// SCIENT-FORK:START — upstream's renewed-URL test on Scient's watcher-driven viewer: the frame keeps its URL until
+// the re-minted one arrives, then loads it.
+it("loads an edited HTML file outside the workspace from a renewed URL", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const preview = (refreshKey: number) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/tmp/report.html"
+      relativePath="/tmp/report.html"
+      title="Report"
+      refreshKey={refreshKey}
+    />
+  );
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,original",
+    expiresAt: 0,
+    refresh,
+  });
+  await using screen = await render(preview(0));
+  const opened = screen.container.querySelector("iframe");
+  expect(opened?.getAttribute("src")).toMatch(/^data:text\/html,original/);
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,original",
+    expiresAt: 0,
+    waiting: true,
+    refresh,
+  });
+  await screen.rerender(preview(1));
+  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "1");
+  expect(screen.container.querySelector("iframe")).toBe(opened);
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,edited",
+    expiresAt: 0,
+    refresh,
+  });
+  await screen.rerender(preview(1));
+  expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
+    /^data:text\/html,edited/,
+  );
+});
+// SCIENT-FORK:END
 
 it("unwraps one text attachment without turning off the word wrap setting", async () => {
   const file = new Blob(["a long line"], { type: "text/plain" });

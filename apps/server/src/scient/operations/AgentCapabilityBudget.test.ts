@@ -28,7 +28,7 @@ it.live(
       const built = yield* ScientSkillsToolkit;
       const execute = <Name extends keyof typeof ScientSkillsToolkit.tools>(
         name: Name,
-        input: Tool.Parameters<(typeof ScientSkillsToolkit.tools)[Name]>,
+        input: Parameters<typeof built.handle<Name>>[1],
       ) =>
         built
           .handle(name, input)

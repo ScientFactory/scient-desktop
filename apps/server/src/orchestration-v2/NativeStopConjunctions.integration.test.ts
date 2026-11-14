@@ -319,6 +319,7 @@ emit({ kind: "ready" });
               .pipe(Effect.orDie);
           return {
             stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
+            renameSession: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -365,6 +366,7 @@ emit({ kind: "ready" });
         }).pipe(Effect.orDie),
       forkSession: () => Effect.die("No fork in Stop conjunction proof"),
       subagentLaunchToolUseId: () => Effect.succeed(null),
+      subagentModel: () => Effect.succeed(null),
       assertComplete: Effect.void,
     },
   });

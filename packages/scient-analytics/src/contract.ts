@@ -1,5 +1,6 @@
 export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
+import { analyticsFailureCode } from "./failureCodes.ts";
 import {
   ANALYTICS_CONTRACT_REVISION,
   EVENT_NAME_PATTERN,
@@ -52,6 +53,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "provider.lifecycle.completed",
   "provider.lifecycle.failed",
   "provider.lifecycle.cancelled",
+  "provider.runtime.first_pick",
   "project.added",
   "project.add.failed",
   "project.opened",
@@ -251,6 +253,9 @@ const LIFECYCLE_ACTIONS = new Set([
   "sign-out",
   "source-switch",
 ]);
+const LIFECYCLE_TRIGGERS = new Set(["user", "background"]);
+const DOWNLOAD_SOURCES = new Set(["primary", "fallback"]);
+const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
   "downloading",
@@ -343,6 +348,17 @@ const OPERATION_KINDS = new Set([
 ]);
 const TRIGGERS = new Set(["user", "agent", "automation", "other"]);
 const PROVIDER_STATES = new Set(["ready", "warning", "error", "disabled"]);
+const STATUS_CHECK_FAILURES = new Set([
+  "version_timeout",
+  "version_failed",
+  "start_failed",
+  "busy",
+  "command_timeout",
+  "command_failed",
+  "exit",
+  "parse",
+  "other",
+]);
 const DELIVERY_CLASSES = new Set([
   "idle",
   "delivered",
@@ -356,6 +372,7 @@ const PLATFORM_VALUES = new Set(["macos", "windows", "linux", "other"]);
 const ARCHITECTURE_VALUES = new Set(["arm64", "x64", "other"]);
 const SHUTDOWN_CLASSES = new Set(["graceful", "forced", "crash", "unknown"]);
 const TURN_FAILURE_CLASSES = new Set([
+  "usage_limit",
   "provider_error",
   "transport_error",
   "permission_error",
@@ -410,7 +427,7 @@ const REVERT_FAILURE_CLASSES = new Set([
   "validation",
   "unknown",
 ]);
-const VOICE_ENGINE_CLASSES = new Set(["local-whisper", "system", "other"]);
+const VOICE_ENGINE_CLASSES = new Set(["local-whisper", "chatgpt", "system", "other"]);
 const VOICE_LANGUAGE_MODES = new Set(["automatic", "explicit", "unknown"]);
 const VOICE_FAILURE_CLASSES = new Set([
   "permission",
@@ -533,6 +550,7 @@ const TOOL_MODES = new Set(["async", "wait"]);
 const TOOL_WORKSPACES = new Set(["scratch", "root", "worktree", "existing_worktree"]);
 const DELEGATED_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const DELEGATED_TASK_WAKES = new Set(["always", "settled_only"]);
+const DELEGATED_TASK_FAILURE_PHASES = ["before_provider", "provider", "unknown"];
 const SURFACES = new Set([
   "files",
   "preview",
@@ -687,6 +705,23 @@ function optionalProperties(
   return properties;
 }
 
+/** A failure code, kept only when it is one of `provider`'s known categories. */
+function failureCodeProperty(
+  provider: string,
+  input: Readonly<Record<string, unknown>>,
+): { failureCode?: string } {
+  const code = analyticsFailureCode(provider, property(input, "failureCode"));
+  return code === undefined ? {} : { failureCode: code };
+}
+
+/** A provider's HTTP status, kept only as a real status code. */
+function httpStatusProperty(input: Readonly<Record<string, unknown>>): { httpStatus?: number } {
+  const value = property(input, "httpStatus");
+  return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599
+    ? { httpStatus: value }
+    : {};
+}
+
 function clientProperties(input: Readonly<Record<string, unknown>>) {
   return {
     surface: normalizedEnum(property(input, "surface"), CLIENT_SURFACES),
@@ -765,6 +800,23 @@ export function modelKey(model: unknown): string {
     MODEL_KEY_ALIASES[withoutPinnedVersion] ??
     withoutPinnedVersion;
   return canonical === "" ? normalized : canonical;
+}
+
+function byteBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value === 0) return "0";
+  if (value < 10 * 1024 ** 2) return "under-10mb";
+  if (value < 50 * 1024 ** 2) return "10-50mb";
+  if (value < 100 * 1024 ** 2) return "50-100mb";
+  return "over-100mb";
+}
+
+function percentBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 25) return "0-24";
+  if (value < 50) return "25-49";
+  if (value < 75) return "50-74";
+  return "75-100";
 }
 
 export function durationBucket(value: unknown): string {
@@ -894,6 +946,14 @@ function normalizeEvent(
           provider,
           from: normalizedEnum(property(input, "from"), PROVIDER_STATES),
           to: normalizedEnum(property(input, "to"), PROVIDER_STATES),
+          ...(property(input, "checkFailure") === undefined
+            ? {}
+            : {
+                checkFailure: normalizedEnum(
+                  property(input, "checkFailure"),
+                  STATUS_CHECK_FAILURES,
+                ),
+              }),
         },
       };
     case "provider.runtime.source.changed":
@@ -922,6 +982,28 @@ function normalizeEvent(
           stage: normalizedEnum(property(input, "stage"), LIFECYCLE_STAGES),
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
+          trigger: normalizedEnum(property(input, "trigger"), LIFECYCLE_TRIGGERS, "user"),
+          ...optionalProperties(input, {
+            attempt: "count",
+            downloadSource: DOWNLOAD_SOURCES,
+            compressed: "boolean",
+          }),
+          ...(property(input, "resumedBytes") === undefined
+            ? {}
+            : { resumedBucket: byteBucket(property(input, "resumedBytes")) }),
+        },
+      };
+    case "provider.runtime.first_pick":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          provider,
+          state: normalizedEnum(property(input, "state"), FIRST_PICK_STATES),
+          ...(property(input, "percent") === undefined
+            ? {}
+            : { percentBucket: percentBucket(property(input, "percent")) }),
         },
       };
     case "scient.operation.started":
@@ -1147,7 +1229,18 @@ function normalizeEvent(
             crossProvider: "boolean",
             completionWake: DELEGATED_TASK_WAKES,
             durationSeconds: "count",
+            failureClass: TURN_FAILURE_CLASSES,
           }),
+          ...failureCodeProperty(normalizedProvider(property(input, "targetProvider")), input),
+          ...(property(input, "failurePhase") === undefined
+            ? {}
+            : {
+                failurePhase: closedCategory(
+                  property(input, "failurePhase"),
+                  DELEGATED_TASK_FAILURE_PHASES,
+                ),
+              }),
+          ...httpStatusProperty(input),
         },
       };
     case "provider.session.started":
@@ -1314,6 +1407,7 @@ function normalizeEvent(
           ...optionalProperties(input, {
             browserToolCalls: "count",
             browserToolFailures: "count",
+            retryAttempts: "count",
           }),
         },
       };
@@ -1325,7 +1419,13 @@ function normalizeEvent(
         properties: {
           provider,
           modelKey: modelKey(property(input, "model")),
-          ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
+          ...optionalProperties(input, {
+            browserToolCalls: "count",
+            browserToolFailures: "count",
+            retryAttempts: "count",
+          }),
+          ...failureCodeProperty(provider, input),
+          ...httpStatusProperty(input),
           failureClass: normalizedEnum(property(input, "failureClass"), TURN_FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
         },

@@ -105,6 +105,26 @@ describe("Esc in a shortcut recorder", () => {
   });
 });
 
+it("Esc in the keybindings search clears the query without closing Settings", async () => {
+  const onOpenChange = vi.fn();
+  await using _screen = await render(
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogPopup>
+        <DialogTitle>Settings</DialogTitle>
+        <KeybindingsSettingsPanel />
+      </DialogPopup>
+    </Dialog>,
+  );
+  // SCIENT-FORK: Scient names the field "Search shortcuts".
+  const search = page.getByRole("searchbox", { name: "Search shortcuts" });
+  await search.fill("sidebar");
+
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(search).toHaveValue("");
+  expect(onOpenChange).not.toHaveBeenCalled();
+});
+
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
   await using screen = await render(
     <RegistryProvider>

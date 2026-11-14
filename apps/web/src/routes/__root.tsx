@@ -42,6 +42,9 @@ import { DevReplayHost } from "../components/DevReplayHost";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
+// SCIENT-FORK:START — on the desktop, signing in sets up Scient Connect.
+import { ScientConnectBridge } from "../scient/connect/ScientConnectBridge";
+// SCIENT-FORK:END
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
@@ -51,6 +54,7 @@ import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepA
 import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { ConnectDeviceApprovalCoordinator } from "../components/ConnectDeviceApprovalCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
@@ -83,6 +87,7 @@ import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/serv
 import { readProject } from "../state/entities";
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
+import { isChunkLoadError } from "../lib/chunkReloadGuard";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
 // SCIENT-FORK:START hosted-landing
@@ -213,7 +218,9 @@ function RootRouteBranch() {
       ) : null}
       {isElectron ? <RunningThreadKeepAlive /> : null}
       <RelayClientInstallDialog />
-      <ConnectOnboardingDialog />
+      {/* SCIENT-FORK:START — on the desktop, signing in sets up Scient Connect; no wizard. */}
+      {isElectron ? <ScientConnectBridge /> : <ConnectOnboardingDialog />}
+      {/* SCIENT-FORK:END */}
       <SshPasswordPromptDialog />
       <SnapShotCoordinator />
       <ScientAnswerBadgeCoordinator />
@@ -232,6 +239,7 @@ function RootRouteBranch() {
       <ShareLinkDialogHost />
       {/* SCIENT-FORK:END */}
       <ProjectCloneToastCoordinator />
+      <ConnectDeviceApprovalCoordinator />
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
       {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
@@ -336,7 +344,12 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
       {/* SCIENT-FORK:END */}
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void router.invalidate()}>
+        <Button
+          size="sm"
+          onClick={() =>
+            isChunkLoadError(error) ? window.location.reload() : void router.invalidate()
+          }
+        >
           Try again
         </Button>
         <Button size="sm" variant="outline" onClick={() => requestDesktopReload(false)}>

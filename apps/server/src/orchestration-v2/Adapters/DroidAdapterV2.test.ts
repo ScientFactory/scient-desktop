@@ -3183,8 +3183,11 @@ it.layer(testLayer, { excludeTestServices: true })(
               `
         const normalPrompt = onPrompt;
         onPrompt = message => {if (state.prompts > 1 || fs.existsSync(__CONTROL_PATH__)) return normalPrompt(message);
+          let finished = false;
+          const finish = () => {if (finished || !fs.existsSync(__CONTROL_PATH__)) return; finished = true; watcher.close(); normalPrompt(message);};
+          const watcher = fs.watch(".", finish);
           update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Held active prompt."}});
-          const watcher = fs.watch(".", () => {if (!fs.existsSync(__CONTROL_PATH__)) return; watcher.close(); normalPrompt(message);});
+          finish();
         };
       `;
             const h = yield* harness(false, false, false, undefined, {
