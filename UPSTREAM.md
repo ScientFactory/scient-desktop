@@ -646,7 +646,7 @@ The current committed alignment through
 [the 2026-11-14 997b304dd6 receipt](docs/internals/t3-upstream-sync-20261114-997b304dd6.md).
 Literal merge `745632a426ff2bca9bec21a3d89e86f6aa3eb37c` has owned base
 `4a01db6ca4fa116eac8e7f0456f7a67fdd522d4f` and the frozen official target as parents, retaining
-the 150 official commits after `4d5d5f89d4`. Stopped threads resume natively where the agent
+the 150 official commits after `4d5d5f89d4`; PR #921 carries it. Stopped threads resume natively where the agent
 supports it, a new thread's first message travels in its creation command with Scient's skill
 selection, and Scient keeps its staging-repository checkpoint capture. A reply cut at the output
 token limit keeps Scient's completed-with-notice outcome. Release remains separate.
