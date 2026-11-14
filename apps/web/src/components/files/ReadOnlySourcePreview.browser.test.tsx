@@ -73,7 +73,7 @@ describe("ReadOnlySourcePreview", () => {
     const contents = text.replaceAll("\n", ending);
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(
-      <div className="flex h-[400px] flex-col">
+      <div style={{ display: "flex", flexDirection: "column", height: 400 }}>
         <ReadOnlySourcePreview name="notes.txt" text={contents} wordWrap={false} />
       </div>,
     );
@@ -92,7 +92,7 @@ describe("ReadOnlySourcePreview", () => {
   it("copies a partial selection after its rows scroll out of the mounted window", async () => {
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(
-      <div className="flex h-[400px] flex-col">
+      <div style={{ display: "flex", flexDirection: "column", height: 400 }}>
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
       </div>,
     );
@@ -118,7 +118,7 @@ describe("ReadOnlySourcePreview", () => {
   it("drops a selection scrolled out of the mounted window when a click lands on its edge", async () => {
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(
-      <div className="flex h-[400px] flex-col">
+      <div style={{ display: "flex", flexDirection: "column", height: 400 }}>
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
       </div>,
     );
@@ -142,7 +142,7 @@ describe("ReadOnlySourcePreview", () => {
   it("copies a drag that autoscrolls past the edge of the preview", async () => {
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(
-      <div className="flex h-[400px] flex-col">
+      <div style={{ display: "flex", flexDirection: "column", height: 400 }}>
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
       </div>,
     );
@@ -182,7 +182,7 @@ describe("ReadOnlySourcePreview", () => {
   it("extends a selection with Shift+click after its anchor scrolls out of the mounted window", async () => {
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(
-      <div className="flex h-[400px] flex-col">
+      <div style={{ display: "flex", flexDirection: "column", height: 400 }}>
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
       </div>,
     );
