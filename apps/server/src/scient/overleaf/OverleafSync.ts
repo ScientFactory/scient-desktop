@@ -3,12 +3,15 @@
  * authority and the stored token. Only a conflict stops a sync; editors are saved
  * in every window before any folder write, holding the connection throughout.
  * A connection is used only in its recorded checkout by its host project. */
-import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
+import {
+  acceptedNativeFilePublicationHelper,
+  nativeFilePublicationHelper,
+} from "../workspace/NativeFilePublication.ts";
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { ThreadId } from "@t3tools/contracts";
+import { overleafFilesystemRefusalText, ThreadId } from "@t3tools/contracts";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -85,6 +88,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       "workspace-not-authorized",
       /** No Overleaf token is saved. */
       "token-missing",
+      /** A token to save is empty, too long, or has spaces inside it. */
+      "token-invalid",
       "project-invalid",
       /** Overleaf refused the token or this account's access to the project. */
       "access-denied",
@@ -108,6 +113,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
         return "This Overleaf link does not belong to this project.";
       case "token-missing":
         return "No Overleaf Git token is saved. Save one first.";
+      case "token-invalid":
+        return "That isn't an Overleaf Git token. Copy it again from Overleaf.";
       case "project-invalid":
         return "That is not an Overleaf project link or ID.";
       case "access-denied":
@@ -277,6 +284,12 @@ export const overleafRefusalReason = (error: { readonly _tag: string }): string 
         );
 };
 
+/** The files an editor-save failure names, as a refusal carries them. */
+const editorUnsavedPaths = (error: OverleafEditorUnsavedError) => {
+  const paths = error.failures.map((failure) => failure.path);
+  return paths.length === 0 ? {} : { path: paths[0]!, ...(paths.length > 1 ? { paths } : {}) };
+};
+
 const isActionable = (error: unknown): error is { readonly _tag: string } =>
   typeof error === "object" &&
   error !== null &&
@@ -300,7 +313,15 @@ const refusedAfterProgress =
         (error) =>
           Effect.succeed({
             _tag: "refused" as const,
-            refusal: { reason: overleafRefusalReason(error) },
+            refusal: {
+              reason: overleafRefusalReason(error),
+              message:
+                overleafFilesystemRefusalText(overleafRefusalReason(error)) ??
+                (error as unknown as { readonly message: string }).message,
+              ...(error._tag === "OverleafEditorUnsavedError"
+                ? editorUnsavedPaths(error as unknown as OverleafEditorUnsavedError)
+                : {}),
+            },
             retried: progress.retried,
             settled: progress.settled,
           }),
@@ -328,7 +349,12 @@ export type OverleafSyncOutcome =
   | ({
       readonly _tag: "refused";
       /** The review's refusal, or an actionable refusal raised after progress. */
-      readonly refusal: { readonly reason: string; readonly path?: string };
+      readonly refusal: {
+        readonly reason: string;
+        readonly path?: string;
+        readonly paths?: ReadonlyArray<string>;
+        readonly message?: string;
+      };
     } & OverleafSyncProgress)
   /** A repeated request: its receipt, never a second sync. */
   | {
@@ -380,6 +406,7 @@ const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).
 export interface OverleafSyncOptions {
   readonly stateRoot: string;
   readonly environmentId: string;
+  /** Read at each use, never kept: the server's helper is null until it passes its checks. */
   readonly publicationHelper: string | null;
   /** Running threads with their checkout path and lineage; null when they could not be read. */
   readonly activeThreads: Effect.Effect<ReadonlyArray<{
@@ -434,7 +461,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const gitUrl = options.gitUrl ?? ((projectId: string) => `https://git.overleaf.com/${projectId}`);
   const coordinator = yield* OverleafCoordinator.make({
     stateRoot: options.stateRoot,
-    publicationHelper: options.publicationHelper,
+    get publicationHelper() {
+      return options.publicationHelper;
+    },
     reservations,
     volumeUuid,
     ...(options.hooks ? { hooks: options.hooks } : {}),
@@ -492,7 +521,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const connections = yield* makeOverleafConnections({
     stateRoot: options.stateRoot,
     environmentId: options.environmentId,
-    publicationHelper: options.publicationHelper,
+    get publicationHelper() {
+      return options.publicationHelper;
+    },
     reservations,
     volumeUuid,
     gitUrl,
@@ -724,7 +755,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const saveToken = Effect.fn("OverleafSync.saveToken")(function* (token: string) {
     const trimmed = token.trim();
     if (trimmed.length === 0 || /\s/u.test(trimmed) || trimmed.length > 512)
-      return yield* new OverleafSyncRefusedError({ reason: "token-missing" });
+      return yield* new OverleafSyncRefusedError({ reason: "token-invalid" });
     yield* credentialLock.withPermits(CREDENTIAL_PERMITS)(
       Effect.gen(function* () {
         yield* secrets.set(TOKEN_SECRET, new TextEncoder().encode(trimmed));
@@ -1335,12 +1366,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       callerBindingId,
       stillAuthorized: stillOwner,
     });
-    if (result._tag !== "done") return result;
-    return {
-      ...result,
-      finishedInterruptedSync:
-        recovered !== null && Exit.isSuccess(recovered) && recovered.value._tag === "recovered",
-    };
+    const finishedInterruptedSync =
+      recovered !== null && Exit.isSuccess(recovered) && recovered.value._tag === "recovered";
+    return { ...result, finishedInterruptedSync };
   });
 
   /**
@@ -1391,7 +1419,29 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     });
   });
 
+  /**
+   * Linux links recorded before the inode generation was read match their folder by inode
+   * alone, which a replacement folder can reuse; record each one's generation as early as
+   * the server can. A link in use now gets it at its next operation.
+   */
+  const recordGenerations = Effect.gen(function* () {
+    for (const document of yield* connections.documents) {
+      if (
+        document.state !== "active" ||
+        (!platformFileIdentity.lacksGeneration(document.checkout.identity) &&
+          !platformFileIdentity.lacksGeneration(document.folder.identity))
+      )
+        continue;
+      yield* OverleafCoordinator.reserveOverleafConnection(
+        reservations,
+        document.connectionId,
+        () => connections.followRestored(document.connectionId),
+      ).pipe(Effect.ignore);
+    }
+  }).pipe(Effect.ignore);
+
   return {
+    recordGenerations,
     tokenStatus,
     saveToken,
     removeToken,
@@ -1433,9 +1483,9 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const stateRoot = NodePath.join(config.stateDir, "overleaf");
-    const publicationHelper = yield* Effect.promise(() =>
-      resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-    );
+    const helperPath = config.filePublicationHelperPath;
+    // Checked before the service runs, as every later use expects; a refusal is checked again.
+    yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
     const engine = Layer.mergeAll(
       OverleafStateStoreModule.layer,
       WorkspaceApplierModule.layer,
@@ -1443,7 +1493,7 @@ export const layer = Layer.unwrap(
         Layer.provide(
           OverleafGitExecutor.layer({
             runtimeRoot: NodePath.join(stateRoot, "runtime"),
-            publicationHelper,
+            filePublicationHelperPath: helperPath,
           }),
         ),
       ),
@@ -1484,17 +1534,19 @@ export const layer = Layer.unwrap(
         const service = yield* make({
           stateRoot,
           environmentId,
-          publicationHelper: publicationHelper ?? null,
+          // Read at each use: a helper refused at startup is used once a later check passes.
+          get publicationHelper() {
+            return acceptedNativeFilePublicationHelper(helperPath) ?? null;
+          },
           activeThreads,
         });
+        yield* Effect.forkScoped(service.recordGenerations);
         const guard =
           <I, A, E, R>(operation: (input: I) => Effect.Effect<A, E, R>) =>
           (input: I) =>
             Effect.gen(function* () {
-              const helper = yield* Effect.promise(() =>
-                resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-              );
-              if (helper === undefined || helper !== publicationHelper)
+              const helper = yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
+              if (helper === undefined)
                 return yield* new OverleafSyncRefusedError({ reason: "helper-unavailable" });
               return yield* operation(input);
             });

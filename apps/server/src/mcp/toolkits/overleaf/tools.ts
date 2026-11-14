@@ -43,8 +43,6 @@ export class ScientOverleafToolError extends Schema.TaggedError<ScientOverleafTo
       "invalid-input",
       "project-required",
       "project-changed",
-      /** No active link with that ID in the thread's project. */
-      "not-linked",
       "workspace-not-authorized",
       "token-missing",
       "token-invalid",

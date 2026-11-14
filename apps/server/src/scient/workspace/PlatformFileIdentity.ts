@@ -26,6 +26,8 @@ const PersistentIdentity = Schema.Union([
     platform: Schema.Literal("linux"),
     volume: Schema.NonEmptyString,
     fileId: DecimalFileId,
+    // Absent only in records written before it was read; those compare by inode alone.
+    generation: Schema.optionalKey(DecimalFileId),
     subvolumeId: Schema.NullOr(DecimalFileId),
   }),
   Schema.Struct({
@@ -119,11 +121,19 @@ export const platformFileIdentity = {
   equal(left: StoredFileIdentity, right: StoredFileIdentity): boolean {
     const platform = (value: typeof left) => value.platform ?? "darwin";
     const subvolume = (value: typeof left) => ("subvolumeId" in value ? value.subvolumeId : null);
+    const generation = (value: typeof left) => ("generation" in value ? value.generation : null);
     return (
       platform(left) === platform(right) &&
       left.volume === right.volume &&
       left.fileId === right.fileId &&
-      subvolume(left) === subvolume(right)
+      subvolume(left) === subvolume(right) &&
+      (generation(left) === null ||
+        generation(right) === null ||
+        generation(left) === generation(right))
     );
+  },
+  /** A Linux record written before the generation was read: it matches by inode alone. */
+  lacksGeneration(stored: StoredFileIdentity): boolean {
+    return stored.platform === "linux" && !("generation" in stored);
   },
 };

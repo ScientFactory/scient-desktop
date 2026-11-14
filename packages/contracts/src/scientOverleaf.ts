@@ -33,7 +33,8 @@ export type ScientOverleafFilesystemRefusalReason =
 const FILESYSTEM_REFUSAL_TEXT: Record<ScientOverleafFilesystemRefusalReason, string> = {
   "unsupported-windows-version":
     "Update this project's server to Windows 10 version 1809 or later, then sync again.",
-  "unsupported-filesystem": "Move the project to a supported local disk, then relink it.",
+  "unsupported-filesystem":
+    "Move the project to a local disk formatted as APFS on a Mac, NTFS on Windows, or ext4, XFS or Btrfs on Linux, then relink it.",
   "network-filesystem":
     "Move the project from the network drive to a supported local disk, then relink it.",
   "volatile-filesystem": "Move the project to a permanent local disk, then relink it.",
@@ -277,7 +278,11 @@ export const ScientOverleafManageResult = Schema.Union([
     /** Disconnect finished an interrupted sync first, which may have written the folder. */
     finishedInterruptedSync: Schema.optional(Schema.Boolean),
   }),
-  Schema.TaggedStruct("refused", { reason: Schema.String }),
+  Schema.TaggedStruct("refused", {
+    reason: Schema.String,
+    /** Disconnect finished an interrupted sync before it was refused. */
+    finishedInterruptedSync: Schema.optional(Schema.Boolean),
+  }),
 ]);
 export type ScientOverleafManageResult = typeof ScientOverleafManageResult.Type;
 
@@ -383,6 +388,10 @@ export type ScientOverleafReview = typeof ScientOverleafReview.Type;
 export const ScientOverleafRefusal = Schema.Struct({
   reason: Schema.String,
   path: Schema.optional(ManuscriptPath),
+  /** Every name the refusal concerns, when it is more than one (two spellings of a name). */
+  paths: Schema.optional(Schema.Array(ManuscriptPath)),
+  /** The server's fixed sentence for a refusal raised after the folder was written. */
+  message: Schema.optional(Schema.String),
 });
 export type ScientOverleafRefusal = typeof ScientOverleafRefusal.Type;
 

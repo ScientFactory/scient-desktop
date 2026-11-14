@@ -3,7 +3,7 @@
  * says how its apply ended, so a replan that wrote nothing is never shown as
  * restored. The replan comes from the real engine, with a late writer.
  */
-import { ScientOverleafRestoreResult } from "@t3tools/contracts";
+import { ScientOverleafRefusal, ScientOverleafRestoreResult } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -16,9 +16,38 @@ import {
   world,
   write,
 } from "./OverleafCoordinator.testkit.ts";
-import { restoreView } from "./http.ts";
+import { refusalView, restoreView } from "./http.ts";
 
 const decode = Schema.decodeUnknownSync(ScientOverleafRestoreResult);
+const decodeRefusal = Schema.decodeSync(ScientOverleafRefusal);
+
+describe("Overleaf refusal view", () => {
+  it("names every file a refusal concerns", () => {
+    const view = (refusal: { readonly reason: string; readonly [field: string]: string }) =>
+      decodeRefusal(refusalView(refusal));
+    expect(view({ reason: "path-alias", first: "Figure.png", second: "figure.png" })).toEqual({
+      reason: "path-alias",
+      paths: ["Figure.png", "figure.png"],
+    });
+    expect(view({ reason: "alias-rename", from: "intro.tex", to: "Intro.tex" }).paths).toEqual([
+      "intro.tex",
+      "Intro.tex",
+    ]);
+    expect(view({ reason: "held-file-clash", path: "fig", other: "fig/a.png" })).toEqual({
+      reason: "held-file-clash",
+      path: "fig",
+      paths: ["fig", "fig/a.png"],
+    });
+    expect(view({ reason: "unreviewed-path", path: "a.tex", onDisk: "A.tex" }).paths).toEqual([
+      "a.tex",
+      "A.tex",
+    ]);
+    expect(view({ reason: "held-file-clash", path: "fig", other: "fig" })).toEqual({
+      reason: "held-file-clash",
+      path: "fig",
+    });
+  });
+});
 
 describe.skipIf(!hasPrivateFoldersAndIdentity)("Overleaf HTTP views", () => {
   it.live("a restore whose apply wrote nothing says so, and one that wrote says restored", () =>

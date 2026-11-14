@@ -383,6 +383,10 @@
       "types": "./src/scientThreadLinks.ts",
       "import": "./src/scientThreadLinks.ts"
     },
+    "./scientAgentModelFallback": {
+      "types": "./src/scientAgentModelFallback.ts",
+      "import": "./src/scientAgentModelFallback.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"

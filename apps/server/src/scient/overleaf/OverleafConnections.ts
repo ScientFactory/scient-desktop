@@ -956,7 +956,10 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     );
   });
 
-  /** Records a restored folder as the link's own. Run while holding the connection. */
+  /**
+   * Records a restored folder as the link's own, and gives a Linux record from before
+   * generations were read its folder's generation. Run while holding the connection.
+   */
   const followRestored = Effect.fn("OverleafConnections.followRestored")(function* (
     connectionId: string,
   ) {
@@ -969,9 +972,13 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     if (
       platformFileIdentity.equal(checkout, document.checkout.identity) &&
       platformFileIdentity.equal(folder, document.folder.identity)
-    )
-      return;
-    if (!(yield* isRestored(document))) return;
+    ) {
+      if (
+        !platformFileIdentity.lacksGeneration(document.checkout.identity) &&
+        !platformFileIdentity.lacksGeneration(document.folder.identity)
+      )
+        return;
+    } else if (!(yield* isRestored(document))) return;
     yield* store.replaceConnection({
       expectedRevision: document.revision,
       next: {

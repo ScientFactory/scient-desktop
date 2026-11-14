@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as HostProcess from "./HostProcess.ts";
+import { securityDescriptorRefusal, type WindowsUser } from "./windowsSecurityDescriptor.ts";
 
 /** How long one native check (PowerShell's permission check, a capability inquiry) may run. */
 export const NATIVE_CHECK_DEADLINE_MS = 10_000;
@@ -34,13 +35,6 @@ export function armNativeCheckDeadline(child: NodeChildProcess.ChildProcess): ()
     return pastDeadline;
   };
 }
-
-/** Windows permission checks that passed, by what they looked at and when. */
-const checkedWindowsPermissions = new Map<string, { readonly key: string; readonly at: number }>();
-// PowerShell takes a second or more to start, so a pass is trusted this long while the
-// helper, its receipt and its folder stay as they were. Folders above change whenever
-// anything is created beside them, so their times say nothing about their permissions.
-const WINDOWS_PERMISSIONS_TRUSTED_MS = 60_000;
 
 export const publicationDigest = (bytes: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
@@ -120,43 +114,14 @@ async function validateArtifact(helper: string, attempt: number): Promise<string
           );
     if (!matches) throw new Error("Native publication is not a host Mach-O executable.");
   }
-  const permissionsKey =
-    platform === "win32" ? await windowsPermissionsKey(helper, receiptPath) : "";
-  const checked = checkedWindowsPermissions.get(helper);
-  if (
-    platform === "win32" &&
-    (checked?.key !== permissionsKey ||
-      performance.now() - checked.at > WINDOWS_PERMISSIONS_TRUSTED_MS)
-  ) {
-    const command = `
-$ErrorActionPreference = 'Stop'
-$allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
-$directory = Split-Path $env:SCIENT_PUBLICATION_VALIDATE
-$files = @($env:SCIENT_PUBLICATION_VALIDATE, $directory, (Join-Path $directory 'publication-artifact.json'))
-$ancestor = Split-Path $directory
-while ($ancestor) {
-  $files += $ancestor
-  $parent = Split-Path $ancestor
-  if ($parent -eq $ancestor) { break }
-  $ancestor = $parent
-}
-foreach ($file in $files) {
-  $mask = if ($file -in $files[0..2]) { 0xD0156 } else { 0xD0040 }
-  $acl = if ([IO.Directory]::Exists($file)) { [IO.Directory]::GetAccessControl($file) } else { [IO.File]::GetAccessControl($file) }
-  $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-  if ($owner -notin $allowed) { throw 'Unexpected native resource owner' }
-  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-    if ($rule.AccessControlType -eq 'Allow' -and !($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -and $rule.IdentityReference.Value -notin $allowed -and ($rule.FileSystemRights -band $mask)) { throw 'Native resource is writable by another principal' }
-  }
-}`;
+  if (platform === "win32") {
+    const permissionsKey = await windowsPermissionsKey(helper, receiptPath);
     // Asynchronous: PowerShell takes a second or more to start, and a synchronous launch
     // would hold the whole server for that long. Checks asked meanwhile share this one.
     const running = `${helper}\0${permissionsKey}`;
     let check = runningWindowsChecks.get(running);
     if (!check) {
-      check = checkWindowsPermissions(helper, command).finally(() =>
-        runningWindowsChecks.delete(running),
-      );
+      check = checkWindowsPermissions(helper).finally(() => runningWindowsChecks.delete(running));
       runningWindowsChecks.set(running, check);
     }
     await check;
@@ -165,13 +130,53 @@ foreach ($file in $files) {
       if (attempt >= 3) throw new Error("Native publication resource kept changing while checked.");
       return validateArtifact(helper, attempt + 1);
     }
-    checkedWindowsPermissions.set(helper, { key: permissionsKey, at: performance.now() });
   }
   await NodeFSP.access(
     helper,
     platform === "win32" ? NodeFSP.constants.F_OK : NodeFSP.constants.X_OK,
   );
   return helper;
+}
+/**
+ * What the Windows permission check reads: the helper, its folder and its receipt, which no
+ * other principal may change, then every folder above, from which none may delete them.
+ */
+export function windowsPermissionTargets(helper: string) {
+  const directory = NodePath.dirname(helper);
+  const targets = [helper, directory, NodePath.join(directory, "publication-artifact.json")].map(
+    (path) => ({ path, mask: 0xd0156 }),
+  );
+  for (let path = directory; path !== NodePath.dirname(path);) {
+    path = NodePath.dirname(path);
+    targets.push({ path, mask: 0xd0040 });
+  }
+  return targets;
+}
+/**
+ * Prints each path's security descriptor on its own line. Only a cmdlet and a property
+ * read, so Constrained Language Mode (AppLocker, WDAC) runs it as it is.
+ */
+export const WINDOWS_PERMISSIONS_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1"
+foreach ($path in $env:SCIENT_PUBLICATION_ACL_PATHS -split '\\n') { (Microsoft.PowerShell.Security\\Get-Acl -LiteralPath $path).Sddl }`;
+/**
+ * Why the descriptors PowerShell printed for `targets` refuse the helper: an owner or a
+ * write right outside the user, SYSTEM, Administrators and TrustedInstaller.
+ */
+export function windowsPermissionsRefusal(
+  targets: ReadonlyArray<{ readonly path: string; readonly mask: number }>,
+  output: string,
+  user: WindowsUser,
+) {
+  const descriptors = output.split(/\r?\n/u).filter((line) => line.trim() !== "");
+  if (descriptors.length !== targets.length)
+    return "Native resource permissions were not read for every folder.";
+  for (const [index, { path, mask }] of targets.entries()) {
+    const refusal = securityDescriptorRefusal(descriptors[index]!.trim(), mask, user);
+    if (refusal !== undefined) return `${refusal} (${path})`;
+  }
+  return undefined;
 }
 const runningWindowsChecks = new Map<string, Promise<unknown>>();
 /** What changes when the helper, its receipt or its folder is replaced or re-permissioned. */
@@ -184,29 +189,74 @@ const windowsPermissionsKey = async (helper: string, receiptPath: string) =>
       }),
     )
   ).join("|");
-/** Settles only once PowerShell has closed, so a retry never overlaps it. */
-const checkWindowsPermissions = (helper: string, command: string) =>
-  new Promise<void>((resolve, reject) => {
+/** Settles only once the program has closed, so a retry never overlaps it. */
+const runPermissionsProgram = (
+  file: string,
+  args: ReadonlyArray<string>,
+  env?: NodeJS.ProcessEnv,
+) =>
+  new Promise<string>((resolve, reject) => {
+    // PowerShell 7 points PSModulePath at its own modules, which Windows PowerShell can't
+    // load, so a server started from a pwsh terminal would find no Get-Acl.
+    const inherited = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "PSMODULEPATH"),
+    );
     const child = NodeChildProcess.execFile(
-      NodePath.join(
-        process.env.SystemRoot ?? "C:/Windows",
-        "System32/WindowsPowerShell/v1.0/powershell.exe",
-      ),
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-EncodedCommand",
-        Buffer.from(command, "utf16le").toString("base64"),
-      ],
-      { env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper }, windowsHide: true },
-      (error) => {
+      NodePath.join(process.env.SystemRoot ?? "C:/Windows", "System32", file),
+      args,
+      { env: { ...inherited, ...env }, windowsHide: true },
+      (error, stdout) => {
         // Too much output is a refusal, whenever it was noticed.
         const overflow =
           (error as { code?: unknown } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
         if (pastDeadline() && !overflow) reject(new NativeCheckDeadlineError("permissions"));
         else if (error) reject(error);
-        else resolve();
+        else resolve(stdout);
       },
     );
     const pastDeadline = armNativeCheckDeadline(child);
   });
+let currentUser: Promise<WindowsUser> | undefined;
+/** The user's SID, which `whoami` gives without .NET, and whether it is a local account. */
+export function windowsUserSid() {
+  currentUser ??= runPermissionsProgram("whoami.exe", ["/user", "/fo", "csv", "/nh"]).then(
+    (output) => {
+      const found = /^"([^"\\]*)\\[^"]*","(S-1-\d+(?:-\d+)+)"\s*$/u.exec(output.trim());
+      if (found === undefined || found === null)
+        throw new Error("whoami did not report the user's SID.");
+      const computer = process.env.COMPUTERNAME;
+      return {
+        sid: found[2]!,
+        local: computer !== undefined && found[1]!.toUpperCase() === computer.toUpperCase(),
+      };
+    },
+  );
+  currentUser.catch(() => {
+    currentUser = undefined;
+  });
+  return currentUser;
+}
+/**
+ * The permissions were read and refuse the helper: asking again soon costs another PowerShell
+ * launch for the same answer. A failed launch, a failed read or a deadline is not one.
+ */
+// @effect-diagnostics-next-line extendsNativeError:off -- Plain-Promise validation; callers test it with instanceof.
+export class WindowsPermissionsRefusedError extends Error {}
+async function checkWindowsPermissions(helper: string) {
+  const targets = windowsPermissionTargets(helper);
+  const [user, output] = await Promise.all([
+    windowsUserSid(),
+    runPermissionsProgram(
+      "WindowsPowerShell/v1.0/powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(WINDOWS_PERMISSIONS_SCRIPT, "utf16le").toString("base64"),
+      ],
+      { SCIENT_PUBLICATION_ACL_PATHS: targets.map(({ path }) => path).join("\n") },
+    ),
+  ]);
+  const refusal = windowsPermissionsRefusal(targets, output, user);
+  if (refusal !== undefined) throw new WindowsPermissionsRefusedError(refusal);
+}

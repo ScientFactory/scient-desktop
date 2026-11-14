@@ -46,7 +46,8 @@ import {
 } from "../scient/workspace/WorkspaceFileMutations.ts";
 import {
   ensureNativePrivateRetentionDirectory,
-  resolveNativeFilePublicationHelperPath,
+  acceptedNativeFilePublicationHelper,
+  nativeFilePublicationHelper,
 } from "../scient/workspace/NativeFilePublication.ts";
 import { RetainedMutationError } from "../scient/workspace/RetainedFileMutation.ts";
 import {
@@ -235,9 +236,9 @@ export const make = Effect.gen(function* () {
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const config = yield* ServerConfig.ServerConfig;
-  const nativePublicationHelper = yield* Effect.promise(() =>
-    resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-  );
+  const helperPath = config.filePublicationHelperPath;
+  // Checked before saves start, so they begin on the path they keep; a refusal is checked again.
+  yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
   const configuredRetentionStorageDirectory =
     config.filePublicationRetentionRoot ?? path.join(config.baseDir, "file-publications");
   // Resolve only ancestors: the final private directory must still reject a symlink.
@@ -271,6 +272,7 @@ export const make = Effect.gen(function* () {
     if (!parent.isDirectory() || parent.isSymbolicLink()) {
       throw new Error("Publication parent binding changed.");
     }
+    const nativePublicationHelper = await nativeFilePublicationHelper(helperPath);
     if (nativePublicationHelper === undefined) {
       throw new RetainedMutationError(
         "unavailable",
@@ -894,7 +896,9 @@ export const make = Effect.gen(function* () {
     workspacePaths,
     workspaceEntries,
     readFile: (input) => readResolvedFile(input, "contained"),
-    ...(nativePublicationHelper === undefined ? {} : { nativePublicationHelper }),
+    get nativePublicationHelper() {
+      return acceptedNativeFilePublicationHelper(helperPath);
+    },
     resolveRetentionStorageDirectory,
     retentionDirectoryFor,
     retentionLimitBytes: config.filePublicationRetentionLimitBytes ?? null,

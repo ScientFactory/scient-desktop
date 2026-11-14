@@ -52,6 +52,24 @@ export interface OverleafSyncContext {
   readonly quiet?: boolean;
 }
 
+/**
+ * Runs a component's async operation and always settles it. Outside the components: the
+ * React Compiler does not compile try/finally.
+ */
+export async function settleOverleafOperation(
+  task: () => Promise<void>,
+  failed: (error: unknown) => void,
+  settled: () => void,
+): Promise<void> {
+  try {
+    await task();
+  } catch (error) {
+    failed(error);
+  } finally {
+    settled();
+  }
+}
+
 /** Opens the project's own page on Overleaf. */
 export function openOverleafProject(projectId: string): void {
   const url = overleafProjectUrl(projectId);
@@ -80,7 +98,10 @@ export async function unlinkOverleaf(
       connectionId,
       requestId: overleafRequestId(),
     });
-    if (result._tag === "refused") return failed(refusalText({ reason: result.reason }));
+    if (result._tag === "refused")
+      return failed(
+        refusalText({ reason: result.reason }, "sync", result.finishedInterruptedSync === true),
+      );
     // What this window remembered of the link (its review, decisions) goes too.
     forgetOverleafConnection(environmentId, connectionId);
     toastManager.add({
@@ -282,7 +303,9 @@ export async function readOverleafChanges(
             _tag: "failed",
             message:
               result._tag === "refused"
-                ? [settled, refusalText(result.refusal)].filter(Boolean).join(" ")
+                ? [settled, refusalText(result.refusal, "sync", settled !== null)]
+                    .filter(Boolean)
+                    .join(" ")
                 : "An interrupted sync was finished first. Read the changes again.",
           },
     );
