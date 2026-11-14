@@ -2308,8 +2308,9 @@ is classified.
 ## Copied guest links
 
 Forks made before #914 copied their source's `guestShare`, so an invite to the source could open
-the fork. The `copied-guest-share` seams in T3's `ProjectionStore.findGuestShareThreadId` and
-`GuestShareService.authorize` accept a share only on a thread created before it
-(`scient/guest/ownGuestShare.ts`): a share made for a thread always comes after the thread. They
-also protect forks already in users' databases, whose events still carry the copy. T3 has no copy
-path, so it needs no such check.
+the fork. A thread is always created without a share of its own, so a share already in its
+`thread.created` event was copied (`scient/guest/ownGuestShare.ts`). The `copied-guest-share`
+seams in T3's `ProjectionStore.findGuestShareThreadId` and `GuestShareService.authorize` refuse
+such a share, for invites and for sessions already redeemed. They protect forks already in users'
+databases, whose events still carry the copy, and need `thread.created` events to stay unpruned,
+as T3's maintenance keeps them. T3 has no copy path, so it needs no such check.
