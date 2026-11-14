@@ -238,4 +238,48 @@ describe("analytics worker delivery", () => {
     expect(await flushed).toBe(50);
     expect(interrupted.fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("starts another slow upload only while its deadline fits the flush budget", async () => {
+    const uploads = [0, 1].map(() => ({
+      started: Promise.withResolvers<void>(),
+      reply: Promise.withResolvers<void>(),
+    }));
+    let next = 0;
+    const slow: FetchStep = async (init) => {
+      const upload = uploads[next++];
+      upload?.started.resolve();
+      await upload?.reply.promise;
+      return accepted(init);
+    };
+    const worker = await startWorker([], slow);
+    await worker.enqueue(Array.from({ length: 150 }, () => draft()));
+    const flushed = worker.flush();
+    for (const upload of uploads) {
+      await upload.started.promise;
+      await vi.advanceTimersByTimeAsync(10_000);
+      upload.reply.resolve();
+    }
+    // A third upload starting at 20 s could run past the 30 s budget, so the flush ends here.
+    expect(await flushed).toBe(100);
+    expect(worker.fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("aborts a stalled deletion when consent changes, so consent is acknowledged", async () => {
+    const deleting = Promise.withResolvers<void>();
+    const worker = await startWorker([
+      (init) => {
+        deleting.resolve();
+        return untilAborted(init);
+      },
+    ]);
+    const deleted = worker.command((requestId) => ({ type: "delete-data", requestId }));
+    await deleting.promise;
+    const consented = worker.command((requestId) => ({
+      type: "set-consent",
+      requestId,
+      consent: "off",
+    }));
+    expect(await deleted).toBe(0);
+    expect(await consented).toBe(0);
+  });
 });

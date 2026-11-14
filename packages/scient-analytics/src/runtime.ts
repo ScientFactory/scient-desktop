@@ -11,7 +11,7 @@ import {
 } from "./contract.ts";
 import {
   DELETE_DEADLINE_MS,
-  SEND_DEADLINE_MS,
+  FLUSH_DEADLINE_MS,
   type AnalyticsEventDraft,
   type AnalyticsWorkerCommand,
   type AnalyticsWorkerInput,
@@ -292,7 +292,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       return (
         (await request(
           (requestId) => ({ type: "flush", requestId }),
-          SEND_DEADLINE_MS + controlTimeoutMs,
+          FLUSH_DEADLINE_MS + controlTimeoutMs,
         )) ?? 0
       );
     },

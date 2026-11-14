@@ -12,6 +12,7 @@ import {
 import { AnalyticsOutbox, type PendingAnalyticsEvent } from "./outbox.ts";
 import {
   DELETE_DEADLINE_MS,
+  FLUSH_DEADLINE_MS,
   SEND_DEADLINE_MS,
   type AnalyticsWorkerCommand,
   type AnalyticsWorkerInput,
@@ -247,7 +248,7 @@ export function startAnalyticsWorker(
       return { kind: "transport", deliveryClass: "network", errorClass: "network" };
     } finally {
       clearTimeout(timeout);
-      activeAbortController = null;
+      if (activeAbortController === controller) activeAbortController = null;
     }
   };
 
@@ -309,10 +310,15 @@ export function startAnalyticsWorker(
 
     const operation = (async () => {
       let delivered = 0;
-      // Re-check between batches so close, consent and controls take over at once.
+      const started = Date.now();
+      // Re-check between batches so close, consent and controls take over at once, and start
+      // another upload only while its whole deadline fits in the flush's budget.
       for (
         let batches = 0;
-        batches < MAX_BATCHES_PER_FLUSH && canDeliver() && Date.now() >= transportRetryAt;
+        batches < MAX_BATCHES_PER_FLUSH &&
+        canDeliver() &&
+        Date.now() >= transportRetryAt &&
+        (batches === 0 || Date.now() - started + SEND_DEADLINE_MS <= FLUSH_DEADLINE_MS);
         batches += 1
       ) {
         const events = outbox.pending(BATCH_SIZE, Date.now());
@@ -409,6 +415,11 @@ export function startAnalyticsWorker(
         case "delete-data": {
           const deletionUrl = new URL("/v1/installations/delete", input.endpoint);
           control(command.requestId, async () => {
+            // Registered as the active request so a consent change or close can abort it.
+            const controller = new AbortController();
+            activeAbortController = controller;
+            const timeout = setTimeout(() => controller.abort(), DELETE_DEADLINE_MS);
+            timeout.unref();
             try {
               const response = await fetch(deletionUrl, {
                 method: "POST",
@@ -417,7 +428,7 @@ export function startAnalyticsWorker(
                   "X-Scient-Installation-Token": installation.token,
                 },
                 body: JSON.stringify({ schema_version: 1, installation_id: installation.id }),
-                signal: AbortSignal.timeout(DELETE_DEADLINE_MS),
+                signal: controller.signal,
                 redirect: "error",
               });
               if (!response.ok) return 0;
@@ -427,6 +438,9 @@ export function startAnalyticsWorker(
               return 1;
             } catch {
               return 0;
+            } finally {
+              clearTimeout(timeout);
+              if (activeAbortController === controller) activeAbortController = null;
             }
           });
           return;
