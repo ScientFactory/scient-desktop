@@ -46,8 +46,6 @@ import {
   connectorStatusText,
   entryName,
   entryNeedsSetup,
-  connectorFacts,
-  entryFacts,
   entryTagline,
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
@@ -286,9 +284,6 @@ export function ConnectorItem({
         connector.local?.commandLine ??
         connector.url
       }
-      facts={connectorFacts(entry, connector)
-        .map(([, value]) => value)
-        .join(" · ")}
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>
@@ -336,9 +331,6 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
         name={name}
         iconUrl={entry.iconUrl}
         tagline={entryTagline(entry)}
-        facts={entryFacts(entry)
-          .map(([, value]) => value)
-          .join(" · ")}
         status={actions.busy === "add" ? "Adding…" : null}
         trailing={
           entry.installedConnectorId === undefined ? (
