@@ -12,7 +12,7 @@ import {
   type RoomRole,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, LinkIcon, MessagesSquareIcon, UsersIcon, XIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LinkIcon, MessagesSquareIcon, ShareIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { guestShareDialogThreadAtom } from "~/components/chat/guestShareDialogState";
@@ -366,7 +366,7 @@ export function RoomIndicator({ threadRef }: { readonly threadRef: ScopedThreadR
           }
         >
           {shown.length === 0 ? (
-            <UsersIcon aria-hidden />
+            <ShareIcon aria-hidden />
           ) : (
             <span aria-hidden className="flex -space-x-1">
               {shown.map((person) => (
@@ -387,6 +387,7 @@ export function RoomIndicator({ threadRef }: { readonly threadRef: ScopedThreadR
               ) : null}
             </span>
           )}
+          Share
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           {joined.length === 0 ? "Invited. Nobody has joined yet." : names}
