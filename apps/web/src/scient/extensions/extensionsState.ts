@@ -110,7 +110,8 @@ export function createExtensionsAtoms<R, E>(
       tag: WS_METHODS.extensionsProviderStoreSearch,
       refreshTrigger: changesOf,
       staleTimeMs: 60_000,
-      idleTtlMs: 60_000,
+      // Kept for a while after leaving a category, so going back shows it at once.
+      idleTtlMs: 10 * 60_000,
     }),
     pluginKeys: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:plugin-keys",

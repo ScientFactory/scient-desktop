@@ -31,6 +31,7 @@ import type {
   ExtensionsDiagnostic,
   ExtensionsError,
   ProjectId,
+  ProviderInstanceId,
   ProviderPluginActionInput,
   ProviderPluginActionResult,
   ScientPluginInstallInput,
@@ -53,7 +54,8 @@ import type {
 
 /** Where an agent's chat runs, for a connector that runs in the project folder. */
 export interface ConnectorLocation {
-  readonly projectId: ProjectId;
+  readonly providerInstanceId?: ProviderInstanceId | undefined;
+  readonly projectId?: ProjectId | undefined;
   readonly worktreePath: string | null;
 }
 
@@ -178,11 +180,14 @@ export interface ConnectorRuntimeShape {
   /** Connectors a new session in this project may receive, plus user-facing skips. */
   readonly resolveDelivery: (input: {
     readonly projectId: ProjectId | undefined;
+    /** The session's agent, for connectors given to chosen agents only. */
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) => Effect.Effect<ConnectorDeliveryResolution>;
   /** Live grant re-check for each proxied request. */
   readonly isGranted: (input: {
     readonly connectorId: ConnectorId;
     readonly projectId: ProjectId | undefined;
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) => Effect.Effect<boolean>;
   /** Forward one MCP HTTP exchange with the vendor credential applied. Never fails: errors become JSON-RPC responses. */
   readonly forward: (request: ConnectorForwardRequest) => Effect.Effect<ConnectorForwardResponse>;
@@ -191,6 +196,8 @@ export interface ConnectorRuntimeShape {
     readonly workingFolder: string;
     readonly connector?: string | undefined;
     readonly name?: string | undefined;
+    /** The calling agent: a connector given to other agents only is not there for it. */
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) => Effect.Effect<
     Omit<Effect.Success<ReturnType<LocalConnectorAuthoring["copy"]>>, "variant">,
     ExtensionsError
