@@ -26,7 +26,13 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
-import { NativeSelect } from "~/components/ui/select";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
@@ -84,6 +90,7 @@ const failureMessage = (
 };
 
 const ROLES = ["watch", "discuss", "agent"] as const;
+const DURATIONS = ["day", "week", "month"] as const;
 
 function RoomDialog({
   threadRef,
@@ -129,7 +136,8 @@ function RoomDialog({
       input: { threadId: threadRef.threadId, action },
     });
 
-  const people = room?.participants ?? [];
+  const joined = (room?.participants ?? []).filter((participant) => participant.name !== null);
+  const unopened = (room?.participants ?? []).filter((participant) => participant.name === null);
   return (
     <Dialog open onOpenChange={(open) => (!open && !creating ? onClose() : null)}>
       <DialogPopup className="max-w-md">
@@ -141,62 +149,56 @@ function RoomDialog({
           <div className="flex flex-col gap-4">
             <section className="flex flex-col gap-2" aria-label="New invite">
               <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1">
-                  <NativeSelect
-                    aria-label="Permission"
+                <RolePicker label="Permission" size="sm" value={role} onChange={setRole} />
+                <Select
+                  value={duration}
+                  onValueChange={(next) => setDuration(next as RoomAccessDuration)}
+                >
+                  <SelectTrigger
                     size="sm"
-                    value={role}
-                    onChange={(event) => setRole(event.target.value as RoomRole)}
-                  >
-                    {ROLES.map((value) => (
-                      <option key={value} value={value}>
-                        {ROOM_ROLE_LABEL[value]}
-                      </option>
-                    ))}
-                  </NativeSelect>
-                </span>
-                <span className="w-24 shrink-0">
-                  <NativeSelect
+                    className="w-24 min-w-0 shrink-0"
                     aria-label="Access for"
-                    size="sm"
-                    value={duration}
-                    onChange={(event) => setDuration(event.target.value as RoomAccessDuration)}
                   >
-                    {(["day", "week", "month"] as const).map((value) => (
-                      <option key={value} value={value}>
+                    <SelectValue>{DURATION_LABEL[duration]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup alignItemWithTrigger={false}>
+                    {DURATIONS.map((value) => (
+                      <SelectItem key={value} value={value}>
                         {DURATION_LABEL[value]}
-                      </option>
+                      </SelectItem>
                     ))}
-                  </NativeSelect>
-                </span>
+                  </SelectPopup>
+                </Select>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="shrink-0"
+                  className="ms-auto shrink-0"
                   disabled={!canInvite || creating}
                   onClick={() => void createInvite()}
                 >
                   {isCopied ? <CheckIcon /> : <CopyIcon />}
-                  {isCopied ? "Copied" : "Copy link"}
+                  {/* Both words hold their space, so the button keeps its width when it changes. */}
+                  <span className="grid">
+                    <span className={cn("col-start-1 row-start-1", isCopied && "invisible")}>
+                      Copy link
+                    </span>
+                    <span className={cn("col-start-1 row-start-1", !isCopied && "invisible")}>
+                      Copied
+                    </span>
+                  </span>
                 </Button>
               </div>
-              {role === "agent" ? (
-                <p className="text-muted-foreground text-xs">
-                  The agent works on this computer, with your files and accounts.
-                </p>
-              ) : null}
               {error !== null ? (
                 <p role="alert" className="text-destructive text-xs">
                   {error}
                 </p>
               ) : null}
             </section>
-            {people.length > 0 ? (
+            {joined.length > 0 || unopened.length > 0 ? (
               <ul className="flex flex-col gap-1" aria-label="People in this room">
-                {people.map((participant) => (
+                {joined.map((participant) => (
                   <ParticipantRow
                     key={participant.id}
-                    threadRef={threadRef}
                     participant={participant}
                     online={online.has(participant.id)}
                     canManage={canOperate}
@@ -206,6 +208,27 @@ function RoomDialog({
                     onRemove={() => void act({ type: "remove", participantId: participant.id })}
                   />
                 ))}
+                {unopened.length > 0 ? (
+                  // Links nobody has opened yet are one line, not a row each: they are not people.
+                  <li className="flex h-7 items-center gap-2 ps-4 text-muted-foreground text-sm">
+                    <span className="min-w-0 flex-1 truncate">
+                      {unopened.length === 1
+                        ? "1 link not opened yet"
+                        : `${unopened.length} links not opened yet`}
+                    </span>
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      disabled={!canOperate}
+                      onClick={() => {
+                        for (const participant of unopened)
+                          void act({ type: "remove", participantId: participant.id });
+                      }}
+                    >
+                      {unopened.length === 1 ? "Cancel it" : "Cancel them"}
+                    </Button>
+                  </li>
+                ) : null}
               </ul>
             ) : null}
           </div>
@@ -248,8 +271,48 @@ function RoomDialog({
   );
 }
 
+const ROLE_HINT: Record<RoomRole, string> = {
+  watch: "Sees the thread live",
+  discuss: "Also chats with you",
+  agent: "Also uses the agent, on this computer",
+};
+
+/** What someone may do. The menu says what each choice means, so nothing appears beside it. */
+function RolePicker(props: {
+  readonly label: string;
+  readonly size: "sm" | "xs";
+  readonly value: RoomRole;
+  readonly disabled?: boolean;
+  readonly onChange: (role: RoomRole) => void;
+}) {
+  return (
+    <Select
+      value={props.value}
+      disabled={props.disabled}
+      onValueChange={(next) => props.onChange(next as RoomRole)}
+    >
+      <SelectTrigger
+        size={props.size}
+        className={cn("min-w-0 shrink-0", props.size === "sm" ? "w-36" : "w-32")}
+        aria-label={props.label}
+      >
+        <SelectValue>{ROOM_ROLE_LABEL[props.value]}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup alignItemWithTrigger={false} matchTriggerWidth={false}>
+        {ROLES.map((value) => (
+          <SelectItem key={value} value={value}>
+            <span className="flex flex-col py-0.5">
+              <span>{ROOM_ROLE_LABEL[value]}</span>
+              <span className="text-muted-foreground text-xs">{ROLE_HINT[value]}</span>
+            </span>
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
+}
+
 function ParticipantRow(props: {
-  readonly threadRef: ScopedThreadRef;
   readonly participant: RoomParticipant;
   readonly online: boolean;
   readonly canManage: boolean;
@@ -257,64 +320,27 @@ function ParticipantRow(props: {
   readonly onRemove: () => void;
 }) {
   const { participant } = props;
-  const inviteLink = useAtomCommand(serverEnvironment.threadRoomInviteLink, {
-    reportFailure: false,
-  });
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "invite link" });
   const name = participant.name ?? "Invited";
   return (
-    <li className="flex items-center gap-2">
+    <li className="flex h-7 items-center gap-2">
       <span
         aria-hidden
         className={cn("size-2 shrink-0 rounded-full", props.online ? "bg-success" : "bg-border")}
       />
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              className={cn(
-                "min-w-0 flex-1 truncate text-sm",
-                participant.name === null && "text-muted-foreground",
-              )}
-            />
-          }
-        >
+        <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-sm" />}>
           {name}
           <span className="sr-only">{props.online ? ", here now" : ""}</span>
         </TooltipTrigger>
         <TooltipPopup side="top">Access until {expiryLabel(participant.expiresAt)}</TooltipPopup>
       </Tooltip>
-      <span className="w-36 shrink-0">
-        <NativeSelect
-          aria-label={`Permission of ${name}`}
-          size="xs"
-          value={participant.role}
-          disabled={!props.canManage}
-          onChange={(event) => props.onRole(event.target.value as RoomRole)}
-        >
-          {ROLES.map((value) => (
-            <option key={value} value={value}>
-              {ROOM_ROLE_LABEL[value]}
-            </option>
-          ))}
-        </NativeSelect>
-      </span>
-      {participant.name === null ? (
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          aria-label="Copy invite link again"
-          onClick={async () => {
-            const result = await inviteLink({
-              environmentId: props.threadRef.environmentId,
-              input: { threadId: props.threadRef.threadId, participantId: participant.id },
-            });
-            if (result._tag === "Success") copyToClipboard(result.value.url);
-          }}
-        >
-          {isCopied ? <CheckIcon /> : <CopyIcon />}
-        </Button>
-      ) : null}
+      <RolePicker
+        label={`Permission of ${name}`}
+        size="xs"
+        value={participant.role}
+        disabled={!props.canManage}
+        onChange={props.onRole}
+      />
       <Button
         size="icon-xs"
         variant="ghost-muted"

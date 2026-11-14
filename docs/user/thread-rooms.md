@@ -22,9 +22,9 @@ Everyone sees the same thread. What differs is what each person can do:
   it. The agent runs on your computer with your files and accounts, so give this
   only to people you trust with that.
 
-Once someone joins, the header shows their faces instead of **Share**. Click them to
-change what someone can do, copy an invite again, remove someone, or **Stop
-sharing**. A change applies at once. Archiving the thread also ends sharing.
+Once someone joins, their faces appear beside **Share** in the header. Open it to
+change what someone can do, remove someone, cancel links nobody has opened yet, or
+**Stop sharing**. A change applies at once. Archiving the thread also ends sharing.
 Removing someone stops their access; it cannot take back what they already saw.
 
 **Publish a copy…** in the same dialog shares a read-only copy instead, which
