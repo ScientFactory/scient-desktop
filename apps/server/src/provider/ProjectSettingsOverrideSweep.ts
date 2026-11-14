@@ -34,13 +34,12 @@ export const sweep = Effect.gen(function* () {
   );
   if (overrides.length === 0) return;
 
-  // SCIENT-FORK:START — a `null` patch entry keeps title instructions for released clients, so
-  // orphans use the server-only removal.
-  const removed = overrides.flatMap(([projectId, patch]) =>
-    patch === null ? [projectId as ProjectId] : [],
+  // SCIENT-FORK:START — a merged patch keeps title instructions for released clients, so every
+  // entry is removed server-side first and only a kept cleanup policy is written back.
+  yield* serverSettings.removeProjectSettingsOverrides(
+    overrides.map(([projectId]) => projectId as ProjectId),
   );
   const kept = overrides.filter(([, patch]) => patch !== null);
-  if (removed.length > 0) yield* serverSettings.removeProjectSettingsOverrides(removed);
   if (kept.length === 0) return;
   // SCIENT-FORK:END
   yield* serverSettings.updateSettings({

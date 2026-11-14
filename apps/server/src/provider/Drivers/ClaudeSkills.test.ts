@@ -843,7 +843,13 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         });
         assert.deepEqual(
           legacySkills,
-          skills.map((skill) => ({ ...skill, enabled: false })),
+          // SCIENT-FORK:START — a managed settings file's override is read-only policy.
+          skills.map(({ canSetEnabled: _canSetEnabled, ...skill }) => ({
+            ...skill,
+            enabled: false,
+            enabledReadOnlyReason: "Managed by policy",
+          })),
+          // SCIENT-FORK:END
         );
       }
       yield* writeSkill(
@@ -871,6 +877,9 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           enabled: true,
           scope: "user",
           description: "Managed deploy.",
+          // SCIENT-FORK:START — a managed settings file's override is read-only policy.
+          enabledReadOnlyReason: "Managed by policy",
+          // SCIENT-FORK:END
         },
       ]);
       assert.deepEqual(

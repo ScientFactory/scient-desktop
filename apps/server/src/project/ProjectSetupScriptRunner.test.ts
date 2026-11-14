@@ -608,11 +608,14 @@ describe("ProjectSetupScriptRunner", () => {
         const written = writes[0] ?? "";
         const sentinel = /__T3_SETUP_DONE___[0-9a-f]{32}:/.exec(written)?.[0];
         expect(sentinel).toBeDefined();
-        expect(written).toBe(` ( bun install\r); printf '\\n${sentinel}%s\\n' "$?"\r`);
+        expect(written).toBe(
+          ` ( __t3_command=$(printf '%b_' 'bun install'); eval "\${__t3_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"\r`,
+        );
 
         // Output arrives in chunks; partial lines are buffered until a newline,
         // control sequences are stripped, and the echoed wrapper is hidden.
-        yield* emit(`( bun install\r\n> ); printf '\\n${sentinel}%s\\n' "$?"\r\n`);
+        // The terminal echoes the submitted line.
+        yield* emit(`${written.trim()}\r\n`);
         yield* emit("\u001b[32mResolving");
         yield* emit(" deps\u001b[0m\r\n");
         // Progress redraws separated by bare carriage returns are their own lines.
@@ -704,7 +707,8 @@ describe("ProjectSetupScriptRunner", () => {
     },
     {
       shell: "/bin/bash",
-      expected: /^ \( bun install\r\); printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' "\$\?"\r$/,
+      expected:
+        /^ \( __t3_command=\$\(printf '%b_' 'bun install'\); eval "\$\{__t3_command%_\}" \); printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' "\$\?"\r$/,
     },
   ])("wraps the command for the $shell syntax", ({ shell, expected }) => {
     const open = vi.fn(() =>
