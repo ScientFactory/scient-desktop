@@ -11,10 +11,13 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SqlError from "effect/sql/SqlError";
 
 import {
   increment,
@@ -26,6 +29,7 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 import { AttachmentRollbackPruneService } from "./AttachmentRollbackPruneService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -46,6 +50,8 @@ import {
   isCheckpointSettlementPending,
 } from "./scient-fork/CheckpointCaptureFinalAttempt.ts";
 // SCIENT-FORK:END checkpoint-capture-final-attempt
+
+const isProviderTurnControlError = Schema.is(ProviderTurnControlService.ProviderTurnControlError);
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -99,6 +105,7 @@ export const layerExecutor: Layer.Layer<
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
+  | ProjectionStore.ProjectionStoreV2
   | ServerSettings.ServerSettingsService
   | ScientForkEffectsContext
 > = Layer.effect(
@@ -115,6 +122,7 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
     // SCIENT-FORK: conversation-fork outbox effects.
     const scientForkEffects = yield* makeScientForkEffects;
@@ -144,7 +152,7 @@ export const layerExecutor: Layer.Layer<
               Effect.tapError(() =>
                 willRetry
                   ? Effect.void
-                  : threads.recoverDelegatedTask(effect.threadId, sourceRunId),
+                  : threads.recoverDelegatedTask(effect.threadId, { sourceRunId }),
               ),
               Effect.mapError(
                 (cause) =>
@@ -360,6 +368,9 @@ export const layerExecutor: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 providerTurnId: effect.request.providerTurnId,
                 messageId: effect.request.messageId,
+                ...(effect.request.modelSelection === undefined
+                  ? {}
+                  : { modelSelection: effect.request.modelSelection }),
               })
               .pipe(
                 Effect.tap(() =>
@@ -384,8 +395,8 @@ export const layerExecutor: Layer.Layer<
                 Effect.catch((error) =>
                   Effect.gen(function* () {
                     if (
-                      !("turnCompleted" in error) ||
-                      !error.turnCompleted ||
+                      !isProviderTurnControlError(error) ||
+                      (!error.turnCompleted && !error.steerDeclined) ||
                       effect.request.type !== "provider-turn.steer"
                     ) {
                       return yield* error;
@@ -402,7 +413,8 @@ export const layerExecutor: Layer.Layer<
                     // Notifications must be queued messages.
                     const queued =
                       message.delegatedCompletion !== undefined ||
-                      message.notification !== undefined;
+                      message.notification !== undefined ||
+                      error.steerDeclined === true;
                     // Reuse message ids and receipts so retries cannot duplicate messages or follow-ups.
                     yield* threads
                       .dispatch({
@@ -410,15 +422,25 @@ export const layerExecutor: Layer.Layer<
                         commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
                         threadId: effect.threadId,
                         messageId: message.id,
+                        ...(error.steerDeclined ? { steerFollowUpOfRunId: run.id } : {}),
+                        ...(error.steerDeclined &&
+                        effect.request.steerFollowUpAfterRunOrdinal !== undefined
+                          ? {
+                              steerFollowUpAfterRunOrdinal:
+                                effect.request.steerFollowUpAfterRunOrdinal,
+                            }
+                          : {}),
                         text: message.text,
                         ...(message.context ? { context: message.context } : {}),
                         attachments: message.attachments,
                         ...(message.selectedScientSkillNames === undefined
                           ? {}
                           : { selectedScientSkillNames: message.selectedScientSkillNames }),
-                        ...(message.delegatedCompletion === undefined
-                          ? {}
-                          : { modelSelection: run.modelSelection }),
+                        ...(error.steerDeclined && effect.request.modelSelection !== undefined
+                          ? { modelSelection: effect.request.modelSelection }
+                          : message.delegatedCompletion === undefined
+                            ? {}
+                            : { modelSelection: run.modelSelection }),
                         dispatchMode: {
                           type: queued ? "queue_after_active" : "start_immediately",
                         },
@@ -436,6 +458,9 @@ export const layerExecutor: Layer.Layer<
                         ...(message.senderThreadId === undefined
                           ? {}
                           : { senderThreadId: message.senderThreadId }),
+                        ...(message.linkedSender === undefined
+                          ? {}
+                          : { linkedSender: message.linkedSender }),
                       })
                       .pipe(
                         // A disabled instance cannot retry this completed turn; its result stands.
@@ -745,6 +770,12 @@ export const layerExecutor: Layer.Layer<
                 // SCIENT-FORK:START checkpoint-capture-final-attempt
                 Effect.provideService(CheckpointCaptureFinalAttempt, !willRetry),
                 // SCIENT-FORK:END checkpoint-capture-final-attempt
+                // Completion bookkeeping must survive a missed live run update, including capture retries.
+                Effect.andThen(
+                  threads.recoverDelegatedTask(effect.threadId, {
+                    completedRunId: effect.request.runId,
+                  }),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -765,8 +796,19 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          // Archive and delete queue this one per-thread teardown, so it also releases the
+          // thread's device claims; the devices stay booted for other threads.
           case "terminal.cleanup":
-            return resourceCleanup.cleanupTerminals(effect.threadId).pipe(
+            return Effect.partition(
+              [
+                resourceCleanup.cleanupTerminals(effect.threadId),
+                resourceCleanup.cleanupDevices(effect.threadId),
+              ],
+              (cleanup) => cleanup,
+            ).pipe(
+              Effect.flatMap(([, [failure]]) =>
+                failure === undefined ? Effect.void : Effect.fail(failure),
+              ),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -798,8 +840,21 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
-          case "attachment.cleanup":
-            return resourceCleanup.cleanupAttachments(effect.request.attachmentIds).pipe(
+          case "attachment.cleanup": {
+            const request = effect.request;
+            return Effect.gen(function* () {
+              // Another message or answer may share the file, or a stale queued edit may restore it.
+              const referenced = new Set(
+                request.skipReferenced
+                  ? yield* projectionStore.getThreadAttachmentIds(effect.threadId, {
+                      includeShownByLiveFork: true,
+                    })
+                  : [],
+              );
+              yield* resourceCleanup.cleanupAttachments(
+                request.attachmentIds.filter((id) => !referenced.has(id)),
+              );
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -809,6 +864,7 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          }
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({
@@ -883,6 +939,16 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedError<Orchestra
 
 const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
 
+// Only the claiming worker settles its row, and a running row blocks every later effect on its
+// thread until the server restarts. onError masks interruption, so retries must restore it.
+const isLockTimeout = (error: EffectOutbox.EffectOutboxError) =>
+  SqlError.isSqlError(error.cause) && error.cause.reason._tag === "LockTimeoutError";
+const lockRetrySchedule = Schedule.spaced(Duration.millis(100));
+const retryWhileLocked = <A>(settlement: Effect.Effect<A, EffectOutbox.EffectOutboxError>) =>
+  Effect.interruptible(
+    Effect.retry(settlement, { schedule: lockRetrySchedule, while: isLockTimeout }),
+  );
+
 type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]>[0], "workerId">;
 
 export interface OrchestrationEffectWorkerV2Shape {
@@ -944,6 +1010,7 @@ export const layerWithOptions = (
                 delayMs: 0,
               })
               .pipe(
+                retryWhileLocked,
                 Effect.flatMap((requeued) =>
                   requeued
                     ? Effect.logWarning("Requeued effect after unexpected worker failure", {
@@ -975,6 +1042,7 @@ export const layerWithOptions = (
             error: `Worker failed to settle a process-bound effect after execution started: ${Cause.pretty(cause)}`,
           })
           .pipe(
+            retryWhileLocked,
             Effect.flatMap((failed) =>
               failed
                 ? Effect.logError("Terminalized process-bound effect after settlement failure", {
@@ -1187,11 +1255,15 @@ export interface OrchestrationEffectDaemonOptions {
 
 const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
 const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
+// A provider request can go unanswered indefinitely. After this wait the slot claims other work
+// while the execution keeps its running row (which blocks its own thread) and settles it later.
+const EFFECT_WORKER_SLOT_WAIT = Duration.seconds(30);
 
 export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>
   Effect.scoped(
     Effect.gen(function* () {
       const worker = yield* OrchestrationEffectWorkerV2;
+      const scope = yield* Effect.scope;
       const requestedConcurrency = options.concurrency ?? DEFAULT_EFFECT_WORKER_CONCURRENCY;
       const concurrency = Number.isFinite(requestedConcurrency)
         ? Math.max(1, Math.floor(requestedConcurrency))
@@ -1206,13 +1278,18 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
       const runWorker = Effect.gen(function* () {
         while (true) {
-          const outcome = yield* worker.runOnce(claimLimits).pipe(
+          const attempt = yield* worker.runOnce(claimLimits).pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
                 Effect.as("failed" as const),
               ),
             ),
+            Effect.forkIn(scope),
+          );
+          const outcome = yield* Fiber.join(attempt).pipe(
+            Effect.timeoutOption(EFFECT_WORKER_SLOT_WAIT),
+            Effect.map(Option.getOrElse(() => "worked" as const)),
           );
           if (outcome === "worked") {
             yield* Effect.yieldNow;

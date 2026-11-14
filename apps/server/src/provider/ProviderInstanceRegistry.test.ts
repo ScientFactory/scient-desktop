@@ -68,9 +68,11 @@ import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -185,8 +187,12 @@ const makeTildeProviderFixtures = Effect.fn(
     directory: homePath,
     prefix: ".t3-provider-path-test-",
   });
+  yield* fileSystem.writeFileString(
+    path.join(fixtureDir, "package.json"),
+    JSON.stringify({ type: "commonjs" }),
+  );
   const codexPath = path.join(fixtureDir, "codex");
-  const claudePath = path.join(fixtureDir, "claude");
+  const claudePath = path.join(fixtureDir, "claude.mjs");
   const claudeHomePath = path.join(fixtureDir, "claude-home");
   const codexScriptPath = path.join(fixtureDir, "codex-script.json");
   const codexFixtureDir = path.join(import.meta.dirname, "testFixtures");
@@ -254,13 +260,15 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     ),
     Layer.provideMerge(ProviderLatestVersions.layer),
     Layer.provideMerge(McpProviderSessions.layer),
+    Layer.provideMerge(ProviderInstallationGate.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
   const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
-  const testLayer = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
-    Layer.provide(PortScanner.layerTest),
+  const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provideMerge(PortScanner.layerTest),
     Layer.provideMerge(layerBase),
   );
 
@@ -345,7 +353,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(rebuiltPersonal).toBeDefined();
       expect(rebuiltPersonal).not.toBe(personal);
       expect(unchangedWork).toBe(work);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["replacement", "removal", "creation failure"] as const)(
@@ -420,7 +428,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           Effect.ensuring(Scope.close(parent, Exit.void)),
         );
         expect(closes).toBe(creates);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["replacement", "removal"] as const)(
@@ -475,10 +483,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect((yield* registry.getInstance(nextId))?.displayName).toBe("Second");
         expect(yield* registry.getInstance(siblingId)).toBe(sibling);
         expect(closed).toBe(1);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
+  it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       const staleId = ProviderInstanceId.make("codex_stale");
       const configMap: ProviderInstanceConfigMap = {
@@ -499,7 +507,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("reports Codex's answer when a redemption changed nothing", () =>
@@ -535,10 +543,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(codex).toBeDefined();
       yield* codex!.snapshot.refresh;
       expect(yield* codex!.consumeResetCredit!(undefined)).toBe("alreadyRedeemed");
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("lists a blocked driver's instances as unavailable without running them", () =>
+  it.effect("lists a blocked driver's instances as unavailable without running them", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");
       const reason = "Example Corp's policy does not allow the Codex provider.";
@@ -553,7 +561,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.availability).toBe("unavailable");
       expect(unavailable?.unavailableReason).toBe(reason);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
@@ -607,7 +615,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         installed: true,
         version: "2.1.219",
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("runs Claude instance probes in the server state dir, not the server cwd", () =>
@@ -640,7 +648,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         version: "2.1.219",
         auth: { status: "authenticated" },
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("applies the lowest maxEffortLevel across Claude's settings sources", () =>
@@ -689,7 +697,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             : [],
         )[0]?.label;
       expect(maxLabel).toBe("Max (capped to High)");
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("keeps usage and uncapped efforts when the CLI rejects get_settings", () =>
@@ -727,7 +735,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(effortLabels.some((label) => label.includes("capped"))).toBe(false);
       expect(snapshot.auth).toMatchObject({ status: "authenticated", email: "test@example.com" });
       expect(snapshot.usageLimits?.windows[0]?.usedPercent).toBe(100);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>
@@ -867,7 +875,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect.arrayContaining([expect.objectContaining({ name: "recovered" })]),
       );
       expect(probeCount).toBeGreaterThan(sameAccountFailureProbeCount);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
@@ -936,7 +944,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provide(testLayer),
+      Effect.provide(layerTest),
     );
 
   it.live.skipIf(windowsHost)("refreshes Claude usage after redeeming a reset", () =>
@@ -1016,7 +1024,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(first.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
       expect(second.usageLimits).toEqual(first.usageLimits);
       expect(query.mock.calls).toHaveLength(1);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   for (const state of ["signed-out", "usage-failed"] as const) {
@@ -1041,11 +1049,11 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           expect(after.auth.status).toBe("authenticated");
           expect(after.usageLimits?.unavailable).toBeUndefined();
           expect(after.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
-        }).pipe(Effect.provide(testLayer)),
+        }).pipe(Effect.provide(layerTest)),
     );
   }
 
-  it.live(
+  it.effect(
     "shadows instances whose driver is not registered in this build without failing boot",
     () =>
       Effect.gen(function* () {
@@ -1082,7 +1090,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(ghost.driver).toBe("ghostDriver");
         expect(ghost.availability).toBe("unavailable");
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(layerTest)),
   );
 });
 
@@ -1123,6 +1131,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
     ),
     Layer.provideMerge(ProviderLatestVersions.layer),
     Layer.provideMerge(McpProviderSessions.layer),
+    Layer.provideMerge(ProviderInstallationGate.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(OmpExecutableGate.layer),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
@@ -1131,7 +1140,8 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
   const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
   const layerWithAcpRegistry = AcpRegistrySupport.layerFromHost.pipe(Layer.provideMerge(layerBase));
   const testLayer = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
-    Layer.provide(PortScanner.layerTest),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provideMerge(PortScanner.layerTest),
     Layer.provideMerge(layerWithAcpRegistry),
     Layer.provideMerge(ProviderLifecycleCoordinator.layer),
   );
@@ -1585,7 +1595,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
           { name: "BASE_URL", value: "https://example.test", sensitive: false },
         ],
       ]);
-    }).pipe(Effect.scoped);
+    });
   });
 
   // An empty secret must not let a driver fall back to a credential the server inherited.
@@ -1608,7 +1618,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* mutator.reconcile({ ...fixture.configMap });
       expect(fixture.reads).toHaveLength(readsAtStartup);
       expect(yield* registry.listUnavailable).toHaveLength(1);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("does not read the secrets of an instance its config decodes as disabled", () => {
@@ -1620,7 +1630,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(fixture.reads).toEqual([]);
       expect(fixture.invalidated).toEqual([]);
       expect(fixture.created).toHaveLength(1);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("re-reads secrets on reload and rebuilds only when they changed", () => {
@@ -1643,7 +1653,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
         "sk-live",
         "sk-rotated",
       ]);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("reads a config field typed SettingsSecretValue and rebuilds when it rotates", () => {
@@ -1663,7 +1673,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
         { apiKey: "gw-live", model: "m" },
         { apiKey: "gw-rotated", model: "m" },
       ]);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect.each([
@@ -1679,7 +1689,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     return Effect.gen(function* () {
       yield* fixture.make;
       expect(fixture.configs).toEqual([expect.objectContaining({ [field]: "provider-live" })]);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("keeps a working instance live when a reload cannot read its secret", () => {
@@ -1693,7 +1703,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(yield* registry.getInstance(instanceId)).toBeDefined();
       expect(yield* registry.listUnavailable).toEqual([]);
       expect(fixture.created).toHaveLength(1);
-    }).pipe(Effect.scoped);
+    });
   });
 
   it.effect("starts without waiting for secrets to be read", () => {
@@ -1710,6 +1720,6 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       expect(yield* registry.getInstance(instanceId)).toBeDefined();
       expect(yield* registry.listUnavailable).toEqual([]);
-    }).pipe(Effect.scoped);
+    });
   });
 });

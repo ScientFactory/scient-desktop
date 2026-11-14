@@ -267,6 +267,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       changes: Stream.empty,
       start: Effect.die("Installation must not start in driver tests"),
       startRelease: () => Effect.die("Installation must not start in driver tests"),
+      checkForUpdate: Effect.void,
       cancel: () => Effect.die("Installation must not cancel in driver tests"),
       remove: () => Effect.die("Installation must not remove in driver tests"),
     }),
@@ -973,7 +974,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         const helper = {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
-          session: { notices: {} },
+          session: { notices: {}, compaction: {} },
         };
         expect(
           (yield* h.readRequests)
@@ -987,7 +988,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           {
             fs: { readTextFile: true, writeTextFile: false },
             terminal: false,
-            session: { notices: {} },
+            session: { notices: {}, compaction: {} },
             elicitation: { form: {} },
           },
         ]);
@@ -1016,7 +1017,13 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
             modelSelection,
             runtimePolicy: cliPolicy,
           });
-          expect(h.launches.at(-1)?.args).toEqual(["acp"]);
+          expect(h.launches.at(-1)?.args).toEqual([
+            "acp",
+            "--gemini-dir",
+            h.profileDirectory,
+            "--app-data-dir",
+            "antigravity-acp",
+          ]);
           expect(
             (yield* h.readRequests)
               .slice(requestsBefore)
@@ -1028,7 +1035,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
               .map((request) => request.params?.value),
           ).toEqual(["default"]);
         }
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -1048,7 +1055,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         expect(h.acquisitions).toHaveLength(2);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
         yield* h.assertClosed;
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.skipIf(windowsHost)("keeps the previous catalog when executable resolution fails", () =>
@@ -1065,7 +1072,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       expect(h.acquisitions).toHaveLength(2);
       expect(h.releases).toEqual([h.first.version]);
       yield* h.assertClosed;
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -1086,7 +1093,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         expect(after.models).toEqual(before.models);
         expect(after.auth).toEqual(before.auth);
         yield* h.assertClosed;
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -1123,7 +1130,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         expect(after.auth).toEqual(before.auth);
         expect(JSON.stringify(after)).not.toContain("sk-secret-123");
         yield* h.assertClosed;
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -1179,6 +1186,6 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
-      }).pipe(Effect.scoped),
+      }),
   );
 });

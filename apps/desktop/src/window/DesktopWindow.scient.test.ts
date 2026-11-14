@@ -29,6 +29,7 @@ vi.mock("electron", async (importOriginal) => ({
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
@@ -169,6 +170,7 @@ const makeHarness = Effect.fnUntraced(function* (
         Layer.mock(ElectronShell.ElectronShell)({}),
         Layer.mock(ElectronTheme.ElectronTheme)({ shouldUseDarkColors: Effect.succeed(false) }),
         Layer.succeed(ElectronWindow.ElectronWindow, electronWindow),
+        Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
         Layer.mock(PreviewPasskeys.PreviewPasskeys)({
           bridgeEnabled: false,
           installSessionHandlers: () => {},

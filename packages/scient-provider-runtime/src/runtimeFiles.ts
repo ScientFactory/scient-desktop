@@ -40,6 +40,8 @@ const DEFAULT_EXTRACTION_LIMITS: ManagedRuntimeExtractionLimits = {
 };
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1_000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30 * 1_000;
+/** A failed try that still brought this much of a resumable download starts the retries afresh. */
+const RESUME_PROGRESS_BYTES = 1024 * 1024;
 
 /** Why a runtime install, update or repair failed, as analytics reports it. */
 export type ManagedRuntimeFailureClass =
@@ -228,13 +230,18 @@ async function fetchWithAllowedRedirects(input: {
   readonly url: string;
   readonly allowedHosts: ReadonlySet<string>;
   readonly signal: AbortSignal;
+  readonly headers?: Readonly<Record<string, string>> | undefined;
 }): Promise<Response> {
   let current = new URL(input.url);
   let redirectCount = 0;
   for (;;) {
     assertAllowedHttpsUrl(current, input.allowedHosts);
     input.signal.throwIfAborted();
-    const response = await fetch(current, { redirect: "manual", signal: input.signal });
+    const response = await fetch(current, {
+      redirect: "manual",
+      signal: input.signal,
+      ...(input.headers ? { headers: input.headers } : {}),
+    });
     if (isTransientDownloadStatus(response.status)) {
       await response.body?.cancel().catch(() => undefined);
       throw new TransientDownloadFailure(
@@ -279,11 +286,26 @@ interface ManagedRuntimeDownloadInput {
   /** Checked after every try, so a damaged copy counts as that source failing. */
   readonly checksum?: ManagedRuntimeChecksum | undefined;
   readonly destination: string;
+  /**
+   * Where a failed try keeps its bytes, so the next try or install continues from them.
+   * Name it by the release digest: both copies serve the same bytes. Needs `checksum`.
+   */
+  readonly partialPath?: string | undefined;
+  /** Per copy; `null` waits as long as data keeps arriving. Ten minutes by default. */
+  readonly timeLimitMs?: number | null | undefined;
   readonly allowedHosts: ReadonlyArray<string>;
   readonly expectedSize: number;
   readonly signal: AbortSignal;
   readonly onProgress?: (downloaded: number, total: number) => void;
   readonly onRetry?: (retry: ManagedRuntimeDownloadRetry) => void;
+}
+
+/** What a finished download continued from, for analytics. */
+export interface ManagedRuntimeDownloadResult {
+  /** Bytes already on disk when the successful try started; 0 for a fresh download. */
+  readonly resumedBytes: number;
+  /** `fallback` when the second copy served the file. */
+  readonly source: "primary" | "fallback";
 }
 
 function describeSourceFailure(failure: Error): string {
@@ -304,16 +326,23 @@ function describeSourceFailure(failure: Error): string {
  * Downloads one reviewed artifact, retrying temporary failures for about a
  * minute. With a fallback copy, any failure of one copy moves to the other.
  * Cancellation, the time limit and local disk errors always stay final.
+ * With `partialPath`, a failed try keeps its bytes and the next try asks only for the rest.
  */
-export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput): Promise<void> {
+export async function downloadManagedRuntime(
+  input: ManagedRuntimeDownloadInput,
+): Promise<ManagedRuntimeDownloadResult> {
   const sources = input.fallbackUrl ? [input.url, input.fallbackUrl] : [input.url];
   const allowedHosts = new Set(input.allowedHosts.map((host) => host.toLowerCase()));
+  const expected = input.checksum ? expectedDigest(input.checksum) : undefined;
+  const partialPath = input.checksum ? input.partialPath : undefined;
+  const timeLimitMs = input.timeLimitMs === undefined ? DOWNLOAD_TIMEOUT_MS : input.timeLimitMs;
   // Each copy gets the whole time limit, so a slow copy never uses up the other's.
   const deadlines = new Map<string, AbortSignal>();
   const deadline = (source: string): AbortSignal => {
     const existing = deadlines.get(source);
     if (existing) return existing;
-    const created = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+    const created =
+      timeLimitMs === null ? new AbortController().signal : AbortSignal.timeout(timeLimitMs);
     deadlines.set(source, created);
     return created;
   };
@@ -326,18 +355,41 @@ export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput)
   for (let retry = 0; ;) {
     const source = round.shift()!;
     tries += 1;
+    const received = { bytes: 0 };
     let cause: unknown;
     try {
-      await downloadOnce(input, source, allowedHosts, deadline(source));
-      if (input.checksum) {
-        await verifyManagedRuntimeChecksum(input.destination, input.checksum).catch(
-          async (mismatch: unknown) => {
-            await NodeFSP.rm(input.destination, { force: true }).catch(() => undefined);
-            throw mismatch;
-          },
+      const attempt = await downloadOnce(
+        input,
+        source,
+        allowedHosts,
+        deadline(source),
+        partialPath,
+        received,
+      );
+      let resumedBytes = attempt.resumedBytes;
+      if (expected !== undefined && attempt.digest !== expected) {
+        await removePartialDownload(partialPath ?? input.destination);
+        // Bytes kept from an earlier try may be what is wrong, so fetch the whole file once.
+        if (resumedBytes === 0) throw checksumMismatch();
+        const fresh = await downloadOnce(
+          input,
+          source,
+          allowedHosts,
+          deadline(source),
+          partialPath,
+          received,
         );
+        if (fresh.digest !== expected) {
+          await removePartialDownload(partialPath ?? input.destination);
+          throw checksumMismatch();
+        }
+        resumedBytes = 0;
       }
-      return;
+      if (partialPath) {
+        await NodeFSP.rename(partialPath, input.destination);
+        await NodeFSP.rm(partialValidatorPath(partialPath), { force: true }).catch(() => undefined);
+      }
+      return { resumedBytes, source: source === input.url ? "primary" : "fallback" };
     } catch (caught) {
       cause = caught;
     }
@@ -345,21 +397,37 @@ export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput)
     // included, only rules this copy out. Cancellation still ends everything.
     const outOfTime = deadline(source).aborted && !input.signal.aborted;
     const ruledOut = sources.length > 1 && (cause instanceof ManagedRuntimeFileError || outOfTime);
-    if (!(cause instanceof TransientDownloadFailure) && !ruledOut) throw cause;
+    if (!(cause instanceof TransientDownloadFailure) && !ruledOut) {
+      if (outOfTime && partialPath && (await partialDownloadSize(partialPath)) > 0) {
+        throw new ManagedRuntimeFileError(
+          `The download took longer than ${describeTimeLimit(timeLimitMs)}. Scient kept what it downloaded; trying again continues from there.`,
+          { cause, failureClass: "timeout" },
+        );
+      }
+      throw cause;
+    }
     lastFailure.set(
       source,
-      outOfTime ? new Error("took longer than 10 minutes.") : (cause as Error),
+      outOfTime
+        ? new Error(`took longer than ${describeTimeLimit(timeLimitMs)}.`)
+        : (cause as Error),
     );
     if (ruledOut) {
       usable = usable.filter((candidate) => candidate !== source);
       round = round.filter((candidate) => candidate !== source);
     }
     if (usable.length > 0 && round.length > 0) continue;
+    // Steady progress on a slow line is not a failing server; keep going while it lasts.
+    if (received.bytes >= RESUME_PROGRESS_BYTES) retry = 0;
     const baseDelay = RETRY_DELAYS_MS[retry];
     if (usable.length === 0 || baseDelay === undefined) {
+      const kept =
+        partialPath && (await partialDownloadSize(partialPath)) > 0
+          ? " Scient kept what it downloaded; trying again continues from there."
+          : "";
       if (sources.length === 1) {
         throw new ManagedRuntimeFileError(
-          exhaustedMessage(cause as TransientDownloadFailure, tries),
+          `${exhaustedMessage(cause as TransientDownloadFailure, tries)}${kept}`,
           { cause, failureClass: transientFailureClass(cause as TransientDownloadFailure) },
         );
       }
@@ -370,7 +438,7 @@ export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput)
         )
         .join(" ");
       throw new ManagedRuntimeFileError(
-        `Scient couldn't download it from either source after ${tries} tries. ${details}`,
+        `Scient couldn't download it from either source after ${tries} tries. ${details}${kept}`,
         { cause, failureClass: outOfTime ? "timeout" : managedRuntimeFailureClass(cause) },
       );
     }
@@ -389,12 +457,103 @@ export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput)
   }
 }
 
+function describeTimeLimit(timeLimitMs: number | null): string {
+  const minutes = Math.round((timeLimitMs ?? 0) / 60_000);
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
+function checksumMismatch(): ManagedRuntimeFileError {
+  return new ManagedRuntimeFileError("Managed runtime verification failed: checksum mismatch.", {
+    failureClass: "checksum",
+  });
+}
+
+const partialValidatorPath = (partialPath: string) => `${partialPath}.json`;
+
+async function removePartialDownload(path: string): Promise<void> {
+  await NodeFSP.rm(path, { force: true }).catch(() => undefined);
+  await NodeFSP.rm(partialValidatorPath(path), { force: true }).catch(() => undefined);
+}
+
+async function partialDownloadSize(path: string): Promise<number> {
+  const stat = await NodeFSP.stat(path).catch(() => undefined);
+  return stat?.isFile() ? stat.size : 0;
+}
+
+/** The server's strong ETag for the copy a kept download came from, sent back as `If-Range`. */
+async function readPartialValidator(partialPath: string, url: string): Promise<string | undefined> {
+  // A sidecar cut short by a crash is only a missing validator; the digest still guards the bytes.
+  const saved: unknown = await NodeFSP.readFile(partialValidatorPath(partialPath), "utf8")
+    .then((text) => JSON.parse(text) as unknown)
+    .catch(() => undefined);
+  if (typeof saved !== "object" || saved === null) return undefined;
+  const { url: savedUrl, etag } = saved as { url?: unknown; etag?: unknown };
+  return savedUrl === url && typeof etag === "string" ? etag : undefined;
+}
+
+async function writePartialValidator(
+  partialPath: string,
+  url: string,
+  response: Response,
+): Promise<void> {
+  const etag = response.headers.get("etag");
+  // Weak validators cannot guard a byte range.
+  if (!etag || etag.startsWith("W/")) {
+    await NodeFSP.rm(partialValidatorPath(partialPath), { force: true });
+    return;
+  }
+  await NodeFSP.writeFile(partialValidatorPath(partialPath), JSON.stringify({ url, etag }), {
+    mode: 0o600,
+  });
+}
+
+/** True for a `206` that continues exactly at `from` and ends with the reviewed size. */
+function continuesAt(response: Response, from: number, expectedSize: number): boolean {
+  if (response.status !== 206) return false;
+  const range = /^bytes (\d+)-(\d+)\/(\d+)$/u.exec(response.headers.get("content-range") ?? "");
+  const length = response.headers.get("content-length");
+  return (
+    range !== null &&
+    Number(range[1]) === from &&
+    Number(range[2]) === expectedSize - 1 &&
+    Number(range[3]) === expectedSize &&
+    (length === null || Number(length) === expectedSize - from)
+  );
+}
+
+async function hashPrefix(path: string, bytes: number, hash: NodeCrypto.Hash): Promise<void> {
+  const file = await NodeFSP.open(path, "r");
+  try {
+    for await (const chunk of file.createReadStream({ start: 0, end: bytes - 1, autoClose: false }))
+      hash.update(chunk as Buffer);
+  } finally {
+    await file.close().catch(() => undefined);
+  }
+}
+
 async function downloadOnce(
   input: ManagedRuntimeDownloadInput,
   url: string,
   allowedHosts: ReadonlySet<string>,
   timeoutSignal: AbortSignal,
-): Promise<void> {
+  partialPath: string | undefined,
+  received: { bytes: number },
+): Promise<{ readonly resumedBytes: number; readonly digest: string | undefined }> {
+  const target = partialPath ?? input.destination;
+  const newHash = () =>
+    input.checksum ? NodeCrypto.createHash(input.checksum.algorithm) : undefined;
+  let hash = newHash();
+  let have = partialPath ? await partialDownloadSize(partialPath) : 0;
+  if (have > input.expectedSize) {
+    await removePartialDownload(target);
+    have = 0;
+  }
+  if (have > 0 && hash) await hashPrefix(target, have, hash);
+  if (have === input.expectedSize) {
+    input.onProgress?.(have, input.expectedSize);
+    return { resumedBytes: have, digest: hash?.digest("hex") };
+  }
+
   const idleController = new AbortController();
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   const resetIdleTimer = () => {
@@ -411,16 +570,33 @@ async function downloadOnce(
       return new TransientDownloadFailure("stalled", "download stalled", null, { cause });
     return fromNetwork ? connectionFailure(cause) : cause;
   };
-  resetIdleTimer();
-
-  try {
-    const response = await fetchWithAllowedRedirects({
+  const request = async (from: number) => {
+    const validator =
+      from > 0 && partialPath ? await readPartialValidator(partialPath, url) : undefined;
+    return fetchWithAllowedRedirects({
       url,
       allowedHosts,
       signal,
+      ...(from > 0
+        ? { headers: { range: `bytes=${from}-`, ...(validator ? { "if-range": validator } : {}) } }
+        : {}),
     }).catch((cause: unknown) => {
       throw classify(cause, true);
     });
+  };
+  resetIdleTimer();
+
+  try {
+    let response = await request(have);
+    if (have > 0 && !continuesAt(response, have, input.expectedSize)) {
+      // A `200` carries the whole file; any other answer is asked again without a range.
+      if (response.status !== 200) {
+        await response.body?.cancel().catch(() => undefined);
+        response = await request(0);
+      }
+      have = 0;
+      hash = newHash();
+    }
     if (!response.ok || !response.body) {
       await response.body?.cancel().catch(() => undefined);
       throw new ManagedRuntimeFileError(
@@ -428,26 +604,32 @@ async function downloadOnce(
         { failureClass: httpFailureClass(response.status) },
       );
     }
-    const contentLengthHeader = response.headers.get("content-length");
-    const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : null;
-    if (
-      contentLength !== null &&
-      (!Number.isSafeInteger(contentLength) ||
-        contentLength < 0 ||
-        contentLength > MAX_DOWNLOAD_BYTES ||
-        contentLength !== input.expectedSize)
-    ) {
-      throw new ManagedRuntimeFileError(
-        "Managed runtime download size does not match the reviewed catalog.",
-        { failureClass: "size_mismatch" },
-      );
+    if (have === 0) {
+      const contentLengthHeader = response.headers.get("content-length");
+      const contentLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : null;
+      if (
+        contentLength !== null &&
+        (!Number.isSafeInteger(contentLength) ||
+          contentLength < 0 ||
+          contentLength > MAX_DOWNLOAD_BYTES ||
+          contentLength !== input.expectedSize)
+      ) {
+        await response.body.cancel().catch(() => undefined);
+        throw new ManagedRuntimeFileError(
+          "Managed runtime download size does not match the reviewed catalog.",
+          { failureClass: "size_mismatch" },
+        );
+      }
     }
 
-    await NodeFSP.mkdir(NodePath.dirname(input.destination), { recursive: true });
-    let downloaded = 0;
+    await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
+    if (partialPath && have === 0) await writePartialValidator(partialPath, url, response);
+    let downloaded = have;
     const source = NodeStream.Readable.fromWeb(response.body as never);
     source.on("data", (chunk: Buffer) => {
       downloaded += chunk.byteLength;
+      received.bytes += chunk.byteLength;
+      hash?.update(chunk);
       resetIdleTimer();
       if (downloaded > MAX_DOWNLOAD_BYTES || downloaded > input.expectedSize) {
         source.destroy(
@@ -458,7 +640,10 @@ async function downloadOnce(
       }
       input.onProgress?.(downloaded, input.expectedSize);
     });
-    const file = NodeFS.createWriteStream(input.destination, { flags: "wx", mode: 0o600 });
+    const file = NodeFS.createWriteStream(target, {
+      flags: partialPath ? (have > 0 ? "a" : "w") : "wx",
+      mode: 0o600,
+    });
     // The pipeline destroys both streams with the first error, so remember
     // which failed first: the response body is the network, the file the disk.
     let failedFirst: "network" | "disk" | undefined;
@@ -467,23 +652,23 @@ async function downloadOnce(
     try {
       await NodeStreamPromises.pipeline(source, file, { signal });
     } catch (cause) {
-      await NodeFSP.rm(input.destination, { force: true }).catch(() => undefined);
+      // A kept download continues on the next try, unless its bytes cannot be right.
+      if (!partialPath || cause instanceof ManagedRuntimeFileError)
+        await removePartialDownload(target);
       throw classify(cause, failedFirst === "network");
     }
     if (downloaded !== input.expectedSize) {
-      await NodeFSP.rm(input.destination, { force: true }).catch(() => undefined);
+      if (!partialPath) await removePartialDownload(target);
       // Fewer bytes than the catalog names means the connection ended early.
       throw new TransientDownloadFailure("cut-off", "download cut off");
     }
+    return { resumedBytes: have, digest: hash?.digest("hex") };
   } finally {
     if (idleTimer) clearTimeout(idleTimer);
   }
 }
 
-export async function verifyManagedRuntimeChecksum(
-  filePath: string,
-  checksum: ManagedRuntimeChecksum,
-): Promise<void> {
+function expectedDigest(checksum: ManagedRuntimeChecksum): string {
   const expected = checksum.digest.trim().toLowerCase();
   const expectedLength = checksum.algorithm === "sha256" ? 64 : 128;
   if (!new RegExp(`^[a-f0-9]{${expectedLength}}$`, "u").test(expected)) {
@@ -491,6 +676,14 @@ export async function verifyManagedRuntimeChecksum(
       `Managed runtime catalog contains an invalid ${checksum.algorithm.toUpperCase()} digest.`,
     );
   }
+  return expected;
+}
+
+export async function verifyManagedRuntimeChecksum(
+  filePath: string,
+  checksum: ManagedRuntimeChecksum,
+): Promise<void> {
+  const expected = expectedDigest(checksum);
   const hash = NodeCrypto.createHash(checksum.algorithm);
   const file = await NodeFSP.open(filePath, "r");
   try {
@@ -498,11 +691,7 @@ export async function verifyManagedRuntimeChecksum(
   } finally {
     await file.close().catch(() => undefined);
   }
-  if (hash.digest("hex") !== expected) {
-    throw new ManagedRuntimeFileError("Managed runtime verification failed: checksum mismatch.", {
-      failureClass: "checksum",
-    });
-  }
+  if (hash.digest("hex") !== expected) throw checksumMismatch();
 }
 
 /**

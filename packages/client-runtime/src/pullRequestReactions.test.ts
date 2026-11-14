@@ -1,4 +1,9 @@
-import type { PullRequestReaction, PullRequestReactionContent } from "@t3tools/contracts";
+import {
+  SourceControlProviderKind,
+  type PullRequestDetail,
+  type PullRequestReaction,
+  type PullRequestReactionContent,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,6 +11,7 @@ import {
   PULL_REQUEST_REACTION_ORDER,
   pullRequestReactionEmoji,
   pullRequestReactionName,
+  canReactPullRequestComment,
 } from "./pullRequestReactions.ts";
 
 function reaction(overrides: Partial<PullRequestReaction> = {}): PullRequestReaction {
@@ -36,6 +42,34 @@ describe("reaction presentation", () => {
       ["rocket", "🚀", "rocket"],
       ["eyes", "👀", "eyes"],
     ]);
+  });
+});
+
+describe("comment reaction permissions", () => {
+  it("excludes only GitCafe review summaries from comment reactions", () => {
+    const detail = {
+      provider: SourceControlProviderKind.make("gitcafe"),
+      capabilities: {
+        diff: true,
+        comment: true,
+        actions: [],
+        mergeMethods: [],
+        search: true,
+        reactions: true,
+        review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+        reviewers: { request: true, listCandidates: true },
+      },
+    } satisfies Pick<PullRequestDetail, "provider" | "capabilities">;
+
+    expect(canReactPullRequestComment(detail, { kind: "issue-comment" })).toBe(true);
+    expect(canReactPullRequestComment(detail, { kind: "review-comment" })).toBe(true);
+    expect(
+      canReactPullRequestComment(
+        { ...detail, provider: SourceControlProviderKind.make("github") },
+        { kind: "review" },
+      ),
+    ).toBe(true);
+    expect(canReactPullRequestComment(detail, { kind: "review" })).toBe(false);
   });
 });
 

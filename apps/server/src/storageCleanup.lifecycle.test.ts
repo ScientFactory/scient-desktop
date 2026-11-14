@@ -14,6 +14,8 @@ import { threadCreated, THREAD_ID } from "../integration/TransferBudgetV2Fixture
 import { ServerConfig } from "./config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "./persistence/Sqlite.ts";
 import { GitManager } from "./git/GitManager.ts";
+import { GitWorkflowService } from "./git/GitWorkflowService.ts";
+import { ThreadManagementService } from "./orchestration-v2/ThreadManagementService.ts";
 import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "./orchestration-v2/EventSink.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -162,6 +164,9 @@ describe("V2 deleted-worktree cleanup lifecycle", () => {
                   ),
             }),
             Layer.mock(GitManager)({ invalidateStatus: () => Effect.void }),
+            // The branch follow-up is a no-op without a current branch.
+            Layer.mock(GitWorkflowService)({ currentBranch: () => Effect.succeed(null) }),
+            Layer.mock(ThreadManagementService)({}),
             Layer.mock(TerminalManager)({
               subscribeMetadata: (listener) =>
                 listener({ type: "snapshot", terminals: [] }).pipe(Effect.as(() => {})),

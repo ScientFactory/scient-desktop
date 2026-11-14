@@ -1,6 +1,6 @@
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-// SCIENT-FORK:START — a quote in a draft reads as its text.
+// SCIENT-FORK:START — file, PDF, compute and Office quotes in a draft read as their text too.
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 // SCIENT-FORK:END
 import { SquarePenIcon, XIcon } from "lucide-react";
@@ -36,11 +36,10 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
-  // SCIENT-FORK:START — a quote in a draft reads as its text.
+  // SCIENT-FORK:START — file, PDF, compute and Office quotes in a draft read as their text too.
   const promptPreview =
-    replaceComposerContextReferences(
-      composerCitationsToPlainText(composer.prompt),
-      (occurrence) => occurrence.label,
+    composerCitationsToPlainText(
+      replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label),
     )
       .trim()
       .split("\n", 1)[0] ?? "";
@@ -104,7 +103,6 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
       >
-        <span className="sr-only">{preview}</span>
         <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
@@ -132,9 +130,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               </Tooltip>
             </span>
           </div>
-          <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
-            {preview}
-          </div>
+          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
         </div>
       </div>
     </li>

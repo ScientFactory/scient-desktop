@@ -193,7 +193,6 @@ const make = Effect.gen(function* () {
           connected = true;
           const writer = yield* socket.writer;
           const reader = yield* socket.reader;
-          // SCIENT-FORK:START — a detach closes the relay; offered to T3 as pingdotgg/t3code#34252.
           // A detach shuts the queue down. Ending here closes the socket, so Playwright's
           // pending commands fail instead of waiting forever for the tab to answer.
           const toPlaywright = Stream.fromQueue(queue).pipe(
@@ -217,7 +216,6 @@ const make = Effect.gen(function* () {
             Effect.forever,
           );
           return yield* Effect.raceFirst(toPlaywright, toDesktop);
-          // SCIENT-FORK:END
         }).pipe(Effect.scoped, Effect.ignore),
       )
       .pipe(Effect.forkScoped);

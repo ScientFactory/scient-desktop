@@ -922,12 +922,21 @@ export interface SearchMatchHint {
   readonly ranges: ReadonlyArray<SearchRange>;
 }
 
-// Most threads' branches start with the app's own worktree prefix ("t3/", and
-// "t3code/" before it), so "t3 connect" would match nearly every thread.
-// Only before more text, so typing "t3/" does not empty the list for a keystroke.
 // SCIENT-FORK:START — Scient's prefix is "scient/"; its older worktrees used "t3/".
+
+// Most threads' branches start with the app's own worktree prefix ("t3/", and
+// "t3code/" before it, "t3-<hex>" when a "t3" branch blocks nested refs), so
+// "t3 connect" would match nearly every thread.
+// Only before more text, so typing "t3/" does not empty the list for a keystroke.
 const WORKTREE_BRANCH_PREFIX_PATTERN = new RegExp(
-  `^(?:${WORKTREE_BRANCH_PREFIX}|t3|t3code)/(?=\\S)`,
+  `^(?:(?:${WORKTREE_BRANCH_PREFIX}|t3|t3code)/(?=\\S)|(?:${WORKTREE_BRANCH_PREFIX}|t3)-(?=[0-9a-f]{8}$))`,
+);
+
+// The flat prefix anywhere in a query, while its hex is still being typed, so
+// "t3-abcd" and "connect t3-abcd1234" still reach the stripped branch field.
+const FLAT_BRANCH_QUERY_PREFIX_PATTERN = new RegExp(
+  `(^| )(?:${WORKTREE_BRANCH_PREFIX}|t3)-(?=[0-9a-f]{1,8}(?: |$))`,
+  "g",
 );
 // SCIENT-FORK:END
 
@@ -1009,7 +1018,8 @@ function threadFieldQuery(normalizedQuery: string): string {
       fieldQuery: normalizedQuery
         .replace(/^(?:pr|pull request|pull)\s*(?=#?\d)/, "")
         .replace(/^#\s*/, "")
-        .replace(WORKTREE_BRANCH_PREFIX_PATTERN, ""),
+        .replace(WORKTREE_BRANCH_PREFIX_PATTERN, "")
+        .replace(FLAT_BRANCH_QUERY_PREFIX_PATTERN, "$1"),
     };
   }
   return lastFieldQuery.fieldQuery;

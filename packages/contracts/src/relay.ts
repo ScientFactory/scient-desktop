@@ -1158,7 +1158,28 @@ const RelayClientGroup = HttpApiGroup.make("client")
   .middleware(RelayClientAuth);
 
 // SCIENT-FORK:START account-deletion — the signed-in user deletes their own account.
+// A fresh Sign in with Apple authorization code from the phone, so the relay can revoke the
+// account's Apple tokens (App Store guideline 5.1.1(v)); Clerk keeps no Apple refresh token.
+export const RelayAppleSignInRevocationRequest = Schema.Struct({
+  authorizationCode: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  clientId: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+});
+export type RelayAppleSignInRevocationRequest = typeof RelayAppleSignInRevocationRequest.Type;
+
 const RelayAccountGroup = HttpApiGroup.make("account")
+  .add(
+    HttpApiEndpoint.post("revokeAppleSignIn", "/v1/me/apple-sign-in-revocations", {
+      headers: RelayBearerRequestHeaders,
+      payload: RelayAppleSignInRevocationRequest,
+      success: RelayOkResponse,
+      error: RelayAuthAndInternalErrors,
+    })
+      .annotate(OpenApi.Summary, "Revoke the account's Sign in with Apple tokens")
+      .annotate(
+        OpenApi.Description,
+        "Exchanges a fresh Sign in with Apple authorization code and revokes the resulting tokens with Apple, so deleting the account also removes it from the user's Apple ID. The phone calls this just before deleting the account.",
+      ),
+  )
   .add(
     HttpApiEndpoint.delete("deleteAccount", "/v1/me", {
       headers: RelayBearerRequestHeaders,

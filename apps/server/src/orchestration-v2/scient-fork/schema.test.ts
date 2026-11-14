@@ -30,7 +30,7 @@ interface TableColumn {
 function withMemory<E, A>(
   effect: Effect.Effect<A, E, SqlClient.SqlClient>,
 ): Effect.Effect<A, E | SqlError, never> {
-  return effect.pipe(Effect.provide(NodeSqliteClient.layerMemory()));
+  return effect.pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
 }
 
 /** PRAGMA table_info helper (uses unsafe because PRAGMA doesn't support parameters). */

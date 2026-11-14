@@ -11,12 +11,15 @@ interface Operation {
   readonly outcome: "completed" | "failed" | "cancelled" | null;
   /** The owner's typed classification of a failure; never derived from its message. */
   readonly failureClass?: string;
+  /** Who started a runtime change and how its download went. */
+  readonly details?: Readonly<Record<string, unknown>>;
 }
 
 interface Snapshot {
   readonly installed: boolean;
   readonly source: string;
   readonly state: string;
+  readonly checkFailure: string | undefined;
   readonly runtime: Operation | null;
   readonly connection: Operation | null;
   readonly update: Operation | null;
@@ -36,6 +39,7 @@ function snapshot(provider: ServerProvider): Snapshot {
     installed: provider.installed,
     source: provider.installed ? (runtime?.source ?? "unknown") : "missing",
     state: provider.status,
+    checkFailure: provider.connection?.checkFailure,
     runtime: operation
       ? {
           key: operation.operationId,
@@ -50,6 +54,17 @@ function snapshot(provider: ServerProvider): Snapshot {
                 ? operation.status
                 : null,
           ...(operation.failureClass === undefined ? {} : { failureClass: operation.failureClass }),
+          details: {
+            trigger: operation.background ? "background" : "user",
+            ...(operation.attempt === undefined ? {} : { attempt: operation.attempt }),
+            ...(operation.download === undefined
+              ? {}
+              : {
+                  resumedBytes: operation.download.resumedBytes,
+                  downloadSource: operation.download.source,
+                  compressed: operation.download.compressed,
+                }),
+          },
         }
       : null,
     connection: connection
@@ -112,6 +127,7 @@ function lifecycleEvent(
       // The UI message is deliberately not inspected: it can contain paths,
       // credentials, provider output, or URLs. The owner sets the typed class.
       failureClass: next.outcome === "failed" ? (next.failureClass ?? "unknown") : "unknown",
+      ...next.details,
     },
   };
 }
@@ -182,7 +198,14 @@ export function createProviderLifecycleAnalyticsMapper() {
         if (before.state !== next.state)
           events.push({
             name: "provider.readiness.changed",
-            properties: { provider: driver, from: before.state, to: next.state },
+            properties: {
+              provider: driver,
+              from: before.state,
+              to: next.state,
+              ...(next.state === "error" && next.checkFailure !== undefined
+                ? { checkFailure: next.checkFailure }
+                : {}),
+            },
           });
         if (before.source !== next.source)
           events.push({

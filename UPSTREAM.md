@@ -200,8 +200,11 @@ and Scient-managed runtimes appear in a Scient-owned circle and card
 `SidebarUpdatePill.tsx`; its **Update all** runs upstream's pass without the confirmation. A pass
 that downloads this app asks in a small card above the pill (`UpdateEverythingAsk.tsx`) only when
 servers would stop running threads. Upstream's `SidebarUpdateCapsule` and `UpdateEverythingDialog`
-are retained unmounted (knip entries) so their changes still merge; the pass's restart countdown is a Scient tooltip above
-the Restart pill. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
+are retained unmounted (knip entries) so their changes still merge. Scient replaces upstream's
+5-second restart countdown with an idle check (`scient/desktopUpdate/restartWhenIdle.ts`): when a
+download the user started finishes, alone or at the end of a pass, this app restarts at once only
+while none of its own threads is working and Compute has no running work; otherwise the pill shows
+Restart. Upstream's `waitForUpdateRestart` stays in place, unused. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
 where a server is left for later while its machine still updates a provider or runtime, and is
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
 A marked root mount delegates browser "update available" toasts to Scient's
@@ -642,6 +645,47 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`2bee33eb193a0430c9a0d8e24f8f684163f045a4` is recorded in
+[the 2026-11-14 2bee33eb19 receipt](docs/internals/t3-upstream-sync-20261114-2bee33eb19.md).
+Literal merge `1235ed4b9a21f02197748810dd2f1a3678a450df` has owned base
+`253ef0edc14f8d6d7c20506fd97aaef57176ae4e` and the frozen official target as parents, retaining
+the 104 official commits after `997b304dd6`; PR #929 carries it. Node moves to 26.13.1 with its
+SQLite 3.54.1, renaming a thread renames the Claude session, and provider switches on portable
+forks keep the inherited conversation. Scient keeps its lazy Files tree and pdf.js find. Release
+remains separate.
+
+The previous committed alignment through
+`997b304dd65f8fee1e4912cbe656b459695aa8e9` is recorded in
+[the 2026-11-14 997b304dd6 receipt](docs/internals/t3-upstream-sync-20261114-997b304dd6.md).
+Literal merge `745632a426ff2bca9bec21a3d89e86f6aa3eb37c` has owned base
+`4a01db6ca4fa116eac8e7f0456f7a67fdd522d4f` and the frozen official target as parents, retaining
+the 150 official commits after `4d5d5f89d4`; PR #921 carries it. Stopped threads resume natively where the agent
+supports it, a new thread's first message travels in its creation command with Scient's skill
+selection, and Scient keeps its staging-repository checkpoint capture. A reply cut at the output
+token limit keeps Scient's completed-with-notice outcome. Release remains separate.
+
+The previous committed alignment through
+`f313d0a6cb843551fb60e57a454a71e71a3a8c04` is recorded in
+[the 2026-11-13 f313d0a6cb receipt](docs/internals/t3-upstream-sync-20261113-f313d0a6cb.md).
+Literal merge `056b8ccc26884eb7c40f517fb3a302b595253bc0` has owned base
+`5067dcfb198bcf94ac6cb78838a1dbbaa9c0fae5` and the frozen official target as parents, retaining
+the 172 official commits after `f70e349eca`. Keep-awake now uses T3's server hold, deciding busy
+from Scient's work definition, and Scient's desktop switch is removed. A message sent after a
+stopped worktree setup waits for a worktree, as in T3. T3's three migrations are appended as 91
+to 93. Release remains separate.
+
+The previous committed alignment through
+`f70e349ecaef6560aecb889f77d6f03b9251edc9` is recorded in
+[the 2026-11-13 f70e349eca receipt](docs/internals/t3-upstream-sync-20261113-f70e349eca.md).
+Literal merge `96fa5a81ff02e5b97172362a3f2722ca9fe10eb9` has owned base
+`5d78d5d7fa5b7bf21db299b2c71897d779d2e62a` and the frozen official target as parents, retaining
+the 589 official commits after `eceeab4d5c`. Scient's copies of its own fixes T3 merged (#34595,
+#34575, #34252) and of the subagent tools-used note (#34821) give way to T3's code. T3's UI
+languages arrive with Scient's names. T3's four migrations are appended as 87 to 90. Antigravity
+keeps Scient's qualified ACP release while T3 moves to Google's native CLI. Release remains
+separate.
+
+An earlier committed alignment through
 `eceeab4d5c5bb02b58906978ff9e50bbd595ec19` is recorded in
 [the 2026-11-12 eceeab4d5c receipt](docs/internals/t3-upstream-sync-20261112-eceeab4d5c.md).
 Literal merge `24bf8e8936698b61e604963c41cf9bd5f016140a` has owned base
@@ -651,7 +695,7 @@ the 243 official commits after `44ebb2fe57`. Scient's copies of its own fixes T3
 and is turned on once for everyone. Grok skips an effort it cannot apply, as in T3. T3's two
 migrations are appended as 85 and 86. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `44ebb2fe57465d32f2bd07c5eb3d8e871bdf5ed5` is recorded in
 [the 2026-11-11 44ebb2fe57 receipt](docs/internals/t3-upstream-sync-20261111-44ebb2fe57.md).
 Literal merge `18697158fb3c076f62fbe0aee8c9c37c0314d022` has owned base
@@ -1531,7 +1575,11 @@ projection lives under `scient/skills`; voice correction shares the existing gua
 generation runner. Retain these narrow mounts without forking the native engine.
 Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
 and targets outside the qualified native set; removing a fallback requires native
-replacement qualification, not merely an available Google archive.
+replacement qualification, not merely an available Google archive. T3 now installs Google's
+native CLI and dropped its pinned ACP release; Scient keeps that 1.4.5 release as the offline
+floor of its qualified catalog (`scient/providerLifecycle/antigravityAcpCatalog.ts`), and T3's
+native install runs only where no catalog is supplied. Moving Scient to the native CLI needs that
+qualification first.
 
 Antigravity sign-in carries four marked seams into upstream-owned files. Three fix upstream bugs
 worth proposing to T3:
@@ -2103,16 +2151,6 @@ Chromium cookies, which Scient doesn't try to bypass
 - web `browserImportWizard.logic.ts`, `BrowserImportWizard.tsx`: the protected-cookie notice, and
   an import into Main counted in sign-ins, partial when it kept one of Main's own.
 
-## Desktop tab relay ends with a detach
-
-`DesktopBrowserChannel.ts` carries one marked block that T3 lacks: when the desktop detaches a
-tab, its relay socket closes, so Playwright's pending CDP commands fail. Upstream keeps the socket
-open after shutting the tab's queue, so a tab detached while the server was setting it up never
-settles. The desktop attach and preview event consumers await each setup in turn, so every later
-desktop tab is never set up and keeps showing the start page over a page that loaded. Offered to
-T3 as pingdotgg/t3code#34252 (issue #34251). When it merges, take T3's version, then delete the
-marked block and `DesktopBrowserChannel.scient.test.ts`.
-
 ## Git maintenance, untracked scans and owned processes
 
 Scient's checkpoints publish with a `git fetch`, which T3 does not (T3 uses `update-ref`), so
@@ -2135,13 +2173,6 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
   from Scient) is upstream code now. Scient's marked blocks keep only its follow-up: overlapping
   status reads share one running listing, and the error keeps the listing's `GitCommandError` as
   `cause`. Tested in `GitVcsDriverCore.scient.test.ts`; offered as pingdotgg/t3code#34574.
-- `GitVcsDriverCore.ts` (`prepareCommitContext`): drafting a commit message stages into a
-  temporary object directory, reading the repository's own objects and every alternate it lists
-  directly, so a draft without a commit leaves no objects in the repository. Tested in
-  `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34595 (issue #34594).
-- `CodexAdapterV2.ts`: T3's 2 s force-kill deadline (pingdotgg/t3code#34461, from Scient) is
-  upstream code now. Only its test keeps a marked wait for the stand-in's `ready` line in
-  `CodexAdapterV2.test.ts`, offered as pingdotgg/t3code#34575.
 - `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
   (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
   is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the
@@ -2272,3 +2303,27 @@ When T3 changes those viewers' open or layout code, carry it into the session fu
 When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
 worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
 replace Scient's rather than run beside it.
+
+## Subagent thread fields
+
+T3's `makeSubagentChildThread` (`packages/provider-core/src/server/subagentProjection.ts`) builds a
+subagent from a copy of its parent thread. Delegated tasks and Claude's and Codex's native
+subagents all use it. A copy carried Scient's own thread state into every subagent: a subagent of a
+forked conversation claimed to be that fork, so `delegate_task` from a fork failed and fork, import,
+rollback and usage-limit readers misjudged the subagent. `SCIENT_DERIVED_THREAD_RESETS`
+(`scientDerivedThread.ts`) is spread after the copy inside the `derived-thread-fields` seam. It also
+resets the parent's opens, list position and snooze wake, as T3's own fork does. The seam's other
+line drops `delegatedFrom`, matching T3's open pingdotgg/t3code#30334 word for word; once T3 merges
+it, that line gives way to T3's. The field table in `scient-fork/DelegatedTaskFromFork.test.ts`
+decides every thread field for subagents, so an alignment that adds one fails typecheck until it
+is classified.
+
+## Copied guest links
+
+Forks made before #914 copied their source's `guestShare`, so an invite to the source could open
+the fork. A thread is always created without a share of its own, so a share already in its
+`thread.created` event was copied (`scient/guest/ownGuestShare.ts`). The `copied-guest-share`
+seams in T3's `ProjectionStore.findGuestShareThreadId` and `GuestShareService.authorize` refuse
+such a share, for invites and for sessions already redeemed. They protect forks already in users'
+databases, whose events still carry the copy, and need `thread.created` events to stay unpruned,
+as T3's maintenance keeps them. T3 has no copy path, so it needs no such check.

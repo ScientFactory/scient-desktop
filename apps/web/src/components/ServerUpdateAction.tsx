@@ -276,13 +276,17 @@ export function ServerUpdateAction({
   const canUpdate = useAtomValue(sessionStateAtom, canUpdateServer);
   const updatesDenial = managedUpdatesDenial(useManagedPolicy(environmentId));
   const update = useServerUpdate();
+  // SCIENT-FORK: an npm-global install relaunches from the Scient release; only a launcher updates.
+  const updatesInstall = installation?.kind === "t3-launcher";
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
-    target: "relaunch command",
+    target: updatesInstall ? "update command" : "relaunch command",
     onCopy: ({ command }) => {
       toastManager.add({
         type: "success",
-        title: "Relaunch command copied",
-        description: `Stop Scient on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed scient command.`,
+        title: updatesInstall ? "Update command copied" : "Relaunch command copied",
+        description: updatesInstall
+          ? `Run \`${command}\` on ${serverLabel}, then restart Scient with your usual options.`
+          : `Stop Scient on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed scient command.`,
       });
     },
     onError: (error) => {
@@ -347,7 +351,12 @@ export function ServerUpdateAction({
 
   const manualCommand =
     selfUpdate === null ? manualServerUpdateCommand(targetVersion, installation) : null;
-  const actionLabel = manualCommand !== null ? "Copy relaunch command" : label;
+  const actionLabel =
+    manualCommand !== null
+      ? updatesInstall
+        ? "Copy update command"
+        : "Copy relaunch command"
+      : label;
   const onClick =
     manualCommand !== null
       ? () => copyToClipboard(manualCommand, { command: manualCommand })

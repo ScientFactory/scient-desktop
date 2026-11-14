@@ -74,6 +74,14 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
     { order: ["binaryPath", "homePath", "profile"] },
   );
 
+  // The modes of Claude's `idleCompaction`; `resolveIdleCompaction` reads either provider's.
+  const SCIENT_AGENT_IDLE_COMPACTION_MODES = [
+    { value: "default", label: "Use default" },
+    { value: "onReturn", label: "When you return" },
+    { value: "beforeCacheExpires", label: "Before the cache expires (beta)" },
+    { value: "off", label: "Never" },
+  ] as const;
+
   /**
    * Scient Agent keeps its state in a directory this server assigns, so it has
    * no home or profile setting. It is Scient's own agent, so it is on by default.
@@ -104,8 +112,32 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
           providerSettingsForm: { control: "switch" },
         }),
       ),
+      imageGeneration: Schema.Boolean.pipe(
+        Schema.withDecodingDefault(Effect.succeed(true)),
+        Schema.annotateKey({
+          title: "Image generation",
+          description:
+            "Lets Scient Agent make and edit pictures, such as figures and diagrams, with a signed-in ChatGPT or Google Antigravity account. It uses that account's quota.",
+          providerSettingsForm: { control: "switch" },
+        }),
+      ),
+      idleCompaction: Schema.Literals(
+        SCIENT_AGENT_IDLE_COMPACTION_MODES.map((mode) => mode.value),
+      ).pipe(
+        Schema.withDecodingDefault(Effect.succeed("default" as const)),
+        Schema.annotateKey({
+          title: "Compact idle threads",
+          description:
+            "When to compact an idle thread over 200,000 tokens: after you return, just before its one-hour prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+          providerSettingsForm: {
+            control: "select",
+            options: SCIENT_AGENT_IDLE_COMPACTION_MODES,
+            clearWhenEmpty: "omit",
+          },
+        }),
+      ),
     },
-    { order: ["binaryPath", "computerControl"] },
+    { order: ["binaryPath", "computerControl", "imageGeneration", "idleCompaction"] },
   );
 
   const DroidSettings = makeProviderSettingsSchema(

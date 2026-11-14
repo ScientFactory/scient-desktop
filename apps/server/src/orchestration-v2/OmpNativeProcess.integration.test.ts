@@ -319,6 +319,16 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
               interrupted ? 2 : 3,
             );
             assert.isTrue(final.providerTurns.every((turn) => turn.acceptedAt !== undefined));
+            // Rewind needs each finished turn tied to the agent's entry for its message.
+            assert.isTrue(
+              final.providerTurns
+                .filter((turn) => turn.status === "completed")
+                .every(
+                  (turn) =>
+                    turn.nativeTurnRef?.strength === "strong" &&
+                    turn.nativeTurnRef.nativeId?.startsWith("entry-") === true,
+                ),
+            );
             yield* sessions.closeInstance(instanceId);
             const audit = yield* readAudit();
             const opened = audit.filter((row) => row.type === "opened");

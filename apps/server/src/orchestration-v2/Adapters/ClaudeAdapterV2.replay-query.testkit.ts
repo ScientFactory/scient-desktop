@@ -509,6 +509,8 @@ function makeReplayQueryRunner(
               );
             }
           }),
+        // Recorded sessions already hold their title, and no replay asserts rename frames.
+        renameSession: () => Effect.void,
         close: Effect.void,
       };
     },

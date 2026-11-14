@@ -634,6 +634,7 @@ describe("native V2 analytics", () => {
           durationMs: 5000,
           usedTools: true,
           hasAttachment: false,
+          retryAttempts: 0,
         },
       },
       {
@@ -649,6 +650,139 @@ describe("native V2 analytics", () => {
     ]);
     expect(JSON.stringify(output)).not.toContain("private");
     expect(mapper.event(runEvent("completed"))).toEqual([]);
+  });
+  describe("why a turn failed", () => {
+    const rootNodeId = NodeId.make("private-root-node");
+    const rootRun = { ...run, rootNodeId };
+    const runAt = (status: OrchestrationV2Run["status"]) => ({
+      ...runEvent(status),
+      payload: { ...rootRun, status },
+    });
+    const errorItem = (
+      id: string,
+      status: "running" | "completed" | "failed",
+      failure: {
+        class: "provider_error" | "usage_limit" | "transport_error";
+        code: string | null;
+        httpStatus?: number;
+      },
+      options: { attempt?: number; nodeId?: string; ordinal?: number; at?: number } = {},
+    ): OrchestrationV2DomainEvent => ({
+      ...base,
+      type: "turn-item.updated",
+      payload: {
+        id: TurnItemId.make(id),
+        threadId,
+        runId,
+        nodeId: NodeId.make(options.nodeId ?? rootNodeId),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: options.ordinal ?? 1,
+        status,
+        title: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+        updatedAt: DateTime.add(now, { seconds: options.at ?? 0 }),
+        type: "error",
+        failure: { message: "private provider text", retryable: null, ...failure },
+        ...(options.attempt === undefined
+          ? {}
+          : { retry: { attempt: options.attempt, maxAttempts: null, retryDelayMs: null } }),
+      },
+    });
+
+    it("reports the run's terminal failure, not a retry that recovered", () => {
+      const mapper = createV2AnalyticsEventMapper();
+      mapper.event(runAt("running"));
+      mapper.event(
+        errorItem(
+          "terminal",
+          "failed",
+          { class: "provider_error", code: "auth-failed", httpStatus: 401 },
+          { ordinal: 2, at: 4 },
+        ),
+      );
+      // A retry row whose last word arrives after the terminal: it recovered, so it is not the failure.
+      const recovered = { class: "transport_error" as const, code: "transient", httpStatus: 503 };
+      mapper.event(errorItem("retry", "running", recovered, { attempt: 1, at: 5 }));
+      mapper.event(errorItem("retry", "running", recovered, { attempt: 2, at: 6 }));
+      mapper.event(errorItem("retry", "completed", recovered, { attempt: 2, at: 7 }));
+      mapper.event(
+        errorItem(
+          "child",
+          "failed",
+          { class: "usage_limit", code: "usage-limit" },
+          { nodeId: "private-child-node", ordinal: 3, at: 5 },
+        ),
+      );
+      const output = mapper.event(runAt("failed"));
+      expect(output).toEqual([
+        {
+          name: "provider.turn.failed",
+          properties: {
+            provider: "codex",
+            model: "gpt-6",
+            durationMs: 5000,
+            failureClass: "provider_error",
+            // Codex never sets "auth-failed", so that code is dropped; its status is still a status.
+            httpStatus: 401,
+            retryAttempts: 2,
+          },
+        },
+      ]);
+      expect(JSON.stringify(output)).not.toContain("private");
+    });
+
+    it("keeps a known code and the HTTP status of the provider that set them", () => {
+      const mapper = createV2AnalyticsEventMapper();
+      mapper.event({ ...runAt("running"), driver: ProviderDriverKind.make("scient") });
+      mapper.event(
+        errorItem("terminal", "failed", {
+          class: "provider_error",
+          code: "context-overflow",
+          httpStatus: 400,
+        }),
+      );
+      expect(
+        mapper.event({ ...runAt("failed"), driver: ProviderDriverKind.make("scient") }),
+      ).toEqual([
+        {
+          name: "provider.turn.failed",
+          properties: {
+            provider: "scient",
+            model: "gpt-6",
+            durationMs: 5000,
+            failureClass: "provider_error",
+            failureCode: "context-overflow",
+            httpStatus: 400,
+            retryAttempts: 0,
+          },
+        },
+      ]);
+    });
+
+    it("counts each retry cycle's attempts, including a row a provider reuses after recovering", () => {
+      const mapper = createV2AnalyticsEventMapper();
+      mapper.event(runAt("running"));
+      const transient = { class: "transport_error" as const, code: null };
+      for (const [status, attempt] of [
+        ["running", 1],
+        ["running", 2],
+        ["running", 3],
+        ["completed", 3],
+        ["completed", 3],
+        ["running", 1],
+        ["completed", 1],
+      ] as const)
+        mapper.event(errorItem("reused-retry", status, transient, { attempt }));
+      mapper.event(errorItem("second-retry", "running", transient, { attempt: 1 }));
+      mapper.event(errorItem("second-retry", "completed", transient, { attempt: 1 }));
+      expect(mapper.event(runAt("completed"))).toMatchObject([
+        { name: "provider.turn.completed", properties: { retryAttempts: 5 } },
+      ]);
+    });
   });
   it("tallies an agent's own terminal commands by category once each, never their text", () => {
     const mapper = createV2AnalyticsEventMapper();

@@ -53,6 +53,9 @@ import {
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
+// SCIENT-FORK:START — scient/connect
+import { describeScientConnectHost, useScientConnectHost } from "~/scient/connect/connectHost";
+// SCIENT-FORK:END
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
@@ -63,6 +66,7 @@ import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/st
 import { APP_VERSION } from "~/branding";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
 import {
   OutdatedServerUpdateAction,
@@ -93,6 +97,9 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
     case "connecting":
       return { text: "Connecting", tone: "muted" };
     case "reconnecting":
+      if (connection.awaitingApproval) {
+        return { text: connection.error ?? "Waiting for approval", tone: "muted" };
+      }
       return {
         text: connection.error ? `Reconnecting: ${connection.error}` : "Reconnecting",
         tone: "error",
@@ -130,13 +137,6 @@ export function SavedBackendListRow({
   const errorTraceId = environment.connection.traceId;
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
-    onCopy: ({ traceId }) => {
-      toastManager.add({
-        type: "success",
-        title: "Trace ID copied",
-        description: traceId,
-      });
-    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
@@ -525,10 +525,13 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
 function ConfiguredCloudLinkRow({
   environmentId,
   canManageRelay,
+  connectDeviceApproval,
 }: {
   readonly environmentId: EnvironmentId;
   readonly canManageRelay: boolean;
+  readonly connectDeviceApproval: ConnectDeviceApprovalControl | null;
 }) {
+  const updateEnvironmentSettings = useUpdateEnvironmentSettings(environmentId);
   const {
     isSignedIn,
     linkState: cloudLinkState,
@@ -547,6 +550,14 @@ function ConfiguredCloudLinkRow({
   const turnOn = useT3ConnectTurnOn(environmentId);
   // Turning on links from this desktop's own backend only; turning off works from anywhere.
   const showSwitch = isElectron && (turnOn.kind !== "on-host" || managedTunnelActive);
+  // SCIENT-FORK:START — scient/connect: on the desktop's own computer, signing in turns Scient
+  // Connect on; the switch shows the person's choice and the line below what setup is doing.
+  const connectHost = useScientConnectHost(environmentId);
+  const hostSwitchOn =
+    connectHost !== null && !connectHost.off && connectHost.block?.reason !== "revoked";
+  const hostDescription =
+    connectHost === null ? null : describeScientConnectHost(connectHost, isSignedIn === true);
+  // SCIENT-FORK:END
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
@@ -556,14 +567,18 @@ function ConfiguredCloudLinkRow({
   const isBusy = isUpdating || isUpdatingPreference;
   const switchDisabled =
     !canManageRelay ||
-    !isSignedIn ||
+    // SCIENT-FORK:START — scient/connect: turning it off needs no sign-in.
+    (!isSignedIn && !(connectHost !== null && hostSwitchOn)) ||
+    // SCIENT-FORK:END
     cloudLinkState.data === null ||
     cloudLinkState.isPending ||
     isBusy;
   // `isSignedIn` is undefined until Clerk loads. Signed out, one row shows a
   // sign-in button instead of its switch; the onboarding dialog that opens after
   // a fresh sign-in offers both linking and publishing.
-  const signedOut = isSignedIn === false;
+  // SCIENT-FORK:START — scient/connect: a computer already on keeps its switch signed out.
+  const signedOut = isSignedIn === false && !(connectHost !== null && hostSwitchOn);
+  // SCIENT-FORK:END
   const signInButton = (
     <Button size="sm" variant="outline" onClick={openAuthPrompt}>
       Sign in
@@ -665,21 +680,25 @@ function ConfiguredCloudLinkRow({
         <SettingsRow
           title={searchableSetting("t3-connect").title}
           description={
-            connectDenial !== undefined && !managedTunnelActive
-              ? connectDenial
-              : signedOut
-                ? "Sign in to make this environment available to your other devices through Scient Connect."
-                : linkRevoked
-                  ? "This environment was removed from Scient Connect. Turn it on to link it again."
-                  : managedTunnelActive
-                    ? reachability?.status === "unreachable"
-                      ? "The cloud connection is on, but other devices cannot reach this environment."
-                      : reachability?.status === "reachable"
-                        ? "This environment is available to your other devices through Scient Connect."
-                        : "The cloud connection is on. Reachability has not been checked yet."
-                    : managedTunnelOutOfSync
-                      ? "Scient Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn Scient Connect on to repair it."
-                      : "Make this environment available to your other devices through Scient Connect."
+            // SCIENT-FORK:START — scient/connect
+            connectHost !== null && hostDescription !== null
+              ? hostDescription
+              : // SCIENT-FORK:END
+                connectDenial !== undefined && !managedTunnelActive
+                ? connectDenial
+                : signedOut
+                  ? "Sign in to make this environment available to your other devices through Scient Connect."
+                  : linkRevoked
+                    ? "This environment was removed from Scient Connect. Turn it on to link it again."
+                    : managedTunnelActive
+                      ? reachability?.status === "unreachable"
+                        ? "The cloud connection is on, but other devices cannot reach this environment."
+                        : reachability?.status === "reachable"
+                          ? "This environment is available to your other devices through Scient Connect."
+                          : "The cloud connection is on. Reachability has not been checked yet."
+                      : managedTunnelOutOfSync
+                        ? "Scient Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn Scient Connect on to repair it."
+                        : "Make this environment available to your other devices through Scient Connect."
           }
           status={operationError ?? cloudLinkState.error ?? reachabilityStatus}
           managed={managedTunnelActive ? undefined : connectDenial}
@@ -688,7 +707,9 @@ function ConfiguredCloudLinkRow({
               signInButton
             ) : (
               <CloudLinkSwitch
-                checked={managedTunnelActive}
+                // SCIENT-FORK:START — scient/connect: the person's choice, not setup progress.
+                checked={connectHost !== null ? hostSwitchOn : managedTunnelActive}
+                // SCIENT-FORK:END
                 disabled={switchDisabled}
                 disabledReason={disabledReason}
                 onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
@@ -697,7 +718,14 @@ function ConfiguredCloudLinkRow({
           }
         >
           {signedOut || connectDenial !== undefined ? null : (
-            <T3ConnectTunnelUsage tunnelLimit={tunnelLimit} />
+            <T3ConnectTunnelUsage
+              tunnelLimit={
+                // SCIENT-FORK:START — scient/connect: a limit setup met in the background.
+                tunnelLimit ??
+                (connectHost?.block?.reason === "limit" ? connectHost.block.maxTunnels : null)
+                // SCIENT-FORK:END
+              }
+            />
           )}
         </SettingsRow>
       ) : linkRevoked ? (
@@ -753,18 +781,48 @@ function ConfiguredCloudLinkRow({
           }
         />
       ) : null}
+      {managedTunnelActive && connectDeviceApproval ? (
+        <SettingsRow
+          title={searchableSetting("connect-device-approval").title}
+          description="Devices that sign in to your Scient Connect account wait until someone already connected here approves them."
+          managed={connectDenial}
+          control={
+            <CloudLinkSwitch
+              ariaLabel="Require approval for new Scient Connect devices"
+              checked={connectDeviceApproval.required}
+              disabled={!connectDeviceApproval.canManage}
+              disabledReason={
+                connectDeviceApproval.canManage
+                  ? null
+                  : "Your session does not have permission to manage access."
+              }
+              onCheckedChange={(enabled) =>
+                updateEnvironmentSettings({ requireConnectDeviceApproval: enabled })
+              }
+            />
+          }
+        />
+      ) : null}
     </>
   );
+}
+
+/** Older servers have no device approval, so callers pass null and the row stays hidden. */
+export interface ConnectDeviceApprovalControl {
+  readonly required: boolean;
+  readonly canManage: boolean;
 }
 
 export function CloudLinkRow({
   environmentId,
   canReadRelay,
   canManageRelay,
+  connectDeviceApproval,
 }: {
   readonly environmentId: EnvironmentId;
   readonly canReadRelay: boolean;
   readonly canManageRelay: boolean;
+  readonly connectDeviceApproval: ConnectDeviceApprovalControl | null;
 }) {
   if (!hasCloudPublicConfig()) return null;
   if (!canReadRelay) {
@@ -775,7 +833,13 @@ export function CloudLinkRow({
       />
     );
   }
-  return <ConfiguredCloudLinkRow environmentId={environmentId} canManageRelay={canManageRelay} />;
+  return (
+    <ConfiguredCloudLinkRow
+      environmentId={environmentId}
+      canManageRelay={canManageRelay}
+      connectDeviceApproval={connectDeviceApproval}
+    />
+  );
 }
 
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {

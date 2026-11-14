@@ -79,7 +79,6 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
-import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { useBrowserPdfExportOwner } from "~/scient/documentExport/browserPdfExportOwner";
@@ -175,12 +174,16 @@ function ServerTabFileNotShown(props: {
   );
 }
 
-function focusPreviewPage(runtimeTabId: string) {
-  const active = document.activeElement;
-  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
+function focusPreviewWebview(runtimeTabId: string) {
   document
     .querySelector<HTMLElement>(`[data-preview-viewport="${CSS.escape(runtimeTabId)}"] webview`)
     ?.focus();
+}
+
+function focusPreviewPage(runtimeTabId: string) {
+  const active = document.activeElement;
+  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
+  focusPreviewWebview(runtimeTabId);
 }
 
 export function PreviewView({
@@ -243,6 +246,7 @@ export function PreviewView({
   const isServerTab = snapshot?.runtime === "server" && !nativeServerTab;
   const serverOwnsRendering = snapshot?.runtime === "server";
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
+  const serverSurfaceBoxRef = useRef<HTMLDivElement | null>(null);
   const [serverAspectRatioLocked, setServerAspectRatioLocked] = useState(false);
   const [serverToolbarWidth, setServerToolbarWidth] = useState(0);
   const serverToolbarShown =
@@ -269,7 +273,12 @@ export function PreviewView({
     previewState.serverEpoch,
   );
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
-  const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
+  // A new Electron tab is Idle until its first URL commits, while the server already has it Loading.
+  const desktopNavStatus =
+    !serverOwnsRendering && desktopOverlay?.navStatus._tag !== "Idle"
+      ? desktopOverlay?.navStatus
+      : undefined;
+  const navStatus = desktopNavStatus ?? snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const clientPdfUrl =
     navStatus._tag === "Success" ? previewPdfAssetUrl(url, environmentHttpBaseUrl) : null;
@@ -278,7 +287,7 @@ export function PreviewView({
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
   const refreshDisabled = navStatus._tag === "Idle";
   const isUnreachable = navStatus._tag === "LoadFailed";
-  const showEmptyState = shouldShowPreviewEmptyState(snapshot);
+  const showEmptyState = navStatus._tag === "Idle";
   // SCIENT-FORK:START — a start page on screen hosts its tab here, so its first address loads here.
   useShowPreviewStartPage(
     visible && showEmptyState && !isServerTab ? (runtimeTabId ?? null) : null,
@@ -421,6 +430,11 @@ export function PreviewView({
     else if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
   };
 
+  const handleStopLoading = () => {
+    if (isServerTab) serverSurfaceRef.current?.stopLoading();
+    else if (previewBridge && runtimeTabId) void previewBridge.stopLoading(runtimeTabId);
+  };
+
   const adjustServerTab = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
     if (!tabId) return;
     const result = await adjust({
@@ -502,7 +516,10 @@ export function PreviewView({
       target,
       browserResponsiveViewportForToggle({
         defaults: browserDefaults,
-        panelRect,
+        // Only BrowserSurfaceSlot publishes a store rect; streamed tabs measure their own box.
+        panelRect: isServerTab
+          ? (serverSurfaceBoxRef.current?.getBoundingClientRect() ?? null)
+          : panelRect,
         zoomFactor: isServerTab ? serverZoomFactor : layoutZoomFactor,
       }),
     ).catch(() => undefined);
@@ -916,6 +933,9 @@ export function PreviewView({
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
       );
       if (pickRequest.cancelled) return;
+      // Main's WebContents.focus() cannot move the embedder's DOM focus into a guest, so key
+      // presses would stay in the app; only focusing the <webview> element hands them to the page.
+      focusPreviewWebview(runtimeTabId);
       const result = await bridge.pickElement(runtimeTabId, voice);
       if (!result || pickRequest.cancelled) return;
       // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
@@ -995,6 +1015,12 @@ export function PreviewView({
         case "refresh":
           handleRefresh();
           return;
+        case "back":
+          handleBack();
+          return;
+        case "forward":
+          handleForward();
+          return;
         case "focus-url":
           urlInputRef.current?.focus();
           return;
@@ -1023,6 +1049,9 @@ export function PreviewView({
     // shortcuts from the guest as menu actions instead.
     const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
       if (action === "preview.focusUrl") onPreviewAction("focus-url");
+      if (action === "preview.zoomIn") onPreviewAction("zoom-in");
+      if (action === "preview.zoomOut") onPreviewAction("zoom-out");
+      if (action === "preview.resetZoom") onPreviewAction("reset-zoom");
       if (action === "preview.find") onPreviewAction("find");
     });
     return () => {
@@ -1074,6 +1103,7 @@ export function PreviewView({
         onBack={handleBack}
         onForward={handleForward}
         onRefresh={handleRefresh}
+        onStopLoading={handleStopLoading}
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId && !isServerTab ? handleCapture : undefined}
@@ -1195,6 +1225,7 @@ export function PreviewView({
               </div>
             ) : null}
             <div
+              ref={serverSurfaceBoxRef}
               className={cn(
                 "absolute inset-x-0 bottom-0",
                 (showEmptyState || isUnreachable) && "invisible",

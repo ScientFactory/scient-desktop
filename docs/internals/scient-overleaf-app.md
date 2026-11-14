@@ -59,15 +59,35 @@ started after it; a forced load (after an operation) starts afresh rather than j
 running, and so does the load of a view marked stale by another view's operation. So a read from during a sync can't answer after the sync's own refresh and leave the chip
 on "Syncing…".
 
-`overleafChipView` maps the status:
+`overleafChipView` maps the status, this window's last result for the link and what Overleaf
+last said (`remoteStates`, asked by `refreshOverleafRemoteState` with each list of the links, at
+most once a minute per link), first match wins:
 
-| Chip             | From                                                                                   |
-| ---------------- | -------------------------------------------------------------------------------------- |
-| Syncing…         | a sync started in this window, or `busy`                                               |
-| Overleaf problem | `unavailable` or `disconnected`; reasons `folder-changed` or `staging`; local `unread` |
-| Needs a decision | reasons `conflict-marks` or `interrupted-files`                                        |
-| Edits to send    | local changes, or `recovery-required` (the next sync finishes it)                      |
-| Up to date       | otherwise                                                                              |
+| Chip                | From                                                              |
+| ------------------- | ----------------------------------------------------------------- |
+| Syncing…            | a sync started in this window, or `busy`                          |
+| Needs a decision    | the last result is `needs-decision`                               |
+| Couldn't sync       | the last result is `refused` (the menu shows its reason)          |
+| Overleaf problem    | `unavailable` or `disconnected`                                   |
+| Needs a decision    | reasons `conflict-marks` or `interrupted-files`                   |
+| Overleaf problem    | reasons `folder-changed` or `staging`; local `unread`             |
+| Edits to send       | local changes, or `recovery-required` (the next sync finishes it) |
+| Not synced yet      | `completedSyncCount` is 0                                         |
+| Changes in Overleaf | Overleaf answered `changed`                                       |
+| Up to date          | Overleaf answered `same`                                          |
+| No edits to send    | otherwise: Overleaf not asked yet, or `unknown`                   |
+
+A sync sets the link's remote state to `same` (and skips the next remote check for a minute) only
+when its apply brought everything in (`overleafChangesCameIn`) and the publication is `none` or
+`accepted`; after any other `synced` result the remote state is dropped and Overleaf is asked
+again.
+
+A list read that fails leaves the links listed before and records `error`; only
+`workspace-not-authorized` (a folder that isn't a project) counts as having no links. Settings
+shows "Couldn't read the linked folders. …" in place of "No folder is linked.", and the review
+tab shows the error in place of "This folder is no longer linked". A failed token-status read
+leaves the token state as it was (unknown until the first answer, "Checking…"), never
+"No token saved", and the next view that shows it asks again.
 
 A file belongs to the link whose folder holds it (`connectionForPath`), whatever copy the link
 is in. In a worktree (`linkedHere` false) the chip says the link belongs to the main copy and
@@ -108,8 +128,13 @@ came in, 2 were sent"), the lines of design section 4.1 and a tone; the toast ca
 changes** when there were changes, and a conflict opens the review tab instead. The Connect
 dialog runs the same function with `quiet` and shows the result itself.
 
-Headline counts: incoming is the review's incoming changes; "sent" counts outgoing changes only
-when the publication is `accepted`. Files held for their conflict marks (the review's
+Headline counts: incoming is the review's incoming changes, said as having come in only when
+the apply brought them in (`overleafChangesCameIn`: outcome `complete`, or `attention` from
+conflict marks in held files alone, which the server still sends from). A `replan` is titled
+"Nothing came in" (the apply wrote nothing; sync again); another `attention` "Overleaf's changes
+were applied as far as the folder allowed", with why. Neither is recorded as an applied review.
+"sent" counts outgoing changes, and renames and older versions are said, only when the
+publication is `accepted`. Files held for their conflict marks (the review's
 `unresolvedMarkers` and the apply's `markerPaths`) are always named, "Waiting for conflict marks
 to be settled: …", after a sync that moved nothing too (its headline is then "N files wait for
 conflicts") and beside a conflict.
@@ -214,6 +239,16 @@ says so and keeps the project; the project fields lock, and Connect again only l
 dialog opens a new thread in the project; if the project hadn't reached the sidebar when it was
 made, closing waits for it again, and says where the project is if it still isn't there. Overleaf's title isn't available, so the project is named
 from the typed name.
+
+## Unreadable link records
+
+Settings ▸ Synced folders ▸ Overleaf lists the environment's link records this release can't
+read (`unreadableRecords` from `list`): each with its folder, whether it is damaged or from a
+newer release, and what it holds back (`unreadableRecordLines`). `setAsideAction` decides the
+button: **Set aside** for `allowed`, **Set aside anyway** (`acceptUnfinished: true`) for
+`confirm`, none for `held`. Refusals that point here (`records-unreadable`, `unreadable-record`,
+`corrupt`, `unsupported`) say "See Settings › Synced folders › Overleaf", since a held record
+has no button.
 
 ## Kept copies
 

@@ -20,6 +20,7 @@ import {
   OrchestrationV2ThreadTranscript,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -29,6 +30,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import type { HttpClient } from "effect/http";
+import { AsyncResult } from "effect/reactivity";
 
 // SCIENT-FORK:START
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
@@ -46,7 +48,7 @@ import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
-import { fetchEnvironmentSessionState } from "./session.ts";
+import { fetchEnvironmentSessionState, sessionDeniesScope } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
@@ -295,7 +297,11 @@ const LOADERS: ReadonlyArray<{
     expected: SHELL,
     load: (input: HttpInput) =>
       fetchEnvironmentShellSnapshot(input).pipe(
-        Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
+        Effect.map((answer) => {
+          if ("resumable" in answer) return answer;
+          const { loadPullRequests: _links, ...snapshot } = answer;
+          return snapshot;
+        }),
       ),
   },
   {
@@ -368,9 +374,12 @@ describe("authenticated environment HTTP requests", () => {
                 ],
               }),
         );
-        const rows = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        const answer = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
           Effect.provide(harness.httpLayer),
         );
+        // A request without `resumeFrom` always answers a full snapshot.
+        if ("resumable" in answer) throw new Error("expected a full shell snapshot");
+        const rows = answer;
         expect(rows.threads.map((thread) => thread.title)).toEqual([
           "Unreadable badge",
           "Valid badge",
@@ -786,6 +795,8 @@ describe("authenticated environment HTTP requests", () => {
         message: "The environment rejected the renewed session authorization.",
       });
       expect(harness.calls).toHaveLength(2);
+      const rejectedLookup = AsyncResult.failure<AuthSessionState, typeof error>(Cause.fail(error));
+      expect(sessionDeniesScope(rejectedLookup, "orchestration:read")).toBe(true);
     }),
   );
 

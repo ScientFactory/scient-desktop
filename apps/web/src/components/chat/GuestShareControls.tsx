@@ -39,6 +39,12 @@ import { type ChatFileAttachment, isImageAttachment } from "../../types";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { GuestMessageAttachments } from "./GuestMessageAttachments";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
+// SCIENT-FORK:START — scient/connect
+import {
+  ScientConnectReadiness,
+  useScientConnectInviteReady,
+} from "~/scient/connect/ScientConnectReadiness";
+// SCIENT-FORK:END
 import { guestShareDialogThreadAtom } from "./guestShareDialogState";
 
 function useThreadGuestShare(threadRef: ScopedThreadRef | null): ThreadGuestShare | null {
@@ -78,6 +84,9 @@ function GuestShareDialog({
     reportFailure: false,
   });
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "guest link" });
+  // SCIENT-FORK:START — scient/connect: invites wait until this computer's Scient Connect is set up.
+  const connectReady = useScientConnectInviteReady(threadRef.environmentId);
+  // SCIENT-FORK:END
   const [state, setState] = useState<CreateState>({ status: "idle" });
 
   const create = async () => {
@@ -117,6 +126,11 @@ function GuestShareDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
+          {/* SCIENT-FORK:START — scient/connect */}
+          {state.status === "created" ? null : (
+            <ScientConnectReadiness environmentId={threadRef.environmentId} onLeave={onClose} />
+          )}
+          {/* SCIENT-FORK:END */}
           {state.status === "created" ? (
             <div className="flex items-center gap-2">
               <Input
@@ -161,7 +175,13 @@ function GuestShareDialog({
               <Button
                 size="sm"
                 onClick={() => void create()}
-                disabled={!canCreate || state.status === "creating"}
+                disabled={
+                  !canCreate ||
+                  state.status === "creating" ||
+                  // SCIENT-FORK:START — scient/connect
+                  !connectReady
+                  // SCIENT-FORK:END
+                }
               >
                 {state.status === "creating" ? "Creating..." : "Create link"}
               </Button>

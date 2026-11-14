@@ -8,6 +8,9 @@ import type { ServerInstallation } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { resolveLauncherPath } from "../cloud/pinnedRuntime.ts";
+
+const PINNED_RUNTIME_ENTRY = /^(.*)\/runtime\/versions\/[^/]+\/t3$/;
 
 type CliRunner = "npx" | "pnpm dlx" | "bunx";
 
@@ -66,6 +69,21 @@ export const resolveServerInstallation = Effect.gen(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const entry = yield* fs.realPath(yield* resolveEntryPath);
+  const runtime = PINNED_RUNTIME_ENTRY.exec(entry);
+  if (runtime) {
+    const launcher = yield* resolveLauncherPath;
+    if (launcher === undefined) return null;
+    // Fails for a runtime started directly, as SSH launches do, or through a copy.
+    const link = yield* fs.readLink(launcher);
+    // Keep the home as the link spells it; `t3 update` only repoints links into that spelling.
+    const linked = PINNED_RUNTIME_ENTRY.exec(path.resolve(path.dirname(launcher), link));
+    if (!linked || (yield* fs.realPath(linked[1] || "/")) !== (runtime[1] || "/")) return null;
+    return {
+      kind: "t3-launcher",
+      launcher,
+      baseDir: linked[1] || "/",
+    } satisfies ServerInstallation;
+  }
   const match = /^(.*)\/lib\/node_modules\/t3\/(?:dist\/bin\.mjs|bin\/t3\.mjs)$/.exec(entry);
   if (!match) {
     const runner = detectCliRunner(entry);
@@ -98,6 +116,13 @@ const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
+ * Quotes for the host's shell: PowerShell on Windows, where typographic single
+ * quotes also end a string and double like `'`, and a POSIX shell elsewhere.
+ */
+export const hostShellWord = (platform: NodeJS.Platform, value: string) =>
+  platform === "win32" ? `'${value.replace(/['‘’‚‛]/g, "$&$&")}'` : shellWord(value);
+
+/**
  * Resolve this installation, never a package download or an unrelated PATH
  * command. Packaged launchers keep AppImage mount handling; script installs
  * retain the running runtime and entry, including private Node installations.
@@ -110,10 +135,8 @@ export const resolveCliCommand = Effect.fn("invocation.resolveCliCommand")(funct
   const env = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
   // Operational snippets use PowerShell on Windows; quoting a path alone
-  // produces a string there, not an invocation. Typographic single quotes
-  // also end a PowerShell string, so they double like `'`.
-  const quote =
-    platform === "win32" ? (value: string) => `'${value.replace(/['‘’‚‛]/g, "$&$&")}'` : shellWord;
+  // produces a string there, not an invocation.
+  const quote = (value: string) => hostShellWord(platform, value);
   const invocationPrefix = platform === "win32" ? "& " : "";
   const shim = env.T3CODE_CLI_PATH?.trim();
   if (shim && path.isAbsolute(shim)) {

@@ -81,7 +81,10 @@ reclaim, then asks which repairs to run; `--fix` runs the recommended ones
 without a prompt, and `--dry-run` only reports. An installed background service
 for the same data directory is stopped for the repair and started again
 afterwards, also when the repair fails. Quit the desktop app or a server you
-started by hand first: the repair refuses to touch a database that is in use.
+started by hand first: the repair refuses to touch a database that is in use,
+and names the server process that holds it when it can tell. While the repair
+runs, a server started for the same data directory, for example by a desktop
+app connecting over SSH, is refused until the repair ends.
 
 The repair's time grows with the size of the whole database, not only the
 space it reclaims, and can exceed an hour on a large database or a slow disk;

@@ -55,10 +55,15 @@ import {
   projectTurnItemForWire,
   threadStreamEventItem,
 } from "../orchestration-v2/WireProjection.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
+// SCIENT-FORK:START copied-guest-share
+import * as SqlClient from "effect/sql/SqlClient";
+import { shareCopiedAtCreation } from "../scient/guest/ownGuestShare.ts";
+// SCIENT-FORK:END
 import {
   classifyGuestUploads,
   GUEST_UPLOAD_HEADER_BYTES,
@@ -219,6 +224,9 @@ const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread |
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  // SCIENT-FORK:START copied-guest-share
+  const sql = yield* SqlClient.SqlClient;
+  // SCIENT-FORK:END
   const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -227,6 +235,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const random = yield* SecureRandom.SecureRandom;
   const analytics = yield* AnalyticsService.AnalyticsService;
+  const documents = yield* DocumentText.DocumentText;
   const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
   /** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
   const inviteSignature = (shareId: string) =>
@@ -328,6 +337,11 @@ const make = Effect.gen(function* () {
       thread.deletedAt !== null ||
       DateTime.toEpochMillis(now) >= Date.parse(share.expiresAt) ||
       (kind === "session" && share.guestName === null) ||
+      // SCIENT-FORK:START copied-guest-share
+      (yield* shareCopiedAtCreation(sql, thread.id, share.id).pipe(
+        Effect.orElseSucceed(() => true),
+      )) ||
+      // SCIENT-FORK:END
       (yield* connectHostname) !== share.host
     ) {
       return yield* inactive;
@@ -393,7 +407,12 @@ const make = Effect.gen(function* () {
         const path = resolveAttachmentPath({ attachmentsDir, attachment });
         return path === null
           ? Effect.void
-          : fileSystem.remove(path, { force: true }).pipe(Effect.ignore);
+          : fileSystem
+              .remove(path, { force: true })
+              .pipe(
+                Effect.andThen(fileSystem.remove(`${path}.txt`, { force: true })),
+                Effect.ignore,
+              );
       },
       { discard: true },
     );
@@ -439,6 +458,7 @@ const make = Effect.gen(function* () {
           yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
           yield* fileSystem.copyFile(uploads[index]!.path, path);
           stored.push(attachment);
+          yield* documents.ensure(path);
         }).pipe(Effect.mapError(() => uploadFailed)),
       { discard: true },
     ).pipe(Effect.onError(() => removeStored(stored)));

@@ -16,6 +16,7 @@ import {
   SCIENT_DEV_APP_FAILURE_FILE_ENV,
 } from "./dev-app-bundle.mjs";
 import {
+  createCoalescedRestartScheduler,
   developmentLauncherIsActive,
   findOwnedDevelopmentProcesses,
   makeMacDevelopmentAppLaunchCommand,
@@ -385,25 +386,24 @@ describe("electron development launcher", () => {
   });
 });
 
-async function developmentCleanupSignals(desktopDir, argvCases) {
+// Supply inert imports so the real startup runs without launching Electron or signalling processes.
+// Scient's launcher owns processes by command prefix, not pkill, so its stubs differ from T3's.
+async function runDevElectronStartup({
+  desktopDir = "/repo/apps/desktop",
+  processes = [],
+  signals = [],
+  spawn,
+  ...context
+}) {
   const source = NodeFS.readFileSync(new URL("./dev-electron.mjs", import.meta.url), "utf8");
-  const appBundlePath = "/tmp/Scient (Dev).app";
-  const electronBinaryPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Electron");
-  const processes = argvCases.map((args, index) => ({
-    pid: 100 + index,
-    command: `${electronBinaryPath} ${args.join(" ")}`,
-  }));
-  processes.push({ pid: 200, command: `/other/Electron ${argvCases[0].join(" ")}` });
-  const signals = [];
-  // Run the live lifecycle and ownership matcher, but keep all I/O and signals synthetic.
-  const lifecycle = await NodeVM.runInNewContext(
+  return await NodeVM.runInNewContext(
     `(async () => { ${source.replace(/^import\s[\s\S]*?;\n/gm, "")}
       return { startApp, stopApp };
     })()`,
     {
       NodeChildProcess: {
         execFileSync: () => undefined,
-        spawn: () => new NodeEvents.EventEmitter(),
+        spawn: spawn ?? (() => new NodeEvents.EventEmitter()),
       },
       NodeFS: {
         readFileSync: () => {
@@ -426,15 +426,18 @@ async function developmentCleanupSignals(desktopDir, argvCases) {
           inspectAllProcesses: () =>
             processes.filter(({ pid }) => !signals.some((sent) => sent.pid === pid)),
         }),
+      inspectProcessCommand: () => null,
       makeMacDevelopmentAppLaunchCommand,
       readOwnedDevelopmentAppProcess: () => null,
       removeDevelopmentLaunchFiles: () => undefined,
       waitForOwnedDevelopmentAppProcess: async () => ({ pid: 300 }),
       waitForOwnedDevelopmentChildProcess: async () => ({ pid: 301 }),
       writeDevelopmentProcessPid: () => undefined,
-      resolveDevProtocolClient: () => ({ appBundlePath }),
+      resolveDevProtocolClient: () => ({ appBundlePath: "/tmp/Scient (Dev).app" }),
+      resolveElectronLaunchCommand: (args) => ({ electronPath: "electron", args }),
       waitForResources: async () => undefined,
       URL,
+      ...makeFakeClock(),
       process: {
         env: {
           VITE_DEV_SERVER_URL: "http://localhost:1234",
@@ -442,16 +445,127 @@ async function developmentCleanupSignals(desktopDir, argvCases) {
         },
         execPath: "node",
         pid: 1,
+        ppid: 1,
         once: () => undefined,
         kill: (pid, signal) => signals.push({ pid, signal }),
       },
+      ...context,
     },
   );
+}
+
+async function developmentCleanupSignals(desktopDir, argvCases) {
+  const appBundlePath = "/tmp/Scient (Dev).app";
+  const electronBinaryPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Electron");
+  const processes = argvCases.map((args, index) => ({
+    pid: 100 + index,
+    command: `${electronBinaryPath} ${args.join(" ")}`,
+  }));
+  processes.push({ pid: 200, command: `/other/Electron ${argvCases[0].join(" ")}` });
+  const signals = [];
+  // Run the live lifecycle and ownership matcher, but keep all I/O and signals synthetic.
+  const lifecycle = await runDevElectronStartup({ desktopDir, processes, signals });
   await lifecycle.startApp();
   await lifecycle.stopApp();
   return signals;
 }
+// SCIENT-FORK:END scient-dev-app
 
+function makeFakeClock() {
+  let now = 0;
+  let timers = [];
+  const schedule = (callback, delay, repeat) => {
+    const timer = { callback, due: now + (delay ?? 0), repeat: repeat ? (delay ?? 0) : null };
+    timer.handle = { unref: () => timer.handle, ref: () => timer.handle };
+    timers.push(timer);
+    return timer.handle;
+  };
+  const clear = (handle) => {
+    timers = timers.filter((timer) => timer.handle !== handle);
+  };
+  const flushMicrotasks = async () => {
+    for (let index = 0; index < 50; index += 1) await Promise.resolve();
+  };
+  return {
+    setTimeout: (callback, delay) => schedule(callback, delay, false),
+    setInterval: (callback, delay) => schedule(callback, delay, true),
+    clearTimeout: clear,
+    clearInterval: clear,
+    async advance(ms) {
+      const end = now + ms;
+      for (;;) {
+        await flushMicrotasks();
+        const next = timers
+          .filter((timer) => timer.due <= end)
+          .toSorted((a, b) => a.due - b.due)[0];
+        if (!next) break;
+        now = next.due;
+        if (next.repeat === null) clear(next.handle);
+        else next.due = now + Math.max(next.repeat, 1);
+        next.callback();
+      }
+      now = end;
+      await flushMicrotasks();
+    },
+  };
+}
+
+it("dev supervisor stops Electron and exits once its parent process goes away", async () => {
+  const clock = makeFakeClock();
+  let ppid = 4242;
+  const exitCodes = [];
+  const appSignals = [];
+  await runDevElectronStartup({
+    ...clock,
+    // SCIENT-FORK:START scient-dev-app — run Scient's real restart scheduler on the fake clock.
+    NodeOS: { platform: () => "linux" },
+    resolveDevProtocolClient: () => null,
+    createCoalescedRestartScheduler: (input) =>
+      createCoalescedRestartScheduler({
+        ...input,
+        setTimer: clock.setTimeout,
+        clearTimer: clock.clearTimeout,
+      }),
+    // SCIENT-FORK:END scient-dev-app
+    spawn: () => {
+      const app = new NodeEvents.EventEmitter();
+      app.pid = 5151;
+      app.kill = (signal) => {
+        appSignals.push(signal);
+        app.emit("exit", null, signal);
+      };
+      return app;
+    },
+    process: {
+      env: { VITE_DEV_SERVER_URL: "http://localhost:1234" },
+      execPath: "node",
+      pid: 4343,
+      get ppid() {
+        return ppid;
+      },
+      once: () => undefined,
+      exit: (code) => {
+        exitCodes.push(code);
+      },
+    },
+  });
+
+  await clock.advance(5_000);
+  assert.deepEqual(appSignals, [], "supervisor stopped Electron while its parent was alive");
+
+  // The launching process died without signalling us; the OS reparented the supervisor.
+  ppid = 1;
+  await clock.advance(5_000);
+
+  assert.include(
+    appSignals,
+    "SIGTERM",
+    "supervisor kept Electron running after its parent process went away",
+  );
+  assert.lengthOf(exitCodes, 1, "supervisor did not exit after its parent process went away");
+});
+
+// SCIENT-FORK:START scient-dev-app
 it.each([
   "/tmp/t3-feature.one/apps/desktop",
   "/tmp/t3-feature.one [two](three)+?^${four}|back\\slash*/apps/desktop",

@@ -439,7 +439,7 @@ export function useBoundedAnswerFollow({
       schedule();
     };
     const onWheel = (event: WheelEvent) => {
-      if (!isTimelineScrollTarget(event.target, viewport, event.deltaY)) return;
+      if (!isTimelineScrollTarget(event.target, viewport, event.deltaY, event)) return;
       if (event.deltaY < 0) cancel();
       else yieldToReader();
     };

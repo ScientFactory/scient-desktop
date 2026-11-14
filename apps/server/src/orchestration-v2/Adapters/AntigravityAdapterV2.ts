@@ -86,6 +86,7 @@ export interface AntigravityAdapterV2Options {
   >;
   readonly withProcess: AntigravityAuth["withProcess"];
   readonly defaultModel: Effect.Effect<string | undefined>;
+  readonly supportsNativeGoals?: Effect.Effect<boolean>;
   readonly onSessionStarted?: (
     started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     cwd: string,
@@ -235,11 +236,12 @@ export function makeAntigravityAcpAdapterFlavor(
     // Scient's awareness rides the first prompt, as upstream's orchestration text does.
     application: scientAntigravityBridge,
     // SCIENT-FORK:END Scient prompt and native-delivery observation mount
+    supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    buildPrompt: ({
+    buildAttachmentPrompt: ({
       text,
       attachments,
       resolveAttachmentPath,
@@ -255,6 +257,7 @@ export function makeAntigravityAcpAdapterFlavor(
         agentVersion,
         currentModel,
       }).pipe(
+        Effect.map((blocks) => (text.trim() ? blocks.slice(1) : blocks)),
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
         Effect.provideService(Path.Path, options.path),
       ),

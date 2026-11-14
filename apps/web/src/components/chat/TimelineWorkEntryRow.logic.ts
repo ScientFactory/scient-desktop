@@ -181,6 +181,12 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
         return "zap";
     }
   }
+  if (workEntry.itemType === "system_notice") {
+    return workEntry.structuredPayload?.type === "system_notice" &&
+      workEntry.structuredPayload.level === "info"
+      ? "zap"
+      : "circle-alert";
+  }
   // SCIENT-FORK:START — approvals show a shield; questions keep the speech bubble.
   if (workEntry.itemType === "approval_request") return "shield";
   if (workEntry.itemType === "user_input_request") return "message-circle";
@@ -228,17 +234,20 @@ export function remarkThoughtPreview(fallback: string) {
       children.push({ type: "text", value: fragments.join("").replace(/\s+/g, " ") });
       fragments = [];
     };
-    const append = (value: string) => {
+    const take = (value: string) => {
       const text = value.slice(0, remaining);
-      remaining -= text.length;
-      fragments.push(text);
+      remaining = text.length < value.length ? 0 : remaining - text.length;
+      // A cut here or at the source limit must not leave half a surrogate pair.
+      return text.replace(/[\uD800-\uDBFF]$/, "");
+    };
+    const append = (value: string) => {
+      fragments.push(take(value));
     };
     const visit = (node: Root | RootContent) => {
       if (remaining === 0 || node.type === "html" || node.type === "definition") return;
       if (node.type === "math" || node.type === "inlineMath") {
         flush();
-        const value = node.value.slice(0, remaining);
-        remaining -= value.length;
+        const value = take(node.value);
         children.push({
           type: "inlineMath",
           value,

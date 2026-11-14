@@ -9,8 +9,10 @@ selection includes git repositories active within the last 30 days with at least
 to include older projects or change the selection.
 
 Linked worktrees of bare repositories can be offered as separate projects.
-Other linked worktrees, Codex scratch directories under `Documents/Codex`, and
-directories under `Downloads` are not offered.
+Conversations in other linked git worktrees count toward their main checkout,
+so a repository is offered even if you only worked in its worktrees. Codex
+scratch directories under `Documents/Codex`, and directories under `Downloads`
+are not offered.
 
 A large or malformed history can reach the scan limit. Scient keeps the
 projects it found and warns when projects or conversations may be missing.

@@ -476,6 +476,7 @@ export const AntigravityDriver: ScientProviderDriver<
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
     const provider = yield* makeAntigravityProvider(settings, {
+      environment: processEnvironment,
       stampIdentity: classifyModels,
       probe,
       probeUsage: usage.probe,
@@ -510,6 +511,11 @@ export const AntigravityDriver: ScientProviderDriver<
       makeRuntime,
       withProcess: authFlow.withProcess,
       defaultModel,
+      supportsNativeGoals: provider.snapshot.getSnapshot.pipe(
+        Effect.map(
+          (snapshot) => snapshot.slashCommands?.some((command) => command.name === "goal") === true,
+        ),
+      ),
       profileDirectory,
       onSessionStarted: provider.onSessionStarted,
       onSessionEvent: (event) => {

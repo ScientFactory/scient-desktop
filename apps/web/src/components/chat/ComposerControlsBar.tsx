@@ -54,6 +54,7 @@ export function ComposerControlsBar(props: {
   >;
   supportedRuntimeModes: ComponentProps<typeof ComposerFooterModeControls>["supportedRuntimeModes"];
   environmentId: EnvironmentId;
+  workspaceCwd: string | null;
   routeKind: ChatComposerProps["routeKind"];
   routeThreadRef: ChatComposerProps["routeThreadRef"];
   draftId: ChatComposerProps["draftId"];
@@ -209,6 +210,7 @@ export function ComposerControlsBar(props: {
   const composerModelPicker = (
     <ComposerModelPicker
       environmentId={environmentId}
+      workspaceCwd={props.workspaceCwd}
       compact={false}
       iconOnly={props.voiceBusy}
       isComposerOwned

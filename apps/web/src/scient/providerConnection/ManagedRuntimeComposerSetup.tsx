@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ProviderConnectionAccount,
   ProviderManagedRuntimeAction,
   ServerProvider,
 } from "@t3tools/contracts";
@@ -35,6 +36,7 @@ import {
   needsManagedRuntimeRecovery,
   providerLifecycleFailureMessage,
   providerRuntimeComputerLabel,
+  runtimeDownloadPercent,
 } from "./providerConnectionPresentation";
 import {
   externalProviderUpdate,
@@ -69,6 +71,8 @@ export function ManagedRuntimeComposerSetup(props: {
   readonly modelSetupHint: string;
   readonly renderModelSetupAction?: (appearance: "setup-action" | "setup-secondary") => ReactNode;
   readonly provider: ServerProvider;
+  /** The selected model's account, whose sign-in ended: Reconnect signs in to it again. */
+  readonly signedOutAccount?: ProviderConnectionAccount | undefined;
 }) {
   const overlay = useContext(ModelPickerOverlayContext);
   const ownsOverlay = overlay?.instanceId === props.provider.instanceId;
@@ -161,13 +165,19 @@ export function ManagedRuntimeComposerSetup(props: {
   if (active || pending === "install" || pending === "repair" || pending === "update") {
     const action: ProviderManagedRuntimeAction =
       active?.action ?? (pending === "repair" || pending === "update" ? pending : "install");
+    const percent = runtimeDownloadPercent(active);
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={localError ?? active?.message ?? `Preparing ${name}…`}
+          body={
+            localError ??
+            (active?.background
+              ? `Downloading in the background. You can use another agent meanwhile.`
+              : (active?.message ?? `Preparing ${name}…`))
+          }
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
           role={localError ? "alert" : "status"}
-          title={`${WORKING_VERBS[action]} ${name}`}
+          title={`${active?.background ? `Getting ${name} ready` : `${WORKING_VERBS[action]} ${name}`}${percent === null ? "" : ` · ${percent}%`}`}
         />
         {active ? (
           <AssistedSetupActions>
@@ -259,6 +269,21 @@ export function ManagedRuntimeComposerSetup(props: {
             )
           : null}
         {error ? <AssistedSetupDiagnostics displayName={name} provider={props.provider} /> : null}
+      </AssistedSetupFrame>
+    );
+  }
+
+  if (props.signedOutAccount) {
+    const account = props.signedOutAccount.name;
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupStatus
+          body={`Sign in to ${account} again to keep using its models.`}
+          icon={<TriangleAlertIcon className="size-5 text-warning" />}
+          role="alert"
+          title={`${account} is signed out`}
+        />
+        {connectModels("setup-action")}
       </AssistedSetupFrame>
     );
   }

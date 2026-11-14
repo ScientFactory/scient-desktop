@@ -33,6 +33,11 @@ vi.mock("../../state/desktopUpdate", async (importOriginal) => {
     useDesktopUpdateState: () => useSyncExternalStore(updateStore.subscribe, updateStore.get),
   };
 });
+// Something here is working unless a test says otherwise, so the download offers Restart.
+const localWork = vi.hoisted(() => ({ blocksRestart: true }));
+vi.mock("./restartWhenIdle", () => ({
+  useLocalWorkBlocksRestart: () => () => localWork.blocksRestart,
+}));
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useParams: () => null,
@@ -131,6 +136,7 @@ async function downloadThroughFooter(_fixture: _Fixture) {
 async function _setupFixture0(_fixture: _Fixture) {
   Object.assign(window, { desktopBridge: bridge });
   updateStore.set(updateState());
+  localWork.blocksRestart = true;
   bridge.downloadUpdate.mockClear();
   bridge.installUpdate.mockClear();
 }
@@ -158,6 +164,21 @@ describe("update restart flow", () => {
     await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledTimes(1));
     expect(confirm).not.toHaveBeenCalled();
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("a finished download restarts at once when nothing here is working", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    localWork.blocksRestart = false;
+    await mount(_fixture);
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Update"));
+    footerButton(_fixture).click();
+
+    await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledTimes(1));
+    expect(anchoredNotice()).toBeNull();
+    expect(cornerNotice()).toBeNull();
   });
 
   it("a finished download shows Restart now above the button, and it installs", async () => {

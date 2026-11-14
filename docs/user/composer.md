@@ -200,8 +200,8 @@ instance:
 
 Fresh Scient Agent, Pi, and Oh My Pi model preferences include GPT-6.1 Terra among the visible
 OpenAI account models when the agent discovers it. Saved visibility choices take precedence.
-The reasoning column shows the model’s supported levels directly; other agent options appear
-below them when available.
+The reasoning column, headed **Reasoning** for every agent, shows the model’s supported levels
+directly; other agent options appear below them when available.
 
 On desktop and web, model choices show the company below the model name. Long names wrap
 so their distinguishing suffix stays readable. The picker keeps one bottom toolbar: **Fork to
@@ -220,8 +220,10 @@ selection for new threads. A model configured in a project's settings overrides 
 selection for that project; resetting the project setting returns it to the remembered selection.
 
 Model options shown as provider defaults remain display values until you choose them in Scient.
-Scient only sends options you selected explicitly, so an unset reasoning level or service tier can
-still come from the provider's own configuration.
+Scient only sends options you selected explicitly, so an unset reasoning level can still come from
+the provider's own configuration. Codex speed is the exception: a new thread runs at the speed the
+picker shows, usually Standard, even when Fast is turned on in the Codex app or CLI. Choose Fast in
+Scient to use it here.
 
 ## Quote a Markdown file
 
@@ -419,10 +421,15 @@ edit or remove it.
 After Stop, a failed turn, or a server restart, queued messages keep their order and are held.
 While the agent is idle, every held message shows **Send now**, on mobile too. Send now starts
 that message, and the rest of the queue continues after it in order. Sending a new message
-directly also continues the held queue after that message. On web or desktop, **Resume** in an
-empty composer continues the queue too, as does **Resume queue** on mobile. You can edit or remove held messages without starting
-them. If the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an
-empty composer on web or desktop to continue the thread, and the queue follows.
+directly also continues the held queue after that message, unless it steers a turn that is
+already running. On web or desktop, **Resume** in an empty composer continues the queue too, as
+does **Resume queue** on mobile. You can edit or remove held messages without starting them. If
+the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an empty
+composer on web or desktop to continue the thread, and the queue follows.
+
+Resume and Resume thread continue a stopped run through the agent's own continuation, without
+sending a new prompt. If the agent does not support it, send a message to continue instead. If
+the original request never reached the agent, Resume sends that request again.
 
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's
@@ -461,20 +468,22 @@ On web and desktop, turn on **Context window** in **Settings → Appearance →
 Thread details** to see context usage in the thread details card. It appears
 once the provider reports usage.
 
-Claude instances can also compact idle threads for you. See
+Claude and Scient Agent instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
 ## Goals
 
-With Codex, Claude, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example
+With Codex, Claude, Scient Agent, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
 until it judges the goal met. The thread shows **Goal** while it works, and a
 line at the end of the thread (above the composer on mobile) shows the goal and
 its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
-- Codex and OpenCode also support `/goal pause` and `/goal resume`. Stopping
-  their goal pauses it. Codex also pauses when its work ends without meeting the goal.
+- Codex, Scient Agent and OpenCode also support `/goal pause` and `/goal resume`.
+  Stopping their goal pauses it. Codex also pauses when its work ends without meeting the goal.
+- Scient Agent works on the goal in turns it starts by itself, and stops on its own
+  when a turn makes no progress. A new goal replaces the current one.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
 - Sending a new goal, or `/goal resume`, while the agent works stops the current

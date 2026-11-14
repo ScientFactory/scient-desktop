@@ -80,7 +80,6 @@ import {
   ComposerCodeBlockExtension,
   ComposerListExtensions,
   buildTiptapContent,
-  ComposerBoldSelectionOnlyExtension,
   convertBulletItemToTask,
   ComposerCodeExtension,
   ComposerBoldExtension,
@@ -117,7 +116,12 @@ import {
 } from "~/composer-undo-grouping";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { isRichTextFormattingShortcut } from "~/keybindings";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { isThreadNavigationShortcut } from "~/keybindings";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { hasCommandForKeyDown } from "~/shortcuts/dispatcher";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
@@ -136,8 +140,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
-import { importPastedComposerText } from "./composerInlineTokenPaste";
+import { importPastedComposerText, readPastedPlainText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
+import {
+  captureComposerAttachmentInsertion,
+  type ComposerAttachmentInsertion,
+} from "./composerAttachmentInsertion";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 // SCIENT-FORK:START — content direction and per-draft cursor memory.
 import { useContentDirection } from "~/scient/bidi/ContentDirectionScope";
@@ -151,6 +159,7 @@ export interface ComposerPromptEditorHandle {
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
+  captureAttachmentInsertion: () => ComposerAttachmentInsertion | undefined;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
@@ -479,7 +488,8 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   // A fresh cancelled insertion also drops only the spaces inserted with it.
   const removeOnCancel = commentTarget?.removeOnCancel;
   const onRemove = () => {
-    if (!editor.isEditable) return;
+    // A read-only composer (dictation) can still cancel a fresh insertion.
+    if (!editor.isEditable && !removeOnCancel) return;
     const pos = nodePos();
     if (pos === null) return;
     const { doc } = editor.state;
@@ -488,7 +498,9 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const end = pos + current.nodeSize;
     const from = removeOnCancel?.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
     const to = removeOnCancel?.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
-    editor.chain().focus().deleteRange({ from, to }).run();
+    // A read-only composer (dictation) can still receive a new citation, so Cancel must undo it.
+    const chain = editor.chain();
+    (editor.isEditable ? chain.focus() : chain).deleteRange({ from, to }).run();
   };
   // SCIENT-FORK:END
 
@@ -853,7 +865,6 @@ function createComposerExtensions(richText: boolean) {
     ...(richText
       ? [
           ComposerMarkdownSourceExtension,
-          ComposerBoldSelectionOnlyExtension,
           ComposerItalicExtension,
           ComposerBoldExtension,
           ComposerStrikeExtension,
@@ -1135,6 +1146,19 @@ function ComposerPromptEditorTiptapInner(
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,
+        handleDOMEvents: {
+          // Composer commands keep precedence; otherwise true skips the editor's keymaps without
+          // preventDefault, so a bound app command still runs.
+          keydown: (_view, event) => {
+            if (!isRichTextFormattingShortcut(event)) return false;
+            if (readCallbacks().onCommandKeyDown?.(event.key, event)) {
+              event.preventDefault();
+              event.stopPropagation();
+              return true;
+            }
+            return hasCommandForKeyDown(event);
+          },
+        },
         handleKeyDown: (view, event) => {
           // In a right-to-left line the start is on the right.
           const backArrow = caretLineDirection(view.state) === "rtl" ? "ArrowRight" : "ArrowLeft";
@@ -1154,6 +1178,13 @@ function ComposerPromptEditorTiptapInner(
             !event.ctrlKey &&
             !event.isComposing
           ) {
+            if (
+              isThreadNavigationShortcut(event, appAtomRegistry.get(primaryServerKeybindingsAtom), {
+                context: { editableFocus: true },
+              })
+            ) {
+              return false;
+            }
             const selection = window.getSelection();
             if (
               selection?.anchorNode &&
@@ -1395,7 +1426,7 @@ function ComposerPromptEditorTiptapInner(
         handlePaste: (view, event) => {
           const clipboardData = event.clipboardData;
           if (!clipboardData || clipboardData.files.length > 0) return false;
-          const pastedText = clipboardData.getData("text/plain");
+          const pastedText = readPastedPlainText(clipboardData);
           if (!pastedText) return false;
           event.preventDefault();
           // Paste verbatim inside fences; markdown parsing would split blocks and create unsupported chips.
@@ -1765,6 +1796,8 @@ function ComposerPromptEditorTiptapInner(
         readSnapshot();
         return selectionRangeRef.current;
       },
+      captureAttachmentInsertion: () =>
+        editor ? captureComposerAttachmentInsertion(editor) : undefined,
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
         if (!editor) return;

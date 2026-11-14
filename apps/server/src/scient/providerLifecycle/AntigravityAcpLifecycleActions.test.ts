@@ -15,9 +15,11 @@ import {
   makeAntigravityConnectionActionsFromController,
   makeAntigravityManagedRuntimeActions,
 } from "./AntigravityAcpLifecycleActions.ts";
-import { ANTIGRAVITY_RELEASE_VERSION } from "../../provider/antigravityRelease.ts";
 import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";
-import { bundledAntigravityAcpAsset } from "./antigravityAcpCatalog.ts";
+import {
+  ANTIGRAVITY_RELEASE_VERSION,
+  bundledAntigravityAcpAsset,
+} from "./antigravityAcpCatalog.ts";
 import { ANTIGRAVITY_SESSION_SETUP_FAILED_MESSAGE } from "./antigravityAuthDiagnostics.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-lifecycle-test");
@@ -203,6 +205,7 @@ it.effect("classifies system, custom, and managed ACP runtimes without taking ow
         }),
       acquire: () => Effect.die("not used"),
       start: Effect.die("not used"),
+      checkForUpdate: Effect.void,
       cancel: () => Effect.die("not used"),
       state: Effect.succeed(installState("idle")),
       changes: Stream.empty,
@@ -282,6 +285,7 @@ it.effect("never removes a managed runtime when its repair download or verificat
             version: ANTIGRAVITY_RELEASE_VERSION,
           });
         }),
+      checkForUpdate: Effect.void,
       cancel: () => Effect.die("not used"),
       state: Effect.succeed(
         installState("idle", { installedVersion: ANTIGRAVITY_RELEASE_VERSION }),

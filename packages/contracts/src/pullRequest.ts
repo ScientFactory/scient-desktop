@@ -62,7 +62,13 @@ export type PullRequestChecksState = typeof PullRequestChecksState.Type;
 export const PullRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
 export type PullRequestMergeability = typeof PullRequestMergeability.Type;
 
-export const PullRequestMergeMethod = Schema.Literals(["merge", "squash", "rebase"]);
+/** `fast-forward` refuses unless the head contains the base, where `rebase` rewrites the branch onto it. */
+export const PullRequestMergeMethod = Schema.Literals([
+  "merge",
+  "squash",
+  "rebase",
+  "fast-forward",
+]);
 export type PullRequestMergeMethod = typeof PullRequestMergeMethod.Type;
 
 export const PullRequestAction = Schema.Literals([
@@ -346,6 +352,8 @@ export const PullRequestMergeCapabilities = Schema.Struct({
   merge: Schema.Boolean,
   squash: Schema.Boolean,
   rebase: Schema.Boolean,
+  /** Optional so servers that predate it still decode; absent means not allowed. */
+  "fast-forward": Schema.optional(Schema.Boolean),
 });
 export type PullRequestMergeCapabilities = typeof PullRequestMergeCapabilities.Type;
 
@@ -816,6 +824,8 @@ export const PullRequestSetFilesViewedInput = Schema.Struct({
     Schema.Struct({
       path: FilePath,
       viewed: Schema.Boolean,
+      /** The file's version in the diff the reader was shown; without it the head's is recorded. */
+      revision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
     }),
   ).check(Schema.isMaxLength(MAX_FILES_VIEWED_PRESSES)),
 });

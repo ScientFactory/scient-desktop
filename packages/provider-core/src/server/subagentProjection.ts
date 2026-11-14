@@ -18,6 +18,9 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START derived-thread-fields
+import { SCIENT_DERIVED_THREAD_RESETS } from "./scientDerivedThread.ts";
+// SCIENT-FORK:END
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
@@ -61,8 +64,13 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
+  // SCIENT-FORK:START derived-thread-fields
+  // The remote parent delegated the parent thread, not its subagents.
+  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...inherited,
+    ...SCIENT_DERIVED_THREAD_RESETS,
+    // SCIENT-FORK:END
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,
@@ -227,8 +235,16 @@ export function subagentResultForRun(
           .filter((item) => item.runId === run.id && item.type === "error")
           .toSorted((left, right) => right.ordinal - left.ordinal)[0]
       : undefined;
+  const reportBeforeFailure =
+    failure !== undefined && turnItem !== null && turnItem.ordinal < failure.ordinal
+      ? (message?.text ?? turnItem.text)
+      : undefined;
   const text =
-    (failure?.type === "error" ? failure.failure.message : undefined) ??
+    (failure?.type === "error"
+      ? reportBeforeFailure === undefined
+        ? failure.failure.message
+        : `${failure.failure.message}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`
+      : undefined) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
@@ -246,6 +262,19 @@ export function subagentResultForRun(
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };
+}
+
+export function subagentHoldsCompletion(
+  task: Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">,
+): boolean {
+  return (
+    isOrchestrationV2WorkActive(task.status) ||
+    // Publishing a child's result precedes scheduling its parent's wake.
+    // The parent still owes that follow-up even between those transactions.
+    (task.status !== "idle" &&
+      (task.completionDelivery?.state === "pending" ||
+        task.completionDelivery?.state === "claimed"))
+  );
 }
 
 export function delegatedTaskProgress(
@@ -277,15 +306,7 @@ export function delegatedTaskProgress(
     (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
   );
   const children =
-    projection.subagents.some(
-      (task) =>
-        isOrchestrationV2WorkActive(task.status) ||
-        // Publishing a child's result precedes scheduling its parent's wake.
-        // The parent still owes that follow-up even between those transactions.
-        (task.status !== "idle" &&
-          (task.completionDelivery?.state === "pending" ||
-            task.completionDelivery?.state === "claimed")),
-    ) ||
+    projection.subagents.some(subagentHoldsCompletion) ||
     projection.providerThreads.some((thread) =>
       backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
     );

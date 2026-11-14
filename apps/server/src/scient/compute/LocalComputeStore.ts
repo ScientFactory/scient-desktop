@@ -829,7 +829,7 @@ const make = Effect.gen(function* () {
         try {
           // `lstat`, not `stat`: a symlink here would let a corrupted or
           // hostile store hand out a signed URL for an arbitrary file.
-          return await NodeFSP.lstat(filePath);
+          return await NodeFSP.lstat(filePath, { bigint: true });
         } catch (cause) {
           if ((cause as NodeJS.ErrnoException).code === "ENOENT") return null;
           throw cause;
@@ -838,7 +838,7 @@ const make = Effect.gen(function* () {
       catch: (cause) => storeError("inspect-output-resource", filePath, cause),
     });
     if (info === null || !info.isFile()) return null;
-    if (info.size !== metadata.byteLength) return null;
+    if (info.size !== BigInt(metadata.byteLength)) return null;
 
     const actualHash = yield* Effect.tryPromise({
       try: () => sha256File(filePath),
@@ -861,9 +861,8 @@ const make = Effect.gen(function* () {
       mediaType: metadata.mediaType,
       contentHash: metadata.contentHash,
       byteLength: metadata.byteLength,
-      // Match Effect FileSystem's truncated whole-millisecond mtime, not Node Date's rounding, or
-      // unchanged output can fail revision checks on fractional milliseconds.
-      revision: { size: info.size, mtimeMs: Math.trunc(info.mtimeMs) },
+      // Use the same integer stat representation as HTTP revision validation.
+      revision: { size: Number(info.size), mtimeMs: Number(info.mtimeMs) },
     } satisfies ResolvedComputeOutputResource;
   });
 

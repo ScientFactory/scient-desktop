@@ -3,8 +3,10 @@ import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlError from "effect/sql/SqlError";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { hasPendingMigrations, runMigrations } from "./Migrations.ts";
@@ -33,6 +35,33 @@ export class ServerOwnsDatabaseError extends Schema.TaggedError<ServerOwnsDataba
     return `Another Scient process, usually a running server, owns ${this.stateDir}, and this CLI would change its database schema. Use the \`scient\` that matches the running server, or stop that server, then retry. The database was not changed.`;
   }
 }
+
+// SQLITE_CORRUPT and SQLITE_NOTADB; node:sqlite reports extended codes whose low byte is the primary code.
+const DAMAGED_SQLITE_CODES = new Set([11, 26]);
+
+const isDamagedDatabase = (error: SqlError.SqlError): boolean => {
+  const seen = new Set<unknown>();
+  let cause: unknown = error.cause;
+  while (Predicate.isObject(cause) && !seen.has(cause)) {
+    seen.add(cause);
+    if (typeof cause.errcode === "number" && DAMAGED_SQLITE_CODES.has(cause.errcode & 0xff)) {
+      return true;
+    }
+    cause = cause.cause;
+  }
+  return false;
+};
+
+// Keeps the SqlError type so callers' error channels do not change; the original stays as the cause.
+const damagedDatabaseError = (dbPath: string, cause: SqlError.SqlError) =>
+  new SqlError.SqlError({
+    reason: new SqlError.UnknownError({
+      cause,
+      operation: "open",
+      // SCIENT-FORK: user-visible recovery text names Scient.
+      message: `The Scient database at ${dbPath} is damaged or is not a SQLite database, so Scient cannot start. To recover, quit Scient, then move that file and any -wal and -shm files next to it out of the folder, or replace them with a backup. Scient creates a new database on the next start.`,
+    }),
+  });
 
 // CLI commands open the server's database from another process; migrating behind its owner changes the schema it runs on.
 const runMigrationsAsOwner = Effect.fn("SqlitePersistence.runMigrationsAsOwner")(function* () {
@@ -71,7 +100,7 @@ const makeLayerSetup = <E, R>(
       // macOS fsync misses drive caches; F_FULLFSYNC flushes them at checkpoints and is ignored elsewhere.
       // Per-commit fullfsync stays off.
       yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
-      // Keep statement journals and sort spills off the main thread's disk path.
+      // Keep statement journals and sort spills off the disk.
       // Large statements and open savepoints can increase peak memory use.
       yield* sql`PRAGMA temp_store = MEMORY;`;
       // PASSIVE checkpoints retain peak WAL size until the last connection closes.
@@ -93,8 +122,13 @@ const makeLayerSetup = <E, R>(
     }).pipe(Effect.withSpan("Sqlite.setup")),
   );
 
+const layerSetup = makeLayerSetup(runMigrations());
+
 const makeLayerFromPath = <E, R>(
-  setup: (filesystemPaths: RetiredThreadFilesystemPaths) => Layer.Layer<never, E, R>,
+  makeSetup: (
+    dbPath: string,
+    filesystemPaths: RetiredThreadFilesystemPaths,
+  ) => Layer.Layer<never, E, R>,
 ) =>
   Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
     const fs = yield* FileSystem.FileSystem;
@@ -103,7 +137,7 @@ const makeLayerFromPath = <E, R>(
 
     const stateDir = path.dirname(dbPath);
     return Layer.provideMerge(
-      setup({
+      makeSetup(dbPath, {
         stateDir,
         attachmentsDir: path.join(stateDir, "attachments"),
         terminalLogsDir: path.join(stateDir, "logs", "terminals"),
@@ -112,22 +146,33 @@ const makeLayerFromPath = <E, R>(
       NodeSqliteClient.layer({
         filename: dbPath,
         readerWorker: true,
-        // Run checkpoint fsyncs off the event loop so slow disk flushes cannot stall clients.
-        checkpointWorker: true,
+        // A slow disk then delays writes instead of freezing every client.
+        writerWorker: true,
         spanAttributes: {
           "db.name": path.basename(dbPath),
           "service.name": "t3code-server",
         },
       }),
+    ).pipe(
+      Layer.catchTag("SqlError", (error) =>
+        Layer.effect(
+          SqlClient.SqlClient,
+          Effect.fail(
+            SqlError.isSqlError(error) && isDamagedDatabase(error)
+              ? damagedDatabaseError(dbPath, error)
+              : error,
+          ),
+        ),
+      ),
     );
   }, Layer.unwrap);
 
-export const layerFromPath = makeLayerFromPath((filesystemPaths) =>
+export const layerFromPath = makeLayerFromPath((_dbPath, filesystemPaths) =>
   makeLayerSetup(runMigrations(), filesystemPaths),
 );
 
 export const layerMemory = Layer.provideMerge(
-  makeLayerSetup(runMigrations()),
+  layerSetup,
   NodeSqliteClient.layer({ filename: ":memory:" }),
 );
 
@@ -174,5 +219,7 @@ export const layerConfig = makeLayerConfig(layerFromPath);
 
 /** For CLI commands: pending migrations run only while no server owns the Scient home. */
 export const layerCliConfig = makeLayerConfig(
-  makeLayerFromPath((filesystemPaths) => makeLayerSetup(runMigrationsAsOwner(), filesystemPaths)),
+  makeLayerFromPath((_dbPath, filesystemPaths) =>
+    makeLayerSetup(runMigrationsAsOwner(), filesystemPaths),
+  ),
 );

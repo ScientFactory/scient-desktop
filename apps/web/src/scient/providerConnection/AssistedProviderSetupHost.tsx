@@ -1,4 +1,9 @@
-import type { EnvironmentId, ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderConnectionAccount,
+  ProviderDriverKind,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { LoaderIcon, LogOutIcon, PowerIcon, TriangleAlertIcon } from "lucide-react";
 import { type ReactNode, useContext, useState } from "react";
 
@@ -55,6 +60,8 @@ interface AssistedProviderSetupHostBaseProps {
   readonly displayName: string;
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
+  /** A Scient Agent model account whose sign-in ended, to sign in again. */
+  readonly signedOutAccount?: ProviderConnectionAccount | undefined;
 }
 
 type AssistedProviderSetupHostProps = AssistedProviderSetupHostBaseProps &
@@ -194,6 +201,7 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
         <ScientAgentInlineSetup
           {...managementProps}
           {...(!isManagement ? { composerController: controller } : {})}
+          signedOutAccount={props.signedOutAccount}
           environmentId={props.environmentId}
           displayName={displayName}
           provider={props.provider}

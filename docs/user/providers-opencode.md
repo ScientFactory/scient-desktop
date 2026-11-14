@@ -42,10 +42,23 @@ provider settings. It does not send a local `OPENCODE_SERVER_PASSWORD` to an ext
 OpenCode uses this password for HTTP Basic authentication.
 
 When **Server URL** points to a locally running server (such as `127.0.0.1`),
-the update button upgrades its installed CLI without terminating the running server.
-The server can still report the previous version until you restart it. Scient
-shows that restart requirement instead of treating the CLI update as a failure.
-Restart the server when active sessions can safely be interrupted.
+the update button upgrades its installed CLI. If that server is this machine's
+OpenCode background service, Scient then restarts it on the new version. The URL
+must use the service's own protocol, host, and port. For a service listening on
+`0.0.0.0` use `127.0.0.1`, and for `[::]` use `[::1]`.
+
+Restarting interrupts running turns, and the service then runs with Scient's
+environment. Set any variables it needs with `opencode service set env <name> <value>`.
+
+Scient does not restart any other server, including the background service
+reached through `localhost`. That server can still report the previous version
+until you restart it. For a loopback URL, Scient shows that restart requirement
+instead of treating the CLI update as a failure.
+
+Scient waits for a local server it started to recover after a lost connection.
+You can stop the turn while it reconnects. If the server exits or an external
+connection cannot be restored, send another prompt to resume the same OpenCode
+session.
 
 ## Stop a turn
 
@@ -76,6 +89,10 @@ the file changes. Repeated refreshes or active helper work can extend this wait.
 
 Scient does not own an external OpenCode server. Native configuration changes on that server can
 require its own reload or restart before a refresh returns the new list.
+
+Models defined in a project's own `opencode.json` appear only in that project's
+model picker, after Scient reads the project's catalog the first time the picker
+opens there.
 
 If a refresh fails, Scient keeps the last known models, slash commands, and skills. Fix the
 connection, then refresh again. A successful refresh can remove entries that OpenCode no longer

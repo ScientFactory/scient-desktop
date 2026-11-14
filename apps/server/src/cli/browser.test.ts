@@ -2,11 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
-
-import { resolveBrowserSetupBaseDir } from "./browser.ts";
-
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -14,128 +9,63 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
-import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { ChildProcessSpawner } from "effect/process";
 
+import packageJson from "../../package.json" with { type: "json" };
+import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 import { browserCommand } from "./browser.ts";
 
-it.layer(NodeServices.layer)("browser setup profiles", (it) => {
-  it.effect(
-    "keeps explicit Scient profiles ahead of environment defaults and ignores ambient T3 state",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const home = path.resolve("/synthetic-user");
-        const flag = path.join(home, "flag profile");
-        const scient = path.join(home, "environment profile");
-        const legacy = path.join(home, ".t3");
-        for (const [explicit, env, expected] of [
-          [Option.some(flag), { SCIENT_NEXT_HOME: scient, T3CODE_HOME: legacy }, flag],
-          [Option.none<string>(), { SCIENT_NEXT_HOME: scient, T3CODE_HOME: legacy }, scient],
-          [Option.some("  "), { SCIENT_NEXT_HOME: scient, T3CODE_HOME: legacy }, scient],
-          [
-            Option.none<string>(),
-            { SCIENT_NEXT_HOME: "  ", T3CODE_HOME: legacy },
-            path.join(home, ".scient-next"),
-          ],
-          [Option.none<string>(), { T3CODE_HOME: legacy }, path.join(home, ".scient-next")],
-        ] as const) {
-          expect(
-            yield* resolveBrowserSetupBaseDir(explicit).pipe(
-              Effect.provideService(HostProcess.HomeDirectory, home),
-              Effect.provideService(HostProcess.Environment, env),
-              Effect.provideService(HostProcess.UserId, 1000),
-            ),
-          ).toBe(expected);
-        }
-      }),
-  );
+const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
+const BROWSER_ROOT = "/home/me/.t3/tools/chrome-headless-shell";
+const BROWSER = `${BROWSER_ROOT}/linux64/154/chrome-headless-shell`;
 
-  it.effect(
-    "uses the invoking user's identity default rather than root or inherited T3 profiles",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const userHome = path.resolve("/synthetic-user");
-        const rootHome = path.resolve("/synthetic-root");
-        const env = { SUDO_USER: "fixture-user", T3CODE_HOME: path.join(userHome, ".t3") };
-        const resolve = (explicit: Option.Option<string>, environment: NodeJS.ProcessEnv) =>
-          resolveBrowserSetupBaseDir(explicit).pipe(
-            Effect.provideService(HostProcess.HomeDirectory, rootHome),
-            Effect.provideService(HostProcess.Environment, environment),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
-              ...spawner,
-              string: () =>
-                Effect.succeed(`fixture-user:x:1000:1000:Fixture:${userHome}:/bin/sh\n`),
-            }),
-          );
-        expect(yield* resolve(Option.none(), env)).toBe(path.join(userHome, ".scient-next"));
-        const profile = path.join(userHome, "selected profile");
-        expect(yield* resolve(Option.some(profile), env)).toBe(profile);
-        expect(yield* resolve(Option.none(), { ...env, SCIENT_NEXT_HOME: profile })).toBe(profile);
-      }),
-  );
+const notFound = (method: string, path: string) =>
+  PlatformError.systemError({
+    _tag: "NotFound",
+    module: "FileSystem",
+    method,
+    pathOrDescriptor: path,
+  });
 
-  it.effect("requires an explicit profile when sudo's invoking account cannot be resolved", () =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const error = yield* resolveBrowserSetupBaseDir(Option.none()).pipe(
-        Effect.provideService(HostProcess.HomeDirectory, "/synthetic-root"),
-        Effect.provideService(HostProcess.Environment, { SUDO_USER: "missing-fixture-user" }),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
-          ...spawner,
-          string: () => Effect.succeed(""),
-        }),
-        Effect.flip,
-      );
-      expect(error).toMatchObject({ _tag: "BrowserSetupStepError" });
-    }),
-  );
-
-  it.effect("does not select a new root profile without an explicit Scient profile", () =>
-    Effect.gen(function* () {
-      const error = yield* resolveBrowserSetupBaseDir(Option.none()).pipe(
-        Effect.provideService(HostProcess.HomeDirectory, "/synthetic-root"),
-        Effect.provideService(HostProcess.Environment, { T3CODE_HOME: "/synthetic-legacy" }),
-        Effect.provideService(HostProcess.UserId, 0),
-        Effect.flip,
-      );
-      expect(error).toMatchObject({ _tag: "BrowserSetupStepError" });
-    }),
-  );
-});
-const BROWSER = "/t3/tools/chrome-headless-shell/linux64/154/chrome-headless-shell";
-const FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf";
-
-/**
- * Records every command. `fc-match` is missing until fonts are installed, unless
- * the host starts with a font; the browser fails to load libnss3 when asked to.
- */
-const fakeSpawner = (host: { readonly font?: string; readonly missingLibrary?: boolean }) => {
-  const commands: Array<ReadonlyArray<string>> = [];
-  let font = host.font;
+/** An Ubuntu host with the userns restriction on, the browser installed, and a system font. */
+const runSetupAsRoot = (input: { readonly profile: string | undefined }) => {
+  const files = new Map([
+    [USERNS_RESTRICTION, "1\n"],
+    [BROWSER, ""],
+  ]);
+  if (input.profile !== undefined) {
+    files.set(PreviewBrowserHost.APPARMOR_PROFILE_PATH, input.profile);
+  }
+  const directories = new Map([
+    [BROWSER_ROOT, ["linux64"]],
+    [`${BROWSER_ROOT}/linux64`, ["154"]],
+  ]);
+  const commands: Array<string> = [];
+  const fileSystem = FileSystem.makeNoop({
+    exists: (path) => Effect.succeed(files.has(path)),
+    readFileString: (path) => {
+      const content = files.get(path);
+      return content === undefined
+        ? Effect.fail(notFound("readFileString", path))
+        : Effect.succeed(content);
+    },
+    readDirectory: (path) => {
+      const entries = directories.get(path);
+      return entries === undefined
+        ? Effect.fail(notFound("readDirectory", path))
+        : Effect.succeed(entries);
+    },
+    writeFileString: (path, content) => Effect.sync(() => void files.set(path, content)),
+  });
   const spawner = ChildProcessSpawner.make((command) =>
-    Effect.gen(function* () {
-      if (!ChildProcess.isStandardCommand(command)) return yield* Effect.die("Unexpected pipeline");
-      commands.push([command.command, ...command.args.map(String)]);
-      if (command.command === "apt-get" && command.args.includes("fonts-liberation")) font = FONT;
-      if (command.command === "fc-match" && font === undefined) {
-        return yield* PlatformError.systemError({
-          _tag: "NotFound",
-          module: "ChildProcess",
-          method: "spawn",
-        });
-      }
+    Effect.sync(() => {
+      const { command: name, args } = command as unknown as {
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+      };
+      commands.push([name, ...args].join(" "));
       const output =
-        command.command === "fc-match"
-          ? font!
-          : command.command === BROWSER && host.missingLibrary
-            ? "error while loading shared libraries: libnss3.so: cannot open shared object file"
-            : command.command === "ldd"
-              ? "\tlibnss3.so => not found\n"
-              : "";
-      const bytes = Stream.make(new TextEncoder().encode(output));
+        name === "fc-match" ? "/usr/share/fonts/sans.ttf" : name === BROWSER ? "Chrome 154\n" : "";
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
@@ -143,75 +73,67 @@ const fakeSpawner = (host: { readonly font?: string; readonly missingLibrary?: b
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
-        stdout: bytes,
+        stdout: Stream.make(new TextEncoder().encode(output)),
         stderr: Stream.empty,
-        all: bytes,
+        all: Stream.make(new TextEncoder().encode(output)),
         getInputFd: () => Sink.drain,
         getOutputFd: () => Stream.empty,
       });
     }),
   );
-  return { spawner, commands };
-};
-
-/** A Linux host with apt and T3's browser installed under `/t3`. */
-const runSetup = (host: {
-  readonly root: boolean;
-  readonly font?: string;
-  readonly missingLibrary?: boolean;
-}) => {
-  const { spawner, commands } = fakeSpawner(host);
-  const fs = FileSystem.makeNoop({
-    exists: (path) => Effect.succeed(path === "/usr/bin/apt-get" || path === BROWSER),
-    readDirectory: (path) =>
-      Effect.succeed(path.endsWith("chrome-headless-shell") ? ["linux64"] : ["154"]),
-  });
   return Effect.gen(function* () {
-    yield* Command.runWith(browserCommand, { version: "0.0.0" })(["setup", "--base-dir", "/t3"]);
-    return { commands, output: (yield* TestConsole.logLines).join("\n") };
+    yield* Command.runWith(browserCommand, { version: packageJson.version })([
+      "setup",
+      "--base-dir",
+      "/home/me/.t3",
+    ]);
+    return {
+      output: (yield* TestConsole.logLines).join("\n"),
+      profile: files.get(PreviewBrowserHost.APPARMOR_PROFILE_PATH),
+      loads: commands.filter((command) => command.startsWith("apparmor_parser")),
+    };
   }).pipe(
-    Effect.provideService(FileSystem.FileSystem, fs),
-    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.provideService(HostProcess.Platform, "linux"),
-    Effect.provideService(HostProcess.UserId, host.root ? 0 : 1000),
-    // Root through sudo from a regular user, so setup reports ready instead of the root warning.
-    Effect.provideService(HostProcess.Environment, host.root ? { SUDO_USER: "alice" } : {}),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer)),
+    Effect.provideService(HostProcess.UserId, 0),
+    Effect.provideService(HostProcess.Environment, { SUDO_USER: "me" }),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, Layer.fresh(TestConsole.layer))),
   );
 };
 
-const aptGet = (commands: ReadonlyArray<ReadonlyArray<string>>) =>
-  commands.filter(([name]) => name === "apt-get");
+const LOAD = `apparmor_parser -r ${PreviewBrowserHost.APPARMOR_PROFILE_PATH}`;
 
-// regression: 03a2b1acc6 fix(cli): browser setup installs missing fonts (#17570)
-it.effect("setup without root does not report a host without fonts as ready", () =>
-  Effect.gen(function* () {
-    const { commands, output } = yield* runSetup({ root: false });
-    expect(output).toContain(
-      "Scient's browser needs fontconfig and system fonts; setup installs them.",
-    );
-    expect(output).toContain("This needs root. Run:");
-    expect(output).not.toContain("ready");
-    expect(aptGet(commands)).toEqual([]);
-  }),
+const CUSTOMIZED_PROFILE = PreviewBrowserHost.APPARMOR_PROFILE.replace(
+  "  userns,\n",
+  "  userns,\n  deny /tmp/t3-admin-private/** rw,\n",
 );
 
-// regression: 03a2b1acc6 fix(cli): browser setup installs missing fonts (#17570)
-it.effect("setup as root installs missing libraries and fonts after one package refresh", () =>
+it.effect.each([
+  {
+    label: "reloads a profile that is on disk",
+    profile: PreviewBrowserHost.APPARMOR_PROFILE,
+    written: PreviewBrowserHost.APPARMOR_PROFILE,
+    said: "Reloaded the AppArmor profile",
+  },
+  {
+    label: "writes and loads a missing profile",
+    profile: undefined,
+    written: PreviewBrowserHost.APPARMOR_PROFILE,
+    said: "Wrote and loaded",
+  },
+  {
+    label: "reloads a customized profile without rewriting it",
+    profile: CUSTOMIZED_PROFILE,
+    written: CUSTOMIZED_PROFILE,
+    said: "Reloaded the AppArmor profile",
+  },
+])("t3 browser setup as root $label", (input) =>
   Effect.gen(function* () {
-    const { commands, output } = yield* runSetup({ root: true, missingLibrary: true });
-    const apt = aptGet(commands);
-    expect(apt.filter(([, action]) => action === "update")).toHaveLength(1);
-    expect(apt.find((args) => args.includes("libnss3"))).toBeDefined();
-    expect(apt).toContainEqual([
-      "apt-get",
-      "install",
-      "-y",
-      "--no-install-recommends",
-      "fontconfig",
-      "fonts-liberation",
-    ]);
-    expect(output).toContain("Installed the browser's fonts.");
-    expect(output).toContain("This host is ready for Scient's browser.");
+    const result = yield* runSetupAsRoot({ profile: input.profile });
+    expect(result.loads).toEqual([LOAD]);
+    expect(result.profile).toBe(input.written);
+    expect(result.output).toContain(input.said);
+    expect(result.output).toContain("This host is ready for Scient's browser.");
   }),
 );

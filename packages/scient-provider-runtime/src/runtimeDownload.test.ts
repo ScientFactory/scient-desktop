@@ -392,6 +392,187 @@ describe("downloads with Scient's own copy first", () => {
   });
 });
 
+describe("resumable downloads", () => {
+  const body = "hello";
+  const checksum = {
+    algorithm: "sha256" as const,
+    digest: NodeCrypto.createHash("sha256").update(body).digest("hex"),
+  };
+  async function resumable(signal?: AbortSignal) {
+    const request = await input(signal);
+    const root = NodePath.dirname(request.destination);
+    return {
+      ...request,
+      expectedSize: body.length,
+      checksum,
+      partialPath: NodePath.join(root, "downloads", `${checksum.digest}.part`),
+    };
+  }
+  const header = (init: RequestInit | undefined, name: string) =>
+    (init?.headers as Record<string, string> | undefined)?.[name];
+  const partialContent = (from: number, text: string) =>
+    new Response(text, {
+      status: 206,
+      headers: { "content-range": `bytes ${from}-${body.length - 1}/${body.length}` },
+    });
+
+  it("continues a cut-off download from the bytes it kept", async () => {
+    const request = await resumable();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("he", { headers: { etag: '"v1"' } }))
+      .mockImplementationOnce(async (_url: URL, init: RequestInit) => {
+        expect(header(init, "range")).toBe("bytes=2-");
+        expect(header(init, "if-range")).toBe('"v1"');
+        return partialContent(2, "llo");
+      });
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadManagedRuntime(request)).resolves.toEqual({
+      resumedBytes: 2,
+      source: "primary",
+    });
+    expect(await NodeFSP.readFile(request.destination, "utf8")).toBe(body);
+    expect(await NodeFSP.readdir(NodePath.dirname(request.partialPath))).toEqual([]);
+  });
+
+  it("continues a download an earlier install left, and skips the network when it is whole", async () => {
+    const request = await resumable();
+    await NodeFSP.mkdir(NodePath.dirname(request.partialPath), { recursive: true });
+    await NodeFSP.writeFile(request.partialPath, "hel");
+    const fetch = vi.fn().mockResolvedValueOnce(partialContent(3, "lo"));
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadManagedRuntime(request)).resolves.toMatchObject({ resumedBytes: 3 });
+    expect(header(fetch.mock.calls[0]![1], "if-range")).toBeUndefined();
+
+    const whole = await resumable();
+    await NodeFSP.mkdir(NodePath.dirname(whole.partialPath), { recursive: true });
+    await NodeFSP.writeFile(whole.partialPath, body);
+    const unused = vi.fn();
+    vi.stubGlobal("fetch", unused);
+    await downloadManagedRuntime(whole);
+    expect(unused).not.toHaveBeenCalled();
+    expect(await NodeFSP.readFile(whole.destination, "utf8")).toBe(body);
+  });
+
+  it("continues past a validator file a crash cut short", async () => {
+    const request = await resumable();
+    await NodeFSP.mkdir(NodePath.dirname(request.partialPath), { recursive: true });
+    await NodeFSP.writeFile(request.partialPath, "he");
+    await NodeFSP.writeFile(`${request.partialPath}.json`, '{"url":"https://');
+    const fetch = vi.fn().mockResolvedValueOnce(partialContent(2, "llo"));
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadManagedRuntime(request)).resolves.toMatchObject({ resumedBytes: 2 });
+  });
+
+  it.each([
+    ["sends the whole file", () => new Response(body)],
+    ["answers a different range", () => partialContent(1, "ello")],
+  ])("starts again from the beginning when the server %s", async (_case, answer) => {
+    const request = await resumable();
+    await NodeFSP.mkdir(NodePath.dirname(request.partialPath), { recursive: true });
+    await NodeFSP.writeFile(request.partialPath, "he");
+    const fetch = vi.fn().mockResolvedValueOnce(answer()).mockResolvedValueOnce(new Response(body));
+    vi.stubGlobal("fetch", fetch);
+    await downloadManagedRuntime(request);
+    expect(await NodeFSP.readFile(request.destination, "utf8")).toBe(body);
+  });
+
+  it("downloads everything again once when the kept bytes don't verify", async () => {
+    const request = await resumable();
+    await NodeFSP.mkdir(NodePath.dirname(request.partialPath), { recursive: true });
+    await NodeFSP.writeFile(request.partialPath, "HE");
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(partialContent(2, "llo"))
+      .mockImplementationOnce(async (_url: URL, init: RequestInit) => {
+        expect(header(init, "range")).toBeUndefined();
+        return new Response(body);
+      });
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadManagedRuntime(request)).resolves.toMatchObject({ resumedBytes: 0 });
+    expect(await NodeFSP.readFile(request.destination, "utf8")).toBe(body);
+  });
+
+  it("lets the second copy continue the first copy's bytes, without its validator", async () => {
+    const mirror = "https://downloads.scientfactory.com/scient-agent/v0.1.0/synthetic";
+    const base = await resumable();
+    const request = {
+      ...base,
+      url: mirror,
+      fallbackUrl: base.url,
+      allowedHosts: [...base.allowedHosts, "downloads.scientfactory.com"],
+    };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("he", { headers: { etag: '"mirror"' } }))
+      .mockImplementationOnce(async (_url: URL, init: RequestInit) => {
+        expect(header(init, "range")).toBe("bytes=2-");
+        expect(header(init, "if-range")).toBeUndefined();
+        return partialContent(2, "llo");
+      });
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadManagedRuntime(request)).resolves.toEqual({
+      resumedBytes: 2,
+      source: "fallback",
+    });
+  });
+
+  it("keeps the bytes when the time limit ends and says trying again continues", async () => {
+    const request = await resumable();
+    const limit = new AbortController();
+    using _timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(limit.signal);
+    await NodeFSP.mkdir(NodePath.dirname(request.partialPath), { recursive: true });
+    await NodeFSP.writeFile(request.partialPath, "he");
+    const fetch = vi.fn().mockImplementationOnce(
+      (_url: URL, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+          limit.abort(new DOMException("time limit", "TimeoutError"));
+        }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const failure = await downloadManagedRuntime(request).then(
+      () => expect.unreachable("the download should stop"),
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(ManagedRuntimeFileError);
+    expect((failure as Error).message).toBe(
+      "The download took longer than 10 minutes. Scient kept what it downloaded; trying again continues from there.",
+    );
+    expect(managedRuntimeFailureClass(failure)).toBe("timeout");
+    expect(await NodeFSP.readFile(request.partialPath, "utf8")).toBe("he");
+  });
+
+  it("starts the retries afresh while a slow line keeps bringing data", async () => {
+    const request = await resumable();
+    const size = 8 * 1024 * 1024 + 1;
+    const content = Buffer.alloc(size, 7);
+    const sized = {
+      ...request,
+      expectedSize: size,
+      checksum: {
+        algorithm: "sha256" as const,
+        digest: NodeCrypto.createHash("sha256").update(content).digest("hex"),
+      },
+    };
+    const mib = 1024 * 1024;
+    const fetch = vi.fn().mockImplementation(async (_url: URL, init: RequestInit) => {
+      const from = Number(/bytes=(\d+)-/u.exec(header(init, "range") ?? "")?.[1] ?? 0);
+      // Each try brings one more MiB, then the connection drops.
+      return new Response(content.subarray(from, Math.min(from + mib, size)), {
+        status: from === 0 ? 200 : 206,
+        headers: from === 0 ? {} : { "content-range": `bytes ${from}-${size - 1}/${size}` },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadManagedRuntime(sized)).resolves.toMatchObject({
+      resumedBytes: 8 * mib,
+    });
+    // Nine tries, more than the five a failing server gets.
+    expect(fetch).toHaveBeenCalledTimes(9);
+  });
+});
+
 describe("managed runtime failure classes", () => {
   const failureOf = (promise: Promise<unknown>) =>
     promise.then(

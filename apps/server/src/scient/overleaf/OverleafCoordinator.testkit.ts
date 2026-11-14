@@ -378,6 +378,8 @@ export const world = (input: {
       coordinatorWith,
       volumeUuid,
       stateRoot,
+      /** The connection's retention folder. */
+      vault: retention.directory,
       checkout,
       folder,
       repo,
@@ -425,6 +427,29 @@ export const world = (input: {
       collectGarbage: Effect.gen(function* () {
         yield* git.execute({ cwd: repo, args: ["reflog", "expire", "--expire=now", "--all"] });
         yield* git.execute({ cwd: repo, args: ["gc", "-q", "--prune=now"] });
+      }),
+      /** With `git`: Overleaf's head becomes a new commit of `contents` on `parent` (forced). */
+      replaceHead: Effect.fnUntraced(function* (parent: string, contents: Contents) {
+        yield* repos.fetch({ repo: collaborator, branch: "main", token: TOKEN });
+        const commit = yield* repos.commit({
+          repo: collaborator,
+          tree: yield* tree(collaborator, contents),
+          parents: [parent],
+          message: "rewritten",
+        });
+        yield* git.execute({
+          cwd: root,
+          args: [
+            "--git-dir",
+            collaborator,
+            "push",
+            "-q",
+            "--force",
+            overleaf,
+            `${commit}:refs/heads/main`,
+          ],
+        });
+        return commit;
       }),
       /** With `git`: replaces Overleaf's history with commits of `chain`, oldest first (forced). */
       rewriteHistory: Effect.fnUntraced(function* (chain: ReadonlyArray<Record<string, string>>) {

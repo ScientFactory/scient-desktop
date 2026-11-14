@@ -116,7 +116,8 @@ interface FakePi {
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   /** Reject the next `get_state` request. */
   readonly failNextState: () => void;
-  readonly deferNextLifecycle: (type: "switch_session" | "new_session") => void;
+  /** Withhold the reply to the next request of this type, as Pi does for a prompt until it is taken. */
+  readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "prompt") => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
   /** Every request received by the fake process. */

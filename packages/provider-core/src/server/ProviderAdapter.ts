@@ -48,6 +48,10 @@ import type {
 import type { ScientTextSnapshotRuntime } from "./scientTextSnapshots.ts";
 export * from "./scientTextSnapshots.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Agent live voice lives in a Scient module.
+import type { ScientLiveVoiceRuntime } from "./scientLiveVoice.ts";
+export * from "./scientLiveVoice.ts";
+// SCIENT-FORK:END
 
 export const ProviderAdapterV2RuntimePolicy = OrchestrationV2ProviderRuntimePolicy;
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
@@ -277,6 +281,30 @@ export class ProviderAdapterThreadInUseError extends Schema.TaggedError<Provider
   }
 }
 
+/**
+ * The user sent `/compact` to a driver whose session has no native compaction.
+ */
+export class ProviderResumeUnsupportedError extends Schema.TaggedError<ProviderResumeUnsupportedError>()(
+  "ProviderResumeUnsupportedError",
+  { driver: ProviderDriverKind, providerThreadId: ProviderThreadId },
+) {
+  override get message(): string {
+    return "This provider cannot resume without a new message. Send a message to continue.";
+  }
+}
+
+export class ProviderCompactionUnsupportedError extends Schema.TaggedError<ProviderCompactionUnsupportedError>()(
+  "ProviderCompactionUnsupportedError",
+  {
+    driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
+  },
+) {
+  override get message(): string {
+    return "This provider does not support /compact. Start a new thread to continue with a fresh context.";
+  }
+}
+
 export class ProviderAdapterEnsureThreadError extends Schema.TaggedError<ProviderAdapterEnsureThreadError>()(
   "ProviderAdapterEnsureThreadError",
   {
@@ -359,6 +387,15 @@ export class ProviderAdapterSteerRunUnsupportedError extends Schema.TaggedError<
   }
 }
 
+export class ProviderAdapterSteerDeclinedError extends Schema.TaggedError<ProviderAdapterSteerDeclinedError>()(
+  "ProviderAdapterSteerDeclinedError",
+  {
+    driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
+    providerTurnId: ProviderTurnId,
+  },
+) {}
+
 export class ProviderAdapterSteerRunError extends Schema.TaggedError<ProviderAdapterSteerRunError>()(
   "ProviderAdapterSteerRunError",
   {
@@ -420,6 +457,8 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    /** Set when T3 closed the session because this thread detached from it, not the provider. */
+    detachedThreadId: Schema.optional(ThreadId),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -470,8 +509,10 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterRollbackThreadError,
   ProviderAdapterForkThreadError,
   ProviderAdapterTurnStartError,
+  ProviderResumeUnsupportedError,
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterSteerRunError,
+  ProviderAdapterSteerDeclinedError,
   ProviderAdapterInterruptError,
   ProviderAdapterInterruptTimeoutError,
   ProviderAdapterRuntimeRequestResponseError,
@@ -513,15 +554,36 @@ export interface ProviderAdapterV2TurnInput {
   readonly nativeThreadHasTurns?: boolean;
   readonly providerTurnOrdinal: number;
   readonly restartContinuationOfRunId?: RunId;
+  readonly resume?: true;
   readonly attemptId: RunAttemptId;
   readonly rootNodeId: NodeId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly message: ProviderAdapterV2TurnMessage;
+  /** Leading characters of `message.text` that are inline handoff context, not the user's words. */
+  readonly inlineContextLength?: number;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   /** Recheck after native preparation and immediately before the prompt write. */
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean>;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+}
+
+export type ProviderAdapterV2ResumeTurnInput = Omit<
+  ProviderAdapterV2TurnInput,
+  "message" | "resume"
+> & {
+  readonly messageId: MessageId;
+};
+
+export function resumeTurnInput(
+  input: ProviderAdapterV2ResumeTurnInput,
+): ProviderAdapterV2TurnInput {
+  const { messageId, ...turn } = input;
+  return {
+    ...turn,
+    resume: true,
+    message: { messageId, text: "", attachments: [], createdBy: "user", creationSource: "server" },
+  };
 }
 
 export interface ProviderAdapterV2SteerInput {
@@ -530,6 +592,8 @@ export interface ProviderAdapterV2SteerInput {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly providerTurnId: ProviderTurnId;
   readonly message: ProviderAdapterV2TurnMessage;
+  /** The selection sent with the message when it differs from the running turn's. */
+  readonly modelSelection?: ModelSelection;
 }
 
 export interface ProviderAdapterV2InterruptInput {
@@ -721,13 +785,19 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
   ) => Effect.Effect<boolean>;
   /** Trusted adapter-owned immutable hash of the actual native launch; never protocol metadata. */
   readonly modelContextWindowLaunchFingerprint?: string;
-  /** Set only if all session background tasks end with its process; otherwise threads must keep Waiting. */
+  /**
+   * Set only if all session background tasks and tool calls end with its process. Releasing the
+   * session then clears its task roster and interrupts its open tool calls; otherwise threads
+   * must keep Waiting.
+   */
   readonly backgroundTasksEndWithProcess?: true;
   readonly getModelContextWindow?: (
     modelSelection: ModelSelection,
     cwd?: string | null,
   ) => number | undefined;
   readonly canReuseContextUsage?: (previous: ModelSelection, next: ModelSelection) => boolean;
+  /** Excludes turn-scoped options from native thread load matching. */
+  readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
   readonly ensureThread: (
     input: ProviderAdapterV2EnsureThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
@@ -745,6 +815,9 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
   ) => Effect.Effect<boolean, ProviderAdapterV2Error>;
   readonly startTurn: (
     input: ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  readonly resumeTurn?: (
+    input: ProviderAdapterV2ResumeTurnInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly compactThread?: (
     input: ProviderAdapterV2TurnInput,
@@ -785,6 +858,8 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
     readonly providerThread: OrchestrationV2ProviderThread;
     // SCIENT-FORK: a detach hands the native writer to another process; wait for its release.
     readonly awaitRelease?: boolean;
+    /** Also hide it from the provider's own clients where it can; resuming it must restore it. */
+    readonly archive?: boolean;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly respondToRuntimeRequest: (
     input: ProviderAdapterV2RuntimeRequestResponseInput,
@@ -798,6 +873,9 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
   }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
   /** Absent means non-interactive apps with plain tool rows. */
   readonly mcpApps?: ProviderAdapterV2McpApps;
+  // SCIENT-FORK:START — a spoken conversation with the running session; absent means none.
+  readonly liveVoice?: ScientLiveVoiceRuntime;
+  // SCIENT-FORK:END
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

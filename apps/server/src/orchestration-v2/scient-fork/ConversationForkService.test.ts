@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  GuestShareId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -121,6 +122,23 @@ it.effect(
         commandId: CommandId.make("fork-source-section"),
         threadId,
         sectionId: ThreadSectionId.make("section:research"),
+      });
+      yield* store.apply({
+        id: EventId.make("fork-source-guest-share"),
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...(yield* store.getThread(threadId)),
+          guestShare: {
+            id: GuestShareId.make("guest-share:fork-source"),
+            host: "guest.example.test",
+            createdAt: DateTime.formatIso(now),
+            expiresAt: DateTime.formatIso(DateTime.add(now, { days: 1 })),
+            guestName: null,
+            messages: [],
+          },
+        },
       });
       const firstRunId = RunId.make("fork-completed-run");
       const secondRunId = RunId.make("fork-running-run");
@@ -332,6 +350,8 @@ it.effect(
       yield* assertForkShellCounts;
       assert.ok(shell.threads.every((thread) => !("conversationForkBoundaries" in thread)));
       assert.equal(target.thread.sectionId, ThreadSectionId.make("section:research"));
+      // A guest invited to the source must never resolve to the fork.
+      assert.isNull(target.thread.guestShare);
       assert.equal(target.thread.conversationFork?.status, "ready");
       assert.equal(target.thread.forkedFrom, null);
       assert.equal(target.runs.length, 0);

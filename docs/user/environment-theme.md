@@ -84,7 +84,8 @@ palette:
 Any of the roles shown in the theme editor's advanced view can be published this way; roles left
 out keep their generated value. A role this version of Scient does not know is ignored rather
 than rejected, so publishing a role added by a newer release is safe. An `id` inside the file is
-ignored — the filename decides.
+ignored — the filename decides. An optional `css` string adds
+[custom CSS](./appearance.md#custom-css).
 
 A theme with no usable colors is not listed on that client.
 

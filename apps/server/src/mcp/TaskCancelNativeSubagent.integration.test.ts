@@ -654,6 +654,21 @@ const cancelBackgroundOnlyTask = (
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
         yield* orchestrator.recoverDelegatedTasks;
+        // SCIENT-FORK:START task-cancel-recovery-receipt
+        const eventSink = yield* EventSink.EventSinkV2;
+        yield* eventSink
+          .stream({ afterSequence: 0, threadId: stopped.scope.thread!.threadId })
+          .pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "subagent.updated" &&
+                event.payload.id === stopped.taskId &&
+                event.payload.status === "interrupted",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+        // SCIENT-FORK:END task-cancel-recovery-receipt
         const task = (yield* orchestrator.getThreadProjection(
           stopped.scope.thread!.threadId,
         )).subagents.find((entry) => entry.id === stopped.taskId);

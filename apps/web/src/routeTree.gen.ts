@@ -73,6 +73,7 @@ import { Route as ChatSettingsExtensionsCategoryCategoryRouteImport } from './ro
 import { Route as ChatSettingsExtensionsItemServerSplatRouteImport } from './routes/_chat.settings.extensions_.item.server.$'
 import { Route as ChatSettingsExtensionsItemPluginPluginIdRouteImport } from './routes/_chat.settings.extensions_.item.plugin.$pluginId'
 import { Route as ChatSettingsExtensionsItemConnectorConnectorIdRouteImport } from './routes/_chat.settings.extensions_.item.connector.$connectorId'
+import { Route as ChatSettingsExtensionsItemAccountServiceIdRouteImport } from './routes/_chat.settings.extensions_.item.account.$serviceId'
 import { Route as ChatSettingsExtensionsItemStoreInstanceIdEntryIdRouteImport } from './routes/_chat.settings.extensions_.item.store.$instanceId.$entryId'
 import { Route as ChatSettingsExtensionsItemProviderInstanceIdServerServerNameRouteImport } from './routes/_chat.settings.extensions_.item.provider.$instanceId.server.$serverName'
 import { Route as ChatSettingsExtensionsItemProviderInstanceIdPluginPluginIdRouteImport } from './routes/_chat.settings.extensions_.item.provider.$instanceId.plugin.$pluginId'
@@ -416,6 +417,12 @@ const ChatSettingsExtensionsItemConnectorConnectorIdRoute =
     path: '/extensions/item/connector/$connectorId',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsExtensionsItemAccountServiceIdRoute =
+  ChatSettingsExtensionsItemAccountServiceIdRouteImport.update({
+    id: '/extensions_/item/account/$serviceId',
+    path: '/extensions/item/account/$serviceId',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsExtensionsItemStoreInstanceIdEntryIdRoute =
   ChatSettingsExtensionsItemStoreInstanceIdEntryIdRouteImport.update({
     id: '/extensions_/item/store/$instanceId/$entryId',
@@ -498,6 +505,7 @@ export interface FileRoutesByFullPath {
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/settings/extensions/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
+  '/settings/extensions/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
   '/settings/extensions/item/connector/$connectorId': typeof ChatSettingsExtensionsItemConnectorConnectorIdRoute
   '/settings/extensions/item/plugin/$pluginId': typeof ChatSettingsExtensionsItemPluginPluginIdRoute
   '/settings/extensions/item/server/$': typeof ChatSettingsExtensionsItemServerSplatRoute
@@ -566,6 +574,7 @@ export interface FileRoutesByTo {
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/settings/extensions/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
+  '/settings/extensions/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
   '/settings/extensions/item/connector/$connectorId': typeof ChatSettingsExtensionsItemConnectorConnectorIdRoute
   '/settings/extensions/item/plugin/$pluginId': typeof ChatSettingsExtensionsItemPluginPluginIdRoute
   '/settings/extensions/item/server/$': typeof ChatSettingsExtensionsItemServerSplatRoute
@@ -636,6 +645,7 @@ export interface FileRoutesById {
   '/_chat/settings/skills_/project': typeof ChatSettingsSkillsProjectRoute
   '/_chat/settings/extensions_/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
   '/_chat/settings/extensions_/store/$instanceId': typeof ChatSettingsExtensionsStoreInstanceIdRoute
+  '/_chat/settings/extensions_/item/account/$serviceId': typeof ChatSettingsExtensionsItemAccountServiceIdRoute
   '/_chat/settings/extensions_/item/connector/$connectorId': typeof ChatSettingsExtensionsItemConnectorConnectorIdRoute
   '/_chat/settings/extensions_/item/plugin/$pluginId': typeof ChatSettingsExtensionsItemPluginPluginIdRoute
   '/_chat/settings/extensions_/item/server/$': typeof ChatSettingsExtensionsItemServerSplatRoute
@@ -706,6 +716,7 @@ export interface FileRouteTypes {
     | '/settings/skills/project'
     | '/settings/extensions/category/$category'
     | '/settings/extensions/store/$instanceId'
+    | '/settings/extensions/item/account/$serviceId'
     | '/settings/extensions/item/connector/$connectorId'
     | '/settings/extensions/item/plugin/$pluginId'
     | '/settings/extensions/item/server/$'
@@ -774,6 +785,7 @@ export interface FileRouteTypes {
     | '/settings/skills/project'
     | '/settings/extensions/category/$category'
     | '/settings/extensions/store/$instanceId'
+    | '/settings/extensions/item/account/$serviceId'
     | '/settings/extensions/item/connector/$connectorId'
     | '/settings/extensions/item/plugin/$pluginId'
     | '/settings/extensions/item/server/$'
@@ -843,6 +855,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/skills_/project'
     | '/_chat/settings/extensions_/category/$category'
     | '/_chat/settings/extensions_/store/$instanceId'
+    | '/_chat/settings/extensions_/item/account/$serviceId'
     | '/_chat/settings/extensions_/item/connector/$connectorId'
     | '/_chat/settings/extensions_/item/plugin/$pluginId'
     | '/_chat/settings/extensions_/item/server/$'
@@ -1314,6 +1327,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsExtensionsItemConnectorConnectorIdRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/extensions_/item/account/$serviceId': {
+      id: '/_chat/settings/extensions_/item/account/$serviceId'
+      path: '/extensions/item/account/$serviceId'
+      fullPath: '/settings/extensions/item/account/$serviceId'
+      preLoaderRoute: typeof ChatSettingsExtensionsItemAccountServiceIdRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/extensions_/item/store/$instanceId/$entryId': {
       id: '/_chat/settings/extensions_/item/store/$instanceId/$entryId'
       path: '/extensions/item/store/$instanceId/$entryId'
@@ -1380,6 +1400,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsSkillsProjectRoute: typeof ChatSettingsSkillsProjectRoute
   ChatSettingsExtensionsCategoryCategoryRoute: typeof ChatSettingsExtensionsCategoryCategoryRoute
   ChatSettingsExtensionsStoreInstanceIdRoute: typeof ChatSettingsExtensionsStoreInstanceIdRoute
+  ChatSettingsExtensionsItemAccountServiceIdRoute: typeof ChatSettingsExtensionsItemAccountServiceIdRoute
   ChatSettingsExtensionsItemConnectorConnectorIdRoute: typeof ChatSettingsExtensionsItemConnectorConnectorIdRoute
   ChatSettingsExtensionsItemPluginPluginIdRoute: typeof ChatSettingsExtensionsItemPluginPluginIdRoute
   ChatSettingsExtensionsItemServerSplatRoute: typeof ChatSettingsExtensionsItemServerSplatRoute
@@ -1433,6 +1454,8 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
     ChatSettingsExtensionsCategoryCategoryRoute,
   ChatSettingsExtensionsStoreInstanceIdRoute:
     ChatSettingsExtensionsStoreInstanceIdRoute,
+  ChatSettingsExtensionsItemAccountServiceIdRoute:
+    ChatSettingsExtensionsItemAccountServiceIdRoute,
   ChatSettingsExtensionsItemConnectorConnectorIdRoute:
     ChatSettingsExtensionsItemConnectorConnectorIdRoute,
   ChatSettingsExtensionsItemPluginPluginIdRoute:

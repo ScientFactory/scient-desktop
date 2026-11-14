@@ -46,8 +46,11 @@ const mocks = vi.hoisted(() => ({
   pictureInPicture: false,
   showEmptyState: false,
   idleServerTab: false,
+  idleDesktopTab: false,
+  idleDesktopOverlay: false,
   loading: false,
   nativeServerTab: false,
+  streamedServerTab: false,
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
@@ -119,6 +122,11 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
     desktopByTabId: {
       "tab-1": {
         hasWebContents: true,
+        // SCIENT-FORK: an empty tab's desktop view is idle too, for Scient's start page tests.
+        navStatus:
+          mocks.idleDesktopOverlay || mocks.showEmptyState
+            ? { _tag: "Idle" }
+            : { _tag: "Success", url: "http://example.com/", title: "Example" },
         canGoBack: false,
         canGoForward: false,
         loading: mocks.loading,
@@ -135,12 +143,12 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
     recentlySeenUrls: [],
     sessions: mocks.showEmptyState
       ? {}
-      : mocks.idleServerTab
+      : mocks.idleServerTab || mocks.idleDesktopTab
         ? {
             "tab-1": {
               threadId: "thread-1",
               tabId: "tab-1",
-              runtime: "server",
+              runtime: mocks.idleDesktopTab ? "desktop" : "server",
               navStatus: { _tag: "Idle" },
               canGoBack: false,
               canGoForward: false,
@@ -152,7 +160,10 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
               threadId: "thread-1",
               tabId: "tab-1",
               // SCIENT-FORK:START — PDF export cases choose the tab runtime and source URL.
-              runtime: mocks.nativeServerTab ? "server" : (mocks.runtime ?? "desktop"),
+              runtime:
+                mocks.nativeServerTab || mocks.streamedServerTab
+                  ? "server"
+                  : (mocks.runtime ?? "desktop"),
               navStatus: { _tag: "Success", url: mocks.sourceUrl, title: "Example" },
               ...(mocks.profileId ? { profileId: mocks.profileId } : {}),
               // SCIENT-FORK:END
@@ -202,6 +213,8 @@ vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => ({
 
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
+import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -276,8 +289,11 @@ function setup() {
   mocks.pictureInPicture = false;
   mocks.showEmptyState = false;
   mocks.idleServerTab = false;
+  mocks.idleDesktopTab = false;
+  mocks.idleDesktopOverlay = false;
   mocks.loading = false;
   mocks.nativeServerTab = false;
+  mocks.streamedServerTab = false;
   mocks.serverEpoch = null;
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
@@ -604,6 +620,51 @@ describe("PreviewView", () => {
   });
   // SCIENT-FORK:END
 
+  it("shows a desktop navigation before its backend status echo arrives", async () => {
+    setup();
+    mocks.idleDesktopTab = true;
+    await using _screen = await render(view());
+    await expect
+      .element(page.getByPlaceholder("Search or enter URL"))
+      .toHaveValue("http://example.com/");
+    await expect.element(page.getByText("No preview yet")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Annotate preview" })).toBeVisible();
+  });
+
+  it("keeps the server navigation while the new desktop tab is still idle", async () => {
+    setup();
+    mocks.idleDesktopOverlay = true;
+    await using _screen = await render(view());
+    await expect
+      .element(page.getByPlaceholder("Search or enter URL"))
+      .toHaveValue("http://example.com/");
+    await expect.element(page.getByText("No preview yet")).not.toBeInTheDocument();
+  });
+
+  it("keeps the address in the bar when Enter commits an IME composition", async () => {
+    setup();
+    await using _screen = await render(view());
+    const input = page.getByPlaceholder("Search or enter URL");
+    await input.fill("https://example.com/pinyin");
+
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(enter, "keyCode", { value: 229 });
+    act(() => {
+      input.element().dispatchEvent(enter);
+    });
+
+    await expect.element(input).toHaveFocus();
+    await expect.element(input).toHaveValue("https://example.com/pinyin");
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(true);
+  });
+
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
     const picked = annotation("annotation-revoked");
@@ -682,6 +743,23 @@ describe("PreviewView", () => {
     const rect = card.element().getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     expect(card.element().contains(hit)).toBe(true);
+  });
+
+  it("sizes the first device viewport of a streamed tab to its panel", async () => {
+    setup();
+    mocks.streamedServerTab = true;
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    const surface = page.getByTestId("server-browser-surface");
+    await expect.element(surface).toBeInTheDocument();
+    const rect = surface.element().getBoundingClientRect();
+
+    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
+
+    expect(commitBrowserViewportChange).toHaveBeenCalledWith(expect.anything(), {
+      _tag: "freeform",
+      ...resolveResponsiveBrowserViewportSize(rect, 1),
+    });
   });
 
   it("focuses and selects the address from forwarded desktop actions only while visible", async () => {

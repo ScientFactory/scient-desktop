@@ -113,16 +113,20 @@ export function makeScientToolListLayer(
 }
 
 /** Preserve Effect's protocol and add only request-scoped tool discovery. */
-const protocol = McpProtocol.v2025_06_18;
-const listTools = protocol.clientRpcs.requests.get("tools/list");
-if (!listTools) throw new Error("The selected MCP protocol has no tool discovery RPC.");
+function withScientToolList(protocol: McpProtocol.ProtocolAdapter): McpProtocol.ProtocolAdapter {
+  const listTools = protocol.clientRpcs.requests.get("tools/list");
+  if (!listTools) throw new Error("The selected MCP protocol has no tool discovery RPC.");
+  return {
+    ...protocol,
+    // The public adapter erases the RPC union. Rebuilding from that map cannot
+    // recover its generic handler union; restore only the adapter's erased shape.
+    // The original RPC schemas and client middleware are retained and tested.
+    clientRpcs: RpcGroup.make(...protocol.clientRpcs.requests.values()).merge(
+      RpcGroup.make(listTools).middleware(ScientToolList),
+    ) as unknown as McpProtocol.ErasedClientRpcGroup,
+  };
+}
 
-export const ScientMcpProtocol: McpProtocol.ProtocolAdapter = {
-  ...protocol,
-  // The public adapter erases the RPC union. Rebuilding from that map cannot
-  // recover its generic handler union; restore only the adapter's erased shape.
-  // The original RPC schemas and client middleware are retained and tested.
-  clientRpcs: RpcGroup.make(...protocol.clientRpcs.requests.values()).merge(
-    RpcGroup.make(listTools).middleware(ScientToolList),
-  ) as unknown as McpProtocol.ErasedClientRpcGroup,
-};
+export const ScientMcpProtocol = withScientToolList(McpProtocol.v2025_06_18);
+/** MCP 2026-07-28 clients discover the server instead of initializing. */
+export const ScientMcpProtocol2026 = withScientToolList(McpProtocol.v2026_07_28);

@@ -37,6 +37,25 @@ export interface ReadingHistoryPage {
   readonly onLoadEarlier: () => void;
 }
 
+// Wide enough for an overlay scrollbar, which takes no layout space (macOS Firefox).
+const SCROLLBAR_HIT_PX = 16;
+
+/**
+ * Scrollbar drags produce no wheel/touch events. The scroll node's own padding also targets it,
+ * so only a press at its trailing edge counts (upstream's attachTimelineViewport rule).
+ */
+export function isScrollbarPress(
+  event: Pick<PointerEvent, "target" | "clientX">,
+  scrollNode: HTMLElement | null | undefined,
+): boolean {
+  return (
+    scrollNode != null &&
+    event.target === scrollNode &&
+    scrollNode.getBoundingClientRect().right - event.clientX <=
+      Math.max(SCROLLBAR_HIT_PX, scrollNode.offsetWidth - scrollNode.clientWidth)
+  );
+}
+
 /**
  * Calls `onResize` when an HTML preview the reader is using (the focused frame in `viewport`)
  * changes its content height, as an accordion inside it does. A click inside a frame never
@@ -119,7 +138,7 @@ export function useReaderScrollInput({
     };
     // A scrollbar drag moves the view on every frame until release.
     const pressed = (event: PointerEvent) => {
-      if (event.target !== listRef.current?.getScrollableNode()) return;
+      if (!isScrollbarPress(event, listRef.current?.getScrollableNode())) return;
       scrollbarHeldRef.current = true;
       input();
     };

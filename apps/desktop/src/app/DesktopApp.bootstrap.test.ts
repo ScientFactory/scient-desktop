@@ -16,6 +16,7 @@ import * as DesktopApp from "./DesktopApp.ts";
 import * as DesktopManagedPolicy from "./DesktopManagedPolicy.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
+import * as DesktopPrimaryPaste from "./DesktopPrimaryPaste.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
@@ -206,6 +207,7 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
       Layer.mock(DesktopRendererHistory.DesktopRendererHistory, { shutdown: Effect.void }),
       // SCIENT-FORK:START — the keep-awake IPC handler needs its service.
       Layer.mock(DesktopKeepAwake.DesktopKeepAwake, {}),
+      Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
       // SCIENT-FORK:END
       Layer.mock(DesktopAppActivation.DesktopAppActivation, { start: Effect.void }),
       Layer.mock(DesktopSnapShot.DesktopSnapShot, { initialize: Effect.void }),

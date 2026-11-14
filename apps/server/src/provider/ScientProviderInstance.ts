@@ -21,6 +21,8 @@ import type {
   ProviderPluginActions,
   ProviderWorkspaceInventory,
   ProviderSkillActions,
+  ProviderLiveVoiceHost,
+  ProviderVoiceDictation,
   ProviderVoiceTranscriptCorrection,
 } from "./ScientProviderInstanceSeams.ts";
 
@@ -33,6 +35,8 @@ export interface ScientProviderInstance extends ProviderInstance {
   readonly nativeInventoryChanges?: Stream.Stream<ProviderNativeInventory> | undefined;
   readonly workspaceInventory?: ProviderWorkspaceInventory | undefined;
   readonly voiceTranscriptCorrection?: ProviderVoiceTranscriptCorrection | undefined;
+  readonly voiceDictation?: ProviderVoiceDictation | undefined;
+  readonly liveVoiceHost?: ProviderLiveVoiceHost | undefined;
 }
 
 /** Driver SPI for server-owned implementations that expose Scient actions. */

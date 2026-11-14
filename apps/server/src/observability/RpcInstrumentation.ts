@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as References from "effect/References";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -87,6 +88,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverDisableAcpRegistryProvider]: "server",
   [WS_METHODS.serverLogoutAcpRegistry]: "server",
   [WS_METHODS.serverDiscoverSourceControl]: "server",
+  [WS_METHODS.serverCheckSecretSource]: "server",
   [WS_METHODS.serverGetTraceDiagnostics]: "server",
   [WS_METHODS.serverGetProcessDiagnostics]: "server",
   [WS_METHODS.serverGetHostResources]: "server",
@@ -112,6 +114,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.guestShareCreate]: "guest-share",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
   [WS_METHODS.cloudInstallRelayClient]: "cloud",
+  // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
+  [WS_METHODS.scientConnectStatus]: "cloud",
+  [WS_METHODS.scientConnectAuthorize]: "cloud",
+  [WS_METHODS.scientConnectTurnOff]: "cloud",
+  // SCIENT-FORK:END
   [WS_METHODS.pullRequestsList]: "pull-requests",
   [WS_METHODS.pullRequestsListStats]: "pull-requests",
   [WS_METHODS.pullRequestsFilterOptions]: "pull-requests",
@@ -142,6 +149,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pullRequestsInvalidate]: "pull-requests",
   [WS_METHODS.pullRequestsReportState]: "pull-requests",
   [WS_METHODS.pullRequestsSubscribeRefreshes]: "pull-requests",
+  [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: "pull-requests",
   [WS_METHODS.pullRequestsReviewerCandidates]: "pull-requests",
   [WS_METHODS.pullRequestsRequestReviewers]: "pull-requests",
   [WS_METHODS.pullRequestsLabelCandidates]: "pull-requests",
@@ -413,6 +421,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.editorsFlushRespond]: "editors",
   [WS_METHODS.editorsFlushLeave]: "editors",
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Agent voice RPCs: live calls and ChatGPT dictation.
+  [WS_METHODS.liveVoiceCall]: "liveVoice",
+  [WS_METHODS.liveVoiceMute]: "liveVoice",
+  [WS_METHODS.voiceDictateWithChatGpt]: "voice",
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes.
   [WS_METHODS.projectsChangeEntries]: "projects",
   [WS_METHODS.projectsOpenWithApps]: "projects",
@@ -428,6 +441,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverPlanProviderRuntime]: "server",
   [WS_METHODS.serverStartProviderRuntime]: "server",
   [WS_METHODS.serverCancelProviderRuntime]: "server",
+  [WS_METHODS.serverObserveProviderRuntimePick]: "server",
   [WS_METHODS.serverSaveCustomModel]: "server",
   [WS_METHODS.serverRemoveCustomModel]: "server",
   [WS_METHODS.serverTestCustomModel]: "server",
@@ -463,13 +477,25 @@ export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect
   if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {
     return measured.pipe(Effect.provideService(References.TracerEnabled, false));
   }
-  return measured.pipe(
-    Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
-      attributes: {
-        ...DEFAULT_RPC_SPAN_ATTRIBUTES,
-        "rpc.method": method,
-        "rpc.aggregate": RPC_AGGREGATES[method as WsRpcMethod],
-      },
-    }),
+  // The ambient span is the socket's `GET /ws` request, open for the whole connection. Parenting
+  // every call to it grows one trace past the collector's per-trace limit, which then drops it.
+  return Effect.currentParentSpan.pipe(
+    Effect.option,
+    Effect.flatMap((connection) =>
+      measured.pipe(
+        Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
+          root: true,
+          links: Option.match(connection, {
+            onNone: () => [],
+            onSome: (span) => [{ span, attributes: {} }],
+          }),
+          attributes: {
+            ...DEFAULT_RPC_SPAN_ATTRIBUTES,
+            "rpc.method": method,
+            "rpc.aggregate": RPC_AGGREGATES[method as WsRpcMethod],
+          },
+        }),
+      ),
+    ),
   );
 });

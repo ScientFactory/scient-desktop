@@ -90,6 +90,8 @@ export function newChatModelSelection(input: {
   );
   const { selectedModel } = deriveEffectiveComposerModelState({
     draft,
+    // The import opens a new thread, so its seeded draft applies.
+    threadStarted: false,
     providers,
     selectedProvider: selectedProviderEntry.driverKind,
     selectedInstanceId: selectedProviderEntry.instanceId,

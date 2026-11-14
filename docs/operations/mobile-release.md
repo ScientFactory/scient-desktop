@@ -134,12 +134,12 @@ a run artifact.
 Android builds an APK on the runner when its fingerprint has none. A persistent
 preview build is `vp run eas:ios:preview` or `vp run eas:android:preview`.
 
-**Production.** With the gate on, every push to `main` that touches mobile code runs
-Mobile EAS Production. It publishes an OTA update to binaries whose native fingerprint
-matches. When a fingerprint has no build, it builds and submits: Android to the Play
-`internal` track, and the iOS `testflight` profile to TestFlight. App Store binaries
-come from a dispatch with `mode=build`, `profile=production` and `platform=ios`
-(or `all`). `mode=update` forces an OTA update.
+**Production.** Mobile EAS Production runs only by manual dispatch, never on a push to
+`main`, so App Store users get only tested code. Dispatch it from a tested release
+commit. `mode=update` publishes an OTA update to the `production` channel.
+`mode=build` with `profile=production` and `platform=ios` (or `all`) makes App Store
+binaries; `profile=testflight` makes TestFlight builds. Turn the gate on only for the
+dispatch, then delete it again, because the dev-client and preview workflows read it too.
 
 **Versions.** The app version is the default in `apps/mobile/app.config.ts`; the
 `testflight` profile in `eas.json` pins its own. Change either in a reviewed PR,

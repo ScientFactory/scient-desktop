@@ -3,7 +3,7 @@ import {
   getDroidModelSection,
   groupDroidModelRows,
 } from "@t3tools/client-runtime/droid-model-presentation";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -122,7 +122,8 @@ interface ProviderModelsSectionProps {
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
-  readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => void;
+  /** Resolves true once the custom models are saved. */
+  readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => Promise<boolean>;
   readonly onHiddenModelsChange: (
     next: ReadonlyArray<string>,
     affectedModels: ReadonlyArray<string>,
@@ -155,6 +156,8 @@ export function ProviderModelsSection({
       : configuredSupportsCustomModels;
   const [input, setInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const addAttemptRef = useRef(0);
   const [filter, setFilter] = useState("");
   const [expandedMore, setExpandedMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,8 +213,8 @@ export function ProviderModelsSection({
   const allBuiltInModelsHidden =
     builtInModels.length > 0 && builtInModels.every((model) => hiddenModels.includes(model.slug));
 
-  const handleAdd = () => {
-    if (!supportsCustomModels || !canManageCustomModels) return;
+  const handleAdd = async () => {
+    if (!supportsCustomModels || !canManageCustomModels || isSaving) return;
     const normalized = normalizeCustomModelSlug(input);
     if (!normalized) {
       setError("Enter a model slug.");
@@ -230,15 +233,25 @@ export function ProviderModelsSection({
       return;
     }
 
+    addAttemptRef.current += 1;
+    const attempt = addAttemptRef.current;
+    setIsSaving(true);
+    const saved = await onChange([
+      ...customModels,
+      { slug: normalized, name: normalized, capabilities: null },
+    ]);
+    setIsSaving(false);
+    // Cancel bumps the attempt, so a late save cannot close the draft opened after it.
+    if (!saved || attempt !== addAttemptRef.current) return;
     scrollToSlugRef.current = normalized;
     setFilter("");
-    onChange([...customModels, { slug: normalized, name: normalized, capabilities: null }]);
     setInput("");
     setError(null);
     setIsAdding(false);
   };
 
   const cancelAdd = () => {
+    addAttemptRef.current += 1;
     setInput("");
     setError(null);
     setIsAdding(false);
@@ -247,7 +260,7 @@ export function ProviderModelsSection({
   const handleRemove = (slug: string) => {
     if (!canManageCustomModels) return;
     if (editingSlug === slug) setEditingSlug(null);
-    onChange(customModels.filter((entry) => entry.slug !== slug));
+    void onChange(customModels.filter((entry) => entry.slug !== slug));
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
     setError(null);
@@ -255,7 +268,7 @@ export function ProviderModelsSection({
 
   const handleSaveEdit = (next: CustomModelDefinition) => {
     if (!canManageCustomModels) return;
-    onChange(customModels.map((entry) => (entry.slug === next.slug ? next : entry)));
+    void onChange(customModels.map((entry) => (entry.slug === next.slug ? next : entry)));
     setEditingSlug(null);
   };
 
@@ -455,6 +468,7 @@ export function ProviderModelsSection({
             id={`provider-instance-${instanceId}-custom-model`}
             size="sm"
             autoFocus
+            readOnly={isSaving}
             value={input}
             onChange={(event) => {
               setInput(event.target.value);
@@ -468,13 +482,13 @@ export function ProviderModelsSection({
               }
               if (event.key !== "Enter") return;
               event.preventDefault();
-              handleAdd();
+              void handleAdd();
             }}
             placeholder={driverKind ? CUSTOM_MODEL_PLACEHOLDER_BY_KIND[driverKind] : "model-slug"}
             spellCheck={false}
           />
           <div className="flex shrink-0 gap-2">
-            <Button size="sm" variant="outline" onClick={handleAdd}>
+            <Button size="sm" variant="outline" disabled={isSaving} onClick={handleAdd}>
               Add
             </Button>
             <Button size="sm" variant="ghost" onClick={cancelAdd}>
@@ -491,7 +505,7 @@ export function ProviderModelsSection({
   );
 }
 
-function ProviderModelRow({
+const ProviderModelRow = memo(function ProviderModelRow({
   model,
   isHidden,
   isFavorite,
@@ -690,4 +704,4 @@ function ProviderModelRow({
       {/* SCIENT-FORK:END */}
     </div>
   );
-}
+});

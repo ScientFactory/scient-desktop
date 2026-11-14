@@ -23,9 +23,11 @@ import type {
   ProviderManagedRuntimeProgress,
 } from "../../provider/ScientProviderInstanceSeams.ts";
 import type { AntigravityInstallation } from "../../provider/AntigravityInstallation.ts";
-import { resolveAntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
 import type { AntigravityReleaseAsset } from "../../provider/antigravityRelease.ts";
-import { ANTIGRAVITY_ACP_REGISTRY_VERSION } from "./antigravityAcpCatalog.ts";
+import {
+  ANTIGRAVITY_ACP_REGISTRY_VERSION,
+  resolveAntigravityReleaseAsset,
+} from "./antigravityAcpCatalog.ts";
 import { ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
 import { antigravityAuthUsesBrowser } from "../../provider/antigravityAuthSupport.ts";
 import type { ProviderAuthController } from "../../provider/ProviderAuthService.ts";

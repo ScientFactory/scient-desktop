@@ -20,14 +20,14 @@ export function RightPanelResizeHandle({ handlers, className, label, ...separato
       {...separatorProps}
       className={cn(
         // SCIENT-FORK: z-41 keeps the line above the browser page (30) and Scient's page corners (40).
-        "cursor-platform-col-resize group absolute inset-y-0 -left-1 z-41 w-2 touch-none select-none any-pointer-coarse:-left-2 any-pointer-coarse:w-4",
+        "cursor-platform-col-resize group absolute inset-y-0 left-0 z-41 w-1 touch-none select-none any-pointer-coarse:-left-2 any-pointer-coarse:w-4",
         className,
       )}
       {...handlers}
     >
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-1/2 w-px bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-primary/60 group-active:bg-primary/60"
+        className="pointer-events-none absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-primary/60 group-active:bg-primary/60 any-pointer-coarse:left-2"
       />
     </div>
   );

@@ -581,11 +581,30 @@ const selectCapturedContextHistory = Effect.fn("ContextHistory.selectCaptured")(
     (sum, handoff) => sum + (handoff.history?.omittedItems ?? 0),
     0,
   );
+  // Name the omitted items (newest last, at most 20) so a read targets them.
+  const priorOmittedIds = input.handoffs.flatMap(
+    (handoff) => handoff.history?.omittedItemIds ?? [],
+  );
+  const maxOmitted = omittedBefore + candidates.length;
+  const omittedList = (ids: ReadonlyArray<string>, total: number) =>
+    ids.length === 0
+      ? ""
+      : ` Omitted item IDs, newest last: ${ids.join(", ")}.${total > ids.length ? ` ${total - ids.length} older omitted items are not listed.` : ""}`;
+  // Reserve room for the widest IDs so the final list cannot exceed it; cap it at an eighth of the budget.
+  const widestIds = [...priorOmittedIds, ...candidates.map((candidate) => candidate.itemId)]
+    .toSorted((a, b) => b.length - a.length)
+    .slice(0, 20);
+  while (
+    widestIds.length > 0 &&
+    Buffer.byteLength(encodeJson(omittedList(widestIds, maxOmitted))) > input.budget / 8
+  )
+    widestIds.pop();
   let remaining =
     input.budget -
     historyCost(
       [],
-      historySelectionContext(coverage, candidates.length, omittedBefore + candidates.length),
+      historySelectionContext(coverage, candidates.length, maxOmitted) +
+        omittedList(widestIds, maxOmitted),
     );
   const selected = new Map<number, OrchestrationV2HistoricalMessage>();
   for (const at of historySelectionOrder(candidates)) {
@@ -603,16 +622,16 @@ const selectCapturedContextHistory = Effect.fn("ContextHistory.selectCaptured")(
   const omittedItemIds = candidates
     .filter((_, at) => !selected.has(at))
     .map((candidate) => candidate.itemId);
+  const omittedItems = maxOmitted - messages.length;
+  const listedIds = [...priorOmittedIds, ...omittedItemIds];
   return {
     messages,
     itemIdsByHandoff,
     omittedItemIds,
-    omittedItems: omittedBefore + candidates.length - messages.length,
-    context: historySelectionContext(
-      coverage,
-      messages.length,
-      omittedBefore + candidates.length - messages.length,
-    ),
+    omittedItems,
+    context:
+      historySelectionContext(coverage, messages.length, omittedItems) +
+      omittedList(widestIds.length === 0 ? [] : listedIds.slice(-widestIds.length), omittedItems),
   };
 });
 

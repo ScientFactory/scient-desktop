@@ -81,7 +81,9 @@ jobs:
     # SCIENT-FORK:START mobile-release-gate
     # Off until the owner sets the SCIENT_MOBILE_RELEASE repository variable to true
     # (docs/operations/mobile-release.md). GitHub-hosted runners: Scient has no Blacksmith.
-    if: vars.SCIENT_MOBILE_RELEASE == 'true'
+    # Scient publishes to the production channel only by manual dispatch from a tested
+    # release, never on a push to main, so App Store users never get untested code.
+    if: github.event_name == 'workflow_dispatch' && vars.SCIENT_MOBILE_RELEASE == 'true'
     runs-on: ubuntu-24.04
     # SCIENT-FORK:END mobile-release-gate
     # Serialize runs so OTAs publish in merge order. GitHub keeps at most one
@@ -141,7 +143,7 @@ jobs:
       # branch; app versions change through reviewed PRs and EAS numbers each build.
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
           # No sparse-checkout here: it makes actions/checkout fetch with
@@ -151,7 +153,7 @@ jobs:
 
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -169,7 +171,7 @@ jobs:
 
       - name: Setup EAS
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
@@ -183,6 +185,11 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+          # SCIENT-FORK:START mobile-ios-only-env
+          # An iOS-only dispatch never builds or fingerprints Android, so it runs before
+          # Scient has a Firebase project.
+          IOS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.platform == 'ios' }}
+          # SCIENT-FORK:END mobile-ios-only-env
         run: |
           eas env:pull production --non-interactive
           # EAS commands skip dotenv, and the Android fingerprint hashes this
@@ -192,6 +199,12 @@ jobs:
           import { parseEnv } from "node:util";
           const env = parseEnv(readFileSync(".env.local", "utf8"));
           const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          // SCIENT-FORK:START mobile-ios-only-env
+          if (!googleServicesFile && process.env.IOS_ONLY === "true") {
+            console.log("T3CODE_ANDROID_GOOGLE_SERVICES_FILE is not set; skipped for this iOS-only build.");
+            process.exit(0);
+          }
+          // SCIENT-FORK:END mobile-ios-only-env
           if (!googleServicesFile) {
             throw new Error("T3CODE_ANDROID_GOOGLE_SERVICES_FILE is missing from the production environment");
           }
@@ -464,7 +477,7 @@ jobs:
       BUILD_TAG: mobile-android-build/${{ needs.production.outputs.android_version }}/${{ needs.production.outputs.android_fingerprint }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.production.outputs.android_sha }}
           fetch-depth: 0
@@ -524,7 +537,7 @@ jobs:
 
       - name: Restore build cache
         if: steps.record.outputs.built != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/t3-android-store/gradle/caches
@@ -545,7 +558,7 @@ jobs:
 
       - name: Setup Node
         if: steps.record.outputs.built != 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: package.json
 
@@ -564,14 +577,14 @@ jobs:
 
       - name: Setup Java
         if: steps.record.outputs.built != 'true'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: 17
 
       - name: Setup EAS
         if: steps.record.outputs.built != 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
@@ -618,7 +631,7 @@ jobs:
       # A --path submission doesn't keep its archive on EAS; this is the only downloadable copy.
       - name: Keep the AAB
         if: steps.record.outputs.built != 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-store-aab-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/t3code.aab
@@ -656,8 +669,8 @@ jobs:
           echo ":rocket: android: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
 
   # Off unless the MOBILE_IOS_LOCAL_BUILDS repository variable is `true`; the
-  # production job only sets ios_build then. Store binaries need the final
-  # Xcode 27.1; MOBILE_IOS_ALLOW_XCODE_RC=true accepts the release candidate.
+  # production job only sets ios_build then. Xcode 27.1 matches the EAS build
+  # image in eas.json.
   # SCIENT-FORK: the GitHub-hosted xcode-27 image by default; the SCIENT_MOBILE_MACOS_RUNNER
   # repository variable names another macOS runner label.
   ios:
@@ -678,10 +691,9 @@ jobs:
       EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
       PROFILE: ${{ needs.production.outputs.ios_profile }}
       BUILD_TAG: mobile-ios-build/${{ needs.production.outputs.ios_profile }}/${{ needs.production.outputs.ios_version }}/${{ needs.production.outputs.ios_fingerprint }}
-      ALLOW_XCODE_RC: ${{ vars.MOBILE_IOS_ALLOW_XCODE_RC == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.production.outputs.ios_sha }}
           fetch-depth: 0
@@ -716,12 +728,9 @@ jobs:
         if: steps.record.outputs.built != 'true'
         run: |
           xcode=/Applications/Xcode_27.1.app
-          if [ ! -d "$xcode" ] && [ "$ALLOW_XCODE_RC" = "true" ]; then
-            xcode=/Applications/Xcode_27.1_Release_Candidate.app
-          fi
           if [ ! -d "$xcode" ]; then
             ls -d /Applications/Xcode*.app
-            echo "::error::Xcode 27.1 (final) is not on this runner. Set the MOBILE_IOS_ALLOW_XCODE_RC repository variable to true to build store binaries with the release candidate."
+            echo "::error::Xcode 27.1 is not on this runner."
             exit 1
           fi
           sudo xcode-select -s "$xcode/Contents/Developer"
@@ -738,7 +747,7 @@ jobs:
 
       - name: Setup Node
         if: steps.record.outputs.built != 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: package.json
 
@@ -757,7 +766,7 @@ jobs:
 
       - name: Setup EAS
         if: steps.record.outputs.built != 'true'
-        uses: expo/expo-github-action@v8
+        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}

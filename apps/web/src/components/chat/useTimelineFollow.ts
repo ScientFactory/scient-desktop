@@ -322,7 +322,10 @@ export function useTimelineFollow(input: TimelineFollowInput) {
         const contentScrollsUp = () => timelineRealContentOverflowsViewportStable();
         // Any outer-list navigation cancels pending placement. Nested scrolls keep their owner.
         const handleWheel = (event: WheelEvent) => {
-          if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY))
+          if (
+            event.ctrlKey ||
+            !isTimelineScrollTarget(event.target, scrollNode, event.deltaY, event)
+          )
             return;
           // Scrolling down, momentum toward the end and pinch never cancel a
           // reveal; scrolling back up through content does.

@@ -73,6 +73,8 @@ export const ServerProviderAuth = Schema.Struct({
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
+  /** Origin of the custom endpoint the instance sends its requests to. */
+  endpoint: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -95,6 +97,9 @@ export const ServerProviderModel = Schema.Struct({
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
   /** Provider-formatted cost labels are opaque; clients render them verbatim without server reinterpretation. */
   providerCostLabel: Schema.optional(TrimmedNonEmptyString),
+  // False when the provider can run this model in sessions but not for
+  // application text generation. Absent means supported.
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -197,6 +202,9 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   // SCIENT-FORK:START — Scient Extensions native inventory.
   plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
   // SCIENT-FORK:END
+  // Absent means the provider's machine `models`, which keeps most snapshots small.
+  models: Schema.optional(Schema.Array(ServerProviderModel)),
+  modelsPending: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -207,6 +215,13 @@ export function isProviderWorkspaceSnapshotCurrent(
   nowMs: number,
 ): boolean {
   return nowMs - Date.parse(snapshot.checkedAt) < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
+}
+
+/** A pending snapshot keeps what it found before and is rescanned before its TTL. */
+export function isProviderWorkspaceSnapshotPending(
+  snapshot: Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "modelsPending">,
+): boolean {
+  return snapshot.slashCommandsPending === true || snapshot.modelsPending === true;
 }
 
 /** Unavailable snapshots must set installed and enabled false. */
@@ -357,8 +372,63 @@ export const ServerProvider = Schema.Struct({
    * connection methods and their current transient operation.
    */
   connection: Schema.optionalKey(ProviderConnectionSummary),
+  /**
+   * Stands for the machine slash commands and skills, which are then left out. Sent to clients
+   * that ask for catalog digests; they load both lists with their next cwd snapshot.
+   */
+  catalogDigest: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Set by the client, never sent: the `catalogDigest` its slash commands and skills belong to. */
+  loadedCatalogDigest: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerProvider = typeof ServerProvider.Type;
+
+/** A provider without the lists that equal the ones its reader already holds. */
+export const ServerProviderDelta = ServerProvider.mapFields((fields) => ({
+  ...fields,
+  models: Schema.optionalKey(fields.models),
+  // Declared again without the decoding default, which would read as a change to an empty list.
+  slashCommands: Schema.optionalKey(Schema.Array(ServerProviderSlashCommand)),
+  skills: Schema.optionalKey(Schema.Array(ServerProviderSkill)),
+}));
+export type ServerProviderDelta = typeof ServerProviderDelta.Type;
+
+const sameJson = (left: unknown, right: unknown) =>
+  left === right || JSON.stringify(left) === JSON.stringify(right);
+
+/** Leaves each provider's models, slash commands, and skills out when `previous` has the same. */
+export function serverProviderDeltas(
+  previous: ReadonlyArray<ServerProvider>,
+  next: ReadonlyArray<ServerProvider>,
+): ServerProviderDelta[] {
+  const held = new Map(previous.map((provider) => [provider.instanceId, provider]));
+  return next.map((provider) => {
+    const base = held.get(provider.instanceId);
+    if (base === undefined) return provider;
+    const { models, slashCommands, skills, ...rest } = provider;
+    return {
+      ...rest,
+      ...(sameJson(base.models, models) ? {} : { models }),
+      ...(sameJson(base.slashCommands, slashCommands) ? {} : { slashCommands }),
+      ...(sameJson(base.skills, skills) ? {} : { skills }),
+    };
+  });
+}
+
+/** Rebuilds the provider list `serverProviderDeltas` was made from. */
+export function applyServerProviderDeltas(
+  previous: ReadonlyArray<ServerProvider>,
+  deltas: ReadonlyArray<ServerProviderDelta>,
+): ServerProvider[] {
+  const held = new Map(previous.map((provider) => [provider.instanceId, provider]));
+  return deltas.flatMap((delta) => {
+    const base = held.get(delta.instanceId);
+    const models = delta.models ?? base?.models;
+    const slashCommands = delta.slashCommands ?? base?.slashCommands;
+    const skills = delta.skills ?? base?.skills;
+    // A list this reader never held cannot be rebuilt; drop the provider like an unreadable one.
+    return models && slashCommands && skills ? [{ ...delta, models, slashCommands, skills }] : [];
+  });
+}
 
 export const ServerProviders = ForwardCompatibleArray(ServerProvider);
 export type ServerProviders = typeof ServerProviders.Type;
@@ -644,6 +714,8 @@ const EnvironmentThemeColors = Schema.Record(
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
+export const THEME_CSS_MAX_LENGTH = 20_000;
+
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
@@ -658,6 +730,8 @@ const environmentThemeFields = {
       dark: Schema.optional(EnvironmentThemeColors),
     }),
   ),
+  /** Custom styles for web and desktop clients. */
+  css: Schema.optional(Schema.String.check(Schema.isMaxLength(THEME_CSS_MAX_LENGTH))),
 };
 
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
@@ -749,6 +823,12 @@ export const ServerConfig = Schema.Struct({
    */
   lastEventLoopStall: Schema.optionalKey(ServerEventLoopStall),
   /**
+   * The host's clock when it built the config, so clients can count live
+   * elapsed times against host timestamps despite clock skew. Only a
+   * subscription's first snapshot is fresh; later snapshots may repeat it.
+   */
+  serverTime: Schema.optionalKey(IsoDateTime),
+  /**
    * Never sent in a config snapshot: the theme stream emits the current set
    * before any change, so a snapshot carrying it too would hand every
    * subscriber the same array twice per connect.
@@ -813,6 +893,13 @@ export const ServerConfigProviderStatusesPayload = Schema.Struct({
 });
 export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderStatusesPayload.Type;
 
+export const ServerConfigProviderStatusDeltasPayload = Schema.Struct({
+  /** Every provider in order, as `serverProviderDeltas` from the list this client last received. */
+  providers: ForwardCompatibleArray(ServerProviderDelta),
+});
+export type ServerConfigProviderStatusDeltasPayload =
+  typeof ServerConfigProviderStatusDeltasPayload.Type;
+
 export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
   settings: ServerSettings,
 });
@@ -840,6 +927,14 @@ export const ServerConfigStreamProviderStatusesEvent = Schema.Struct({
 });
 export type ServerConfigStreamProviderStatusesEvent =
   typeof ServerConfigStreamProviderStatusesEvent.Type;
+
+export const ServerConfigStreamProviderStatusDeltasEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("providerStatusDeltas"),
+  payload: ServerConfigProviderStatusDeltasPayload,
+});
+export type ServerConfigStreamProviderStatusDeltasEvent =
+  typeof ServerConfigStreamProviderStatusDeltasEvent.Type;
 
 export const ServerConfigStreamSettingsUpdatedEvent = Schema.Struct({
   version: Schema.Literal(1),
@@ -881,6 +976,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
   ServerConfigStreamProviderStatusesEvent,
+  ServerConfigStreamProviderStatusDeltasEvent,
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
@@ -1012,6 +1108,7 @@ export const ServerSelfUpdateInput = Schema.Struct({
   channel: Schema.optionalKey(DesktopUpdateChannelSchema),
   /** The target release's highest migration; the host refuses to leave Nightly without it. */
   targetDatabaseMigration: Schema.optionalKey(Schema.Int),
+  stageOnly: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 

@@ -31,9 +31,7 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: true,
         threadContexts: [localThread, remoteThread],
-        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
-        candidateEnvironments: [],
-        // SCIENT-FORK:END
+        candidateEnvironmentIds: [],
       }).title,
     ).toBe("Checking machine resources");
   });
@@ -43,9 +41,7 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: false,
         threadContexts: [localThread, remoteThread],
-        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
-        candidateEnvironments: [{ environmentId: local }, { environmentId: remote }],
-        // SCIENT-FORK:END
+        candidateEnvironmentIds: [local, remote],
       }).description,
     ).toMatch(/No machine can read every attached thread/);
   });
@@ -55,9 +51,7 @@ describe("loadBalancingSendWarning", () => {
       loadBalancingSendWarning({
         pending: false,
         threadContexts: [localThread],
-        // SCIENT-FORK:START — candidates carry their environment (load-balanced send).
-        candidateEnvironments: [{ environmentId: remote }, { environmentId: local }],
-        // SCIENT-FORK:END
+        candidateEnvironmentIds: [remote, local],
       }).description,
     ).toMatch(/No eligible machine has available resources/);
   });

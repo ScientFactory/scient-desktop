@@ -13,6 +13,7 @@ import {
 } from "@scientfactory/compute";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,6 +27,8 @@ import {
   layer,
   type LocalComputeStoreError,
 } from "./LocalComputeStore.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const OBSERVED_AT = "2026-08-20T09:00:00.000Z";
 
@@ -784,6 +787,38 @@ describe("LocalComputeStore images", () => {
       // temp directory is itself a symlink, so the raw paths would not match.
       const canonicalComputeDir = yield* Effect.promise(() => NodeFSP.realpath(computeDir));
       expect(resolved?.path.startsWith(canonicalComputeDir)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("pins the integer stat revision when floating milliseconds round upward", () =>
+    Effect.gen(function* () {
+      const { use } = yield* harness("scient-compute-store-image-stat-precision-");
+      yield* use(
+        Effect.gen(function* () {
+          const store = yield* LocalComputeStore;
+          yield* seed;
+          const { lstat } = yield* Effect.promise(() =>
+            vi.importActual<typeof NodeFSP>("node:fs/promises"),
+          );
+          const nanoseconds = 1794612800123999999n;
+          using _stat = vi.spyOn(NodeFSP, "lstat").mockImplementation(async (file, options) => {
+            const info = await lstat(file, options);
+            return Object.assign(info, {
+              mtimeMs: options?.bigint ? nanoseconds / 1_000_000n : Number(nanoseconds) / 1_000_000,
+            });
+          });
+          const resolved = yield* store.resolveOutputImage({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            executionId: EXECUTION_ID,
+            contentHash: PNG_HASH,
+          });
+          expect(resolved?.revision).toEqual({
+            size: PNG_BYTES.byteLength,
+            mtimeMs: 1794612800123,
+          });
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

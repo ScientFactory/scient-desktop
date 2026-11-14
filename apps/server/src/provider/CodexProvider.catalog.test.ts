@@ -162,8 +162,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
     }).pipe(Effect.scoped),
   );
 
-  // regression: 3b844dab5c fix(codex): display inherited service tiers across models (#15623)
-  it.effect("displays the inherited global Fast tier on every discovered model", () =>
+  // SCIENT-FORK:START — Codex's global speed setting does not carry into Scient's picker.
+  it.effect("keeps the catalog's Standard tier when Codex's own config says Fast", () =>
     Effect.gen(function* () {
       for (const tier of ["fast", "priority"]) {
         const provider = yield* probeCatalog(false, tier);
@@ -176,10 +176,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
           const serviceTier = descriptors.find((descriptor) => descriptor.id === "serviceTier");
           assert.equal(serviceTier?.type, "select");
           if (serviceTier?.type !== "select") return;
-          assert.equal(getProviderOptionCurrentLabel(serviceTier), "Fast");
+          assert.equal(getProviderOptionCurrentLabel(serviceTier), "Standard");
           assert.deepStrictEqual(
             serviceTier.options.filter((option) => option.isDefault).map((option) => option.id),
-            ["priority"],
+            ["default"],
           );
           assert.equal(
             descriptors.find((descriptor) => descriptor.id === "reasoningEffort")?.currentValue,
@@ -190,6 +190,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
       }
     }).pipe(Effect.scoped),
   );
+  // SCIENT-FORK:END
 
   // regression: 3b844dab5c fix(codex): display inherited service tiers across models (#15623)
   it.effect(

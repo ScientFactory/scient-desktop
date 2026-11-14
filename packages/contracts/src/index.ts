@@ -106,6 +106,7 @@ export * from "./scientNotebook.ts";
 export * from "./scientSkills.ts";
 // SCIENT-FORK:START — Scient Extensions contracts (new files, no upstream edits).
 export * from "./scient/secrets.ts";
+export * from "./scient/connectHost.ts";
 export * from "./scient/extensions.ts";
 export * from "./scient/nativeSubagentControl.ts";
 // SCIENT-FORK:END
@@ -123,6 +124,9 @@ export * from "./scientDocumentExport.ts";
 export * from "./scientMarkdown.ts";
 // SCIENT-FORK:START — Scient tool input schema checks (new file, no upstream edits).
 export * from "./scientToolSchemas.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient idle compaction providers (new file, no upstream edits).
+export * from "./scient/idleCompaction.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
@@ -173,6 +177,10 @@ export * from "./scientDocumentHost.ts";
 export * from "./scientPdfEdits.ts";
 // SCIENT-FORK:START — Scient editor flush contracts (new file, no upstream edits).
 export * from "./scient/editorFlush.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Agent voice contracts: live calls and ChatGPT dictation (new files, no upstream edits).
+export * from "./scient/liveVoice.ts";
+export * from "./scient/chatGptDictation.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Files panel entry changes (new file, no upstream edits).
 export * from "./scient/workspaceEntryChanges.ts";

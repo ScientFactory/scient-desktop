@@ -25,6 +25,8 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopHomeOwner from "../backend/DesktopHomeOwner.ts";
+import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
@@ -180,13 +182,12 @@ const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
   },
 );
 
-const bootstrap = Effect.gen(function* () {
+// Spawns the local backend as soon as the protocol, IPC, and legacy storage that every window needs exist.
+const startLocalBackend = Effect.gen(function* () {
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
-  const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
-  const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
   yield* logBootstrapInfo("bootstrap start");
 
   const settings = yield* desktopSettings.get;
@@ -207,38 +208,37 @@ const bootstrap = Effect.gen(function* () {
   yield* installDesktopIpcHandlers();
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
 
-  yield* snapShot.initialize;
-  // Only the user's own login shell PATH shows every t3 a new terminal runs; a fresh install has
-  // no cached one. Without it, the command is left to Settings.
-  const installCli = (yield* DesktopCliCommand.DesktopCliCommand).installOnFirstLaunch;
-  yield* Effect.forkScoped(
-    (yield* DesktopShellEnvironment.DesktopShellEnvironment).awaitUserShellDiscovery.pipe(
-      Effect.flatMap((found) =>
-        found || environment.platform === "win32"
-          ? installCli
-          : logBootstrapInfo("skipped installing the t3 command without the shell PATH"),
-      ),
-    ),
-  );
-
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
-    if (!(yield* Ref.get(state.quitting))) {
-      yield* desktopWindow.createMainIfBackendReady;
-    }
-    return;
+    return false;
   }
 
-  const pool = yield* DesktopBackendPool.DesktopBackendPool;
-  const primaryBackend = yield* pool.primary;
+  const primaryBackend = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-  const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
 
   // SCIENT-FORK:START — only a Vite renderer needs the matching explicit backend port.
   if (Option.isSome(environment.devServerUrl) && Option.isNone(environment.configuredBackendPort)) {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
   // SCIENT-FORK:END
+
+  // A backend started while another server holds this home's lock can only exit with code 78.
+  if (
+    !(settings.wslOnly && settings.wslBackendEnabled) &&
+    !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease())
+  ) {
+    const owner = yield* DesktopHomeOwner.readLiveHomeOwner();
+    yield* logBootstrapWarning("bootstrap found another server owning the Scient home", {
+      owner: Option.getOrNull(owner),
+    });
+    yield* (yield* ElectronDialog.ElectronDialog).showErrorBox(
+      // SCIENT-FORK: Scient branding.
+      DesktopHomeOwner.HOME_OWNED_TITLE,
+      DesktopHomeOwner.homeOwnedMessage(owner),
+    );
+    yield* (yield* ElectronApp.ElectronApp).quit;
+    return false;
+  }
 
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
   const backendPort = backendPortSelection.port;
@@ -275,32 +275,76 @@ const bootstrap = Effect.gen(function* () {
     );
   }
 
-  if (!(yield* Ref.get(state.quitting))) {
-    if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
-      yield* desktopWindow.showConnectingSplash;
-    }
-    yield* primaryBackend.start;
-    yield* logBootstrapInfo("bootstrap backend start requested");
-    // WSL-only fallback can change the primary endpoint before readiness.
-    const config = yield* primaryBackend.currentConfig;
-    if (
-      !environment.isDevelopment &&
-      !settings.wslOnly &&
-      Option.isSome(config) &&
-      Option.isNone(config.value.preflightFailure)
-    ) {
-      yield* desktopWindow.ensureMain;
-    }
-    yield* appActivation.start.pipe(
-      Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
-      Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
-    );
-    // SCIENT-FORK:START — the standing dev app's controller channel (development launches only).
-    yield* DevLaunchControl.start;
-    // SCIENT-FORK:END
-    yield* Effect.forkScoped(wslBackend.reconcile);
+  if (yield* Ref.get(state.quitting)) {
+    return false;
   }
-}).pipe(Effect.withSpan("desktop.bootstrap"));
+  if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
+    yield* desktopWindow.showConnectingSplash;
+  }
+  yield* primaryBackend.start;
+  yield* logBootstrapInfo("bootstrap backend start requested");
+  // The renderer asks for this token first; minting it at readiness saves a round trip.
+  yield* Effect.forkScoped(
+    (yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth).getBearerToken.pipe(
+      Effect.ignore,
+    ),
+  );
+  return true;
+}).pipe(Effect.withSpan("desktop.startLocalBackend"));
+
+const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: boolean) {
+  const state = yield* DesktopState.DesktopState;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
+  const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
+  const settings = yield* desktopSettings.get;
+  if (settings.localEnvironmentEnabled && (!backendStarted || (yield* Ref.get(state.quitting)))) {
+    return;
+  }
+
+  yield* snapShot.initialize;
+  // Only the user's own login shell PATH shows every t3 a new terminal runs; a fresh install has
+  // no cached one. Without it, the command is left to Settings.
+  const installCli = (yield* DesktopCliCommand.DesktopCliCommand).installOnFirstLaunch;
+  yield* Effect.forkScoped(
+    (yield* DesktopShellEnvironment.DesktopShellEnvironment).awaitUserShellDiscovery.pipe(
+      Effect.flatMap((found) =>
+        found || environment.platform === "win32"
+          ? installCli
+          : logBootstrapInfo("skipped installing the t3 command without the shell PATH"),
+      ),
+    ),
+  );
+
+  if (!settings.localEnvironmentEnabled) {
+    if (!(yield* Ref.get(state.quitting))) {
+      yield* desktopWindow.createMainIfBackendReady;
+    }
+    return;
+  }
+
+  const primaryBackend = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
+  // WSL-only fallback can change the primary endpoint before readiness.
+  const config = yield* primaryBackend.currentConfig;
+  if (
+    !environment.isDevelopment &&
+    !settings.wslOnly &&
+    Option.isSome(config) &&
+    Option.isNone(config.value.preflightFailure)
+  ) {
+    yield* desktopWindow.ensureMain;
+  }
+  yield* appActivation.start.pipe(
+    Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
+    Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
+  );
+  // SCIENT-FORK:START — the standing dev app's controller channel (development launches only).
+  yield* DevLaunchControl.start;
+  // SCIENT-FORK:END
+  yield* Effect.forkScoped((yield* DesktopWslBackend.DesktopWslBackend).reconcile);
+});
 
 const startup = Effect.gen(function* () {
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
@@ -375,14 +419,20 @@ const startup = Effect.gen(function* () {
     });
   }
   yield* appIdentity.configure;
-  yield* previewPasskeys.configure;
-  yield* applicationMenu.configure;
+  // Sets canInstallUpdates, which the backend bootstrap payload reads.
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;
   yield* DesktopStartupRecovery.listen;
+  const backendStarted = yield* startLocalBackend.pipe(
+    Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)),
+  );
+  yield* previewPasskeys.configure;
+  yield* applicationMenu.configure;
   // Portal identity is prepared pre-ready; MIME helpers must not gate the backend or window.
   yield* linuxUrlHandler.register.pipe(Effect.forkScoped);
-  yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
+  yield* bootstrap(backendStarted).pipe(
+    Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)),
+  );
 }).pipe(Effect.withSpan("desktop.startup"));
 
 const scopedProgram = Effect.scoped(

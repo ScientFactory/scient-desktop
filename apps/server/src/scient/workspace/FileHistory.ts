@@ -101,6 +101,8 @@ const limitTotal = async (directory: string, limit: number, kept: string) => {
 export async function keepFileVersion(input: {
   readonly directory: string;
   readonly target: string;
+  /** Where the bytes to keep are, when not in `target` itself. */
+  readonly source?: string;
   /** The revision on disk, about to be replaced. */
   readonly revision: string;
   /** Whether Scient wrote that revision itself. */
@@ -116,10 +118,11 @@ export async function keepFileVersion(input: {
   if (newest?.revision === input.revision) return true;
   if (input.ownSave && newest && input.now - newest.at < KEEP_OWN_SAVES_EVERY_MS) return false;
   // A file that could never fit must not cost every other file its history.
-  if ((await NodeFSP.stat(input.target)).size > limit) return false;
+  const source = input.source ?? input.target;
+  if ((await NodeFSP.stat(source)).size > limit) return false;
   const partial = NodePath.join(folder, `.${input.now}.${NodeCrypto.randomUUID()}.partial`);
   try {
-    await NodeFSP.copyFile(input.target, partial);
+    await NodeFSP.copyFile(source, partial);
     // The caller replaces the original next, so the copy must survive a power loss first. The
     // copy is Scient's own, so a read-only original can't keep it from being opened to flush.
     await NodeFSP.chmod(partial, 0o600);

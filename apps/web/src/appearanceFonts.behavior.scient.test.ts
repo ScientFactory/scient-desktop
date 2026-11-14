@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { applyAppearanceFontVariables } from "./appearanceFonts";
+
+// The list-marker probe measures with a canvas; these unit tests run without a DOM, so the
+// canvas has no 2D context, as when a browser cannot provide one.
+beforeEach(() => {
+  vi.stubGlobal("document", { createElement: () => ({ getContext: () => null }) });
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function applySizes(sizeInterface: number, sizePrompt: number, sizeCode: number) {
   const properties = new Map<string, string>();

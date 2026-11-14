@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadProjection: (() => state.projection) as never,
+  // The queue control reads the quiet structure, which never changes while text streams.
+  useQuietThreadProjection: (() => state.projection) as never,
   useThreadShell: (() => state.shell) as never,
 }));
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
@@ -57,6 +59,7 @@ const props = {
   onCancelEdit: () => undefined,
   timestampFormat: "locale",
   onOpenThread: () => undefined,
+  onImageExpand: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
 
 function queuedRun(ordinal: number, held: boolean): OrchestrationV2Run {

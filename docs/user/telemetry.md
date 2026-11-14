@@ -22,10 +22,20 @@ it.
   as all-caps sentences, swearing or "no, that's not what I asked". Only the
   counts are sent, never the message.
 - Whether a turn was started by you, an agent or a schedule.
+- When Scient installs or updates an agent: whether you or Scient started it,
+  which try it was, whether the download continued an earlier one (in size
+  ranges) and which of the two download sources served it. When you first pick
+  Scient Agent: whether it was ready, still downloading (in quarters), failed or
+  not started.
 - Which agent tools run, how long they take and whether they succeed.
 - When something fails, whether the cause was Scient, the code or document being
   run, a missing package or program, or a network service. Never the error
-  message or the error's name.
+  message.
+- When an agent's turn or a delegated task fails, the kind of failure from a
+  fixed list (for example an expired sign-in, a usage limit, a conversation too
+  long for the model, or a provider that was briefly unavailable), the
+  provider's HTTP status code, and how many times the provider retried. Never
+  the provider's error text.
 - Which kinds of programs agents run in their own terminal, such as Python, R,
   LaTeX or Stata, and how many fail. Only the kind, never the command.
 - For your own skills: where each one came from (a file, folder, zip, pasted

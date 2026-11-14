@@ -579,6 +579,32 @@ export async function replaceByRename(from: string, to: string, rename = NodeFSP
     }
   }
 }
+/** A save's temporary file beside its target: `.<name>.<uuid>.scient-tmp`, as every release names it. */
+const PLAIN_TEMPORARY =
+  /^\.(.+)\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.scient-tmp$/u;
+/** A name holds 255 UTF-8 bytes on Linux, 255 characters on APFS, 255 UTF-16 units on Windows and HFS+ (NFD). */
+const PLAIN_TEMPORARY_PREFIX_LIMIT = 255 - ".".length - ".".length - 36 - ".scient-tmp".length;
+const fitsPrefix = (prefix: string, limit: number) =>
+  Buffer.byteLength(prefix) <= limit && prefix.normalize("NFD").length <= limit;
+/** The whole name when it fits, else its start and a digest of all of it, so no two names share one. */
+const plainTemporaryPrefix = (basename: string) => {
+  if (fitsPrefix(basename, PLAIN_TEMPORARY_PREFIX_LIMIT)) return basename;
+  const digest = `~${NodeCrypto.createHash("sha256").update(basename).digest("hex").slice(0, 16)}`;
+  let prefix = "";
+  for (const char of basename) {
+    if (!fitsPrefix(prefix + char, PLAIN_TEMPORARY_PREFIX_LIMIT - digest.length)) break;
+    prefix += char;
+  }
+  return prefix + digest;
+};
+export const plainTemporaryName = (basename: string) =>
+  `.${plainTemporaryPrefix(basename)}.${NodeCrypto.randomUUID()}.scient-tmp`;
+export const isPlainTemporaryName = (name: string) => PLAIN_TEMPORARY.test(name);
+/** Whether `name` is a temporary file of a save of `basename`, by this release or an earlier one. */
+export const isPlainTemporaryOf = (name: string, basename: string) => {
+  const prefix = PLAIN_TEMPORARY.exec(name)?.[1];
+  return prefix === basename || prefix === plainTemporaryPrefix(basename);
+};
 export async function durableJson(file: string, value: unknown) {
   const temporary = `${file}.tmp`;
   const handle = await NodeFSP.open(

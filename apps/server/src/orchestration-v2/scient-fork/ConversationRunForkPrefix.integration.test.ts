@@ -192,7 +192,7 @@ it.live.each(
             type: "expect_outbound",
             label: "thread/unsubscribe/source",
             frame: {
-              id: 4,
+              id: 5,
               method: "thread/unsubscribe",
               params: { threadId: "native-source-thread" },
             },
@@ -200,7 +200,7 @@ it.live.each(
           {
             type: "emit_inbound",
             label: "thread/unsubscribe/source",
-            frame: { id: 4, result: { status: "unsubscribed" } },
+            frame: { id: 5, result: { status: "unsubscribed" } },
           },
           {
             type: "emit_inbound",
@@ -411,33 +411,38 @@ it.live.each(
           assert.ok(sourceStart?.type === "emit_inbound");
           const freshResult: unknown = decodeFrame(
             encodeFrame(sourceStart.frame)
-              .replace('"id":2', '"id":7')
+              .replace('"id":2', '"id":9')
               .replaceAll("native-source-thread", "native-grandchild-thread"),
           );
           const targetStart = full.entries.findIndex(
             (entry) => entry.type === "expect_outbound" && entry.label === "turn/start/fork",
           );
+          // The target turn's config/read precedes its turn/start.
           const suffix = full.entries
-            .slice(targetStart)
+            .slice(targetStart - 2)
             .filter((entry) => entry.type !== "runtime_exit")
             .map((entry) => {
               if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
               const frame: unknown = decodeFrame(
                 encodeFrame(entry.frame)
-                  .replace('"id":5', '"id":9')
                   .replaceAll("native-fork-thread", "native-grandchild-thread")
                   .replaceAll("native-fork-turn", "native-grandchild-turn")
                   .replaceAll("native-fork-user-item", "native-grandchild-user-item")
                   .replaceAll("native-fork-agent-item", "native-grandchild-agent-item"),
               );
-              return { ...entry, frame };
+              return typeof frame === "object" &&
+                frame !== null &&
+                "id" in frame &&
+                typeof frame.id === "number"
+                ? { ...entry, frame: { ...frame, id: frame.id + 5 } }
+                : { ...entry, frame };
             });
           entries.push(
             {
               type: "expect_outbound",
               label: "thread/unsubscribe/parent",
               frame: {
-                id: 6,
+                id: 8,
                 method: "thread/unsubscribe",
                 params: { threadId: "native-fork-thread" },
               },
@@ -445,7 +450,7 @@ it.live.each(
             {
               type: "emit_inbound",
               label: "thread/unsubscribe/parent",
-              frame: { id: 6, result: { status: "unsubscribed" } },
+              frame: { id: 8, result: { status: "unsubscribed" } },
             },
             {
               type: "emit_inbound",
@@ -455,7 +460,7 @@ it.live.each(
               type: "expect_outbound",
               label: "thread/start/grandchild",
               frame: {
-                id: 7,
+                id: 9,
                 method: "thread/start",
                 params: { config: CODEX_THREAD_CONFIG },
               },
@@ -465,7 +470,7 @@ it.live.each(
               type: "expect_outbound",
               label: "thread/inject_items/grandchild",
               frame: {
-                id: 8,
+                id: 10,
                 method: "thread/inject_items",
                 params: {
                   threadId: "native-grandchild-thread",
@@ -476,7 +481,7 @@ it.live.each(
             {
               type: "emit_inbound",
               label: "thread/inject_items/grandchild",
-              frame: { id: 8, result: {} },
+              frame: { id: 10, result: {} },
             },
             ...suffix,
           );

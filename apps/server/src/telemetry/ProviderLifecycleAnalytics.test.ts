@@ -125,6 +125,7 @@ describe("Provider lifecycle analytics", () => {
           stage: "downloading",
           durationMs: 12_000,
           failureClass: "unknown",
+          trigger: "user",
         },
       },
     ]);
@@ -142,6 +143,36 @@ describe("Provider lifecycle analytics", () => {
       {
         name: "provider.lifecycle.failed",
         properties: { stage: "downloading", failureClass: "http_5xx" },
+      },
+    ]);
+  });
+
+  it("says a background change started on its own and how its download went", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    const background = { ...operation("downloading"), background: true, attempt: 2 };
+    expect(mapper.observe([provider(background)])).toMatchObject([
+      { name: "provider.lifecycle.started", properties: { trigger: "background", attempt: 2 } },
+    ]);
+    expect(
+      mapper.observe([
+        provider({
+          ...background,
+          status: "failed",
+          finishedAt: "2026-08-31T00:00:12.000Z",
+          download: { resumedBytes: 41_000_000, source: "fallback", compressed: true },
+        }),
+      ]),
+    ).toMatchObject([
+      {
+        name: "provider.lifecycle.failed",
+        properties: {
+          trigger: "background",
+          attempt: 2,
+          resumedBytes: 41_000_000,
+          downloadSource: "fallback",
+          compressed: true,
+        },
       },
     ]);
   });
@@ -223,6 +254,31 @@ describe("Provider lifecycle analytics", () => {
       {
         name: "provider.runtime.source.changed",
         properties: { provider: "droid", from: "scient_managed", to: "missing" },
+      },
+    ]);
+  });
+
+  it("says which step of a failed status check took the provider to error", () => {
+    const mapper = createProviderLifecycleAnalyticsMapper();
+    mapper.observe([provider()]);
+    const failed = provider();
+    expect(
+      mapper.observe([
+        {
+          ...failed,
+          status: "error",
+          connection: { ...failed.connection!, checkFailure: "version_timeout" },
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "provider.readiness.changed",
+        properties: {
+          provider: "droid",
+          from: "ready",
+          to: "error",
+          checkFailure: "version_timeout",
+        },
       },
     ]);
   });

@@ -5,6 +5,8 @@ import type {
   ProviderStoreEntry,
   ServerProvider,
 } from "@t3tools/contracts";
+import { AccountServiceItem, accountServicesFor } from "./AccountServicePages";
+import { isAccountServiceStoreEntry } from "./accountServices";
 import { Link, Navigate } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
 import { useContext, useState } from "react";
@@ -248,6 +250,9 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
                 }
               >
                 <ExtensionGrid label={section.title}>
+                  {accountServicesFor(section.category).map((service) => (
+                    <AccountServiceItem key={`account:${service.id}`} service={service} />
+                  ))}
                   {section.entries.map((entry) => (
                     <EntryItem key={entry.name} entry={entry} />
                   ))}
@@ -333,6 +338,9 @@ function DiscoverSearchResults({
   const curatedNames = new Set(curated.data?.entries.map((entry) => entry.name));
   return (
     <ExtensionGrid label="Search results">
+      {(showsKind(kind, "plugins") ? accountServicesFor(undefined, query) : []).map((service) => (
+        <AccountServiceItem key={`account:${service.id}`} service={service} />
+      ))}
       {connectors.map((connector) => (
         <ConnectorItem
           key={connector.connectorId}
@@ -517,6 +525,9 @@ function CategoryContents({
           <MutedLine>Loading picks…</MutedLine>
         ) : null}
         <ExtensionGrid label="Scient’s picks">
+          {accountServicesFor(category, query).map((service) => (
+            <AccountServiceItem key={`account:${service.id}`} service={service} />
+          ))}
           {visiblePicks.map((entry) => {
             const equivalents = stores.filter((store) => storeMatches(store.entry, entry));
             return equivalents.length ? (
@@ -554,6 +565,7 @@ function CategoryContents({
                     .filter(
                       ({ entry }) =>
                         !curated.some((pick) => storeMatches(entry, pick)) &&
+                        !isAccountServiceStoreEntry(entry) &&
                         matchesQuery(query, [entry.name, entry.displayName, entry.description]),
                     )
                     .map(({ provider, entry, refresh }) => (

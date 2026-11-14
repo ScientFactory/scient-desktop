@@ -34,6 +34,9 @@ interface LazyWorkspaceTreeControllerOptions {
 
 const EMPTY_CHILDREN: ReadonlySet<string> = new Set();
 const MAX_CONCURRENT_DIRECTORY_LOADS = 4;
+// A batched add or remove reworks its folder's siblings, a rebuild every path once. T3 measured
+// the break-even between 200 and 500 operations on flat folders of 50,000 and 332,000 entries.
+const REBUILD_COST_IN_FOLDER_OPERATIONS = 300;
 
 function treePath(entry: ProjectDirectoryEntry): string {
   return entry.kind === "directory" ? `${entry.relativePath}/` : entry.relativePath;
@@ -61,6 +64,7 @@ export class LazyWorkspaceTreeController {
   readonly #requestVersions = new Map<string, number>();
   readonly #inFlight = new Map<string, Promise<boolean>>();
   readonly #unloadedDirectories = new Set<string>();
+  readonly #provisionalTreePaths = new Set<string>();
   readonly #directoryLoadWaiters: Array<() => void> = [];
 
   #view: ProjectDirectoryView;
@@ -187,10 +191,16 @@ export class LazyWorkspaceTreeController {
       });
     } else if (moved) {
       // Into a folder not listed yet: its listing brings the item.
-      this.#forgetSubtree(to);
+      this.#forgetSubtrees(new Set([to]));
       this.#model.remove(treePath({ ...moved, relativePath: to }), { recursive: true });
     }
     this.#emit();
+  }
+
+  /** Shows a row before the disk has it, such as a new entry while it is named. */
+  addProvisional(treePath: string): void {
+    this.#provisionalTreePaths.add(treePath);
+    this.#model.add(treePath);
   }
 
   /**
@@ -198,6 +208,8 @@ export class LazyWorkspaceTreeController {
    * file or folder named in place), so the next listing finds it known.
    */
   noteAdded(relativePath: string, kind: ProjectDirectoryEntry["kind"]): void {
+    this.#provisionalTreePaths.delete(relativePath);
+    this.#provisionalTreePaths.delete(`${relativePath}/`);
     if (this.#destroyed || this.#entries.has(relativePath)) return;
     // Any folder the tree knows, loading included: a listing still on its way then
     // reconciles against what the tree shows instead of adding the row twice.
@@ -385,15 +397,18 @@ export class LazyWorkspaceTreeController {
     }
 
     const previousChildren = this.#branches.get(relativeDirectory)?.children ?? EMPTY_CHILDREN;
+    const previousPathCount = this.#entries.size;
     const operations: FileTreeBatchOperation[] = [];
+    const removedChildren = new Set<string>();
     for (const previousPath of previousChildren) {
       const previousEntry = this.#entries.get(previousPath);
       const nextEntry = byPath.get(previousPath);
       if (previousEntry && (!nextEntry || previousEntry.kind !== nextEntry.kind)) {
         operations.push({ type: "remove", path: treePath(previousEntry), recursive: true });
-        this.#forgetSubtree(previousPath);
+        removedChildren.add(previousPath);
       }
     }
+    this.#forgetSubtrees(removedChildren);
     for (const entry of byPath.values()) {
       const previousEntry = this.#entries.get(entry.relativePath);
       if (!previousEntry || previousEntry.kind !== entry.kind) {
@@ -413,19 +428,92 @@ export class LazyWorkspaceTreeController {
       hasLoadedOnce: true,
     });
     this.#emit();
-    if (operations.length > 0) this.#model.batch(operations);
+    if (operations.length > 0) {
+      // Every operation here lands among this folder's children.
+      const batchWork = operations.length * Math.max(previousChildren.size, byPath.size);
+      const rebuildWork = Math.max(previousPathCount, this.#entries.size);
+      if (batchWork > REBUILD_COST_IN_FOLDER_OPERATIONS * rebuildWork) this.#rebuild(operations);
+      else this.#model.batch(operations);
+    }
     this.#loadExpandedBranches();
   }
 
-  #forgetSubtree(relativePath: string): void {
-    const prefix = `${relativePath}/`;
+  /**
+   * Rebuilds the tree from the known entries, then applies part of the change as an ordinary
+   * batch: Pierre clears a drag, remaps rename, focus and selection and refreshes an open search
+   * only on a real change, which a rebuild is not.
+   */
+  #rebuild(operations: readonly FileTreeBatchOperation[]): void {
+    const model = this.#model;
+    const removed = new Set<string>();
+    const added = new Set<string>();
+    for (const op of operations) {
+      if (op.type === "remove") removed.add(op.path);
+      else if (op.type === "add") added.add(op.path);
+    }
+    const isRemoved = (path: string) => {
+      for (let end = path.indexOf("/"); end !== -1; end = path.indexOf("/", end + 1)) {
+        if (end < path.length - 1 && removed.has(path.slice(0, end + 1))) return true;
+      }
+      return removed.has(path);
+    };
+    const otherKind = (path: string) => (path.endsWith("/") ? path.slice(0, -1) : `${path}/`);
+    const kindChanges = operations.flatMap((op) =>
+      op.type === "remove" && added.has(otherKind(op.path)) ? [op.path] : [],
+    );
+    const carried = operations.find((op) => op.type === "add") ?? operations[0]!;
+
+    const paths = new Set<string>();
+    const expandedPaths: string[] = [];
+    for (const entry of this.#entries.values()) {
+      const path = treePath(entry);
+      paths.add(path);
+      if (entry.kind !== "directory") continue;
+      const item = model.getItem(path);
+      if (item && "isExpanded" in item && item.isExpanded()) expandedPaths.push(path);
+    }
+    for (const path of this.#provisionalTreePaths) {
+      if (model.getItem(path) === null || isRemoved(path)) this.#provisionalTreePaths.delete(path);
+      else paths.add(path);
+    }
+    // A row the tree moved before telling the controller is still a visible one.
+    for (const row of model.getVisibleRows(0, model.getVisibleCount() - 1)) {
+      if (!isRemoved(row.path)) paths.add(row.path);
+    }
+    const focusedPath = model.getFocusedPath();
+    if (kindChanges.length > 0) {
+      // A rebuild would move a rename or selection to the entry of the other kind, so a first
+      // one without either form ends them.
+      const withoutReplaced = new Set(paths);
+      for (const path of kindChanges) withoutReplaced.delete(otherKind(path));
+      model.resetPaths([...withoutReplaced], { initialExpandedPaths: expandedPaths });
+    }
+    if (carried.type === "add") paths.delete(carried.path);
+    else if (carried.type === "remove") paths.add(carried.path);
+    model.resetPaths([...paths], { initialExpandedPaths: expandedPaths });
+    model.batch([carried]);
+    // As in a batch, focus stays on an entry that changed kind.
+    if (focusedPath !== null && kindChanges.includes(focusedPath)) {
+      model.focusPath(otherKind(focusedPath));
+    }
+  }
+
+  /** Forgets these entries and everything under them, in one pass however many there are. */
+  #forgetSubtrees(relativePaths: ReadonlySet<string>): void {
+    if (relativePaths.size === 0) return;
+    const isForgotten = (path: string) => {
+      for (let current = path; current.length > 0; current = parentDirectory(current)) {
+        if (relativePaths.has(current)) return true;
+      }
+      return false;
+    };
     for (const path of this.#entries.keys()) {
-      if (path !== relativePath && !path.startsWith(prefix)) continue;
+      if (!isForgotten(path)) continue;
       this.#entries.delete(path);
       this.#unloadedDirectories.delete(path);
     }
     for (const path of this.#branches.keys()) {
-      if (path !== relativePath && !path.startsWith(prefix)) continue;
+      if (!isForgotten(path)) continue;
       this.#branches.delete(path);
       this.#requestVersions.set(path, (this.#requestVersions.get(path) ?? 0) + 1);
       this.#inFlight.delete(path);

@@ -9,6 +9,7 @@ import {
   VcsProcessSpawnError,
   VcsExecutableUnavailableError,
   GitManagerError,
+  VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -328,6 +329,44 @@ it.effect("refuses name-only creation at the service boundary before filesystem 
         assert.isFalse(yield* fs.exists(path.join(baseDir, "projects")));
       }),
     { namedProjectsEnabled: false },
+  ),
+);
+
+it.effect("offers the Scratch folder once a Git check that timed out is asked again", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+        assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+        assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
+      }),
+    {
+      vcsProcess: Layer.effect(
+        VcsProcess.VcsProcess,
+        Effect.map(VcsProcess.make, (real) => {
+          let timedOut = false;
+          return VcsProcess.VcsProcess.of({
+            run: (input) =>
+              Effect.suspend(() => {
+                if (timedOut) return real.run(input);
+                timedOut = true;
+                return Effect.fail(
+                  new VcsProcessTimeoutError({
+                    operation: input.operation,
+                    command: input.command,
+                    cwd: input.cwd,
+                    timeoutMs: 5_000,
+                  }),
+                );
+              }),
+          });
+        }),
+      ).pipe(
+        Layer.provide(ProcessRunner.layer),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    },
   ),
 );
 

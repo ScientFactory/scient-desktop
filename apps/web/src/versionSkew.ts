@@ -104,9 +104,15 @@ export function supportsDesktopAppUpdate(
 
 export function manualServerUpdateCommand(
   targetVersion: string,
-  _installation?: ServerInstallation,
+  installation?: ServerInstallation,
 ): string {
-  return scientServerNpxCommand(targetVersion);
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  // SCIENT-FORK:START — npm and runner installs recover from the immutable Scient release; Scient
+  // publishes no `t3` npm package. A launcher's own update installs Scient's release.
+  if (installation?.kind !== "t3-launcher") return scientServerNpxCommand(targetVersion);
+  // SCIENT-FORK:END
+  // An inherited T3CODE_HOME would otherwise send the update to a home the launcher is not in.
+  return `${quote(installation.launcher)} update --base-dir ${quote(installation.baseDir)} ${targetVersion}`;
 }
 
 export function buildVersionMismatchDismissalKey(

@@ -87,6 +87,7 @@ import { providerThreadRosterEvents } from "./ClaudeAdapterV2.wake.testkit.ts";
 import type { McpServerStatus } from "@anthropic-ai/claude-agent-sdk";
 import * as Clock from "effect/Clock";
 import type { ProviderNativeInventory } from "../../provider/ScientProviderInstanceSeams.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 
 describe("ClaudeAdapterV2 background wake turns (Admission)", () => {
   it.effect(
@@ -319,6 +320,7 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
               Effect.sync(() => {
                 openedOptions = input.options;
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -337,6 +339,7 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -481,6 +484,7 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
             allocateSessionId: Effect.succeed("native-thread-claude-attachments"),
             open: () =>
               Effect.succeed({
+                renameSession: () => Effect.void,
                 stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
@@ -501,6 +505,7 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1054,6 +1059,7 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
                 const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                 processQueues.push(sdkMessages);
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -1072,6 +1078,7 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1240,6 +1247,7 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
               Effect.sync(() => {
                 executablePaths.push(input.options.pathToClaudeCodeExecutable);
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -1258,6 +1266,7 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           }),
         );
@@ -1293,6 +1302,7 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
           NodeServices.layer,
           NodeCrypto.layer,
           McpProviderSessions.layer,
+          ProviderInstallationGate.layer,
         ),
       ),
     ),
@@ -1327,6 +1337,7 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                 Effect.sync(() => {
                   openedOptions = input.options;
                   return {
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
@@ -1345,6 +1356,7 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                 }),
               forkSession: () => Effect.die("unused"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              subagentModel: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -2708,6 +2720,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               Effect.sync(() => {
                 openedQueries.push(input);
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -2726,6 +2739,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -2852,6 +2866,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
@@ -2870,6 +2885,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                 }),
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              subagentModel: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -4373,6 +4389,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               Effect.sync(() => {
                 openCount += 1;
                 return {
+                  renameSession: () => Effect.void,
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
                   mcpServerStatus: Effect.succeed([]),
@@ -4391,6 +4408,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -4989,6 +5007,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
+                    renameSession: () => Effect.void,
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
                     mcpServerStatus: Effect.succeed([]),
@@ -5008,6 +5027,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               },
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              subagentModel: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -5194,6 +5214,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               ),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });

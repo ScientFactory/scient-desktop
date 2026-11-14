@@ -84,14 +84,7 @@ export async function copyFilePathToClipboard(input: {
 }): Promise<boolean> {
   const title = filePathCopyTitle(input.format);
   try {
-    const copied = await writeTextToClipboard(input.value, title.toLowerCase());
-    if (!copied) return false;
-    toastManager.add({
-      type: "success",
-      title: `${title} copied`,
-      description: input.value,
-    });
-    return true;
+    return await writeTextToClipboard(input.value, title.toLowerCase());
   } catch (error) {
     input.onError?.(error);
     toastManager.add(
