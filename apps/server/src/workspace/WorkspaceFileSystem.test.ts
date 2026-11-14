@@ -621,7 +621,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           mutationId: NodeCrypto.randomUUID(),
         };
         const saved = yield* service.writeFile(input);
+        // Another program drops the BOM before the retry arrives; the retry still replays.
+        const written = yield* fs.readFile(path.join(cwd, "bom.ts"));
+        yield* fs.writeFile(path.join(cwd, "bom.ts"), written.subarray(3));
         const replay = yield* service.writeFile(input);
+        yield* fs.writeFile(path.join(cwd, "bom.ts"), written);
         const bytes = yield* fs.readFile(path.join(cwd, "bom.ts"));
         expect([...bytes]).toEqual([
           ...new TextEncoder().encode("\uFEFFexport const answer = 43;\n"),

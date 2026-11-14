@@ -969,19 +969,28 @@ export const make = Effect.gen(function* () {
     yield* resolveWriteTarget(normalized);
     return normalized;
   });
+  // A retried save keeps its first BOM decision, so it replays the same bytes even after
+  // another program changed the file; mutation receipts are matched by those bytes.
+  const bomDecisions = new Map<string, boolean>();
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
     "WorkspaceFileSystem.writeFile",
   )(function* (input) {
     const target = yield* assertWritableTarget(input);
     const { realTargetPath } = yield* resolveWriteTarget(target);
-    const replacesFile = yield* fileSystem
-      .exists(realTargetPath)
-      .pipe(Effect.orElseSucceed(() => false));
+    const decided = input.mutationId === undefined ? undefined : bomDecisions.get(input.mutationId);
+    const replacesFile =
+      decided === undefined &&
+      (yield* fileSystem.exists(realTargetPath).pipe(Effect.orElseSucceed(() => false)));
     // readFile decodes the BOM away, so an editor save would otherwise drop it from the file.
     const keepsBom =
-      replacesFile &&
-      !input.contents.startsWith(UTF8_BOM) &&
-      (yield* Effect.promise(() => startsWithUtf8Bom(realTargetPath)));
+      decided ??
+      (replacesFile &&
+        !input.contents.startsWith(UTF8_BOM) &&
+        (yield* Effect.promise(() => startsWithUtf8Bom(realTargetPath))));
+    if (input.mutationId !== undefined && decided === undefined) {
+      bomDecisions.set(input.mutationId, keepsBom);
+      if (bomDecisions.size > 512) bomDecisions.delete(bomDecisions.keys().next().value!);
+    }
     const contents = keepsBom ? UTF8_BOM + input.contents : input.contents;
     return yield* mutations.writeFile({ ...input, ...target, contents });
   });
