@@ -8,6 +8,7 @@ import type {
   ScientSourceType,
 } from "../model.ts";
 import { normalizePersistentIdentifier } from "../normalize.ts";
+import { normalizeScientSourceMore, type ScientSourceMoreName } from "../sourceMore.ts";
 import { collapseWhitespace } from "./latex.ts";
 
 export const BIBLIOGRAPHY_FORMATS = ["bibtex", "ris", "csl-json", "endnote-xml"] as const;
@@ -47,6 +48,8 @@ export interface BibliographyEntry {
   readonly language: string | null;
   readonly url: string | null;
   readonly tags: ReadonlyArray<string>;
+  /** Edition, place of publication and the like, by CSL variable (`sourceMore.ts`). */
+  readonly more: Readonly<Record<string, string>>;
   readonly note: string | null;
   /** Scient field → the file's field name it came from. */
   readonly sourceFields: Readonly<Record<string, string>>;
@@ -126,6 +129,7 @@ export class BibliographyEntryBuilder {
   private readonly identifierList: ScientSourceIdentifier[] = [];
   private readonly identifierKeys = new Set<string>();
   private readonly tagList: string[] = [];
+  private readonly moreMap: Record<string, string> = {};
   private readonly notes: string[] = [];
   private readonly origins: Record<string, string> = {};
   private readonly dropped = new Set<string>();
@@ -187,6 +191,28 @@ export class BibliographyEntryBuilder {
     this.identifierList.push({ scheme, value: normalizedValue });
   }
 
+  /**
+   * One of the further details. The first value for a name wins; a second one, or text too
+   * long to keep, is reported as not kept, never cut.
+   */
+  setMore(name: ScientSourceMoreName, value: string | null | undefined, sourceField: string): void {
+    const clean = collapseWhitespace(value ?? "");
+    if (!clean) return;
+    if (
+      this.moreMap[name] !== undefined ||
+      normalizeScientSourceMore({ [name]: clean }).left.length > 0
+    ) {
+      if (this.moreMap[name] !== clean) this.notKeep(sourceField);
+      return;
+    }
+    this.moreMap[name] = clean;
+    this.origins[`more.${name}`] = sourceField;
+  }
+
+  hasMore(name: ScientSourceMoreName): boolean {
+    return this.moreMap[name] !== undefined;
+  }
+
   addTags(tags: ReadonlyArray<string>, sourceField: string): void {
     const clean = tags.map((tag) => collapseWhitespace(tag)).filter((tag) => tag.length > 0);
     if (clean.length === 0) return;
@@ -236,6 +262,7 @@ export class BibliographyEntryBuilder {
       language: this.get("language"),
       url: this.get("url"),
       tags: [...new Set(this.tagList)],
+      more: this.moreMap,
       note: this.notes.length > 0 ? this.notes.join("\n\n") : null,
       sourceFields: this.origins,
       notKept: [...this.dropped],
@@ -276,6 +303,7 @@ export function bibliographyEntryCandidate(input: {
     language: entry.language,
     url: entry.url,
     tags: entry.tags,
+    more: entry.more,
   });
   const fieldProvenance: ScientSourceFieldProvenance[] = Object.entries(entry.sourceFields).map(
     ([field, sourceField]) => ({ field, origin: "file", sourceField: `${format}:${sourceField}` }),

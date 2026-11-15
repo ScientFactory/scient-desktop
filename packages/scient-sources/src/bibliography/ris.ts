@@ -1,4 +1,5 @@
 import type { ScientSourceType } from "../model.ts";
+import type { ScientSourceMoreName } from "../sourceMore.ts";
 import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import {
   BibliographyEntryBuilder,
@@ -61,6 +62,9 @@ function readRis(text: string): {
 }
 
 const TYPE_BY_RIS_TYPE: Readonly<Record<string, ScientSourceType>> = {
+  COMP: "software",
+  SLIDE: "presentation",
+  MANSCPT: "manuscript",
   JOUR: "article",
   JFULL: "article",
   MGZN: "article",
@@ -122,6 +126,21 @@ const CUSTOM_TYPE_LABELS: Readonly<Record<string, string>> = {
 
 /** Database bookkeeping tags; they describe where a record came from, not the work. */
 const IGNORED_TAGS = new Set(["DB", "DP", "Y2", "ST", "J2", "JA", "J1", "M3", "AN"]);
+
+/** RIS tags that are one of a source's further details. */
+const RIS_MORE: ReadonlyArray<readonly [string, ScientSourceMoreName]> = [
+  ["ET", "edition"],
+  ["CY", "publisher-place"],
+  ["PP", "publisher-place"],
+  ["T3", "collection-title"],
+  ["NV", "number-of-volumes"],
+  ["ST", "title-short"],
+  ["M1", "number"],
+  ["M3", "genre"],
+  ["SE", "section"],
+  ["CN", "call-number"],
+  ["Y2", "accessed"],
+];
 
 /** RIS dates are "YYYY/MM/DD/other"; Mendeley and Zotero also write ISO dates. */
 function risDate(value: string): string {
@@ -190,6 +209,14 @@ function entryFromRaw(raw: RawRisRecord, index: number): BibliographyEntry {
   }
   builder.set("publisher", first("PB"), "PB");
   builder.set("language", first("LA"), "LA");
+  for (const [tag, variable] of RIS_MORE) {
+    const value = first(tag);
+    if (!value) continue;
+    use(tag);
+    // "Preprint" as a type of work is the source's type, read below.
+    if (tag === "M3" && /^preprint$/iu.test(value.trim())) continue;
+    builder.setMore(variable, tag === "Y2" ? risDate(value) : value, tag);
+  }
   builder.set("abstract", first("AB") ?? first("N2"), first("AB") ? "AB" : "N2");
   for (const note of values("N1")) builder.addNote(note.replace(/<[^>]+>/gu, " "));
   builder.addTags(
@@ -342,8 +369,20 @@ export function formatRis(
       if (options.includeAbstracts !== false) add("AB", record.abstract);
       for (const tag of record.tags) add("KW", tag);
       if (options.includeNotes) add("N1", record.note ?? null, true);
+      const more = record.more ?? {};
+      const written = new Set<string>();
+      for (const [tag, variable] of RIS_MORE) {
+        if (written.has(variable) || !more[variable] || tag === "M3") continue;
+        written.add(variable);
+        const date = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?/u.exec(more[variable]);
+        add(
+          tag,
+          tag === "Y2" && date ? `${date[1]}/${date[2] ?? ""}/${date[3] ?? ""}` : more[variable],
+        );
+      }
       if (record.type === "preprint") add("M3", "Preprint");
       else if (record.type === "other" && record.customType) add("M3", record.customType);
+      else add("M3", more.genre);
       lines.push("ER  - ");
       return lines.join("\r\n");
     })

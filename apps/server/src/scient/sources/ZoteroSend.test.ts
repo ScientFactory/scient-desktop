@@ -329,6 +329,39 @@ describe("Send to Zotero", () => {
     expect(before?.more).toMatchObject({ edition: "4", "original-date": "1971" });
   });
 
+  it("sends a further detail again only when it changed", async () => {
+    const { root, sourceId } = await sourceInScient({
+      type: "book",
+      containerTitle: null,
+      volume: null,
+      pages: null,
+      publisher: "A Press",
+      more: { edition: "2", "publisher-place": "Leiden" },
+    });
+    const org = zoteroOrg();
+    const send = () =>
+      sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
+    await send();
+    const writes = org.writes.length;
+    // Nothing changed here: nothing is sent, although Scient's reading of the item has no
+    // "edition" of its own to compare with.
+    expect((await send()).items[0]).toMatchObject({ outcome: "unchanged" });
+    expect(org.writes).toHaveLength(writes);
+
+    const record = (await readScientSourceRecord(root, sourceId))!;
+    await updateScientSourceMetadata({
+      root,
+      sourceId,
+      expectedRevision: record.revision,
+      metadata: {
+        ...editableMetadataFromRecord(record),
+        more: { edition: "3", "publisher-place": "Leiden" },
+      },
+    });
+    expect((await send()).items[0]).toMatchObject({ outcome: "updated" });
+    expect(JSON.parse(org.writes.at(-1)?.body ?? "{}")).toEqual({ edition: "3" });
+  });
+
   it("writes a legal case and a program under the names their types have", async () => {
     const legal = await sourceInScient({
       type: "other",

@@ -468,7 +468,11 @@ other reference manager by exporting it to a file and importing that file.
    EndNote XML (`.xml`) file.
 
 Each entry keeps its citation key, authors, editors, identifiers (DOI, PMID,
-PMCID, arXiv, ISBN, ISSN), tags and abstract. Notes in the file (`note` and
+PMCID, arXiv, ISBN, ISSN), tags and abstract, and the details beyond a
+source's main fields: edition, place of publication, series, number of
+volumes and pages, short title, a report's number and kind, a thesis's kind,
+the date accessed and the like (see **More details** in a source). Software,
+slides and manuscripts keep their type. Notes in the file (`note` and
 `annote`, RIS `N1`, EndNote notes) become the source's **My note**. LaTeX
 accents and commands in `.bib` files are turned into plain text, `@string`
 abbreviations and `crossref` entries are resolved, and Google Scholar's
@@ -486,8 +490,8 @@ another computer, Scient does not know the file's folder, so only PDFs inside
 the project are attached.
 
 After the import, a short note lists entries that could not be read (with
-their line), fields that have no place in a Scient source, such as `address`
-or `edition`, and linked PDFs that were not attached, with the reason (not
+their line), fields that have no place in a Scient source, and linked PDFs
+that were not attached, with the reason (not
 found, outside the project and the file's folder, or not a PDF). Nothing else
 is dropped silently. Identifiers
 from a file are stored as given; Scient has not yet checked them against their
@@ -502,7 +506,8 @@ sources are. Each source is written under its citation key.
 Project notes stay private unless you turn on **Include notes**. Exported
 BibTeX is UTF-8; words with inner capitals (`DNA`, `mRNA`) are braced so
 styles keep their case.
-Identifiers and the preprint type survive in every format. When a format has
+Identifiers, the preprint type, and a source's further details (edition,
+place of publication, series and the like) survive in every format. When a format has
 no place for something (for example EndNote XML holds an arXiv ID or a PMID,
 not both), a note after the export names what the file leaves out.
 

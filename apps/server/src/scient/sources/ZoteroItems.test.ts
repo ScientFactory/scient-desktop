@@ -253,4 +253,34 @@ describe("Better BibTeX keys", () => {
       ]),
     );
   });
+
+  it("reads a line of Extra that names a field, and keeps the others as written", () => {
+    const candidate = zoteroItemToCandidate({
+      key: "ABCD2345",
+      version: 1,
+      library: { type: "user", id: 0 },
+      data: {
+        key: "ABCD2345",
+        version: 1,
+        itemType: "book",
+        title: "A book",
+        extra: [
+          "Original Date: 1899",
+          "publisher-place: Leiden",
+          // The kind of item to cite it as, not a detail: kept as written.
+          "Type: dataset",
+          "tex.ids: old2019key",
+          "https://example.org/errata",
+          "bought second hand",
+          "PMID: 123456",
+        ].join("\n"),
+      },
+    });
+    expect(candidate.more).toEqual({
+      "publisher-place": "Leiden",
+      "original-date": "1899",
+      extra: "Type: dataset\ntex.ids: old2019key\nhttps://example.org/errata\nbought second hand",
+    });
+    expect(candidate.identifiers).toEqual([{ scheme: "pmid", value: "123456" }]);
+  });
 });

@@ -275,10 +275,14 @@ export function zoteroPatchFor(input: {
     ...(input.current.data.extra ? { existingExtra: input.current.data.extra } : {}),
     creating: false,
   });
+  // What Zotero has now: a field Scient's own reading of the item leaves out is in `fields`,
+  // so a detail that has not changed is not sent again.
+  const zoteroHas = (field: string) => raw[field] ?? input.current.fields?.[field];
   const patch: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(data)) {
     if (
-      JSON.stringify(comparable(field, value)) !== JSON.stringify(comparable(field, raw[field]))
+      JSON.stringify(comparable(field, value)) !==
+      JSON.stringify(comparable(field, zoteroHas(field)))
     ) {
       patch[field] = value;
     }
