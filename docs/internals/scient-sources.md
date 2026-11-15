@@ -387,9 +387,13 @@ pairs and what is left as possible duplicates. One merge:
 - The loser goes to the trash with `mergedInto` (survivor and merge ID). A
   plain restore refuses it; only the merge's Undo brings it back. Such an
   entry is Undo material, not something a person removed: the Trash list, its
-  count and Empty Trash leave it out (`removedByPerson` in `store.ts`), a
-  deletion that names it still deletes it, and deleting a source for good
-  takes every copy merged into it (`withCopiesMergedInto`).
+  count and Empty Trash leave it out (`removedByPerson` in `store.ts`; the
+  agent's Trash list reads the same through `readScientSourcesRemovedByPerson`),
+  a deletion that names it still deletes it, and deleting a source for good
+  takes every copy merged into it (`withCopiesMergedInto`). The copies are
+  deleted first and the source last, so a deletion that stops part way leaves
+  the source in the Trash to delete again; the merges of copies already gone
+  can then no longer be undone.
 - `aliases.json` maps the loser to the survivor. `resolveScientLibraryAlias`
   (`/library-aliases`) follows aliases to the last survivor and skips
   tombstones; the instance map (5c) resolves through it.
@@ -2459,10 +2463,11 @@ every LaTeX field: `useLatexCitationSuggestions` gives the completion context
 (`latexCommandCompletion.ts`) a `citations` function. The document's own
 `\bibitem` keys come first; then one ranked list of the entries of its linked
 `.bib` files (the first 24, read when the editor opens and again when a
-citation is typed and the last read is five seconds old) and the project's
+citation is typed and the last read is five seconds old; a finished read
+refreshes the open list through `refreshLatexCompletions`) and the project's
 Library sources. The citation commands are a named set; a multicite's every
 key list is completed; the text searched and replaced is the whole item after
-the last comma. A Library source offered to a whole document that does not link
+the last comma, and a key list never reaches across a blank line. A Library source offered to a whole document that does not link
 the managed `references.bib` carries a note the menu shows once under the
 list. The Source editor reads the paths from the open file only, so a file
 included by another gets Library sources without that note. A

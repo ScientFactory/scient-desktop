@@ -864,9 +864,10 @@ update it yourself.
   or title). Press Enter or Tab to insert it; Escape closes the list.
 - **LaTeX:** type `\cite{` (or `\citep{`, `\citet{`, `\parencite{`,
   `\textcite{` and the other natbib and biblatex forms) and pick a source from
-  the list, by key, author, year or title, in Visual and in Source. The list
-  starts with the entries of the `.bib` files the document links (the first
-  24), then this project's Library sources. If the document does not load
+  the list, by key, author, year or title, in Visual and in Source. Before
+  you type, the list starts with the entries of the `.bib` files the document
+  links (the first 24), then this project's Library sources; once you type,
+  both are ranked together by how well they match. If the document does not load
   `references.bib` yet, the list says which line to add. In Source, a file that
   another file includes is offered Library sources only, because its `.bib`
   files are named in the main file. **Insert citation** lists Library sources
