@@ -30,7 +30,9 @@ import { SourcesListEdge, type SourcesViewAnchor } from "./SourcesList";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 
-const CARD_MIN_WIDTH_REM = 10.5;
+const CARD_MIN_WIDTH_REM = 9;
+/** Wider than this, a card would only grow taller and emptier; extra width stays as margin. */
+const CARD_MAX_WIDTH_REM = 11;
 /** Tailwind's `gap-x-3.5`, the space between cards in a row. */
 const CARD_GAP_REM = 0.875;
 const CARD_ASPECT = 1.3;
@@ -111,13 +113,6 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
                 </span>
               </span>
               <span className="mt-2.5 line-clamp-5 font-serif text-[15px] leading-snug">
-                {record.readingStatus === "unread" ? (
-                  <span
-                    role="img"
-                    aria-label={LIBRARY_LABELS.unread}
-                    className="me-1.5 inline-block size-1.5 rounded-full bg-sky-500 align-middle"
-                  />
-                ) : null}
                 {record.title ?? "Untitled source"}
               </span>
               <span className="mt-auto line-clamp-3 pt-2 text-xs text-muted-foreground">
@@ -141,14 +136,13 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
             onCheckedChange={() => row.onToggleSelected(record.sourceId)}
           />
         ) : null}
-        <span className="flex-1" />
-        {record.readingStatus !== undefined ? (
-          <RowStar
-            title={record.title}
-            starred={record.starred === true}
-            {...(onToggleStar ? { onToggle: () => onToggleStar(record) } : {})}
-          />
+        {record.readingStatus === "unread" ? (
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span aria-hidden className="size-1.5 rounded-full bg-sky-500" />
+            {LIBRARY_LABELS.unread}
+          </span>
         ) : null}
+        <span className="flex-1" />
         {diagnostics && diagnostics.length > 0 ? (
           <span className="flex size-6 items-center justify-center">
             <MetadataReviewIndicator
@@ -158,6 +152,13 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
           </span>
         ) : null}
         <SourcePdfAction record={record} row={row} size="icon-xs" />
+        {record.readingStatus !== undefined ? (
+          <RowStar
+            title={record.title}
+            starred={record.starred === true}
+            {...(onToggleStar ? { onToggle: () => onToggleStar(record) } : {})}
+          />
+        ) : null}
         <SourceMenuButton record={record} row={row} />
       </div>
     </div>
@@ -224,7 +225,10 @@ export function SourceCards(
 
   const cardWidth =
     layout && columns
-      ? (layout.width - (columns - 1) * CARD_GAP_REM * layout.rem) / columns
+      ? Math.min(
+          (layout.width - (columns - 1) * CARD_GAP_REM * layout.rem) / columns,
+          CARD_MAX_WIDTH_REM * layout.rem,
+        )
       : CARD_MIN_WIDTH_REM * 16;
   const estimatedRowSize = Math.round(cardWidth * CARD_ASPECT + (sectioned ? 62 : 20));
   const onTopSourceChange = props.onTopSourceChange;
@@ -236,8 +240,10 @@ export function SourceCards(
       extraData={props.row}
       renderItem={({ item, index }) => (
         <div
-          className={`${SOURCES_COLUMN} grid gap-x-3.5 px-3 ${index === 0 ? "pt-3" : ""} ${sectioned ? "pb-9" : "pb-5"}`}
-          style={{ gridTemplateColumns: `repeat(${columns ?? 1}, minmax(0, 1fr))` }}
+          className={`${SOURCES_COLUMN} grid gap-x-3.5 px-3 ${index === 0 ? "pt-3" : ""} ${sectioned ? "pb-6" : "pb-5"}`}
+          style={{
+            gridTemplateColumns: `repeat(${columns ?? 1}, minmax(0, ${CARD_MAX_WIDTH_REM}rem))`,
+          }}
         >
           {item.cards.map((card) => (
             <div key={card.record.sourceId} className="flex min-w-0 flex-col gap-1.5">
