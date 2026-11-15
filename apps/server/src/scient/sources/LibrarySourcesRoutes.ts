@@ -44,6 +44,10 @@ import {
 } from "@scientfactory/scient-sources/library-changes";
 import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
 import {
+  dismissScientLibraryNoticeChanges,
+  listScientLibraryNoticeChanges,
+} from "@scientfactory/scient-sources/library-notice-watch";
+import {
   dismissScientReviewCombineReport,
   readScientReviewCombineReport,
   readScientReviewVersions,
@@ -297,12 +301,15 @@ export async function libraryOverview(
   const categories = store.exists
     ? await readScientSourceCategories(store.library).catch(() => ({}))
     : {};
+  const held = new Set(inspected.records.map((record) => record.sourceId));
   const organization = store.exists
-    ? await readScientSourcesOrganization(
-        store.library,
-        new Set(inspected.records.map((record) => record.sourceId)),
-      )
+    ? await readScientSourcesOrganization(store.library, held)
     : null;
+  const noticeChanges = store.exists
+    ? (await listScientLibraryNoticeChanges(store.library)).filter((change) =>
+        held.has(change.sourceId),
+      )
+    : [];
   // Indexing and categorizing write library caches, so only a caller that may change it starts them.
   if (input.background && store.exists) {
     void scheduleSourceFullTextIndexing(store.library);
@@ -331,6 +338,7 @@ export async function libraryOverview(
       project: works.length,
       library: inspected.records.length,
     },
+    ...(noticeChanges.length > 0 ? { noticeChanges } : {}),
   };
 }
 
@@ -1143,6 +1151,7 @@ export const isLibraryOrganizeAction = (
   change.action === "move-back" ||
   change.action === "dismiss-move-summary" ||
   change.action === "retry-move" ||
+  change.action === "dismiss-notice-changes" ||
   change.action === "restore-pre-move" ||
   change.action === "export-package" ||
   change.action === "list-packages" ||
@@ -1272,6 +1281,8 @@ export async function organizeLibrarySources(
     case "retry-move":
       // Every change runs the move first; one served from the Library has moved.
       return { outcome: "moved" as const };
+    case "dismiss-notice-changes":
+      return { outcome: await dismissScientLibraryNoticeChanges(store.library) };
     case "link-pin":
     case "unlink-pin":
     case "keep-pin-separate":

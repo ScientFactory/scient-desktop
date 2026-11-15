@@ -368,6 +368,48 @@ describe("Sources project scope", () => {
     await expect.element(screen.getByRole("button", { name: /Other study/u })).toBeVisible();
   });
 
+  it("shows the papers the weekly check found a notice on, and Dismiss ends the line", async () => {
+    setup(true, true);
+    const read = mocks.read.getMockImplementation()!;
+    let dismissed = false;
+    mocks.read.mockImplementation(async (...asked) => ({
+      ...(await read(...asked)),
+      ...(dismissed
+        ? {}
+        : { noticeChanges: [{ sourceId: "other", kind: "retraction", change: "added" }] }),
+    }));
+    mocks.organize.mockImplementation(async (_environment, { change }) => {
+      if (change.action !== "dismiss-notice-changes") throw new Error("Unexpected mutation");
+      dismissed = true;
+      return { outcome: "dismissed" };
+    });
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    const line = screen.getByText("The weekly check found: 1 paper was retracted.");
+    await expect.element(line).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Show", exact: true }));
+
+    // The whole Library, narrowed to the paper with the notice.
+    await expect.element(screen.getByRole("button", { name: /Other study/u })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: /Existing study/u }))
+      .not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss", exact: true }));
+    await expect.element(line).not.toBeInTheDocument();
+    expect(mocks.organize).toHaveBeenCalledWith("environment-1", {
+      root: "/project",
+      change: { action: "dismiss-notice-changes" },
+    });
+  });
+
   it("lets a read-only empty project browse the Library", async () => {
     setup(false);
     await using screen = await render(

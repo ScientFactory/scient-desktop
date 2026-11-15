@@ -1,6 +1,11 @@
-import type { ScientSourceDetailResult, ScientSourceRestoreResult } from "@t3tools/contracts";
+import type {
+  ScientSourceDetailResult,
+  ScientSourceRestoreResult,
+  ScientSourcesOverviewResult,
+} from "@t3tools/contracts";
 
 type EditorialStatus = NonNullable<ScientSourceDetailResult["editorialStatus"]>;
+type NoticeChange = NonNullable<ScientSourcesOverviewResult["noticeChanges"]>[number];
 type Verification = NonNullable<ScientSourceDetailResult["verification"]>;
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
@@ -137,4 +142,38 @@ export function verificationProblemLabel(verification: Verification | undefined)
   if (verification?.problem === "not-found") return ` · Not found in registry${carried}`;
   if (verification?.problem === "mismatch") return ` · Identifier names another work${carried}`;
   return "";
+}
+
+/** Above the list narrowed to the papers of the weekly check's line. */
+export const NOTICE_CHANGES_SHOWN = "Found by the weekly check";
+
+const NOTICE_CHANGE_WORDS = [
+  ["retraction", "was retracted", "were retracted"],
+  [
+    "expression-of-concern",
+    "was flagged with an expression of concern",
+    "were flagged with an expression of concern",
+  ],
+  ["correction", "was corrected", "were corrected"],
+  ["withdrawn", "had a notice taken back", "had a notice taken back"],
+] as const;
+
+/** What the weekly check found, each paper counted once under its most serious new notice. */
+export function noticeChangesLine(changes: ReadonlyArray<NoticeChange>): string | null {
+  const found = new Map<string, Set<string>>();
+  for (const change of changes) {
+    const kinds = found.get(change.sourceId) ?? new Set();
+    kinds.add(change.change === "added" ? change.kind : "withdrawn");
+    found.set(change.sourceId, kinds);
+  }
+  const counted = new Map<string, number>();
+  for (const kinds of found.values()) {
+    const first = NOTICE_CHANGE_WORDS.find(([kind]) => kinds.has(kind))?.[0];
+    if (first) counted.set(first, (counted.get(first) ?? 0) + 1);
+  }
+  const parts = NOTICE_CHANGE_WORDS.flatMap(([kind, one, many]) => {
+    const count = counted.get(kind) ?? 0;
+    return count === 0 ? [] : [count === 1 ? `1 paper ${one}` : `${count} papers ${many}`];
+  });
+  return parts.length > 0 ? `The weekly check found: ${parts.join(", ")}.` : null;
 }

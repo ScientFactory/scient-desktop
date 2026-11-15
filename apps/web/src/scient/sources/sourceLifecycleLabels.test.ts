@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   changedFieldsLabel,
   editorialStatusLine,
+  noticeChangesLine,
   revisionLabel,
   sourceTrustLabel,
 } from "./sourceLifecycleLabels";
@@ -45,5 +46,20 @@ describe("source lifecycle labels", () => {
       " · Not found in registry",
     );
     expect(sourceTrustLabel({ verification: { state: "verified" } })).toBe("");
+  });
+
+  it("counts each paper of the weekly check once, under its most serious new notice", () => {
+    expect(
+      noticeChangesLine([
+        { sourceId: "a", kind: "expression-of-concern", change: "added" },
+        { sourceId: "a", kind: "retraction", change: "added" },
+        { sourceId: "b", kind: "retraction", change: "added" },
+        { sourceId: "c", kind: "correction", change: "added" },
+        { sourceId: "d", kind: "retraction", change: "withdrawn" },
+      ]),
+    ).toBe(
+      "The weekly check found: 2 papers were retracted, 1 paper was corrected, 1 paper had a notice taken back.",
+    );
+    expect(noticeChangesLine([])).toBeNull();
   });
 });
