@@ -7,7 +7,11 @@ import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "@effect/vitest";
 import type { ScientSourceRecord } from "@scientfactory/scient-sources";
 
-import { journalIconResolverInternals, resolveJournalIcon } from "./JournalIconResolver.ts";
+import {
+  journalIconResolverInternals,
+  resolveJournalIcon,
+  type PublicHttpsHop,
+} from "./JournalIconResolver.ts";
 
 function article(overrides: Partial<ScientSourceRecord> = {}): ScientSourceRecord {
   return {
@@ -37,6 +41,36 @@ function article(overrides: Partial<ScientSourceRecord> = {}): ScientSourceRecor
     importedAt: "2026-08-13T00:00:00.000Z",
     ...overrides,
   };
+}
+
+function pngOfSize(size: number): Buffer {
+  const bytes = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+  bytes.writeUInt32BE(size, 16);
+  bytes.writeUInt32BE(size, 20);
+  return bytes;
+}
+
+type RecordedResponse = {
+  readonly status: number;
+  readonly location?: string;
+  readonly body?: string | Buffer;
+};
+
+/** Replays recorded responses by exact address, else by address without its query; others are 404. */
+function recordedHop(responses: Readonly<Record<string, RecordedResponse>>) {
+  const requested: string[] = [];
+  const hop: PublicHttpsHop = async ({ url }) => {
+    requested.push(url.href);
+    const recorded = responses[url.href] ??
+      responses[`${url.origin}${url.pathname}`] ?? { status: 404, body: "<html>Not found</html>" };
+    return {
+      status: recorded.status,
+      location: recorded.location ?? null,
+      body: Buffer.from(recorded.body ?? ""),
+    };
+  };
+  return { hop, requested };
 }
 
 describe("journal icon resolution", () => {
@@ -219,5 +253,157 @@ describe("journal icon resolution", () => {
         message: { resource: { primary: { URL: "https://doi.org/10.1000/example" } } },
       }),
     ).toBeNull();
+  });
+
+  it("finds a journal's icon on its article page when the publisher's favicon and homepage fail", async () => {
+    const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
+    const touchIcon = pngOfSize(180);
+    const articleUrl = "https://www.nature.com/articles/nature14539";
+    const returnUrl = `${articleUrl}?error=cookies_not_supported&code=7a1c`;
+    const { hop } = recordedHop({
+      "https://api.crossref.org/works/10.1038/nature14539": {
+        status: 200,
+        body: JSON.stringify({
+          message: {
+            URL: "https://doi.org/10.1038/nature14539",
+            resource: { primary: { URL: articleUrl } },
+          },
+        }),
+      },
+      [articleUrl]: {
+        status: 303,
+        location: `https://idp.nature.com/authorize?response_type=cookie&client_id=grover&redirect_uri=${encodeURIComponent(articleUrl)}`,
+      },
+      "https://idp.nature.com/authorize": {
+        status: 302,
+        location: `https://idp.nature.com/transit?redirect_uri=${encodeURIComponent(articleUrl)}&code=7a1c`,
+      },
+      "https://idp.nature.com/transit": { status: 302, location: returnUrl },
+      [returnUrl]: {
+        status: 200,
+        body: `<!DOCTYPE html><html lang="en"><head>
+          <link rel="apple-touch-icon" sizes="180x180" href=/oscar-static/images/favicons/nature/apple-touch-icon-f39cb19454.png>
+          <link rel="icon" type="image/png" sizes="48x48" href=/oscar-static/images/favicons/nature/favicon-48x48-b52890008c.png>
+          <link rel="shortcut icon" href=/oscar-static/images/favicons/nature/favicon.ico>
+          </head><body><h1>Deep learning</h1></body></html>`,
+      },
+      "https://www.nature.com/oscar-static/images/favicons/nature/apple-touch-icon-f39cb19454.png":
+        { status: 200, body: touchIcon },
+      "https://www.nature.com/oscar-static/images/favicons/nature/favicon-48x48-b52890008c.png": {
+        status: 200,
+        body: pngOfSize(48),
+      },
+      "https://www.nature.com/favicon.ico": { status: 404, body: "<html>Page not found</html>" },
+      "https://nature.com/": { status: 301, location: "https://www.nature.com/" },
+      "https://www.nature.com/": {
+        status: 303,
+        location: "https://www.nature.com/?error=cookies_not_supported",
+      },
+    });
+
+    const icon = await resolveJournalIcon({
+      record: article({
+        containerTitle: "Nature",
+        identifiers: [{ scheme: "doi", value: "10.1038/nature14539" }],
+        url: null,
+      }),
+      cacheRoot,
+      options: { httpsHop: hop },
+    });
+
+    await expect(NodeFSP.readFile(icon!.absolutePath)).resolves.toEqual(touchIcon);
+  });
+
+  it("keeps the fallback when Crossref does not know the DOI", async () => {
+    const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
+    const { hop, requested } = recordedHop({});
+
+    const icon = await resolveJournalIcon({
+      record: article({
+        containerTitle: "Advances in Neural Information Processing Systems",
+        identifiers: [{ scheme: "doi", value: "10.48550/arXiv.1706.03762" }],
+        url: null,
+      }),
+      cacheRoot,
+      options: { httpsHop: hop },
+    });
+
+    expect(icon).toBeNull();
+    expect(requested.map((href) => new URL(href).hostname)).toEqual(["api.crossref.org"]);
+  });
+
+  it("tries only two first-party raster icons from the final article page before the favicon", async () => {
+    const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
+    const favicon = Buffer.from([0, 0, 1, 0, 1, 0, 16, 16, 0, 0, 1, 0, 32, 0, 1, 0, 0, 0, 22, 0]);
+    const articleUrl = "https://www.publisher.example/journal/article/S1";
+    const { hop, requested } = recordedHop({
+      "https://linkinghub.publisher.example/retrieve/pii/S1": { status: 301, location: articleUrl },
+      [articleUrl]: {
+        status: 200,
+        body: `<head>
+          <link rel="icon" sizes="512x512" href="https://cdn.tracker.example/icon.png">
+          <link rel="icon" sizes="256x256" href="icons/logo.svg">
+          <link rel="icon" sizes="192x192" href="icons/a.png">
+          <link rel="icon" sizes="180x180" href="icons/b.png">
+          <link rel="icon" sizes="32x32" href="icons/c.png">
+        </head>`,
+      },
+      "https://www.publisher.example/journal/article/icons/b.png": {
+        status: 200,
+        body: "<html>not an image</html>",
+      },
+      "https://www.publisher.example/journal/article/icons/c.png": {
+        status: 200,
+        body: pngOfSize(32),
+      },
+      "https://www.publisher.example/favicon.ico": { status: 200, body: favicon },
+      "https://publisher.example/": { status: 200, body: "<head></head>" },
+    });
+
+    const icon = await resolveJournalIcon({
+      record: article({ url: "https://linkinghub.publisher.example/retrieve/pii/S1" }),
+      cacheRoot,
+      options: { httpsHop: hop },
+    });
+
+    await expect(NodeFSP.readFile(icon!.absolutePath)).resolves.toEqual(favicon);
+    expect(requested.filter((href) => href.includes("/icons/"))).toEqual([
+      "https://www.publisher.example/journal/article/icons/a.png",
+      "https://www.publisher.example/journal/article/icons/b.png",
+    ]);
+    expect(requested.some((href) => href.includes("tracker"))).toBe(false);
+  });
+
+  it("follows at most three HTTPS redirects and rejects oversized or insecure responses", async () => {
+    const chain = (hops: number) =>
+      recordedHop(
+        Object.fromEntries([
+          ...Array.from({ length: hops }, (_, index) => [
+            `https://journal.example/${index}`,
+            { status: 302, location: `/${index + 1}` },
+          ]),
+          [`https://journal.example/${hops}`, { status: 200, body: "<html></html>" }],
+        ]),
+      ).hop;
+    const request = (hop: PublicHttpsHop, maxBytes = 1_024) =>
+      journalIconResolverInternals.requestPublicHttps({
+        url: new URL("https://journal.example/0"),
+        maxBytes,
+        accept: "text/html",
+        hop,
+      });
+
+    await expect(request(chain(3))).resolves.toMatchObject({
+      url: new URL("https://journal.example/3"),
+    });
+    await expect(request(chain(4))).rejects.toThrow("redirected too many times");
+    await expect(request(chain(0), 4)).rejects.toThrow("too large");
+    await expect(
+      request(
+        recordedHop({
+          "https://journal.example/0": { status: 302, location: "http://journal.example/1" },
+        }).hop,
+      ),
+    ).rejects.toThrow("standard HTTPS");
   });
 });
