@@ -205,11 +205,28 @@ describe("a deliberate link", () => {
       actor: "agent",
     });
     expect(await entry()).toMatchObject({ title: "Another title for it" });
+    // regression: review H1-d-1 finding 4, a review that took the source while it was linked
+    // kept the linked record's data after Unlink.
+    const later = await changeScientLibraryReview({
+      projectRoot: project,
+      library,
+      change: { action: "create-review", title: "A later review" },
+      actor: "user",
+    });
+    await changeScientLibraryReview({
+      projectRoot: project,
+      library,
+      change: { action: "add-sources", reviewId: later.reviewId!, sourceIds: [screened.sourceId] },
+      actor: "user",
+    });
 
     await unlinkScientProjectSourceRestoringCopies({ ...repair, actor: "agent" });
     expect(await entry()).toMatchObject({
       title: "Screened only",
       abstract: "Abstract of Screened only.",
     });
+    expect(
+      (await readScientReviewSnapshotEntries(project, later.reviewId!)).get(screened.sourceId),
+    ).toMatchObject({ title: "Screened only" });
   });
 });

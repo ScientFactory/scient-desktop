@@ -562,14 +562,67 @@ describe("records the Library holds apart from a source", () => {
     });
   });
 
-  it("the same when the unmerged paper is removed before the project refreshes", async () => {
-    const { copies, away, trash } = await mergedPair();
+  it("the same when either paper is removed before the project refreshes", async () => {
+    const { library, project, copies, kept, away, trash } = await mergedPair();
     await trash(away.sourceId);
-    expect((await copies()).away).toMatchObject({
-      title: "The merged-away paper",
-      publisher: null,
-      pages: "11-19",
+    await trash(kept.sourceId);
+    // regression: review H1-d-1 finding 1, the reader cited the stale copy until a refresh.
+    const cited = await listScientProjectPinnedWorks({ projectRoot: project, library });
+    expect(
+      cited.map(({ from, record }) => [from, record.title, record.publisher, record.pages]),
+    ).toEqual([
+      ["snapshot", "The kept paper", "Kept Press", null],
+      ["snapshot", "The merged-away paper", null, "11-19"],
+    ]);
+    expect(await copies()).toMatchObject({
+      kept: { title: "The kept paper", publisher: "Kept Press", pages: null },
+      away: { title: "The merged-away paper", publisher: null, pages: "11-19" },
     });
+  });
+
+  // regression: review H1-d-1 finding 2, the whole copy made unknown citation fields known.
+  it("an older copy's unknown fields stay unknown for a paper hydrated from it", async () => {
+    const base = await newBase();
+    const author = await newLibrary(base, "author");
+    const project = await newProject(base);
+    const cited = await add(author, work("Cited from an older file"));
+    await pinScientLibrarySource({
+      projectRoot: project,
+      library: author,
+      sourceId: cited.sourceId,
+      actor: "user",
+    });
+    // The file as an older Scient wrote it: the six fields, no pages, publisher or the rest.
+    const pinsPath = NodePath.join(project, ".scient", "library", "pins.json");
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"));
+    const { type, title, creators, issuedYear, identifiers, containerTitle } = file.pins[0].work;
+    file.pins[0].work = { type, title, creators, issuedYear, identifiers, containerTitle };
+    await NodeFSP.writeFile(pinsPath, `${JSON.stringify(file, null, 2)}\n`);
+    const library = await newLibrary(base, "collaborator");
+    const refreshed = async () => {
+      await resolveScientProjectPins({
+        projectRoot: project,
+        library,
+        mode: "write",
+        actor: "user",
+      });
+      return (await refreshScientProjectPinSnapshots({ projectRoot: project, library })).pins[0]!;
+    };
+    expect(await refreshed()).not.toHaveProperty("work.pages");
+    const hydrated = (await listScientSourceRecords(library))[0]!;
+    const other = await add(library, {
+      ...work("Another sparse paper"),
+      identifiers: [{ scheme: "doi", value: "10.1000/another" }],
+    });
+    const merged = await mergeScientLibrarySources({
+      library,
+      sourceIds: [hydrated.sourceId, other.sourceId],
+      survivorId: hydrated.sourceId,
+    });
+    if (merged.outcome !== "merged") throw new Error("Expected a merge.");
+    await undoScientLibraryMerge({ library, mergeId: merged.merge.mergeId });
+
+    expect(await refreshed()).not.toHaveProperty("work.pages");
   });
 
   // regression: review H1-b-1 finding 3, a copy of the source itself was replaced when it differed.

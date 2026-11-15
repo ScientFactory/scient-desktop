@@ -109,6 +109,15 @@ function unmergedLabels(model: Model): ReadonlySet<string> {
   );
 }
 
+/**
+ * The title a removed source is cited under: its saved copy's, or, once it was unmerged, its own
+ * last title, which the reader takes from the Library also before the copy is rewritten.
+ */
+export function removedCitationTitle(model: Model, pin: ModelPin): string {
+  const target = targetOf(model, pin.work);
+  return unmergedLabels(model).has(target.label) ? target.title : pin.snapshotTitle;
+}
+
 const pinOf = (model: Model, project: number, work: string) =>
   model.pins.find((pin) => pin.project === project && pin.work === work);
 

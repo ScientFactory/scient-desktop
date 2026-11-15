@@ -632,8 +632,13 @@ sources in `<project>/.scient/library/pins.json`:
   Library record whole, with no known values kept from the old snapshot:
   from the live record when the pin resolves to it, and, for a pin that is
   `removed`, from the source's own Trash entry or tombstone (the pin's ID
-  through aliases, `readScientRemovedLibraryRecords`). `listScientProjectPinnedWorks`
-  applies the same rule when it reads. Any other removed pin keeps its
+  through aliases, `readScientRemovedLibraryRecords`). A field the old
+  snapshot did not know and the record has no information on stays unknown
+  (`scientPinWorkKeepingUnknown`), so a fuller managed entry is still kept.
+  `listScientProjectPinnedWorks` applies the same rule when it reads, for a
+  live and for a removed source, so the bibliography never cites the stale
+  snapshot before the refresh; a review read gives an unmerged record no
+  abstract from its snapshot. Any other removed pin keeps its
   snapshot untouched. Limits: what a project knew about an unmerged source
   beyond the Library is not kept; a pin whose ID is another computer's and
   was matched here by its data is not repaired after removal; a source merged
@@ -757,7 +762,9 @@ link, in this checkout's map, because only this checkout can undo it; a second
 link keeps the first one's copies. `unlink-pin`
 (`unlinkScientProjectSourceRestoringCopies`) holds the review lock and the
 pins lock (the move's order), puts the copies back where the pin or review
-still has the source, then puts the replaced entry back (or none) under the
+still has the source (a review that took the source while it was linked gets
+another review's copy, else one built from the pin's), then puts the replaced
+entry back (or none) under the
 library lock, and keeps the record that was linked out of automatic matching
 for this source through its `keptSeparate` entry, until a new link or Ask
 again: the restored copy may by now match that record alone (another

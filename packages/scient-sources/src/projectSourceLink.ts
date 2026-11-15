@@ -61,7 +61,12 @@ export async function unlinkScientProjectSourceRestoringCopies(input: {
     if (typeof copies === "object" && copies !== null) {
       const { pin, reviews } = copies as { readonly pin?: unknown; readonly reviews?: unknown };
       await scientProjectPinsInternals.writePinCopy(root, input.projectSourceId, pin);
-      await scientLibraryReviewsInternals.writeEntryCopies(root, input.projectSourceId, reviews);
+      await scientLibraryReviewsInternals.writeEntryCopies(
+        root,
+        input.projectSourceId,
+        reviews,
+        typeof pin === "object" && pin !== null ? (pin as { readonly work?: unknown }).work : null,
+      );
     }
     return unlinkScientProjectSource(input);
   });

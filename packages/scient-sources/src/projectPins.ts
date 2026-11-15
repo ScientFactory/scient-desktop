@@ -289,6 +289,15 @@ function noteChange(
   };
 }
 
+/**
+ * An unmerged source's copy: its record's values alone, none from the earlier copy. A field the
+ * earlier copy did not know and the record has no information on stays unknown, so a fuller
+ * managed entry is not given up for it.
+ */
+function unmergedSourceWork(earlier: ScientPinWork, record: ScientSourceRecord): ScientPinWork {
+  return scientPinWorkKeepingUnknown(earlier, scientPinWorkFromRecord(record), record);
+}
+
 export function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWork {
   return {
     type: record.type,
@@ -899,7 +908,7 @@ export async function refreshScientProjectPinSnapshots(input: {
         // An unmerged source's copy is its record whole: what the old copy knew beyond it may
         // be the other source's, written while the merge stood.
         const work = unmerged.has(record.sourceId)
-          ? scientPinWorkFromRecord(record)
+          ? unmergedSourceWork(stored.pin.work, record)
           : scientPinWorkKeepingUnknown(
               stored.pin.work,
               scientPinWorkFromRecord(withKnownPinCitationValues(record, stored.pin.work)),
@@ -916,7 +925,9 @@ export async function refreshScientProjectPinSnapshots(input: {
           ? (await (removed ??= readScientRemovedLibraryRecords(input.library))).get(ownId)
           : undefined;
       pins.push(
-        own ? { ...stored, pin: { ...stored.pin, work: scientPinWorkFromRecord(own) } } : stored,
+        own
+          ? { ...stored, pin: { ...stored.pin, work: unmergedSourceWork(stored.pin.work, own) } }
+          : stored,
       );
     }
     const changed = await writePinsDocument(root, document, pins);
@@ -1027,12 +1038,27 @@ export async function listScientProjectPinnedWorks(input: {
   const records = library
     ? new Map((await listScientSourceRecords(library)).map((record) => [record.sourceId, record]))
     : new Map<string, ScientSourceRecord>();
-  const unmerged = library
-    ? scientUnmergedSourceIds(await readScientLibraryAliases(library))
-    : new Set<string>();
-  return pins.map((pin, index) => {
+  const aliases = library ? await readScientLibraryAliases(library) : new Map();
+  const unmerged = scientUnmergedSourceIds(aliases);
+  // What the next refresh will write for a removed, unmerged source, read here without writing.
+  const removed =
+    library &&
+    pins.some(
+      (pin, index) =>
+        resolutions[index]?.kind === "unresolved" &&
+        unmerged.has(resolveScientLibraryAlias(aliases, pin.sourceId)),
+    )
+      ? await readScientRemovedLibraryRecords(library)
+      : new Map<string, ScientSourceRecord>();
+  return pins.map((stored, index) => {
     const resolution = resolutions[index];
     const found = resolution?.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
+    const ownId = resolveScientLibraryAlias(aliases, stored.sourceId);
+    const own =
+      resolution?.kind === "unresolved" && resolution.reason === "removed" && unmerged.has(ownId)
+        ? removed.get(ownId)
+        : undefined;
+    const pin = own ? { ...stored, work: unmergedSourceWork(stored.work, own) } : stored;
     const projectNote = pin.note ?? null;
     const incomplete = !scientPinWorkIsComplete(pin.work);
     if (!found) {

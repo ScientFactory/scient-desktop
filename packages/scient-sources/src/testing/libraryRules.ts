@@ -16,7 +16,13 @@ import {
   readScientSourceTrashEntries,
   sourceAttachmentAbsolutePath,
 } from "../store.ts";
-import { targetOf, type Model, type ModelPin, type ModelWork } from "./libraryModel.ts";
+import {
+  removedCitationTitle,
+  targetOf,
+  type Model,
+  type ModelPin,
+  type ModelWork,
+} from "./libraryModel.ts";
 import { libraryOf, type Scenario } from "./librarySteps.ts";
 
 /**
@@ -277,13 +283,19 @@ export async function checkLibraryRules(
         if (found.length !== 1 || !cited) return false;
         if ((found[0]!.note ?? null) !== pin.note) return false;
         if (!workModel.works.some((work) => work.label === label)) return false;
-        const fromCopy = cited.from === "snapshot" && cited.record.title === pin.snapshotTitle;
+        const removedAs = removedCitationTitle(workModel, pin);
         // Between the states of an interrupted step, the saved copy may serve the key.
-        if (interrupted && fromCopy) return true;
+        if (
+          interrupted &&
+          cited.from === "snapshot" &&
+          [pin.snapshotTitle, removedAs].includes(cited.record.title ?? "")
+        ) {
+          return true;
+        }
         const target = targetOf(workModel, label);
         return target.state === "live"
           ? cited.from === "library" && cited.record.title === target.title
-          : fromCopy;
+          : cited.from === "snapshot" && cited.record.title === removedAs;
       };
       if (!models.some((pinModel) => models.some((workModel) => matches(pinModel, workModel)))) {
         const state = cited
@@ -330,5 +342,5 @@ function describePin(model: Model, project: number, label: string): string {
   const target = targetOf(model, label);
   return target.state === "live"
     ? `one key, cited from the library as "${target.title}", note ${JSON.stringify(pin.note)}`
-    : `one key, cited from the snapshot as "${pin.snapshotTitle}", note ${JSON.stringify(pin.note)}`;
+    : `one key, cited from the snapshot as "${removedCitationTitle(model, pin)}", note ${JSON.stringify(pin.note)}`;
 }

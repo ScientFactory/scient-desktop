@@ -409,6 +409,44 @@ describe("review record snapshots", () => {
     });
   });
 
+  // regression: review H1-d-1 finding 3, a read filled the abstract from the stale snapshot.
+  it("a read gives an unmerged record no abstract from a snapshot taken while it was merged", async () => {
+    const base = await fixture();
+    const library = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const kept = await addRecord(library, 1, "Abstract of the first trial.");
+    const merged = await addRecord(library, 2);
+    const reviewId = await createReview(projectRoot, library);
+    await changeScientLibraryReview({
+      projectRoot,
+      library,
+      change: { action: "add-sources", reviewId, sourceIds: [merged.sourceId] },
+      actor: "user",
+    });
+    const result = await mergeScientLibrarySources({
+      library,
+      sourceIds: [kept.sourceId, merged.sourceId],
+      survivorId: kept.sourceId,
+    });
+    if (result.outcome !== "merged") throw new Error("Expected a merge.");
+    await refreshScientLibraryReviewSnapshot({ projectRoot, library, reviewId });
+    await undoScientLibraryMerge({ library, mergeId: result.merge.mergeId });
+
+    expect(
+      await readScientLibraryReviewRecord({
+        projectRoot,
+        library,
+        reviewId,
+        sourceId: merged.sourceId,
+        mode: "read",
+      }),
+    ).toMatchObject({
+      from: "library",
+      abstractFrom: null,
+      record: { title: "Randomised trial number 2", abstract: null },
+    });
+  });
+
   it("sets a broken snapshot aside, refills it, and removes a snapshot whose review never existed", async () => {
     const base = await fixture();
     const library = await newLibrary(base, "author");

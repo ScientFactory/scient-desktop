@@ -540,6 +540,8 @@ type ReviewAccess =
 interface Resolved {
   readonly resolutions: ReadonlyMap<string, ScientProjectSourceResolution>;
   readonly records: ReadonlyMap<string, ScientSourceRecord>;
+  /** Sources a merge's Undo separated: their records stand alone, with nothing from a snapshot. */
+  readonly unmerged: ReadonlySet<string>;
 }
 
 async function resolveReviewIds(
@@ -549,7 +551,9 @@ async function resolveReviewIds(
     readonly entries: ReadonlyMap<string, StoredWork>;
   },
 ): Promise<Resolved> {
-  if (input.library === null) return { resolutions: new Map(), records: new Map() };
+  if (input.library === null) {
+    return { resolutions: new Map(), records: new Map(), unmerged: new Set() };
+  }
   const resolutions = await resolveScientProjectSources({
     library: input.library,
     projectRoot: input.root,
@@ -563,6 +567,7 @@ async function resolveReviewIds(
   return {
     resolutions: new Map(resolutions.map((resolution) => [resolution.projectSourceId, resolution])),
     records: new Map(records.map((record) => [record.sourceId, record])),
+    unmerged: scientUnmergedSourceIds(await readScientLibraryAliases(input.library)),
   };
 }
 
@@ -621,7 +626,7 @@ export async function changeScientLibraryReview(input: {
   const root = await projectRootFor(input.projectRoot);
   const folder = libraryFolder(root);
   let document = EMPTY_STATE;
-  let resolved: Resolved = { resolutions: new Map(), records: new Map() };
+  let resolved: Resolved = { resolutions: new Map(), records: new Map(), unmerged: new Set() };
   return changeReviewIn(
     folder,
     {
@@ -731,7 +736,8 @@ function reviewRecord(
   const removed = wasRemoved(resolved.resolutions.get(projectSourceId));
   const library = libraryRecordFor(resolved, projectSourceId);
   if (library) {
-    if (library.abstract === null && work?.abstract) {
+    // An unmerged source's snapshot may still hold the other source's abstract.
+    if (library.abstract === null && work?.abstract && !resolved.unmerged.has(library.sourceId)) {
       return {
         projectSourceId,
         from: "library",
@@ -984,7 +990,7 @@ export async function refreshScientLibraryReviewSnapshot(input: {
     const now = new Date().toISOString();
     const entries = new Map<string, StoredWork>();
     const aliases = await readScientLibraryAliases(input.library);
-    const unmerged = scientUnmergedSourceIds(aliases);
+    const { unmerged } = resolved;
     let removed: Promise<ReadonlyMap<string, ScientSourceRecord>> | undefined;
     for (const sourceId of named) {
       const stored = document.entries.get(sourceId);
@@ -1027,13 +1033,27 @@ export const scientLibraryReviewsInternals = {
     }
     return copies;
   },
-  /** Puts copies from `readEntryCopies` back, only where the review still has the entry. */
-  async writeEntryCopies(root: string, projectSourceId: string, copies: unknown): Promise<void> {
-    if (!isJsonObject(copies)) return;
+  /**
+   * Puts copies from `readEntryCopies` back in every review that has the entry now. A review that
+   * took the entry while the source was linked has no copy of its own: it gets another review's,
+   * else one built from the pin's copy (`pinWork`), so no review keeps the unlinked record's data.
+   */
+  async writeEntryCopies(
+    root: string,
+    projectSourceId: string,
+    copies: unknown,
+    pinWork: unknown,
+  ): Promise<void> {
+    const kept = isJsonObject(copies) ? copies : {};
+    const fromPin = isJsonObject(pinWork)
+      ? { ...pinWork, abstract: null, abstractSections: [], capturedAt: new Date().toISOString() }
+      : undefined;
+    const fallback = Object.values(kept)[0] ?? (fromPin && { ...fromPin, capturedRevision: 1 });
     const folder = libraryFolder(root);
-    for (const [reviewId, raw] of Object.entries(copies)) {
+    for (const { reviewId } of (await readAllReviews(folder)).reviews) {
       const state = await readSnapshotState(folder, reviewId, "write");
-      if (!state.entries.has(projectSourceId)) continue;
+      const raw = kept[reviewId] ?? fallback;
+      if (!state.entries.has(projectSourceId) || raw === undefined) continue;
       const entries = new Map(state.entries);
       entries.set(projectSourceId, { work: decodeWork(raw), extra: extraFields(raw, WORK_FIELDS) });
       await publishSnapshot(folder, reviewId, state, entries, []);
