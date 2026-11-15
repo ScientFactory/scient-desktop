@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   personalNote: vi.fn(),
   organize: vi.fn(),
   addByIdentifier: vi.fn(),
+  recentChanges: vi.fn(),
   menu: vi.fn(),
   canChange: true,
   accountCommand: vi.fn(async () => undefined),
@@ -30,6 +31,7 @@ vi.mock("./client", async (original) => ({
   updateScientSourcePersonalNote: mocks.personalNote,
   organizeScientSources: mocks.organize,
   addScientSourcesByIdentifier: mocks.addByIdentifier,
+  readScientSourceRecentChanges: mocks.recentChanges,
 }));
 vi.mock("../../localApi", async (original) => ({
   ...(await original<typeof import("../../localApi")>()),
@@ -43,6 +45,9 @@ vi.mock("./sourcesCommands", async (original) => ({
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   usePrimaryEnvironmentId: () => "environment-1",
+  useEnvironment: (environmentId: string) => ({
+    label: environmentId === "environment-1" ? "This Mac" : "lab-server",
+  }),
 }));
 vi.mock("../accounts/useAccounts", () => ({
   useAccounts: () => ({ data: null }),
@@ -225,6 +230,73 @@ describe("Sources project scope", () => {
         }),
       ),
     );
+  });
+
+  it("names the computer under the title only when the Library is another computer's", async () => {
+    setup();
+    const panel = (environmentId: string) => (
+      <ScientSourcesPanel
+        environmentId={environmentId as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />
+    );
+    await using screen = await render(panel("environment-2"), { router: false });
+    await expect.element(screen.getByText("On lab-server")).toBeVisible();
+
+    await screen.rerender(panel("environment-1"));
+    await expect
+      .element(screen.getByRole("heading", { name: "No sources in this project" }))
+      .toBeVisible();
+    await expect.element(screen.getByText(/^On /u)).not.toBeInTheDocument();
+  });
+
+  it("opens Recent changes from the Library's menu and shows an import's sources", async () => {
+    setup(true, true);
+    mocks.recentChanges.mockReset();
+    mocks.recentChanges.mockImplementation(async (_environment, input) =>
+      input.sourcesOfImport
+        ? { changes: [], more: false, importSourceIds: ["other"] }
+        : {
+            changes: [
+              {
+                kind: "import",
+                id: "operation-1",
+                at: "2026-11-14T09:00:00.000Z",
+                by: "agent",
+                intake: "zotero",
+                outcome: "completed",
+                imported: 1,
+                available: 1,
+                failed: 0,
+              },
+            ],
+            more: false,
+          },
+    );
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Recent changes" }));
+    await expect.element(page.getByText("Imported 1 source from Zotero")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: /^Show sources/u }));
+
+    // The whole Library, narrowed to what that import brought.
+    await expect.element(screen.getByText("Sources from this import")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: /Other study/u })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: /Existing study/u }))
+      .not.toBeInTheDocument();
   });
 
   it("shows only papers retained by package Undo, then clears that view", async () => {

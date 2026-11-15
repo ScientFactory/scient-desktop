@@ -7,7 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import {
   bulkUpdateScientSources,
@@ -15,6 +15,7 @@ import {
   createScientSourceCollection,
   deleteScientSourceCollection,
   deleteScientSourceSearch,
+  listScientSourcesBulkEdits,
   organizeScientSources,
   readScientSourcesOrganization,
   renameScientSourceCollection,
@@ -73,6 +74,7 @@ function countStoreTraffic(): () => {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   NodeFS.promises.readFile = originalReadFile;
   NodeFS.promises.rename = originalRename;
   NodeModule.syncBuiltinESMExports();
@@ -556,6 +558,228 @@ describe("Scient source collections", () => {
       actor: "user",
     });
     expect(await scientBulkEditChangedType(root, tagsOnly.undo?.batchId ?? "")).toBe(false);
+  });
+  it("lists past bulk edits: one sent in parts as one, and what a partial Undo left", async () => {
+    const { root, sourceIds } = await project(["First", "Second", "Third"]);
+    const [first, second, third] = sourceIds as [string, string, string];
+    const tag = (ids: ReadonlyArray<string>, partNumber?: number) =>
+      bulkUpdateScientSources({
+        root,
+        change: { sourceIds: [...ids], addTags: ["Screened"] },
+        actor: "agent",
+        ...(partNumber ? { partOf: "edit_tags", partNumber } : {}),
+      });
+    // The list is ordered by time: a clock set after the fixture moves a second per request.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.UTC(2100, 0, 1);
+    const later = () => vi.setSystemTime((clock += 1000));
+    const firstPart = await tag([first, second], 1);
+    later();
+    await tag([third], 2);
+    // Changes nothing, so it is not an edit to list.
+    later();
+    await tag([first]);
+    later();
+    const retyped = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds: [first, second], type: "report" },
+      actor: "user",
+    });
+
+    const listed = await listScientSourcesBulkEdits(root, 10);
+    expect(listed).toMatchObject([
+      { id: retyped.undo?.batchId, by: "user", typeChanged: 2, tagsAdded: [], undone: false },
+      {
+        by: "agent",
+        tagsAdded: ["Screened"],
+        typeChanged: 0,
+        parts: [
+          { sourceCount: 2, undone: false },
+          { sourceCount: 1, undone: false },
+        ],
+        partsMissing: false,
+        undone: false,
+        left: 0,
+      },
+    ]);
+    expect(listed[1]?.sourceIds.toSorted()).toEqual([first, second, third].toSorted());
+    expect(await listScientSourcesBulkEdits(root, 1)).toHaveLength(1);
+
+    // A later change to one source is kept by Undo, and the list remembers that it was.
+    const record = await readScientSourceRecord(root, first);
+    await updateScientSourceMetadata({
+      root,
+      sourceId: first,
+      expectedRevision: record!.revision,
+      metadata: { ...editableMetadataFromRecord(record!), type: "thesis" },
+      actor: "user",
+    });
+    const undone = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: retyped.undo?.batchId ?? "" },
+      actor: "user",
+    });
+    expect(undone.conflicts).toHaveLength(1);
+    expect((await listScientSourcesBulkEdits(root, 10))[0]).toMatchObject({
+      id: retyped.undo?.batchId,
+      undone: true,
+      left: 1,
+    });
+
+    // The edit's first request is gone, as after 250 newer ones: the row is the rest of it.
+    await NodeFSP.rm(
+      NodePath.join(root, ".scient", "sources", "bulk-edits", `${firstPart.undo?.batchId}.json`),
+    );
+    expect((await listScientSourcesBulkEdits(root, 10))[1]).toMatchObject({
+      parts: [{ sourceCount: 1 }],
+      partsMissing: true,
+    });
+  });
+  it("leaves a tag alone when the paper's tag was changed after the bulk edit", async () => {
+    const { root, sourceIds } = await project(["First", "Second", "Third"]);
+    const [first, second, third] = sourceIds as [string, string, string];
+    const setTags = async (sourceId: string, tags: ReadonlyArray<string>) => {
+      const record = await readScientSourceRecord(root, sourceId);
+      await updateScientSourceMetadata({
+        root,
+        sourceId,
+        expectedRevision: record!.revision,
+        metadata: { ...editableMetadataFromRecord(record!), tags: [...tags] },
+        actor: "user",
+      });
+    };
+    const tags = async (sourceId: string) => (await readScientSourceRecord(root, sourceId))?.tags;
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["RCT"] },
+      actor: "user",
+    });
+    // First: the tag was taken off and deliberately put back. Second: another tag was added.
+    await setTags(first, []);
+    await setTags(first, ["RCT"]);
+    await setTags(second, ["RCT", "Later"]);
+
+    const undone = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: bulk.undo?.batchId ?? "" },
+      actor: "user",
+    });
+    expect(await tags(first)).toEqual(["RCT"]);
+    expect(await tags(second)).toEqual(["Later"]);
+    expect(await tags(third)).toEqual([]);
+    expect(undone.conflicts).toEqual([
+      {
+        sourceId: first,
+        message:
+          "Tags were added to it or removed from it after the bulk edit, so those tags were kept.",
+      },
+    ]);
+    expect((await listScientSourcesBulkEdits(root, 10))[0]).toMatchObject({
+      undone: true,
+      left: 1,
+    });
+  });
+  it("leaves a type that was changed away and back after the bulk edit", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const setType = async (sourceId: string, type: ScientSourceType) => {
+      const record = await readScientSourceRecord(root, sourceId);
+      await updateScientSourceMetadata({
+        root,
+        sourceId,
+        expectedRevision: record!.revision,
+        metadata: { ...editableMetadataFromRecord(record!), type },
+        actor: "user",
+      });
+    };
+    const type = async (sourceId: string) => (await readScientSourceRecord(root, sourceId))?.type;
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, type: "report" },
+      actor: "user",
+    });
+    await setType(first, "book");
+    await setType(first, "report");
+
+    const undone = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: bulk.undo?.batchId ?? "" },
+      actor: "user",
+    });
+    expect(await type(first)).toBe("report");
+    expect(await type(second)).toBe("article");
+    expect(undone.conflicts).toEqual([
+      {
+        sourceId: first,
+        message: "Its type was changed after the bulk edit, so the newer type was kept.",
+      },
+    ]);
+  });
+  // regression: review U1-b-1, the retry found the restore done and forgot what it had kept.
+  it("remembers what an Undo kept when it stopped before marking the source done", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const first = sourceIds[0] ?? "";
+    const edit = async (fields: {
+      readonly type?: ScientSourceType;
+      readonly tags?: ReadonlyArray<string>;
+    }) => {
+      const record = await readScientSourceRecord(root, first);
+      await updateScientSourceMetadata({
+        root,
+        sourceId: first,
+        expectedRevision: record!.revision,
+        metadata: { ...editableMetadataFromRecord(record!), ...fields },
+        actor: "user",
+      });
+    };
+    const now = async () => {
+      const record = await readScientSourceRecord(root, first);
+      return [record?.type, record?.tags];
+    };
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["RCT"], type: "report" },
+      actor: "user",
+    });
+    await edit({ tags: [] });
+    await edit({ tags: ["RCT"] });
+    const undo = () =>
+      bulkUpdateScientSources({
+        root,
+        change: { undoBatchId: bulk.undo?.batchId ?? "" },
+        actor: "user",
+      });
+
+    // The type is put back and the tag kept; the write that marks the source done fails.
+    failNextReceiptWrite(async () => (await now())[0] === "article");
+    await undo().catch(() => undefined);
+    expect(await now()).toEqual(["article", ["RCT"]]);
+    await undo();
+    expect((await listScientSourcesBulkEdits(root, 10))[0]).toMatchObject({
+      undone: true,
+      left: 1,
+    });
+  });
+  it("does not call an edit incomplete because its first request changed nothing", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const tag = (sourceId: string, partNumber: number) =>
+      bulkUpdateScientSources({
+        root,
+        change: {
+          sourceIds: [sourceId],
+          removeTags: ["Absent"],
+          ...(partNumber === 2 ? { addTags: ["RCT"] } : {}),
+        },
+        actor: "user",
+        partOf: "edit_one",
+        partNumber,
+      });
+    await tag(first, 1);
+    await tag(second, 2);
+    expect(await listScientSourcesBulkEdits(root, 10)).toMatchObject([
+      { sourceIds: [second], parts: [{ sourceCount: 1 }], partsMissing: false },
+    ]);
   });
   it("changes nothing when the bulk edit receipt folder is unsafe", async () => {
     const { root, sourceIds } = await project(["First"]);

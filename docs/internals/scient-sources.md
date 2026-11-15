@@ -647,8 +647,12 @@ sources in `<project>/.scient/library/pins.json`:
   live and for a removed source, so the bibliography never cites the stale
   snapshot before the refresh; a review read gives an unmerged record no
   abstract from its snapshot. Any other removed pin keeps its
-  snapshot untouched. Limits: what a project knew about an unmerged source
-  beyond the Library is not kept; a pin whose ID is another computer's and
+  snapshot untouched. What a copy knew and the record that replaces it does
+  not (a field with a value in the copy and none in the record) is kept
+  before the replacement in `.scient/library/displaced/project.json`, and a
+  review entry's in `displaced/reviews.json` (`projectDisplacedCopies.ts`:
+  the copy as it was, who held it, the fields lost; newest 200 per file;
+  nothing reads them back on its own). Limits: a pin whose ID is another computer's and
   was matched here by its data is not repaired after removal; a source merged
   again and unmerged again marks only its latest pair. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not
@@ -2452,6 +2456,56 @@ Overleaf Windows job. The copies folder is reached only through real folders
 key is then in the Library, with nothing changed or removed, is the file
 written again; otherwise it stays edited for the person to decide.
 
+## Recent changes
+
+`listScientLibraryRecentChanges` (`libraryChanges.ts`, route `recentChanges`,
+read scope) lists what the Library still records and can act on: bulk edits,
+merges, finished imports and the Trash, newest first, each with the fields the
+panel needs for one sentence and one action. It writes nothing and keeps no
+log of its own, so it is not a history: a restored source leaves the Trash and
+the list. The panel (`RecentChanges.tsx`, words in `recentChangeLabels.ts`)
+runs the existing commands: bulk Undo request by request through
+`useSourcesOrganize.undoBulkEdit`, `undo-merge`, restore, and the list view
+narrowed to an import's sources.
+
+- **Bulk edits** come from `listScientSourcesBulkEdits`. A selection larger
+  than one request is sent in parts of 100, one receipt each; the panel gives
+  every request of one edit the same `partOf` and its `partNumber`, stored in
+  the receipt, and the list groups by actor and `partOf`. Receipts without
+  `partOf` list one per request. The newest 250 receipts are kept, so an old
+  edit can lose its first requests: a group whose lowest number is above 1 is
+  listed as `partsMissing`. Each part carries whether it is undone, and the
+  panel sends Undo only for those that are not.
+- **What an Undo left.** An entry Undo leaves as it was gets `kept` in the
+  same receipt write that marks it done, and the list counts those, so a
+  finished Undo with conflicts is not listed as plainly undone; the mark is
+  written with the restore intention, before the source, so a retry after a
+  stop still has it. Undo leaves a tag whose presence on the source changed
+  after the bulk edit, and a type that changed after it, even when it changed
+  back (`readScientSourceRecordsAfter` reads only the source's revisions in
+  between; when one is gone, or the entry has no revision, the edit's tags and
+  type on that source are all left). Collection membership has no per-member
+  history and is undone by value. A request of a named edit keeps its receipt
+  even when it changed nothing, so its number still counts.
+- **Merges** are found through `aliases.json` (one file) and only the listed
+  merges' receipts are read; a pair merged, undone and merged again is listed
+  once, by its latest merge.
+- **Imports** are the receipts in `receipts/` that added a source, with the
+  operation's actor and intake. A row carries counts only; the sources of one
+  import are asked for when they are shown (`sourcesOfImport`), resolved
+  through the aliases and limited to records that exist.
+- **The Trash** is `readScientSourcesRemovedByPerson`; sources an alias
+  forwards are merges' copies and their entries are not read.
+
+Measured on a quiet Mac with 20,000 records, 5,000 merges, 250 bulk receipts
+of 100 sources and 200 imports of 500: about 90 ms for the first page and a
+9 KB answer. Reading every merge receipt and Trash entry instead took 0.4 to
+1.0 s, and sending each import's IDs made the answer almost 1 MB.
+
+Agents have no tool for this list yet (`libraryParity.ts` records the gap):
+they list merges and the Trash, and get a bulk edit's batch ID when they make
+it, but cannot list past bulk edits or imports.
+
 ## Citing
 
 Documents cite by key. In Markdown, typing `[@` opens a list of Library
@@ -3217,7 +3271,9 @@ single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
 an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a named test. No gaps are left.
+`libraryParity.test.ts` lists each gap as a named test. One gap stands: the
+Recent changes list (`scientSources.recentChanges`), whose agent side waits for
+a new input on the list tool.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is
@@ -3259,8 +3315,9 @@ apart from the stores (`libraryModel.ts`).
    other; doing the action again finishes it.
 
 Limits, by design: an import keeps the items it finished; importing a deleted
-paper again on purpose brings it back; Undo keeps newer edits and stops being
-available once the Trash is emptied; history is bounded (50 revisions per
+paper again on purpose brings it back; a merge's Undo keeps newer edits and
+ends when the merged paper, or the merged copy by name, is deleted for good
+(emptying the Trash does not end it); history is bounded (50 revisions per
 source, 20 project note versions and the first).
 
 **What a write guarantees.** JSON and PDF files are written to a temporary

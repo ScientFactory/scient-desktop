@@ -67,6 +67,8 @@ import { SourceEditor } from "./SourceEditor";
 import { SourceFullTextResults } from "./SourceFullTextResults";
 import type { SourceRowContext } from "./SourceRow";
 import { showSourceRowMenu } from "./sourceRowMenu";
+import { RecentChangesDialog } from "./RecentChanges";
+import { RECENT_CHANGES_LABELS } from "./recentChangeLabels";
 import { SourcesList } from "./SourcesList";
 import { requestSourceTextReveal } from "./sourceTextReveal";
 import { useLibraryFileImport } from "./libraryFileHandoff";
@@ -108,7 +110,9 @@ import {
   LIBRARY_LABELS,
   matchesReadingFilter,
   type ReadingStateChange,
+  libraryElsewhereLabel,
 } from "./libraryLabels";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { SnapshotRemovalDialog, useLibraryProjectActions } from "./useLibraryProjectActions";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
@@ -207,6 +211,10 @@ export function ScientSourcesPanel(props: {
     props.environmentId,
   );
   const canChangeProject = useCanRunSourcesCommand(sourcesCommands.organize, props.environmentId);
+  // Each computer has its own Library: one that is not this computer's is named.
+  const environment = useEnvironment(props.environmentId);
+  const thisComputer = usePrimaryEnvironmentId();
+  const elsewhere = environment && props.environmentId !== thisComputer ? environment.label : null;
   const canSavePersonalNote = useCanRunSourcesCommand(
     sourcesCommands.updatePersonalNote,
     props.environmentId,
@@ -265,6 +273,7 @@ export function ScientSourcesPanel(props: {
   const [query, setQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [packageSources, setPackageSources] = useState<ReadonlySet<string> | null>(null);
+  const [shownSourcesLabel, setShownSourcesLabel] = useState("Papers kept after Undo");
   const [sourceSort, setSourceSort] = useState<ScientSourceSort>("last-added");
   const organize = useSourcesOrganize({
     environmentId: props.environmentId,
@@ -277,6 +286,7 @@ export function ScientSourcesPanel(props: {
   const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
   const [showingReviews, setShowingReviews] = useState(false);
   const [showingDuplicates, setShowingDuplicates] = useState<DuplicatesSection | null>(null);
+  const [showingRecentChanges, setShowingRecentChanges] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -482,8 +492,12 @@ export function ScientSourcesPanel(props: {
     organize.clearSelection();
     void sources.selectScope(scope);
   };
-  const showPackageSources = (sourceIds: ReadonlyArray<string>) => {
+  const showPackageSources = (
+    sourceIds: ReadonlyArray<string>,
+    label = "Papers kept after Undo",
+  ) => {
     if (!panelMounted.current || panelContextRef.current !== panelContext) return;
+    setShownSourcesLabel(label);
     setSelectedSourceId(null);
     setShowingReviews(false);
     setShowingDuplicates(null);
@@ -1368,6 +1382,7 @@ export function ScientSourcesPanel(props: {
       />
       <PanelHeader
         title="Library"
+        {...(elsewhere ? { description: libraryElsewhereLabel(elsewhere) } : {})}
         action={
           <div className="flex shrink-0 items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
@@ -1440,7 +1455,12 @@ export function ScientSourcesPanel(props: {
               missingPdfCount={canChange ? missingPdfs.length : 0}
               onGetMissingPdfs={() => void requestPapers({ root: props.root, papers: missingPdfs })}
               onOpenReviews={() => setShowingReviews(true)}
-              {...(scopes ? { onOpenDuplicates: () => setShowingDuplicates("pairs") } : {})}
+              {...(scopes
+                ? {
+                    onOpenDuplicates: () => setShowingDuplicates("pairs"),
+                    onOpenRecentChanges: () => setShowingRecentChanges(true),
+                  }
+                : {})}
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
               {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
@@ -1481,6 +1501,19 @@ export function ScientSourcesPanel(props: {
         {...(scopes ? { onReview: () => setShowingDuplicates("merged") } : {})}
       />
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
+      {showingRecentChanges ? (
+        <RecentChangesDialog
+          environmentId={props.environmentId}
+          root={props.root}
+          canChange={canChange}
+          onUndoBulkEdit={organize.undoBulkEdit}
+          onShowSources={(sourceIds) =>
+            showPackageSources(sourceIds, RECENT_CHANGES_LABELS.importedSources)
+          }
+          onChanged={sources.refreshOverview}
+          onClose={() => setShowingRecentChanges(false)}
+        />
+      ) : null}
       <ZoteroRefreshDialog
         state={zoteroSync.refresh}
         resolving={zoteroSync.resolving}
@@ -1612,7 +1645,7 @@ export function ScientSourcesPanel(props: {
           </ToggleGroup>
           {packageSources ? (
             <>
-              <span className="text-xs text-muted-foreground">Papers kept after Undo</span>
+              <span className="text-xs text-muted-foreground">{shownSourcesLabel}</span>
               <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
                 Show all
               </Button>

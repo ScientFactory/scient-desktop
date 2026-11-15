@@ -497,6 +497,85 @@ export const ScientSourceTrashListing = Schema.Struct({
 });
 export type ScientSourceTrashListing = typeof ScientSourceTrashListing.Type;
 
+const RecentChangeBase = { at: NonEmptyString, by: ScientSourceActor };
+
+/**
+ * One recorded change to the Library that can still be taken back or looked at: a bulk edit, a
+ * merge, an import, or a source in the Trash. Source IDs are the Library's.
+ */
+export const ScientLibraryRecentChange = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("bulk-edit"),
+    /** The newest request's batch ID; `parts` has every request of the edit, oldest first. */
+    id: NonEmptyString,
+    ...RecentChangeBase,
+    parts: Schema.Array(
+      Schema.Struct({ batchId: NonEmptyString, sourceCount: Schema.Int, undone: Schema.Boolean }),
+    ),
+    /** The oldest requests of the edit are no longer kept; the counts are of what remains. */
+    partsMissing: Schema.Boolean,
+    sourceCount: Schema.Int,
+    tagsAdded: Schema.Array(Schema.String),
+    tagsRemoved: Schema.Array(Schema.String),
+    typeChanged: Schema.Int,
+    collections: Schema.Array(
+      Schema.Struct({
+        /** Null once the collection was deleted. */
+        name: Schema.NullOr(Schema.String),
+        added: Schema.Int,
+        removed: Schema.Int,
+        created: Schema.Boolean,
+      }),
+    ),
+    undone: Schema.Boolean,
+    /** Sources and collections an Undo left as they were, because they changed since. */
+    left: Schema.Int,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("merge"),
+    /** The merge ID. */
+    id: NonEmptyString,
+    ...RecentChangeBase,
+    /** Scient merged them on its own rule (same identifier, PDF or Zotero item). */
+    automatic: Schema.Boolean,
+    keptSourceId: NonEmptyString,
+    keptTitle: Schema.NullOr(Schema.String),
+    mergedTitle: Schema.NullOr(Schema.String),
+    undo: Schema.Literals(["available", "undone", "kept-source-gone", "merged-source-gone"]),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("import"),
+    /** The operation ID. */
+    id: NonEmptyString,
+    ...RecentChangeBase,
+    intake: Schema.Literals(["zotero", "local-pdf", "identifier", "file"]),
+    outcome: Schema.Literals(["completed", "cancelled"]),
+    imported: Schema.Int,
+    /** How many of them are in the Library now: a merged one counts as the source that kept it. */
+    available: Schema.Int,
+    failed: Schema.Int,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("trash"),
+    /** The source ID. */
+    id: NonEmptyString,
+    ...RecentChangeBase,
+    title: Schema.NullOr(Schema.String),
+    revision: Schema.Int,
+  }),
+]);
+export type ScientLibraryRecentChange = typeof ScientLibraryRecentChange.Type;
+
+export const ScientLibraryRecentChanges = Schema.Struct({
+  /** Newest first. */
+  changes: Schema.Array(ScientLibraryRecentChange),
+  /** Older changes exist than the ones returned. */
+  more: Schema.Boolean,
+  /** Only when one import's sources were asked for: those in the Library now. */
+  importSourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
+});
+export type ScientLibraryRecentChanges = typeof ScientLibraryRecentChanges.Type;
+
 export const ScientSourceRestoreResult = Schema.Struct({
   outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
   sourceId: NonEmptyString,

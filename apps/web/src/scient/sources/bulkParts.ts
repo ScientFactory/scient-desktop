@@ -279,6 +279,14 @@ export function undoPartsAnnouncement(
   const couldNot = (value: number) =>
     value === 1 ? "1 change could not be undone." : `${count(value)} changes could not be undone.`;
   const why = outcome.unavailableMessage ?? null;
+  // What Undo left on purpose is said with a failure too, not only when all else went well.
+  const keptCount = result?.conflicts?.length ?? 0;
+  const kept =
+    keptCount === 0
+      ? null
+      : keptCount === 1
+        ? "1 later change was kept."
+        : `${count(keptCount)} later changes were kept.`;
   if (end.kind === "lost") {
     return {
       type: "warning",
@@ -286,6 +294,7 @@ export function undoPartsAnnouncement(
       description: sentences(
         failed + unavailable > 0 ? couldNot(failed + unavailable) : null,
         why,
+        kept,
         noAnswer(outcome.unanswered, "change", "undone"),
       ),
     };
@@ -302,6 +311,7 @@ export function undoPartsAnnouncement(
       description: sentences(
         nothingUndone ? null : couldNot(notUndone),
         why,
+        kept,
         end.kind === "failed" ? message(end.error) : null,
       ),
     };

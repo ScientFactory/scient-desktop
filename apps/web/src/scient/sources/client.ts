@@ -14,6 +14,7 @@ import {
   listEnvironmentZoteroCollections,
   preflightEnvironmentZoteroImport,
   listEnvironmentScientSourceRevisions,
+  listEnvironmentScientSourceRecentChanges,
   listEnvironmentScientSourceTrash,
   exportEnvironmentScientSources,
   readEnvironmentScientCitationStyles,
@@ -44,6 +45,7 @@ import type {
   ScientSourceRevertRequest,
   ScientSourceRevisionsRequest,
   ScientSourcesPermanentDeletionRequest,
+  ScientSourcesRecentChangesRequest,
   ScientSourcesTrashRequest,
   ScientSourcesZoteroRefreshRequest,
   ScientSourcesZoteroSendRequest,
@@ -223,6 +225,15 @@ export async function saveScientSourcePage(
   input: ScientSourceSavePageRequest,
 ) {
   return runSourcesCommand(sourcesCommands.savePage, environmentId, input);
+}
+
+export function readScientSourceRecentChanges(
+  environmentId: EnvironmentId,
+  input: ScientSourcesRecentChangesRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSourceRecentChanges({ prepared: prepared(environmentId), ...input }),
+  );
 }
 
 export function readScientSourceTrash(

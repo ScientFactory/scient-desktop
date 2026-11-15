@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/ai";
 
-import budget from "../../../provider/agentContextBudget.scient.json" with { type: "json" };
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import {
@@ -45,15 +44,13 @@ const sourcesToolBytes = (backend: ScientSourcesBackendKind) =>
     ),
   );
 
-// The budget file holds the library backend's list; the project backend swaps the same tools one
-// for one, so its whole list differs by exactly the Sources tools' difference.
-it.effect("measures the tool list each backend advertises", () =>
+// The measured size lives in the budget file alone (AgentContextBudget.scient.test.ts checks
+// it); here only the relation: the project backend swaps the same tools for smaller ones.
+it.effect("advertises a smaller tool list on the project backend than on the Library's", () =>
   Effect.gen(function* () {
     const project = yield* sourcesToolBytes("project");
     const library = yield* sourcesToolBytes("library");
-    expect({
-      mcpToolListJsonBytes: budget.mcpToolListJsonBytes,
-      projectMcpToolListJsonBytes: budget.mcpToolListJsonBytes - library + project,
-    }).toEqual({ mcpToolListJsonBytes: 120947, projectMcpToolListJsonBytes: 116769 });
+    expect(project).toBeGreaterThan(0);
+    expect(project).toBeLessThan(library);
   }),
 );

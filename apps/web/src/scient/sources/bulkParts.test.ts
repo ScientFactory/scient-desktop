@@ -151,8 +151,9 @@ describe("bulk edits in parts", () => {
     expect(undoPartsAnnouncement(first, message)).toEqual({
       type: "warning",
       title: "Undo did not finish",
+      // What Undo kept on purpose is said even though a part failed and one got no answer.
       description:
-        "1 change could not be undone. No answer came back for 20 changes, so whether they were undone is unknown.",
+        "1 change could not be undone. 2 later changes were kept. No answer came back for 20 changes, so whether they were undone is unknown.",
     });
 
     // The lost request did land: the server now answers that this part was already undone.
@@ -188,7 +189,8 @@ describe("bulk edits in parts", () => {
     expect(undoPartsAnnouncement(gone, message)).toEqual({
       type: "warning",
       title: "Some changes were not undone",
-      description: "10 changes could not be undone. This bulk edit was not found.",
+      description:
+        "10 changes could not be undone. This bulk edit was not found. 3 later changes were kept.",
     });
   });
 });

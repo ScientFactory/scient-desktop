@@ -230,6 +230,8 @@ export const ScientSourcesBulkReceipt = Schema.Struct({
       pending: Schema.optionalKey(Schema.Literal(true)),
       restoring: Schema.optionalKey(Schema.Struct({ revision: Schema.Int, fields: BulkFields })),
       undoneAt: Schema.optionalKey(NonEmptyString),
+      // Undo left some of it as it was, because it changed since; written with `undoneAt`.
+      kept: Schema.optionalKey(Schema.Literal(true)),
     }),
   ),
   collections: Schema.Array(
@@ -243,11 +245,16 @@ export const ScientSourcesBulkReceipt = Schema.Struct({
       pending: Schema.optionalKey(Schema.Literal(true)),
       restoring: Schema.optionalKey(Schema.Struct({ updatedAt: NonEmptyString })),
       undoneAt: Schema.optionalKey(NonEmptyString),
+      kept: Schema.optionalKey(Schema.Literal(true)),
     }),
   ),
   // Set when every entry is undone.
   undoneAt: Schema.optionalKey(NonEmptyString),
   undoneBy: Schema.optionalKey(ScientSourceActor),
+  // One edit sent in several requests shares this, so it is listed and undone as one; the
+  // number (from 1) shows when the oldest requests of an edit are no longer kept.
+  partOf: Schema.optionalKey(NonEmptyString),
+  partNumber: Schema.optionalKey(Schema.Int),
 });
 export type ScientSourcesBulkReceipt = typeof ScientSourcesBulkReceipt.Type;
 

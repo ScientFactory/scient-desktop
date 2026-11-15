@@ -13,6 +13,7 @@ import {
   type ScientSourcesBulkRequestChange,
   type ScientSourcesOrganizeAction,
   type ScientSystematicReviewAction,
+  type ScientLibraryRecentChanges,
 } from "@scientfactory/scient-sources";
 import {
   readScientSourceCategories,
@@ -31,6 +32,10 @@ import {
   type ScientLibraryMerge,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
+import {
+  listScientLibraryImportSources,
+  listScientLibraryRecentChanges,
+} from "@scientfactory/scient-sources/library-changes";
 import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
 import {
   dismissScientReviewCombineReport,
@@ -975,6 +980,22 @@ export async function libraryTrash(store: Store, projects?: ReadonlyArray<KnownP
   };
 }
 
+/** The Library's recent changes; the whole Library's, whichever project asks. */
+export async function libraryRecentChanges(
+  store: Store,
+  input: { readonly limit?: number; readonly sourcesOfImport?: string },
+): Promise<ScientLibraryRecentChanges> {
+  if (!store.exists) return { changes: [], more: false };
+  if (input.sourcesOfImport !== undefined) {
+    return {
+      changes: [],
+      more: false,
+      importSourceIds: await listScientLibraryImportSources(store.library, input.sourcesOfImport),
+    };
+  }
+  return listScientLibraryRecentChanges(store.library, input.limit ?? 50);
+}
+
 export async function restoreLibrarySource(store: Store, input: { readonly sourceId: string }) {
   const result = await restoreScientSource({
     root: store.library,
@@ -1032,7 +1053,11 @@ export async function revertLibrarySource(
 
 export async function bulkUpdateLibrarySources(
   store: Store,
-  input: { readonly change: ScientSourcesBulkRequestChange },
+  input: {
+    readonly change: ScientSourcesBulkRequestChange;
+    readonly partOf?: string;
+    readonly partNumber?: number;
+  },
 ) {
   const change =
     "sourceIds" in input.change
@@ -1048,7 +1073,13 @@ export async function bulkUpdateLibrarySources(
     "type" in change ||
     ("undoBatchId" in change &&
       (await scientBulkEditChangedType(store.library, change.undoBatchId)) !== false);
-  const result = await bulkUpdateSources({ root: store.library, change, actor: ACTOR });
+  const result = await bulkUpdateSources({
+    root: store.library,
+    change,
+    actor: ACTOR,
+    ...(input.partOf ? { partOf: input.partOf } : {}),
+    ...(input.partNumber !== undefined ? { partNumber: input.partNumber } : {}),
+  });
   if (changesSnapshots) {
     await afterChange(
       store,

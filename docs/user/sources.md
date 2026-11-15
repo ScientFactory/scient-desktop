@@ -20,6 +20,10 @@ Library beside the conversation or expand it when you need more room. If the
 folder is not yet set up as a Scient project, the Library offers the same optional
 project setup used by **Add project**.
 
+Each computer has its own Library. When a project runs on another computer,
+the Library shown is that computer's, and the line under the title names it
+("On lab-server").
+
 Use **This project / All Library** above the list to choose what to browse.
 The choice stays available in an empty project and when you can only read.
 An empty project says **No sources in this project**; **Choose from Library**
@@ -244,7 +248,11 @@ another project moves in or when Undo stopped halfway; the pair is listed
 again, and you can still merge them or mark them as not duplicates. A project
 that cites the copy you brought back cites that paper again, never the kept
 one, also after you remove the copy: the project then cites it from its own
-saved citation details. If Scient stopped in the middle of a merge or an Undo,
+saved citation details. Those saved details become exactly that paper's
+again. If they held a value the paper's Library record does not have (for
+example an abstract a systematic review imported while the two were merged),
+the earlier details are kept in the project folder under
+`.scient/library/displaced/`, where you or an agent can read them. If Scient stopped in the middle of a merge or an Undo,
 it finishes it the next time it opens your Library. After a
 project moves into your Library, its summary line offers **Review** when some
 merges kept different values.
@@ -766,6 +774,35 @@ be undone; a change to more than 500 sources counts as one for every 100 of them
 Collections, saved searches, study designs and topics are kept in your
 Library, so they show in every project; choose **All** to see every source in
 a collection.
+
+### Recent changes
+
+Choose **Recent changes** (in the **⋯** menu at the top of the Library) to see
+the changes to your whole Library that are still on record, newest first, with
+who made each one (you or an agent) and what can be done about it now:
+
+- **A bulk change:** what it did and to how many sources, with **Undo**. A
+  change that was sent in several parts is one line and is undone as one. Undo
+  does not reverse what you decided later: a tag that was added to a paper or
+  removed from it after the bulk change stays as it is, and so does a type
+  that was changed since. The line then reads "Undone; _N_ changed since and
+  were left". Collections keep no record of when each paper joined, so Undo of
+  a collection change puts back the members the bulk change added or removed
+  wherever they still are. When only the later parts of an old, large change
+  are still on record, the line says so and Undo covers those.
+- **A merge:** the two papers, with **Undo**, or why it can no longer be
+  undone. A pair that was merged, undone and merged again is listed once.
+- **An import** from Zotero, a reference file or PDF files: how many sources it
+  brought, and how many of them are in the Library now if some were merged or
+  removed since. **Show sources** lists them.
+- **A source in the Trash**, with **Restore**.
+
+This is not a full history, and it shows the 400 newest changes at most. Edits
+to one paper are in that paper's **History**.
+Changes to reading status and stars, and removals from a project, are not
+recorded. A restored source leaves the Trash and this list. Package imports,
+the move of a project into your Library and "not duplicates" decisions stay
+where they are (the **Recover** submenu and **Possible duplicates**).
 
 ## Run a systematic review
 
