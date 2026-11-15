@@ -15,7 +15,12 @@ import { ServerConfig } from "../../config.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { moveProjectIntoLibrary, type ScientLibraryMoveRunOutcome } from "./LibraryMove.ts";
-import { finishInterruptedLibraryMerges, ScientSourcesBackend } from "./SourcesBackend.ts";
+import { runLibraryNoticeWatch } from "./LibraryNoticeWatch.ts";
+import {
+  finishInterruptedLibraryMerges,
+  libraryExists,
+  ScientSourcesBackend,
+} from "./SourcesBackend.ts";
 
 /** A folder that is not there (an unattached drive) waits for a later pass. */
 async function scientProjectPresent(root: string): Promise<boolean> {
@@ -61,6 +66,14 @@ export const runLibraryMovePass = Effect.fn("ScientLibraryMove.pass")(function* 
   return outcomes;
 });
 
+/** The weekly notice check rides the same pass; it never creates a Library to check. */
+const checkLibraryNotices = Effect.fn("ScientLibraryNoticeWatch.pass")(function* () {
+  const config = yield* ServerConfig;
+  const library = scientLibraryLocation(scientLibraryRootFor(config.stateDir));
+  if (!(yield* Effect.promise(() => libraryExists(library.root)))) return;
+  yield* Effect.promise((signal) => runLibraryNoticeWatch({ library, signal }));
+});
+
 const PASS_DELAY = "2 minutes";
 const PASS_INTERVAL = "6 hours";
 
@@ -76,6 +89,8 @@ export const libraryMovePassLayer = Layer.effectDiscard(
         ]),
       ),
       Effect.catchCause((cause) => Effect.logWarning("The library move pass failed.", { cause })),
+      Effect.andThen(checkLibraryNotices()),
+      Effect.catchCause((cause) => Effect.logWarning("The weekly notice check failed.", { cause })),
     );
     yield* forkParked(
       Effect.sleep(PASS_DELAY).pipe(
