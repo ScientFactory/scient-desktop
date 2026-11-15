@@ -219,12 +219,15 @@ export type ScientLibraryRestorePrepared =
   | { readonly outcome: "damaged"; readonly file: string }
   /** Another restore is being prepared, cancelled or finished right now. */
   | { readonly outcome: "busy" }
+  /** An earlier restore already moved a folder; the next start finishes it first. */
+  | { readonly outcome: "unfinished" }
   | { readonly outcome: "stopped" };
 
 /**
  * Checks a backup and copies it beside the Library, each file compared with the backup's own
  * list. Changes nothing in the Library: the copy takes its place at the next start
- * (`finishScientLibraryRestore`). An earlier copy that was waiting is replaced.
+ * (`finishScientLibraryRestore`). An earlier copy that was waiting is replaced once this one
+ * is whole; a restore that failed before that leaves the earlier one waiting.
  */
 export async function prepareScientLibraryRestore(input: {
   /** The Library's folder; it need not exist yet. Its parent folder must. */
@@ -264,12 +267,9 @@ export async function prepareScientLibraryRestore(input: {
     return await withScientFileLock(
       paths.lock,
       async (): Promise<ScientLibraryRestorePrepared> => {
-        // The person chose again: the copy that was waiting goes, intent first.
+        // A restore that already moved a folder is finished by the next start, never replaced.
         const earlier = await readIntent(libraryRoot);
-        if (earlier) {
-          await NodeFSP.rm(paths.intent, { force: true });
-          await NodeFSP.rm(paths.staged(earlier.restoreId), { recursive: true, force: true });
-        }
+        if (earlier && (await begun(libraryRoot, earlier))) return { outcome: "unfinished" };
         await NodeFSP.mkdir(staged);
         created = true;
         for (const [index, file] of manifest.files.entries()) {
@@ -331,7 +331,8 @@ export async function prepareScientLibraryRestore(input: {
           files: manifest.counts.files,
           bytes: manifest.counts.bytes,
         };
-        // Written last: only a whole, checked copy is ever put in place.
+        // Written last: only a whole, checked copy is ever put in place. It takes the place of
+        // a copy that was waiting, which goes only now that this one is whole.
         await atomicWriteJson(
           paths.intent,
           {
@@ -344,6 +345,9 @@ export async function prepareScientLibraryRestore(input: {
           } satisfies ScientLibraryRestoreIntent,
           MAX_SMALL_BYTES,
         );
+        if (earlier) {
+          await NodeFSP.rm(paths.staged(earlier.restoreId), { recursive: true, force: true });
+        }
         return { outcome: "ready", restoreId, backupCreatedAt: manifest.createdAt, counts };
       },
       { timeoutMs: 0 },
@@ -355,24 +359,43 @@ export async function prepareScientLibraryRestore(input: {
   }
 }
 
-/** The copy of a backup that waits for the next start, if there is one. */
+/**
+ * A start already moved a folder for this restore: the Library stepped aside, or the copy is
+ * no longer where it waited. From then on only the next start may end it; dropping the intent
+ * would leave a Library that was swapped in without the projects' "moved back" decisions.
+ */
+async function begun(libraryRoot: string, intent: ScientLibraryRestoreIntent): Promise<boolean> {
+  const paths = beside(libraryRoot);
+  // A Library that was never there (a new computer) is not one that stepped aside.
+  return (
+    (await snapshot(paths.staged(intent.restoreId))) !== "directory" ||
+    (await snapshot(paths.replaced(intent.restoreId))) === "directory"
+  );
+}
+
+/**
+ * The copy of a backup that waits for the next start, if there is one. `begun`: a start
+ * already moved a folder for it and could not finish, so it can no longer be cancelled.
+ */
 export async function readScientLibraryRestorePending(
   libraryRoot: string,
-): Promise<ScientLibraryRestoreIntent | null> {
+): Promise<(ScientLibraryRestoreIntent & { readonly begun: boolean }) | null> {
   const root = await canonicalRoot(libraryRoot);
-  return root === null ? null : readIntent(root);
+  const intent = root === null ? null : await readIntent(root);
+  return root === null || intent === null ? null : { ...intent, begun: await begun(root, intent) };
 }
 
 /** Drops the copy that was waiting; the Library was never touched. */
 export async function cancelScientLibraryRestore(
   libraryRoot: string,
-): Promise<{ readonly outcome: "cancelled" | "nothing-waiting" }> {
+): Promise<{ readonly outcome: "cancelled" | "nothing-waiting" | "begun" }> {
   const root = await canonicalRoot(libraryRoot);
   if (root === null || !(await readIntent(root))) return { outcome: "nothing-waiting" };
   const paths = beside(root);
   return withScientFileLock(paths.lock, async () => {
     const intent = await readIntent(root);
     if (!intent) return { outcome: "nothing-waiting" as const };
+    if (await begun(root, intent)) return { outcome: "begun" as const };
     await NodeFSP.rm(paths.intent, { force: true });
     await NodeFSP.rm(paths.staged(intent.restoreId), { recursive: true, force: true });
     return { outcome: "cancelled" as const };
@@ -485,15 +508,26 @@ export async function finishScientLibraryRestore(
       const restores = await restoresOf(libraryRoot);
       if (restores.some((entry) => entry.restoreId === restoreId && !entry.finishedAt)) {
         const finishedAt = new Date().toISOString();
+        // Libraries that earlier restores kept are known only to the Library replaced now:
+        // its records of them come along, or their folders could never be found again.
+        const known = new Set(restores.map((entry) => entry.restoreId));
+        const earlierKept = (await asideThere())
+          ? (await restoresOf(aside).catch(() => [])).filter(
+              (entry) => entry.finishedAt && entry.kept && !known.has(entry.restoreId),
+            )
+          : [];
         await atomicWriteJson(
           NodePath.join(libraryRoot, RESTORES_FILE),
           {
             formatVersion: 1,
-            restores: restores.map((entry) =>
-              entry.restoreId === restoreId
-                ? { ...entry, finishedAt, ...(kept ? { kept } : {}) }
-                : entry,
-            ),
+            restores: [
+              ...earlierKept,
+              ...restores.map((entry) =>
+                entry.restoreId === restoreId
+                  ? { ...entry, finishedAt, ...(kept ? { kept } : {}) }
+                  : entry,
+              ),
+            ],
           },
           MAX_SMALL_BYTES,
         );

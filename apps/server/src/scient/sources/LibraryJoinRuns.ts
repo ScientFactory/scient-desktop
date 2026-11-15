@@ -74,7 +74,9 @@ export function startLibraryJoin(
             failed("Adding from the other Library was stopped.");
             return;
           case "busy":
-            failed("An Undo of an earlier addition is running. Try again when it has finished.");
+            failed(
+              "Another addition, or the Undo of one, is running. Try again when it has finished.",
+            );
             return;
           case "damaged":
             failed(

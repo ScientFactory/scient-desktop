@@ -18,6 +18,7 @@ import {
   takeFromScientLibraryJoin,
   undoScientLibraryJoin,
 } from "./libraryJoin.ts";
+import { editableMetadataFromRecord } from "./editable.ts";
 import { readScientLibraryDistinctPairs } from "./libraryExclusions.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { finishScientLibraryRestore, prepareScientLibraryRestore } from "./libraryRestore.ts";
@@ -32,6 +33,7 @@ import {
   readScientSourceTrashEntries,
   removeScientSource,
   setScientLibraryReadingState,
+  updateScientSourceMetadata,
   updateScientSourceNote,
 } from "./store.ts";
 import {
@@ -105,6 +107,18 @@ async function inventory(folder: string): Promise<ReadonlyMap<string, string>> {
 function changedSince(before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>) {
   return [...after].filter(([path, hash]) => before.get(path) !== hash).map(([path]) => path);
 }
+
+type Row = NonNullable<
+  Awaited<ReturnType<typeof readScientLibraryJoinDifferences>>
+>["rows"][number];
+
+/** What a row showed, as a request to take something from it says it. */
+const shownOf = (row: Row) => ({
+  here: row.here?.fingerprint ?? null,
+  other: row.other!.fingerprint,
+  relation: row.relation,
+  candidates: row.candidates.map((candidate) => candidate.sourceId),
+});
 
 const ids = async (scenario: Scenario) =>
   (await listScientSourceRecords(libraryOf(scenario))).map((record) => record.sourceId).toSorted();
@@ -994,7 +1008,7 @@ describe("what differs between the two Libraries, and taking one thing at a time
         joinId,
         otherSourceId: id("s2"),
         take: what,
-        shown: { here: from.here?.fingerprint ?? null, other: from.other!.fingerprint },
+        shown: shownOf(from),
         operationId,
         actor: "user",
       });
@@ -1037,7 +1051,7 @@ describe("what differs between the two Libraries, and taking one thing at a time
         joinId,
         otherSourceId: id("s2"),
         take: { kind: "note" },
-        shown: { here: shown.here!.fingerprint, other: shown.other!.fingerprint },
+        shown: shownOf(shown),
         operationId: `op_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
         actor: "user",
       });
@@ -1058,7 +1072,8 @@ describe("what differs between the two Libraries, and taking one thing at a time
     expect((await readScientSourceRecord(ours.library, id("s2")))?.note).toBe("My own note.");
   });
 
-  it("adds a paper that may be the same separately, and keeps it apart from the one it resembled", async () => {
+  /** A paper of the other Library that may be one here, left behind by a join. */
+  async function alikeLeftBehind() {
     const candidate = (sourceKey: string) => ({
       sourceKey,
       type: "article" as const,
@@ -1111,24 +1126,33 @@ describe("what differs between the two Libraries, and taking one thing at a time
     if (joined.outcome !== "joined") throw new Error(`Not joined: ${joined.outcome}`);
     const list = async () =>
       (await readScientLibraryJoinDifferences({ library: ours.library, joinId: joined.joinId }))!;
+    const addSeparately = (row: Row, operationId: string) =>
+      takeFromScientLibraryJoin({
+        library: ours.library,
+        joinId: joined.joinId,
+        otherSourceId: alike.sourceId,
+        take: { kind: "add-separately" },
+        shown: shownOf(row),
+        operationId,
+        actor: "user",
+      });
+    return { ours, alike, mine, list, addSeparately };
+  }
+
+  it("adds a paper that may be the same separately, and keeps it apart from the one it resembled", async () => {
+    const { ours, alike, mine, list, addSeparately } = await alikeLeftBehind();
     const [shown] = (await list()).rows;
     expect(shown).toMatchObject({
       otherSourceId: alike.sourceId,
       relation: "possibly-same",
       here: { sourceId: mine.sourceId },
+      candidates: [{ sourceId: mine.sourceId }],
     });
 
-    expect(
-      await takeFromScientLibraryJoin({
-        library: ours.library,
-        joinId: joined.joinId,
-        otherSourceId: alike.sourceId,
-        take: { kind: "add-separately" },
-        shown: { here: shown!.here!.fingerprint, other: shown!.other!.fingerprint },
-        operationId: "op_add_1",
-        actor: "user",
-      }),
-    ).toEqual({ outcome: "taken", sourceId: alike.sourceId });
+    expect(await addSeparately(shown!, "op_add_1")).toEqual({
+      outcome: "taken",
+      sourceId: alike.sourceId,
+    });
     expect(await readScientSourceRecord(ours.library, alike.sourceId)).toMatchObject({
       title: "A study with no identifier",
     });
@@ -1139,6 +1163,143 @@ describe("what differs between the two Libraries, and taking one thing at a time
     ).toEqual([[alike.sourceId, mine.sourceId].toSorted()]);
     // It is here under its own ID now, so it is no longer listed.
     expect((await list()).rows).toEqual([]);
+  });
+
+  it("adds nothing separately from a row that no longer shows how the papers stand", async () => {
+    const { ours, alike, mine, list, addSeparately } = await alikeLeftBehind();
+    const [shown] = (await list()).rows;
+    // The paper here it resembled is retitled: nothing here looks like the other one now.
+    const record = (await readScientSourceRecord(ours.library, mine.sourceId))!;
+    await updateScientSourceMetadata({
+      root: ours.library,
+      sourceId: mine.sourceId,
+      expectedRevision: record.revision,
+      metadata: {
+        ...editableMetadataFromRecord(record),
+        title: "Something else entirely",
+        creators: [],
+        issuedRaw: "1901",
+      },
+      actor: "user",
+    });
+
+    // The old row named a paper to keep it apart from; that is no longer what would happen.
+    expect(await addSeparately(shown!, "op_stale")).toEqual({ outcome: "changed" });
+    expect(await readScientSourceRecord(ours.library, alike.sourceId)).toBeNull();
+    expect(await readScientLibraryDistinctPairs(ours.scenario.libraryRoot)).toEqual([]);
+
+    // The list says so, and from that row the paper is added with nothing to keep apart from.
+    const [now] = (await list()).rows;
+    expect(now).toMatchObject({ relation: "not-here", here: null, candidates: [] });
+    expect(await addSeparately(now!, "op_now")).toEqual({
+      outcome: "taken",
+      sourceId: alike.sourceId,
+    });
+    expect(await readScientLibraryDistinctPairs(ours.scenario.libraryRoot)).toEqual([]);
+  });
+
+  it("attaches only the very PDF the row named, and reads a backup's records against its list", async () => {
+    const { ours, id, backup, joinId, list, row, pdf } = await diverged();
+    const shown = (await row("s2"))!;
+    // The file at the PDF's place in the backup is replaced by another PDF.
+    const payload = NodePath.join(backup, "library");
+    for (const entry of await NodeFSP.readdir(payload, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const file = NodePath.join(entry.parentPath, entry.name);
+      const hash = NodeCrypto.createHash("sha256")
+        .update(await NodeFSP.readFile(file))
+        .digest("hex");
+      if (hash === pdf) await NodeFSP.writeFile(file, "%PDF-1.7\nanother paper\n%%EOF\n");
+    }
+    expect(
+      await takeFromScientLibraryJoin({
+        library: ours.library,
+        joinId,
+        otherSourceId: id("s2"),
+        take: { kind: "pdf", sha256: pdf },
+        shown: shownOf(shown),
+        operationId: "op_swapped",
+        actor: "user",
+      }),
+    ).toEqual({ outcome: "unavailable" });
+    expect((await readScientSourceRecord(ours.library, id("s2")))?.attachments).toEqual([]);
+
+    // A record of the backup that was changed is not shown as the other version.
+    const record = NodePath.join(payload, "records", `${id("s1")}.json`);
+    await NodeFSP.writeFile(
+      record,
+      (await NodeFSP.readFile(record, "utf8")).replace("retitled", "tampered"),
+    );
+    expect((await list()).available).toBe(true);
+    expect(await row("s1")).toMatchObject({ parts: ["details"], other: null });
+  });
+
+  it("leaves both notes out for a reader that may not see the person's notes", async () => {
+    const { ours, id, joinId } = await diverged();
+    const listed = (await readScientLibraryJoinDifferences({
+      library: ours.library,
+      joinId,
+      personal: false,
+    }))!;
+    const row = listed.rows.find((entry) => entry.otherSourceId === id("s2"));
+    expect(row).toMatchObject({ parts: ["pdfs"], here: { note: "" }, other: { note: "" } });
+    expect(JSON.stringify(listed)).not.toContain("Written on the other computer.");
+    expect(JSON.stringify(listed)).not.toContain("My own note.");
+  });
+
+  it("does not add a paper that an edit made here, between two parts, the same as one here", async () => {
+    const theirs = await built([
+      { op: "add", label: "t1", pdf: false },
+      { op: "add", label: "t2", pdf: false },
+    ]);
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    const mine = NodePath.join(
+      ours.scenario.libraryRoot,
+      "records",
+      `${workOf(ours.model, "mine").sourceId}.json`,
+    );
+    const backup = await backUp(theirs.scenario);
+    let asked = 0;
+    const result = await joinScientLibrary({
+      library: ours.library,
+      folder: backup,
+      actor: "user",
+      faults: { partSize: 1 },
+      shouldStop: () => {
+        asked += 1;
+        if (asked !== 2) return false;
+        // Between the parts, the paper here is given the details of the one still to come.
+        const coming = ["t1", "t2"]
+          .map((label) => workOf(theirs.model, label).sourceId)
+          .find(
+            (sourceId) =>
+              !NodeFS.existsSync(
+                NodePath.join(ours.scenario.libraryRoot, "records", `${sourceId}.json`),
+              ),
+          )!;
+        const other = JSON.parse(
+          NodeFS.readFileSync(
+            NodePath.join(theirs.scenario.libraryRoot, "records", `${coming}.json`),
+            "utf8",
+          ),
+        ) as Record<string, unknown>;
+        const here = JSON.parse(NodeFS.readFileSync(mine, "utf8")) as Record<string, unknown>;
+        NodeFS.writeFileSync(
+          mine,
+          JSON.stringify({
+            ...here,
+            title: other.title,
+            creators: other.creators,
+            issuedRaw: other.issuedRaw,
+            issuedYear: other.issuedYear,
+            identifiers: other.identifiers,
+          }),
+        );
+        return false;
+      },
+    });
+    expect(result).toMatchObject({ outcome: "joined", added: 1, skipped: 1 });
+    expect(await ids(ours.scenario)).toHaveLength(2);
   });
 
   it("refuses to make a note longer than a note may be", async () => {
@@ -1159,7 +1320,7 @@ describe("what differs between the two Libraries, and taking one thing at a time
         joinId,
         otherSourceId: id("s2"),
         take: { kind: "note" },
-        shown: { here: shown.here!.fingerprint, other: shown.other!.fingerprint },
+        shown: shownOf(shown),
         operationId: "op_long_1",
         actor: "user",
       }),

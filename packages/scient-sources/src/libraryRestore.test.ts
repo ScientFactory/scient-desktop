@@ -13,6 +13,7 @@ import {
 } from "./collections.ts";
 import { backUpScientLibrary, scientLibraryBackupLeavesOut } from "./libraryBackup.ts";
 import { listScientLibraryRecentChanges } from "./libraryChanges.ts";
+import { openScientLibraryJoinSource } from "./libraryJoin.ts";
 import { markScientLibrarySourcesDistinct } from "./libraryMerge.ts";
 import {
   moveScientProjectBackIntoProject,
@@ -22,6 +23,7 @@ import {
 import {
   cancelScientLibraryRestore,
   finishScientLibraryRestore,
+  listScientLibraryRestores,
   prepareScientLibraryRestore,
   readScientLibraryRestorePending,
   scientLibraryUnused,
@@ -480,6 +482,107 @@ describe("restoring a backup of the Library", () => {
     expect(await prepare()).toEqual({ outcome: "unsupported" });
 
     expect(await besideOf(root)).toEqual(["library.restore.lock"]);
+  });
+
+  it("cannot be cancelled or replaced once a start has swapped the Library in", async () => {
+    const { scenario } = await build();
+    const backup = await backUp(scenario);
+    const other = await createScenario(await temporaryRoot());
+    await runStep(other, EMPTY_MODEL, { op: "add", label: "mine", pdf: false });
+    const prepared = await prepareScientLibraryRestore({ libraryRoot: other.libraryRoot, backup });
+    if (prepared.outcome !== "ready") throw new Error(`Not ready: ${prepared.outcome}`);
+    expect(await readScientLibraryRestorePending(other.libraryRoot)).toMatchObject({
+      begun: false,
+    });
+
+    // The start is killed after the copy took the Library's place, before it was recorded.
+    await expect(
+      finishScientLibraryRestore(other.libraryRoot, { fault: "after-swap" }),
+    ).rejects.toThrow("test fault");
+    expect(await readScientLibraryRestorePending(other.libraryRoot)).toMatchObject({
+      restoreId: prepared.restoreId,
+      begun: true,
+    });
+    // Dropping the intent now would leave a restored Library nothing ever finished.
+    expect(await cancelScientLibraryRestore(other.libraryRoot)).toEqual({ outcome: "begun" });
+    expect(await prepareScientLibraryRestore({ libraryRoot: other.libraryRoot, backup })).toEqual({
+      outcome: "unfinished",
+    });
+    expect(await finishScientLibraryRestore(other.libraryRoot)).toMatchObject({
+      outcome: "restored",
+      restoreId: prepared.restoreId,
+      keptReplaced: { sources: 1 },
+    });
+    expect(await readScientLibraryRestorePending(other.libraryRoot)).toBeNull();
+  });
+
+  it("leaves the copy that was waiting when a later backup turns out damaged", async () => {
+    const { scenario } = await build();
+    const backup = await backUp(scenario);
+    const root = NodePath.join(scenario.root, "elsewhere", "scient", "library");
+    const first = await prepareScientLibraryRestore({ libraryRoot: root, backup });
+    if (first.outcome !== "ready") throw new Error(`Not ready: ${first.outcome}`);
+
+    // A second backup whose last listed file was changed: found only after copying the rest.
+    const damaged = NodePath.join(scenario.root, "damaged-backup");
+    await NodeFSP.cp(backup, damaged, { recursive: true });
+    const manifest = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(damaged, "backup.json"), "utf8"),
+    ) as { readonly files: ReadonlyArray<{ readonly path: string }> };
+    const last = manifest.files.at(-1)!.path;
+    await NodeFSP.appendFile(NodePath.join(damaged, "library", ...last.split("/")), "x");
+    expect(await prepareScientLibraryRestore({ libraryRoot: root, backup: damaged })).toEqual({
+      outcome: "damaged",
+      file: last,
+    });
+
+    expect(await readScientLibraryRestorePending(root)).toMatchObject({
+      restoreId: first.restoreId,
+      begun: false,
+    });
+    expect(await besideOf(root)).toEqual([
+      "library.restore.json",
+      "library.restore.lock",
+      `library.restoring-${first.restoreId}`,
+    ]);
+    expect(await finishScientLibraryRestore(root)).toMatchObject({
+      outcome: "restored",
+      restoreId: first.restoreId,
+    });
+  });
+
+  it("still lists, and reads, a Library an earlier restore kept after another restore", async () => {
+    const { scenario } = await build();
+    const backup = await backUp(scenario);
+    const other = await createScenario(await temporaryRoot());
+    await runStep(other, EMPTY_MODEL, { op: "add", label: "mine", pdf: false });
+    const restore = async () => {
+      const prepared = await prepareScientLibraryRestore({
+        libraryRoot: other.libraryRoot,
+        backup,
+      });
+      if (prepared.outcome !== "ready") throw new Error(`Not ready: ${prepared.outcome}`);
+      expect(await finishScientLibraryRestore(other.libraryRoot)).toMatchObject({
+        outcome: "restored",
+      });
+      return `${other.libraryRoot}.replaced-${prepared.restoreId}`;
+    };
+    const firstKept = await restore();
+    // Something made after the first restore, so the second keeps that Library too.
+    await runStep(other, EMPTY_MODEL, { op: "add", label: "between", pdf: false });
+    const secondKept = await restore();
+
+    // The backup knows neither; the record of the first came over from the Library replaced.
+    const kept = (await listScientLibraryRestores(libraryOf(other))).flatMap((entry) =>
+      entry.kept ? [entry.kept.path] : [],
+    );
+    expect(kept.toSorted()).toEqual([firstKept, secondKept].toSorted());
+    for (const folder of [firstKept, secondKept]) {
+      expect(await openScientLibraryJoinSource(libraryOf(other), folder)).toMatchObject({
+        outcome: "ready",
+        other: { kind: "replaced" },
+      });
+    }
   });
 
   it("drops a waiting copy on Cancel, replaces it on a second request, and can be stopped", async () => {

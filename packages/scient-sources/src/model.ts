@@ -636,7 +636,8 @@ export const ScientLibraryJoinPart = Schema.Literals([
 
 export const ScientLibraryJoinDifferenceRow = Schema.Struct({
   otherSourceId: NonEmptyString,
-  relation: ScientLibraryJoinRelation,
+  /** How the two stand now; `not-here`: no paper here could be the other one any more. */
+  relation: Schema.Union([ScientLibraryJoinRelation, Schema.Literal("not-here")]),
   /** What differs now; what was recorded, while the other Library's folder is away. */
   parts: Schema.Array(ScientLibraryJoinPart),
   here: Schema.NullOr(ScientLibraryJoinSide),

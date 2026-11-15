@@ -359,6 +359,29 @@ describe("backing up the Library from the panel", () => {
     expect(screen.getByText(/2 of 9 files/u).query()).not.toBeNull();
   });
 
+  it("offers no Cancel for a restore that a start left part way through", async () => {
+    setup(
+      [{ state: "none" }],
+      [
+        {
+          state: "ready",
+          backupCreatedAt: "2026-11-14T07:00:00.000Z",
+          sources: 1204,
+          pdfs: 980,
+          begun: true,
+        },
+      ],
+    );
+    await using screen = await render(<Harness />, { router: false });
+    await expect
+      .element(screen.getByText(/is part way through restoring the backup of/u))
+      .toBeVisible();
+    await expect
+      .element(screen.getByText(/Quit Scient and open it again to finish/u))
+      .toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
   it("says that another backup was refused while the one that was ready still waits", async ({
     signal,
   }) => {
@@ -451,7 +474,7 @@ describe("backing up the Library from the panel", () => {
         type: "success",
         title: "Sources added from the other Library",
         description:
-          "Added 312 sources, each with its versions, note, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. 2 PDFs were not in the other Library's folder and did not come. Some of them could not be put in the collection Thesis; you can file them there by hand. Recent changes lists this, with Undo.",
+          "Added 312 sources with their versions, notes, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. 2 PDFs were not in the other Library's folder and did not come. Some of them could not be put in the collection Thesis; you can file them there by hand. Recent changes lists this, with Undo.",
       }),
     );
     expect(onAdded).toHaveBeenCalledTimes(1);

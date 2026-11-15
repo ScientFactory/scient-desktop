@@ -6,9 +6,10 @@ import type {
 
 export const JOIN_DIFFERENCES_LABELS = {
   open: "Show differences",
-  title: "Papers both Libraries have",
-  empty: "Nothing differs any more.",
+  title: "Differences from the other Library",
+  empty: "No differences are left from this addition.",
   more: "Show more",
+  loading: "Reading both Libraries…",
   here: "Here",
   addNote: "Add to my note",
   useNote: "Use this note",
@@ -34,17 +35,17 @@ export function otherLibraryName(listed: ScientSourcesJoinDifferences): string {
 
 /** What the list is, and that looking at it changes nothing. */
 export function differencesIntro(listed: ScientSourcesJoinDifferences): string {
-  return `These papers are in this Library and in ${otherLibraryName(listed)
+  return `These papers of ${otherLibraryName(listed)
     .replace(/^The /u, "the ")
     .replace(
       /^Backup/u,
       "the backup",
-    )}, and the other one has something this one lacks. Nothing here was changed. Take what you want, one thing at a time; each is an ordinary edit of the paper.`;
+    )} were not added, because this Library has them or may have them. Nothing here was changed. Where the other version has something this one lacks, take it one thing at a time: a note or a PDF makes a new version of the paper, and a paper added separately can be moved to the Trash.`;
 }
 
 /** Said while the folder that was read cannot be read. */
 export function differencesAway(listed: ScientSourcesJoinDifferences): string {
-  return `The other Library's folder is not there now (${listed.folder}), so its versions cannot be shown or taken. The list below is what was recorded when the sources were added.`;
+  return `The other Library's folder cannot be read now, or is no longer the one that was read (${listed.folder}), so its versions cannot be shown or taken. The list below is what was recorded when the sources were added.`;
 }
 
 const titleOf = (title: string | null | undefined) =>
@@ -63,6 +64,8 @@ export function relationLabel(row: ScientSourcesJoinDifferenceRow): string {
       return "The copy here was rebuilt from a project and may lack details";
     case "same-paper":
       return "The same paper, entered separately in each Library";
+    case "not-here":
+      return "No paper here looks like it any more";
     case "possibly-same":
       return row.candidates.length > 1
         ? `May be one of these papers here: ${row.candidates.map((candidate) => `“${titleOf(candidate.title)}”`).join(", ")}`
@@ -87,7 +90,7 @@ const PART_WORDS: Record<ScientSourcesJoinDifferenceRow["parts"][number], string
 /** What was recorded as differing, for a row whose other version cannot be read now. */
 export function recordedParts(row: ScientSourcesJoinDifferenceRow): string {
   return row.parts.length > 0
-    ? `The other Library has more: ${row.parts.map((part) => PART_WORDS[part]).join(", ")}.`
+    ? `Recorded as differing: ${row.parts.map((part) => PART_WORDS[part]).join(", ")}.`
     : "";
 }
 
@@ -98,9 +101,9 @@ export function takeProblem(outcome: ScientSourcesOrganizeResult["outcome"]): st
     case "take-already":
       return null;
     case "take-changed":
-      return "One of the two papers changed since this list was shown, so nothing was done. The list is up to date now.";
+      return "One of the two papers changed since this list was shown, so nothing was done.";
     case "take-unavailable":
-      return "The other Library's folder or that file is not there now, so nothing was done.";
+      return "The other Library's folder or that file cannot be read now, or is not the one that was read, so nothing was done.";
     case "take-too-long":
       return "The two notes together are longer than a note can be, so nothing was added. Shorten the note here, or copy the part you want.";
     default:

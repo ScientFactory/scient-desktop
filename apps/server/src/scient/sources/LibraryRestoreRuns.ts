@@ -46,6 +46,8 @@ function notPrepared(result: Exclude<ScientLibraryRestorePrepared, { outcome: "r
       return `The backup is damaged: ${result.file} is missing, changed or does not belong. Nothing was restored.`;
     case "busy":
       return "Another restore is being prepared.";
+    case "unfinished":
+      return "An earlier restore is part way through. Quit Scient and open it again to finish it, then restore.";
     case "stopped":
       return "The restore was stopped.";
   }
@@ -67,6 +69,7 @@ export async function libraryRestoreStatus(
       backupCreatedAt: waiting.backupCreatedAt,
       sources: waiting.counts.sources,
       pdfs: waiting.counts.pdfs,
+      ...(waiting.begun ? { begun: true } : {}),
       ...(problem === undefined ? {} : { problem }),
       ...(last?.state === "failed"
         ? { refused: { failedAt: last.failedAt, reason: last.reason } }
@@ -99,10 +102,13 @@ export function startLibraryRestore(libraryRoot: string, fromFolder: string): vo
     .finally(() => preparing.delete(libraryRoot));
 }
 
-/** Drops the copy that waits; a copy still being made is left to finish first. */
+/**
+ * Drops the copy that waits; a copy still being made is left to finish first, and a restore
+ * that already moved a folder is left for the next start.
+ */
 export async function cancelLibraryRestore(libraryRoot: string): Promise<void> {
   if (preparing.has(libraryRoot)) return;
-  await cancelScientLibraryRestore(libraryRoot);
+  if ((await cancelScientLibraryRestore(libraryRoot)).outcome === "begun") return;
   problems.delete(libraryRoot);
   ended.delete(libraryRoot);
 }

@@ -68,6 +68,11 @@ function Sides(props: {
   );
 }
 
+interface Page {
+  readonly offset: number;
+  readonly listed: ScientSourcesJoinDifferences;
+}
+
 /**
  * The papers a join left as they are here because both Libraries have them, each with both
  * sides. Looking changes nothing; each action takes one thing, as an ordinary edit, and only
@@ -84,24 +89,24 @@ export function JoinDifferencesDialog(props: {
   readonly onClose: () => void;
 }) {
   const { environmentId, root, joinId } = props;
-  const [listed, setListed] = useState<ScientSourcesJoinDifferences | null>(null);
-  const [rows, setRows] = useState<ReadonlyArray<ScientSourcesJoinDifferenceRow>>([]);
+  /** The pages read so far, in order; each knows where it starts and where the next does. */
+  const [pages, setPages] = useState<ReadonlyArray<Page>>([]);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const latest = useRef(0);
 
-  // Reads from the start up to `upTo` recorded differences, so an action's result shows on
-  // every row that is on screen; the newest request's answer is the one shown.
-  const load = useStableCallback(async (upTo: number) => {
+  const [loading, setLoading] = useState(true);
+  // Reads the pages that start at `offsets` and puts each in its place; the newest request's
+  // answer is the one shown. One page is read to show more, and one again after an action.
+  const load = useStableCallback(async (offsets: ReadonlyArray<number>) => {
     latest.current += 1;
     const asked = latest.current;
+    setLoading(true);
     try {
-      const pages: ScientSourcesJoinDifferenceRow[] = [];
-      let first: ScientSourcesJoinDifferences | null = null;
-      let last: ScientSourcesJoinDifferences | null = null;
-      for (let offset: number | null = 0; offset !== null && offset < upTo;) {
+      const read: Page[] = [];
+      for (const offset of offsets) {
         const answer = await readScientSourceRecentChanges(environmentId, {
           root,
           differencesOfJoin: { joinId, offset },
@@ -109,30 +114,44 @@ export function JoinDifferencesDialog(props: {
         if (asked !== latest.current) return;
         if (!answer.joinDifferences) {
           setMissing(true);
+          setLoading(false);
           return;
         }
-        if (first === null) first = answer.joinDifferences;
-        last = answer.joinDifferences;
-        pages.push(...answer.joinDifferences.rows);
-        offset = answer.joinDifferences.nextOffset;
+        read.push({ offset, listed: answer.joinDifferences });
       }
-      if (first && last) setListed({ ...first, nextOffset: last.nextOffset });
-      setRows(pages);
+      setPages((current) =>
+        [
+          ...current.filter((page) => !read.some((next) => next.offset === page.offset)),
+          ...read,
+        ].toSorted((left, right) => left.offset - right.offset),
+      );
       setError(null);
+      setLoading(false);
     } catch (cause) {
-      if (asked === latest.current) setError(errorMessage(cause));
+      // An answer to an older request leaves the newer one's state alone.
+      if (asked !== latest.current) return;
+      setError(errorMessage(cause));
+      setLoading(false);
     }
   });
-  const [upTo, setUpTo] = useState(1);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the join's recorded differences from the environment when the dialog opens and when more are asked for
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the join's recorded differences from the environment when the dialog opens
   useEffect(() => {
-    void load(upTo);
-  }, [upTo, load]);
+    void load([0]);
+  }, [load]);
+
+  const listed = pages[0]?.listed ?? null;
+  const nextOffset = pages.at(-1)?.listed.nextOffset ?? null;
+  const rows = pages.flatMap((page) => page.listed.rows);
 
   const take = (row: ScientSourcesJoinDifferenceRow, what: Take) => {
     if (!row.other) return;
-    const shown = { here: row.here?.fingerprint ?? null, other: row.other.fingerprint };
+    const shown = {
+      here: row.here?.fingerprint ?? null,
+      other: row.other.fingerprint,
+      relation: row.relation,
+      candidates: row.candidates.map((candidate) => candidate.sourceId),
+    };
     setWorking(true);
     setNotice(null);
     void settleAfter(
@@ -154,7 +173,10 @@ export function JoinDifferencesDialog(props: {
           setNotice(errorMessage(cause));
         }
         await props.onChanged().catch(() => undefined);
-        await load(upTo);
+        // The page the row is on is read again; a row elsewhere that this changed is refused
+        // when it is used, and read again then.
+        const page = pages.find((entry) => entry.listed.rows.includes(row));
+        await load([page?.offset ?? 0]);
       },
       () => setWorking(false),
     );
@@ -194,7 +216,7 @@ export function JoinDifferencesDialog(props: {
               {notice}
             </p>
           ) : null}
-          {listed && rows.length === 0 && listed.nextOffset === null ? (
+          {listed && rows.length === 0 && nextOffset === null ? (
             <p className="text-sm text-muted-foreground">{JOIN_DIFFERENCES_LABELS.empty}</p>
           ) : null}
           <ul className="divide-y divide-border text-sm">
@@ -216,12 +238,14 @@ export function JoinDifferencesDialog(props: {
                   {!other ? (
                     <p className="mt-1 text-xs text-muted-foreground">{recordedParts(row)}</p>
                   ) : null}
-                  {other && row.relation === "possibly-same" ? (
+                  {other && (row.relation === "possibly-same" || row.relation === "not-here") ? (
                     <div className="mt-2 flex items-start justify-between gap-2">
                       <p className="min-w-0 text-xs break-words">
                         {otherName}: “{other.title ?? JOIN_DIFFERENCES_LABELS.untitled}”
-                        {other.by ? ` (${other.by})` : ""}. It was not added, because it may be a
-                        paper you already have.
+                        {other.by ? ` (${other.by})` : ""}.{" "}
+                        {row.relation === "not-here"
+                          ? "It was not added, because it looked like a paper here that has changed since."
+                          : "It was not added, because it may be a paper you already have."}
                       </p>
                       {offer ? (
                         <Button
@@ -318,15 +342,20 @@ export function JoinDifferencesDialog(props: {
               );
             })}
           </ul>
-          {listed?.nextOffset !== null && listed !== null ? (
+          {!listed && loading && !missing && !error ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {JOIN_DIFFERENCES_LABELS.loading}
+            </p>
+          ) : null}
+          {nextOffset !== null ? (
             <Button
               className="mt-3"
               size="xs"
               variant="ghost"
-              disabled={working}
-              onClick={() => setUpTo(listed.nextOffset! + 1)}
+              disabled={working || loading}
+              onClick={() => void load([nextOffset])}
             >
-              {JOIN_DIFFERENCES_LABELS.more}
+              {loading ? JOIN_DIFFERENCES_LABELS.loading : JOIN_DIFFERENCES_LABELS.more}
             </Button>
           ) : null}
           {listed && listed.removedHere.length > 0 ? (

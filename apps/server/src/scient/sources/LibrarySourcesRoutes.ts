@@ -994,6 +994,8 @@ export async function libraryRecentChanges(
     readonly limit?: number;
     readonly sourcesOfImport?: string;
     readonly differencesOfJoin?: { readonly joinId: string; readonly offset?: number };
+    /** False for a session that may only read: the person's own notes are left out. */
+    readonly personal?: boolean;
   },
 ): Promise<ScientLibraryRecentChanges> {
   if (!store.exists) return { changes: [], more: false };
@@ -1002,6 +1004,7 @@ export async function libraryRecentChanges(
     const joinDifferences = await readScientLibraryJoinDifferences({
       library: store.library,
       joinId: input.differencesOfJoin.joinId,
+      ...(input.personal === false ? { personal: false } : {}),
       ...(input.differencesOfJoin.offset === undefined
         ? {}
         : { offset: input.differencesOfJoin.offset }),
