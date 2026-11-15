@@ -42,6 +42,9 @@ import {
 } from "~/scient/threadQueue/optimisticQueuePresentation";
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
 import { flushComposerDraftPersistence } from "../../composerDraftStore";
+// SCIENT-FORK: thread rooms.
+import { useRoomComposerPost } from "../../scient/room/roomComposer";
+import { composerSendIsForPeople } from "../../scient/room/roomComposerRouting";
 
 import { assertQueueEditSelectionProvenance } from "../../scient/threadQueue/composerSnapshot";
 
@@ -2002,8 +2005,48 @@ export function useComposerSend(input: ComposerSendInput) {
   );
 
   const onSendLatest = useStableCallback(onSend);
+  // SCIENT-FORK:START — in a thread with people in it, a message is for them first.
+  const postToRoom = useRoomComposerPost({
+    environmentId,
+    threadId: isServerThread && activeThread ? activeThread.id : null,
+    composerDraftTarget,
+    promptRef,
+    onError: setThreadError,
+  });
+  // SCIENT-FORK:END
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
+    // SCIENT-FORK:START — only a plain new message is for people.
+    const roomSendCtx = composerRef.current?.getSendContext();
+    const sendEvent = args[0];
+    // A modifier click while the agent runs is the alternate send, like its shortcut.
+    const modifierClick =
+      sendEvent !== undefined &&
+      "metaKey" in sendEvent &&
+      "ctrlKey" in sendEvent &&
+      (sendEvent.metaKey === true || sendEvent.ctrlKey === true);
+    if (
+      postToRoom.applies() &&
+      composerSendIsForPeople({
+        steer: args[4]?.steer === true,
+        alternate:
+          (args[2] !== undefined && args[2] !== "foreground") ||
+          (modifierClick && args[1] !== undefined && args[1] !== "auto"),
+        directPrompt: args[4]?.directPrompt !== undefined,
+        annotation: args[3] !== undefined,
+        queueEdit:
+          useQueueEditSessions.getState().sessions[composerTargetKey(composerDraftTarget)] !==
+            undefined ||
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+            ?.extractedIntent !== undefined,
+        answering:
+          (Boolean(activePendingProgress) && roomSendCtx?.answeringPendingUserInput !== false) ||
+          (roomSendCtx?.shownPendingApprovalIds.length ?? 0) > 0,
+        prompt: promptRef.current,
+      })
+    )
+      return postToRoom.post();
+    // SCIENT-FORK:END
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null

@@ -226,6 +226,9 @@ export function conversationSnapshotProjection(
       case "error":
         activity("runtime.error", item.failure.message, { message: item.failure.message }, "error");
         break;
+      // People's room messages stay in this thread: an imported copy's history can reach an agent.
+      case "room_message":
+        break;
     }
   }
   const active = projection.runs.findLast((run) =>

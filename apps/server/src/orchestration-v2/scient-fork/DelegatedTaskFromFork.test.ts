@@ -79,6 +79,7 @@ const helperFields = {
   lastSnoozeWakeAt: "reset",
   limitRecovery: "reset",
   guestShare: "reset",
+  room: "reset",
   pinnedAt: "reset",
   autoSettleDisabledAt: "reset",
   pinOrderKey: "reset",
