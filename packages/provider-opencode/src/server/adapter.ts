@@ -438,6 +438,8 @@ interface OpenCodeThreadState {
   inheritedPermission: PermissionRuleset;
   // SCIENT-FORK: whether OpenCode last reported `permission` back. Cleared before every write.
   permissionConfirmed: boolean;
+  // SCIENT-FORK: the policy last applied to this session's rules; new children take it.
+  appliedPolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
 
 interface OpenCodeRequestOwner {
@@ -1220,6 +1222,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         let hasConnected = false;
         // Orders native events with turn installation, so a held wake replays before later events.
         const eventPermit = Semaphore.makeUnsafe(1);
+        // SCIENT-FORK: a policy change and a new child's rules never interleave.
+        const permissionPermit = Semaphore.makeUnsafe(1);
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
@@ -1635,45 +1639,54 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               createdAt: now,
               updatedAt: now,
             };
-            const childSessionResponse = yield* sdkCall(
-              "session.get",
-              { sessionID: childSessionId },
-              () => client.session.get({ sessionID: childSessionId }),
+            // SCIENT-FORK:START — a policy change waits for the child's rules, and the child takes
+            // the policy last applied to its parent, not the one its turn started with.
+            yield* permissionPermit.withPermit(
+              Effect.gen(function* () {
+                const childPolicy = state.appliedPolicy ?? turn.runtimePolicy;
+                const childSessionResponse = yield* sdkCall(
+                  "session.get",
+                  { sessionID: childSessionId },
+                  () => client.session.get({ sessionID: childSessionId }),
+                );
+                const nativeChildSession = unwrapData("session.get", childSessionResponse);
+                const childPermission = openCodeChildPermissionRules(
+                  childPolicy,
+                  nativeChildSession.permission ?? [],
+                );
+                // SCIENT-FORK: the child runs only under rules OpenCode reads back.
+                yield* writeConfirmedChildPermissionRules(childSessionId, childPermission);
+                // A Task call with task_id resumes the child, whose earlier turns already hold ordinals.
+                const knownChild = threads.get(childSessionId);
+                const resumedChild = knownChild?.parentSubagent == null ? undefined : knownChild;
+                const nextChildTurnOrdinal =
+                  resumedChild === undefined
+                    ? recordString(input, "task_id") === childSessionId
+                      ? null
+                      : 1
+                    : resumedChild.nextChildTurnOrdinal;
+                threads.set(childSessionId, {
+                  nativeSessionId: childSessionId,
+                  providerThread: childProviderThread,
+                  appThread: childThread,
+                  activeTurn: null,
+                  providerTurns: new Map(),
+                  runtimeRequests: new Map(),
+                  messageRoles: resumedChild?.messageRoles ?? new Map(),
+                  userMessageIds: resumedChild?.userMessageIds ?? [],
+                  parentSubagent: context,
+                  nextChildTurnOrdinal,
+                  nextAdmissionGeneration: 1,
+                  wake: null,
+                  lifecyclePermit: Semaphore.makeUnsafe(1),
+                  permission: childPermission,
+                  inheritedPermission: openCodePermissionRules(childPolicy),
+                  permissionConfirmed: true,
+                  appliedPolicy: childPolicy,
+                });
+              }),
             );
-            const nativeChildSession = unwrapData("session.get", childSessionResponse);
-            const childPermission = openCodeChildPermissionRules(
-              turn.runtimePolicy,
-              nativeChildSession.permission ?? [],
-            );
-            // SCIENT-FORK: the child runs only under rules OpenCode reads back.
-            yield* writeConfirmedChildPermissionRules(childSessionId, childPermission);
-            // A Task call with task_id resumes the child, whose earlier turns already hold ordinals.
-            const knownChild = threads.get(childSessionId);
-            const resumedChild = knownChild?.parentSubagent == null ? undefined : knownChild;
-            const nextChildTurnOrdinal =
-              resumedChild === undefined
-                ? recordString(input, "task_id") === childSessionId
-                  ? null
-                  : 1
-                : resumedChild.nextChildTurnOrdinal;
-            threads.set(childSessionId, {
-              nativeSessionId: childSessionId,
-              providerThread: childProviderThread,
-              appThread: childThread,
-              activeTurn: null,
-              providerTurns: new Map(),
-              runtimeRequests: new Map(),
-              messageRoles: resumedChild?.messageRoles ?? new Map(),
-              userMessageIds: resumedChild?.userMessageIds ?? [],
-              parentSubagent: context,
-              nextChildTurnOrdinal,
-              nextAdmissionGeneration: 1,
-              wake: null,
-              lifecyclePermit: Semaphore.makeUnsafe(1),
-              permission: childPermission,
-              inheritedPermission: openCodePermissionRules(turn.runtimePolicy),
-              permissionConfirmed: true,
-            });
+            // SCIENT-FORK:END
             yield* emitProviderEvent({
               type: "app_thread.created",
               driver: OPENCODE_PROVIDER,
@@ -3465,15 +3478,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
             client.session.update({ sessionID: sessionId, permission }, { signal }),
           );
-          const confirmed = unwrapData(
-            "session.get",
-            yield* sdkCall("session.get", { sessionID: sessionId }, (signal) =>
-              client.session.get({ sessionID: sessionId }, { signal }),
-            ),
-          );
-          const effectivePermission = confirmed.permission;
+          const confirmed = (yield* sdkCall("session.get", { sessionID: sessionId }, (signal) =>
+            client.session.get({ sessionID: sessionId }, { signal }),
+          )).data;
+          const effectivePermission = confirmed?.permission;
           if (
-            confirmed.id !== sessionId ||
+            confirmed?.id !== sessionId ||
             effectivePermission === undefined ||
             effectivePermission.length !== permission.length ||
             !permission.every((rule, index) => {
@@ -3494,16 +3504,18 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             permission,
             "OpenCode did not confirm a subagent's permission rules.",
           ).pipe(
-            Effect.tapError(() =>
-              sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
-                client.session.abort({ sessionID: sessionId }, { signal }),
-              ).pipe(Effect.timeout("1 second"), Effect.ignore({ log: true })),
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit)
+                ? Effect.void
+                : sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
+                    client.session.abort({ sessionID: sessionId }, { signal }),
+                  ).pipe(Effect.timeout("1 second"), Effect.ignore({ log: true })),
             ),
           );
         // SCIENT-FORK:END
 
         // OpenCode copies parent rules into a child only at creation, so children are updated here too.
-        const applyPermissionRules = Effect.fnUntraced(function* (
+        const applyPermissionRulesUnguarded = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) {
@@ -3533,12 +3545,36 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               target.permissionConfirmed = true;
               // SCIENT-FORK:END
             }
+            target.appliedPolicy = policy;
             if (target.parentSubagent !== null) target.inheritedPermission = parentRules;
             for (const child of threads.values()) {
               if (child.parentSubagent?.parentState === target) pending.push(child);
             }
           }
         });
+        // SCIENT-FORK:START — a session tree whose new rules OpenCode does not all confirm stops
+        // as a whole, so no session keeps rules broader than the policy.
+        const applyPermissionRules = (
+          state: OpenCodeThreadState,
+          policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) => {
+          let owner = state;
+          while (owner.parentSubagent !== null) owner = owner.parentSubagent.parentState;
+          return applyPermissionRulesUnguarded(state, policy).pipe(
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit)
+                ? Effect.void
+                : abortRootSession(owner).pipe(
+                    Effect.ignore({ log: true }),
+                    Effect.andThen(abortDescendants(owner.nativeSessionId)),
+                    Effect.timeout("10 seconds"),
+                    Effect.ignore({ log: true }),
+                  ),
+            ),
+            permissionPermit.withPermit,
+          );
+        };
+        // SCIENT-FORK:END
 
         const resolvePromptParts = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
