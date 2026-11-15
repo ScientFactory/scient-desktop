@@ -11,7 +11,6 @@ import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 
 import * as GeneratedDocumentStore from "../../../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as LatexBuildService from "../../../scient/latex/LatexBuildService.ts";
@@ -21,11 +20,10 @@ import { WorkspaceFileSystem } from "../../../workspace/WorkspaceFileSystem.ts";
 import {
   assertCurrentDocumentBuildProject,
   publishProjectPdfOutput,
-  isInsideRoot,
-  isWindowsAbsolutePath,
   type ProjectDocumentBuildBoundaryError,
   resolveDocumentBuildProject,
   resolveProjectPdfOutput,
+  resolveProjectSourceFile,
   prepareProjectPdfOutputIntent,
 } from "./projectDocumentBuild.ts";
 import { ScientLatexBuildToolError } from "./tools.ts";
@@ -124,69 +122,14 @@ const sameRevision = (
   left.artifactId === right.artifactId &&
   left.revisionId === right.revisionId;
 
-const resolveLatexSource = Effect.fn("ScientLatexBuild.resolveSource")(function* (
-  root: string,
-  requestedPath: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  if (
-    requestedPath.includes("\0") ||
-    path.isAbsolute(requestedPath) ||
-    isWindowsAbsolutePath(requestedPath)
-  ) {
-    return yield* toolError(
-      "invalid-source-path",
-      "sourcePath must be relative to the current Scient project.",
-    );
-  }
-  const segments = requestedPath.split(/[\\/]/u);
-  if (
-    segments.some((segment) => segment === "..") ||
-    path.extname(requestedPath).toLowerCase() !== ".tex"
-  ) {
-    return yield* toolError(
-      "invalid-source-path",
-      "sourcePath must identify a project-relative .tex file.",
-    );
-  }
-
-  const canonicalRoot = yield* fileSystem
-    .realPath(root)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("project-changed", "The current project workspace is unavailable."),
-      ),
-    );
-  const candidatePath = path.resolve(canonicalRoot, requestedPath);
-  const canonicalPath = yield* fileSystem
-    .realPath(candidatePath)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("source-not-found", "The LaTeX source file was not found in this project."),
-      ),
-    );
-  if (!isInsideRoot(canonicalRoot, canonicalPath, path) || canonicalPath === canonicalRoot) {
-    return yield* toolError(
-      "invalid-source-path",
-      "The LaTeX source must remain inside the current project workspace.",
-    );
-  }
-  const info = yield* fileSystem
-    .stat(canonicalPath)
-    .pipe(
-      Effect.mapError(() =>
-        toolError("source-not-found", "The LaTeX source file could not be inspected."),
-      ),
-    );
-  if (info.type !== "File") {
-    return yield* toolError("source-not-found", "The LaTeX source path does not identify a file.");
-  }
-  return {
-    canonicalRoot,
-    sourcePath: path.relative(canonicalRoot, canonicalPath).split(path.sep).join("/"),
-  } satisfies ResolvedLatexSource;
-});
+const resolveLatexSource = (root: string, requestedPath: string) =>
+  resolveProjectSourceFile(root, requestedPath, { label: "LaTeX", extensions: [".tex"] }).pipe(
+    Effect.map(
+      ({ canonicalRoot, sourcePath }) =>
+        ({ canonicalRoot, sourcePath }) satisfies ResolvedLatexSource,
+    ),
+    Effect.mapError((cause) => toolError(cause.code, cause.message)),
+  );
 
 const buildServiceToolError = (
   cause: LatexBuildService.LatexBuildError,

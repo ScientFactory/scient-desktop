@@ -718,6 +718,13 @@ export type ProviderAdapterV2SubagentOutcome = {
   readonly result: OrchestrationV2Subagent["result"];
 };
 
+// SCIENT-FORK:START — background-wait recovery: finished ids and the live roster.
+export interface ProviderAdapterV2BackgroundTaskSummary {
+  readonly taskId: string;
+  readonly description?: string | undefined;
+}
+// SCIENT-FORK:END
+
 // SCIENT-FORK:START — running-fork text snapshot members come from ScientTextSnapshotRuntime.
 export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRuntime {
   // SCIENT-FORK:END
@@ -844,7 +851,18 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly taskIds: ReadonlyArray<string>;
     readonly awaited: boolean;
-  }) => Effect.Effect<{ readonly matched: ReadonlyArray<string> }, ProviderAdapterV2Error>;
+  }) => Effect.Effect<
+    {
+      readonly matched: ReadonlyArray<string>;
+      // SCIENT-FORK:START — background-wait recovery: finished ids and the live roster.
+      /** Requested ids this thread ran that already finished; nothing is left to wait on. */
+      readonly settled?: ReadonlyArray<string>;
+      /** Running, not-yet-awaited tasks on this thread, for a request that matched none. */
+      readonly running?: ReadonlyArray<ProviderAdapterV2BackgroundTaskSummary>;
+      // SCIENT-FORK:END
+    },
+    ProviderAdapterV2Error
+  >;
   readonly interruptTurn: (
     input: ProviderAdapterV2InterruptInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
@@ -889,6 +907,10 @@ export class ProviderAdapterV2 extends Context.Service<
   {
     /** This configured adapter can inject a host-issued MCP session. Independent of native tools. */
     readonly mcpSessionInjection?: boolean;
+    // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
+    /** Whether a session opened now implements `awaitBackgroundTasks`. */
+    readonly backgroundWait?: Effect.Effect<boolean>;
+    // SCIENT-FORK:END
     readonly instanceId: ProviderInstanceId;
     readonly driver: ProviderDriverKind;
     readonly getCapabilities: () => Effect.Effect<
