@@ -1,5 +1,6 @@
 import {
   getEnvironmentScientSourcesDuplicates,
+  getEnvironmentScientSourcesBackupStatus,
   getEnvironmentScientSourcesMoveStatus,
   getEnvironmentScientSystematicReview,
   listEnvironmentScientSystematicReviewConflicts,
@@ -197,6 +198,12 @@ export function readLibraryDuplicates(
 export function readLibraryMoveStatus(environmentId: EnvironmentId, root: string) {
   return runtime.runPromise(
     getEnvironmentScientSourcesMoveStatus({ prepared: prepared(environmentId), root }),
+  );
+}
+
+export function readLibraryBackupStatus(environmentId: EnvironmentId, root: string) {
+  return runtime.runPromise(
+    getEnvironmentScientSourcesBackupStatus({ prepared: prepared(environmentId), root }),
   );
 }
 

@@ -67,6 +67,7 @@ import { SourceEditor } from "./SourceEditor";
 import { SourceFullTextResults } from "./SourceFullTextResults";
 import type { SourceRowContext } from "./SourceRow";
 import { showSourceRowMenu } from "./sourceRowMenu";
+import { LibraryBackupNotice, useLibraryBackup } from "./LibraryBackup";
 import { RecentChangesDialog } from "./RecentChanges";
 import { RECENT_CHANGES_LABELS } from "./recentChangeLabels";
 import { SourcesList } from "./SourcesList";
@@ -214,6 +215,16 @@ export function ScientSourcesPanel(props: {
   // Each computer has its own Library: one that is not this computer's is named.
   const environment = useEnvironment(props.environmentId);
   const thisComputer = usePrimaryEnvironmentId();
+  const backup = useLibraryBackup({
+    environmentId: props.environmentId,
+    root: props.root,
+    enabled: sources.overview?.libraryBackend === true,
+  });
+  // A folder is chosen with this computer's own dialog, so only for a Library that is here.
+  const pickBackupFolder =
+    props.environmentId === thisComputer && window.desktopBridge
+      ? readLocalApi()?.dialogs.pickFolder
+      : undefined;
   const elsewhere = environment && props.environmentId !== thisComputer ? environment.label : null;
   const canSavePersonalNote = useCanRunSourcesCommand(
     sourcesCommands.updatePersonalNote,
@@ -1461,6 +1472,14 @@ export function ScientSourcesPanel(props: {
                     onOpenRecentChanges: () => setShowingRecentChanges(true),
                   }
                 : {})}
+              {...(scopes && canChange && pickBackupFolder
+                ? {
+                    onBackUp: () =>
+                      void pickBackupFolder()
+                        .catch(() => null)
+                        .then((folder) => (folder ? backup.start(folder) : undefined)),
+                  }
+                : {})}
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
               {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
@@ -1500,6 +1519,7 @@ export function ScientSourcesPanel(props: {
         move={move}
         {...(scopes ? { onReview: () => setShowingDuplicates("merged") } : {})}
       />
+      <LibraryBackupNotice line={backup.line} />
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
       {showingRecentChanges ? (
         <RecentChangesDialog
