@@ -1509,6 +1509,36 @@ async function importFileOperationItem(input: {
   return { ...result, record };
 }
 
+const ZOTERO_NOTE_ADDED =
+  "A reference that was already in your Library had no note of yours, so its Zotero note was added to it.";
+
+/**
+ * A Zotero item skipped because its reference is certainly here already, under another
+ * origin, still gives its notes when the source here has no note. Anything more would be a
+ * merge (whose note, whose PDF), which is the person's to decide.
+ */
+async function addNoteToSourceAlreadyHere(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly duplicate: ScientSourceDuplicateAssessment;
+  readonly note: string | null;
+  readonly actor: ScientSourceActor;
+}): Promise<boolean> {
+  const { kind, matchingSourceIds } = input.duplicate;
+  const sourceId = matchingSourceIds[0];
+  if (!input.note || !sourceId || matchingSourceIds.length !== 1) return false;
+  if (kind !== "same-identifier" && kind !== "same-pdf") return false;
+  const record = await readScientSourceRecord(input.root, sourceId);
+  if (!record || record.note?.trim()) return false;
+  const updated = await updateScientSourceNote({
+    root: input.root,
+    sourceId,
+    expectedRevision: record.revision,
+    note: input.note,
+    actor: input.actor,
+  });
+  return updated.outcome === "updated";
+}
+
 async function importZoteroOperationItem(input: {
   readonly root: ScientSourceStoreLocation;
   readonly operation: ScientSourceImportOperation;
@@ -1574,7 +1604,13 @@ async function importZoteroOperationItem(input: {
       ];
       return { ...result, record, ...(note ? { note } : {}), notBrought };
     }
-    return { ...result, record };
+    const noteAdded = await addNoteToSourceAlreadyHere({
+      root: input.root,
+      duplicate: result.duplicate,
+      note: material.note,
+      actor: input.operation.actor,
+    });
+    return { ...result, record, ...(noteAdded ? { note: ZOTERO_NOTE_ADDED } : {}) };
   } finally {
     await Promise.all(files.map((file) => file.release().catch(() => undefined)));
   }

@@ -7,6 +7,7 @@ import { initializeScientProject } from "@scientfactory/project-init";
 import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
 import {
   cancelSourceImportOperation,
+  importScientSource,
   listScientSourceImports,
   listScientSourceRecords,
 } from "@scientfactory/scient-sources/store";
@@ -20,6 +21,7 @@ import {
   zoteroGroupItem,
   zoteroItem,
 } from "./Zotero.testkit.ts";
+import { zoteroItemToCandidate } from "./ZoteroItems.ts";
 import { countZoteroScopeStandalone } from "./ZoteroLibraryReader.ts";
 import type { ZoteroWebHttp } from "./ZoteroWebAdapter.ts";
 
@@ -273,6 +275,61 @@ describe("Zotero import", () => {
       },
     });
     expect(record?.attachments.map((attachment) => attachment.fileName)).toEqual(["book.pdf"]);
+  });
+
+  it("gives the note of a reference that was already here to its source, only when that has none", async () => {
+    const root = await project();
+    // Two sources that did not come from Zotero; Zotero holds the same two works, with notes.
+    const here = (key: string, doi: string, note?: string) =>
+      importScientSource({
+        root,
+        operationId: `here-${key}`,
+        candidate: {
+          ...zoteroItemToCandidate(zoteroItem(key, { title: `Work ${doi}`, DOI: doi })),
+          sourceKey: `file-${key}`,
+          externalReferences: [],
+          ...(note ? { note } : {}),
+        },
+      });
+    await here("AAAA2345", "10.1000/no-note");
+    await here("BBBB2345", "10.1000/own-note", "My own note");
+    const inZotero = (key: string, doi: string) =>
+      [
+        key,
+        {
+          item: zoteroItem(key, { title: `Work ${doi}`, DOI: doi, abstractNote: "A." }),
+          children: [
+            zoteroItem(`N${key.slice(1)}`, {
+              itemType: "note",
+              note: "<p>From <em>Zotero</em></p>",
+            }),
+          ],
+        },
+      ] as const;
+    const zotero = fakeZoteroAccess(
+      fakeZoteroTransport({
+        items: new Map([
+          inZotero("CCCC2345", "10.1000/no-note"),
+          inZotero("DDDD2345", "10.1000/own-note"),
+        ]),
+      }),
+    );
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "here",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "here", zotero });
+    const operation = await advanceSourceImport({ root, operationId: "here", zotero });
+
+    const said = new Map(operation.items.map((item) => [item.itemKey, item]));
+    expect(said.get("CCCC2345")).toMatchObject({ state: "skipped", note: expect.any(String) });
+    expect(said.get("DDDD2345")).toMatchObject({ state: "skipped" });
+    expect(said.get("DDDD2345")?.note).toBeUndefined();
+    const notes = (await listScientSourceRecords(root)).map((record) => record.note).toSorted();
+    expect(notes).toEqual(["From *Zotero*", "My own note"]);
   });
 
   it("imports a scope too large for one operation as a run of parts, each item once", async () => {
