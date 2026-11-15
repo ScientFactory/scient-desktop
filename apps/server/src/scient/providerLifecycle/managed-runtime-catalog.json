@@ -605,107 +605,107 @@
     "scient": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "0.1.10",
+      "version": "0.1.11",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "scient-agent-darwin-arm64",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.10/scient-agent-darwin-arm64",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.11/scient-agent-darwin-arm64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "9652e1cf3728450142970744d487f16cb90e8a2bb02f0b9d85b290b432b07e9a"
+            "digest": "f11e9d6dd777ddc4a2a91f19947e17cf1c15c2669e0dba803dc27041c8d36b43"
           },
-          "size": 237273232,
+          "size": 237388944,
           "compressed": {
             "format": "zstd",
-            "size": 100762542,
+            "size": 100797899,
             "checksum": {
               "algorithm": "sha256",
-              "digest": "05508772c22b85f9a6c74e551942f50b51a6619a8013c5406788ef47e27c7377"
+              "digest": "4522ac77a04ecf1f1d34e62d4100c0082c1202ad6ae396310f1a07ba96169964"
             }
           }
         },
         "darwin-x64": {
           "artifactName": "scient-agent-darwin-x64",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.10/scient-agent-darwin-x64",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.11/scient-agent-darwin-x64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "0de757f673f85aa945d63269d9883f76d9141409d5f91f3e93825b730f449206"
+            "digest": "2f958eae03768b0f4c5cafc27af26b427e35e68e2df0044bb81db778e4ebee4e"
           },
-          "size": 288565712,
+          "size": 288665040,
           "compressed": {
             "format": "zstd",
-            "size": 137124359,
+            "size": 137127016,
             "checksum": {
               "algorithm": "sha256",
-              "digest": "b57c3d7cb6f92d6ca2a989907091275151d4eb23416a9c07f6552ca982bbd342"
+              "digest": "ea232165131675e015e050b08eac4594e26c80986790e022c1f92e37b7aa2e4b"
             }
           }
         },
         "linux-arm64-glibc": {
           "artifactName": "scient-agent-linux-arm64",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.10/scient-agent-linux-arm64",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.11/scient-agent-linux-arm64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "57d7fd3f2901b30f69b8fad25bf16fac93c4328dca9bd38423a4d687857aa7c5"
+            "digest": "20a07c751ee74026667e71c95973a6cc5e5b0f5ea0bc7c12b23e887f8d540db3"
           },
-          "size": 261213176,
+          "size": 261344248,
           "compressed": {
             "format": "zstd",
-            "size": 114574610,
+            "size": 114563056,
             "checksum": {
               "algorithm": "sha256",
-              "digest": "bda1fc39c16621ef07a250fd48c202a1a60438f6a317d85426ec5edc4d0ae391"
+              "digest": "a8b36b7d1e3c29abbc5e212ec6c93d5b1d1a16fe93d87193d28e5c8c168111b8"
             }
           }
         },
         "linux-x64-glibc": {
           "artifactName": "scient-agent-linux-x64",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.10/scient-agent-linux-x64",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.11/scient-agent-linux-x64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "0a5dc2f42ec9e368a757c3ebcd2d673df9d0027a8a0204a4096b1fb996fe12c6"
+            "digest": "d2838d3dda3cd79f65f5281e879877876fa2d1b75c7cd0f16c49284c1774d4a6"
           },
-          "size": 306587824,
+          "size": 306690224,
           "compressed": {
             "format": "zstd",
-            "size": 151926260,
+            "size": 151989051,
             "checksum": {
               "algorithm": "sha256",
-              "digest": "486eed2eceb9246f525ebbf92295b44c45d480977ba9c71bdfb151128e17652a"
+              "digest": "9da9652a8ffccb06cc612a8be0b6a97f22d338a5d37130457d6fee017f891350"
             }
           }
         },
         "win32-arm64": {
           "artifactName": "scient-agent-windows-arm64.exe",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.10/scient-agent-windows-arm64.exe",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.11/scient-agent-windows-arm64.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "180e04fa82632e09819058a07454c5419cb75dfe882cd2cec77b015064c50172"
+            "digest": "dd164a8424d60d97ccbd5307f65e22692127a7afcd3166f690e19c9db8c80662"
           },
-          "size": 245873152,
+          "size": 245977088,
           "compressed": {
             "format": "zstd",
-            "size": 107447493,
+            "size": 107472225,
             "checksum": {
               "algorithm": "sha256",
-              "digest": "790fd33a5af38b19fbd726c73b23fd030ffc33d7f05d50b7a8a69709728913c8"
+              "digest": "cdbbeafc4b04363f5b75e44c219bb2e317c77e98a6971a16c0d2c74e08df3e29"
             }
           }
         },
         "win32-x64": {
           "artifactName": "scient-agent-windows-x64.exe",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.10/scient-agent-windows-x64.exe",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.11/scient-agent-windows-x64.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "9564b9d032aabf00f6e792fb7eed8c14679909855f495dd0d62e2c6ee987243f"
+            "digest": "3e3716d0e1ab5c9e942e644f8f105d36ac9ae2b389bd2784bc3da9809962578a"
           },
-          "size": 302164992,
+          "size": 302268928,
           "compressed": {
             "format": "zstd",
-            "size": 144247665,
+            "size": 144249834,
             "checksum": {
               "algorithm": "sha256",
-              "digest": "c66867f5c1cb02729e54923fc32c45656b3611a822238867d3eeb467bfc3582b"
+              "digest": "1d37d7584d527a4d7dbdcc3d5e68992d643a78e76d48f58bbd05980a2ab14d8f"
             }
           }
         }
