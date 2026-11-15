@@ -66,7 +66,19 @@ import { normalizePythonDiagnostic } from "./PythonDiagnostic.ts";
 import {
   ComputeProjectOutputObserver,
   type ComputeProjectOutputObserverPort,
+  type ComputeProjectOutputWatch,
 } from "./ComputeProjectOutputObserver.ts";
+
+const fakeProjectOutputs = (
+  collect: ComputeProjectOutputWatch["collect"],
+): ComputeProjectOutputObserverPort => ({
+  watch: (projectRoot) =>
+    Effect.succeed({
+      ready: Effect.void,
+      begin: Effect.succeed({ projectRoot, startedAt: 0, mark: null }),
+      collect,
+    }),
+});
 
 const OBSERVED_AT = "2026-08-20T09:00:00.000Z";
 const encodeUnknownJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -1827,24 +1839,22 @@ describe("interactive capture analytics", () => {
       const f = analyticsFixture();
       const test = yield* harness({
         analytics: f.service,
-        projectOutputs: {
-          begin: () => Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
-          collect: () =>
-            Effect.succeed({
-              tables: [],
-              images: [
-                {
-                  relativePath: "private-figure.png",
-                  mediaType: "image/png",
-                  contentHash: PNG_HASH,
-                  bytes: PNG_BYTES,
-                  width: 4,
-                  height: 3,
-                },
-              ],
-              warnings: [],
-            }),
-        },
+        projectOutputs: fakeProjectOutputs(() =>
+          Effect.succeed({
+            tables: [],
+            images: [
+              {
+                relativePath: "private-figure.png",
+                mediaType: "image/png",
+                contentHash: PNG_HASH,
+                bytes: PNG_BYTES,
+                width: 4,
+                height: 3,
+              },
+            ],
+            warnings: [],
+          }),
+        ),
       });
       yield* test.use(
         Effect.gen(function* () {
@@ -1871,15 +1881,13 @@ describe("interactive capture analytics", () => {
       const f = analyticsFixture();
       const test = yield* harness({
         analytics: f.service,
-        projectOutputs: {
-          begin: () => Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
-          collect: () =>
-            Effect.succeed({
-              images: [],
-              tables: [],
-              warnings: ["private project-output warning /private/path"],
-            }),
-        },
+        projectOutputs: fakeProjectOutputs(() =>
+          Effect.succeed({
+            images: [],
+            tables: [],
+            warnings: ["private project-output warning /private/path"],
+          }),
+        ),
       });
       yield* test.use(
         Effect.gen(function* () {
@@ -1903,27 +1911,24 @@ describe("interactive capture analytics", () => {
   );
 
   it.effect.each(["print(1)", "chart"])(
-    "separates known retained output from partial scan coverage for %s",
+    "separates known retained output from partial watch coverage for %s",
     (code) =>
       Effect.gen(function* () {
         const f = analyticsFixture();
         const test = yield* harness({
           analytics: f.service,
-          projectOutputs: {
-            begin: () =>
-              Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
-            collect: () =>
-              Effect.succeed({
-                images: [],
-                tables: [],
-                warnings: ["private scan detail /private/path"],
-                capture: {
-                  coverage: "partial",
-                  coverageReason: "scan-entry-limit",
-                  rejectedCount: 0,
-                },
-              }),
-          },
+          projectOutputs: fakeProjectOutputs(() =>
+            Effect.succeed({
+              images: [],
+              tables: [],
+              warnings: ["private scan detail /private/path"],
+              capture: {
+                coverage: "partial",
+                coverageReason: "watch-overflow",
+                rejectedCount: 0,
+              },
+            }),
+          ),
         });
         yield* test.use(
           Effect.gen(function* () {
@@ -1944,7 +1949,7 @@ describe("interactive capture analytics", () => {
           properties: {
             captureOutcome: code === "chart" ? "retained" : "unobserved",
             captureCoverage: "partial",
-            captureReason: "scan-entry-limit",
+            captureReason: "watch-overflow",
             rejectedOutputCount: 0,
           },
         });

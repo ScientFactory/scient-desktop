@@ -6,7 +6,7 @@
  */
 
 /** Codes the host itself sets, whatever the provider. */
-const HOST_CODES = new Set(["oom_kill", "retry_stalled"]);
+const HOST_CODES = new Set(["oom_kill", "retry_stalled", "prompt_inactivity"]);
 
 /** Scient Agent and Oh My Pi: the agent's error kinds and the OMP host's outcome reasons. */
 const OMP_CODES = new Set([
@@ -88,6 +88,49 @@ const CODEX_CODES = new Set([
   "chatpass_v2_invalid_authorization_context",
 ]);
 
+/** Antigravity: Google's RPC status names, and Scient's harness error categories. */
+const ANTIGRAVITY_CODES = new Set([
+  "CANCELLED",
+  "UNKNOWN",
+  "INVALID_ARGUMENT",
+  "DEADLINE_EXCEEDED",
+  "NOT_FOUND",
+  "ALREADY_EXISTS",
+  "PERMISSION_DENIED",
+  "RESOURCE_EXHAUSTED",
+  "FAILED_PRECONDITION",
+  "ABORTED",
+  "OUT_OF_RANGE",
+  "UNIMPLEMENTED",
+  "INTERNAL",
+  "UNAVAILABLE",
+  "DATA_LOSS",
+  "UNAUTHENTICATED",
+  "QUOTA_EXHAUSTED",
+  "mcp_load_failed",
+  "harness_error",
+]);
+
+/** Droid's turn-end reasons, and Factory's missing-subscription code. */
+const DROID_CODES = new Set([
+  "model_usage_exhausted",
+  "model_rate_limited",
+  "model_authentication_failed",
+  "model_provider_unreachable",
+  "model_provider_unavailable",
+  "model_request_rejected",
+  "prompt_rejected",
+  "no_approver_available",
+  "host_resources_exhausted",
+  "completion_persistence_failed",
+  "structured_output_missing",
+  "structured_output_invalid",
+  "structured_output_schema_invalid",
+  "process_exit",
+  "error",
+  "no_active_subscription",
+]);
+
 const HTTP_CODE = /^http_[1-5]\d\d$/u;
 const CLAUDE_API_ERROR_CODE = /^api_error_[1-5]\d\d$/u;
 
@@ -103,6 +146,10 @@ export function analyticsFailureCode(provider: string, code: unknown): string | 
       return CLAUDE_CODES.has(code) || CLAUDE_API_ERROR_CODE.test(code) ? code : undefined;
     case "codex":
       return CODEX_CODES.has(code) ? code : undefined;
+    case "antigravity":
+      return ANTIGRAVITY_CODES.has(code) ? code : undefined;
+    case "droid":
+      return DROID_CODES.has(code) ? code : undefined;
     default:
       return undefined;
   }

@@ -9,11 +9,13 @@ import {
   type NormalizationContext,
   normalizeInheritedEvent,
 } from "./contract.ts";
-import type {
-  AnalyticsEventDraft,
-  AnalyticsWorkerCommand,
-  AnalyticsWorkerInput,
-  AnalyticsWorkerResponse,
+import {
+  DELETE_DEADLINE_MS,
+  FLUSH_DEADLINE_MS,
+  type AnalyticsEventDraft,
+  type AnalyticsWorkerCommand,
+  type AnalyticsWorkerInput,
+  type AnalyticsWorkerResponse,
 } from "./workerProtocol.ts";
 
 const DEFAULT_ENDPOINT = "https://events.scientfactory.com/v1/events";
@@ -210,6 +212,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       case "diagnostics":
         record("app.diagnostics", {
           queuedCount: response.queuedCount,
+          droppedCount: response.droppedCount,
           retryCount: response.retryCount,
           deliveryClass: response.deliveryClass,
         });
@@ -286,7 +289,12 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
       if (!ready || !available) return 0;
       drain();
-      return (await request((requestId) => ({ type: "flush", requestId }))) ?? 0;
+      return (
+        (await request(
+          (requestId) => ({ type: "flush", requestId }),
+          FLUSH_DEADLINE_MS + controlTimeoutMs,
+        )) ?? 0
+      );
     },
     setConsent: async (nextConsent) => {
       consent = nextConsent;
@@ -330,7 +338,10 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
         if (!ready || !available) return false;
         // Already-posted enqueues precede deletion on the worker's message port.
         // Hold all remaining batches until its result, including persisted ACKs.
-        const result = await request((requestId) => ({ type: "delete-data", requestId }));
+        const result = await request(
+          (requestId) => ({ type: "delete-data", requestId }),
+          DELETE_DEADLINE_MS + controlTimeoutMs,
+        );
         if (result === null) {
           // An ambiguous response may follow identity rotation; never replay the
           // old memory buffer under that identity.

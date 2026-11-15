@@ -23,12 +23,15 @@ import {
   type ComputeRunRoute,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 
 import { sanitizeComputeEnvironment } from "../compute/ComputeEnvironmentPolicy.ts";
 import { pathModule } from "../compute/RuntimeDiscovery.ts";
 import type {
   ComputeProjectOutputObservation,
   ComputeProjectOutputObserverPort,
+  ComputeProjectOutputWatch,
 } from "../compute/ComputeProjectOutputObserver.ts";
 import type { FoundLanguageTool } from "../compute/ToolScan.ts";
 import { batchLogBaseline, batchLogsFor, type BatchLogBaseline } from "./batchLogOutput.ts";
@@ -341,19 +344,53 @@ function alternatives(
   });
 }
 
+const WATCH_READY_TIMEOUT = "2 seconds";
+
+interface WatchedRun {
+  readonly scope: Scope.Closeable;
+  prepared?: {
+    readonly watch: ComputeProjectOutputWatch;
+    readonly observation: ComputeProjectOutputObservation;
+  };
+}
+
 /** What a run left in the project: its pictures become results, its tables are pointed at. */
 function projectOutputCapture(observer: ComputeProjectOutputObserverPort) {
-  // Held by the run's own context, so a run that never reaches collection leaves nothing behind.
-  const observations = new WeakMap<AnalysisRunContext, ComputeProjectOutputObservation>();
+  const runs = new WeakMap<AnalysisRunContext, WatchedRun>();
+  const release = async (context: AnalysisRunContext) => {
+    const run = runs.get(context);
+    runs.delete(context);
+    // A watch still being acquired into the closed scope is released as soon as it exists.
+    if (run !== undefined) await Effect.runPromise(Scope.close(run.scope, Exit.void));
+  };
   return {
+    // The program is a child process the server cannot ask, so its writes are watched.
     prepareRun: async (context: AnalysisRunContext): Promise<void> => {
-      observations.set(context, await Effect.runPromise(observer.begin(context.source.cwd)));
+      // Owned before the first await, so a release during preparation still closes it.
+      const run: WatchedRun = { scope: Scope.makeUnsafe() };
+      runs.set(context, run);
+      try {
+        const watch = await Effect.runPromise(
+          observer.watch(context.source.cwd).pipe(Scope.provide(run.scope)),
+        );
+        const observation = await Effect.runPromise(
+          watch.ready.pipe(
+            Effect.timeoutOrElse({ duration: WATCH_READY_TIMEOUT, orElse: () => Effect.void }),
+            Effect.andThen(watch.begin),
+          ),
+        );
+        run.prepared = { watch, observation };
+      } catch (error) {
+        await release(context);
+        throw error;
+      }
     },
+    releaseRun: release,
     collectArtifacts: async (context: AnalysisRunContext): Promise<AnalysisArtifactCollection> => {
-      const observation = observations.get(context);
-      if (observation === undefined) return { candidates: [], failureMessage: null };
-      const { images, tables } = await Effect.runPromise(
-        observer.collect(observation, { maximumBytes: MAXIMUM_CAPTURED_BYTES }),
+      const prepared = runs.get(context)?.prepared;
+      if (prepared === undefined) return { candidates: [], failureMessage: null };
+      const { images, tables, capture } = await Effect.runPromise(
+        prepared.watch.collect(prepared.observation, { maximumBytes: MAXIMUM_CAPTURED_BYTES }),
       );
       const files = NodePath.join(context.artifactStagingDirectory, "files");
       await NodeFSP.mkdir(files, { recursive: true });
@@ -379,7 +416,12 @@ function projectOutputCapture(observer: ComputeProjectOutputObserverPort) {
           };
         }),
       );
-      return { candidates, writtenFiles: tables, failureMessage: null };
+      return {
+        candidates,
+        writtenFiles: tables,
+        failureMessage: null,
+        ...(capture === undefined ? {} : { coverage: capture }),
+      };
     },
   };
 }
@@ -392,7 +434,7 @@ export function makeRunTableAdapters(input: {
   readonly observer?: ComputeProjectOutputObserverPort;
 }): ReadonlyArray<AnalysisRuntimeAdapter> {
   const { environment } = sanitizeComputeEnvironment(input.environment);
-  const capture: Pick<AnalysisRuntimeAdapter, "prepareRun" | "collectArtifacts"> =
+  const capture: Pick<AnalysisRuntimeAdapter, "prepareRun" | "releaseRun" | "collectArtifacts"> =
     input.observer === undefined ? {} : projectOutputCapture(input.observer);
   const names = new Map(
     COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages).map((language) => [

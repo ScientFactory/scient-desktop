@@ -2332,3 +2332,28 @@ seams in T3's `ProjectionStore.findGuestShareThreadId` and `GuestShareService.au
 such a share, for invites and for sessions already redeemed. They protect forks already in users'
 databases, whose events still carry the copy, and need `thread.created` events to stay unpruned,
 as T3's maintenance keeps them. T3 has no copy path, so it needs no such check.
+
+## Agent tool recovery
+
+T3's background wait and `delegate_task` refuse calls an agent cannot repair, so Scient carries
+`background-wait recovery`, `delegate target recovery` and `ID recovery` seams until T3 takes the
+same behaviour (the upstream issue draft is in the analytics-failures review folder).
+
+- **Background wait.** `ProviderAdapterV2.backgroundWait` (Claude, OpenCode v2) is stamped on the
+  MCP credential in `ProviderSessionManager.prepareMcpSession`; `shownWithBackgroundWait` hides
+  `scient_background_wait` from every other provider. The adapters remember finished task ids
+  (`scientBackgroundWait.ts`, 64 per session) and return them as `settled`, and a registration
+  that matches nothing lists up to 5 running, unawaited ids through
+  `ThreadManagementBackgroundWaitError.running`. The tool, Claude note and OpenCode instruction say
+  to pass `taskIds: [id]` in a later response. The OpenCode tests' `settled` expectations sit in
+  the same seams.
+- **Delegation.** `resolveTarget` accepts the one advertised model whose slug, or last `/` segment,
+  matches the request ignoring case, and sends that slug; two matches are refused with both.
+  Refusals name the closest models or the usable instances (`DelegateTargetRecovery.ts`). The
+  capabilities description no longer promises that any catalog model works. `t3_thread_launch`
+  keeps T3's exact-model check and message.
+- **IDs.** `task_status` and `task_cancel` misses name the owning thread and its child, from
+  `orchestration_v2_projection_subagents`, each only when it is in the caller's project
+  (`DelegatedTaskOwner.ts`). The task and thread inputs say which ID they take.
+
+When T3 ships any of these, take its version and delete the matching seam, helper and test.

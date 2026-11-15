@@ -110,6 +110,7 @@ import {
   ComputeProjectOutputObserver,
   disabledLayer as disabledProjectOutputObserverLayer,
   type ComputeProjectOutputObservation,
+  type ComputeProjectOutputWatch,
 } from "./ComputeProjectOutputObserver.ts";
 import * as LocalComputeStore from "./LocalComputeStore.ts";
 import { makeComputeSessionNotifications } from "./ComputeSessionNotifications.ts";
@@ -397,6 +398,8 @@ interface LiveComputeSession {
   readonly queueRef: Ref.Ref<ComputeQueueState>;
   readonly pendingRef: Ref.Ref<ReadonlyMap<ComputeExecutionId, ComputeExecutionRecord>>;
   readonly executionSourcesRef: Ref.Ref<NonNullable<ComputeDiagnosticContext["executionSources"]>>;
+  /** Listens to the project for the runtime scope, so each execution reads what it wrote. */
+  readonly projectOutputs: ComputeProjectOutputWatch;
   readonly projectOutputObservationsRef: Ref.Ref<
     ReadonlyMap<ComputeExecutionId, ComputeProjectOutputObservation>
   >;
@@ -1824,8 +1827,8 @@ const make = Effect.gen(function* () {
 
   /**
    * File changes observed during execution do not prove producer attribution; retain project-file
-   * origin separately from runtime displays. The Scient observer owns authorized workspace
-   * scanning; language transports must not infer file authority from output paths.
+   * origin separately from runtime displays. The Scient observer decides which reported or
+   * watched files may be read; a runtime's write report is a list of candidates, not authority.
    */
   const collectProjectOutputs = Effect.fn("ComputeSessionService.collectProjectOutputs")(function* (
     live: LiveComputeSession,
@@ -1848,21 +1851,23 @@ const make = Effect.gen(function* () {
         budgets.session.ceiling - budgets.session.bytes,
       ),
     );
-    const collection = yield* projectOutputObserver.collect(observation, { maximumBytes }).pipe(
-      Effect.onExit((exit) =>
-        Exit.isFailure(exit)
-          ? observeComputeOutputs({
-              key: analyticsExecutionKey(live, event.requestId, event.generation),
-              phase: "coverage",
-              capture: {
-                coverage: "unavailable",
-                coverageReason: "observation-unavailable",
-                rejectedCount: 0,
-              },
-            })
-          : Effect.void,
-      ),
-    );
+    const collection = yield* live.projectOutputs
+      .collect(observation, { maximumBytes }, event.writes)
+      .pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? observeComputeOutputs({
+                key: analyticsExecutionKey(live, event.requestId, event.generation),
+                phase: "coverage",
+                capture: {
+                  coverage: "unavailable",
+                  coverageReason: "observation-unavailable",
+                  rejectedCount: 0,
+                },
+              })
+            : Effect.void,
+        ),
+      );
     yield* observeComputeOutputs({
       key: analyticsExecutionKey(live, event.requestId, event.generation),
       phase: "coverage",
@@ -2042,20 +2047,7 @@ const make = Effect.gen(function* () {
               execution?.result?.status !== "submitting"
             )
               return;
-            // Observation is ancillary: a slow directory cannot hold the mutation
-            // lease or indefinitely prevent Stop. Missing baseline means no inferred files.
-            const observation = yield* projectOutputObserver.begin(live.workingDirectory).pipe(
-              Effect.timeoutOrElse({
-                duration: "1 second",
-                orElse: () =>
-                  Effect.succeed({
-                    projectRoot: live.workingDirectory,
-                    baseline: null,
-                    warnings: ["Project-file observation timed out."],
-                    coverageReason: "scan-timeout" as const,
-                  }),
-              }),
-            );
+            const observation = yield* live.projectOutputs.begin;
             yield* Ref.update(live.projectOutputObservationsRef, (observations) =>
               new Map(observations).set(next.executionId, observation),
             );
@@ -2828,6 +2820,7 @@ const make = Effect.gen(function* () {
       ...(input.runOnce === undefined ? {} : { lifetime: "fresh" as const }),
     };
     const ready = yield* Deferred.make<ComputeSessionRecord, ComputeOperationError>();
+    const runtimeScope = yield* Scope.make("sequential");
     const live: LiveComputeSession = {
       workspaceReceipt,
       releaseWorkspace,
@@ -2835,7 +2828,7 @@ const make = Effect.gen(function* () {
       sessionId: input.sessionId,
       workingDirectory: projectRoot,
       adapter: binding.adapter,
-      scope: yield* Scope.make("sequential"),
+      scope: runtimeScope,
       releaseCapacity,
       channel: null,
       cleanup: null,
@@ -2850,6 +2843,9 @@ const make = Effect.gen(function* () {
       pendingRef: yield* Ref.make<ReadonlyMap<ComputeExecutionId, ComputeExecutionRecord>>(
         new Map(),
       ),
+      projectOutputs: yield* projectOutputObserver
+        .watch(projectRoot)
+        .pipe(Scope.provide(runtimeScope)),
       projectOutputObservationsRef: yield* Ref.make<
         ReadonlyMap<ComputeExecutionId, ComputeProjectOutputObservation>
       >(new Map()),

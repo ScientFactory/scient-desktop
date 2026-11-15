@@ -113,7 +113,10 @@ export const readProjectMarkdownFile = Effect.fn("MarkdownFileBundle.readProject
       .realPath(path.resolve(canonicalRoot, portable))
       .pipe(
         Effect.mapError(() =>
-          sourceError("source-unavailable", "The Markdown file was not found in this project."),
+          sourceError(
+            "source-unavailable",
+            `No file at ${requestedPath} in this project (${canonicalRoot}).`,
+          ),
         ),
       );
     if (!isInside(path, canonicalRoot, canonicalPath)) {

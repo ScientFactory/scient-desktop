@@ -813,10 +813,17 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
-        adapter: Pick<
-          ProviderAdapter.ProviderAdapterV2["Service"],
-          "driver" | "mcpSessionInjection"
-        >,
+        // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
+        adapter:
+          | Pick<
+              ProviderAdapter.ProviderAdapterV2["Service"],
+              "driver" | "mcpSessionInjection" | "backgroundWait"
+            >
+          | Pick<
+              ProviderAdapter.ProviderAdapterV2SessionRuntime,
+              "driver" | "mcpSessionInjection" | "awaitBackgroundTasks"
+            >,
+        // SCIENT-FORK:END
         // SCIENT-FORK:START Scient Extensions: receipts name sessions without a credential.
         providerSessionId: ProviderSessionId,
         cwd?: string | null,
@@ -955,6 +962,14 @@ export const layerWithOptions = (
               Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
               Effect.orElseSucceed(() => false),
             );
+            // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
+            const backgroundWait =
+              "awaitBackgroundTasks" in adapter
+                ? adapter.awaitBackgroundTasks !== undefined
+                : "backgroundWait" in adapter && adapter.backgroundWait !== undefined
+                  ? yield* adapter.backgroundWait
+                  : false;
+            // SCIENT-FORK:END
             const existing = yield* mcpSessions.read(threadId);
             if (existing !== undefined) {
               // Reserve before async validation so release cannot revoke between validation and reservation.
@@ -975,6 +990,9 @@ export const layerWithOptions = (
                 resolved.thread.providerInstanceId === providerInstanceId &&
                 // A credential issued while the lineage read failed is replaced once it works.
                 (resolved.thread.subagent === true) === subagent &&
+                // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
+                (resolved.thread.backgroundWait === true) === backgroundWait &&
+                // SCIENT-FORK:END
                 // Reuse binds the whole explicit policy, including owned Scient operations.
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
@@ -1038,6 +1056,9 @@ export const layerWithOptions = (
               browserToolsAvailable,
               capabilities,
               subagent,
+              // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
+              backgroundWait,
+              // SCIENT-FORK:END
               ...(capabilities.has("skills:read")
                 ? {
                     skillScope: {

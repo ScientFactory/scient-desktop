@@ -9,9 +9,11 @@ import { EVENT_NAME_PATTERN, eventContractViolation, isWireValue } from "./wireC
 
 const MAX_OUTBOX_EVENTS = 10_000;
 const MAX_DEAD_LETTERS = 100;
+const MAX_REJECTIONS = 20;
 
 export interface PendingAnalyticsEvent extends AnalyticsEvent {
   readonly attemptCount: number;
+  readonly rejectionCount: number;
   readonly priority: AnalyticsPriority;
 }
 
@@ -31,7 +33,9 @@ export class AnalyticsOutbox {
   readonly #database: NodeSqlite.DatabaseSync;
   readonly #insert: NodeSqlite.StatementSync;
   readonly #remove: NodeSqlite.StatementSync;
-  readonly #markFailed: NodeSqlite.StatementSync;
+  readonly #markAttempted: NodeSqlite.StatementSync;
+  readonly #markRejected: NodeSqlite.StatementSync;
+  readonly #countDropped: NodeSqlite.StatementSync;
   #size: number;
 
   constructor(filename: string) {
@@ -56,6 +60,7 @@ export class AnalyticsOutbox {
         properties_json TEXT NOT NULL,
         priority INTEGER NOT NULL DEFAULT 1 CHECK (priority IN (0, 1, 2)),
         attempt_count INTEGER NOT NULL DEFAULT 0,
+        rejection_count INTEGER NOT NULL DEFAULT 0,
         next_attempt_at INTEGER NOT NULL DEFAULT 0,
         last_error_class TEXT
       );
@@ -74,6 +79,11 @@ export class AnalyticsOutbox {
           "ALTER TABLE analytics_outbox ADD COLUMN priority INTEGER NOT NULL DEFAULT 1 CHECK (priority IN (0, 1, 2))",
         );
       }
+      if (!columns.some((column) => column.name === "rejection_count")) {
+        this.#database.exec(
+          "ALTER TABLE analytics_outbox ADD COLUMN rejection_count INTEGER NOT NULL DEFAULT 0",
+        );
+      }
       this.#database.exec(`
       DROP INDEX IF EXISTS analytics_outbox_due;
       CREATE INDEX IF NOT EXISTS analytics_outbox_due_priority
@@ -86,12 +96,23 @@ export class AnalyticsOutbox {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       this.#remove = this.#database.prepare("DELETE FROM analytics_outbox WHERE id = ?");
-      this.#markFailed = this.#database.prepare(
+      this.#markAttempted = this.#database.prepare(
         `UPDATE analytics_outbox
           SET attempt_count = attempt_count + 1,
+              last_error_class = ?
+        WHERE id = ?`,
+      );
+      this.#markRejected = this.#database.prepare(
+        `UPDATE analytics_outbox
+          SET attempt_count = attempt_count + 1,
+              rejection_count = rejection_count + 1,
               next_attempt_at = ?,
               last_error_class = ?
         WHERE id = ?`,
+      );
+      this.#countDropped = this.#database.prepare(
+        `INSERT INTO analytics_meta (key, value) VALUES ('dropped_count', ?)
+         ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + excluded.value`,
       );
       const row = this.#database
         .prepare("SELECT COUNT(*) AS count FROM analytics_outbox")
@@ -163,6 +184,7 @@ export class AnalyticsOutbox {
           )
           .run(excess);
         trimmedCount = Number(trimmed.changes);
+        if (trimmedCount > 0) this.#countDropped.run(trimmedCount);
       }
       this.#database.exec("COMMIT");
       this.#size += inserted - trimmedCount;
@@ -174,12 +196,13 @@ export class AnalyticsOutbox {
   }
 
   pending(limit: number, now: number): ReadonlyArray<PendingAnalyticsEvent> {
-    // Expired events must not retry forever or outlive the diagnostic policy.
+    // Only rejections and age retire an event: a network outage must not.
     const expired = this.#database
       .prepare(`SELECT id, name FROM analytics_outbox
-      WHERE attempt_count >= 20 OR julianday(occurred_at) < julianday(?, 'unixepoch')
+      WHERE rejection_count >= ? OR julianday(occurred_at) < julianday(?, 'unixepoch')
         OR (privacy_level = 'diagnostic' AND julianday(occurred_at) < julianday(?, 'unixepoch'))`)
       .all(
+        MAX_REJECTIONS,
         (now - 180 * 86400000) / 1000,
         (now - 30 * 86400000) / 1000,
       ) as unknown as ReadonlyArray<{ id: string; name: string }>;
@@ -192,7 +215,7 @@ export class AnalyticsOutbox {
     const rows = this.#database
       .prepare(
         `SELECT id, name, distinct_id, session_id, occurred_at, privacy_level,
-                consent_level, properties_json, attempt_count, priority
+                consent_level, properties_json, attempt_count, rejection_count, priority
            FROM analytics_outbox
           WHERE next_attempt_at <= ?
           ORDER BY priority, occurred_at, id
@@ -208,6 +231,7 @@ export class AnalyticsOutbox {
       readonly consent_level: AnalyticsEvent["consent_level"];
       readonly properties_json: string;
       readonly attempt_count: number;
+      readonly rejection_count: number;
       readonly priority: number;
     }>;
     const events: PendingAnalyticsEvent[] = [];
@@ -247,6 +271,7 @@ export class AnalyticsOutbox {
           consent_level: row.consent_level,
           properties: parsed as AnalyticsEvent["properties"],
           attemptCount: row.attempt_count,
+          rejectionCount: row.rejection_count,
           priority: analyticsPriority(row.priority),
         });
       } catch {
@@ -273,6 +298,7 @@ export class AnalyticsOutbox {
         insert.run(row.id, EVENT_NAME_PATTERN.test(row.name) ? row.name : "unknown", errorClass);
         removed += Number(this.#remove.run(row.id).changes);
       }
+      if (removed > 0) this.#countDropped.run(removed);
       this.#database
         .prepare(
           `DELETE FROM analytics_dead_letter
@@ -305,12 +331,40 @@ export class AnalyticsOutbox {
     }
   }
 
-  markFailed(ids: ReadonlyArray<string>, errorClass: string, retryAt: number): void {
+  /** A transport failure: the event stays due and keeps its rejection budget. */
+  markAttempted(ids: ReadonlyArray<string>, errorClass: string): void {
+    this.#update(ids, (id) => this.#markAttempted.run(errorClass.slice(0, 80), id));
+  }
+
+  /** The gateway refused the batch: hold these events until `retryAt`. */
+  markRejected(ids: ReadonlyArray<string>, errorClass: string, retryAt: number): void {
+    this.#update(ids, (id) => this.#markRejected.run(retryAt, errorClass.slice(0, 80), id));
+  }
+
+  #update(ids: ReadonlyArray<string>, apply: (id: string) => void): void {
     if (ids.length === 0) return;
     this.#database.exec("BEGIN IMMEDIATE");
     try {
-      for (const id of ids) this.#markFailed.run(retryAt, errorClass.slice(0, 80), id);
+      for (const id of ids) apply(id);
       this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /** Events removed undelivered (retired, invalid or trimmed) since the last call. */
+  takeDroppedCount(): number {
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.#database
+        .prepare(
+          "SELECT CAST(value AS INTEGER) AS count FROM analytics_meta WHERE key = 'dropped_count'",
+        )
+        .get() as { readonly count: number } | undefined;
+      this.#database.prepare("DELETE FROM analytics_meta WHERE key = 'dropped_count'").run();
+      this.#database.exec("COMMIT");
+      return row?.count ?? 0;
     } catch (error) {
       this.#database.exec("ROLLBACK");
       throw error;
@@ -346,7 +400,7 @@ export class AnalyticsOutbox {
         DELETE FROM analytics_outbox;
         DELETE FROM analytics_dead_letter;
         DELETE FROM analytics_meta
-          WHERE key IN ('installation_id', 'installation_token');
+          WHERE key IN ('installation_id', 'installation_token', 'dropped_count');
       `);
       this.#database.exec("COMMIT");
       this.#size = 0;

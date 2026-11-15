@@ -61,10 +61,10 @@ export interface ProjectPdfOutputIntent {
 const boundaryError = (code: ProjectDocumentBuildBoundaryError["code"], message: string) =>
   new ProjectDocumentBuildBoundaryError({ code, message });
 
-export const isWindowsAbsolutePath = (value: string): boolean =>
+const isWindowsAbsolutePath = (value: string): boolean =>
   /^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("\\\\");
 
-export const isInsideRoot = (root: string, candidate: string, path: Path.Path): boolean => {
+const isInsideRoot = (root: string, candidate: string, path: Path.Path): boolean => {
   const relativePath = path.relative(root, candidate);
   return (
     relativePath === "" ||
@@ -73,6 +73,138 @@ export const isInsideRoot = (root: string, candidate: string, path: Path.Path): 
       !path.isAbsolute(relativePath))
   );
 };
+
+/** The path inside `root` as `/`-separated project-relative text, or undefined outside it. */
+const relativeInside = (root: string, candidate: string, path: Path.Path): string | undefined =>
+  isInsideRoot(root, candidate, path) && path.relative(root, candidate) !== ""
+    ? path.relative(root, candidate).split(path.sep).join("/")
+    : undefined;
+
+/**
+ * Project-relative text for a requested path, or undefined outside the project. An absolute path
+ * is compared with the root as bound and as resolved (macOS `/var` is `/private/var`) through its
+ * nearest existing ancestor; the components after it stay as written, so a link stays the link.
+ */
+export const projectRelativePath = Effect.fn("ProjectDocumentBuild.projectRelativePath")(function* (
+  roots: ReadonlyArray<string>,
+  requestedPath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (requestedPath.includes("\0")) return undefined;
+  if (!path.isAbsolute(requestedPath))
+    return isWindowsAbsolutePath(requestedPath) ? undefined : requestedPath;
+  for (const root of roots) {
+    const relative = relativeInside(root, requestedPath, path);
+    if (relative !== undefined) return relative;
+  }
+  let ancestor = path.dirname(requestedPath);
+  let canonicalAncestor = yield* fileSystem.realPath(ancestor).pipe(Effect.option);
+  while (Option.isNone(canonicalAncestor)) {
+    const next = path.dirname(ancestor);
+    if (next === ancestor) return undefined;
+    ancestor = next;
+    canonicalAncestor = yield* fileSystem.realPath(ancestor).pipe(Effect.option);
+  }
+  const resolved = path.join(canonicalAncestor.value, path.relative(ancestor, requestedPath));
+  for (const root of roots) {
+    const relative = relativeInside(root, resolved, path);
+    if (relative !== undefined) return relative;
+  }
+  return undefined;
+});
+
+export class ProjectDocumentSourceError extends Schema.TaggedError<ProjectDocumentSourceError>()(
+  "ProjectDocumentSourceError",
+  {
+    code: Schema.Literals(["project-changed", "invalid-source-path", "source-not-found"]),
+    message: NonEmptyMessage,
+  },
+) {}
+
+export interface ResolvedProjectSourceFile {
+  readonly canonicalRoot: string;
+  readonly canonicalPath: string;
+  /** Project-relative and `/`-separated, after links resolve. */
+  readonly sourcePath: string;
+}
+
+/**
+ * The one source lookup for document builds: a project-relative or in-project absolute path to an
+ * existing file with one of `extensions`, still inside the project once links resolve.
+ */
+export const resolveProjectSourceFile = Effect.fn("ProjectDocumentBuild.resolveSourceFile")(
+  function* (
+    root: string,
+    requestedPath: string,
+    source: { readonly label: string; readonly extensions: ReadonlyArray<string> },
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const sourceError = (code: ProjectDocumentSourceError["code"], message: string) =>
+      new ProjectDocumentSourceError({ code, message });
+    const canonicalRoot = yield* fileSystem
+      .realPath(root)
+      .pipe(
+        Effect.mapError(() =>
+          sourceError("project-changed", "The current project workspace is unavailable."),
+        ),
+      );
+    const relativePath = yield* projectRelativePath([root, canonicalRoot], requestedPath);
+    if (relativePath === undefined) {
+      return yield* sourceError(
+        "invalid-source-path",
+        `sourcePath ${requestedPath} is not inside this project (${canonicalRoot}). Pass a path inside it, relative to it or absolute.`,
+      );
+    }
+    if (
+      relativePath.split(/[\\/]/u).some((segment) => segment === "..") ||
+      !source.extensions.includes(path.extname(relativePath).toLowerCase())
+    ) {
+      return yield* sourceError(
+        "invalid-source-path",
+        `sourcePath must identify a project ${source.extensions.join(", ")} file.`,
+      );
+    }
+    const canonicalPath = yield* fileSystem
+      .realPath(path.resolve(canonicalRoot, relativePath))
+      .pipe(
+        Effect.mapError(() =>
+          sourceError(
+            "source-not-found",
+            `No file at ${requestedPath} in this project (${canonicalRoot}). Save the ${source.label} source there first, or pass its path relative to that folder.`,
+          ),
+        ),
+      );
+    if (!isInsideRoot(canonicalRoot, canonicalPath, path) || canonicalPath === canonicalRoot) {
+      return yield* sourceError(
+        "invalid-source-path",
+        `The ${source.label} source must remain inside the current project workspace.`,
+      );
+    }
+    const info = yield* fileSystem
+      .stat(canonicalPath)
+      .pipe(
+        Effect.mapError(() =>
+          sourceError(
+            "source-not-found",
+            `The ${source.label} source file could not be inspected.`,
+          ),
+        ),
+      );
+    if (info.type !== "File") {
+      return yield* sourceError(
+        "source-not-found",
+        `The ${source.label} source path does not identify a file.`,
+      );
+    }
+    return {
+      canonicalRoot,
+      canonicalPath,
+      sourcePath: path.relative(canonicalRoot, canonicalPath).split(path.sep).join("/"),
+    } satisfies ResolvedProjectSourceFile;
+  },
+);
 
 export const resolveDocumentBuildProject = Effect.fn("ProjectDocumentBuild.resolveProject")(
   function* () {
@@ -113,17 +245,21 @@ export const assertCurrentDocumentBuildProject = Effect.fn(
 });
 
 export const resolveProjectPdfOutput = Effect.fn("ProjectDocumentBuild.resolvePdfOutput")(
-  function* (root: string, requestedPath: string) {
+  function* (root: string, outputPathInput: string) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    if (
-      requestedPath.includes("\0") ||
-      path.isAbsolute(requestedPath) ||
-      isWindowsAbsolutePath(requestedPath)
-    ) {
+    const canonicalRoot = yield* fileSystem
+      .realPath(root)
+      .pipe(
+        Effect.mapError(() =>
+          boundaryError("project-changed", "The current project workspace is unavailable."),
+        ),
+      );
+    const requestedPath = yield* projectRelativePath([root, canonicalRoot], outputPathInput);
+    if (requestedPath === undefined) {
       return yield* boundaryError(
         "invalid-output-path",
-        "outputPath must be relative to the current Scient project.",
+        `outputPath ${outputPathInput} is not inside this project (${canonicalRoot}). Pass a path inside it, relative to it or absolute.`,
       );
     }
     const segments = requestedPath.split(/[\\/]/u);
@@ -133,17 +269,10 @@ export const resolveProjectPdfOutput = Effect.fn("ProjectDocumentBuild.resolvePd
     ) {
       return yield* boundaryError(
         "invalid-output-path",
-        "outputPath must identify a project-relative .pdf file.",
+        "outputPath must identify a project .pdf file.",
       );
     }
 
-    const canonicalRoot = yield* fileSystem
-      .realPath(root)
-      .pipe(
-        Effect.mapError(() =>
-          boundaryError("project-changed", "The current project workspace is unavailable."),
-        ),
-      );
     const absolutePath = path.resolve(canonicalRoot, requestedPath);
     if (!isInsideRoot(canonicalRoot, absolutePath, path) || absolutePath === canonicalRoot) {
       return yield* boundaryError(
