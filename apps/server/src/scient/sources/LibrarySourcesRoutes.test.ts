@@ -37,14 +37,17 @@ import { ServerConfig } from "../../config.ts";
 import { beginBibliographyFileImport } from "./BibliographyFileAdapter.ts";
 import { libraryImportPinInstance } from "./LibraryImportPins.ts";
 import {
+  bulkUpdateLibrarySources,
   exportLibrarySources,
   isLibraryOrganizeAction,
   libraryDuplicates,
   libraryImportTarget,
   libraryOverview,
+  libraryRecentChanges,
   libraryReview,
   librarySourceDetail,
   organizeLibrarySources,
+  removeLibrarySource,
   updateLibraryPersonalNote,
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
@@ -233,6 +236,45 @@ describe("Library routes on the library backend", () => {
       expect(overview.recordDiagnostics).toEqual([
         { sourceId: untitled.sourceId, diagnostics: [expect.objectContaining({ field: "title" })] },
       ]);
+    }),
+  );
+
+  it.effect("lists recent changes: a bulk edit sent in two requests as one, then the removal", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const { a, b, c } = yield* Effect.promise(() => threeSources(fixture));
+      const store = yield* storeFor(fixture, "write");
+      const tag = (sourceIds: ReadonlyArray<string>) =>
+        bulkUpdateLibrarySources(store, {
+          change: { sourceIds: [...sourceIds], addTags: ["Screened"] },
+          partOf: "edit_one",
+        });
+      yield* Effect.promise(async () => {
+        await tag([a.sourceId]);
+        await tag([b.sourceId]);
+        const removed = await removeLibrarySource(store, {
+          sourceId: a.sourceId,
+          expectedRevision: a.revision + 1,
+        });
+        expect(removed.outcome).toBe("removed");
+
+        const listed = await libraryRecentChanges(store, {});
+        expect(listed.more).toBe(false);
+        expect(listed.changes).toMatchObject([
+          { kind: "trash", id: a.sourceId, by: "user" },
+          {
+            kind: "bulk-edit",
+            by: "user",
+            sourceCount: 2,
+            tagsAdded: ["Screened"],
+            parts: [{ sourceCount: 1 }, { sourceCount: 1 }],
+            undone: false,
+          },
+          // The fixture's own removal, the oldest.
+          { kind: "trash", id: c.sourceId, title: "Fluid balance" },
+        ]);
+        expect((await libraryRecentChanges(store, { limit: 1 })).more).toBe(true);
+      });
     }),
   );
 

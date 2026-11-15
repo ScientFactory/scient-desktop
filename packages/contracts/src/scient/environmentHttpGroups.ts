@@ -68,7 +68,9 @@ import {
   ScientSourceRevisionsResult,
   ScientSourcesPermanentDeletionRequest,
   ScientSourcePermanentDeletionResult,
+  ScientSourcesRecentChangesRequest,
   ScientSourcesTrashRequest,
+  ScientLibraryRecentChanges,
   ScientSourceTrashListing,
   ScientSourcesAdvanceImportRequest,
   ScientSourcesBulkResult,
@@ -434,6 +436,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesAddByIdentifierRequest,
         success: ScientSourcesAddByIdentifierResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("recentChanges", "/api/scient/sources/recent-changes", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesRecentChangesRequest,
+        success: ScientLibraryRecentChanges,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

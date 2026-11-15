@@ -26,6 +26,7 @@ import type {
   ScientSourceRevertRequest,
   ScientSourceRevisionsRequest,
   ScientSourcesPermanentDeletionRequest,
+  ScientSourcesRecentChangesRequest,
   ScientSourcesTrashRequest,
   ScientSourcesZoteroRefreshRequest,
   ScientSourcesZoteroSendRequest,
@@ -397,6 +398,24 @@ export const addEnvironmentScientSourcesByIdentifier = Effect.fn(
           ...(input.pin !== undefined ? { pin: input.pin } : {}),
         },
       }),
+  });
+});
+
+export const listEnvironmentScientSourceRecentChanges = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientSourceRecentChanges",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourcesRecentChangesRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.recentChanges(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.recentChanges({ headers, payload }),
   });
 });
 

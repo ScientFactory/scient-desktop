@@ -1,5 +1,6 @@
 import {
   MAX_SOURCE_IDENTIFIER_BATCH,
+  ScientLibraryRecentChanges,
   ScientSourceIdentifierAddItem,
   ScientSourceEditableMetadata,
   ScientSourceImportOperation,
@@ -798,6 +799,8 @@ export type ScientSourcesMoveStatus = typeof ScientSourcesMoveStatus.Type;
 export const ScientSourcesBulkUpdateRequest = Schema.Struct({
   root: NonEmptyString,
   change: ScientSourcesBulkRequestChange,
+  /** The same value on every request of one edit sent in parts, so it is listed as one. */
+  partOf: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(80))),
 });
 export type ScientSourcesBulkUpdateRequest = typeof ScientSourcesBulkUpdateRequest.Type;
 export const ScientSourcesAddByIdentifierRequest = Schema.Struct({
@@ -816,6 +819,19 @@ export type ScientSourcesAddByIdentifierResult = typeof ScientSourcesAddByIdenti
 
 export const ScientSourcesTrashRequest = Schema.Struct({ root: NonEmptyString });
 export type ScientSourcesTrashRequest = typeof ScientSourcesTrashRequest.Type;
+
+/**
+ * The Library's recent changes that can be taken back or looked at; `limit` rows, 50 if absent.
+ * With `sourcesOfImport` (an import row's ID) the answer is only that import's sources that are
+ * in the Library now, as `importSourceIds`.
+ */
+export const ScientSourcesRecentChangesRequest = Schema.Struct({
+  root: NonEmptyString,
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 400 }))),
+  sourcesOfImport: Schema.optionalKey(NonEmptyString),
+});
+export type ScientSourcesRecentChangesRequest = typeof ScientSourcesRecentChangesRequest.Type;
+export type ScientSourcesRecentChange = ScientLibraryRecentChanges["changes"][number];
 
 export const ScientSourceRestoreRequest = Schema.Struct({
   root: NonEmptyString,
@@ -1031,6 +1047,7 @@ export {
   ScientSystematicReviewChangeResult,
   ScientSystematicReviewList,
   ScientSourcePermanentDeletionResult,
+  ScientLibraryRecentChanges,
   ScientSourceRestoreResult,
   ScientSourceTrashListing,
   ScientSourceZoteroRefreshField,

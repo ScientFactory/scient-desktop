@@ -76,6 +76,7 @@ import {
 import { startManagedBibliographySync } from "./ManagedBibliography.ts";
 import {
   bulkUpdateLibrarySources,
+  libraryRecentChanges,
   isLibraryOrganizeAction,
   changeLibraryReview,
   changeLibraryReviewConflict,
@@ -537,6 +538,14 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               }
               return { results };
             },
+          ),
+        )
+        .handle("recentChanges", (args) =>
+          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
+            // A project that keeps its own sources has the toast's Undo and its Trash only.
+            library
+              ? libraryRecentChanges(library, args.payload)
+              : Promise.resolve({ changes: [], more: false }),
           ),
         )
         .handle("trash", (args) =>
