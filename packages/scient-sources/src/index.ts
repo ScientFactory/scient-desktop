@@ -1,6 +1,7 @@
 export * from "./abstract.ts";
 export * from "./categories.ts";
 export * from "./citationKeys.ts";
+export * from "./citationLocators.ts";
 export * from "./connectorIdentifiers.ts";
 export * from "./duplicates.ts";
 export * from "./editable.ts";
