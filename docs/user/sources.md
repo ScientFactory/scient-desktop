@@ -570,6 +570,10 @@ its details and earlier versions, your personal note, read and star, PDFs,
 highlights, and the collections it was in. It runs in the background and the
 Library says how far it is.
 
+Highlights come with a PDF that is new here. If this Library already has that
+PDF, its own highlights stay, and the message counts the source among those
+that differ.
+
 It never changes a source that is already in your Library. Sources that both
 Libraries hold and that differ, for example a note you wrote on the other
 computer, are counted in the message at the end and left as they are here. So
@@ -580,15 +584,22 @@ You can add from the same backup again, or from a newer one, as often as you
 like: what is already here is skipped.
 
 **Undo** is in **Recent changes**. It moves the sources that were added to the
-Trash, but only those that are still exactly as they arrived; one you have
-since edited, read, starred or merged stays.
+Trash, but only those you have not used since. A source you edited, read or
+starred, one a project now cites, one you put in a collection, or one whose
+PDF you highlighted stays.
 
-To keep two computers in step by hand:
+If a paper is in both Libraries and differs, adding from the other one does
+not bring the other version here, and Scient does not yet show you which
+papers those are; it only counts them. So do not use **Restore from a
+backup…** to make one computer equal to the other after you have worked on
+both: the restore replaces that Library, and a note you wrote only there would
+no longer be in it (it stays in the folder the restore keeps). Add from the
+other Library in both directions instead; that brings every new source across
+and changes nothing else.
 
-- If you work on one at a time, back up there and **Restore from a backup…**
-  here. That makes this Library exactly the other one.
-- If you added sources on both, back up one and **Add from another Library…**
-  on the other. Then back that one up and restore it on the first.
+If you always finish on one computer before you start on the other, restoring
+is the simple way: back up there, restore here, and this Library is exactly
+the other one.
 
 Only a backup folder, or a Library that a restore set aside, can be added
 from. A Library that another Scient is using cannot; back it up there first.

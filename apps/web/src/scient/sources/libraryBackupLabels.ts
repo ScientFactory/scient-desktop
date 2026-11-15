@@ -90,6 +90,7 @@ export const JOIN_LABELS = {
   done: "Sources added from the other Library",
   nothingNew: "Nothing new in the other Library",
   failed: "Nothing was added from the other Library",
+  stopped: "Adding from the other Library stopped part way",
 } as const;
 
 const sourcesWord = (value: number) => (value === 1 ? "1 source" : `${count(value)} sources`);
@@ -97,8 +98,7 @@ const sourcesWord = (value: number) => (value === 1 ? "1 source" : `${count(valu
 /** The one line shown while sources are added. */
 export function joinRunningLabel(status: ScientSourcesJoinStatus): string | null {
   if (status.state !== "running") return null;
-  const progress =
-    status.total > 0 ? `: ${count(status.done)} of ${count(status.total)} added` : "";
+  const progress = status.total > 0 ? `: ${count(status.done)} of ${count(status.total)} done` : "";
   return `Adding sources from the other Library${progress}. Nothing that is in this Library is changed.`;
 }
 
@@ -120,7 +120,17 @@ export function joinDoneLabel(status: Extract<ScientSourcesJoinStatus, { state: 
     status.skipped > 0
       ? `${sourcesWord(status.skipped)} could not be added; adding again tries ${status.skipped === 1 ? "it" : "them"} once more.`
       : "",
+    status.missingPdfs > 0
+      ? `${status.missingPdfs === 1 ? "One PDF was" : `${count(status.missingPdfs)} PDFs were`} not in the other Library's folder and did not come.`
+      : "",
     status.added > 0 ? "Recent changes lists this, with Undo." : "",
   ];
   return lines.filter(Boolean).join(" ");
+}
+
+/** What to say when adding stopped with an error after some sources had arrived. */
+export function joinStoppedLabel(
+  status: Extract<ScientSourcesJoinStatus, { state: "failed" }>,
+): string {
+  return `${sourcesWord(status.added)} ${status.added === 1 ? "was" : "were"} added before it stopped: ${status.reason} Recent changes lists what was added, with Undo; adding again brings the rest.`;
 }

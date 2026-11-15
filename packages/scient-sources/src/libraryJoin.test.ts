@@ -15,8 +15,12 @@ import {
   openScientLibraryJoinSource,
   undoScientLibraryJoin,
 } from "./libraryJoin.ts";
+import { readScientLibraryDistinctPairs } from "./libraryExclusions.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
+import { finishScientLibraryRestore, prepareScientLibraryRestore } from "./libraryRestore.ts";
 import {
+  deleteScientSourcesPermanently,
+  detachScientSourcePdf,
   importScientSource,
   listScientSourceRecords,
   readScientSourceRecord,
@@ -430,6 +434,246 @@ describe("adding what another Library holds", () => {
     });
   });
 
+  it("does not add a paper that several sources here could be, nor a second rebuilt copy", async () => {
+    // Two sources here share a DOI (one is a raw copy of the other under its own ID), so the
+    // import's rule cannot choose between them for a third.
+    const ours = await built([{ op: "add", label: "twin", pdf: false }]);
+    const twin = workOf(ours.model, "twin").sourceId;
+    const records = NodePath.join(ours.scenario.libraryRoot, "records");
+    const copyId = `source_${"c".repeat(32)}`;
+    const original = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(records, `${twin}.json`), "utf8"),
+    ) as Record<string, unknown>;
+    await NodeFSP.writeFile(
+      NodePath.join(records, `${copyId}.json`),
+      JSON.stringify({ ...original, sourceId: copyId }),
+    );
+    const theirs = await built([{ op: "add", label: "twin", pdf: false }]);
+    // Each Library rebuilt the same project source under its own ID; there it was retitled.
+    const rebuilt = (library: typeof ours.library, title: string) =>
+      importScientSource({
+        root: library,
+        operationId: `op_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+        candidate: {
+          sourceKey: `rebuilt-${title}`,
+          type: "article",
+          customType: null,
+          title,
+          creators: [],
+          issuedRaw: null,
+          issuedYear: null,
+          identifiers: [],
+          abstract: null,
+          containerTitle: null,
+          publisher: null,
+          volume: null,
+          issue: null,
+          pages: null,
+          language: null,
+          url: null,
+          tags: [],
+          externalReferences: [],
+          fieldProvenance: [],
+          pdfAvailable: false,
+          pdfFileName: null,
+          pdfAttachmentCount: 0,
+        },
+        hydratedFromProjectSourceId: "source_project_original",
+        actor: "user",
+        intake: "file",
+      }).then((result) => result.record!);
+    const here = await rebuilt(ours.library, "The paper as the project saved it");
+    const there = await rebuilt(theirs.library, "The paper, title corrected there");
+    const backup = await backUp(theirs.scenario);
+    const join = () => joinScientLibrary({ library: ours.library, folder: backup, actor: "user" });
+
+    expect(await join()).toMatchObject({ outcome: "joined", added: 0, different: 2 });
+    const [first] = await listScientLibraryJoins(ours.library);
+    const by = (otherSourceId: string) =>
+      first!.different.find((entry) => entry.otherSourceId === otherSourceId);
+    // Several candidates: none is named, and it is not added.
+    expect(by(workOf(theirs.model, "twin").sourceId)).toMatchObject({
+      sourceId: null,
+      relation: "possibly-same",
+    });
+    expect(by(there.sourceId)).toMatchObject({
+      sourceId: here.sourceId,
+      relation: "rebuilt-here",
+      parts: ["details"],
+    });
+
+    // Deleted for good here, the other Library's copy of that project source stays out.
+    await removeScientSource({
+      root: ours.library,
+      sourceId: here.sourceId,
+      expectedRevision: here.revision,
+      actor: "user",
+    });
+    await deleteScientSourcesPermanently({ root: ours.library });
+    expect(await join()).toMatchObject({ outcome: "joined", added: 0, removedHere: 1 });
+    expect(await readScientSourceRecord(ours.library, there.sourceId)).toBeNull();
+  });
+
+  it("leaves on Undo a source that a project uses, that was filed or highlighted since", async () => {
+    const theirs = await built(
+      ["a", "b", "c", "d"].map((label) => ({ op: "add", label, pdf: true }) as Step),
+    );
+    const id = (label: string) => workOf(theirs.model, label).sourceId;
+    const backup = await backUp(theirs.scenario);
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    const joined = await joinScientLibrary({
+      library: ours.library,
+      folder: backup,
+      actor: "user",
+    });
+    if (joined.outcome !== "joined") throw new Error(`Not joined: ${joined.outcome}`);
+    expect(joined.added).toBe(4);
+
+    // a: a project pinned it. b: it was put in a collection. c: its PDF was highlighted.
+    const root = ours.scenario.libraryRoot;
+    await NodeFSP.mkdir(NodePath.join(root, "projects"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(root, "projects", "instance_1.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        instanceId: "instance_1",
+        sources: [{ projectSourceId: id("a"), sourceId: id("a") }],
+      }),
+    );
+    await createScientSourceCollection({
+      root: ours.library,
+      name: "Mine",
+      sourceIds: [id("b")],
+      actor: "user",
+    });
+    const pdf = workOf(theirs.model, "c").pdfs[0]!.sha256;
+    await NodeFSP.mkdir(NodePath.join(root, "annotations", "v1"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(root, "annotations", "v1", `${pdf}.json`), "{}");
+
+    expect(
+      await undoScientLibraryJoin({ library: ours.library, joinId: joined.joinId, actor: "user" }),
+    ).toEqual({ outcome: "undone", trashed: 1, left: 3 });
+    expect(await ids(ours.scenario)).toEqual(
+      [id("a"), id("b"), id("c"), workOf(ours.model, "mine").sourceId].toSorted(),
+    );
+  });
+
+  it("keeps apart here what the other Library unmerged, and brings a PDF only an earlier version names", async () => {
+    const theirs = await built([
+      { op: "add", label: "x", pdf: false },
+      { op: "add", label: "y", pdf: false },
+      { op: "merge", survivor: "x", loser: "y" },
+      { op: "undoMerge", loser: "y" },
+      { op: "add", label: "p", pdf: true },
+    ]);
+    const id = (label: string) => workOf(theirs.model, label).sourceId;
+    // The PDF is detached there; its earlier version still names it and the file is still kept.
+    const withPdf = (await readScientSourceRecord(theirs.library, id("p")))!;
+    const attachment = withPdf.attachments[0]!;
+    await detachScientSourcePdf({
+      root: theirs.library,
+      sourceId: id("p"),
+      attachmentId: attachment.attachmentId,
+      expectedRevision: withPdf.revision,
+      actor: "user",
+    });
+    const backup = await backUp(theirs.scenario);
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+
+    expect(
+      await joinScientLibrary({ library: ours.library, folder: backup, actor: "user" }),
+    ).toMatchObject({ outcome: "joined", added: 3 });
+    expect(
+      (await readScientLibraryDistinctPairs(ours.scenario.libraryRoot)).map((pair) =>
+        [...pair.sourceIds].toSorted(),
+      ),
+    ).toEqual([[id("x"), id("y")].toSorted()]);
+    expect((await readScientSourceRecord(ours.library, id("p")))?.attachments).toEqual([]);
+    await expect(
+      NodeFSP.stat(
+        NodePath.join(
+          ours.scenario.libraryRoot,
+          "files",
+          "sha256",
+          attachment.sha256.slice(0, 2),
+          `${attachment.sha256}.pdf`,
+        ),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("files a source that arrived just before a join stopped, and keeps the parent of a kept collection", async () => {
+    const theirs = await built([
+      { op: "add", label: "a", pdf: false },
+      { op: "add", label: "b", pdf: false },
+    ]);
+    const id = (label: string) => workOf(theirs.model, label).sourceId;
+    const parent = await createScientSourceCollection({
+      root: theirs.library,
+      name: "Thesis",
+      actor: "user",
+    });
+    await createScientSourceCollection({
+      root: theirs.library,
+      name: "Chapter 3",
+      parentCollectionId: parent.collection!.collectionId,
+      sourceIds: [id("a"), id("b")],
+      actor: "user",
+    });
+    const backup = await backUp(theirs.scenario);
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    const members = async () =>
+      (await readScientSourcesOrganization(ours.library)).collections
+        .find((entry) => entry.name === "Chapter 3")
+        ?.sourceIds.toSorted();
+
+    // Killed after the first record was created, before it was put in its collection.
+    let organised = 0;
+    await expect(
+      joinScientLibrary({
+        library: ours.library,
+        folder: backup,
+        actor: "user",
+        faults: {
+          beforeOrganise: () => {
+            organised += 1;
+            throw new Error("Stopped before organising (test fault).");
+          },
+        },
+      }),
+    ).rejects.toThrow("test fault");
+    expect(organised).toBe(1);
+    expect(await ids(ours.scenario)).toHaveLength(2);
+    expect(await members()).toEqual([]);
+
+    // The next join settles the stopped one first: its source is filed, the other one added.
+    const joined = await joinScientLibrary({
+      library: ours.library,
+      folder: backup,
+      actor: "user",
+    });
+    if (joined.outcome !== "joined") throw new Error(`Not joined: ${joined.outcome}`);
+    expect(joined.added).toBe(1);
+    expect(await members()).toEqual([id("a"), id("b")].toSorted());
+
+    // Undo of the second join: its one source is starred, so it and its collections stay.
+    const second = (await listScientLibraryJoins(ours.library)).find(
+      (entry) => entry.joinId === joined.joinId,
+    )!;
+    expect(second).toMatchObject({ state: "done", added: 1 });
+    const added = (await ids(ours.scenario)).filter(
+      (sourceId) => sourceId === id("a") || sourceId === id("b"),
+    );
+    await setScientLibraryReadingState({ library: ours.library, sourceIds: added, starred: true });
+    expect(
+      await undoScientLibraryJoin({ library: ours.library, joinId: joined.joinId, actor: "user" }),
+    ).toMatchObject({ outcome: "undone", trashed: 0 });
+    const names = (await readScientSourcesOrganization(ours.library)).collections.map(
+      (entry) => entry.name,
+    );
+    expect(names.toSorted()).toEqual(["Chapter 3", "Thesis"]);
+  });
+
   it("reads only a finished backup or a Library its own restore moved aside", async () => {
     const theirs = await built([{ op: "add", label: "a", pdf: true }]);
     const ours = await built([{ op: "add", label: "mine", pdf: false }]);
@@ -448,13 +692,24 @@ describe("adding what another Library holds", () => {
       await joinScientLibrary({ library: ours.library, folder: backup, actor: "user" }),
     ).toEqual({ outcome: "damaged" });
 
-    // A Library beside this one under a restore's name.
-    const aside = `${ours.scenario.libraryRoot}.replaced-restore_1`;
-    await NodeFSP.cp(theirs.scenario.libraryRoot, aside, { recursive: true });
+    // A folder beside this Library that only looks like one a restore set aside is refused.
+    const lookalike = `${ours.scenario.libraryRoot}.replaced-restore_1`;
+    await NodeFSP.cp(theirs.scenario.libraryRoot, lookalike, { recursive: true });
+    expect(await open(lookalike)).toEqual({ outcome: "not-a-library" });
+
+    // The Library a restore of this one moved aside, as that restore recorded it.
+    const restorable = await built([{ op: "add", label: "r", pdf: false }]);
+    const good = await backUp(restorable.scenario);
+    await prepareScientLibraryRestore({ libraryRoot: ours.scenario.libraryRoot, backup: good });
+    const finished = await finishScientLibraryRestore(ours.scenario.libraryRoot);
+    if (finished.outcome !== "restored" || !finished.keptReplaced) throw new Error("Not kept.");
+    const aside = finished.keptReplaced.path;
     expect(await open(aside)).toMatchObject({ outcome: "ready", other: { kind: "replaced" } });
+    // What this Library held before the restore comes into the restored one.
     expect(
       await joinScientLibrary({ library: ours.library, folder: aside, actor: "user" }),
     ).toMatchObject({ outcome: "joined", added: 1 });
+    expect(await ids(ours.scenario)).toContain(workOf(ours.model, "mine").sourceId);
     const compared = await compareScientLibraries(ours.library, aside);
     expect(compared).toMatchObject({ fresh: [], identical: 1 });
   });

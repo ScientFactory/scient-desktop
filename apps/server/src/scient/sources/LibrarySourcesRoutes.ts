@@ -1273,7 +1273,9 @@ export async function organizeLibrarySources(
           outcome:
             undone.outcome === "not-found"
               ? ("join-not-found" as const)
-              : ("already-undone" as const),
+              : undone.outcome === "running"
+                ? ("join-busy" as const)
+                : ("already-undone" as const),
         };
       }
       await afterChange(store, []);

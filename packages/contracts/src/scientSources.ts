@@ -604,6 +604,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "join-running",
     "join-undone",
     "join-not-found",
+    "join-busy",
     "project-store-present",
     "dismissed",
     "nothing-to-dismiss",
@@ -873,11 +874,15 @@ export const ScientSourcesJoinStatus = Schema.Union([
     removedHere: Schema.Int,
     /** Live here, removed in the other Library: left as it is here. */
     removedThere: Schema.Int,
+    /** PDFs the added sources name that the other Library's folder did not hold. */
+    missingPdfs: Schema.Int,
   }),
   Schema.Struct({
     state: Schema.Literal("failed"),
     failedAt: NonEmptyString,
     reason: Schema.String,
+    /** Sources that had been added when it failed; they are in the Library. */
+    added: Schema.Int,
   }),
 ]);
 export type ScientSourcesJoinStatus = typeof ScientSourcesJoinStatus.Type;

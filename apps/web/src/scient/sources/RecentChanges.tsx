@@ -165,9 +165,12 @@ export function RecentChangesDialog(props: {
                 root,
                 change: { action: "undo-join", joinId: change.id },
               });
+              if (result.outcome === "join-busy") {
+                return "Sources are being added from another Library. Undo this when that has finished.";
+              }
               const left = result.joinUndone?.left ?? 0;
               return left > 0
-                ? `${left.toLocaleString()} ${left === 1 ? "source" : "sources"} changed since and ${left === 1 ? "was" : "were"} left in the Library.`
+                ? `${left.toLocaleString()} ${left === 1 ? "source or collection that was changed or used since was" : "sources or collections that were changed or used since were"} left in the Library.`
                 : null;
             }),
         };

@@ -188,7 +188,11 @@ describe("Recent changes", () => {
       }),
     );
     await expect
-      .element(page.getByText("2 sources changed since and were left in the Library."))
+      .element(
+        page.getByText(
+          "2 sources or collections that were changed or used since were left in the Library.",
+        ),
+      )
       .toBeVisible();
 
     await userEvent.click(

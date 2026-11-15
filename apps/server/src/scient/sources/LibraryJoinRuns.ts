@@ -34,14 +34,23 @@ export function startLibraryJoin(
 ): { readonly outcome: "join-started" | "join-running" } {
   if (runs.get(library.root)?.state === "running") return { outcome: "join-running" };
   runs.set(library.root, { state: "running", done: 0, total: 0 });
+  let added = 0;
   const failed = (reason: string) =>
-    runs.set(library.root, { state: "failed", failedAt: new Date().toISOString(), reason });
+    runs.set(library.root, {
+      state: "failed",
+      failedAt: new Date().toISOString(),
+      reason,
+      added,
+    });
   void joinScientLibrary({
     library,
     folder: fromFolder,
     actor,
     onStarted: (joinId) => running.set(library.root, joinId),
-    onProgress: ({ done, total }) => runs.set(library.root, { state: "running", done, total }),
+    onProgress: (progress) => {
+      added = progress.added;
+      runs.set(library.root, { state: "running", done: progress.done, total: progress.total });
+    },
   })
     .then(
       (result) => {
@@ -56,12 +65,15 @@ export function startLibraryJoin(
               different: result.different,
               removedHere: result.removedHere,
               removedThere: result.removedThere,
+              missingPdfs: result.missingPdfs,
             });
             return;
           case "stopped":
-            failed(
-              "Adding from the other Library was stopped. What it had added is in the Library.",
-            );
+            added = result.added;
+            failed("Adding from the other Library was stopped.");
+            return;
+          case "busy":
+            failed("An Undo of an earlier addition is running. Try again when it has finished.");
             return;
           case "damaged":
             failed(
