@@ -92,10 +92,10 @@ import { subscribeKeyboardPreferences } from "../../keyboard/preferences";
 import { markdownMathController } from "~/scient/math/input/markdownAdapter";
 import { isScientMessageCopyHtml } from "~/scient/clipboard/messageCopyMarker";
 import {
-  citationGroupKeys,
   filterLibraryCitations,
   type LibraryCitationCandidate,
 } from "~/scient/sources/libraryCitations";
+import { citationOpenRequest, type ScientMarkdownCitationOpenRequest } from "./citationOpenRequest";
 import {
   insertLibraryCitation,
   libraryCitationQuery,
@@ -139,8 +139,8 @@ export interface ScientMarkdownEditorViewOptions {
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly selectImage?: () => void;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
-  /** Opens the Library source a clicked citation names; false leaves the click to the editor. */
-  readonly onOpenCitation?: (keys: ReadonlyArray<string>) => boolean;
+  /** Opens what a clicked citation names; false leaves the click to the editor. */
+  readonly onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean;
 }
 
 export interface ScientMarkdownEditorSnapshot {
@@ -1113,16 +1113,14 @@ export class ScientMarkdownEditorView {
         ...(this.options.wikiLinkTargetExists
           ? { wikiLinkTargetExists: this.options.wikiLinkTargetExists }
           : {}),
-        openCitation: (source) => this.options.onOpenCitation?.(citationGroupKeys(source)) ?? false,
+        openCitation: (position, at) => this.openCitation(position, at),
       }),
       handleKeyDown: (_view, event) => this.handleEditorKeyDown(event),
-      handleClickOn: (_view, _position, node, _nodePosition, event, direct) => {
+      handleClickOn: (_view, _position, node, nodePosition, event, direct) => {
         if (!direct || event.button !== 0) return false;
         if (node.type === scientMarkdownSchema.nodes.citation) {
           if (modeIsEditable(this.mode) && !(event.metaKey || event.ctrlKey)) return false;
-          return (
-            this.options.onOpenCitation?.(citationGroupKeys(String(node.attrs.source))) ?? false
-          );
+          return this.openCitation(nodePosition, { x: event.clientX, y: event.clientY });
         }
         return node.type === scientMarkdownSchema.nodes.wiki_link;
       },
@@ -1848,6 +1846,14 @@ export class ScientMarkdownEditorView {
     if (candidates === this.citationCandidates) return;
     this.citationCandidates = candidates;
     this.publishSnapshot(false);
+  }
+
+  private openCitation(position: number, at: ScientMarkdownCitationOpenRequest["at"]): boolean {
+    const open = this.options.onOpenCitation;
+    if (!open) return false;
+    const state = this.editorView?.state ?? this.session.state;
+    const request = citationOpenRequest(state.doc, position, at);
+    return request !== null && open(request);
   }
 
   private citationMenu(): {

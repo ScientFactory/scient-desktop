@@ -53,6 +53,7 @@ import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
 import { useDocumentQuoteTarget } from "../annotations/documentQuoteTargets";
 import { markdownQuote } from "../annotations/quoteFormat";
 import type { LibraryCitationCandidate } from "../sources/libraryCitations";
+import type { ScientMarkdownCitationOpenRequest } from "./prosemirror/citationOpenRequest";
 
 const EMPTY_LIBRARY_CITATIONS: ReadonlyArray<LibraryCitationCandidate> = [];
 
@@ -93,7 +94,7 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
   /** Library sources offered after `[@`. */
   readonly libraryCitations?: ReadonlyArray<LibraryCitationCandidate>;
-  readonly onOpenCitation?: (keys: ReadonlyArray<string>) => boolean;
+  readonly onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean;
   readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths?: ReadonlyArray<string>;
   readonly onWikiLinkSelected?: (path: string) => void;
@@ -237,7 +238,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             }
           : {}),
         wikiLinkTargetExists: (target) => readBindings().wikiLinkTargetExists?.(target) ?? null,
-        onOpenCitation: (keys) => readBindings().onOpenCitation?.(keys) ?? false,
+        onOpenCitation: (request) => readBindings().onOpenCitation?.(request) ?? false,
         showLinkContextMenu: async (request) => {
           const api = readLocalApi();
           if (!api) return null;

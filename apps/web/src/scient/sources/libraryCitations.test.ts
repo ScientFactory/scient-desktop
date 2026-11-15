@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  citationGroupKeys,
-  filterLibraryCitations,
-  type LibraryCitationCandidate,
-} from "./libraryCitations";
+import { filterLibraryCitations, type LibraryCitationCandidate } from "./libraryCitations";
 
 const candidates: ReadonlyArray<LibraryCitationCandidate> = [
   { sourceId: "a", citationKey: "lovelace1843notes", label: "Lovelace 1843", title: "Notes" },
@@ -31,10 +27,5 @@ describe("Library citations", () => {
     ]);
     expect(filterLibraryCitations(candidates, "")).toHaveLength(3);
     expect(filterLibraryCitations(candidates, "zzz")).toEqual([]);
-  });
-
-  it("reads every key in a Pandoc citation group", () => {
-    expect(citationGroupKeys("@a, p. 4; -@b.c; see @d:e")).toEqual(["a", "b.c", "d:e"]);
-    expect(citationGroupKeys("mail me at x@y.org")).toEqual([]);
   });
 });
