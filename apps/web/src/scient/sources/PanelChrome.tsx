@@ -23,6 +23,9 @@ export function SourceErrorBanner(props: {
   );
 }
 
+/** Every Sources page keeps its content in one column; past 64rem only the side margins grow. */
+export const SOURCES_COLUMN = "mx-auto w-full max-w-[64rem]";
+
 export function PanelHeader(props: {
   readonly title: ReactNode;
   readonly description?: string;
