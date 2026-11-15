@@ -636,6 +636,9 @@ async function collectWordDocument(
       namesBibliography: false,
       citesEverything: false,
     });
+    notes.push(
+      "Citations typed in the text were matched with the list under the last References heading (or Bibliography, Works cited, Literature cited).",
+    );
     if (unmatched) notes.push(unmatched);
     return {
       subjects,
@@ -688,7 +691,7 @@ async function collectWordDocument(
     notes.push(
       absent === subjects.length
         ? "None of the cited works is in the Library."
-        : `${absent} of the ${subjects.length} cited works ${absent === 1 ? "is" : "are"} not in the Library.`,
+        : `${absent === 1 ? "One" : absent} of the ${subjects.length} cited works ${absent === 1 ? "is" : "are"} not in the Library.`,
     );
   }
   if (!references.hasList) {

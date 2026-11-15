@@ -527,7 +527,8 @@ describe("checkReferences", () => {
 
 // The Word files below are constructed here: the XML is what Word and each plug-in write
 // (Zotero's field, list and bookmark codes as in its public source and pandoc's public sample
-// file; EndNote's data field as publicly described), around made-up works.
+// file; EndNote's data field and Mendeley Cite's tag as publicly described), around made-up
+// works.
 const WORD_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 const escapeXml = (value: string) =>
   value
@@ -615,6 +616,20 @@ describe("checkReferences on a Word document", () => {
     const endNote = Buffer.from(
       `<EndNote><Cite><Author>Wakefield</Author><Year>1998</Year><RecNum>4</RecNum><record><rec-number>4</rec-number><contributors><authors><author>Wakefield, A.</author></authors></contributors><titles><title>Vaccines and autism</title><secondary-title>The Lancet</secondary-title></titles><dates><year>1998</year></dates><electronic-resource-num>10.1000/retracted</electronic-resource-num></record></Cite></EndNote>`,
     ).toString("base64");
+    // Mendeley Cite keeps the citation as base64 in a content control's tag, without padding.
+    const mendeleyCite = `MENDELEY_CITATION_v3_${Buffer.from(
+      JSON.stringify({
+        citationID: "MENDELEY_CITATION_1de18c13",
+        citationItems: [
+          {
+            id: "f3a0c1d2",
+            itemData: { ...article("f3a0c1d2", "Ng", "Handbook of sleep", "2010"), type: "book" },
+          },
+        ],
+      }),
+    )
+      .toString("base64")
+      .replace(/=+$/u, "")}`;
     const property = (name: string, value: string) =>
       `<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="${name}"><vt:lpwstr>${escapeXml(value)}</vt:lpwstr></property>`;
     await fixture.write(
@@ -633,7 +648,7 @@ describe("checkReferences on a Word document", () => {
               fieldMark("end"),
           ),
           paragraph(
-            `<w:bookmarkStart w:id="0" w:name="ZOTERO_BREF_Jx3kq8mZ1aPl"/>${run("(Doe, 2019)")}<w:bookmarkEnd w:id="0"/><w:r><w:footnoteReference w:id="2"/></w:r>`,
+            `<w:bookmarkStart w:id="0" w:name="ZOTERO_BREF_Jx3kq8mZ1aPl"/>${run("(Doe, 2019)")}<w:bookmarkEnd w:id="0"/><w:sdt><w:sdtPr><w:tag w:val="${mendeleyCite}"/></w:sdtPr><w:sdtContent>${run(" (Ng, 2010)")}</w:sdtContent></w:sdt><w:r><w:footnoteReference w:id="2"/></w:r>`,
           ),
           // Zotero's list is one field across its paragraphs, with a link field inside it.
           paragraph(
@@ -668,15 +683,16 @@ describe("checkReferences on a Word document", () => {
     expect(report).toMatchObject({
       target: { kind: "file", path: "paper/draft.docx" },
       files: ["paper/draft.docx"],
-      references: 3,
-      citations: 4,
+      references: 4,
+      citations: 5,
       checked: 3,
+      noIdentifier: 1,
       complete: true,
       notes: [
         "Tracked changes were read as if accepted.",
         "Comments were not read.",
         "Citations inserted with a reference manager were read. Citations typed by hand were not.",
-        "1 of the 3 cited works is not in the Library.",
+        "2 of the 4 cited works are not in the Library.",
       ],
     });
     expect(lookup.asked).not.toContain("doi:10.1000/missing");
@@ -694,6 +710,7 @@ describe("checkReferences on a Word document", () => {
       library.find((record) => record.title === title)?.sourceId ?? null;
     expect(report.ledger.map(({ label, sourceId }) => [label, sourceId])).toEqual([
       ["The effect of light on sleep", inLibrary("The effect of light on sleep")],
+      ["Handbook of sleep", null],
       ["Vaccines and autism", null],
       ["Sleep in shift workers", inLibrary("Sleep in shift workers")],
     ]);
