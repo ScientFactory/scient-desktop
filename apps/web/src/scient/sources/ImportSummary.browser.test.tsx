@@ -5,7 +5,8 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
-import { ImportSummary } from "./ImportSummary";
+import { importResultContent, RunningImportBody } from "./ImportSummary";
+import type { SourcesResultContent } from "./sourcesFeedback";
 
 type Item = ScientSourceImportOperation["items"][number];
 
@@ -34,10 +35,20 @@ const operation = (
   notBrought: [{ kind: "notes-alone", count: 5 }],
 });
 
+function Receipt(props: { readonly content: SourcesResultContent }) {
+  return (
+    <div>
+      <p>{props.content.summary}</p>
+      {props.content.details}
+      {props.content.actions}
+    </div>
+  );
+}
+
 const fields = ["place", "edition", "numPages", "series", "shortTitle", "callNumber"];
 
-describe("what an import says it did not bring", () => {
-  it("lists each thing with how many references, shows them on request, and the rest on request", async () => {
+describe("a finished Zotero import's receipt", () => {
+  it("lists what was not brought with how many references, shows them on request, and the rest on request", async () => {
     const onShowSources = vi.fn();
     const items = [
       imported(1, [
@@ -49,109 +60,79 @@ describe("what an import says it did not bring", () => {
         { kind: "highlights", count: 3 },
       ]),
     ];
-    await using _screen = await render(
-      <ImportSummary
-        operation={operation(items)}
-        outcome={null}
-        onDismiss={() => undefined}
-        onCancel={() => undefined}
-        cancelling={false}
-        onShowSources={onShowSources}
-      />,
-      { router: false },
-    );
+    const content = importResultContent({
+      operation: operation(items),
+      outcome: null,
+      referenceFile: null,
+      target: "library",
+      onShowSources,
+    });
+    await using _screen = await render(<Receipt content={content} />, { router: false });
 
-    await expect.element(page.getByText("Not brought from Zotero")).toBeVisible();
     await expect
-      .element(page.getByText("All of it is still in Zotero.", { exact: false }))
+      .element(
+        page.getByText(
+          "2 references imported and added to My Library. Zotero holds more for some references than was brought.",
+        ),
+      )
       .toBeVisible();
+    await expect.element(page.getByText("Not brought from Zotero")).toBeVisible();
     await expect.element(page.getByText("15 on 2 references")).toBeVisible();
     await expect.element(page.getByText("Place of publication:", { exact: false })).toBeVisible();
     // Five kinds first; the rest, with what belongs to no reference, on request.
     await expect.element(page.getByText("Short title:", { exact: false })).not.toBeInTheDocument();
     await userEvent.click(page.getByRole("button", { name: "Show all (8)" }));
     await expect.element(page.getByText("Short title:", { exact: false })).toBeVisible();
-    await expect
-      .element(page.getByText("Notes that belong to no reference:", { exact: false }))
-      .toBeVisible();
 
     await userEvent.click(page.getByRole("button", { name: "Show: Place of publication" }));
     expect(onShowSources).toHaveBeenCalledWith(
       ["source_1", "source_2"],
       "References this was not brought for: Place of publication",
     );
-    // What belongs to no reference has no references to show.
     await expect
       .element(page.getByRole("button", { name: "Show: Notes that belong to no reference" }))
       .not.toBeInTheDocument();
   });
 
-  it("says nothing of it while the import still runs, and nothing at all when all was brought", async () => {
-    const running = await render(
-      <ImportSummary
-        operation={operation([imported(1, [{ kind: "highlights", count: 2 }])], "running")}
-        outcome={null}
-        onDismiss={() => undefined}
-        onCancel={() => undefined}
-        cancelling={false}
-      />,
-      { router: false },
-    );
-    await expect.element(page.getByText("Importing sources")).toBeVisible();
-    await expect.element(page.getByText("Not brought from Zotero")).not.toBeInTheDocument();
-    await running.unmount();
-
-    const { notBrought: _none, ...whole } = operation([
-      { itemKey: "ITEM1", state: "imported", sourceId: "source_1", message: null },
-    ]);
-    await using _screen = await render(
-      <ImportSummary
-        operation={whole}
-        outcome={null}
-        onDismiss={() => undefined}
-        onCancel={() => undefined}
-        cancelling={false}
-      />,
-      { router: false },
-    );
-    await expect.element(page.getByText("Import complete")).not.toBeInTheDocument();
-  });
-
-  it("says how many references of a large Zotero import are still to come, and goes on after a stop", async () => {
-    const run = { runId: "run", part: 1, remaining: 4612, scope: { kind: "library" as const } };
+  it("goes on with a large import after a stop, saying how many remain", async () => {
     const pending: Item = { itemKey: "ITEM2", state: "pending", sourceId: null, message: null };
-    const running = await render(
-      <ImportSummary
-        operation={{ ...operation([imported(1, []), pending], "running"), run }}
-        outcome={null}
-        onDismiss={() => undefined}
-        onCancel={() => undefined}
-        cancelling={false}
-      />,
-      { router: false },
-    );
-    await expect
-      .element(page.getByText("1 of 2 items processed · 4,612 more to follow"))
-      .toBeVisible();
-    await expect
-      .element(page.getByRole("button", { name: /^Import the rest/u }))
-      .not.toBeInTheDocument();
-    await running.unmount();
-
-    // Stopped, or Scient was closed: the rest is offered, with how many.
+    const { notBrought: _none, ...stopped } = operation([imported(1, []), pending], "cancelled");
     const onImport = vi.fn();
-    await using _screen = await render(
-      <ImportSummary
-        operation={{ ...operation([imported(1, []), pending], "cancelled"), run }}
-        outcome={null}
-        onDismiss={() => undefined}
-        onCancel={() => undefined}
-        cancelling={false}
-        rest={{ count: 4613, onImport }}
-      />,
-      { router: false },
-    );
+    const content = importResultContent({
+      operation: stopped,
+      outcome: null,
+      referenceFile: null,
+      target: "library",
+      rest: { count: 4613, onImport },
+    });
+    await using _screen = await render(<Receipt content={content} />, { router: false });
+    await expect
+      .element(
+        page.getByText(
+          "1 reference imported and added to My Library. The import was stopped; 1 was not imported. See Details for more.",
+        ),
+      )
+      .toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Import the rest (4,613)" }));
     expect(onImport).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a running import in Activity", () => {
+  it("says how far it is and what later parts bring, and stops on request", async () => {
+    const run = { runId: "run", part: 1, remaining: 4612, scope: { kind: "library" as const } };
+    const pending: Item = { itemKey: "ITEM2", state: "pending", sourceId: null, message: null };
+    const onCancel = vi.fn();
+    await using _screen = await render(
+      <RunningImportBody
+        operation={{ ...operation([imported(1, []), pending], "running"), run }}
+        cancelling={false}
+        onCancel={onCancel}
+      />,
+      { router: false },
+    );
+    await expect.element(page.getByText("Importing 1 of 2 · 4,612 more to follow")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Cancel after current item" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });
