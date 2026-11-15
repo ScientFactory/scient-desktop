@@ -59,8 +59,9 @@ is a guess: if it doesn't fail now, say so, and look in the log for when and how
 ## 6. Check, then save
 
 - Check again with the call that failed and the calls that worked before.
-- `scient_connector_save {folder, connector}`. Scient checks it, swaps it in, restarts it and
-  keeps the old version; the connector's page has **Undo last change**.
+- `scient_connector_save {folder, connector}`, always with `connector` (without it Scient
+  refuses, since it would install a second copy). Scient checks it, swaps it in, restarts it
+  and keeps the old version; the connector's page has **Undo last change**.
 - A connector someone else published (a vendor's bundle) is never changed in place: your fix
   becomes the user's own copy, shown as "Your copy of …". Tell the user that updates from the
   publisher won't reach this copy, and suggest reporting the problem to them if it is public.

@@ -5,7 +5,11 @@
  */
 import * as NodePath from "node:path";
 
-import { AccountsError, type ExtensionsError } from "@t3tools/contracts";
+import {
+  AccountsError,
+  type ConnectorToolFailureClass,
+  type ExtensionsError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
@@ -27,7 +31,7 @@ import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey, askInCard } from "./accountAdd.ts";
+import { askForAccountKey, askInCard, cardEndedNote, withCardAllowance } from "./accountAdd.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
 
@@ -35,13 +39,27 @@ type Input<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.T
   (typeof ScientAccountsToolkit.tools)[K]["parametersSchema"]
 >;
 
-const toAccountsError = (error: ExtensionsError) =>
+const FAILURE_CLASS = {
+  "not-found": "not_found",
+  "invalid-input": "invalid_input",
+  unreachable: "unreachable",
+  "not-an-mcp-server": "not_an_mcp_server",
+  "sign-in-failed": "sign_in_failed",
+  "registration-unsupported": "registration_unsupported",
+  "limit-reached": "limit_reached",
+  "state-unavailable": "state_unavailable",
+  unsupported: "unsupported",
+  "provider-rejected": "provider_rejected",
+} as const satisfies Record<ExtensionsError["reason"], ConnectorToolFailureClass>;
+
+export const toAccountsError = (error: ExtensionsError) =>
   new AccountsError({
     reason:
       error.reason === "invalid-input" || error.reason === "not-found"
         ? "invalid-input"
         : "unavailable",
     message: error.message,
+    failureClass: FAILURE_CLASS[error.reason],
   });
 
 const runtime = Effect.gen(function* () {
@@ -94,12 +112,14 @@ export const copyConnector = Effect.fn("AccountsAgent.connectorCopy")(function* 
 ) {
   const where = yield* workspace;
   const connectors = yield* runtime;
+  const { threadId, providerInstanceId } = yield* AgentInvocationContext;
   return yield* connectors
     .copyForAgent({
       workingFolder: where.folder,
       connector: input.connector,
       name: input.name,
-      providerInstanceId: (yield* AgentInvocationContext).providerInstanceId,
+      providerInstanceId,
+      owner: threadId,
     })
     .pipe(Effect.mapError(toAccountsError));
 });
@@ -118,7 +138,9 @@ const keptOr = <A>(asked: Effect.Effect<A | { readonly problem: string }, Accoun
   asked.pipe(Effect.catch((error) => Effect.succeed({ problem: error.message })));
 
 const cardProblem = (status: string) =>
-  status === "declined" ? "the user did not enter it." : `the card ended (${status}).`;
+  status === "declined" || status === "cancelled" || status === "timed_out"
+    ? cardEndedNote(status)
+    : `the card ended (${status}).`;
 
 /** The add's private cards: the key goes to Accounts, a sign-in app to the connector itself. */
 const addAsks = Effect.gen(function* () {
@@ -169,6 +191,9 @@ const addAsks = Effect.gen(function* () {
             reason: `Skip this if the app has no client secret.`,
             notKept,
           });
+          // Declining is the user's "no secret"; a card that timed out or closed is no answer.
+          if (secret.status === "timed_out" || secret.status === "cancelled")
+            return { problem: cardProblem(secret.status) };
           return {
             clientId: id.value,
             ...(secret.status === "saved" ? { clientSecret: secret.value } : {}),
@@ -188,7 +213,7 @@ export const addConnector = Effect.fn("AccountsAgent.connectorAdd")(function* (
     location: yield* callerLocation,
     asks: yield* addAsks,
   }).pipe(Effect.mapError(toAccountsError));
-});
+}, withCardAllowance);
 
 /**
  * Opens a sign-in page in this chat's browser as the user's own tab, ready for them: no agent
@@ -209,12 +234,11 @@ export const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url
 export const controlConnector = Effect.fn("AccountsAgent.connectorControl")(function* (
   input: Input<"scient_connector_control">,
 ) {
-  const invocation = yield* AgentInvocationContext;
   const context = yield* Effect.context<AgentInvocationContext>();
   return yield* controlFor(
     input,
     (url) => openForUser(url).pipe(Effect.provide(context)),
-    invocation.providerInstanceId,
+    yield* callerLocation,
   ).pipe(Effect.mapError(toAccountsError));
 });
 

@@ -103,14 +103,26 @@ it("drops the catalog's access words from a connector once its sign-in works", (
     categories: [],
   } satisfies Parameters<typeof connectorFacts>[0];
   const borrowed = { type: "source-control", host: "github.com", account: "octo" } as const;
-  expect(connectorFacts(entry, { status: "connected", auth: borrowed })).toEqual([
+  const url = "https://api.githubcopilot.com/mcp/";
+  expect(connectorFacts(entry, { status: "connected", auth: borrowed, url })).toEqual([
+    ["Host", "api.githubcopilot.com"],
     ["Hosting", "Official"],
     ["Access", "Signed in as octo"],
   ]);
   expect(
-    connectorFacts(entry, { status: "connected", auth: { type: "oauth", usesOwnClient: false } }),
-  ).toEqual([["Hosting", "Official"]]);
-  expect(connectorFacts(entry, { status: "needs-credential", auth: borrowed })).toEqual([
+    connectorFacts(entry, {
+      status: "connected",
+      auth: { type: "oauth", usesOwnClient: false },
+      url,
+    }),
+  ).toEqual([
+    ["Host", "api.githubcopilot.com"],
+    ["Hosting", "Official"],
+  ]);
+  // A connector that runs here has no host to name.
+  expect(
+    connectorFacts(entry, { status: "needs-credential", auth: borrowed, url, local: {} }),
+  ).toEqual([
     ["Hosting", "Official"],
     ["Access", "Account needed"],
   ]);

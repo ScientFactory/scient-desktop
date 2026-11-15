@@ -1359,6 +1359,21 @@ export type AccountsCheckInput = typeof AccountsCheckInput.Type;
 
 export const AccountsTestInput = Schema.Struct({ accountId: AccountId });
 
+/** Why a connector tool failed: the connector runtime's reason, as an analytics code. */
+export const ConnectorToolFailureClass = Schema.Literals([
+  "not_found",
+  "invalid_input",
+  "unreachable",
+  "not_an_mcp_server",
+  "sign_in_failed",
+  "registration_unsupported",
+  "limit_reached",
+  "state_unavailable",
+  "unsupported",
+  "provider_rejected",
+]);
+export type ConnectorToolFailureClass = typeof ConnectorToolFailureClass.Type;
+
 export class AccountsError extends Schema.TaggedError<AccountsError>()("AccountsError", {
   reason: Schema.Literals([
     "not-found",
@@ -1369,6 +1384,8 @@ export class AccountsError extends Schema.TaggedError<AccountsError>()("Accounts
     "denied",
   ]),
   message: TrimmedNonEmptyString,
+  /** A connector tool's own reason, so analytics keep the real cause. */
+  failureClass: Schema.optional(ConnectorToolFailureClass),
 }) {}
 
 /** Value-free desktop session observations; missing profiles mean unknown. */

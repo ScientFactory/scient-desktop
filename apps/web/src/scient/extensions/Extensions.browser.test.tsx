@@ -2100,6 +2100,7 @@ describe("Detail pages", () => {
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     expect(fixture.aboutTerms()).toEqual([
       "Added on",
+      "Host",
       "Works with",
       "Sign-in used",
       "URL",

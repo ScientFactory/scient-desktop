@@ -573,6 +573,32 @@ export interface GeneratedVariable {
   readonly default?: string | undefined;
 }
 
+/** Words kept in capitals when an environment name becomes a title. */
+const ACRONYMS = new Set([
+  "API",
+  "AWS",
+  "HTTP",
+  "HTTPS",
+  "ID",
+  "JWT",
+  "MCP",
+  "PAT",
+  "SSH",
+  "URI",
+  "URL",
+]);
+
+/**
+ * A title for an environment name the program reads (`GOOGLE_ACCESS_TOKEN` → "Google access
+ * token"). The name itself stays the exact key; other names are already titles.
+ */
+export const envTitle = (name: string): string => {
+  if (!/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/u.test(name)) return name;
+  const words = name.split("_").map((word) => (ACRONYMS.has(word) ? word : word.toLowerCase()));
+  const first = words[0]!;
+  return [first.charAt(0).toUpperCase() + first.slice(1), ...words.slice(1)].join(" ");
+};
+
 /**
  * The manifest Scient writes for a typed command, a registry package or a server imported from
  * another app, so every local connector is a folder its setup, Restart and later fixes can read.
@@ -616,7 +642,7 @@ export const generatedManifest = (input: {
             variable.name,
             {
               type: "string" as const,
-              title: variable.name,
+              title: envTitle(variable.name),
               ...(variable.description === undefined ? {} : { description: variable.description }),
               required: variable.required,
               ...(variable.secret ? { sensitive: true } : {}),
