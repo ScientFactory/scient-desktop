@@ -541,9 +541,11 @@ export type ScientSourcePlacedCollection =
   | { readonly collection: null; readonly why: string };
 
 /**
- * Finds or makes the wanted collections of an outside tree with the ones above them: by ID, else
- * by name under the same parent if no other outside one took it, else new. One deleted here is
- * left out, or with `remake` made anew under a new ID so the deleted one stays restorable.
+ * Finds or makes the wanted collections of an outside tree with the ones above them: by ID or
+ * one remembered (`outsideIds`), else by name under the same parent if no other outside one
+ * took it, else new. One deleted here is left out, or with `remake` made anew under a new ID
+ * so the deleted one stays restorable. One found by name or made anew remembers the outside
+ * ID, so a rename or move here does not lose it.
  */
 export function placeScientSourceCollections(input: {
   readonly root: ScientSourceStoreLocation;
@@ -563,6 +565,15 @@ export function placeScientSourceCollections(input: {
       const parentOf = (node: ScientSourceOutsideCollection) =>
         node.parentCollectionId ? outside.get(node.parentCollectionId) : undefined;
       const byId = new Map(collectionsById(document.collections));
+      // What stands for an outside collection here: its own ID first, then one that
+      // remembers it; a live one before a deleted one.
+      const holderOf = (outsideId: string) => {
+        const holders = [
+          byId.get(outsideId),
+          ...document.collections.filter((entry) => entry.outsideIds?.includes(outsideId)),
+        ].filter((entry) => entry !== undefined);
+        return holders.find((entry) => entry.deletedAt === undefined) ?? holders[0];
+      };
       const taken = new Set<string>();
       // The whole tree is matched each time, in one order, so which same-named sibling has a
       // collection made by hand does not depend on what is wanted.
@@ -574,7 +585,7 @@ export function placeScientSourceCollections(input: {
         here.set(node.collectionId, null);
         const parent = parentOf(node);
         const parentHere = parent ? match(parent) : undefined;
-        const own = byId.get(node.collectionId);
+        const own = holderOf(node.collectionId);
         const found =
           own && own.deletedAt === undefined
             ? own
@@ -586,6 +597,7 @@ export function placeScientSourceCollections(input: {
                     collection.parentCollectionId === parentHere?.collectionId &&
                     nameKey(collection.name) === nameKey(node.name) &&
                     !outside.has(collection.collectionId) &&
+                    !collection.outsideIds?.some((outsideId) => outside.has(outsideId)) &&
                     !taken.has(collection.collectionId),
                 ) ?? null);
         if (found) taken.add(found.collectionId);
@@ -598,14 +610,25 @@ export function placeScientSourceCollections(input: {
       // Parents before children, as callers undo in reverse.
       const result = new Map<string, ScientSourcePlacedCollection>();
       const added: ScientSourceCollection[] = [];
+      const remembered = new Map<string, ReadonlyArray<string>>();
       let live = document.collections.filter((entry) => entry.deletedAt === undefined).length;
       const place = (node: ScientSourceOutsideCollection): ScientSourcePlacedCollection | null => {
         const known = placed.get(node.collectionId);
         if (known !== undefined) return known;
         const make = (): ScientSourcePlacedCollection | null => {
           const found = here.get(node.collectionId);
-          if (found) return { collection: found, created: false };
-          const deleted = byId.has(node.collectionId);
+          if (found) {
+            const outsideIds = remembered.get(found.collectionId) ?? found.outsideIds ?? [];
+            if (found.collectionId === node.collectionId || outsideIds.includes(node.collectionId)) {
+              return { collection: found, created: false };
+            }
+            remembered.set(found.collectionId, [...outsideIds, node.collectionId]);
+            return {
+              collection: { ...found, outsideIds: [...outsideIds, node.collectionId] },
+              created: false,
+            };
+          }
+          const deleted = holderOf(node.collectionId) !== undefined;
           if (deleted && !input.remake) return null;
           const parent = parentOf(node);
           const above = parent ? place(parent) : undefined;
@@ -614,7 +637,7 @@ export function placeScientSourceCollections(input: {
           }
           // Under a deleted parent that is not made again, as the person's own ones are there.
           const parentHere =
-            above === null && parent ? byId.get(parent.collectionId) : above?.collection;
+            above === null && parent ? holderOf(parent.collectionId) : above?.collection;
           const name = node.name.trim();
           const levels = parentHere ? collectionsAbove(byId, parentHere).length + 2 : 1;
           const why = !name
@@ -631,6 +654,7 @@ export function placeScientSourceCollections(input: {
             collectionId: deleted ? newId("collection") : node.collectionId,
             name,
             ...(parentHere ? { parentCollectionId: parentHere.collectionId } : {}),
+            ...(deleted ? { outsideIds: [node.collectionId] } : {}),
             sourceIds: [],
             createdAt: now,
             updatedAt: now,
@@ -654,9 +678,18 @@ export function placeScientSourceCollections(input: {
       }
       return {
         document:
-          added.length === 0
+          added.length === 0 && remembered.size === 0
             ? null
-            : { ...document, collections: [...document.collections, ...added] },
+            : {
+                ...document,
+                collections: [
+                  ...document.collections.map((collection) => {
+                    const outsideIds = remembered.get(collection.collectionId);
+                    return outsideIds ? { ...collection, outsideIds } : collection;
+                  }),
+                  ...added,
+                ],
+              },
         result,
       };
     },

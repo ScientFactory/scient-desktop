@@ -357,7 +357,7 @@ describe("Scient source collections", () => {
       why: "Its name is longer than 200 characters.",
     });
     expect((await place(["collection_a"])).get("collection_a")).toEqual({
-      collection: byHand.collection,
+      collection: { ...byHand.collection, outsideIds: ["collection_a"] },
       created: false,
     });
     const placed = new Map([
@@ -383,6 +383,58 @@ describe("Scient source collections", () => {
         [remade!.collectionId, ["thesis", null]],
       ]),
     );
+  });
+
+  it("finds a collection again after a rename or a move, when it was found by name or made beside a deleted one", async () => {
+    const { root } = await project([]);
+    const byHand = await createScientSourceCollection({ root, name: "Thesis", actor: "user" });
+    const tree = [
+      { collectionId: "collection_a", name: "Thesis" },
+      { collectionId: "collection_b", name: "Teaching" },
+    ];
+    const place = async (collectionId: string) =>
+      (
+        await placeScientSourceCollections({
+          root,
+          tree,
+          wanted: [collectionId],
+          remake: true,
+          actor: "user",
+        })
+      ).get(collectionId);
+    const names = async () =>
+      (await readScientSourcesOrganization(root)).collections.map((entry) => entry.name).toSorted();
+
+    // Found by name, then renamed here: the next import finds it, it does not make another.
+    expect(await place("collection_a")).toMatchObject({
+      collection: { collectionId: byHand.collection!.collectionId },
+      created: false,
+    });
+    await renameScientSourceCollection({
+      root,
+      collectionId: byHand.collection!.collectionId,
+      name: "Doctorate",
+      actor: "user",
+    });
+    expect((await place("collection_a"))?.collection?.collectionId).toBe(
+      byHand.collection!.collectionId,
+    );
+
+    // Made beside a deleted one, then moved under another collection here: found the same way.
+    await place("collection_b");
+    await deleteScientSourceCollection({ root, collectionId: "collection_b", actor: "user" });
+    const remade = (await place("collection_b"))?.collection?.collectionId;
+    await organizeScientSources({
+      root,
+      change: {
+        action: "move-collection",
+        collectionId: remade!,
+        parentCollectionId: byHand.collection!.collectionId,
+      },
+      actor: "user",
+    });
+    expect((await place("collection_b"))?.collection?.collectionId).toBe(remade);
+    expect(await names()).toEqual(["Doctorate", "Teaching"]);
   });
 
   it("adds and removes members and reports an unknown collection", async () => {

@@ -3263,14 +3263,16 @@ an agent.
 - `placeScientSourceCollections` is how a tree kept elsewhere arrives (Zotero,
   another Library, a project package). It takes the whole outside tree and
   the collections wanted, and in one locked change finds or makes each with
-  the ones above it: the live collection with the outside collection's ID;
-  else a live one with its name under the same parent that no other outside
-  collection has taken; else a new one with that ID. The whole tree is
+  the ones above it: the live collection with the outside collection's ID, or
+  one that remembers it (`outsideIds`); else a live one with its name under the
+  same parent that no other outside collection has taken; else a new one with
+  that ID. A collection found by name remembers the outside ID, so a rename or
+  a move here does not lose it. The whole tree is
   matched on every call in one order, so which same-named sibling has a
   collection made by hand does not depend on what was wanted. A collection
   the person deleted here is left out, or with `remake` made again as a new
-  collection with a new ID beside it, so the deleted one keeps its members and
-  can still be restored (later calls find the new one by name). An outside
+  collection with a new ID beside it that remembers the outside ID, so the
+  deleted one keeps its members and can still be restored. An outside
   collection under a deleted one that is not made again is made under it. One
   that cannot be made (500 collections, ten levels, a 200-character name)
   comes back with the reason.
