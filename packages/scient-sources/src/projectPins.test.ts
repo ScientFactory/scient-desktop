@@ -13,6 +13,7 @@ import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import type { ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
 import {
+  bindScientProjectCitationKeys,
   changeScientProjectPins,
   listScientProjectPinnedWorks,
   pinScientLibrarySource,
@@ -658,5 +659,75 @@ describe("project pins", () => {
       "lovelace2020",
     ]);
     expect((await readScientSourceRecord(library, first.sourceId))?.citationKey).toBe("smith2020");
+  });
+
+  it("binds each key a manuscript cites a work by, never taking one that cites another", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const deep = await addRecord(library, "A", { citationKey: "lecun2015deep" });
+    const other = await addRecord(library, "B", { citationKey: "smith2020" });
+    await pinScientLibrarySource({ projectRoot, library, sourceId: other.sourceId, actor: "user" });
+    const bind = (citationKeys: ReadonlyArray<string>) =>
+      bindScientProjectCitationKeys({
+        projectRoot,
+        library,
+        sourceId: deep.sourceId,
+        citationKeys,
+        actor: "user",
+      });
+
+    expect(await bind(["lecun2015deep", "lecun2015deep_copy", "SMITH2020"])).toEqual({
+      outcome: "bound",
+      bindings: [
+        { citationKey: "lecun2015deep", outcome: "added" },
+        { citationKey: "lecun2015deep_copy", outcome: "added" },
+        { citationKey: "SMITH2020", outcome: "taken" },
+      ],
+    });
+    const pinsAfter = async () =>
+      (await readScientProjectPins(projectRoot)).map((pin) => [pin.citationKey, pin.sourceId]);
+    const bound = await pinsAfter();
+    expect(bound).toEqual([
+      ["lecun2015deep", deep.sourceId],
+      ["lecun2015deep_copy", deep.sourceId],
+      ["smith2020", other.sourceId],
+    ]);
+    // The same keys again change nothing.
+    expect((await bind(["lecun2015deep_copy", "lecun2015deep"])).outcome).toBe("bound");
+    expect(await pinsAfter()).toEqual(bound);
+    // Both keys reach the one work's bibliography entries.
+    expect(
+      (await listScientProjectPinnedWorks({ projectRoot, library })).map((work) => [
+        work.citationKey,
+        work.record.sourceId,
+      ]),
+    ).toEqual(bound);
+  });
+
+  it("pins a work whose every key cites another source under a key of its own", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const first = await addRecord(library, "A", { citationKey: "smith2020" });
+    const second = await addRecord(library, "B", { citationKey: "smith2020b" });
+    await pinScientLibrarySource({ projectRoot, library, sourceId: first.sourceId, actor: "user" });
+
+    const bound = await bindScientProjectCitationKeys({
+      projectRoot,
+      library,
+      sourceId: second.sourceId,
+      citationKeys: ["smith2020"],
+      actor: "user",
+    });
+    expect(bound).toEqual({
+      outcome: "bound",
+      bindings: [{ citationKey: "smith2020", outcome: "taken" }],
+      projectKey: "smith2020b",
+    });
+    expect((await readScientProjectPins(projectRoot)).map((pin) => pin.sourceId)).toEqual([
+      first.sourceId,
+      second.sourceId,
+    ]);
   });
 });

@@ -6,7 +6,11 @@ import {
   takenCitationKeys,
 } from "../citationKeys.ts";
 import { assessSourceDuplicate, type ScientSourceIntakeExclusions } from "../duplicates.ts";
-import type { ScientSourceCandidate, ScientSourceRecord } from "../model.ts";
+import {
+  scientCreatorRoleIncomplete,
+  type ScientSourceCandidate,
+  type ScientSourceRecord,
+} from "../model.ts";
 import { normalizePersistentIdentifier } from "../normalize.ts";
 import { scientSourceMoreKind, scientSourceMoreLabel } from "../sourceMore.ts";
 import { scientLibraryIdentityProblem } from "../sourceIdentity.ts";
@@ -35,7 +39,7 @@ export type {
   BibliographyParseResult,
 } from "./entry.ts";
 export { BIBLIOGRAPHY_FORMATS } from "./entry.ts";
-export { cslJsonItem, type CslJsonItem } from "./cslJson.ts";
+export { CSL_INCOMPLETE_NAMES, cslJsonItem, type CslJsonItem } from "./cslJson.ts";
 
 export const BibliographyFormatSchema = Schema.Literals(BIBLIOGRAPHY_FORMATS);
 
@@ -141,12 +145,26 @@ export const BibliographyFieldLoss = Schema.Struct({
 });
 export type BibliographyFieldLoss = typeof BibliographyFieldLoss.Type;
 
+/** A later entry for a work an earlier entry of the file already gave; its key cites that work too. */
+export const BibliographySameWork = Schema.Struct({
+  citationKey: Schema.String,
+  line: Schema.NullOr(Schema.Int),
+  /** The earlier entry, by its key (or line). */
+  sameAs: Schema.String,
+  /** The identifier both give (DOI, arXiv ID, PMID, PMCID); null for an exact copy of the entry. */
+  identifier: Schema.NullOr(Schema.String),
+});
+export type BibliographySameWork = typeof BibliographySameWork.Type;
+
 export const BibliographyImportReport = Schema.Struct({
   format: BibliographyFormatSchema,
   /** Entries recognised in the file, readable or not. */
   entryCount: Schema.Int,
-  /** New entries staged for this import. */
+  /** Works new to the Library staged for this import. */
   importCount: Schema.Int,
+  /** Works the Library has, staged too so the import adds them to the project with their keys. */
+  presentCount: Schema.optionalKey(Schema.Int),
+  /** Entries left out as already in the Library: a possible match by details, or past this batch. */
   alreadyInLibrary: Schema.Int,
   /** New entries beyond one import's limit; importing the file again continues with them. */
   remaining: Schema.Int,
@@ -158,6 +176,24 @@ export const BibliographyImportReport = Schema.Struct({
       reason: Schema.String,
     }),
   ),
+  /** Several entries for one work: each later entry's key cites the work the first one gave. */
+  sameWork: Schema.optionalKey(Schema.Array(BibliographySameWork)),
+  /** One key given to two different works; the later work comes in under another key. */
+  keyConflicts: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        citationKey: Schema.String,
+        line: Schema.NullOr(Schema.Int),
+        firstLine: Schema.NullOr(Schema.Int),
+      }),
+    ),
+  ),
+  /** Staged works whose author list the file ended with "and others", by source key. */
+  incompleteAuthors: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ sourceKey: Schema.String, label: Schema.String, named: Schema.Int }),
+    ),
+  ),
   notKept: Schema.Array(BibliographyFieldLoss),
   withoutCitationKey: Schema.Int,
   /** PDFs named in the file that will be attached to the staged entries. */
@@ -166,6 +202,7 @@ export const BibliographyImportReport = Schema.Struct({
 export type BibliographyImportReport = typeof BibliographyImportReport.Type;
 
 export interface BibliographyImportPlan {
+  /** New works first, then works the Library has (which an import adds to the project). */
   readonly candidates: ReadonlyArray<ScientSourceCandidate>;
   readonly report: BibliographyImportReport;
   /** Files the staged entries name, by source key, with the entry's report label. */
@@ -174,8 +211,13 @@ export interface BibliographyImportPlan {
     readonly label: string;
     readonly files: ReadonlyArray<BibliographyLinkedFile>;
   }>;
-  /** Records the left-out entries are the same work as (not a possible metadata match). */
-  readonly presentSourceIds: ReadonlyArray<string>;
+  /** Every key the file cites each staged work by, by source key, its own key first. */
+  readonly citationKeys: Readonly<Record<string, ReadonlyArray<string>>>;
+  /** Works the Library has past this batch's room, with the keys the file cites them by. */
+  readonly presentPastBatch: ReadonlyArray<{
+    readonly sourceId: string;
+    readonly citationKeys: ReadonlyArray<string>;
+  }>;
 }
 
 function hasContent(candidate: ScientSourceCandidate): boolean {
@@ -184,11 +226,22 @@ function hasContent(candidate: ScientSourceCandidate): boolean {
   );
 }
 
+/** A work the file gives: new, one the Library has, or one that may be (which is left out). */
+interface PlannedWork {
+  readonly kind: "new" | "present" | "maybe";
+  readonly candidate: ScientSourceCandidate;
+  readonly label: string;
+  readonly line: number | null;
+  readonly sourceId: string | null;
+  readonly keys: string[];
+  readonly linkedFiles: BibliographyLinkedFile[];
+}
+
 /**
- * Turns a parsed file into the next batch of new import candidates and a
- * report of everything that will not arrive in the Library as written.
- * Entries already in the Library are left out before the batch limit applies,
- * so importing the same large file again continues where the last import ended.
+ * Turns a parsed file into the next batch of import candidates and a report of everything that
+ * will not arrive as written. Several entries for one work become one work cited by each of their
+ * keys. New works fill the batch first, so importing a large file again continues where the last
+ * import ended; works the Library has follow in the room left.
  */
 export function planBibliographyImport(input: {
   readonly parse: BibliographyParseResult;
@@ -203,17 +256,28 @@ export function planBibliographyImport(input: {
   const { parse } = input;
   const unreadable: BibliographyUnreadableEntry[] = [...parse.unreadable];
   const notKept = new Map<string, { entryCount: number; citationKeys: string[] }>();
-  const seenKeys = new Map<string, number | null>();
-  const seenWorks = new Map<
-    string,
-    ReadonlyArray<{ readonly line: number | null; readonly candidate: ScientSourceCandidate }>
-  >();
-  const fresh: ScientSourceCandidate[] = [];
-  const labels = new Map<string, string>();
-  const linked = new Map<string, ReadonlyArray<BibliographyLinkedFile>>();
-  let alreadyInLibrary = 0;
-  const present = new Set<string>();
+  const works: PlannedWork[] = [];
+  const bySourceKey = new Map<string, PlannedWork>();
+  const byIdentifier = new Map<string, PlannedWork[]>();
+  const byCitationKey = new Map<string, PlannedWork>();
+  const sameWork: BibliographySameWork[] = [];
+  const keyConflicts: Array<{
+    citationKey: string;
+    line: number | null;
+    firstLine: number | null;
+  }> = [];
   let withoutCitationKey = 0;
+  // A key cites the work it was first given to; given again to another work it is a conflict.
+  const claimKey = (work: PlannedWork, key: string | null, line: number | null) => {
+    if (!key) return;
+    const claimed = byCitationKey.get(citationKeyComparisonValue(key));
+    if (!claimed) {
+      byCitationKey.set(citationKeyComparisonValue(key), work);
+      work.keys.push(key);
+    } else if (claimed !== work) {
+      keyConflicts.push({ citationKey: key, line, firstLine: claimed.line });
+    }
+  };
   for (const entry of parse.entries) {
     const label =
       entry.citationKey ?? (entry.line ? `line ${entry.line}` : `item ${entry.index + 1}`);
@@ -227,18 +291,45 @@ export function planBibliographyImport(input: {
       });
       continue;
     }
-    if (seenKeys.has(sourceKey)) {
-      const firstLine = seenKeys.get(sourceKey);
-      unreadable.push({
+    const copied = bySourceKey.get(sourceKey);
+    if (copied) {
+      sameWork.push({
+        citationKey: label,
         line: entry.line,
-        citationKey: entry.citationKey,
-        reason: firstLine
-          ? `This entry repeats the entry on line ${firstLine}.`
-          : "This entry repeats an earlier entry.",
+        sameAs: copied.label,
+        identifier: null,
       });
       continue;
     }
-    seenKeys.set(sourceKey, entry.line);
+    const workKeys = candidate.identifiers.flatMap((identifier) =>
+      WORK_LEVEL_SCHEMES.has(identifier.scheme)
+        ? [
+            {
+              key: normalizePersistentIdentifier(identifier.scheme, identifier.value),
+              label: IDENTIFIER_LABELS[identifier.scheme] ?? identifier.scheme,
+            },
+          ]
+        : [],
+    );
+    // A shared identifier repeats an entry only when the two corroborate one work.
+    const repeated = workKeys
+      .flatMap((key) => (byIdentifier.get(key.key) ?? []).map((work) => ({ work, key })))
+      .find(({ work }) => scientLibraryIdentityProblem(candidate, work.candidate) === null);
+    if (repeated) {
+      sameWork.push({
+        citationKey: label,
+        line: entry.line,
+        sameAs: repeated.work.label,
+        identifier: repeated.key.label,
+      });
+      claimKey(repeated.work, entry.citationKey, entry.line);
+      for (const file of entry.linkedFiles) {
+        if (!repeated.work.linkedFiles.some((known) => known.path === file.path)) {
+          repeated.work.linkedFiles.push(file);
+        }
+      }
+      continue;
+    }
     if (!entry.citationKey) withoutCitationKey += 1;
     for (const field of entry.notKept) {
       const summary = notKept.get(field) ?? { entryCount: 0, citationKeys: [] };
@@ -246,65 +337,86 @@ export function planBibliographyImport(input: {
       if (summary.citationKeys.length < REPORT_KEY_LIMIT) summary.citationKeys.push(label);
       notKept.set(field, summary);
     }
-    const workKeys = candidate.identifiers.flatMap((identifier) =>
-      WORK_LEVEL_SCHEMES.has(identifier.scheme)
-        ? [normalizePersistentIdentifier(identifier.scheme, identifier.value)]
-        : [],
-    );
-    // A shared identifier repeats an entry only when the two corroborate one work.
-    const repeated = workKeys
-      .flatMap((key) => seenWorks.get(key) ?? [])
-      .find((earlier) => scientLibraryIdentityProblem(candidate, earlier.candidate) === null)?.line;
-    if (repeated !== undefined) {
-      unreadable.push({
-        line: entry.line,
-        citationKey: entry.citationKey,
-        reason: repeated
-          ? `This entry has the same identifier as the entry on line ${repeated}.`
-          : "This entry has the same identifier as an earlier entry.",
-      });
-      continue;
-    }
-    for (const key of workKeys) {
-      seenWorks.set(key, [...(seenWorks.get(key) ?? []), { line: entry.line, candidate }]);
-    }
-    const sourceId = input.sourceIdFor(sourceKey);
     const duplicate = assessSourceDuplicate({
       candidate,
       existing: input.existing,
-      sourceId,
+      sourceId: input.sourceIdFor(sourceKey),
       ...(input.exclusions ? { exclusions: input.exclusions } : {}),
     });
-    if (duplicate.kind !== "new") {
-      alreadyInLibrary += 1;
-      const [match] = duplicate.matchingSourceIds;
-      if (duplicate.kind !== "possible-metadata-match" && match) present.add(match);
-      continue;
-    }
-    fresh.push(candidate);
-    if (entry.linkedFiles.length > 0) {
-      labels.set(sourceKey, label);
-      linked.set(sourceKey, entry.linkedFiles);
-    }
+    const match = duplicate.matchingSourceIds[0] ?? null;
+    const work: PlannedWork = {
+      kind:
+        duplicate.kind === "new"
+          ? "new"
+          : duplicate.kind !== "possible-metadata-match" && match
+            ? "present"
+            : "maybe",
+      candidate,
+      label,
+      line: entry.line,
+      sourceId: duplicate.kind === "new" ? null : match,
+      keys: [],
+      linkedFiles: [...entry.linkedFiles],
+    };
+    works.push(work);
+    bySourceKey.set(sourceKey, work);
+    for (const key of workKeys)
+      byIdentifier.set(key.key, [...(byIdentifier.get(key.key) ?? []), work]);
+    claimKey(work, entry.citationKey, entry.line);
   }
-  const candidates = fresh.slice(0, input.limit);
+  const fresh = works.filter((work) => work.kind === "new");
+  const present = works.filter((work) => work.kind === "present");
+  const staged = [...fresh.slice(0, input.limit)];
+  staged.push(...present.slice(0, Math.max(0, input.limit - staged.length)));
+  const stagedPresent = staged.length - Math.min(fresh.length, input.limit);
+  const presentPastBatch = present.slice(stagedPresent);
+  const stagedFresh = staged.filter((work) => work.kind === "new");
+  const incompleteAuthors = stagedFresh.flatMap((work) =>
+    scientCreatorRoleIncomplete(work.candidate.incompleteCreatorRoles, "author")
+      ? [
+          {
+            sourceKey: work.candidate.sourceKey,
+            label: work.label,
+            named: work.candidate.creators.filter(
+              (creator) => creator.creatorType.toLowerCase() === "author",
+            ).length,
+          },
+        ]
+      : [],
+  );
   return {
-    candidates,
-    linkedFiles: candidates.flatMap((candidate) => {
-      const files = linked.get(candidate.sourceKey);
-      return files
-        ? [{ sourceKey: candidate.sourceKey, label: labels.get(candidate.sourceKey) ?? "", files }]
-        : [];
-    }),
-    presentSourceIds: [...present],
+    candidates: staged.map((work) => work.candidate),
+    linkedFiles: stagedFresh.flatMap((work) =>
+      work.linkedFiles.length > 0
+        ? [{ sourceKey: work.candidate.sourceKey, label: work.label, files: work.linkedFiles }]
+        : [],
+    ),
+    citationKeys: Object.fromEntries(
+      staged.flatMap((work) =>
+        work.keys.length > 0 ? [[work.candidate.sourceKey, work.keys]] : [],
+      ),
+    ),
+    presentPastBatch: presentPastBatch.map((work) => ({
+      sourceId: work.sourceId!,
+      citationKeys: work.keys,
+    })),
     report: {
       format: parse.format,
       entryCount: parse.entries.length + parse.unreadable.length,
-      importCount: candidates.length,
-      alreadyInLibrary,
-      remaining: fresh.length - candidates.length,
+      importCount: stagedFresh.length,
+      ...(stagedPresent > 0 ? { presentCount: stagedPresent } : {}),
+      alreadyInLibrary:
+        works.filter((work) => work.kind === "maybe").length + presentPastBatch.length,
+      remaining: fresh.length - stagedFresh.length,
       unreadableCount: unreadable.length,
       unreadable: unreadable.slice(0, REPORT_LIST_LIMIT).map((entry) => ({ ...entry })),
+      ...(sameWork.length > 0 ? { sameWork: sameWork.slice(0, REPORT_LIST_LIMIT) } : {}),
+      ...(keyConflicts.length > 0
+        ? { keyConflicts: keyConflicts.slice(0, REPORT_LIST_LIMIT) }
+        : {}),
+      ...(incompleteAuthors.length > 0
+        ? { incompleteAuthors: incompleteAuthors.slice(0, REPORT_LIST_LIMIT) }
+        : {}),
       notKept: [...notKept.entries()]
         .toSorted((left, right) => right[1].entryCount - left[1].entryCount)
         .slice(0, REPORT_LIST_LIMIT)
@@ -432,6 +544,14 @@ export function exportBibliographyFile(
       else if (found.creatorType.toLowerCase() !== creator.creatorType.toLowerCase()) {
         fields.add("Creator roles");
       }
+    }
+    // RIS and EndNote XML have no way to say a name list goes on past the names given.
+    if (
+      record.incompleteCreatorRoles?.some(
+        (role) => !scientCreatorRoleIncomplete(entry?.incompleteCreatorRoles, role),
+      )
+    ) {
+      fields.add("“et al.” after a list of names");
     }
     for (const field of fields) {
       const summary = lost.get(field) ?? { entryCount: 0, citationKeys: [] };

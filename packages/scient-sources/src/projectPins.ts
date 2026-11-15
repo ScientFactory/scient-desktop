@@ -28,6 +28,7 @@ import {
   ScientSourceCitationKey,
   ScientSourceCreator,
   ScientSourceIdentifier,
+  ScientSourceIncompleteCreatorRoles,
   type ScientSourceRecord,
 } from "./model.ts";
 import {
@@ -73,6 +74,8 @@ export const ScientPinWork = Schema.Struct({
   type: NonEmptyString,
   title: NullableText,
   creators: Schema.Array(ScientSourceCreator).pipe(Schema.check(Schema.isMaxLength(256))),
+  /** Present only when a role's list stops short; the managed entry ends it with "and others". */
+  incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: Schema.Array(ScientSourceIdentifier).pipe(Schema.check(Schema.isMaxLength(256))),
   containerTitle: NullableText,
@@ -156,6 +159,9 @@ function encodeWork(work: ScientPinWork, extra: JsonObject) {
       familyName: creator.familyName,
       literalName: creator.literalName,
     })),
+    ...(work.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: [...work.incompleteCreatorRoles] }
+      : {}),
     issuedYear: work.issuedYear,
     identifiers: work.identifiers.map((identifier) => ({
       scheme: identifier.scheme,
@@ -306,6 +312,9 @@ export function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWo
     type: record.type,
     title: record.title,
     creators: record.creators,
+    ...(record.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: record.incompleteCreatorRoles }
+      : {}),
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
     containerTitle: record.containerTitle,
@@ -467,6 +476,101 @@ export async function pinScientLibrarySource(input: {
     }
     await writePinsDocument(root, document, [...document.pins, { pin, extra: {}, workExtra: {} }]);
     return { outcome: "pinned", pin };
+  });
+}
+
+export type ScientCitationKeyBinding = {
+  readonly citationKey: string;
+  /** added: it cites the source here from now on; cited: it did already; taken: another source. */
+  readonly outcome: "added" | "cited" | "taken";
+};
+
+/**
+ * Binds keys a manuscript already uses to a library source, each exactly as given: a key the
+ * project does not use yet gets a pin of its own, even when the source has another key here; a key
+ * that cites the source already is left alone; a key that cites another source is `taken` and stays
+ * with it. When none of the keys cites the source, it is pinned as `pinScientLibrarySource` pins it,
+ * and `projectKey` is the key it got. Never renames a pin or touches a note.
+ */
+export async function bindScientProjectCitationKeys(input: {
+  readonly projectRoot: string;
+  readonly library: ScientLibraryLocation;
+  readonly sourceId: string;
+  readonly citationKeys: ReadonlyArray<string>;
+  readonly actor: ScientSourceActor;
+}): Promise<
+  | {
+      readonly outcome: "bound";
+      readonly bindings: ReadonlyArray<ScientCitationKeyBinding>;
+      readonly projectKey?: string;
+    }
+  | { readonly outcome: "not-found" }
+> {
+  const root = await projectRootFor(input.projectRoot);
+  const { projectId } = await readScientProjectIdentity(root);
+  await registerScientLibraryInstance({ library: input.library, projectId, projectRoot: root });
+  return withPinsLock(root, async () => {
+    const aliases = await readScientLibraryAliases(input.library);
+    const record = await readScientSourceRecord(
+      input.library,
+      resolveScientLibraryAlias(aliases, input.sourceId),
+    );
+    if (!record) return { outcome: "not-found" };
+    const document = await readPinsDocument(root);
+    const resolutions = await resolvePinsRead(input.library, root, document.pins);
+    const citesRecord = (stored: StoredPin) => {
+      const resolution = resolutions[document.pins.indexOf(stored)];
+      return (
+        stored.pin.sourceId === input.sourceId ||
+        stored.pin.sourceId === record.sourceId ||
+        (resolution?.kind === "resolved" && resolution.sourceId === record.sourceId)
+      );
+    };
+    const pins = [...document.pins];
+    const bindings: ScientCitationKeyBinding[] = [];
+    const pinnedAt = new Date().toISOString();
+    const added = (citationKey: string): StoredPin => ({
+      pin: {
+        citationKey,
+        sourceId: record.sourceId,
+        pinnedAt,
+        pinnedBy: input.actor,
+        work: scientPinWorkFromRecord(record),
+      },
+      extra: {},
+      workExtra: {},
+    });
+    for (const citationKey of input.citationKeys) {
+      const wanted = citationKeyComparisonValue(citationKey);
+      if (bindings.some((binding) => citationKeyComparisonValue(binding.citationKey) === wanted)) {
+        continue;
+      }
+      const existing = findPin(document.pins, citationKey);
+      if (existing) {
+        bindings.push({ citationKey, outcome: citesRecord(existing) ? "cited" : "taken" });
+      } else {
+        pins.push(added(citationKey));
+        bindings.push({ citationKey, outcome: "added" });
+      }
+    }
+    let projectKey: string | undefined;
+    if (!bindings.some((binding) => binding.outcome !== "taken")) {
+      const pinned = document.pins.find(citesRecord);
+      if (pinned) projectKey = pinned.pin.citationKey;
+      else {
+        const taken = new Set(pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
+        projectKey = assignCitationKey({
+          preferred: record.citationKey ?? null,
+          creators: record.creators,
+          issuedYear: record.issuedYear,
+          title: record.title,
+          taken,
+        });
+        pins.push(added(projectKey));
+      }
+    }
+    if (pins.length !== document.pins.length) await writePinsDocument(root, document, pins);
+    return { outcome: "bound", bindings, ...(projectKey ? { projectKey } : {}) };
   });
 }
 
@@ -1019,6 +1123,9 @@ function recordFromSnapshot(pin: ScientProjectPin): ScientSourceRecord {
     ...(work.customType ? { customType: work.customType } : {}),
     title: work.title,
     creators: work.creators,
+    ...(work.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: work.incompleteCreatorRoles }
+      : {}),
     issuedRaw: work.issuedRaw ?? (work.issuedYear === null ? null : String(work.issuedYear)),
     issuedYear: work.issuedYear,
     identifiers: work.identifiers,

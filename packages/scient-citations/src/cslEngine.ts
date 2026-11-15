@@ -1,5 +1,6 @@
 import bundledLocales from "@citation-js/plugin-csl/lib-mjs/locales.json" with { type: "json" };
 import bundledStyles from "@citation-js/plugin-csl/lib-mjs/styles.json" with { type: "json" };
+import { CSL_INCOMPLETE_NAMES } from "@scientfactory/scient-sources/bibliography";
 
 import extraLocales from "./bundledLocales.json" with { type: "json" };
 
@@ -7,6 +8,7 @@ import type { ScientReferenceStyleId } from "./styles.ts";
 
 interface CslItem {
   readonly id: string;
+  readonly custom?: unknown;
 }
 
 interface CslEngine {
@@ -26,8 +28,26 @@ interface CslEngineConstructor {
   ): CslEngine;
 }
 
+/** The parts of citeproc's name renderer the incomplete-list rule reads. */
+interface CiteprocNameOutput {
+  readonly persons_count: Record<string, Record<number, number>>;
+  readonly freeters_count: Record<string, number>;
+  readonly state: { readonly tmp: { readonly sort_key_flag?: boolean } };
+  etal_use_last: boolean;
+}
+
 interface CiteprocModule {
   readonly Engine: CslEngineConstructor;
+  readonly NameOutput: {
+    readonly prototype: {
+      _setEtAlParameter(
+        this: CiteprocNameOutput,
+        type: string,
+        variable: string,
+        index?: number,
+      ): void;
+    };
+  };
 }
 
 // citeproc-js is JavaScript-only. Keep its untyped boundary isolated here so
@@ -36,6 +56,45 @@ interface CiteprocModule {
 import UntypedCiteproc from "citeproc";
 
 const Citeproc = UntypedCiteproc as CiteprocModule;
+
+/** The name variables of the item being rendered whose list stops short; set only while rendering. */
+let incompleteNames: ReadonlySet<string> = new Set();
+
+function incompleteNamesOf(item: CslItem): ReadonlySet<string> {
+  const custom = item.custom;
+  const marked =
+    typeof custom === "object" && custom !== null
+      ? (custom as Record<string, unknown>)[CSL_INCOMPLETE_NAMES]
+      : undefined;
+  return new Set(Array.isArray(marked) ? marked.filter((name) => typeof name === "string") : []);
+}
+
+// citeproc ends a name list with the style's et-al term when it holds fewer names than counted.
+// A known-short list counts one more, so a list the style did not cut ends in et al. and a cut
+// one keeps the style's cutoff; "last author" styles get plain et al., as the last given is not.
+const setEtAlParameter = Citeproc.NameOutput.prototype._setEtAlParameter;
+Citeproc.NameOutput.prototype._setEtAlParameter = function (type, variable, index) {
+  if (
+    !incompleteNames.has(variable) ||
+    this.state.tmp.sort_key_flag ||
+    (type !== "persons" && type !== "freeters")
+  ) {
+    setEtAlParameter.call(this, type, variable, index);
+    return;
+  }
+  const counts: Record<string | number, number> | undefined =
+    type === "persons" ? this.persons_count[variable] : this.freeters_count;
+  const key = type === "persons" ? (index ?? 0) : variable;
+  const useLast = this.etal_use_last;
+  if (counts?.[key] !== undefined) counts[key] += 1;
+  this.etal_use_last = false;
+  try {
+    setEtAlParameter.call(this, type, variable, index);
+  } finally {
+    this.etal_use_last = useLast;
+    if (counts?.[key] !== undefined) counts[key] -= 1;
+  }
+};
 
 type BibliographyEntryRenderer = ((item: CslItem) => string) & { readonly seen: Set<string> };
 
@@ -68,6 +127,7 @@ function createRenderer(style: string): BibliographyEntryRenderer {
 
   const render = (item: CslItem) => {
     current = item;
+    incompleteNames = incompleteNamesOf(item);
     try {
       // citeproc derives sort keys and name disambiguation when an item is first
       // registered and keeps them for a re-registered ID, so render each entry
@@ -78,6 +138,7 @@ function createRenderer(style: string): BibliographyEntryRenderer {
       return bibliography ? (bibliography[1][0] ?? "") : "";
     } finally {
       current = null;
+      incompleteNames = new Set();
     }
   };
   return Object.assign(render, { seen: new Set<string>() });

@@ -167,13 +167,14 @@ describe("BibTeX import", () => {
     expect(entry?.creators[1]).toEqual(author("Jan", "Novák"));
   });
 
-  it("turns a Google Scholar arXiv article into a preprint and reports a truncated author list", () => {
+  it("turns a Google Scholar arXiv article into a preprint whose author list stops short", () => {
     const [entry] = parseFixture("scholar.bib").entries;
     expect(entry).toMatchObject({
       type: "preprint",
       containerTitle: "arXiv",
       identifiers: [{ scheme: "arxiv", value: "1706.03762" }],
-      notKept: ["author (“and others”)"],
+      incompleteCreatorRoles: ["author"],
+      notKept: [],
     });
     expect(entry?.creators).toHaveLength(3);
   });
@@ -372,36 +373,59 @@ describe("import plan", () => {
 @article{d, title={Three}, year=2003}
 @article{e, title={Four}, year=2004}
 @article{f, year=2005}
+@article{e, title={Five}, year=2006}
 `;
   const plan = (limit: number) =>
     planBibliographyImport({
       parse: parseBibliography(bib, "bibtex"),
       existing: [existingRecord("10.1000/one")],
-      sourceKeyFor: (identity) =>
-        `file_${identity.length}_${identity.slice(-24).replace(/\W/gu, "")}`,
+      sourceKeyFor: (identity) => identity,
       sourceIdFor: (sourceKey) => `source_${sourceKey}`,
       limit,
     });
 
-  it("leaves out repeats, sources already in the Library and empty entries, then batches the rest", () => {
-    const { candidates, report } = plan(2);
-    expect(candidates.map((candidate) => candidate.title)).toEqual(["Two", "Three"]);
+  it("gives one work for several entries, cited by each of their keys", () => {
+    const { candidates, citationKeys, report } = plan(10);
+    expect(candidates.map((candidate) => candidate.title)).toEqual([
+      "Two",
+      "Three",
+      "Four",
+      "Five",
+      "One",
+    ]);
+    const keysOf = (title: string) =>
+      citationKeys[candidates.find((candidate) => candidate.title === title)!.sourceKey];
+    expect(keysOf("Two")).toEqual(["b", "c"]);
+    // The work the Library has is staged too, so the import cites it here by the file's key.
+    expect(keysOf("One")).toEqual(["a"]);
+    // A key the file gave another work first stays with that work.
+    expect(keysOf("Five")).toBeUndefined();
     expect(report).toMatchObject({
-      format: "bibtex",
-      entryCount: 7,
-      importCount: 2,
-      alreadyInLibrary: 1,
-      remaining: 1,
-      unreadableCount: 3,
-      withoutCitationKey: 0,
+      entryCount: 8,
+      importCount: 4,
+      presentCount: 1,
+      alreadyInLibrary: 0,
+      remaining: 0,
+      unreadableCount: 1,
+      sameWork: [
+        { citationKey: "c", line: 4, sameAs: "b", identifier: "DOI" },
+        { citationKey: "a", line: 5, sameAs: "a", identifier: null },
+      ],
+      keyConflicts: [{ citationKey: "e", line: 9, firstLine: 7 }],
       // A field a source has a place for is no longer reported; one it has none for is.
       notKept: [],
     });
     expect(report.unreadable.map((entry) => entry.reason)).toEqual([
-      "This entry has the same identifier as the entry on line 3.",
-      "This entry repeats the entry on line 2.",
       "This entry has no title, author or identifier.",
     ]);
+  });
+
+  it("fills a batch with new works first, so importing the file again continues", () => {
+    const { candidates, presentPastBatch, report } = plan(2);
+    expect(candidates.map((candidate) => candidate.title)).toEqual(["Two", "Three"]);
+    expect(presentPastBatch).toEqual([{ sourceId: "source_existing", citationKeys: ["a"] }]);
+    expect(report).toMatchObject({ importCount: 2, alreadyInLibrary: 1, remaining: 2 });
+    expect(report.presentCount).toBeUndefined();
   });
 
   it("builds candidates the store accepts, with file provenance and the note", () => {
@@ -584,6 +608,28 @@ describe("export", () => {
         format,
       ).entries;
       expect([back?.issue, back?.more.number]).toEqual(["2", undefined]);
+    }
+  });
+
+  it("keeps an author list that stops short where the format can say so, and says where not", () => {
+    const short = decodeRecord({ ...record, incompleteCreatorRoles: ["author"] });
+    const write = (format: BibliographyFormat) =>
+      exportBibliographyFile([{ record: short, citationKey: "k" }], format, {
+        includeNotes: false,
+      });
+    expect(write("bibtex").content).toContain(
+      "author = {Müller, Jörg and van der Berg, Anna and {Malaria Consortium} and others}",
+    );
+    for (const format of ["bibtex", "csl-json"] as const) {
+      const [back] = parseBibliography(write(format).content, format).entries;
+      expect(back?.incompleteCreatorRoles).toEqual(["author"]);
+      expect(back?.creators.filter((creator) => creator.creatorType === "author")).toHaveLength(3);
+      expect(write(format).notKept).toEqual([]);
+    }
+    for (const format of ["ris", "endnote-xml"] as const) {
+      expect(write(format).notKept.map((entry) => entry.field)).toEqual([
+        "“et al.” after a list of names",
+      ]);
     }
   });
 

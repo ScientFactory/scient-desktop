@@ -41,6 +41,8 @@ import {
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
   type ScientSourceImportOperation,
+  type ScientSourceItemCitationKey,
+  scientCreatorRoleIncomplete,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   zoteroGroupIdOfLibrary,
   type ScientSourceOrigin,
@@ -138,6 +140,7 @@ import {
   type ManagedBibliographyFileName,
 } from "./ManagedBibliography.ts";
 import {
+  bindLibraryImportKeys,
   libraryImportPinInstance,
   pinLibraryImport,
   syncLibraryImportBibliography,
@@ -145,6 +148,7 @@ import {
 import { canonicalScientSourceLocation, scientSourceStoreKey } from "./SourcesBackend.ts";
 import {
   beginBibliographyFileImport,
+  completeFileAuthorList,
   discardBibliographyFileImport,
   fileImportVerification,
   getBibliographyFileImportMaterial,
@@ -1517,18 +1521,37 @@ async function addToZoteroCollections(input: {
   return input.collectionKeys.length - filed;
 }
 
-/** A reference-file entry, with the PDFs its file names attached like any other PDF. */
+/** What a reference-file item brings besides its source: its keys, and how its author list ended. */
+interface FileItemOutcome {
+  readonly citationKeys: ReadonlyArray<string>;
+  readonly authorList?: "completed" | "incomplete";
+}
+
+/**
+ * A reference-file entry, with the PDFs its file names attached like any other PDF and an author
+ * list the file cut short filled in from its DOI where the registry corroborates it.
+ */
 async function importFileOperationItem(input: {
   readonly root: ScientSourceStoreLocation;
   readonly operation: ScientSourceImportOperation;
   readonly itemKey: string;
   readonly allowPossibleMetadataMatch: boolean;
+  readonly resolveIdentifier: ResolveSourceIdentifier | undefined;
 }) {
-  const { candidate, pdfs } = await getBibliographyFileImportMaterial(
+  const material = await getBibliographyFileImportMaterial(
     input.root,
     input.operation.operationId,
     input.itemKey,
   );
+  const { pdfs, citationKeys } = material;
+  // Only a new work is completed: a work the Library has keeps its record as it is.
+  const completed =
+    scientCreatorRoleIncomplete(material.candidate.incompleteCreatorRoles, "author") &&
+    (await assessScientSourceIntake({ root: input.root, candidate: material.candidate })).kind ===
+      "new"
+      ? await completeFileAuthorList(material.candidate, input.resolveIdentifier)
+      : null;
+  const candidate = completed?.candidate ?? material.candidate;
   const [primary, ...extra] = pdfs;
   const result = await importScientSourceOperationItem({
     root: input.root,
@@ -1547,8 +1570,12 @@ async function importFileOperationItem(input: {
     ...(primary ? { pdfPath: primary.path } : {}),
     allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
   });
+  const file: FileItemOutcome = {
+    citationKeys,
+    ...(completed && result.outcome === "imported" ? { authorList: completed.authorList } : {}),
+  };
   let record = result.record;
-  if (result.outcome !== "imported") return result;
+  if (result.outcome !== "imported") return { ...result, file };
   for (const pdf of extra) {
     if (!record) break;
     const attached = await attachScientSourcePdf({
@@ -1561,7 +1588,7 @@ async function importFileOperationItem(input: {
     });
     record = attached.record;
   }
-  return { ...result, record };
+  return { ...result, record, file };
 }
 
 /**
@@ -1729,6 +1756,8 @@ export async function advanceSourceImport(
     readonly root: ScientSourceStoreLocation;
     readonly operationId: string;
     readonly zotero?: ZoteroAccess;
+    /** Fills in a reference-file author list that ends in "and others" from its DOI; none: kept short. */
+    readonly resolveIdentifier?: ResolveSourceIdentifier;
   },
   observer?: SourceImportObserver,
 ) {
@@ -1740,6 +1769,7 @@ export async function advanceSourceImport(
     const pending = operation.items.find((item) => item.state === "pending");
     if (!pending) return operation;
     try {
+      const fileItem: { outcome: FileItemOutcome | null } = { outcome: null };
       const result = await observeSourceImport(
         observer,
         async () => {
@@ -1753,12 +1783,15 @@ export async function advanceSourceImport(
             });
           }
           if (operation.adapter === "file") {
-            return importFileOperationItem({
+            const imported = await importFileOperationItem({
               root,
               operation,
               itemKey: pending.itemKey,
               allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
+              resolveIdentifier: input.resolveIdentifier,
             });
+            fileItem.outcome = imported.file;
+            return imported;
           }
           const { candidate, pdfPath, expectedPdf } = await getLocalPdfImportMaterial(
             root,
@@ -1779,13 +1812,32 @@ export async function advanceSourceImport(
       );
       // Pinned before the item is recorded, so a crash in between pins it when the item runs again.
       const pinned = importedOrSameWork(result);
-      if (operation.pinInstanceId && isScientLibraryLocation(root) && pinned) {
-        await pinLibraryImport({
-          library: root,
-          instanceId: operation.pinInstanceId,
-          sourceIds: [pinned],
+      const file = fileItem.outcome;
+      const pin =
+        operation.pinInstanceId && isScientLibraryLocation(root)
+          ? { library: root, instanceId: operation.pinInstanceId }
+          : null;
+      let keys: {
+        readonly citationKeys: ReadonlyArray<ScientSourceItemCitationKey>;
+        readonly projectKey?: string;
+      } | null = null;
+      if (pin && pinned && file) {
+        keys = await bindLibraryImportKeys({
+          ...pin,
+          sourceId: pinned,
+          citationKeys: file.citationKeys,
           actor: operation.actor,
         });
+      } else if (pin && pinned) {
+        await pinLibraryImport({ ...pin, sourceIds: [pinned], actor: operation.actor });
+      } else if (file && pinned && isScientLibraryLocation(root)) {
+        // A My Library import writes nothing in a project; the keys are kept for the receipt.
+        keys = {
+          citationKeys: file.citationKeys.map((citationKey) => ({
+            citationKey,
+            outcome: "library" as const,
+          })),
+        };
       }
       const updated = await updateSourceImportOperationItem({
         root,
@@ -1798,6 +1850,9 @@ export async function advanceSourceImport(
         ...("notBrought" in result && Array.isArray(result.notBrought)
           ? { notBrought: result.notBrought }
           : {}),
+        ...(keys ? { citationKeys: keys.citationKeys } : {}),
+        ...(keys?.projectKey ? { projectKey: keys.projectKey } : {}),
+        ...(file?.authorList ? { authorList: file.authorList } : {}),
       });
       if (operation.adapter === "local-files") {
         await discardLocalPdfImportMaterial(root, pending.itemKey);
@@ -1929,7 +1984,9 @@ export async function syncManagedBibliographyWithImports(
 
 /** Begins a reference-file import and runs it to the end, for callers without a progress view. */
 export async function importBibliographyFile(
-  input: Parameters<typeof beginBibliographyFileImport>[0],
+  input: Parameters<typeof beginBibliographyFileImport>[0] & {
+    readonly resolveIdentifier?: ResolveSourceIdentifier;
+  },
   observer?: SourceImportObserver,
 ) {
   const begun = await beginBibliographyFileImport(input);
@@ -1939,7 +1996,11 @@ export async function importBibliographyFile(
     operation.items.some((item) => item.state === "pending")
   ) {
     operation = await advanceSourceImport(
-      { root: input.root, operationId: operation.operationId },
+      {
+        root: input.root,
+        operationId: operation.operationId,
+        ...(input.resolveIdentifier ? { resolveIdentifier: input.resolveIdentifier } : {}),
+      },
       observer,
     );
   }

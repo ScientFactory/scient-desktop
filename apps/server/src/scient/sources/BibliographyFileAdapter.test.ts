@@ -112,8 +112,13 @@ describe("reference file import", () => {
       text: BIB,
       actor: "user",
     });
-    expect(again.operation).toBeNull();
-    expect(again.report).toMatchObject({ importCount: 0, alreadyInLibrary: 3 });
+    // A file whose works are all here still gets an import of its own, so its receipt says so.
+    expect(again.operation?.items.map((item) => item.state)).toEqual([
+      "skipped",
+      "skipped",
+      "skipped",
+    ]);
+    expect(again.report).toMatchObject({ importCount: 0, presentCount: 3, alreadyInLibrary: 0 });
     expect(await listScientSourceRecords(root)).toHaveLength(3);
   });
 
@@ -131,14 +136,21 @@ describe("reference file import", () => {
       ...input,
       operationId: "file_import_large_2",
     });
-    expect(second.report).toMatchObject({ importCount: 1, alreadyInLibrary: 500, remaining: 0 });
+    // New entries come first; works already here fill the room left, the rest are counted.
+    expect(second.report).toMatchObject({
+      importCount: 1,
+      presentCount: 499,
+      alreadyInLibrary: 1,
+      remaining: 0,
+    });
     const staged = await readScientSourceStagedFileImport(root, "file_import_large_2");
-    expect(staged?.candidates.map((candidate) => candidate.citationKey)).toEqual(["k500"]);
+    expect(staged?.candidates[0]?.citationKey).toBe("k500");
+    expect(staged?.candidates).toHaveLength(500);
     const continued = await importBibliographyFile({
       ...input,
       operationId: "file_import_large_2",
     });
-    expect(continued.operation?.items.map((item) => item.state)).toEqual(["imported"]);
+    expect(continued.operation?.items.filter((item) => item.state === "imported")).toHaveLength(1);
 
     const [candidate] = staged?.candidates ?? [];
     if (!candidate) throw new Error("Missing staged entry");

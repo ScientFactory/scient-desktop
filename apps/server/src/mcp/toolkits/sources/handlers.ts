@@ -2072,6 +2072,7 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
     const store = yield* resolveScientSourcesStore();
     const { root } = store;
     const observeImport = yield* makeSourceImportAnalytics("agent");
+    const resolveIdentifier = yield* keyedIdentifierLookup();
     const { operation, report } = yield* Effect.tryPromise({
       try: async () => {
         const file = await resolveProjectBibliographyFile(root, input.relativePath);
@@ -2087,6 +2088,7 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
             sourceFolder: NodePath.dirname(file.absolutePath),
             actor: "agent",
             ...(input.format ? { format: input.format } : {}),
+            resolveIdentifier,
           },
           observeImport,
         );
@@ -2138,6 +2140,17 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
       unreadable: report.unreadable,
       notKept: report.notKept,
       withoutCitationKey: report.withoutCitationKey,
+      sameWork: (report.sameWork ?? []).map(({ citationKey, sameAs }) => ({ citationKey, sameAs })),
+      citationKeysTaken: items.flatMap((item) =>
+        (item.citationKeys ?? []).flatMap((key) =>
+          key.outcome === "taken" ? [key.citationKey] : [],
+        ),
+      ),
+      incompleteAuthorLists: (report.incompleteAuthors ?? []).map(({ sourceKey, label }) => ({
+        citationKey: label,
+        completedFromDoi:
+          items.find((item) => item.itemKey === sourceKey)?.authorList === "completed",
+      })),
       pdfsAttached: records
         .filter((record) => importedIds.includes(record.sourceId))
         .reduce(

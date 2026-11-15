@@ -156,6 +156,62 @@ describe("formatSourceReference", () => {
   });
 });
 
+describe("formatSourceReference with an author list that stops short", () => {
+  const person = (familyName: string, givenName: string) => ({
+    creatorType: "author",
+    givenName,
+    familyName,
+    literalName: null,
+  });
+  const alphaFold: ScientSourceRecord = {
+    ...article,
+    sourceId: "source_alphafold",
+    title: "Highly accurate protein structure prediction with AlphaFold",
+    creators: [
+      person("Jumper", "John"),
+      person("Evans", "Richard"),
+      person("Pritzel", "Alexander"),
+    ],
+    incompleteCreatorRoles: ["author"],
+    issuedRaw: "2021",
+    issuedYear: 2021,
+    identifiers: [],
+    containerTitle: "Nature",
+    volume: "596",
+    issue: null,
+    pages: "583-589",
+    url: null,
+  };
+  // A style with no et-al rule lists every name it is given.
+  const listAll = {
+    xml: `<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" class="in-text" version="1.0">
+  <info><title>List all</title><id>http://www.zotero.org/styles/list-all</id></info>
+  <citation><layout><text variable="title"/></layout></citation>
+  <bibliography><layout suffix="."><names variable="author"><name delimiter=", " and="text"/></names><text variable="title" prefix=". "/></layout></bibliography>
+</style>`,
+  };
+
+  it("ends the names with the style's et al., never the last given name as the last author", () => {
+    expect(formatSourceReference(alphaFold, "vancouver")).toMatch(
+      /^1\. Jumper J, Evans R, Pritzel A, et al\. Highly accurate/u,
+    );
+    expect(formatSourceReference(alphaFold, "apa")).toMatch(
+      /^Jumper, J\., Evans, R\., Pritzel, A\., et al\. \(2021\)/u,
+    );
+    expect(formatSourceReference(alphaFold, listAll)).toBe(
+      "John Jumper, Richard Evans, Alexander Pritzel, et al. Highly accurate protein structure prediction with AlphaFold.",
+    );
+  });
+
+  it("keeps a complete list as the style writes it", () => {
+    const { incompleteCreatorRoles: _marked, ...complete } = alphaFold;
+    expect(formatSourceReference(complete, listAll)).toBe(
+      "John Jumper, Richard Evans, and Alexander Pritzel. Highly accurate protein structure prediction with AlphaFold.",
+    );
+  });
+});
+
 // regression: review B4-1, a file with the shape of a CSL style counted as usable whatever it held
 describe("readCslStyle", () => {
   const nature = bundledCslStyleXml("nature")!;

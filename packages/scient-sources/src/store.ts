@@ -58,6 +58,7 @@ import {
   type ScientSourceReadingStatus,
   ScientSourceImportOperation,
   ScientSourceImportReceipt,
+  type ScientSourceItemCitationKey,
   type ScientSourceNotBrought,
   ScientSourceRecordV1,
   type ScientSourceRecord,
@@ -2258,6 +2259,9 @@ export async function updateSourceImportOperationItem(input: {
   readonly sourceId?: string;
   readonly message?: string;
   readonly notBrought?: ReadonlyArray<ScientSourceNotBrought>;
+  readonly citationKeys?: ReadonlyArray<ScientSourceItemCitationKey>;
+  readonly projectKey?: string;
+  readonly authorList?: "completed" | "incomplete";
 }): Promise<ScientSourceImportOperation> {
   const paths = await sourceStorePaths(input.root);
   return withStoreLock(paths, input.operationId, async () => {
@@ -2281,6 +2285,11 @@ export async function updateSourceImportOperationItem(input: {
               ...(input.notBrought && input.notBrought.length > 0
                 ? { notBrought: input.notBrought.slice(0, 80) }
                 : {}),
+              ...(input.citationKeys && input.citationKeys.length > 0
+                ? { citationKeys: input.citationKeys.slice(0, 50) }
+                : {}),
+              ...(input.projectKey ? { projectKey: input.projectKey } : {}),
+              ...(input.authorList ? { authorList: input.authorList } : {}),
             }
           : item,
       ),
@@ -2717,6 +2726,10 @@ const ScientSourceStagedFileImport = Schema.Struct({
         Schema.check(Schema.isMaxLength(SCIENT_SOURCE_LINKED_PDF_LIMIT)),
       ),
     ),
+  ),
+  /** Every key the file cites a staged entry's work by, by source key, its own key first. */
+  citationKeys: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.Array(Schema.String.check(Schema.isNonEmpty()))),
   ),
 });
 export type ScientSourceStagedFileImport = typeof ScientSourceStagedFileImport.Type;
@@ -3320,6 +3333,9 @@ async function importScientSourceWithRecordLookup(
       customType: input.candidate.customType ?? null,
       title: input.candidate.title,
       creators: input.candidate.creators,
+      ...(input.candidate.incompleteCreatorRoles?.length
+        ? { incompleteCreatorRoles: input.candidate.incompleteCreatorRoles }
+        : {}),
       issuedRaw: input.candidate.issuedRaw,
       issuedYear: input.candidate.issuedYear,
       identifiers: input.candidate.identifiers,

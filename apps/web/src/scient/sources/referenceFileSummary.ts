@@ -67,7 +67,8 @@ export function unreadableEntryLabel(entry: Report["unreadable"][number]): strin
   return where ? `${where}: ${entry.reason}` : entry.reason;
 }
 
-const REFERENCE_FILE_EXTENSIONS = /\.(?:bib|bibtex|biblatex|ris|json|xml)$/iu;
+// `.txt` too: the file picker takes it, and the server reads what the text is, not its name.
+const REFERENCE_FILE_EXTENSIONS = /\.(?:bib|bibtex|biblatex|ris|json|xml|txt)$/iu;
 
 export function isReferenceFileName(fileName: string): boolean {
   return REFERENCE_FILE_EXTENSIONS.test(fileName.trim());
