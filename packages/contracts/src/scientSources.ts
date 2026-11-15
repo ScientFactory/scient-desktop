@@ -21,6 +21,7 @@ import {
   ScientSourcesBulkRequestChange,
   ScientSourcesBulkResult,
   ScientReviewCombineReport,
+  ScientReviewVersionDifferences,
   ScientReviewVersionSummary,
   ScientSystematicReviewAction,
   ScientSystematicReviewChangeResult,
@@ -763,6 +764,14 @@ export const ScientSystematicReviewChangeRequest = Schema.Struct({
 });
 export type ScientSystematicReviewChangeRequest = typeof ScientSystematicReviewChangeRequest.Type;
 
+export const ScientSystematicReviewConflictsRequest = Schema.Struct({
+  ...ScientSystematicReviewRequest.fields,
+  /** Also answer with a page of what differs between the version in force and this one. */
+  differencesOf: Schema.optionalKey(Schema.Struct({ conflictId: NonEmptyString, offset: Count })),
+});
+export type ScientSystematicReviewConflictsRequest =
+  typeof ScientSystematicReviewConflictsRequest.Type;
+
 /** The picker for a review with other versions: the one in force, then each other version. */
 export const ScientSystematicReviewConflictsResult = Schema.Struct({
   current: Schema.NullOr(ScientReviewVersionSummary),
@@ -770,6 +779,8 @@ export const ScientSystematicReviewConflictsResult = Schema.Struct({
   currentRevision: Schema.optionalKey(NonEmptyString),
   versions: Schema.Array(ScientReviewVersionSummary),
   combineReport: Schema.NullOr(ScientSystematicReviewCombineReport),
+  /** With `differencesOf`; null when either version cannot be read. */
+  differences: Schema.optionalKey(Schema.NullOr(ScientReviewVersionDifferences)),
 });
 export type ScientSystematicReviewConflictsResult =
   typeof ScientSystematicReviewConflictsResult.Type;

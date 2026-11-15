@@ -83,6 +83,7 @@ import {
   ScientSystematicReviewChangeResult,
   ScientSystematicReviewConflictRequest,
   ScientSystematicReviewConflictResult,
+  ScientSystematicReviewConflictsRequest,
   ScientSystematicReviewConflictsResult,
   ScientSystematicReviewList,
   ScientSystematicReviewRequest,
@@ -486,7 +487,7 @@ export function makeScientEnvironmentHttpGroups({
     .add(
       HttpApiEndpoint.post("systematicReviewConflicts", "/api/scient/sources/reviews/conflicts", {
         headers: OptionalBearerHeaders,
-        payload: ScientSystematicReviewRequest,
+        payload: ScientSystematicReviewConflictsRequest,
         success: ScientSystematicReviewConflictsResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),

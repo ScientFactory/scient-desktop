@@ -40,6 +40,7 @@ import type {
   ScientSourcesScope,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewConflictRequest,
+  ScientSystematicReviewConflictsRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
   ScientSourcesExportRequest,
@@ -171,7 +172,7 @@ export function changeSystematicReview(
 
 export function readSystematicReviewConflicts(
   environmentId: EnvironmentId,
-  input: ScientSystematicReviewRequest,
+  input: ScientSystematicReviewConflictsRequest,
 ) {
   return runtime.runPromise(
     listEnvironmentScientSystematicReviewConflicts({ prepared: prepared(environmentId), ...input }),
