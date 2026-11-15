@@ -1403,8 +1403,9 @@ the snapshot in force through the same publisher (nothing it held is dropped,
 so a crash before the review file is written loses no entry), and then removes
 the kept version's file and shards (`removeScientReviewSnapshotAt`). Tests
 lower the threshold through `scientReviewSnapshotLimits`. Each other file is
-copied hidden, checked and renamed, decisions last. Collections are created parents first with their
-ancestry (a same-named sibling here is joined). Anything that fails is listed in
+copied hidden, checked and renamed, decisions last. Collections that hold a paper it brought are
+found or made with the ones above them through `placeScientSourceCollections`
+(below), so two same-named siblings of the package stay two. Anything that fails is listed in
 `failed` and never counted. The managed bibliography is synced after.
 
 Each import writes a receipt, `package-imports/<importId>.json` in the Library
@@ -2834,8 +2835,9 @@ Library with `standingOf`:
 A join holds `<library>.join.lock` for its whole life (so does an Undo), so
 one runs per Library. It writes `joins/<joinId>/join.json` (the other
 Library, counts, the differences), finds or makes the collections of the other
-Library that hold a fresh source (by name under the same parent; one that
-cannot be made is recorded with the reason) and records that map, then works
+Library that hold a fresh source (`placeScientSourceCollections`: by ID, then
+by name under the same parent; one that cannot be made is recorded with the
+reason) and records that map, then works
 in parts of 100. A part file naming the sources and each one's fingerprint (a
 hash of the whole record) is written before the part is applied under the
 Library's lock.
@@ -3217,15 +3219,38 @@ an agent.
   are source IDs; a removed source keeps its membership and is only hidden, so
   restoring it from the trash restores its collections too. Reads project
   members onto the sources that exist.
-- A collection may have a `parentCollectionId`, one level only: a parent has
-  no parent, and a collection with subcollections cannot become one
-  (`too-deep`). Names are unique among siblings without regard to case.
-  Creating a name that exists under the same parent returns that collection
-  and adds the given sources, so a repeated agent request is harmless.
-  Filtering by a collection includes its subcollections' members. A
-  subcollection of a deleted parent is shown at the top level, and rejoins it
-  when the parent is restored; nothing is rewritten. Deleting a collection or saved search marks it
-  deleted (the latest 50 are kept) so it can be restored.
+- A collection may have a `parentCollectionId`, and that one a parent of its
+  own, to `SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT` (10) levels. The stored
+  pointers are the tree. Creating or moving a collection is refused
+  (`too-deep`) when the tree would get deeper or the collection would end up
+  inside itself; levels are counted on the stored chain, deleted collections
+  included, so a restore never makes it deeper. Filtering by a collection
+  includes everything under it.
+- Deleting a collection or saved search marks it deleted (the latest 50 are
+  kept) so it can be restored. A deleted collection keeps its pointer and the
+  ones under it keep theirs: readers show a collection under the nearest one
+  above it that is not deleted, so the ones under a deleted collection show
+  one level up and rejoin it when it is restored; nothing is rewritten. A
+  restore is never refused. When a deleted collection is dropped for good,
+  the ones under it are pointed at its parent.
+- Creating a name that exists under the same parent returns that collection
+  (the oldest, when two share the name) and adds the given sources, so a
+  repeated agent request is harmless; rename and move refuse a name a sibling
+  has. Two siblings share a name only when they arrived as two.
+- `placeScientSourceCollections` is how a tree kept elsewhere arrives (Zotero,
+  another Library, a project package). It takes the whole outside tree and
+  the collections wanted, and in one locked change finds or makes each with
+  the ones above it: the live collection with the outside collection's ID;
+  else a live one with its name under the same parent that no other outside
+  collection has taken; else a new one with that ID. The whole tree is
+  matched on every call in one order, so which same-named sibling has a
+  collection made by hand does not depend on what was wanted. A collection
+  the person deleted here is left out, or with `remake` made again as a new
+  collection with a new ID beside it, so the deleted one keeps its members and
+  can still be restored (later calls find the new one by name). An outside
+  collection under a deleted one that is not made again is made under it. One
+  that cannot be made (500 collections, ten levels, a 200-character name)
+  comes back with the reason.
 - Every change goes through `organizeScientSources` (one action union shared by
   the `organize` HTTP endpoint and `scient_sources_organize`) under one write
   lock, credited with `updatedBy`.
@@ -3502,12 +3527,19 @@ arXiv, DOI for types without a DOI field) and the citation key (Zotero's field,
 then Better BibTeX's `Citation Key:` line, then Better BibTeX's JSON-RPC) are
 read; S2's key rules keep it.
 
-Zotero collections are intake scopes when browsing. After an item is imported
-it joins a Library collection (`collections.json`) named after each Zotero
-collection it belongs to. One level of Zotero's nesting is kept as a
-subcollection; a deeper collection's items join its ancestor at that level,
-and the item's `note` in the operation (and the agent import result) names
-each one flattened. A collection problem never fails the import.
+Zotero collections are intake scopes when browsing, and arrive as a tree. A
+Zotero collection's ID here is a hash of its Zotero library and key
+(`zoteroCollectionId`), so every import, part and restart finds the same
+collection with no stored map. When a scoped import begins, the scope's
+collections are placed (`makeZoteroScopeCollections`: the chosen collection,
+its subcollections when included, the ones above them; empty ones too)
+without remaking what the person deleted here. Each imported item then joins
+the collection of every Zotero collection it is in, with `remake`, so a
+deleted one comes back only for a reference filed in it. A collection problem
+never fails the import: what could not be made or filled is a `collection`
+entry of "not brought" (`unmade` on the operation, `unfiled` on the item, or
+`unread` when Zotero did not list its collections). A refresh reads details,
+notes and PDFs and never refiles.
 
 **Every bibliographic field has a place.** A record's `more` is a small map
 from a CSL variable to text (`sourceMore.ts`: the closed list of names, each
@@ -3711,7 +3743,33 @@ linked source is patched with only the fields that differ, using the item's
 own field set and `If-Unmodified-Since-Version`; if the item changed in Zotero
 since Scient last read it, nothing is sent and the user is asked to refresh.
 Empty values here are never sent. Extra keeps its unmanaged lines and carries
-the citation key and identifiers without a Zotero field. PDFs are not uploaded.
+the citation key and identifiers without a Zotero field.
+
+With `pdfs` (the panel's **Include PDF**, off when the panel opens and held in
+`useZoteroSync`; the agent's `pdfs` input) each PDF of a source whose item was
+created, updated or found unchanged is sent by `sendPdfs` after the item's
+attachments are read once. A stored attachment with the PDF's MD5 means Zotero
+has it (`in-zotero`). A `linked_file` attachment with the same file name (its
+`filename`, or the last part of its `path`) is not uploaded over: Zotero keeps
+only a path for it, so the name is all there is to compare. A personal library
+whose key lacks the `files` permission is not asked. Otherwise the documented
+upload runs (`ZoteroWebLibrary.uploadFile`): an `imported_file` attachment is
+created under the item (a fresh write token each time, since Zotero refuses a
+token used within 12 hours and a refused attachment is made again on retry);
+`POST /items/<key>/file` with MD5, name, size and modification time and
+`If-None-Match: *` authorises it (`exists` ends it: Zotero holds the bytes);
+the bytes are streamed from disk between Zotero's `prefix` and `suffix` to the
+storage address it names, which never receives the API key
+(`ZoteroWebHttp.upload`); `upload=<uploadKey>` registers it. On 403 or 413 the
+attachment this send made is deleted again (`If-Unmodified-Since-Version`), so
+Zotero shows no empty attachment; any other stop leaves an attachment without a
+file, which the next send finds (`imported_file`, same name, no MD5) and fills
+instead of making another. No local record of phases is kept. Each PDF's result
+(`sent`, `in-zotero`, or `not-sent` with the reason) is in the item's `pdfs`;
+the details are sent either way. Highlights are not sent. Whether a person
+stores files with WebDAV is not visible to the API; uploads always go to
+Zotero's own storage.
+
 Without a `groupId` sends go to My Library. With one, the key is checked again
 and the group must be writable: the key's group `write` and the group's
 `libraryEditing` (`members`, or `admins` with the user as owner or admin);

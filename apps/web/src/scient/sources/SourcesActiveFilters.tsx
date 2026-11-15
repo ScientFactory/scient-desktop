@@ -1,8 +1,10 @@
+import { SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT } from "@scientfactory/scient-sources";
 import { MoreHorizontal, X } from "lucide-react";
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
+import { orderedCollections } from "./collectionTree";
 import { LIBRARY_LABELS } from "./libraryLabels";
 import { SCIENT_SOURCE_STUDY_DESIGN_LABELS, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
@@ -35,6 +37,10 @@ export function SourcesActiveFilters(props: {
   const { filter, collection, savedSearch } = organize;
   if (!organize.filterActive && !organize.readingFilterActive && !savedSearch) return null;
   const without = (key: keyof typeof filter) => organize.setFilter({ ...filter, [key]: undefined });
+  const levelsAbove =
+    orderedCollections(organize.organization.collections).find(
+      (entry) => entry.collection.collectionId === collection?.collectionId,
+    )?.aboveIds.length ?? 0;
   const renameCollection = () => {
     if (!collection) return;
     props.onRequestName({
@@ -136,11 +142,11 @@ export function SourcesActiveFilters(props: {
               <MenuItem disabled={!organize.canChange} onClick={renameCollection}>
                 Rename collection…
               </MenuItem>
-              {collection.parentCollectionId ? null : (
+              {levelsAbove + 1 < SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT ? (
                 <MenuItem disabled={!organize.canChange} onClick={newSubcollection}>
                   New subcollection…
                 </MenuItem>
-              )}
+              ) : null}
               <MenuItem
                 variant="destructive"
                 disabled={!organize.canChange}

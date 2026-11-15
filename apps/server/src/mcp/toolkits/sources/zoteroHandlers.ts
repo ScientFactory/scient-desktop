@@ -305,7 +305,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
       failed: count("failed"),
       // A part of a large import names only what needs a look; the counts say the rest.
       items: (operation.run
-        ? operation.items.filter((item) => item.state !== "imported" || item.note)
+        ? operation.items.filter((item) => item.state !== "imported")
         : operation.items
       ).map((item) => ({
         itemKey: item.itemKey,
@@ -314,7 +314,6 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
         sourceId: item.sourceId,
         message:
           item.state === "failed" ? safeZoteroMessage(new Error(item.message ?? "")) : item.message,
-        ...(item.note ? { note: item.note } : {}),
       })),
       ...(notBrought.length > 0 ? { notBrought } : {}),
       // A person who stopped the import is not overruled by going on: no runId then.
@@ -370,7 +369,11 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
 );
 
 export const sendToZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroSend")(
-  function* (input: { readonly sourceIds: ReadonlyArray<string>; readonly library?: string }) {
+  function* (input: {
+    readonly sourceIds: ReadonlyArray<string>;
+    readonly library?: string;
+    readonly pdfs?: boolean;
+  }) {
     const { store, root, zotero } = yield* agentZotero();
     const sourceIds = (yield* librarySourceIds(store, input.sourceIds)) ?? input.sourceIds;
     return yield* zoteroAttempt(() =>
@@ -378,6 +381,7 @@ export const sendToZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroS
         root,
         sourceIds,
         ...(input.library ? { groupId: input.library } : {}),
+        ...(input.pdfs ? { pdfs: true } : {}),
         actor: "agent",
         zotero,
       }),

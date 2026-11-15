@@ -1152,6 +1152,8 @@ export const ScientSourcesZoteroSendRequest = Schema.Struct({
   root: NonEmptyString,
   sourceIds: BoundedSourceIds,
   groupId: Schema.optionalKey(ZoteroGroupId),
+  /** Also each PDF Zotero lacks; off when absent. */
+  pdfs: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientSourcesZoteroSendRequest = typeof ScientSourcesZoteroSendRequest.Type;
 

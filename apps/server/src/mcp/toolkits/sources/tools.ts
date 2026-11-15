@@ -968,8 +968,6 @@ export const ScientSourcesZoteroImportResult = Schema.Struct({
       ),
       sourceId: NullableText,
       message: NullableText,
-      /** Zotero collections nested deeper than the Library keeps, and where they went. */
-      note: Schema.optionalKey(Schema.String),
     }),
   ).pipe(Schema.check(Schema.isMaxLength(500))),
   /** What Zotero holds for the imported references that was not brought; tell the user. */
@@ -1058,6 +1056,9 @@ const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
       Schema.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
     ),
     library: Schema.optionalKey(ZoteroLibraryInput),
+    pdfs: Schema.optionalKey(
+      Schema.Boolean.annotate({ description: "Also upload each PDF Zotero lacks." }),
+    ),
   }),
   success: ScientSourceZoteroSendResult,
   failure: ScientSourcesToolError,
@@ -1111,7 +1112,7 @@ const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
   .annotate(ScientOperation, sourceOperation("sources.collections", false));
 
 const ORGANIZE_DESCRIPTION =
-  "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing); parentCollectionId nests one level; move-collection changes it (null: top level). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.";
+  "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing); parentCollectionId nests it; move-collection changes it (null: top level). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.";
 
 const organizeTool = <P extends Schema.Top, S extends Schema.Top>(
   description: string,

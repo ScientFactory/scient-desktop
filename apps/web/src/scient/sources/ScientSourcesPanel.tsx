@@ -1269,6 +1269,7 @@ export function ScientSourcesPanel(props: {
           onSendToZotero={(groupId) =>
             void zoteroSync.sendToZotero(selectedRecord.sourceId, groupId)
           }
+          zoteroSendPdfs={{ include: zoteroSync.sendPdfs, change: zoteroSync.setSendPdfs }}
           zoteroWritableGroups={zoteroSync.writableGroups}
           onSourceActionsOpen={zoteroSync.loadWritableGroups}
           onOpenHistory={() => setHistorySourceId(selectedRecord.sourceId)}
