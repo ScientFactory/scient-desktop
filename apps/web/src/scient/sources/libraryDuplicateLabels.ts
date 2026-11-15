@@ -68,6 +68,7 @@ const FIELD_WORDS: Readonly<Record<string, string>> = {
   pages: "pages",
   language: "language",
   url: "web address",
+  more: "more details",
   identifiers: "identifiers",
   attachments: "PDF",
   note: "note",

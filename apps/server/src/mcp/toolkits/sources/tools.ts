@@ -5,6 +5,7 @@ import {
   ScientSourceEditorialStatus,
   ScientSourceExternalReference,
   ScientSourceEditableMetadata,
+  ScientSourceMore,
   ScientSourceFieldProvenance,
   ScientSourceIdentifier,
   ScientSourceAbstractSection,
@@ -236,6 +237,8 @@ export const ScientSourceAgentDetail = Schema.Struct({
   pages: NullableText,
   language: NullableText,
   url: NullableText,
+  /** Further bibliographic details by CSL variable (edition, publisher-place, …). */
+  more: Schema.optionalKey(ScientSourceMore),
   tags: Schema.Array(Schema.String),
   externalReferences: Schema.Array(ScientSourceExternalReference),
   attachments: Schema.Array(ScientSourceAgentAttachment),

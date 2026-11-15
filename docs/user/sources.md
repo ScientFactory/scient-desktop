@@ -779,7 +779,12 @@ when the source is added and each time you refresh its metadata. If its DOI or
 PMID no longer exists, or now names a different work, the source says that
 instead.
 
-Use **Edit** to correct the metadata. Use **Refresh metadata** when you want
+Use **Edit** to correct the metadata. Under **More details** the source shows
+what it has beyond its main details: edition, place of publication, series,
+number of pages, a report's number, the date you accessed a page and the
+like. Change one, remove it, or choose **Add a detail…** to add one from the
+list. These are used when the source is cited (a book's edition, a report's
+number), and each is recorded in the source's History like any other edit. Use **Refresh metadata** when you want
 Scient to recheck the existing PDF and exact DOI or PMID; review the warning
 first because refreshed fields can replace manual corrections. Scient blocks
 conflicting exact identifiers and asks before accepting a possible duplicate

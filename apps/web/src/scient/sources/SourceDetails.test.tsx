@@ -100,6 +100,29 @@ describe("SourceDetails", () => {
     expect(markup).toContain("Imported from Zotero");
   });
 
+  it("shows the further details a source has, by name, and none when it has none", () => {
+    const details = (more?: Record<string, string>) =>
+      renderToStaticMarkup(
+        <SourceDetails
+          record={{ ...record, ...(more ? { more } : {}) }}
+          diagnostics={[]}
+          onBack={() => undefined}
+          onEdit={() => undefined}
+          onSaveNote={saveNote}
+          onRefreshMetadata={async () => undefined}
+          onRemove={async () => undefined}
+          onOpenPdf={() => undefined}
+        />,
+      );
+    const markup = details({ edition: "4", "publisher-place": "Oxford", accessed: "2026-03-10" });
+    expect(markup).toContain("More details");
+    expect(markup).toContain("Edition");
+    expect(markup).toContain("Place of publication");
+    expect(markup).toContain("Oxford");
+    expect(markup).toContain("Date accessed");
+    expect(details()).not.toContain("More details");
+  });
+
   it("does not repeat a canonical abstract wrapper heading", () => {
     const markup = renderToStaticMarkup(
       <SourceDetails

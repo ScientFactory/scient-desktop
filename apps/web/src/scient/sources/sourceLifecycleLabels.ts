@@ -22,6 +22,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   language: "language",
   url: "link",
   tags: "tags",
+  more: "more details",
   attachments: "PDFs",
   verification: "identifier check",
   editorialStatus: "retraction status",

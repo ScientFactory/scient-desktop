@@ -8,6 +8,11 @@ import type {
   ScientSourceRecord,
 } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
+import {
+  isScientSourceMoreName,
+  normalizeScientSourceMore,
+  scientSourceMoreLabel,
+} from "./sourceMore.ts";
 import { normalizeScientSourceAbstract } from "./abstract.ts";
 import { normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import { CITATION_KEY_SYNTAX_MESSAGE, isValidCitationKey } from "./citationKeys.ts";
@@ -30,6 +35,7 @@ const SCIENT_SOURCE_EDITABLE_FIELDS = [
   "language",
   "url",
   "tags",
+  "more",
 ] as const;
 
 export type ScientSourceEditableField = (typeof SCIENT_SOURCE_EDITABLE_FIELDS)[number];
@@ -85,6 +91,7 @@ export function editableMetadataFromRecord(
     language: record.language,
     url: record.url,
     tags: record.tags,
+    more: record.more ?? {},
   };
 }
 
@@ -133,6 +140,10 @@ export function normalizeScientSourceEditableMetadata(
     language: nullableText(metadata.language),
     url: nullableText(metadata.url),
     tags,
+    // An entry that would not fit is refused by validation, so nothing is dropped here.
+    ...(metadata.more === undefined
+      ? {}
+      : { more: normalizeScientSourceMore(metadata.more).more ?? {} }),
   };
 }
 
@@ -162,6 +173,14 @@ export function validateScientSourceEditableMetadata(
       });
     }
   }
+  for (const name of normalizeScientSourceMore(metadata.more).left) {
+    issues.push({
+      field: `more.${name}`,
+      message: isScientSourceMoreName(name)
+        ? `${scientSourceMoreLabel(name)} is too long to keep.`
+        : "This detail has no name Scient knows.",
+    });
+  }
   if (metadata.issuedYear !== null && (metadata.issuedYear < 1000 || metadata.issuedYear > 9999)) {
     issues.push({ field: "issuedYear", message: "Enter a four-digit publication year." });
   }
@@ -186,7 +205,8 @@ export function changedEditableMetadataFields(
   return SCIENT_SOURCE_EDITABLE_FIELDS.filter(
     (field) =>
       !(field === "citationKey" && next.citationKey === undefined) &&
-      JSON.stringify(previous[field]) !== JSON.stringify(next[field]),
+      !(field === "more" && next.more === undefined) &&
+      JSON.stringify(previous[field] ?? {}) !== JSON.stringify(next[field] ?? {}),
   );
 }
 
@@ -205,6 +225,18 @@ function belongsToChangedField(
   return provenance.field.startsWith("identifiers.") && changed.has("identifiers");
 }
 
+/** The further details whose text differs between two versions, by name. */
+function changedMoreNames(
+  previous: ScientSourceEditableMetadata,
+  next: ScientSourceEditableMetadata,
+): ReadonlyArray<string> {
+  if (next.more === undefined) return [];
+  const [before, after] = [previous.more ?? {}, next.more];
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
+    (name) => before[name] !== after[name],
+  );
+}
+
 export function applyEditableMetadata(input: {
   readonly record: ScientSourceRecord;
   readonly metadata: ScientSourceEditableMetadata;
@@ -216,15 +248,31 @@ export function applyEditableMetadata(input: {
   const next = normalizeScientSourceEditableMetadata(input.metadata);
   const changed = changedEditableMetadataFields(previous, next);
   const changedSet = new Set(changed);
+  // Each further detail has its own line: who last set or cleared it, apart from the others.
+  const moreNames = new Set(changedMoreNames(previous, next).map((name) => `more.${name}`));
   const fieldProvenance = input.record.fieldProvenance.filter(
-    (entry) => !belongsToChangedField(entry, changedSet),
+    (entry) => !belongsToChangedField(entry, changedSet) && !moreNames.has(entry.field),
   );
-  fieldProvenance.push(...changed.map((field) => ({ field, origin: actor, sourceField: null })));
+  fieldProvenance.push(
+    ...changed
+      .filter((field) => field !== "more")
+      .map((field) => ({ field, origin: actor, sourceField: null })),
+    ...[...moreNames].map((field) => ({ field, origin: actor, sourceField: null })),
+  );
   const abstractChanged = changedSet.has("abstract");
   const abstract = abstractChanged ? normalizeScientSourceAbstractDocument(next.abstract) : null;
+  // The further details are replaced as a whole when given; none left means the part goes.
+  const { more: nextMore, ...nextFields } = next;
+  const { more: _currentMore, ...withoutMore } = input.record;
+  const kept =
+    nextMore === undefined
+      ? input.record
+      : Object.keys(nextMore).length > 0
+        ? { ...withoutMore, more: nextMore }
+        : withoutMore;
   const updated = {
-    ...input.record,
-    ...next,
+    ...kept,
+    ...nextFields,
     revision: input.record.revision + 1,
     fieldProvenance,
     updatedAt: input.updatedAt,

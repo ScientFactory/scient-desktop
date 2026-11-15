@@ -20,7 +20,11 @@ import {
 } from "../../components/ui/select";
 import { cn } from "../../lib/utils";
 import { useSourceEditor } from "./useSourceEditor";
-import { CITATION_KEY_SYNTAX_MESSAGE, isValidCitationKey } from "@scientfactory/scient-sources";
+import {
+  CITATION_KEY_SYNTAX_MESSAGE,
+  SCIENT_SOURCE_MORE_FIELDS,
+  isValidCitationKey,
+} from "@scientfactory/scient-sources";
 
 type SourceRecord = ScientSourceDetailResult;
 type Metadata = ScientSourceMetadataUpdateRequest["metadata"];
@@ -33,6 +37,7 @@ const COMMON_SOURCE_TYPES: ReadonlyArray<readonly [Metadata["type"], string]> = 
   ["book", "Book"],
   ["thesis", "Thesis"],
   ["report", "Report"],
+  ["software", "Software"],
   ["other", "Other source"],
 ];
 
@@ -90,6 +95,7 @@ function metadataFromRecord(record: SourceRecord): Metadata {
     language: record.language,
     url: record.url,
     tags: record.tags,
+    more: record.more ?? {},
   };
 }
 
@@ -149,6 +155,15 @@ export function SourceEditor(props: {
   const [yearText, setYearText] = useState(
     originalMetadata.issuedYear === null ? "" : String(originalMetadata.issuedYear),
   );
+  const more = metadata.more ?? {};
+  /** Sets one of the further details; null takes its row away. */
+  const setMore = (name: string, value: string | null) =>
+    setMetadata((current) => {
+      const rest = Object.fromEntries(
+        Object.entries(current.more ?? {}).filter(([key]) => key !== name),
+      );
+      return { ...current, more: value === null ? rest : { ...rest, [name]: value } };
+    });
   const [tagsText, setTagsText] = useState(originalMetadata.tags.join("\n"));
   const [creatorKeys, setCreatorKeys] = useState(() =>
     originalMetadata.creators.map((_, index) => `creator-${props.record.sourceId}-${index}`),
@@ -547,6 +562,57 @@ export function SourceEditor(props: {
                 }
               />
             </Field>
+          </FormSection>
+
+          <FormSection title="More details">
+            {SCIENT_SOURCE_MORE_FIELDS.filter(({ name }) => name in more).map(({ name, label }) => (
+              <Field key={name}>
+                <FieldLabel>{label}</FieldLabel>
+                <div className="flex items-start gap-1">
+                  {name === "extra" ? (
+                    <InlineTextarea
+                      aria-label={label}
+                      value={more[name] ?? ""}
+                      onChange={(event) => setMore(name, event.target.value)}
+                    />
+                  ) : (
+                    <InlineInput
+                      aria-label={label}
+                      value={more[name] ?? ""}
+                      onChange={(event) => setMore(name, event.target.value)}
+                    />
+                  )}
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`Remove ${label}`}
+                    onClick={() => setMore(name, null)}
+                  >
+                    <Trash2 />
+                  </Button>
+                </div>
+              </Field>
+            ))}
+            <Select
+              value=""
+              onValueChange={(name) => {
+                if (typeof name === "string" && name) setMore(name, "");
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Add a detail">
+                <SelectValue placeholder="Add a detail…" />
+              </SelectTrigger>
+              <SelectPopup>
+                {SCIENT_SOURCE_MORE_FIELDS.filter(({ name }) => !(name in more)).map(
+                  ({ name, label }) => (
+                    <SelectItem key={name} value={name}>
+                      {label}
+                    </SelectItem>
+                  ),
+                )}
+              </SelectPopup>
+            </Select>
           </FormSection>
 
           <FormSection title="Identifiers and links">
