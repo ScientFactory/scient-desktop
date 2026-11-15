@@ -82,7 +82,7 @@ export type ScientLibraryBackupResult =
   /** A project is moving into or out of the Library right now; its files are in flux. */
   | { readonly outcome: "busy" }
   | { readonly outcome: "stopped" }
-  /** The destination is not a folder, or is inside the Library. */
+  /** The destination is not an absolute path to a folder, or is inside the Library. */
   | { readonly outcome: "unsafe-destination" };
 
 async function hashOf(filePath: string): Promise<string> {
@@ -195,7 +195,9 @@ export async function backUpScientLibrary(input: {
   readonly shouldStop?: () => boolean;
 }): Promise<ScientLibraryBackupResult> {
   const libraryRoot = await NodeFSP.realpath(input.library.root);
-  const destination = await NodeFSP.realpath(input.destination).catch(() => null);
+  const destination = NodePath.isAbsolute(input.destination)
+    ? await NodeFSP.realpath(input.destination).catch(() => null)
+    : null;
   if (
     destination === null ||
     (await snapshot(destination)) !== "directory" ||

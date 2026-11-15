@@ -150,6 +150,8 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "list-package-imports": ["list-package-imports"],
   // Agents find package folders with their own file tools.
   "list-packages": [],
+  // Not for agents yet: it needs a new action on the organize tool, with its evals.
+  "back-up-library": [],
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */
@@ -175,6 +177,11 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
   // Library mode only: the list tool's duplicates.
   "scientSources.duplicates": tool("scient_sources_list"),
   "scientSources.moveStatus": tool("scient_sources_list"),
+  "scientSources.backupStatus": {
+    kind: "gap",
+    reason:
+      "An agent cannot start or watch a Library backup yet; it needs a new action on the organize tool, with its evals.",
+  },
   "scientSources.revisions": tool("scient_sources_get"),
   "scientSources.zoteroStatus": tool("scient_sources_zotero_browse"),
   "scientSources.zoteroLibrary": tool("scient_sources_zotero_browse"),

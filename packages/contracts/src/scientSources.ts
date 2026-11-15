@@ -474,6 +474,14 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   }),
   /** The packages in the project's top-level folders. */
   Schema.Struct({ action: Schema.Literal("list-packages") }),
+  /**
+   * Starts a copy of the whole Library into a new dated folder inside `inFolder` (an absolute
+   * path on this environment). It runs on; `backupStatus` reports it.
+   */
+  Schema.Struct({
+    action: Schema.Literal("back-up-library"),
+    inFolder: NonEmptyString.check(Schema.isMaxLength(4_096)),
+  }),
   /** A package folder in the project, or an absolute path. */
   Schema.Struct({
     action: Schema.Literal("import-package"),
@@ -579,6 +587,8 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "moved-back",
     "moved",
     "not-moved",
+    "backup-started",
+    "backup-running",
     "project-store-present",
     "dismissed",
     "nothing-to-dismiss",
@@ -745,6 +755,37 @@ export type ScientSystematicReviewConflictResult = typeof ScientSystematicReview
 
 export const ScientSourcesMoveStatusRequest = Schema.Struct({ root: NonEmptyString });
 export type ScientSourcesMoveStatusRequest = typeof ScientSourcesMoveStatusRequest.Type;
+
+export const ScientSourcesBackupStatusRequest = Schema.Struct({ root: NonEmptyString });
+export type ScientSourcesBackupStatusRequest = typeof ScientSourcesBackupStatusRequest.Type;
+
+/**
+ * The Library's backup on this environment since the server started: none yet, running (changes
+ * to the Library wait meanwhile), or how the last one ended.
+ */
+export const ScientSourcesBackupStatus = Schema.Union([
+  Schema.Struct({ state: Schema.Literal("none") }),
+  Schema.Struct({
+    state: Schema.Literal("running"),
+    done: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("done"),
+    /** The backup folder. */
+    path: NonEmptyString,
+    finishedAt: NonEmptyString,
+    sources: Schema.Int,
+    pdfs: Schema.Int,
+    bytes: Schema.Int,
+  }),
+  Schema.Struct({
+    state: Schema.Literal("failed"),
+    finishedAt: NonEmptyString,
+    reason: Schema.String,
+  }),
+]);
+export type ScientSourcesBackupStatus = typeof ScientSourcesBackupStatus.Type;
 
 /** Where a move or a move back is; `done` of `total` counts the phase's own items. */
 export const ScientSourcesMoveProgress = Schema.Struct({
