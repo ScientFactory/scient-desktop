@@ -5,6 +5,7 @@ import { composerSendIsForPeople, roomHasPeople } from "./roomComposerRouting";
 
 const plain = {
   steer: false,
+  alternate: false,
   directPrompt: false,
   annotation: false,
   queueEdit: false,
@@ -19,6 +20,7 @@ describe("composerSendIsForPeople", () => {
 
   it.each([
     ["a steer", { steer: true }],
+    ["the alternate send", { alternate: true }],
     ["a direct prompt", { directPrompt: true }],
     ["a preview annotation", { annotation: true }],
     ["an edit of a queued message", { queueEdit: true }],

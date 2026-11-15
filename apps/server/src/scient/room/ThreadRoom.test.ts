@@ -636,6 +636,35 @@ it.effect("leaves a room message with its own thread when a fork that shows it a
         }),
       ),
     );
+    // Nor can a post in the fork's own room take the id of a message the fork shows.
+    yield* room.orchestrator.dispatch({
+      type: "thread.room.server",
+      commandId: nextCommandId("fork-invite"),
+      threadId: forkId,
+      action: {
+        type: "invite",
+        roomId: ThreadRoomId.make("room:fork"),
+        host: "env.scient.test",
+        participantId: RoomParticipantId.make("f"),
+        role: "discuss",
+        expiresAt: DateTime.formatIso(DateTime.add(yield* DateTime.now, { days: 7 })),
+      },
+    });
+    assert.isTrue(
+      yield* fails(
+        room.orchestrator.dispatch({
+          type: "thread.room",
+          commandId: nextCommandId("fork-post"),
+          threadId: forkId,
+          action: {
+            type: "post",
+            roomMessageId: RoomMessageId.make("m1"),
+            text: "Overwrite",
+            attachments: [],
+          },
+        }),
+      ),
+    );
     const kept = yield* room.roomItem("m1");
     assert.equal(kept.threadId, threadId);
     assert.equal(kept.text, "For people");

@@ -2018,10 +2018,20 @@ export function useComposerSend(input: ComposerSendInput) {
     args[0]?.preventDefault();
     // SCIENT-FORK:START — only a plain new message is for people.
     const roomSendCtx = composerRef.current?.getSendContext();
+    const sendEvent = args[0];
+    // A modifier click while the agent runs is the alternate send, like its shortcut.
+    const modifierClick =
+      sendEvent !== undefined &&
+      "metaKey" in sendEvent &&
+      "ctrlKey" in sendEvent &&
+      (sendEvent.metaKey === true || sendEvent.ctrlKey === true);
     if (
       postToRoom.applies() &&
       composerSendIsForPeople({
         steer: args[4]?.steer === true,
+        alternate:
+          (args[2] !== undefined && args[2] !== "foreground") ||
+          (modifierClick && args[1] !== undefined && args[1] !== "auto"),
         directPrompt: args[4]?.directPrompt !== undefined,
         annotation: args[3] !== undefined,
         queueEdit:

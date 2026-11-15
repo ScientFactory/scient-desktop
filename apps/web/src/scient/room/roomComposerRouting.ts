@@ -8,12 +8,14 @@ export const roomHasPeople = (room: ThreadRoom | null, nowMs: number): room is T
   );
 
 /**
- * Only a plain new message is for people. A send that steers, answers the agent's question or
- * approval, edits a queued message, carries a preview annotation, or is a command goes to the
- * agent as it would with nobody in the thread.
+ * Only a plain new message is for people. A send that steers, uses the alternate or background
+ * send, answers the agent's question or approval, edits a queued message, carries a preview
+ * annotation, or is a command goes to the agent as it would with nobody in the thread.
  */
 export const composerSendIsForPeople = (send: {
   readonly steer: boolean;
+  /** The other of steer and queue while the agent runs, or send-and-new-thread. */
+  readonly alternate: boolean;
   readonly directPrompt: boolean;
   readonly annotation: boolean;
   readonly queueEdit: boolean;
@@ -21,6 +23,7 @@ export const composerSendIsForPeople = (send: {
   readonly prompt: string;
 }): boolean =>
   !send.steer &&
+  !send.alternate &&
   !send.directPrompt &&
   !send.annotation &&
   !send.queueEdit &&

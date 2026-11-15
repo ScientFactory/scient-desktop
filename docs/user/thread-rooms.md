@@ -43,9 +43,9 @@ To talk to the agent directly, turn on the robot button next to Send in the comp
 Your messages then go straight to the agent, as when nobody else is in the thread. It
 is remembered for that thread, and only people who can use the agent have it.
 
-Some things always go to the agent: commands that start with `/`, steering, your
-answer when the agent asks a question or for approval, and an edit of a queued
-message.
+Some things always go to the agent: commands that start with `/`, steering, the
+alternate send while the agent is working, your answer when the agent asks a
+question or for approval, and an edit of a queued message.
 
 The thread shows a dot in the sidebar while guests' messages wait for you.
 

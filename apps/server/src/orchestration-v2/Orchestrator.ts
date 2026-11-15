@@ -4513,9 +4513,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? // A reply only quotes its target, which may be one the fork shows.
             yield* readRoomItem(command, action.replyTo, false)
           : null;
+    // Also an item a fork shows: a post under its id would take the source's row.
     const messageExists =
       "roomMessageId" in action
-        ? (yield* readRoomItem(command, roomMessageItemId(action.roomMessageId))) !== null
+        ? (yield* readRoomItem(command, roomMessageItemId(action.roomMessageId), false)) !== null
         : false;
     const now = yield* DateTime.now;
     const input = {

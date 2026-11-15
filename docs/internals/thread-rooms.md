@@ -32,7 +32,7 @@ and a T3 share already open at upgrade keeps working until it ends.
   composer posts (`scient/room/roomComposer.tsx`, a seam in `useComposerSend`) unless
   "straight to the agent" is on (`roomDirectStore`, per thread, in local storage).
   Only a plain new message is for people (`scient/room/roomComposerRouting.ts`):
-  steering, direct prompts, preview annotations, edits of a queued message, answers
+  steering, the alternate and background sends, direct prompts, preview annotations, edits of a queued message, answers
   to the agent's question or approval, and commands (a prompt starting with `/`) go
   to the agent. The guest page has one composer and the same switch for the agent
   role. The phone app follows the same model.
