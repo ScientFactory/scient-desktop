@@ -124,7 +124,7 @@ describe("the words of a recent change", () => {
     expect(recentChangeDetail(restore)).toBe(
       "The Library that was here (4 sources) is kept in /state/scient/library.replaced-restore_1",
     );
-    expect(recentChangeState({ ...restore, kept: null })).toBe("Nothing was kept from before");
+    expect(recentChangeState({ ...restore, kept: null })).toBe("No earlier Library is kept");
     expect(recentChangeDetail({ ...restore, kept: null })).toBeNull();
   });
 

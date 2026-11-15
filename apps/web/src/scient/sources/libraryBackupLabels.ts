@@ -61,6 +61,9 @@ export function restoreLine(status: ScientSourcesRestoreStatus): string | null {
     return `Checking and copying the backup${progress}. The Library is not changed yet.`;
   }
   if (status.state !== "ready") return null;
+  if (status.begun) {
+    return `Scient is part way through restoring the backup of ${day(status.backupCreatedAt)}. Quit Scient and open it again to finish. Until then no project can move its sources into the Library.`;
+  }
   const problem = status.problem
     ? ` Scient could not put it in place at its last start (${status.problem}); it tries again at the next.`
     : "";
@@ -88,7 +91,7 @@ export function restoredLabel(
 export const JOIN_LABELS = {
   menuItem: "Add from another Library…",
   done: "Sources added from the other Library",
-  nothingNew: "Nothing new in the other Library",
+  nothingNew: "No sources added from the other Library",
   failed: "Nothing was added from the other Library",
   stopped: "Adding from the other Library stopped part way",
 } as const;
@@ -108,8 +111,8 @@ export function joinRunningLabel(status: ScientSourcesJoinStatus): string | null
 export function joinDoneLabel(status: Extract<ScientSourcesJoinStatus, { state: "done" }>): string {
   const lines = [
     status.added > 0
-      ? `Added ${sourcesWord(status.added)}, each with its versions, note, PDFs and highlights.`
-      : "Every source of the other Library is already here, or was removed here.",
+      ? `Added ${sourcesWord(status.added)} with ${status.added === 1 ? "its" : "their"} versions, notes, PDFs and highlights.`
+      : "The other Library has no source that is new here.",
     status.different > 0
       ? `${sourcesWord(status.different)} that both Libraries hold ${status.different === 1 ? "differs or may be the same paper and was" : "differ or may be the same paper and were"} left as ${status.different === 1 ? "it is" : "they are"} here.`
       : "",

@@ -68,7 +68,7 @@ describe("wording of the differences between two Libraries", () => {
     expect(rowTitle(row({}))).toBe("The other title");
     expect(rowTitle(row({ otherTitle: null }))).toBe("Untitled source");
     expect(recordedParts(row({ parts: ["note", "pdfs"] }))).toBe(
-      "The other Library has more: a note, PDFs.",
+      "Recorded as differing: a note, PDFs.",
     );
   });
 
@@ -88,6 +88,6 @@ describe("wording of the differences between two Libraries", () => {
     expect(takeProblem("take-already")).toBeNull();
     expect(takeProblem("take-changed")).toContain("changed since this list was shown");
     expect(takeProblem("take-too-long")).toContain("longer than a note can be");
-    expect(takeProblem("take-unavailable")).toContain("not there now");
+    expect(takeProblem("take-unavailable")).toContain("cannot be read now");
   });
 });

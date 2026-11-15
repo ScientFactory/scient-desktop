@@ -528,10 +528,24 @@ describe("Library routes on the library backend", () => {
                 joinId: done.joinId,
                 otherSourceId: theirShared.sourceId,
                 take: { kind: "note" },
-                shown: { here: row!.here!.fingerprint, other: row!.other!.fingerprint },
+                shown: {
+                  here: row!.here!.fingerprint,
+                  other: row!.other!.fingerprint,
+                  relation: row!.relation,
+                  candidates: [],
+                },
                 operationId: "take_route_1",
               },
             });
+          // A session that may only read is not served either Library's personal note.
+          const reader = (
+            await libraryRecentChanges(store, {
+              differencesOfJoin: { joinId: done.joinId },
+              personal: false,
+            })
+          ).joinDifferences!;
+          expect(JSON.stringify(reader)).not.toContain("Written in the other Library.");
+          expect(reader.rows).toEqual([]);
           expect(await take()).toEqual({ outcome: "taken" });
           expect(await take()).toEqual({ outcome: "take-already" });
           expect((await readScientSourceRecord(store.library, mine.sourceId))?.note).toBe(

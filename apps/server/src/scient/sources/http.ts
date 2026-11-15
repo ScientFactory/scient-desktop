@@ -589,12 +589,23 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("recentChanges", (args) =>
-          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
-            // A project that keeps its own sources has the toast's Undo and its Trash only.
-            library
-              ? libraryRecentChanges(library, args.payload)
-              : Promise.resolve({ changes: [], more: false }),
-          ),
+          Effect.gen(function* () {
+            // As for a source's detail: only a session that may change the Library is served
+            // the person's own notes (a join's differences show both Libraries' notes).
+            const personal = (yield* EnvironmentAuthenticatedPrincipal).scopes.has(
+              AuthOrchestrationOperateScope,
+            );
+            return yield* route(
+              args.endpoint.name,
+              AuthOrchestrationReadScope,
+              args.payload.root,
+              (library) =>
+                // A project that keeps its own sources has the toast's Undo and its Trash only.
+                library
+                  ? libraryRecentChanges(library, { ...args.payload, personal })
+                  : Promise.resolve({ changes: [], more: false }),
+            );
+          }),
         )
         .handle("trash", (args) =>
           Effect.gen(function* () {

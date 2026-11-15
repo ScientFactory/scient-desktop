@@ -531,7 +531,13 @@ there. If the Library that was there held anything, for example sources you
 added after the backup, or sources Scient rebuilt from your projects on a new
 computer, it is not deleted: it is kept as a folder beside the Library. The
 message after the restart says where, and so does **Recent changes** for as
-long as the folder is there. Scient never removes that folder.
+long as the folder is there. Scient never removes that folder. If you restore
+again later, the folders kept by earlier restores stay listed too.
+
+If Scient is stopped in the middle of putting the backup in place, the Library
+says it is part way through and finishes at the next start. Until then
+**Cancel** is not offered and another backup cannot be chosen, because half a
+restore must not be left behind.
 
 Your project folders are not changed by the restore. A project's citation
 keys and project notes stay as they are, and its sources are found again in
@@ -565,10 +571,12 @@ Library) and pick a backup folder made with **Back up the Library…**. For the
 Library a restore replaced you do not need to find a folder: **Recent
 changes** shows the restore with **Add its sources**.
 
-Scient then adds the sources that are new to this Library, each one whole:
-its details and earlier versions, your personal note, read and star, PDFs,
-highlights, and the collections it was in. It runs in the background and the
-Library says how far it is.
+Scient then adds the sources that are new to this Library with what belongs
+to them: details and earlier versions, your personal note, read and star,
+PDFs, highlights, and the collections they were in. Anything that could not
+come (a PDF missing from the folder, a collection that could not be made) is
+said in the message at the end. It runs in the background and the Library
+says how far it is.
 
 Highlights come with a PDF that is new here. If this Library already has that
 PDF, its own highlights stay, and the message counts the source among those
@@ -588,10 +596,12 @@ brought back. The message at the end counts each of these.
 ### See what the other Library has more of
 
 In **Recent changes**, the line of the addition has **Show differences**. It
-lists the papers both Libraries have where the other one has something this
-one lacks, each with both sides: the two notes, the PDFs only the other has,
-tags, whether it was read or starred there, and each detail that differs
-(title, authors, date and so on). Looking changes nothing.
+lists the papers that were not added because this Library has them, or may
+have them, where the other one has something this one lacks. Each is shown
+with both sides: the two notes, the PDFs only the other has, tags, whether it
+was read or starred there, and each detail that differs (title, authors, date
+and so on). Each row says how the two papers stand now, so a paper you merged
+or edited since is shown as it is. Looking changes nothing.
 
 You can take three things, one at a time:
 
@@ -601,14 +611,16 @@ You can take three things, one at a time:
 - **Add separately**, for a paper that may be one you already have, adds it as
   its own source and marks the two as not duplicates.
 
-Each is an ordinary edit of that paper, so it appears in the paper's History.
+A note or a PDF makes a new version of that paper, which its History shows. A
+paper added separately is a new source; move it to the Trash to take it back.
 If a paper changed after the list was shown, nothing is done and the list is
-shown again as it is now. Details, tags, and read or star are shown but not
-copied: change them on the paper if you want to.
+read again. Details, tags, and read or star are shown but not copied: change
+them on the paper if you want to.
 
-The other versions are read from the folder you added from. If that folder is
-not there (a backup on a drive that is unplugged), the list still shows which
-papers differ, and the actions come back when the folder does.
+The other versions are read from the folder you added from. If that folder
+cannot be read (a backup on a drive that is unplugged), or holds another
+backup now, the list still shows which papers differed when they were added,
+and the actions come back when the folder does.
 
 You can add from the same backup again, or from a newer one, as often as you
 like: what is already here is skipped.

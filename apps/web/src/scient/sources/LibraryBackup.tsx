@@ -234,7 +234,9 @@ export function useLibraryBackup(input: {
     restoreLine: copies ? restoreLine(copies.restore) : null,
     /** Offered while a checked copy waits for the next start. */
     cancelRestore:
-      copies?.restore.state === "ready" ? () => changeRestore({ action: "cancel" }) : undefined,
+      copies?.restore.state === "ready" && !copies.restore.begun
+        ? () => changeRestore({ action: "cancel" })
+        : undefined,
     restoreFrom: (fromFolder: string) => changeRestore({ action: "prepare", fromFolder }),
   };
 }

@@ -2569,9 +2569,15 @@ hashing the bytes as they pass and flushing each file. A file that is gone or
 differs ends it as `damaged` with that file's name and removes the copy. It
 adds the restore to the copy's `restores.json` (restore ID, backup ID, who,
 counts, when), and last writes the intent `<library>.restore.json`. A second
-request that succeeds replaces a waiting copy; one that fails leaves it
-waiting. `cancelScientLibraryRestore` drops it. All three hold
-`<library>.restore.lock`.
+request that succeeds replaces a waiting copy, which is removed only once the
+new copy is whole; one that fails at any point leaves it waiting.
+`cancelScientLibraryRestore` drops it. All three hold
+`<library>.restore.lock`. Once a start has moved a folder for a restore (its
+copy is no longer where it waited, or the Library it replaces stands aside),
+the restore has begun: Cancel answers `begun`, a new request `unfinished`, and
+the status carries `begun` so the panel says to restart and offers no Cancel.
+Only the next start ends it, so a Library is never left swapped in without
+the "moved back" decisions being carried over.
 
 `finishScientLibraryRestore` puts the copy in place and is called once, at the
 server's start, right after the server owns its data folder
@@ -2590,7 +2596,10 @@ taking a lock. Otherwise, by what is on disk:
 
 Commit first writes, into the restored Library's own `restores.json`, when the
 restore finished and, if the replaced Library is not unused, its folder and
-source count; then removes the intent; then removes the replaced Library only
+source count, together with the replaced Library's own records of Libraries
+that earlier restores kept (a backup made before those restores does not know
+them, and without this a second restore would leave the first kept folder
+unlisted and refused by a join); then removes the intent; then removes the replaced Library only
 if it is unused (`scientLibraryUnused`: absent, or holding only
 `library.json`, `instances.json`, what a backup leaves out, and folders of
 those; anything else, also something unknown or a link outside `text/` and
@@ -2690,12 +2699,14 @@ hash of the whole record) is written before the part is applied under the
 Library's lock.
 
 Under that lock the join first compares a mark of the Library (the names in
-`records/`, `trash/` and `deleted/` apart from its own additions, and the
-alias file) with the mark from before the comparison. If another writer added,
-removed or merged a source since, the Library is read again and each source of
-the part is judged against it, ignoring what this join itself added (the other
-Library keeps those apart, so they must not make each other "not new"). An
-edit of an existing record during a join is not seen. Then each source is
+`records/`, `trash/` and `deleted/` apart from its own additions, each
+record's modification time and size, and the alias file) with the mark from
+before the comparison. If another writer added, removed, merged or edited a
+source since, the Library is read again and each source of the part is judged
+against it, ignoring what this join itself added (the other Library keeps
+those apart, so they must not make each other "not new"). An edit counts
+because it can make a source here the same paper as one about to arrive. Then
+each source is
 added, in an order that survives a kill at any point: for each PDF that is not
 here, its highlights file and then the PDF (checked by hash, flushed); a PDF
 already here keeps this Library's highlights, and the source is recorded as
@@ -2757,12 +2768,19 @@ and their bibliographic fields differ. What only this Library has is not a
 difference. Each is recorded with the other's title and, for `possibly-same`,
 every candidate here. `readScientLibraryJoinDifferences` (the `recentChanges`
 endpoint with `differencesOfJoin`, a page of 50 recorded differences at a
-time) reads both sides as they are now: this Library's record, and the other
-Library's from the folder the join read, in place. A row that no longer
-differs, and a possibly-same paper that is now here under its own ID, are left
-out. The folder must still be the same snapshot (the backup's ID, or the
+time) reads both sides as they are now: the other Library's record from the
+folder the join read, in place, and where it stands in this Library now
+(`standingOf` against the Library as read once per page), not where it stood
+when it was recorded. So a paper merged or edited here since is shown against
+the paper it now belongs to; one that nothing here resembles any more is
+`not-here`; one removed here since is left out, as is a row that no longer
+differs. The folder must still be the same snapshot (the backup's ID, or the
 Library this Library's `restores.json` names); otherwise `available` is false
-and rows carry only what was recorded.
+and rows carry only what was recorded. A backup is not hashed whole again for
+this (the join did that): each record read from it must match the checksum in
+the backup's own list, or the row is shown as recorded, without the other
+version. A session without the operate scope is served neither Library's
+personal note, as for a source's detail.
 
 `takeFromScientLibraryJoin` (organize action `take-from-library`) takes one
 thing: `note` (this note, a line saying where the rest is from, the other
@@ -2770,10 +2788,14 @@ note; refused beyond the note limit; never when the other note is empty or
 already contained), `pdf` (one attachment by hash, through
 `attachScientSourcePdf`, without its highlights), or `add-separately` (the
 whole paper as a join adds one, kept apart from every candidate before its
-record exists). Under the Library's lock it requires that both records still
-have the fingerprints the row showed (a hash of the whole record, so read and
-star count too), that the pair stands as recorded, and that the request's
-`operationId` has no file under `joins/<joinId>/taken/`; then it uses the
+record exists). The request carries what the row showed: both fingerprints (a
+hash of the whole record, so read and star count too), the relation, and the
+candidates. Under the Library's lock the standing is worked out again and
+must equal all of it, also for `add-separately`, whose candidates are the
+papers it is kept apart from; the request's `operationId` must have no file
+under `joins/<joinId>/taken/`; and a PDF's bytes are hashed and must be the
+attachment the row named, so a file replaced at its path is refused. Then it
+uses the
 ordinary store function with the revision it read. Otherwise it answers
 `changed`, `unavailable`, `too-long` or `already` and writes nothing. No
 action copies details, tags, or read and star; none marks the Libraries as

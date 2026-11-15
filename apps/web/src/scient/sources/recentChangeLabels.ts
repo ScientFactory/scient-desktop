@@ -7,7 +7,7 @@ export const RECENT_CHANGES_LABELS = {
   title: "Recent changes",
   // Said always: the list is what can be taken back, not everything that happened.
   coverage:
-    "Changes to your whole Library that are still on record: bulk edits (the latest 250 requests), merges, imports and the Trash. Edits to one paper are in that paper's History. Reading status and removals from a project are not recorded.",
+    "Changes to your whole Library that are still on record: bulk edits (the latest 250 requests), merges, imports, restores, additions from another Library and the Trash. Edits to one paper are in that paper's History. Reading status and removals from a project are not recorded.",
   none: "No recorded changes yet.",
   loading: "Reading changes…",
   loadFailed: "The changes could not be read. Close and open this again to retry.",
@@ -19,7 +19,7 @@ export const RECENT_CHANGES_LABELS = {
   showSources: "Show sources",
   showOlder: "Show older changes",
   undone: "Undone",
-  restored: "Nothing was kept from before",
+  restored: "No earlier Library is kept",
   nothingAdded: "Nothing was new",
   addKept: "Add its sources",
   importedSources: "Sources from this import",

@@ -507,8 +507,21 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
       Schema.Struct({ kind: Schema.Literal("pdf"), sha256: NonEmptyString }),
       Schema.Struct({ kind: Schema.Literal("add-separately") }),
     ]),
-    /** The fingerprints of both sides as the list showed them. */
-    shown: Schema.Struct({ here: Schema.NullOr(NonEmptyString), other: NonEmptyString }),
+    /** What the row showed: both fingerprints, how the two stood, and the papers it named. */
+    shown: Schema.Struct({
+      here: Schema.NullOr(NonEmptyString),
+      other: NonEmptyString,
+      relation: Schema.Literals([
+        "same-id",
+        "merged-here",
+        "rebuilt-there",
+        "rebuilt-here",
+        "same-paper",
+        "possibly-same",
+        "not-here",
+      ]),
+      candidates: Schema.Array(NonEmptyString).check(Schema.isMaxLength(100)),
+    }),
     /** Made by the caller; the same request sent again does nothing more. */
     operationId: NonEmptyString.check(Schema.isMaxLength(128)),
   }),
@@ -852,6 +865,8 @@ export const ScientSourcesRestoreStatus = Schema.Union([
     backupCreatedAt: NonEmptyString,
     sources: Schema.Int,
     pdfs: Schema.Int,
+    /** A start already moved a folder for it: it can only be finished, by the next start. */
+    begun: Schema.optionalKey(Schema.Boolean),
     /** Why the last start could not put it in place; the next start tries again. */
     problem: Schema.optionalKey(Schema.String),
     /** A later request to restore another backup failed; this copy still waits. */
