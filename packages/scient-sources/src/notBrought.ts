@@ -94,6 +94,12 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
       return "Files that belong to no reference";
     case "alone-uncounted":
       return "Notes and files that belong to no reference: Zotero did not say how many";
+    case "collection":
+      return name === "unfiled"
+        ? "Collections a reference could not be put in"
+        : name === "unread"
+          ? "Empty collections: Zotero did not list its collections"
+          : "Collections that could not be made here";
     case "already-here":
       return "References that were already in your Library: nothing was taken from Zotero's copy (its notes, files and details)";
   }
@@ -105,10 +111,10 @@ const references = (count: number) =>
 /** How many, in the unit that fits: references for a field, items for countable things. */
 export function notBroughtAmount(line: NotBroughtLine): string {
   const on = line.sourceIds.length;
-  if (line.kind === "notes-alone" || line.kind === "files-alone") {
+  if (line.kind === "notes-alone" || line.kind === "files-alone" || line.name === "unmade") {
     return line.count.toLocaleString();
   }
-  if (line.kind === "alone-uncounted") return "not counted";
+  if (line.kind === "alone-uncounted" || line.name === "unread") return "not counted";
   if (line.kind === "already-here") return references(line.count);
   // A field or a line is there once per reference, so the references are the count.
   if (line.kind === "field" || line.kind === "extra" || line.kind === "note-cut") {

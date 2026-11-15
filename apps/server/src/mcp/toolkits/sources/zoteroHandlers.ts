@@ -310,7 +310,6 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
         sourceId: item.sourceId,
         message:
           item.state === "failed" ? safeZoteroMessage(new Error(item.message ?? "")) : item.message,
-        ...(item.note ? { note: item.note } : {}),
       })),
       ...(notBrought.length > 0 ? { notBrought } : {}),
       ...(operation.run && operation.run.remaining > 0

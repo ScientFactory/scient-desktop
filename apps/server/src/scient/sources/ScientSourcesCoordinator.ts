@@ -48,6 +48,7 @@ import {
   type ScientSourceVerification,
   type ZoteroConnection,
   type ZoteroConnectionStatus,
+  type ZoteroCollection,
   type ZoteroImportScope,
   zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
@@ -59,9 +60,11 @@ import {
 import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
 import {
   bulkUpdateScientSources,
-  createScientSourceCollection,
+  changeScientSourceCollectionMembers,
   organizeScientSources,
+  placeScientSourceCollections,
   readScientSourcesOrganization,
+  type ScientSourceOutsideCollection,
 } from "@scientfactory/scient-sources/collections";
 import {
   readScientSourceCategories,
@@ -121,7 +124,7 @@ import {
   readZoteroItemMaterial,
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
-import { ZOTERO_PDFS_PER_ITEM } from "./ZoteroItems.ts";
+import { ZOTERO_PDFS_PER_ITEM, zoteroDescendantCollectionKeys } from "./ZoteroItems.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import {
@@ -1284,6 +1287,17 @@ async function beginZoteroRunPart(input: {
     parts.length === 0
       ? await countZoteroScopeStandalone(transport, input.scope)
       : { notes: 0, files: 0 };
+  // The tree is made once, with the first part; later parts find it.
+  const unmade =
+    parts.length === 0
+      ? await makeZoteroScopeCollections({
+          root: input.root,
+          transport,
+          scope: input.scope,
+          groupId: input.groupId,
+          actor: input.actor ?? "user",
+        })
+      : 0;
   return createSourceImportOperation({
     root: input.root,
     operationId: parts.length === 0 ? runId : `${runId}-${parts.length + 1}`,
@@ -1299,13 +1313,19 @@ async function beginZoteroRunPart(input: {
           },
         }
       : {}),
-    notBrought:
-      alone === null
+    notBrought: [
+      ...(alone === null
         ? [{ kind: "alone-uncounted" as const, count: 1 }]
         : [
             ...(alone.notes > 0 ? [{ kind: "notes-alone" as const, count: alone.notes }] : []),
             ...(alone.files > 0 ? [{ kind: "files-alone" as const, count: alone.files }] : []),
-          ],
+          ]),
+      ...(unmade === null
+        ? [{ kind: "collection" as const, name: "unread", count: 1 }]
+        : unmade > 0
+          ? [{ kind: "collection" as const, name: "unmade", count: unmade }]
+          : []),
+    ],
     ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
     ...input.pin,
@@ -1367,54 +1387,71 @@ export async function discardLocalPdfSources(input: {
   return { discarded: keys.length };
 }
 
-/** Where a Zotero collection's items go: a top-level collection, or one level under a parent. */
-interface ZoteroCollectionPlace {
-  readonly name: string;
-  readonly parent?: string;
-  /** A deeper Zotero collection whose items joined `name`, its ancestor one level down. */
-  readonly flattened?: string;
+/** A Zotero collection's ID here: the same on every import, so it is found again, not doubled. */
+function zoteroCollectionId(groupId: string | undefined, collectionKey: string): string {
+  const digest = NodeCrypto.createHash("sha256")
+    .update(`zotero\0${groupId ?? ""}\0${collectionKey}`)
+    .digest("hex");
+  return `collection_${digest.slice(0, 32)}`;
 }
 
-const zoteroCollectionPlaces = new Map<
-  string,
-  Promise<ReadonlyMap<string, ZoteroCollectionPlace>>
->();
-
-/** Zotero keeps any depth; the Library keeps one level, so deeper ones join that level. */
-function zoteroCollectionPlacesFor(
-  collections: ReadonlyArray<{
-    readonly key: string;
-    readonly name: string;
-    readonly parentCollectionKey: string | null;
-  }>,
-): ReadonlyMap<string, ZoteroCollectionPlace> {
-  const byKey = new Map(collections.map((collection) => [collection.key, collection]));
-  const ancestors = (key: string) => {
-    const chain: string[] = [];
-    let parent = byKey.get(key)?.parentCollectionKey ?? null;
-    while (parent && byKey.has(parent) && !chain.includes(parent) && parent !== key) {
-      chain.unshift(byKey.get(parent)!.name);
-      parent = byKey.get(parent)!.parentCollectionKey;
-    }
-    return chain;
-  };
-  return new Map(
-    collections.map((collection): [string, ZoteroCollectionPlace] => {
-      const [top, level, ...deeper] = ancestors(collection.key);
-      if (top === undefined) return [collection.key, { name: collection.name }];
-      if (level === undefined) return [collection.key, { name: collection.name, parent: top }];
-      return [
-        collection.key,
-        { name: level, parent: top, flattened: [...deeper, collection.name].join(" / ") },
-      ];
-    }),
-  );
+/** Zotero's collections as the Library places them: each under the ID it has here. */
+function zoteroCollectionTree(
+  collections: ReadonlyArray<ZoteroCollection>,
+  groupId: string | undefined,
+): ReadonlyArray<ScientSourceOutsideCollection> {
+  return collections.map((collection) => ({
+    collectionId: zoteroCollectionId(groupId, collection.key),
+    name: collection.name,
+    ...(collection.parentCollectionKey
+      ? { parentCollectionId: zoteroCollectionId(groupId, collection.parentCollectionKey) }
+      : {}),
+  }));
 }
 
 /**
- * An imported item joins a Library collection for each Zotero collection it is in. A
- * collection problem never fails the import; the source is in the Library either way. Returns
- * a note naming the collections nested too deep to keep, or null.
+ * Makes the scope's collections here as Zotero nests them, empty ones too, except those the
+ * person deleted here. Returns how many could not be made (a limit of the Library), or null
+ * when Zotero did not list its collections. Neither fails the import: both are said.
+ */
+async function makeZoteroScopeCollections(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly transport: ZoteroTransport;
+  readonly scope: ZoteroImportScope;
+  readonly groupId: string | undefined;
+  readonly actor: "user" | "agent";
+}): Promise<number | null> {
+  const listed = await listZoteroCollectionsWith(input.transport).catch(() => null);
+  if (!listed) return null;
+  const { collections } = listed;
+  const { scope } = input;
+  const keys =
+    scope.kind === "library"
+      ? collections.map((collection) => collection.key)
+      : scope.includeSubcollections
+        ? zoteroDescendantCollectionKeys(scope.collectionKey, collections)
+        : [scope.collectionKey];
+  return placeScientSourceCollections({
+    root: input.root,
+    tree: zoteroCollectionTree(collections, input.groupId),
+    wanted: keys.map((key) => zoteroCollectionId(input.groupId, key)),
+    remake: false,
+    actor: input.actor,
+  }).then(
+    (placed) => [...placed.values()].filter((entry) => entry.collection === null).length,
+    () => keys.length,
+  );
+}
+
+const zoteroCollectionTrees = new Map<
+  string,
+  Promise<ReadonlyArray<ScientSourceOutsideCollection>>
+>();
+
+/**
+ * An imported item joins the Library collection of each Zotero collection it is in; one the
+ * person deleted here is made again for it. A collection problem never fails the import: the
+ * source is in the Library either way. Returns how many collections it could not be put in.
  */
 async function addToZoteroCollections(input: {
   readonly root: ScientSourceStoreLocation;
@@ -1422,44 +1459,45 @@ async function addToZoteroCollections(input: {
   readonly transport: ZoteroTransport;
   readonly sourceId: string;
   readonly collectionKeys: ReadonlyArray<string>;
-}): Promise<string | null> {
-  if (input.collectionKeys.length === 0) return null;
+}): Promise<number> {
+  if (input.collectionKeys.length === 0) return 0;
+  const groupId = input.operation.zoteroGroupId;
   const cacheKey = `${scientSourceStoreKey(input.root)}\0${input.operation.operationId}`;
-  let places = zoteroCollectionPlaces.get(cacheKey);
-  if (!places) {
-    places = listZoteroCollectionsWith(input.transport).then((result) =>
-      zoteroCollectionPlacesFor(result.collections),
+  let tree = zoteroCollectionTrees.get(cacheKey);
+  if (!tree) {
+    tree = listZoteroCollectionsWith(input.transport).then((result) =>
+      zoteroCollectionTree(result.collections, groupId),
     );
-    if (zoteroCollectionPlaces.size >= 8) zoteroCollectionPlaces.clear();
-    zoteroCollectionPlaces.set(cacheKey, places);
+    if (zoteroCollectionTrees.size >= 8) zoteroCollectionTrees.clear();
+    zoteroCollectionTrees.set(cacheKey, tree);
+    // A listing that failed is asked again for the next item.
+    tree.catch(() => zoteroCollectionTrees.delete(cacheKey));
   }
-  const resolved = await places.catch(() => new Map<string, ZoteroCollectionPlace>());
-  const flattened: string[] = [];
-  for (const key of input.collectionKeys) {
-    const place = resolved.get(key);
-    if (!place) continue;
-    const parent = place.parent
-      ? await createScientSourceCollection({
-          root: input.root,
-          name: place.parent,
-          actor: input.operation.actor,
-        }).catch(() => null)
-      : null;
-    if (place.parent && !parent?.collection) continue;
-    const joined = await createScientSourceCollection({
+  const wanted = input.collectionKeys.map((key) => zoteroCollectionId(groupId, key));
+  let filed = 0;
+  try {
+    const placed = await placeScientSourceCollections({
       root: input.root,
-      name: place.name,
-      sourceIds: [input.sourceId],
-      ...(parent?.collection ? { parentCollectionId: parent.collection.collectionId } : {}),
+      tree: await tree,
+      wanted,
+      remake: true,
       actor: input.operation.actor,
-    }).catch(() => null);
-    if (joined?.collection && place.flattened) {
-      flattened.push(`“${place.flattened}” joined “${place.parent} / ${place.name}”`);
+    });
+    for (const collectionId of wanted) {
+      const collection = placed.get(collectionId)?.collection;
+      if (!collection) continue;
+      const change = await changeScientSourceCollectionMembers({
+        root: input.root,
+        collectionId: collection.collectionId,
+        add: [input.sourceId],
+        actor: input.operation.actor,
+      });
+      if (change.collection?.sourceIds.includes(input.sourceId)) filed += 1;
     }
+  } catch {
+    // Counted below with the rest that could not be filed.
   }
-  return flattened.length > 0
-    ? `Zotero collections more than one level deep: ${flattened.join("; ")}.`
-    : null;
+  return wanted.length - filed;
 }
 
 /** A reference-file entry, with the PDFs its file names attached like any other PDF. */
@@ -1556,7 +1594,7 @@ async function importZoteroOperationItem(input: {
         material,
         attachmentKeys: files.map((file) => file.attachmentKey),
       });
-      const note = await addToZoteroCollections({
+      const unfiled = await addToZoteroCollections({
         root: input.root,
         operation: input.operation,
         transport,
@@ -1571,8 +1609,9 @@ async function importZoteroOperationItem(input: {
         ...(unavailable > 0
           ? [{ kind: "pdf" as const, name: "unavailable", count: unavailable }]
           : []),
+        ...(unfiled > 0 ? [{ kind: "collection" as const, name: "unfiled", count: unfiled }] : []),
       ];
-      return { ...result, record, ...(note ? { note } : {}), notBrought };
+      return { ...result, record, notBrought };
     }
     return { ...result, record };
   } finally {
@@ -1680,7 +1719,6 @@ export async function advanceSourceImport(
         duplicateKind: result.duplicate.kind,
         ...(result.record ? { sourceId: result.record.sourceId } : {}),
         message: result.duplicate.reason,
-        ...("note" in result && typeof result.note === "string" ? { note: result.note } : {}),
         ...("notBrought" in result && Array.isArray(result.notBrought)
           ? { notBrought: result.notBrought }
           : {}),

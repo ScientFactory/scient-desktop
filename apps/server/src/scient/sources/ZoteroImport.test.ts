@@ -4,7 +4,15 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
+import {
+  notBroughtAmount,
+  notBroughtName,
+  summarizeNotBrought,
+} from "@scientfactory/scient-sources";
+import {
+  organizeScientSources,
+  readScientSourcesOrganization,
+} from "@scientfactory/scient-sources/collections";
 import {
   cancelSourceImportOperation,
   listScientSourceImports,
@@ -135,7 +143,146 @@ describe("Zotero import", () => {
     expect(keys).toEqual(["fromBetterBibTeX", "pinned2026"]);
   });
 
-  it("keeps one level of Zotero's collections and reports deeper ones it flattened", async () => {
+  it("brings a real library's collection tree as it is: five levels, empty ones, two with one name", async () => {
+    const root = await project();
+    // The Digital Humanities group's 95 collections; how the file is made is in its `from`.
+    const { collections } = JSON.parse(
+      await NodeFSP.readFile(
+        new URL("./fixtures/zotero-public-collections.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { collections: Array<{ key: string; name: string; parent: string | null }> };
+    const byKey = new Map(collections.map((collection) => [collection.key, collection]));
+    const zoteroPath = (key: string): string[] => {
+      const collection = byKey.get(key)!;
+      return [...(collection.parent ? zoteroPath(collection.parent) : []), collection.name];
+    };
+    const deepest = collections.find((collection) => zoteroPath(collection.key).length === 5)!;
+    const twin = collections.find((collection) => collection.name === "Digital humanities")!;
+    const zotero = fakeZoteroAccess(
+      fakeZoteroTransport({
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem("ABCD2345", {
+                title: "Filed deep",
+                abstractNote: "A.",
+                collections: [deepest.key, twin.key],
+              }),
+              children: [],
+            },
+          ],
+        ]),
+        collections: collections.map(({ key, name, parent }) => ({
+          key,
+          name,
+          ...(parent ? { parent } : {}),
+        })),
+      }),
+    );
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "tree",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "tree", zotero });
+
+    const [record] = await listScientSourceRecords(root);
+    const organization = await readScientSourcesOrganization(root);
+    const here = new Map(organization.collections.map((entry) => [entry.collectionId, entry]));
+    const pathHere = (collectionId: string): string[] => {
+      const entry = here.get(collectionId)!;
+      return [...(entry.parentCollectionId ? pathHere(entry.parentCollectionId) : []), entry.name];
+    };
+    const paths = (all: ReadonlyArray<ReadonlyArray<string>>) =>
+      all.map((path) => path.join(" / ")).toSorted();
+    expect(paths(organization.collections.map((entry) => pathHere(entry.collectionId)))).toEqual(
+      paths(collections.map((collection) => zoteroPath(collection.key))),
+    );
+    expect(
+      paths(
+        organization.collections
+          .filter((entry) => entry.sourceIds.includes(record!.sourceId))
+          .map((entry) => pathHere(entry.collectionId)),
+      ),
+    ).toEqual(paths([zoteroPath(deepest.key), ["Digital humanities"]]));
+  });
+
+  it("finds the tree again on a later import, and makes a deleted collection again only for a reference filed in it", async () => {
+    const root = await project();
+    const items = new Map<string, { item: ReturnType<typeof zoteroItem>; children: [] }>();
+    const add = (key: string, title: string, collectionKey: string) =>
+      items.set(key, {
+        item: zoteroItem(key, { title, abstractNote: "A.", collections: [collectionKey] }),
+        children: [],
+      });
+    const zotero = fakeZoteroAccess(
+      fakeZoteroTransport({
+        items,
+        collections: [
+          { key: "THES2345", name: "Thesis" },
+          { key: "CHAP2345", name: "Chapter 2", parent: "THES2345" },
+          { key: "FIGS2345", name: "Figures", parent: "CHAP2345" },
+        ],
+      }),
+    );
+    const importLibrary = async (operationId: string) => {
+      await beginZoteroScopedImport({ root, operationId, scope: { kind: "library" }, zotero });
+      let operation = await advanceSourceImport({ root, operationId, zotero });
+      while (operation.state === "running") {
+        operation = await advanceSourceImport({ root, operationId, zotero });
+      }
+    };
+    const shape = async () =>
+      (await readScientSourcesOrganization(root)).collections
+        .map((entry) => [entry.name, entry.sourceIds.length])
+        .toSorted();
+    // The person had a "Thesis" before the first import: it is joined, not doubled.
+    await organizeScientSources({
+      root,
+      change: { action: "create-collection", name: "Thesis" },
+      actor: "user",
+    });
+    add("AAAA2345", "First", "CHAP2345");
+    await importLibrary("first");
+    const collectionId = (name: string) => async () =>
+      (await readScientSourcesOrganization(root)).collections.find((entry) => entry.name === name)!
+        .collectionId;
+    await organizeScientSources({
+      root,
+      change: {
+        action: "rename-collection",
+        collectionId: await collectionId("Chapter 2")(),
+        name: "Chapter two",
+      },
+      actor: "user",
+    });
+    await organizeScientSources({
+      root,
+      change: { action: "delete-collection", collectionId: await collectionId("Figures")() },
+      actor: "user",
+    });
+
+    add("BBBB2345", "Second", "CHAP2345");
+    await importLibrary("second");
+    expect(await shape()).toEqual([
+      ["Chapter two", 2],
+      ["Thesis", 0],
+    ]);
+
+    add("CCCC2345", "Third", "FIGS2345");
+    await importLibrary("third");
+    expect(await shape()).toEqual([
+      ["Chapter two", 2],
+      ["Figures", 1],
+      ["Thesis", 0],
+    ]);
+  });
+
+  it("lists the collections it could not make instead of dropping them", async () => {
     const root = await project();
     const zotero = fakeZoteroAccess(
       fakeZoteroTransport({
@@ -144,44 +291,36 @@ describe("Zotero import", () => {
             "ABCD2345",
             {
               item: zoteroItem("ABCD2345", {
-                title: "Filed twice",
+                title: "Filed under a long name",
                 abstractNote: "A.",
-                collections: ["THES2345", "FIGS2345"],
+                collections: ["SUBC2345"],
               }),
               children: [],
             },
           ],
         ]),
         collections: [
-          { key: "THES2345", name: "Thesis" },
-          { key: "CHAP2345", name: "Chapter 2", parent: "THES2345" },
-          { key: "FIGS2345", name: "Figures", parent: "CHAP2345" },
+          { key: "LONG2345", name: "x".repeat(201) },
+          { key: "SUBC2345", name: "Under it", parent: "LONG2345" },
         ],
       }),
     );
 
     await beginZoteroScopedImport({
       root,
-      operationId: "filed",
+      operationId: "long",
       scope: { kind: "library" },
       zotero,
     });
-    const operation = await advanceSourceImport({ root, operationId: "filed", zotero });
+    const operation = await advanceSourceImport({ root, operationId: "long", zotero });
 
-    const [record] = await listScientSourceRecords(root);
-    const organization = await readScientSourcesOrganization(root);
-    const thesis = organization.collections.find((collection) => collection.name === "Thesis");
+    expect((await readScientSourcesOrganization(root)).collections).toEqual([]);
     expect(
-      organization.collections.map((collection) => [
-        collection.name,
-        collection.parentCollectionId ?? null,
-        collection.sourceIds,
-      ]),
+      summarizeNotBrought(operation).map((line) => [notBroughtName(line), notBroughtAmount(line)]),
     ).toEqual([
-      ["Thesis", null, [record?.sourceId]],
-      ["Chapter 2", thesis?.collectionId, [record?.sourceId]],
+      ["Collections a reference could not be put in", "1 on 1 reference"],
+      ["Collections that could not be made here", "2"],
     ]);
-    expect(operation.items[0]?.note).toContain("“Figures” joined “Thesis / Chapter 2”");
   });
 
   it("says what Zotero holds for each reference that it did not bring", async () => {

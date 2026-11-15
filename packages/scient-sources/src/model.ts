@@ -802,6 +802,8 @@ export const ScientSourceNotBrought = Schema.Struct({
     "alone-uncounted",
     /** References that were already here: nothing of Zotero's copy was taken. */
     "already-here",
+    /** Collections not made; `name`: `unmade`, `unfiled` (a reference's), `unread` (not listed). */
+    "collection",
   ]),
   name: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(120))),
   count: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -817,8 +819,6 @@ export const ScientSourceOperationItem = Schema.Struct({
   duplicateKind: Schema.optionalKey(ScientSourceDuplicateKind),
   sourceId: NullableText,
   message: NullableText,
-  /** Something worth telling about an imported item, such as a flattened Zotero collection. */
-  note: Schema.optionalKey(NonEmptyString),
   /** What the import read for this item and did not bring; absent when it brought it all. */
   notBrought: Schema.optionalKey(
     Schema.Array(ScientSourceNotBrought).check(Schema.isMaxLength(80)),
