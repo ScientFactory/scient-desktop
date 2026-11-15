@@ -112,13 +112,27 @@ it("sorts by title and uses source ID as a deterministic tie-breaker", () => {
   expect(sorted.map((item) => item.sourceId)).toEqual(["first", "a", "z"]);
 });
 
-it("sorts recently added sources newest first", () => {
+it("sorts recently added sources newest first and an unreadable date last", () => {
   const sorted = sortScientSourceRecords(
     [
+      source({ sourceId: "unknown", importedAt: "not a date" }),
       source({ sourceId: "old", importedAt: "2026-08-01T00:00:00.000Z" }),
       source({ sourceId: "new", importedAt: "2026-08-15T00:00:00.000Z" }),
     ],
     "last-added",
   );
-  expect(sorted.map((item) => item.sourceId)).toEqual(["new", "old"]);
+  expect(sorted.map((item) => item.sourceId)).toEqual(["new", "old", "unknown"]);
+});
+
+it("sorts by journal A–Z, case aside, with title as tie-breaker and no journal last", () => {
+  const sorted = sortScientSourceRecords(
+    [
+      source({ sourceId: "none", containerTitle: "  ", title: "A" }),
+      source({ sourceId: "science", containerTitle: "Science", title: "A" }),
+      source({ sourceId: "nature-b", containerTitle: "nature", title: "B" }),
+      source({ sourceId: "nature-a", containerTitle: "Nature ", title: "A" }),
+    ],
+    "journal",
+  );
+  expect(sorted.map((item) => item.sourceId)).toEqual(["nature-a", "nature-b", "science", "none"]);
 });

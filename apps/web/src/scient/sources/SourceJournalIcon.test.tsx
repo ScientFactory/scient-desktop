@@ -40,7 +40,7 @@ describe("SourceJournalIcon", () => {
 });
 
 // regression: 4e05b272c1 feat(sources): complete reference intake workflows
-it("renders the book immediately and does not wait for journal lookup", () => {
+it("renders the type's icon immediately and does not wait for journal lookup", () => {
   const resolveIcon = vi.fn(async () => null);
   const markup = renderToStaticMarkup(
     <SourceJournalIcon
