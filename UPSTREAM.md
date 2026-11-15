@@ -1751,6 +1751,8 @@ inherited-host seams are limited to typed IPC/preload registration, one
 composer mount plus busy-state footer layout and an icon-only provider trigger,
 one ready-model-only citation-comment
 mount, and one desktop-packaging call into `scripts/lib/scient-voice-build.ts`.
+Dictation with ChatGPT adds one `voiceDictation` entry to the inherited Codex
+driver, built by the Scient-owned `apps/server/src/scient/voice/CodexChatGptDictation.ts`.
 Future T3 merges should preserve those narrow mounts rather than moving voice
 orchestration into inherited T3 components. See
 [Scient local voice architecture](docs/internals/scient-voice.md).

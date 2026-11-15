@@ -27,7 +27,7 @@ export function ScientVoiceCommentControl({
   const client = getVoiceBridge();
   const [ready, setReady] = useState(false);
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
-  const chatGptReady = useChatGptDictation(environmentId) !== null;
+  const chatGptReady = useChatGptDictation(environmentId).transcriber !== null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the voice client's model state when the client changes, ignoring stale completions
   useEffect(() => {
@@ -46,7 +46,10 @@ export function ScientVoiceCommentControl({
     };
   }, [client]);
 
-  if (!client || !(engine === "chatgpt" ? chatGptReady : ready)) return null;
+  // Before an engine is chosen, a ChatGPT sign-in means the choice is still owed in the composer.
+  const engineReady =
+    engine === "chatgpt" ? chatGptReady : ready && !(engine === "auto" && chatGptReady);
+  if (!client || !engineReady) return null;
   return (
     <ScientVoiceComposerControl
       ariaLabel="Dictate citation comment"

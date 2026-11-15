@@ -341,5 +341,46 @@ describe("DesktopClientSettings", () => {
       }),
     ),
   );
+
+  it.effect(
+    "returns the old default dictation engine to auto once, then keeps a later choice",
+    () =>
+      withClientSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* DesktopClientSettings.DesktopClientSettings;
+          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            environment.clientSettingsPath,
+            '{"voiceDictationEngine":"local"}\n',
+          );
+          yield* fileSystem.writeFileString(
+            `${environment.stateDir}/client-settings-resets`,
+            "1\n",
+          );
+          assert.equal(Option.getOrThrow(yield* settings.get).voiceDictationEngine, "auto");
+
+          yield* settings.set({ ...clientSettings, voiceDictationEngine: "local" });
+          assert.equal(Option.getOrThrow(yield* settings.get).voiceDictationEngine, "local");
+        }),
+      ),
+  );
+
+  it.effect("keeps ChatGPT dictation chosen before the engine reset", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.clientSettingsPath,
+          '{"voiceDictationEngine":"chatgpt"}\n',
+        );
+        assert.equal(Option.getOrThrow(yield* settings.get).voiceDictationEngine, "chatgpt");
+      }),
+    ),
+  );
   // SCIENT-FORK:END restored-behavior-guards
 });
