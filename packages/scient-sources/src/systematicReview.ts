@@ -162,7 +162,14 @@ export const ScientReviewVersionDifferences = Schema.Struct({
   records: OneSidedCounts,
   /** Parts of a review that differ and have no rows; `deleted`: one version deleted the review. */
   alsoDiffering: Schema.Array(
-    Schema.Literals(["deleted", "title", "question", "exclusion-reasons", "duplicates", "retrieval"]),
+    Schema.Literals([
+      "deleted",
+      "title",
+      "question",
+      "exclusion-reasons",
+      "duplicates",
+      "retrieval",
+    ]),
   ),
   /** Decisions that differ, searches, decisions in one version only, then records. */
   rows: Schema.Array(ScientReviewVersionDifference),

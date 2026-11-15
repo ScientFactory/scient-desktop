@@ -730,8 +730,7 @@ async function collectWordDocument(
   notes.push(
     "Citations inserted with a reference manager were read. Citations typed by hand were not.",
   );
-  const absent =
-    subjects.filter((subject) => subject.sourceId === null).length - ambiguous.length;
+  const absent = subjects.filter((subject) => subject.sourceId === null).length - ambiguous.length;
   if (absent > 0) {
     notes.push(
       absent === subjects.length
