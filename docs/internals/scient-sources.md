@@ -2519,15 +2519,28 @@ does not load the Sources tools.
 `backUpScientLibrary` (`libraryBackup.ts`) copies the Library's folder into
 `<destination>/Scient Library backup <date time>/library/`, with `backup.json`
 (format version, backup ID, the Library's ID, counts, every file with size and
-SHA-256, what was left out and why) and a README. It first settles interrupted
-merges, then holds every checkout's move lock (answering `busy` when a move
-holds one) and the Library's write lock for the whole copy, because deleting a
-source for good collects PDFs that no live or trashed record names. Every
-regular file is kept, also ones this version does not know, except `text/`
-(rebuilt from PDFs), lock files and temporary files; links are not followed.
-Each copy is hashed against what was read, the folder is built under a hidden
-`.partial` name and renamed once the manifest is written, and a stop or a
-failure removes it. The callbacks run inside the lock and must only report.
+SHA-256, each reason something was left out with its file count, the entries
+that are not files, and the number of unfinished moves) and a README. It holds
+every checkout's move lock (answering `busy` when a move holds one) and the
+Library's write lock for the whole copy, because deleting a source for good
+collects PDFs that no live or trashed record names. Inside the Library lock it
+takes the move lock of any checkout that began moving since (or answers
+`busy`), settles interrupted merges, and counts the moves that stopped part
+way (`countScientLibraryUnfinishedMoves`: a journal in `copying`, `prepared`
+or `restoring`, or one that cannot be read). Such a Library is copied as it
+is: the move's remaining sources are still in the project's folder, and the
+manifest, the README and the end message say so. Every regular file is kept,
+also ones this version does not know, except, by exact place or name: `text/`
+(rebuilt from PDFs), `staging/` (working files of unfinished imports),
+`library.lock` and each `migrations/<id>/move.lock`, and files with one of
+Scient's two temporary names (`….tmp-<uuid>`, `….<uuid>.tmp`) outside
+`migrations/`, where a move's sealed evidence is kept byte for byte. A kept
+file whose name only resembles those stays. Links and other entries that are
+not files are never copied and are listed. Package receipts are written under
+the Library lock for the same reason. Each copy is hashed against what was
+read, the folder is created exclusively under a hidden `.partial` name and
+renamed once the manifest is written, and a stop or a failure removes what
+this backup created. The callbacks run inside the lock and must only report.
 `checkScientLibraryBackup` reads a folder against its manifest: files changed,
 gone, or not listed.
 
@@ -2537,11 +2550,69 @@ one ended until the next starts or the server stops; `backupStatus` (read
 scope) reports none, running with files done and total, done with the folder
 and counts, or failed with the reason. The panel (`LibraryBackup.tsx`) offers
 the menu item where this computer's folder dialog can choose the folder, asks
-the status each second while one runs, and announces the end of a backup it
-saw running. Library writes wait on the lock meanwhile (30 s, then
+the status each second while one runs (whether or not the last read
+succeeded), and announces the end once in each window that started the backup
+or saw it running, also after a switch to another project. Library writes wait on the lock meanwhile (30 s, then
 `ScientLibraryBusyError`). Agents have no action for it yet (a recorded
-parity gap). Restore is not built: it needs a barrier outside the swapped
-folder and a recoverable swap, designed on its own
+parity gap).
+
+## Library restore
+
+A restore never changes a live Library. `prepareScientLibraryRestore`
+(`libraryRestore.ts`) reads `backup.json` (a later format is `unsupported`),
+refuses paths that would leave the Library, collide when case is ignored, or
+name something a backup leaves out, refuses a payload that holds anything
+unlisted, then copies every file into `<library>.restoring-<restoreId>/`
+beside the Library, hashing the bytes as they pass and flushing each file; a
+file that is gone or differs ends it as `damaged` with that file's name and
+removes the copy. It adds the restore to the copy's `restores.json` (restore
+ID, backup ID, when), and last writes the intent `<library>.restore.json`.
+A second request replaces a waiting copy; `cancelScientLibraryRestore` drops
+it. All three hold `<library>.restore.lock`.
+
+`finishScientLibraryRestore` puts the copy in place and is called once, at the
+server's start, right after the server owns its data folder
+(`finishLibraryRestoreAtStart` in `server.ts`, before any layer is built): no
+request, background job, cache or second server exists then, so nothing has to
+be drained. With nothing of a restore beside the Library it returns without
+taking a lock. Otherwise, by what is on disk:
+
+| Intent | Copy | Library                                         | Then                                                                                           |
+| ------ | ---- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| none   | –    | –                                               | remove copies nothing waits for, and replaced Libraries that are unused                        |
+| yes    | yes  | present                                         | rename the Library to `<library>.replaced-<restoreId>`, rename the copy to the Library, commit |
+| yes    | yes  | absent                                          | rename the copy to the Library, commit                                                         |
+| yes    | no   | present, its `restores.json` names this restore | already swapped: commit                                                                        |
+| yes    | no   | otherwise                                       | the copy is gone: put a Library this restore moved aside back, remove the intent, `failed`     |
+
+Commit removes the intent, then removes the replaced Library only if it is
+unused (`scientLibraryUnused`: absent, or holding only `library.json`,
+`instances.json`, what a backup leaves out, and folders of those; anything
+else, also something unknown or a link, means it is kept). A kept one is
+reported with its path and source count and is never removed by Scient. A
+rename that fails (a file held open on Windows) leaves the intent, puts the
+Library back if it was already aside, and is tried again at the next start.
+Every step can be repeated; the tests stop the finish after each rename and
+run it again.
+
+The replaced Library is kept rather than refused because a new computer's
+Library is never empty for long: resolving a project's pins with write access
+rebuilds its sources there from the project's saved details (`resolvedBy:
+hydrated`). After the restore the project's pins name the restored records
+directly, and the rebuilt copies stay in the kept folder.
+
+The server (`LibraryRestoreRuns.ts`) runs one preparation at a time, reports
+`preparing`, `ready` (from the intent file, with the last start's problem if
+it could not finish), and for the rest of its run how the last restore ended.
+The `libraryRestore` endpoint (operate scope) takes `prepare` and `cancel`
+and, unlike `organize`, resolves no store: it never creates the Library or
+moves the open project into it. `backupStatus` answers both the backup and
+the restore. The panel shows the waiting copy with Cancel and says once per
+window how a restore ended. Scient does not restart itself. Agents have no
+action for it yet (a recorded parity gap).
+
+Known limit: a move back made after the backup was taken is not known to the
+restored Library, so that project moves in again
 (`reviews/sources-improve-20261115/DECISIONS.md`).
 
 ## Citing
@@ -3309,8 +3380,8 @@ single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
 an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a named test. One gap stands: an
-agent cannot start or watch a Library backup.
+`libraryParity.test.ts` lists each gap as a named test. Two gaps stand: an
+agent cannot start or watch a Library backup, and cannot restore one.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is
