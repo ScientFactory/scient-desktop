@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Paths are joined as the module joins them, per platform.
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -9,9 +12,9 @@ import {
 } from "./browserConnection.ts";
 import { importedCookie } from "./browserConnectionImport.ts";
 
-const DIR = "/browser/User Data";
-const ACTIVE = `${DIR}/DevToolsActivePort`;
-const STATE = `${DIR}/Local State`;
+const DIR = NodePath.join("browser", "User Data");
+const ACTIVE = NodePath.join(DIR, "DevToolsActivePort");
+const STATE = NodePath.join(DIR, "Local State");
 const ON = JSON.stringify({ devtools: { remote_debugging: { "user-enabled": true } } });
 
 const times = { startup: 200, answer: 200, tab: 200, command: 200, idle: 30, poll: 5 };
