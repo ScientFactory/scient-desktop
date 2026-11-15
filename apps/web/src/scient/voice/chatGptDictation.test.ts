@@ -44,6 +44,16 @@ const scientAgent = (
   },
 });
 
+const codex = (id: string, authType: string | undefined, enabled = true): ServerProvider => ({
+  ...scientAgent(id, [], enabled),
+  driver: ProviderDriverKind.make("codex"),
+  version: "0.169.0",
+  auth:
+    authType === undefined
+      ? { status: "unauthenticated", required: true }
+      : { status: "authenticated", type: authType },
+});
+
 describe("chatGptDictationInstance", () => {
   it("picks the enabled Scient Agent signed in to ChatGPT", () => {
     expect(
@@ -66,8 +76,32 @@ describe("chatGptDictationInstance", () => {
   });
 
   it("finds none without a ChatGPT sign-in", () => {
-    expect(chatGptDictationInstance([scientAgent("scient", [{ id: "openai-codex" }])])).toBeNull();
+    expect(
+      chatGptDictationInstance([
+        scientAgent("scient", [{ id: "openai-codex" }]),
+        codex("codex-key", "apiKey"),
+        codex("codex-signed-out", undefined),
+        codex("codex-off", "chatgpt", false),
+      ]),
+    ).toBeNull();
     expect(chatGptDictationInstance(undefined)).toBeNull();
+  });
+
+  it("dictates through Codex's ChatGPT sign-in when no Scient Agent is signed in", () => {
+    expect(
+      chatGptDictationInstance([
+        scientAgent("scient", [{ id: "openai-codex" }]),
+        codex("codex", "chatgpt"),
+      ]),
+    ).toBe("codex");
+  });
+
+  it("prefers a signed-in Scient Agent to Codex, unless the agent is too old to dictate", () => {
+    const agent = scientAgent("scient", [{ id: "openai-codex", connected: true }]);
+    expect(chatGptDictationInstance([codex("codex", "chatgpt"), agent])).toBe("scient");
+    expect(
+      chatGptDictationInstance([{ ...agent, version: "0.1.8" }, codex("codex", "chatgpt")]),
+    ).toBe("codex");
   });
 });
 
@@ -102,7 +136,7 @@ describe("makeChatGptDictationTranscriber", () => {
       ProviderInstanceId.make("scient"),
     );
     await expect(transcriber.transcribe(request)).rejects.toThrow(
-      "Sign in to ChatGPT in Scient Agent to dictate with ChatGPT.",
+      "Sign in to ChatGPT in Scient Agent or Codex to dictate with ChatGPT.",
     );
   });
 });

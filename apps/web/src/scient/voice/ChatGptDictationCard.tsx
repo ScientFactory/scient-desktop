@@ -9,11 +9,14 @@ import { Button } from "../../components/ui/button";
 export function ChatGptDictationCard({
   selected,
   signedIn,
+  offeredOnFirstUse,
   onSelect,
 }: {
   readonly selected: boolean;
-  /** Whether a Scient Agent on this computer is signed in to ChatGPT. */
+  /** Whether a Scient Agent or Codex here is signed in to ChatGPT. */
   readonly signedIn: boolean;
+  /** No engine is chosen yet and no local model is set up, so the microphone offers ChatGPT. */
+  readonly offeredOnFirstUse: boolean;
   readonly onSelect: () => void;
 }): ReactNode {
   return (
@@ -29,7 +32,7 @@ export function ChatGptDictationCard({
         </div>
         <p className="text-muted-foreground text-xs">
           Accurate in many languages, with nothing to download. Uses your ChatGPT sign-in in Scient
-          Agent.
+          Agent or Codex.
         </p>
         <p className="text-muted-foreground/70 text-xs">
           Recordings go to OpenAI, which keeps them for 30 days.
@@ -37,14 +40,21 @@ export function ChatGptDictationCard({
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {signedIn ? (
-          <Button
-            size="xs"
-            variant={selected ? "outline" : "default"}
-            disabled={selected}
-            onClick={onSelect}
-          >
-            {selected ? "In use" : "Use ChatGPT"}
-          </Button>
+          <>
+            <Button
+              size="xs"
+              variant={selected ? "outline" : "default"}
+              disabled={selected}
+              onClick={onSelect}
+            >
+              {selected ? "In use" : "Use ChatGPT"}
+            </Button>
+            {offeredOnFirstUse ? (
+              <span className="text-muted-foreground text-xs">
+                Offered the first time you dictate.
+              </span>
+            ) : null}
+          </>
         ) : (
           <>
             <Button size="xs" render={<Link to="/settings/providers" />}>

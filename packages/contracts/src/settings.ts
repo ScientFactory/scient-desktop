@@ -641,9 +641,9 @@ export const ClientSettingsSchema = Schema.Struct({
   voiceLanguagePreference: VoiceLanguagePreference.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_LANGUAGE_PREFERENCE)),
   ),
-  // SCIENT-FORK:START — dictation with ChatGPT through Scient Agent's sign-in.
+  // SCIENT-FORK:START — dictation with ChatGPT through a provider's ChatGPT sign-in.
   voiceDictationEngine: VoiceDictationEngine.pipe(
-    Schema.withDecodingDefault(Effect.succeed("local" as const)),
+    Schema.withDecodingDefault(Effect.succeed("auto" as const)),
   ),
   // SCIENT-FORK:END
   // Superseded by voiceMicrophones; read only to seed an empty order.

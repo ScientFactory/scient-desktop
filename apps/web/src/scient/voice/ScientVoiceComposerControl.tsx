@@ -27,7 +27,7 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip.tsx";
 import { cn } from "../../lib/utils.ts";
-import { useClientSettings } from "../../hooks/useSettings.ts";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { buildVoiceWaveformLevels, VOICE_WAVEFORM_LEVEL_COUNT } from "./voiceWaveform.ts";
 import { getVoiceBridge } from "./voiceClient.ts";
@@ -126,19 +126,33 @@ interface VoiceModelSetupPickerProps {
   readonly disabled: boolean;
   readonly snapshot: VoiceModelsSnapshot | null;
   readonly onSelect: (modelId: VoiceModelId) => void;
+  /** Offers ChatGPT first, through a provider's ChatGPT sign-in. */
+  readonly onChooseChatGpt?: (() => void) | undefined;
 }
+
+const SETUP_OPTION_CLASS_NAME =
+  "group flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+const SETUP_OPTION_ICON_CLASS_NAME =
+  "mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground";
 
 function VoiceModelSetupPicker({
   disabled,
   snapshot,
   onSelect,
+  onChooseChatGpt,
 }: VoiceModelSetupPickerProps): ReactNode {
-  const models = snapshot?.models ?? [];
+  // Models this computer cannot run are not offered; ChatGPT may still be.
+  const models = snapshot?.runtimeAvailable ? snapshot.models : [];
   const recommendedModelId = snapshot?.recommendation?.modelId ?? null;
 
   return (
-    <Popover>
-      <PopoverTrigger render={<ComposerControl disabled={disabled || models.length === 0} />}>
+    // The microphone was just pressed: the choices open at once.
+    <Popover defaultOpen>
+      <PopoverTrigger
+        render={
+          <ComposerControl disabled={disabled || (models.length === 0 && !onChooseChatGpt)} />
+        }
+      >
         <ComposerControlIcon icon={MicIcon} />
         Choose voice model
       </PopoverTrigger>
@@ -150,12 +164,38 @@ function VoiceModelSetupPicker({
         sideOffset={8}
       >
         <div className="space-y-1 p-2">
+          {onChooseChatGpt ? (
+            <button
+              className={SETUP_OPTION_CLASS_NAME}
+              disabled={disabled}
+              onClick={onChooseChatGpt}
+              type="button"
+            >
+              <span className="min-w-0 flex-1 space-y-0.5">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium text-sm">ChatGPT</span>
+                  <Badge size="sm" variant="info">
+                    Nothing to download
+                  </Badge>
+                </span>
+                <span className="block text-muted-foreground text-xs leading-4">
+                  Uses your ChatGPT sign-in. Recordings go to OpenAI, which keeps them for 30 days.
+                </span>
+              </span>
+              <MicIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
+            </button>
+          ) : null}
+          {onChooseChatGpt && models.length > 0 ? (
+            <p className="px-2.5 pt-1.5 text-muted-foreground text-xs">
+              Or download a model to keep recordings on this computer
+            </p>
+          ) : null}
           {models.map((model) => {
             const recommended = model.id === recommendedModelId;
             return (
               <button
                 key={model.id}
-                className="group flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                className={SETUP_OPTION_CLASS_NAME}
                 disabled={disabled}
                 onClick={() => onSelect(model.id)}
                 type="button"
@@ -173,7 +213,7 @@ function VoiceModelSetupPicker({
                     {model.description} · {formatModelSize(model.byteSize)}
                   </span>
                 </span>
-                <DownloadIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground" />
+                <DownloadIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
               </button>
             );
           })}
@@ -223,6 +263,7 @@ export function ScientVoiceComposerControl({
     languagePreference,
     engine,
     chatGpt,
+    onEngineChosen: (chosen) => void updateClientSettings({ voiceDictationEngine: chosen }),
     ...(environmentId === undefined ? {} : { environmentId }),
     draftOrigin,
     localFieldKey,
@@ -250,7 +291,7 @@ export function ScientVoiceComposerControl({
   // A surface that offers dictation only when it is ready hides it while its engine is not.
   const readyModelBecameUnavailable =
     readyModelOnly &&
-    engine === "local" &&
+    engine !== "chatgpt" &&
     (controller.phase === "setup-prompt" ||
       (controller.modelSnapshot !== null &&
         !hasReadySelectedVoiceModel(controller.modelSnapshot)) ||
@@ -395,6 +436,9 @@ export function ScientVoiceComposerControl({
             disabled={disabled}
             onSelect={(modelId) => void controller.setupModel(modelId)}
             snapshot={controller.modelSnapshot}
+            onChooseChatGpt={
+              controller.chatGptOffered ? () => void controller.chooseChatGpt() : undefined
+            }
           />
           <Button
             aria-label="Dismiss voice setup"

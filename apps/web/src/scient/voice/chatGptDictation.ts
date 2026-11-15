@@ -1,5 +1,5 @@
-// Dictation with ChatGPT: the recording goes to the environment's Scient Agent, which sends it to
-// ChatGPT's own transcription service with its ChatGPT sign-in.
+// Dictation with ChatGPT: the recording goes to the environment's Scient Agent or Codex, which
+// sends it to ChatGPT's own transcription service with its ChatGPT sign-in.
 import {
   type AtomCommandResult,
   createEnvironmentRpcCommand,
@@ -11,6 +11,7 @@ import {
   type VoiceTranscriptionLanguage,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Cause from "effect/Cause";
 
 import { connectionAtomRuntime } from "../../connection/runtime.ts";
@@ -20,7 +21,10 @@ import { scientAgentChatGptSignedIn } from "../liveVoice/liveVoiceAvailability.t
 import type { VoiceJobTranscriber } from "./voiceProcessing.ts";
 
 export const SIGN_IN_TO_DICTATE_MESSAGE =
-  "Sign in to ChatGPT in Scient Agent to dictate with ChatGPT.";
+  "Sign in to ChatGPT in Scient Agent or Codex to dictate with ChatGPT.";
+
+/** The first Scient Agent release with dictation; the server refuses an older one. */
+const SCIENT_AGENT_DICTATION_VERSION = "0.1.9";
 
 const chatGptDictationCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:voice:dictate-with-chatgpt",
@@ -28,17 +32,31 @@ const chatGptDictationCommand = createEnvironmentRpcCommand(connectionAtomRuntim
   concurrency: { mode: "parallel" },
 });
 
-/** The environment's first enabled Scient Agent signed in to ChatGPT, if any. */
+/**
+ * The provider instance that dictates with ChatGPT in this environment, if any: an enabled
+ * Scient Agent signed in to ChatGPT, else an enabled Codex signed in with ChatGPT. A Scient Agent
+ * too old to dictate comes after Codex, since it would only ask for an update.
+ */
 export function chatGptDictationInstance(
   providers: ReadonlyArray<ServerProvider> | undefined,
 ): ProviderInstanceId | null {
-  const provider = providers?.find(
-    (candidate) =>
-      candidate.driver === "scient" &&
-      candidate.enabled &&
-      scientAgentChatGptSignedIn(candidate) === true,
+  const signedIn = (providers ?? []).filter(
+    (provider) =>
+      provider.enabled &&
+      (provider.driver === "scient"
+        ? scientAgentChatGptSignedIn(provider) === true
+        : provider.driver === "codex" &&
+          provider.auth.status === "authenticated" &&
+          provider.auth.type === "chatgpt"),
   );
-  return provider?.instanceId ?? null;
+  const dictatingAgent = signedIn.find(
+    (provider) =>
+      provider.driver === "scient" &&
+      (!provider.version ||
+        compareSemverVersions(provider.version, SCIENT_AGENT_DICTATION_VERSION) >= 0),
+  );
+  const codex = signedIn.find((provider) => provider.driver === "codex");
+  return (dictatingAgent ?? codex ?? signedIn[0])?.instanceId ?? null;
 }
 
 function failureMessage(cause: Cause.Cause<unknown>): string {

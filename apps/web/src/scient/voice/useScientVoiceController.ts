@@ -57,9 +57,14 @@ interface VoiceControllerOptions {
   readonly correctionClient?: VoiceTranscriptCorrectionClient | null;
   readonly correctionEnabled?: boolean;
   readonly languagePreference?: VoiceLanguagePreference;
-  /** Who transcribes. ChatGPT needs `chatGpt`, a Scient Agent signed in to ChatGPT. */
+  /**
+   * Who transcribes. ChatGPT needs `chatGpt`, a provider signed in to ChatGPT. `auto` dictates
+   * with a local model that is already set up, and otherwise offers ChatGPT beside the models.
+   */
   readonly engine?: VoiceDictationEngine;
   readonly chatGpt?: VoiceJobTranscriber | null;
+  /** Saves the engine chosen when `auto` offered ChatGPT beside the local models. */
+  readonly onEngineChosen?: (engine: "local" | "chatgpt") => void;
   readonly environmentId?: EnvironmentId;
   /**
    * The composer draft a stop click commits to. With an origin, a committed
@@ -108,7 +113,11 @@ export interface ScientVoiceController {
   readonly microphonePermissionDenied: boolean;
   readonly downloadPercent: number;
   readonly modelSnapshot: VoiceModelsSnapshot | null;
+  /** The setup prompt offers ChatGPT beside the local models. */
+  readonly chatGptOffered: boolean;
   activate: () => Promise<void>;
+  /** Dictates with ChatGPT from the setup prompt, and keeps it as the engine. */
+  chooseChatGpt: () => Promise<void>;
   setupModel: (modelId?: VoiceModelId) => Promise<void>;
   dismissSetup: () => void;
   stop: (send: boolean) => Promise<void>;
@@ -155,6 +164,11 @@ function percent(progress: VoiceModelDownloadProgress | null): number {
   return Math.min(100, Math.round((progress.downloadedBytes / progress.totalBytes) * 100));
 }
 
+type RecordingEngine = "local" | "chatgpt";
+
+const engineClassOf = (engine: RecordingEngine) =>
+  engine === "chatgpt" ? ("chatgpt" as const) : ("local-whisper" as const);
+
 export function useScientVoiceController({
   client,
   correctionClient = null,
@@ -162,6 +176,7 @@ export function useScientVoiceController({
   languagePreference = "auto",
   engine = "local",
   chatGpt = null,
+  onEngineChosen,
   environmentId,
   draftOrigin = null,
   localFieldKey = null,
@@ -169,7 +184,9 @@ export function useScientVoiceController({
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
   const recordAnalytics = useStableCallback(useRecordScientAnalytics());
-  const engineClass = engine === "chatgpt" ? "chatgpt" : "local-whisper";
+  // The engine of the recording in progress, fixed when it starts.
+  const recordingEngineRef = useRef<RecordingEngine>("local");
+  const [chatGptOfferedState, setChatGptOffered] = useState(false);
   const beginVoiceAnalytics = useBeginVoiceAnalytics(environmentId);
   const [{ localPhase, errorMessage, microphonePermissionDenied }, dispatchController] = useReducer(
     (
@@ -299,12 +316,13 @@ export function useScientVoiceController({
     const ownerKey = origin ? `draft:${origin.key}` : localOwnerKey;
     const correctionRequested =
       correctionEnabled && correctionClient !== null && environmentId !== undefined;
+    const recordingEngine = recordingEngineRef.current;
     const { done } = startVoiceJob({
       ownerKey,
       clip,
       send,
-      voiceBridge: engine === "chatgpt" ? (chatGpt ?? signedOutOfChatGpt) : client,
-      engineClass,
+      voiceBridge: recordingEngine === "chatgpt" ? (chatGpt ?? signedOutOfChatGpt) : client,
+      engineClass: engineClassOf(recordingEngine),
       correction: correctionRequested ? { corrector: correctionClient, environmentId } : null,
       language: languagePreference === "auto" ? undefined : languagePreference,
       recordAnalytics: beginVoiceAnalytics(),
@@ -326,9 +344,10 @@ export function useScientVoiceController({
     if (job?.phase === "correcting") finishVoiceJobWithOriginal(job.id);
   };
 
-  const beginRecording = async (): Promise<void> => {
+  const beginRecording = async (recordingEngine: RecordingEngine): Promise<void> => {
     const operation = (operationRef.current += 1);
     recordingDestinationRef.current = destinationKeyRef.current;
+    recordingEngineRef.current = recordingEngine;
     clearErrors();
     setElapsedMs(0);
     setPhase("requesting-permission");
@@ -345,7 +364,7 @@ export function useScientVoiceController({
           name: "voice.recording.failed",
           properties: {
             voiceSchemaVersion: 2,
-            engineClass,
+            engineClass: engineClassOf(recordingEngine),
             failureClass: "permission",
             stage: "recording",
           },
@@ -365,36 +384,64 @@ export function useScientVoiceController({
 
   const activate = async (): Promise<void> => {
     if (!client) return;
-    // ChatGPT needs no model on this computer, only Scient Agent's sign-in.
+    // ChatGPT needs no model on this computer, only a provider's ChatGPT sign-in.
     if (engine === "chatgpt") {
       clearErrors();
-      if (chatGpt) await beginRecording();
+      if (chatGpt) await beginRecording("chatgpt");
       else setErrorMessage(SIGN_IN_TO_DICTATE_MESSAGE);
       return;
     }
     const operation = (operationRef.current += 1);
     clearErrors();
-    let state: VoiceModelsSnapshot;
+    // Not chosen yet: a local model already set up keeps dictating; otherwise ChatGPT is offered
+    // beside the local models, and nothing leaves this computer until it is chosen.
+    const offerChatGpt = engine === "auto" && chatGpt !== null;
+    setChatGptOffered(offerChatGpt);
+    let state: VoiceModelsSnapshot | null;
     try {
       state = await client.getModelsState();
       setModelSnapshot(state);
       if (operation !== operationRef.current) return;
     } catch (error) {
       if (operation !== operationRef.current) return;
-      setErrorMessage(describeVoiceError(error));
-      return;
+      if (!offerChatGpt) {
+        setErrorMessage(describeVoiceError(error));
+        return;
+      }
+      state = null;
+      setModelSnapshot(null);
     }
-    const selectedModel = state.models.find((model) => model.id === state.selectedModelId);
-    if (selectedModel?.state.state === "ready") await beginRecording();
-    else if (!state.runtimeAvailable) {
+    const selectedModelId = state?.selectedModelId;
+    const selectedModel = state?.models.find((model) => model.id === selectedModelId);
+    // With ChatGPT on offer, a model this computer cannot run does not stand in its way.
+    const localReady =
+      selectedModel?.state.state === "ready" && (!offerChatGpt || state?.runtimeAvailable === true);
+    if (localReady) await beginRecording("local");
+    else if (offerChatGpt) setPhase("setup-prompt");
+    else if (state && !state.runtimeAvailable) {
       setErrorMessage(state.runtimeMessage ?? "Offline voice is unavailable.");
     } else {
       setPhase("setup-prompt");
     }
   };
 
+  const chooseChatGpt = async (): Promise<void> => {
+    if (!client) return;
+    onEngineChosen?.("chatgpt");
+    if (chatGpt) {
+      await beginRecording("chatgpt");
+      return;
+    }
+    // The sign-in ended while the prompt was open; the choice stands and asks for it again.
+    operationRef.current += 1;
+    setPhase("idle");
+    setErrorMessage(SIGN_IN_TO_DICTATE_MESSAGE);
+  };
+
   const setupModel = async (requestedModelId?: VoiceModelId): Promise<void> => {
     if (!client) return;
+    // Downloading a model where ChatGPT was offered chooses this computer, once it is set up.
+    const choosesLocal = phaseRef.current === "setup-prompt" && chatGptOfferedState;
     const operation = (operationRef.current += 1);
     clearErrors();
     setDownloadProgress(null);
@@ -421,8 +468,10 @@ export function useScientVoiceController({
           setModelSnapshot(nextSnapshot);
           if (operation !== operationRef.current) break completeOperation;
           const state = nextSnapshot.models.find((model) => model.id === modelId)?.state;
-          if (state?.state === "ready") await beginRecording();
-          else {
+          if (state?.state === "ready") {
+            if (choosesLocal) onEngineChosen?.("local");
+            await beginRecording("local");
+          } else {
             setPhase("idle");
             setErrorMessage(
               state?.state === "error" || state?.state === "unavailable"
@@ -515,11 +564,11 @@ export function useScientVoiceController({
       properties: {
         voiceSchemaVersion: 2,
         stage: "recording",
-        engineClass,
+        engineClass: engineClassOf(recordingEngineRef.current),
         failureClass: recorderErrorKind === "permission-denied" ? "permission" : "audio",
       },
     });
-  }, [engineClass, recordAnalytics, recorderErrorKind, recorderStatus]);
+  }, [recordAnalytics, recorderErrorKind, recorderStatus]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- advances the elapsed-time display on an interval while recording
   useEffect(() => {
@@ -588,7 +637,9 @@ export function useScientVoiceController({
     microphonePermissionDenied,
     downloadPercent: percent(downloadProgress),
     modelSnapshot,
+    chatGptOffered: phase === "setup-prompt" && chatGptOfferedState,
     activate,
+    chooseChatGpt,
     setupModel,
     dismissSetup,
     stop,
