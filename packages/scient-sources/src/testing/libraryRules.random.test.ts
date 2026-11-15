@@ -92,8 +92,9 @@ async function runSteps(root: string, seed: number, stepCount: number): Promise<
   for (let index = 0; index < stepCount; index += 1) {
     const step = pick(pick(possibleSteps(model, index), random), random);
     history.push(step);
+    // The replay comes first: a long history can be cut off where the failure is shown.
     const told = () =>
-      `seed ${seed}, after ${history.length} steps:\n${history.map((entry) => JSON.stringify(entry)).join("\n")}`;
+      `seed ${seed}, after ${history.length} steps. ${replay(seed)}\n${history.map((entry) => JSON.stringify(entry)).join("\n")}`;
     let facts;
     try {
       facts = await runStep(scenario, model, step);
@@ -113,6 +114,10 @@ async function runSteps(root: string, seed: number, stepCount: number): Promise<
 // The default is sized for CI, where a step costs about eight times what it does on a Mac.
 const seedCount = Number(NodeProcess.env["LIBRARY_RULES_SEEDS"] ?? 6);
 const stepCount = Number(NodeProcess.env["LIBRARY_RULES_STEPS"] ?? 40);
+
+/** A seed's steps depend only on the seed, so one seed of a long hunt runs again alone. */
+const replay = (seed: number) =>
+  `Run this seed again, in packages/scient-sources: LIBRARY_RULES_SEEDS=${seedCount} LIBRARY_RULES_STEPS=${stepCount} vp test run src/testing/libraryRules.random.test.ts -t "seed ${seed}$"`;
 
 describe("the Library keeps its rules under random use", () => {
   const seeds = Array.from({ length: seedCount }, (_, index) => index + 1);

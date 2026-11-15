@@ -98,6 +98,18 @@ import {
   SecretExpect,
   secretDiagnostics,
 } from "./secret-grading.ts";
+// SCIENT-FORK:START — Scient's Sources tools over a case's own Library, with state checks.
+import {
+  gradeLibrary,
+  isSourcesTool,
+  LibraryExpect,
+  type LibraryOutcome,
+  LibraryWorld,
+  makeSourcesLibrary,
+  SOURCES_TOOLS,
+  type SourcesLibrary,
+} from "./scientSources.ts";
+// SCIENT-FORK:END
 /** Agent models by id, with the display name a harness gives them. */
 const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
@@ -168,6 +180,8 @@ export type SampleRun = {
   readonly cwd?: string;
   /** The `agent-device` commands T3's device_open returned, prior turns included. */
   readonly launchers?: ReadonlyArray<string>;
+  // SCIENT-FORK: what the sample changed in the case's Library, for `expect.library`.
+  readonly library?: LibraryOutcome;
 };
 
 const Rest = [Schema.Record(Schema.String, Schema.Unknown)] as const;
@@ -239,6 +253,8 @@ const McpToolUseExpect = Schema.Struct({
   secret: Schema.optional(SecretExpect),
   /** File pills in the final answer resolve against the thread cwd to `world.files` entries. */
   fileLinks: Schema.optional(FileLinksExpect),
+  // SCIENT-FORK: the case's Library when the sample ends. See `LibraryExpect` in scientSources.ts.
+  library: Schema.optional(LibraryExpect),
 });
 
 /**
@@ -279,6 +295,8 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceAgentAccess: Schema.optional(Schema.Boolean),
     /** false: agent browser access is off. T3 denies every preview call and drops its browser text. */
     browserAgentAccess: Schema.optional(Schema.Boolean),
+    // SCIENT-FORK: the person's Library. With it, Scient's Sources tools are listed and answer from it.
+    library: Schema.optional(LibraryWorld),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -434,7 +452,12 @@ const CODEX_NAMES: Readonly<Record<string, string>> = {
 };
 // SCIENT-FORK:START — Scient registers upstream's `t3_*` tools as `scient_*`; cases keep T3's names.
 const t3CaseName = (name: string) =>
-  name === "scient_thread_inspect" ? "t3_thread_read" : name.replace(/^scient_/, "t3_");
+  name === "scient_thread_inspect"
+    ? "t3_thread_read"
+    : // Scient's own Sources tools have no T3 name.
+      isSourcesTool(name)
+      ? name
+      : name.replace(/^scient_/, "t3_");
 // SCIENT-FORK:END
 export const normalizeToolName = (name: string) => {
   const bare = name.slice(name.lastIndexOf(".") + 1);
@@ -532,13 +555,25 @@ const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?:
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
+// SCIENT-FORK:START — a case with a Library also gets Scient's Sources tools, from source.
+const sourcesTools: ReadonlyArray<ApiTool> = SOURCES_TOOLS.map((tool) => ({
+  name: `${T3_PREFIX}${tool.name}`,
+  description: Tool.getDescription(tool) ?? "",
+  input_schema: advertisedJsonSchema(tool),
+}));
+const visibleTools = (options: Parameters<typeof visibleT3Tools>[0] & SourcesAccess) => [
+  ...visibleT3Tools(options),
+  ...(options.sourcesAccess === true ? sourcesTools : []),
+];
+type SourcesAccess = { readonly sourcesAccess?: boolean };
+// SCIENT-FORK:END
 
 /**
  * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` and
  * `browser` say whether the thread holds the `device` and `preview` capabilities, as agent device
  * and browser access decide.
  */
-const claudeQueryOptions = (model: Model, device = true, browser = true) => {
+const claudeQueryOptions = (model: Model, device = true, browser = true, sources = false) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -553,7 +588,7 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
     browserToolsAvailable: browser,
     // SCIENT-FORK:START — Scient's granted awareness carries the session's device block.
     scientAwareness: buildScientAwareness(
-      scientEvalCapabilities(device, browser),
+      scientEvalCapabilities(device, browser, sources),
       CLAUDE_SCIENT_TOOL_PROJECTION,
     ),
     // SCIENT-FORK:END
@@ -562,8 +597,8 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true, browser = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser);
+export const t3SystemAppend = (model: Model, device = true, browser = true, sources = false) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, sources);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -609,8 +644,13 @@ const SCIENT_EVAL_CAPABILITIES = new Set(["preview", "device"] as const);
 const scientEvalCapabilities = (
   device: boolean,
   browser = true,
+  sources = false,
 ): ReadonlySet<McpInvocationContext.McpCapability> =>
-  new Set([...(browser ? (["preview"] as const) : []), ...(device ? (["device"] as const) : [])]);
+  new Set([
+    ...(browser ? (["preview"] as const) : []),
+    ...(device ? (["device"] as const) : []),
+    ...(sources ? (["sources:read", "sources:write"] as const) : []),
+  ]);
 // SCIENT-FORK:END
 
 const t3ContextReport = (model: Model) => {
@@ -661,9 +701,10 @@ export const buildBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
-  },
+    // SCIENT-FORK: true lists the Sources tools and adds the Library's part of Scient's text.
+  } & SourcesAccess,
 ) => {
-  const t3 = visibleT3Tools(options);
+  const t3 = visibleTools(options);
   const firstAssistant = template.messages.findIndex((message) => message.role === "assistant");
   const head = template.messages.slice(0, firstAssistant === -1 ? undefined : firstAssistant);
   const systemTexts = [
@@ -686,7 +727,8 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : t3SystemAppend(model, options.deviceAccess, options.browserAccess);
+    : // SCIENT-FORK: the Library's part follows the case's Library.
+      t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.sourcesAccess);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -755,9 +797,10 @@ const buildCodexBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
-  },
+    // SCIENT-FORK: true lists the Sources tools and adds the Library's part of Scient's text.
+  } & SourcesAccess,
 ): Base => {
-  const t3 = visibleT3Tools(options);
+  const t3 = visibleTools(options);
   const contentText = (item: Block) =>
     Array.isArray(item.content)
       ? item.content.map((block: Block) => valueText(block.text)).join("\n")
@@ -791,7 +834,11 @@ const buildCodexBase = (
   const context = buildCodexAdditionalContext(
     { model: options.model, reasoningEffort: effort },
     // SCIENT-FORK: Scient grants named capabilities instead of browser/device flags.
-    scientEvalCapabilities(options.deviceAccess ?? true, options.browserAccess ?? true),
+    scientEvalCapabilities(
+      options.deviceAccess ?? true,
+      options.browserAccess ?? true,
+      options.sourcesAccess,
+    ),
   );
   input.push(
     ...Object.entries(context).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`)),
@@ -906,6 +953,8 @@ type Sample = {
   backgroundWait?: BackgroundWait;
   /** Calls so far per mocked tool, for mocks that answer in sequence. */
   readonly mockCalls: Map<string, number>;
+  // SCIENT-FORK: the case's Library and Scient's Sources tools on it, once `withSources` builds them.
+  sources?: SourcesLibrary;
 };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
@@ -1000,6 +1049,13 @@ export const withBackgroundWait = Effect.fn("evaluateMcpToolUse.withBackgroundWa
     if (result.isError) sample.priorErrors.add(call);
   }
 });
+
+// SCIENT-FORK:START — the case's Library, in a temporary folder the sample's scope removes.
+export const withSources = Effect.fn("evaluateMcpToolUse.withSources")(function* (sample: Sample) {
+  const library = sample.testCase.setup.world?.library;
+  if (library !== undefined) sample.sources = yield* makeSourcesLibrary(library);
+});
+// SCIENT-FORK:END
 
 // Main's history under every case's world.
 const MAIN_COMMITS = [
@@ -1723,6 +1779,12 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     const result = yield* sample.backgroundWait(input);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
+  // SCIENT-FORK:START — Sources calls run on the case's Library; a case cannot mock them.
+  if (sample.sources && isT3Name(call.name) && isSourcesTool(name)) {
+    const result = yield* sample.sources.call(name, input);
+    return result.isError ? failed(result.text) : toolResult(call.id, result.text);
+  }
+  // SCIENT-FORK:END
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
     if (name === "request_secret") savedSecretFile(sample, mock);
@@ -1980,6 +2042,8 @@ export const gradeSample = (
     ),
   );
   checks.push(...gradeSecret(expect.secret, run, pasted));
+  // SCIENT-FORK: the Library changed as asked, and nothing else in it did.
+  checks.push(...gradeLibrary(expect.library, run.library));
   return checks;
 };
 
@@ -2217,7 +2281,8 @@ export const ranCalls = (
  * Runs one sample until the model ends its turn, uses up its steps, or fails a check that no
  * later step can undo. Tokens add up in `spent`, so a sample that errors still reports them.
  */
-const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
+// SCIENT-FORK: exported so scientSources.test.ts runs whole samples with a scripted model.
+export const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   testCase: McpToolUseCase,
   config: Config,
   base: Base,
@@ -2226,6 +2291,8 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   const sample = { ...makeSample(testCase, base), shellUsage: spent.shellUsage };
   yield* withDevices(sample);
   yield* withBackgroundWait(sample);
+  // SCIENT-FORK: a case with a Library gets it before the first model call.
+  yield* withSources(sample);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
   const messages = buildMessages(sample);
   const input = base.codex ? codexMessages(messages) : undefined;
@@ -2353,6 +2420,8 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     cwd: base.environment.cwd,
     linked: [...sample.linked],
     ...(sample.devices ? { launchers: [...sample.devices.launchers] } : {}),
+    // SCIENT-FORK: read the Library again, for the state checks.
+    ...(sample.sources ? { library: yield* sample.sources.outcome } : {}),
     usage,
     shellUsage: sample.shellUsage,
     transcript: input ? transcript : messages.slice(start),
@@ -2591,6 +2660,8 @@ const main = Effect.gen(function* () {
     deviceAccess: boolean,
     browserAccess: boolean,
     links: boolean,
+    // SCIENT-FORK: true for a case with a Library.
+    sourcesAccess = false,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2603,6 +2674,7 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
+              sourcesAccess,
             }),
           ),
         )
@@ -2616,6 +2688,7 @@ const main = Effect.gen(function* () {
               links,
               deviceAccess,
               browserAccess,
+              sourcesAccess,
             });
             return role === "native-subagent"
               ? Effect.promise(() =>
@@ -2640,13 +2713,37 @@ const main = Effect.gen(function* () {
     ];
     bases.set(key, yield* buildFor(role, device === "true", browser === "true", links === "true"));
   }
-  const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
+  // SCIENT-FORK:START — a case with a Library gets its own base, which lists the Sources tools.
+  const libraryBases = new Map<string, Base>();
+  for (const testCase of selected) {
+    const { role, world, linkedEnvironments } = testCase.setup;
+    if (world?.library === undefined || libraryBases.has(baseKey(testCase))) continue;
+    libraryBases.set(
+      baseKey(testCase),
+      yield* buildFor(
+        role,
+        world.deviceAgentAccess !== false,
+        world.browserAgentAccess !== false,
+        linkedEnvironments === true,
+        true,
+      ),
+    );
+  }
+  const baseFor = (testCase: McpToolUseCase) =>
+    (testCase.setup.world?.library === undefined
+      ? undefined
+      : libraryBases.get(baseKey(testCase))) ??
+    bases.get(baseKey(testCase)) ??
+    base;
+  // SCIENT-FORK:END
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
   if (flags["dry-run"]) {
     // One JSON line per case. Without --case this also checks that every case builds.
     for (const testCase of selected) {
       const sample = makeSample(testCase, baseFor(testCase));
       yield* Effect.scoped(Effect.andThen(withDevices(sample), withBackgroundWait(sample)));
+      // SCIENT-FORK: also proves the case's Library builds.
+      yield* Effect.scoped(withSources(sample));
       const messages = buildMessages(sample);
       const body = sample.base.codex
         ? codexRequest(sample.base, codexMessages(messages))
