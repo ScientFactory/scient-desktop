@@ -17,6 +17,7 @@ import {
   zoteroDescendantCollectionKeys,
   zoteroItemMaterial,
   ZOTERO_ITEM_KEY_PATTERN,
+  ZOTERO_PDFS_PER_ITEM,
   type ZoteroItemMaterial,
   type ZoteroRawItem,
 } from "./ZoteroItems.ts";
@@ -24,7 +25,6 @@ import {
 const MAX_PAGE_SIZE = 100;
 const MAX_ZOTERO_COLLECTIONS = 10_000;
 const MAX_ZOTERO_SCOPED_BROWSE_ITEMS = 10_000;
-const MAX_IMPORTED_PDFS_PER_ITEM = 10;
 
 export type ZoteroConnectionKind = "local" | "web";
 
@@ -246,6 +246,40 @@ export async function listZoteroScopeItemKeysWith(
   return [...new Set(items.map((item) => item.key))];
 }
 
+/**
+ * Notes and files in a scope that belong to no reference. An import brings references with
+ * what hangs on them, so these are passed by; the import says how many. Zero when Zotero
+ * cannot be asked (the count is a courtesy, never a reason to fail an import).
+ */
+export async function countZoteroScopeStandalone(
+  transport: ZoteroTransport,
+  scope: ZoteroImportScope,
+): Promise<{ readonly notes: number; readonly files: number }> {
+  const count = async (path: string, itemType: string) => {
+    const parameters = new URLSearchParams({ format: "json", itemType, limit: "1" });
+    const { response, value } = await getJson(transport, `${path}?${parameters.toString()}`);
+    return totalResults(response, Array.isArray(value) ? value.length : 0);
+  };
+  try {
+    const paths =
+      scope.kind === "collection" && scope.includeSubcollections
+        ? zoteroDescendantCollectionKeys(
+            scope.collectionKey,
+            await listAllCollections(transport),
+          ).map((key) => `/collections/${key}/items/top`)
+        : [scopePath(scope)];
+    let notes = 0;
+    let files = 0;
+    for (const path of paths) {
+      notes += await count(path, "note");
+      files += await count(path, "attachment");
+    }
+    return { notes, files };
+  } catch {
+    return { notes: 0, files: 0 };
+  }
+}
+
 async function readAllChildren(
   transport: ZoteroTransport,
   itemKey: string,
@@ -314,7 +348,7 @@ export async function readZoteroAttachmentFiles(
 ): Promise<ReadonlyArray<ZoteroAttachmentFile & { readonly attachmentKey: string }>> {
   const files: Array<ZoteroAttachmentFile & { readonly attachmentKey: string }> = [];
   try {
-    for (const pdf of pdfs.slice(0, MAX_IMPORTED_PDFS_PER_ITEM)) {
+    for (const pdf of pdfs.slice(0, ZOTERO_PDFS_PER_ITEM)) {
       const file = await transport.attachmentFile(pdf);
       if (file) files.push({ ...file, attachmentKey: pdf.key });
     }

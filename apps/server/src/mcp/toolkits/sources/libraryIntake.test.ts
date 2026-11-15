@@ -12,6 +12,10 @@ import {
   scientLibraryLocation,
   scientLibraryRootFor,
 } from "@scientfactory/scient-sources/library-root";
+import {
+  listScientLibraryImportNotBrought,
+  listScientLibraryRecentChanges,
+} from "@scientfactory/scient-sources/library-changes";
 import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
 import { importScientSource, listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -290,6 +294,54 @@ describe("Sources intake on the library backend", () => {
       const keys = yield* Effect.promise(() => pinKeys(fixture));
       expect(keys).toEqual(["fluids2026", "lactate2026", "vasopressin2026"]);
       expect(yield* Effect.promise(() => managedKeys(fixture))).toEqual(keys);
+    }),
+  );
+
+  it.effect("what a Zotero import did not bring stays on record with the import", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const zotero = fakeZoteroTransport({
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem("ABCD2345", {
+                itemType: "book",
+                title: "A book with a place",
+                abstractNote: "A.",
+                ...({ place: "Leiden", edition: "2nd" } as object),
+              }),
+              children: [
+                zoteroItem("SNAP2345", {
+                  itemType: "attachment",
+                  contentType: "text/html",
+                  linkMode: "imported_url",
+                }),
+              ],
+            },
+          ],
+        ]),
+      });
+      const imported = yield* run(importZoteroForInvocation({ itemKeys: ["ABCD2345"] }), fixture, {
+        zotero,
+      });
+      const sourceId = imported.items[0]!.sourceId!;
+
+      // Long after the summary was dismissed: the import's line counts it, and lists it.
+      const change = (yield* Effect.promise(() =>
+        listScientLibraryRecentChanges(fixture.library, 50),
+      )).changes.find((entry) => entry.kind === "import");
+      expect(change).toMatchObject({ kind: "import", imported: 1, notBrought: 3 });
+      expect(
+        yield* Effect.promise(() => listScientLibraryImportNotBrought(fixture.library, change!.id)),
+      ).toEqual([
+        { what: "Edition", amount: "1 reference", sourceIds: [sourceId] },
+        { what: "Place of publication", amount: "1 reference", sourceIds: [sourceId] },
+        { what: "Web page snapshots", amount: "1 on 1 reference", sourceIds: [sourceId] },
+      ]);
+      expect(
+        yield* Effect.promise(() => listScientLibraryImportNotBrought(fixture.library, "no-such")),
+      ).toEqual([]);
     }),
   );
 

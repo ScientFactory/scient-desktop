@@ -1,9 +1,19 @@
 import { AlertCircle, CheckCircle2, Info, LoaderCircle, X } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { completedImportCounts, type ScientSourcesImportOutcome } from "./importOutcome";
 import { inLibraryNotProjectLabel, LIBRARY_LABELS } from "./libraryLabels";
+import {
+  NOT_BROUGHT_LABELS,
+  notBroughtAmount,
+  notBroughtLines,
+  notBroughtName,
+} from "./notBroughtLabels";
 import type { useScientSources } from "./useScientSources";
+
+/** How many kinds of things not brought are listed before "Show all". */
+const NOT_BROUGHT_FIRST = 5;
 
 function importedCount(operation: NonNullable<ReturnType<typeof useScientSources>["operation"]>) {
   return operation.items.filter((item) => item.state !== "pending").length;
@@ -18,7 +28,10 @@ export function ImportSummary(props: {
   readonly onRetryFailed?: () => void;
   /** On a personal Library, an import that added its sources to the Library only. */
   readonly libraryOnly?: { readonly onAddToProject?: (sourceIds: ReadonlyArray<string>) => void };
+  /** Shows the references one thing was not brought for. */
+  readonly onShowSources?: (sourceIds: ReadonlyArray<string>, label: string) => void;
 }) {
+  const [allNotBrought, setAllNotBrought] = useState(false);
   const counts = props.outcome?.counts ?? completedImportCounts(props.operation);
   const imported = counts.imported;
   const alreadyPresent = counts.alreadyPresent;
@@ -32,6 +45,8 @@ export function ImportSummary(props: {
     item.state === "imported" && item.sourceId ? [item.sourceId] : [],
   );
   const libraryOnly = props.libraryOnly && !running && importedIds.length > 0;
+  // Said once the import has ended: while it runs the list would grow under the reader.
+  const notBrought = running ? [] : notBroughtLines(props.operation);
   if (
     !libraryOnly &&
     !running &&
@@ -40,7 +55,8 @@ export function ImportSummary(props: {
     unprocessed === 0 &&
     alreadyPresent === 0 &&
     reviewRequired === 0 &&
-    notes.length === 0
+    notes.length === 0 &&
+    notBrought.length === 0
   )
     return null;
   const details = running
@@ -80,6 +96,56 @@ export function ImportSummary(props: {
         {libraryOnly ? (
           <div className="mt-1 text-xs text-muted-foreground">
             {inLibraryNotProjectLabel(importedIds.length)}
+          </div>
+        ) : null}
+        {notBrought.length > 0 ? (
+          <div className="mt-2 text-xs">
+            <div className="font-medium">{NOT_BROUGHT_LABELS.heading}</div>
+            <div className="text-muted-foreground">{NOT_BROUGHT_LABELS.about}</div>
+            <ul className="mt-1 space-y-0.5">
+              {(allNotBrought ? notBrought : notBrought.slice(0, NOT_BROUGHT_FIRST)).map((line) => {
+                const name = notBroughtName(line);
+                return (
+                  <li
+                    key={`${line.kind}:${line.name ?? ""}`}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span className="min-w-0 break-words">
+                      {name}:{" "}
+                      <span className="text-muted-foreground">{notBroughtAmount(line)}</span>
+                    </span>
+                    {props.onShowSources && line.sourceIds.length > 0 ? (
+                      <Button
+                        className="shrink-0"
+                        size="xs"
+                        variant="ghost"
+                        aria-label={`${NOT_BROUGHT_LABELS.show}: ${name}`}
+                        onClick={() =>
+                          props.onShowSources?.(
+                            line.sourceIds,
+                            `${NOT_BROUGHT_LABELS.shownSources}: ${name}`,
+                          )
+                        }
+                      >
+                        {NOT_BROUGHT_LABELS.show}
+                      </Button>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+            {notBrought.length > NOT_BROUGHT_FIRST ? (
+              <Button
+                className="mt-1"
+                size="xs"
+                variant="ghost"
+                onClick={() => setAllNotBrought((value) => !value)}
+              >
+                {allNotBrought
+                  ? NOT_BROUGHT_LABELS.showFewer
+                  : `${NOT_BROUGHT_LABELS.showAll} (${notBrought.length})`}
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {libraryOnly && props.libraryOnly?.onAddToProject ? (

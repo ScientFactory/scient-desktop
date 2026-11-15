@@ -1,4 +1,8 @@
-import type { EnvironmentId, ScientSourcesRecentChange } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScientSourcesImportNotBrought,
+  ScientSourcesRecentChange,
+} from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -34,6 +38,80 @@ import { restoreProblem } from "./sourceLifecycleLabels";
 const PAGE = 50;
 const MOST = 400;
 const errorMessage = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
+
+/**
+ * What an import read and did not bring, read from the import's record when it is opened:
+ * each thing, how many, and a way to see the sources it concerns.
+ */
+function NotBrought(props: {
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+  readonly importId: string;
+  readonly kinds: number;
+  readonly about: string;
+  readonly onShowSources: (sourceIds: ReadonlyArray<string>) => void;
+}) {
+  const [lines, setLines] = useState<ScientSourcesImportNotBrought | null>(null);
+  const [open, setOpen] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const toggle = () => {
+    setOpen((value) => !value);
+    if (lines !== null || open) return;
+    readScientSourceRecentChanges(props.environmentId, {
+      root: props.root,
+      notBroughtOfImport: props.importId,
+    }).then(
+      (answer) => setLines(answer.importNotBrought ?? []),
+      (cause: unknown) => setProblem(errorMessage(cause)),
+    );
+  };
+  return (
+    <div className="mt-1">
+      <Button
+        size="xs"
+        variant="outline"
+        aria-expanded={open}
+        aria-label={`${RECENT_CHANGES_LABELS.notBrought} (${props.kinds}): ${props.about}`}
+        onClick={toggle}
+      >
+        {RECENT_CHANGES_LABELS.notBrought} ({props.kinds})
+      </Button>
+      {open && problem ? (
+        <p role="alert" className="mt-1 text-xs text-muted-foreground">
+          {problem}
+        </p>
+      ) : null}
+      {open && lines?.length === 0 ? (
+        <p className="mt-1 text-xs text-muted-foreground">{RECENT_CHANGES_LABELS.notBroughtNone}</p>
+      ) : null}
+      {open && lines && lines.length > 0 ? (
+        <div className="mt-1 text-xs">
+          <p className="text-muted-foreground">{RECENT_CHANGES_LABELS.notBroughtAbout}</p>
+          <ul className="mt-1 space-y-0.5">
+            {lines.map((line) => (
+              <li key={line.what} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 break-words">
+                  {line.what}: <span className="text-muted-foreground">{line.amount}</span>
+                </span>
+                {line.sourceIds.length > 0 ? (
+                  <Button
+                    className="shrink-0"
+                    size="xs"
+                    variant="ghost"
+                    aria-label={`${RECENT_CHANGES_LABELS.showThese}: ${line.what}`}
+                    onClick={() => props.onShowSources(line.sourceIds)}
+                  >
+                    {RECENT_CHANGES_LABELS.showThese}
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * The Library's recorded changes, newest first, each with the one thing that can be done about
@@ -249,6 +327,20 @@ export function RecentChangesDialog(props: {
                         <p className="text-xs break-words text-muted-foreground">
                           {recentChangeDetail(change)}
                         </p>
+                      ) : null}
+                      {change.kind === "import" && (change.notBrought ?? 0) > 0 ? (
+                        // Looking is not a change: offered to every session.
+                        <NotBrought
+                          environmentId={environmentId}
+                          root={root}
+                          importId={change.id}
+                          kinds={change.notBrought ?? 0}
+                          about={sentence}
+                          onShowSources={(sourceIds) => {
+                            props.onShowSources(sourceIds);
+                            props.onClose();
+                          }}
+                        />
                       ) : null}
                       {change.kind === "restore" && change.kept && props.canChange ? (
                         // For a restore made by mistake: that Library whole, not only its

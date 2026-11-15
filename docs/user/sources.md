@@ -304,6 +304,19 @@ a collection nested deeper joins its ancestor one level down, and the import
 result says which ones did. The original Zotero references and attachments are
 never changed by an import.
 
+When the import ends it lists, under **Not brought from Zotero**, everything
+Zotero holds for the imported references that did not come, each with how
+many references it concerns: fields Scient has no place for yet (place of
+publication, edition, number of pages and others), lines of Zotero's Extra it
+does not read, highlights and comments on PDFs, files that are not PDFs, links
+kept as attachments, PDFs Zotero could not hand over, notes whose links or
+tables became plain text, and notes and files that belong to no reference.
+**Show** on a line shows the references it concerns. All of it is still in
+Zotero. The list is made by comparing what was brought with everything Zotero
+sent, so what is not on it was brought. It stays with the import: in **Recent
+changes**, the import's line has **Not brought** with the same list, also
+after you have dismissed the summary.
+
 Zotero must be open in the same environment where the project runs. For a
 remote project, that means Zotero must run on the remote computer, not only on
 the computer displaying Scient. If Zotero blocks local access, enable **Allow

@@ -3336,7 +3336,35 @@ it joins a Library collection (`collections.json`) named after each Zotero
 collection it belongs to. One level of Zotero's nesting is kept as a
 subcollection; a deeper collection's items join its ancestor at that level,
 and the item's `note` in the operation (and the agent import result) names
-each one flattened. A collection problem never fails the import. Scope discovery is capped at 500 importable references
+each one flattened. A collection problem never fails the import.
+
+**What was not brought.** `decodeZoteroRawItem` lists every non-empty text
+field Zotero sent (`fields`) before the item's schema drops the ones Sources
+does not read. `zoteroFieldDispositions` gives each one of three places:
+brought into the record, not brought, or not content (Zotero's bookkeeping,
+and fields read elsewhere). `zoteroItemMaterial` turns the second into entries
+(`notBrought`, each a `ScientSourceNotBrought`: a kind, a name,
+a count) and adds what else an
+item holds that does not come: lines of Extra that are not read, related
+items, automatic tags (brought as ordinary tags), files that are not PDFs,
+link attachments, PDFs past the tenth, notes with formatting that is lost or
+that are cut, and the highlights on each PDF (the attachment's
+`meta.numChildren`; they are not fetched). The import adds PDFs Zotero could
+not hand over and stores the entries on the operation's item; a scoped
+import also counts, with two requests, the notes and files in the scope that
+belong to no reference and stores them on the operation. `summarizeNotBrought`
+and `notBroughtName` (`packages/scient-sources/src/notBrought.ts`) add them up
+and name them for the panel's summary and for the agent's import result alike.
+The finished operation's file stays on disk, so the list outlives the summary:
+an import's line in Recent changes carries how many kinds it has, and
+`recentChanges` with `notBroughtOfImport` (`listScientLibraryImportNotBrought`)
+returns it with the sources each line concerns that are in the Library now.
+`ZoteroFidelity.test.ts` holds the rule on 42 real references of every Zotero
+item type (a recorded public library, bibliographic details only): every field
+and every child is brought, listed, or bookkeeping, and the list of what is
+not brought is a snapshot that later work may only shorten.
+
+Scope discovery is capped at 500 importable references
 per operation and fails with a request to choose a smaller scope above that
 bound. Collection and whole-library actions skip the separate preflight
 screen; each item is still validated, duplicate-assessed and committed by the

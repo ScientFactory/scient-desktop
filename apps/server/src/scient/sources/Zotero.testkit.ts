@@ -10,11 +10,18 @@ export function zoteroItem(
   libraryId: string | number = 0,
 ): ZoteroRawItem {
   const version = data.version ?? 1;
+  const whole = { itemType: "journalArticle", ...data, key, version };
   return {
     key,
     version,
     library: { type: "user", id: libraryId },
-    data: { itemType: "journalArticle", ...data, key, version },
+    data: whole,
+    // As the decoder does for Zotero's own answer: every non-empty text field, by name.
+    fields: Object.fromEntries(
+      Object.entries(whole).flatMap(([name, value]) =>
+        typeof value === "string" && value.trim() ? [[name, value]] : [],
+      ),
+    ),
   };
 }
 
@@ -57,7 +64,17 @@ export function fakeZoteroTransport(
         return match[2] ? json(entry.children, entry.children.length) : json(entry.item);
       }
       if (route === "/items/top") {
-        const top = [...library.items.values()].map((entry) => entry.item);
+        // As Zotero filters: `itemType=note` keeps one type, `-attachment` leaves one out.
+        const wanted = new URLSearchParams(path.split("?")[1] ?? "").get("itemType");
+        const top = [...library.items.values()]
+          .map((entry) => entry.item)
+          .filter((item) =>
+            !wanted
+              ? true
+              : wanted.startsWith("-")
+                ? item.data.itemType !== wanted.slice(1)
+                : item.data.itemType === wanted,
+          );
         return json(top, top.length);
       }
       if (route === "/collections") {

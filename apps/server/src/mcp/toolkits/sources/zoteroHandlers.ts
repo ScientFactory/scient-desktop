@@ -8,6 +8,9 @@ import {
   type ZoteroConnection,
   type ZoteroGroup,
   type ZoteroImportScope,
+  notBroughtAmount,
+  notBroughtName,
+  summarizeNotBrought,
 } from "@scientfactory/scient-sources";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { ProjectId } from "@t3tools/contracts";
@@ -285,6 +288,10 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
       return current;
     });
     const count = (state: string) => operation.items.filter((item) => item.state === state).length;
+    const notBrought = summarizeNotBrought(operation).map((line) => ({
+      what: notBroughtName(line),
+      amount: notBroughtAmount(line),
+    }));
     return {
       imported: count("imported"),
       skipped: count("skipped"),
@@ -298,6 +305,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
           item.state === "failed" ? safeZoteroMessage(new Error(item.message ?? "")) : item.message,
         ...(item.note ? { note: item.note } : {}),
       })),
+      ...(notBrought.length > 0 ? { notBrought } : {}),
     };
   },
 );

@@ -1047,6 +1047,8 @@ export const ScientSourcesRecentChangesRequest = Schema.Struct({
   root: NonEmptyString,
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 400 }))),
   sourcesOfImport: Schema.optionalKey(NonEmptyString),
+  /** Instead of the list: what that import read and did not bring, as `importNotBrought`. */
+  notBroughtOfImport: Schema.optionalKey(NonEmptyString),
   /** Instead of the list: the papers that join left as they are here, a page at a time. */
   differencesOfJoin: Schema.optionalKey(
     Schema.Struct({
@@ -1061,6 +1063,9 @@ export type ScientSourcesJoinDifferences = NonNullable<
   ScientLibraryRecentChanges["joinDifferences"]
 >;
 export type ScientSourcesJoinDifferenceRow = ScientSourcesJoinDifferences["rows"][number];
+export type ScientSourcesImportNotBrought = NonNullable<
+  ScientLibraryRecentChanges["importNotBrought"]
+>;
 
 export const ScientSourceRestoreRequest = Schema.Struct({
   root: NonEmptyString,

@@ -38,6 +38,7 @@ import {
   undoScientLibraryJoin,
 } from "@scientfactory/scient-sources/library-join";
 import {
+  listScientLibraryImportNotBrought,
   listScientLibraryImportSources,
   listScientLibraryRecentChanges,
 } from "@scientfactory/scient-sources/library-changes";
@@ -993,6 +994,7 @@ export async function libraryRecentChanges(
   input: {
     readonly limit?: number;
     readonly sourcesOfImport?: string;
+    readonly notBroughtOfImport?: string;
     readonly differencesOfJoin?: { readonly joinId: string; readonly offset?: number };
     /** False for a session that may only read: the person's own notes are left out. */
     readonly personal?: boolean;
@@ -1010,6 +1012,16 @@ export async function libraryRecentChanges(
         : { offset: input.differencesOfJoin.offset }),
     });
     return { changes: [], more: false, ...(joinDifferences ? { joinDifferences } : {}) };
+  }
+  if (input.notBroughtOfImport !== undefined) {
+    return {
+      changes: [],
+      more: false,
+      importNotBrought: await listScientLibraryImportNotBrought(
+        store.library,
+        input.notBroughtOfImport,
+      ),
+    };
   }
   if (input.sourcesOfImport !== undefined) {
     return {
