@@ -183,7 +183,10 @@ export interface ConnectorRuntimeShape {
     /** The session's agent, for connectors given to chosen agents only. */
     readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) => Effect.Effect<ConnectorDeliveryResolution>;
-  /** Live grant re-check for each proxied request. */
+  /**
+   * Live grant re-check for each proxied request: on, eligible, for this project and agent.
+   * Whether it is signed in is `forward`'s to answer (a refused sign-in keeps failing discovery).
+   */
   readonly isGranted: (input: {
     readonly connectorId: ConnectorId;
     readonly projectId: ProjectId | undefined;

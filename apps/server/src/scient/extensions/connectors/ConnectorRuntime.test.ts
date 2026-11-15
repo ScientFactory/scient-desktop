@@ -124,8 +124,11 @@ interface FakeVendor {
   exchange: Gate;
   /** Tokens the MCP endpoint refuses (even if valid); each refusal passes `refusing` first. */
   refusedTokens: Set<string>;
-  /** Tokens answered with HTTP 403. */
-  forbiddenTokens: Set<string>;
+  /**
+   * Tokens answered with HTTP 403: naming an auth error in JSON, with a `WWW-Authenticate`
+   * challenge, or as an edge-policy HTML page that says nothing about the credential.
+   */
+  forbiddenTokens: Map<string, "json" | "challenge" | "edge">;
   refusing: Gate;
   refreshCount: number;
   registrations: Array<Record<string, unknown>>;
@@ -217,7 +220,20 @@ const handleMcp = async (
       response.end();
       return;
     }
-    if (vendor.forbiddenTokens.has(token)) return json(response, 403, { error: "forbidden" });
+    const forbidden = vendor.forbiddenTokens.get(token);
+    if (forbidden === "json") {
+      return json(response, 403, { error: { code: "invalid_api_key", message: "Key revoked." } });
+    }
+    if (forbidden !== undefined) {
+      response.writeHead(403, {
+        "content-type": "text/html",
+        ...(forbidden === "challenge"
+          ? { "www-authenticate": 'Bearer error="insufficient_scope"' }
+          : {}),
+      });
+      response.end("<html><body>Access denied</body></html>");
+      return;
+    }
     vendor.upstream.push({
       path: request.url ?? "",
       method: request.method ?? "",
@@ -459,7 +475,7 @@ const resetVendor = (base: string): FakeVendor => ({
   refresh: { gate: undefined, arrived: undefined },
   exchange: { gate: undefined, arrived: undefined },
   refusedTokens: new Set(),
-  forbiddenTokens: new Set(),
+  forbiddenTokens: new Map(),
   refusing: { gate: undefined, arrived: undefined },
   refreshCount: 0,
   registrations: [],
@@ -2332,11 +2348,12 @@ describe("connector disconnect", () => {
   );
 
   it.live.each([
-    { status: 401, says: "rejected the credential stored in Scient" },
-    { status: 403, says: "answered with HTTP 403" },
+    { status: 401, forbidden: undefined, says: "rejected the credential stored in Scient" },
+    { status: 403, forbidden: "json", says: "answered with HTTP 403" },
+    { status: 403, forbidden: "challenge", says: "answered with HTTP 403" },
   ] as const)(
-    "keeps discovery failing when the service refuses a key it accepted before ($status)",
-    ({ status, says }) =>
+    "keeps discovery failing when the service refuses a key it accepted before ($status $forbidden)",
+    ({ forbidden, says }) =>
       Effect.gen(function* () {
         const harness = yield* makeHarness();
         vendor.validTokens.add("entered-secret-value");
@@ -2352,8 +2369,8 @@ describe("connector disconnect", () => {
           ),
         ).toMatchObject({ id: 1, result: { tools: [{ name: "search" }] } });
 
-        if (status === 401) vendor.validTokens.delete("entered-secret-value");
-        else vendor.forbiddenTokens.add("entered-secret-value");
+        if (forbidden === undefined) vendor.validTokens.delete("entered-secret-value");
+        else vendor.forbiddenTokens.set("entered-secret-value", forbidden);
         // regression: a refused stored key met the empty server, so discovery reported success.
         const refused = { code: -32001, message: expect.stringContaining(says) };
         expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toEqual({
@@ -2378,12 +2395,68 @@ describe("connector disconnect", () => {
         vendor.validTokens.delete("vendor-access-token-1");
         if (refusal === "refresh refused") vendor.refreshMode = "invalid_grant";
         else vendor.refusedTokens.add("vendor-access-token-2");
+        const refused = { code: -32001, message: expect.stringContaining("no longer connected") };
         expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toMatchObject({
           id: 2,
-          error: { code: -32001, message: expect.stringContaining("no longer connected") },
+          error: refused,
         });
         expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-auth");
+        // regression: only the request that saw the refusal failed; later discovery met the
+        // empty server and reported success with no tools.
+        expect(yield* readJson(yield* harness.proxy(connectorId, initialize(3)))).toMatchObject({
+          id: 3,
+          error: refused,
+        });
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 4, method: "tools/list" }),
+          ),
+        ).toMatchObject({ id: 4, error: refused });
+
+        // Turning it off is the person dealing with it: from then on it is merely unavailable.
+        yield* harness.runtime.update({ connectorId, enabled: false });
+        yield* harness.runtime.update({ connectorId, enabled: true });
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 5, method: "tools/list" }),
+          ),
+        ).toEqual({ jsonrpc: "2.0", id: 5, result: { tools: [] } });
       }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("answers discovery as an empty server when a 403 says nothing about the key", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      vendor.validTokens.add("entered-secret-value");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/secure/mcp` },
+        credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
+      });
+      const connectorId = added.connector.connectorId;
+      harness.delivered.add(connectorId);
+      vendor.forbiddenTokens.set("entered-secret-value", "edge");
+      // regression: an HTML edge-policy 403 failed the agent's discovery like a refused key.
+      expect(yield* readJson(yield* harness.proxy(connectorId, initialize(1)))).toMatchObject({
+        id: 1,
+        result: { instructions: expect.stringContaining("offers no tools") },
+      });
+      expect(
+        yield* readJson(
+          yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 2, method: "tools/list" }),
+        ),
+      ).toEqual({ jsonrpc: "2.0", id: 2, result: { tools: [] } });
+      expect(yield* readJson(yield* harness.proxy(connectorId, toolCall(3)))).toMatchObject({
+        id: 3,
+        error: { code: -32001, message: expect.stringContaining("answered with HTTP 403") },
+      });
+
+      vendor.forbiddenTokens.delete("entered-secret-value");
+      expect(
+        yield* readJson(
+          yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 4, method: "tools/list" }),
+        ),
+      ).toMatchObject({ id: 4, result: { tools: [{ name: "search" }] } });
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("cancels an in-flight refresh so nothing is sent or kept after removal", () =>

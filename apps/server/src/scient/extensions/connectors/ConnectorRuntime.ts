@@ -471,6 +471,75 @@ const sessionNotFound: ConnectorForwardResponse = {
 const cancelBody = (response: Response) =>
   Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
 
+/** Error codes a service uses when it refuses the credential itself, read case-insensitively. */
+const CREDENTIAL_ERROR_CODES = new Set([
+  "invalid_token",
+  "insufficient_scope",
+  "invalid_api_key",
+  "unauthorized",
+  "unauthenticated",
+  "authentication_error",
+]);
+const CREDENTIAL_EVIDENCE_MAX_BYTES = 16 * 1024;
+const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+const fieldOf = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null && key in value
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+
+/** `{"error":"invalid_token"}`, `{"error":{"code":"invalid_api_key"}}`, `{"code":"unauthorized"}` and kin. */
+const namesCredentialError = (parsed: unknown): boolean => {
+  const error = fieldOf(parsed, "error");
+  return [
+    error,
+    fieldOf(parsed, "code"),
+    fieldOf(parsed, "error_code"),
+    fieldOf(error, "code"),
+    fieldOf(error, "type"),
+    fieldOf(error, "status"),
+  ].some((code) => typeof code === "string" && CREDENTIAL_ERROR_CODES.has(code.toLowerCase()));
+};
+
+/**
+ * Whether a 403 refused the credential: a `WWW-Authenticate` challenge, or a JSON body naming an
+ * authentication error. An HTML edge-policy page or an unexplained 403 is no such evidence. Reads
+ * at most 16 KiB of the body and gives up when `signal` (the exchange) aborts.
+ */
+const forbidsCredential = (response: Response, signal: AbortSignal) =>
+  Effect.promise(async (interrupted) => {
+    if (response.headers.get("www-authenticate") !== null) return true;
+    const body = response.body;
+    if (!(response.headers.get("content-type")?.toLowerCase() ?? "").includes("json")) {
+      return false;
+    }
+    if (body === null) return false;
+    const reader = body.getReader();
+    const stop = () => void reader.cancel().catch(() => undefined);
+    interrupted.addEventListener("abort", stop, { once: true });
+    signal.addEventListener("abort", stop, { once: true });
+    const chunks: Array<Uint8Array> = [];
+    let size = 0;
+    try {
+      while (size < CREDENTIAL_EVIDENCE_MAX_BYTES) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        size += value.byteLength;
+      }
+    } catch {
+      return false;
+    } finally {
+      stop();
+      interrupted.removeEventListener("abort", stop);
+      signal.removeEventListener("abort", stop);
+    }
+    if (size >= CREDENTIAL_EVIDENCE_MAX_BYTES) return false;
+    return decodeJsonText(Buffer.concat(chunks).toString("utf8")).pipe(
+      Option.exists(namesCredentialError),
+    );
+  });
+
 export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function* (
   options: ConnectorRuntimeOptions,
 ) {
@@ -538,6 +607,26 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     return controller.signal;
   };
   const isLive = (connectorId: string) => !removed.has(connectorId);
+  /**
+   * Sign-ins the service refused for good (the refresh, or the refreshed token), by connector:
+   * the credential generation the refusal published and what to tell the agent, never a token.
+   * Until the person signs in again, or turns the connector off or removes it, every request
+   * hears the refusal, discovery too, instead of the empty server.
+   */
+  const refusedSignIns = new Map<
+    string,
+    { readonly authRevision: number; readonly message: string }
+  >();
+  const standingRefusal = (record: ConnectorRecord): string | undefined => {
+    const refused = refusedSignIns.get(record.connectorId);
+    if (refused === undefined) return undefined;
+    if (record.status !== "connected" && refused.authRevision === record.authRevision) {
+      return refused.message;
+    }
+    // A new sign-in or credential replaced the refused one.
+    refusedSignIns.delete(record.connectorId);
+    return undefined;
+  };
   /** A plugin's connector is usable only while an enabled, verified plugin owns it. */
   const isPluginEligible = (record: ConnectorRecord) =>
     eligibility.isEligible({
@@ -845,28 +934,44 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     record: ConnectorRecord,
     status: ConnectorRecord["status"],
     lastError: string,
+    /** The service refused the sign-in for good: later requests keep hearing this. */
+    refusal?: string,
   ) =>
     isLive(record.connectorId)
-      ? updateRecord(record.connectorId, (current, updatedAt) =>
-          current.authRevision !== record.authRevision
-            ? current
-            : {
-                ...current,
-                status,
-                lastError,
-                ...(status !== current.status && status !== "connected"
-                  ? { authRevision: current.authRevision + 1 }
-                  : {}),
-                updatedAt,
-              },
-        ).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("connector status could not be saved", {
-              connectorId: record.connectorId,
-              reason: error.reason,
-            }),
-          ),
-        )
+      ? Effect.suspend(() => {
+          let marked: ConnectorRecord | undefined;
+          return updateRecord(record.connectorId, (current, updatedAt) => {
+            marked =
+              current.authRevision !== record.authRevision
+                ? undefined
+                : {
+                    ...current,
+                    status,
+                    lastError,
+                    ...(status !== current.status && status !== "connected"
+                      ? { authRevision: current.authRevision + 1 }
+                      : {}),
+                    updatedAt,
+                  };
+            return marked ?? current;
+          }).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                if (refusal === undefined || marked === undefined) return;
+                refusedSignIns.set(record.connectorId, {
+                  authRevision: marked.authRevision,
+                  message: refusal,
+                });
+              }),
+            ),
+            Effect.catch((error) =>
+              Effect.logWarning("connector status could not be saved", {
+                connectorId: record.connectorId,
+                reason: error.reason,
+              }),
+            ),
+          );
+        })
       : Effect.void;
 
   /**
@@ -874,14 +979,19 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
    * no sign-in can commit in between), the loss is published only if that
    * grant still owns the connector.
    */
-  const markGrantLost = (connectorId: string, grantId: string, lastError: string) =>
+  const markGrantLost = (
+    connectorId: string,
+    grantId: string,
+    lastError: string,
+    refusal?: string,
+  ) =>
     lifecycle(connectorId).withPermits(1)(
       Effect.gen(function* () {
         const current = yield* findRecord(connectorId);
         if (current === undefined) return;
         const entry = yield* loadOAuth(current).pipe(Effect.orElseSucceed(() => undefined));
         if (entry?.material.session?.grantId !== grantId) return;
-        yield* markStatus(current, "needs-auth", lastError);
+        yield* markStatus(current, "needs-auth", lastError, refusal);
       }),
     );
 
@@ -1057,7 +1167,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         }
         // The grant being refreshed is gone (or unusable): drop its session from
         // memory and storage, then publish the loss for the record it belongs to.
-        const loseGrant = Effect.fn("ConnectorRuntime.loseGrant")(function* (lastError: string) {
+        const loseGrant = Effect.fn("ConnectorRuntime.loseGrant")(function* (
+          lastError: string,
+          refusal?: string,
+        ) {
           const { session: _dropped, ...withoutSession } = entry.material;
           publishOAuth(record.connectorId, { material: withoutSession, version: entry.version });
           if (record.auth.type === "oauth" && record.auth.credentialRef !== undefined) {
@@ -1076,7 +1189,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
                 Effect.ignore,
               );
           }
-          yield* markStatus(record, "needs-auth", lastError);
+          yield* markStatus(record, "needs-auth", lastError, refusal);
           return { type: "lost", message: lostGrantMessage(record) } satisfies RefreshOutcome;
         });
         if (Exit.isSuccess(refreshed) && !sessionProtectable(refreshed.value)) {
@@ -1088,6 +1201,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         if (isGrantLost(failure)) {
           const lost = yield* loseGrant(
             "The sign-in expired or was revoked. Sign in again to reconnect.",
+            lostGrantMessage(record),
           );
           return { type: "rejected", message: lost.message } satisfies RefreshOutcome;
         }
@@ -1363,6 +1477,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         record.connectorId,
         refreshed.session.grantId,
         "The service no longer accepts this sign-in.",
+        lostGrantMessage(record),
       );
       return { type: "rejected", message: lostGrantMessage(record) } satisfies SendOutcome;
     }
@@ -1874,6 +1989,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     lifetimes.delete(connectorId);
     lifecycleLocks.delete(connectorId);
     inFlight.delete(connectorId);
+    refusedSignIns.delete(connectorId);
   });
 
   const startSignIn: ConnectorRuntimeShape["startSignIn"] = Effect.fn(
@@ -2390,14 +2506,16 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
               correlationId,
             })
           : Effect.void;
-      if (
-        record === undefined ||
-        !isLive(record.connectorId) ||
-        !record.enabled ||
-        record.status !== "connected" ||
-        !(yield* isPluginEligible(record))
-      ) {
+      const usable =
+        record !== undefined &&
+        isLive(record.connectorId) &&
+        record.enabled &&
+        (yield* isPluginEligible(record));
+      if (!usable || record.status !== "connected") {
         yield* recordToolUse("denied");
+        // A sign-in the service refused stays the person's to fix: discovery keeps failing.
+        const refused = usable ? standingRefusal(record) : undefined;
+        if (refused !== undefined) return credentialRefusal(request, refused);
         return connectorUnavailableResponse(
           request,
           record === undefined
@@ -2509,11 +2627,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         const message = response.ok
           ? `${record.displayName} did not answer like an MCP server.`
           : `${record.displayName} answered with HTTP ${response.status}.`;
-        // A hosted service forbade the credential Scient sent: discovery must hear it fail.
+        // A hosted service said it forbade the credential Scient sent: discovery must hear it
+        // fail. A 403 without that evidence (an edge or policy block) meets the empty server.
         const refused =
           response.status === 403 &&
           record.local === undefined &&
-          outcome.secrets.some((secret) => secret !== undefined);
+          outcome.secrets.some((secret) => secret !== undefined) &&
+          (yield* forbidsCredential(response, exchange.signal));
         return yield* settle(
           refused
             ? credentialRefusal(request, message)
@@ -2715,6 +2835,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       yield* input.localSetup === undefined
         ? commit
         : authoring.exclusive(input.connectorId)(commit);
+      // Turned off, the person has dealt with the refused sign-in: it meets the empty server.
+      if (input.enabled === false) refusedSignIns.delete(input.connectorId);
       // Turned off, set up again or restarted: running copies stop; the next request starts anew.
       if (restarts || input.enabled === false) {
         yield* localHost.stop(
@@ -2801,7 +2923,6 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         record !== undefined &&
         isLive(record.connectorId) &&
         record.enabled &&
-        record.status === "connected" &&
         isAvailableIn(record, input.projectId) &&
         isForAgent(record, input.providerInstanceId) &&
         (yield* isPluginEligible(record))
