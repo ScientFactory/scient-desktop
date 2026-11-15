@@ -17,6 +17,7 @@ import {
   deleteScientSourceSearch,
   listScientSourcesBulkEdits,
   organizeScientSources,
+  placeScientSourceCollections,
   readScientSourcesOrganization,
   renameScientSourceCollection,
   restoreScientSourceCollection,
@@ -239,7 +240,7 @@ describe("Scient source collections", () => {
     );
   });
 
-  it("nests one level deep, with names unique among siblings", async () => {
+  it("nests ten levels deep and never puts a collection inside itself", async () => {
     const { root } = await project([]);
     const create = (name: string, parentCollectionId?: string) =>
       createScientSourceCollection({
@@ -249,44 +250,128 @@ describe("Scient source collections", () => {
         actor: "user",
       });
     const id = (change: Awaited<ReturnType<typeof create>>) => change.collection!.collectionId;
-    const thesis = id(await create("Thesis"));
-    const review = id(await create("Review"));
-    const methods = id(await create("Methods", thesis));
-
-    expect((await create("Methods", review)).outcome).toBe("created");
-    expect((await create("Figures", methods)).outcome).toBe("too-deep");
     const move = (collectionId: string, parentCollectionId: string | null) =>
       organizeScientSources({
         root,
         change: { action: "move-collection", collectionId, parentCollectionId },
         actor: "agent",
       });
-    // A parent cannot become a child, nor can a child take another's name.
-    expect((await move(thesis, review)).outcome).toBe("too-deep");
-    expect((await move(methods, review)).outcome).toBe("name-taken");
-    expect((await move(methods, null)).outcome).toBe("updated");
+    const parentOf = async (collectionId: string) =>
+      (await readScientSourcesOrganization(root)).collections.find(
+        (entry) => entry.collectionId === collectionId,
+      )?.parentCollectionId;
+    const chain = [id(await create("Level 1"))];
+    for (let level = 2; level <= 10; level += 1) {
+      chain.push(id(await create(`Level ${level}`, chain.at(-1))));
+    }
+    const [top, second, third] = chain as [string, string, string];
 
-    // A child whose parent is deleted shows at the top level until the parent is restored.
-    await move(methods, thesis);
-    await deleteScientSourceCollection({ root, collectionId: thesis, actor: "user" });
-    const orphan = (await readScientSourcesOrganization(root)).collections.find(
-      (entry) => entry.collectionId === methods,
-    );
-    expect(orphan?.parentCollectionId).toBeUndefined();
-    await restoreScientSourceCollection({ root, collectionId: thesis, actor: "user" });
-    const restored = (await readScientSourcesOrganization(root)).collections.find(
-      (entry) => entry.collectionId === methods,
-    );
-    expect(restored?.parentCollectionId).toBe(thesis);
+    expect((await create("Level 11", chain.at(-1))).outcome).toBe("too-deep");
+    expect((await move(top, third)).outcome).toBe("too-deep");
+    // Two levels (Review with Methods under it) do not fit under the ninth.
+    const review = id(await create("Review"));
+    const methods = id(await create("Methods", review));
+    expect((await move(review, chain[8]!)).outcome).toBe("too-deep");
+    expect((await move(review, chain[7]!)).outcome).toBe("updated");
+    expect(await parentOf(methods)).toBe(review);
 
-    // A deleted child whose parent moved under another collection comes back at the top level.
+    // Two parents can each have a "Methods"; one parent cannot be given a second by hand.
+    expect((await create("Methods", top)).outcome).toBe("created");
+    expect((await move(methods, top)).outcome).toBe("name-taken");
+
+    // Deleting a collection moves what is under it one level up; restoring puts it back.
+    await deleteScientSourceCollection({ root, collectionId: second, actor: "user" });
+    expect(await parentOf(third)).toBe(top);
+    // A sibling that took the name meanwhile does not stop the Undo.
+    await create("Level 2", top);
+    expect(
+      (await restoreScientSourceCollection({ root, collectionId: second, actor: "user" })).outcome,
+    ).toBe("restored");
+    expect(await parentOf(third)).toBe(second);
+  });
+
+  it("keeps a collection under the one above when a deleted one between them is dropped for good", async () => {
+    const { root } = await project([]);
+    const create = async (name: string, parentCollectionId?: string) =>
+      (
+        await createScientSourceCollection({
+          root,
+          name,
+          ...(parentCollectionId ? { parentCollectionId } : {}),
+          actor: "user",
+        })
+      ).collection!.collectionId;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.parse("2026-11-15T10:00:00.000Z");
+    vi.setSystemTime(clock);
+    const thesis = await create("Thesis");
+    const methods = await create("Methods", thesis);
+    const figures = await create("Figures", methods);
     await deleteScientSourceCollection({ root, collectionId: methods, actor: "user" });
-    expect((await move(thesis, review)).outcome).toBe("updated");
-    await restoreScientSourceCollection({ root, collectionId: methods, actor: "user" });
-    const unnested = (await readScientSourcesOrganization(root)).collections.find(
-      (entry) => entry.collectionId === methods,
-    );
-    expect(unnested?.parentCollectionId).toBeUndefined();
+    // Only the 50 newest deleted collections are kept.
+    for (let index = 0; index < 50; index += 1) {
+      vi.setSystemTime((clock += 1000));
+      const collectionId = await create(`Scratch ${index}`);
+      await deleteScientSourceCollection({ root, collectionId, actor: "user" });
+    }
+
+    expect(
+      (await restoreScientSourceCollection({ root, collectionId: methods, actor: "user" })).outcome,
+    ).toBe("not-found");
+    const organization = await readScientSourcesOrganization(root);
+    expect(
+      organization.collections.find((entry) => entry.collectionId === figures)?.parentCollectionId,
+    ).toBe(thesis);
+  });
+
+  it("places a tree from elsewhere: same-named siblings stay two, and a deleted one is not made again unasked", async () => {
+    const { root } = await project([]);
+    const byHand = await createScientSourceCollection({ root, name: "Thesis", actor: "user" });
+    const node = (collectionId: string, name: string, parentCollectionId?: string) => ({
+      collectionId,
+      name,
+      ...(parentCollectionId ? { parentCollectionId } : {}),
+    });
+    const tree = [
+      node("collection_a", "Thesis"),
+      node("collection_b", "thesis"),
+      node("collection_c", "Chapter 2", "collection_b"),
+      node("collection_d", "x".repeat(201)),
+    ];
+    const place = (wanted: ReadonlyArray<string>, remake = false) =>
+      placeScientSourceCollections({ root, tree, wanted, remake, actor: "user" });
+    const shape = async () =>
+      new Map(
+        (await readScientSourcesOrganization(root)).collections.map((entry) => [
+          entry.collectionId,
+          [entry.name, entry.parentCollectionId ?? null],
+        ]),
+      );
+
+    // Only the second twin is wanted: the collection made by hand is still the first one's.
+    const first = await place(["collection_c", "collection_d"]);
+    expect(first.get("collection_b")).toMatchObject({ created: true });
+    expect(first.get("collection_d")).toEqual({
+      collection: null,
+      why: "Its name is longer than 200 characters.",
+    });
+    expect((await place(["collection_a"])).get("collection_a")).toEqual({
+      collection: byHand.collection,
+      created: false,
+    });
+    const placed = new Map([
+      [byHand.collection!.collectionId, ["Thesis", null]],
+      ["collection_b", ["thesis", null]],
+      ["collection_c", ["Chapter 2", "collection_b"]],
+    ]);
+    expect(await shape()).toEqual(placed);
+
+    await deleteScientSourceCollection({ root, collectionId: "collection_b", actor: "user" });
+    expect([...(await place(["collection_b"])).keys()]).toEqual([]);
+    expect((await place(["collection_b"], true)).get("collection_b")).toMatchObject({
+      created: true,
+    });
+    expect(await shape()).toEqual(placed);
   });
 
   it("adds and removes members and reports an unknown collection", async () => {

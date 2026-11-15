@@ -10,9 +10,10 @@ import * as Schema from "effect/Schema";
 
 import {
   changeScientSourceCollectionMembers,
-  createScientSourceCollection,
   deleteScientSourceCollection,
+  placeScientSourceCollections,
   readScientSourcesOrganization,
+  type ScientSourcePlacedCollection,
 } from "./collections.ts";
 import { readScientLibraryAliases, resolveScientLibraryAlias } from "./libraryAliases.ts";
 import {
@@ -787,9 +788,9 @@ const reasonOf = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
 
 /**
- * Finds or makes here the collections of the other Library that hold a new source, matched by
- * name under the same parent. Members are added later, one source at a time. One that cannot
- * be made (a limit) is recorded with the reason, and its sources arrive without it.
+ * Finds or makes here the collections of the other Library that hold a new source, with the
+ * ones above them. Members are added later, one source at a time. One that cannot be made (a
+ * limit) is recorded with the reason, and its sources arrive without it.
  */
 async function ensureCollections(input: {
   readonly library: ScientLibraryLocation;
@@ -799,54 +800,27 @@ async function ensureCollections(input: {
 }): Promise<JoinHeader["collections"]> {
   if (input.fresh.size === 0) return [];
   const theirs = await readScientSourcesOrganization(scientLibraryLocation(input.otherRoot));
-  const byId = new Map(theirs.collections.map((entry) => [entry.collectionId, entry]));
-  const mapped = new Map<string, JoinHeader["collections"][number]>();
-  const ensure = async (otherId: string): Promise<string | null> => {
-    const known = mapped.get(otherId);
-    if (known) return known.collectionId;
-    const collection = byId.get(otherId);
-    if (!collection) return null;
-    const none = (why: string) => {
-      mapped.set(otherId, {
-        otherId,
-        name: collection.name,
-        collectionId: null,
-        created: false,
-        why,
-      });
-      return null;
-    };
-    const parentId = collection.parentCollectionId
-      ? await ensure(collection.parentCollectionId)
-      : null;
-    if (collection.parentCollectionId && !parentId) {
-      return none("The collection above it could not be made here.");
-    }
-    try {
-      const change = await createScientSourceCollection({
-        root: input.library,
-        name: collection.name,
-        ...(parentId ? { parentCollectionId: parentId } : {}),
-        actor: input.actor,
-      });
-      if (!change.collection) return none("It could not be made here.");
-      mapped.set(otherId, {
-        otherId,
-        name: collection.name,
-        collectionId: change.collection.collectionId,
-        created: change.outcome === "created",
-      });
-      return change.collection.collectionId;
-    } catch (error) {
-      return none(reasonOf(error, "It could not be made here."));
-    }
-  };
-  for (const collection of theirs.collections) {
-    if (collection.sourceIds.some((sourceId) => input.fresh.has(sourceId))) {
-      await ensure(collection.collectionId);
-    }
-  }
-  return [...mapped.values()];
+  const wanted = theirs.collections.filter((collection) =>
+    collection.sourceIds.some((sourceId) => input.fresh.has(sourceId)),
+  );
+  const names = new Map(theirs.collections.map((entry) => [entry.collectionId, entry.name]));
+  const placed = await placeScientSourceCollections({
+    root: input.library,
+    tree: theirs.collections,
+    wanted: wanted.map((collection) => collection.collectionId),
+    remake: true,
+    actor: input.actor,
+  }).catch((error: unknown): ReadonlyMap<string, ScientSourcePlacedCollection> => {
+    const why = reasonOf(error, "It could not be made here.");
+    return new Map(wanted.map((entry) => [entry.collectionId, { collection: null, why }]));
+  });
+  return [...placed].map(([otherId, result]) => ({
+    otherId,
+    name: names.get(otherId) ?? "",
+    ...(result.collection === null
+      ? { collectionId: null, created: false, why: result.why }
+      : { collectionId: result.collection.collectionId, created: result.created }),
+  }));
 }
 
 /** Keeps a source apart, here, from every source the other Library keeps it apart from. */

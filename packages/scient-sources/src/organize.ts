@@ -22,6 +22,8 @@ const Name = NonEmptyString.check(Schema.isMaxLength(SCIENT_SOURCE_NAME_LIMIT));
 const Tag = NonEmptyString.check(Schema.isMaxLength(SCIENT_SOURCE_NAME_LIMIT));
 
 export const SCIENT_SOURCE_COLLECTION_LIMIT = 500;
+/** How many levels a collection tree has at most, the top level counted. */
+export const SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT = 10;
 export const SCIENT_SOURCE_SAVED_SEARCH_LIMIT = 200;
 export const SCIENT_SOURCE_COLLECTION_MEMBER_LIMIT = 20_000;
 /** The most sources one bulk edit or collection change takes; clients send more in parts. */
@@ -43,7 +45,7 @@ export type ScientSourceFilter = typeof ScientSourceFilter.Type;
 export const ScientSourceCollection = Schema.Struct({
   collectionId: NonEmptyString,
   name: Name,
-  /** One level only: a parent never has a parent itself. */
+  /** The collection it is in. It stays when that one is deleted, so a restore puts both back. */
   parentCollectionId: Schema.optionalKey(NonEmptyString),
   // Ids stay when a source is removed, so restoring it from the trash restores membership too.
   sourceIds: Schema.Array(NonEmptyString).pipe(
@@ -77,7 +79,7 @@ export type ScientSourceCollectionsDocument = typeof ScientSourceCollectionsDocu
 export const ScientSourceCollectionSummary = Schema.Struct({
   collectionId: NonEmptyString,
   name: Name,
-  /** Absent for a top-level collection, and for one whose parent was deleted. */
+  /** The nearest collection above it that is not deleted; absent at the top level. */
   parentCollectionId: Schema.optionalKey(NonEmptyString),
   sourceIds: Schema.Array(NonEmptyString),
   updatedAt: NonEmptyString,
@@ -369,18 +371,24 @@ export function scientSourceFilterIsEmpty(filter: ScientSourceFilter): boolean {
   );
 }
 
-/** A collection's sources with those of its subcollections. */
+/** A collection's sources with those of every collection under it. */
 export function scientSourceCollectionMemberIds(
   organization: Pick<ScientSourcesOrganization, "collections">,
   collectionId: string,
 ): ReadonlySet<string> {
+  const under = new Set([collectionId]);
+  // A pass adds one level, so the tree's depth bounds the passes.
+  for (let size = 0; size !== under.size;) {
+    size = under.size;
+    for (const collection of organization.collections) {
+      if (collection.parentCollectionId && under.has(collection.parentCollectionId)) {
+        under.add(collection.collectionId);
+      }
+    }
+  }
   return new Set(
     organization.collections
-      .filter(
-        (collection) =>
-          collection.collectionId === collectionId ||
-          collection.parentCollectionId === collectionId,
-      )
+      .filter((collection) => under.has(collection.collectionId))
       .flatMap((collection) => collection.sourceIds),
   );
 }

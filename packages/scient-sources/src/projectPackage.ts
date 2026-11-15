@@ -8,7 +8,12 @@ import * as NodePath from "node:path";
 import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
-import { createScientSourceCollection, readScientSourcesOrganization } from "./collections.ts";
+import {
+  changeScientSourceCollectionMembers,
+  placeScientSourceCollections,
+  readScientSourcesOrganization,
+  type ScientSourcePlacedCollection,
+} from "./collections.ts";
 import { resolveScientLibraryAlias, readScientLibraryAliases } from "./libraryAliases.ts";
 import {
   readScientProjectSourceRejectedTargets,
@@ -1391,7 +1396,7 @@ async function snapshotFiles(
   return files;
 }
 
-/** Collections with their ancestry, parents before children; a same-named sibling here is joined. */
+/** The package's collections that hold a paper it brought, each with the ones above it. */
 async function importCollections(
   library: ScientLibraryLocation,
   mapped: ReadonlyMap<string, string>,
@@ -1400,66 +1405,66 @@ async function importCollections(
 ): Promise<number> {
   const text = await readText(absolute(state.folder, "organization.json"));
   const document = text ? decodeOrganization(JSON.parse(text)) : { collections: [] };
-  const entries = document.collections.map((collection, index) => ({
+  // A package written before IDs names its collections only: each gets an ID here.
+  const entries = document.collections.map((collection) => ({
     ...collection,
-    key: collection.collectionId ?? `name:${index}`,
-    parentKey:
-      collection.parentId ??
-      (collection.parentName !== undefined ? `parent-name:${collection.parentName}` : undefined),
-  }));
-  const created = new Map<string, string>();
-  const byName = new Map<string, string>();
-  let count = 0;
-  const pending = [...entries];
-  while (pending.length > 0) {
-    const index = pending.findIndex(
-      (entry) =>
-        entry.parentKey === undefined ||
-        created.has(entry.parentKey) ||
-        (entry.parentKey.startsWith("parent-name:") &&
-          byName.has(entry.parentKey.slice("parent-name:".length))) ||
-        !entries.some(
-          (other) =>
-            other.key === entry.parentKey ||
-            (entry.parentKey!.startsWith("parent-name:") &&
-              other.name === entry.parentKey!.slice("parent-name:".length)),
-        ),
-    );
-    const entry = pending.splice(index === -1 ? 0 : index, 1)[0]!;
-    const parentCollectionId =
-      entry.parentKey === undefined
-        ? undefined
-        : (created.get(entry.parentKey) ??
-          byName.get(entry.parentKey.slice("parent-name:".length)));
-    const sourceIds = entry.projectSourceIds.flatMap((id) => {
+    key: collection.collectionId ?? `collection_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+    sourceIds: collection.projectSourceIds.flatMap((id) => {
       const sourceId = mapped.get(id);
       return sourceId ? [sourceId] : [];
-    });
-    if (sourceIds.length === 0 && !entries.some((other) => other.parentKey === entry.key)) {
-      continue;
-    }
-    try {
-      const change = await createScientSourceCollection({
-        root: library,
+    }),
+  }));
+  const parentKey = (entry: (typeof entries)[number]) =>
+    entry.parentId ??
+    (entry.parentName === undefined
+      ? undefined
+      : entries.find((other) => other.parentName === undefined && other.name === entry.parentName)
+          ?.key);
+  const wanted = entries.filter((entry) => entry.sourceIds.length > 0);
+  const placed = await placeScientSourceCollections({
+    root: library,
+    tree: entries.map((entry) => {
+      const parentCollectionId = parentKey(entry);
+      return {
+        collectionId: entry.key,
         name: entry.name,
-        sourceIds,
         ...(parentCollectionId ? { parentCollectionId } : {}),
-        actor,
-      });
-      if (!change.collection) throw new Error(`The collection was not made (${change.outcome}).`);
-      created.set(entry.key, change.collection.collectionId);
-      if (entry.parentKey === undefined) byName.set(entry.name, change.collection.collectionId);
-      if (change.outcome === "created") {
-        state.receipt.collections.push(change.collection.collectionId);
+      };
+    }),
+    wanted: wanted.map((entry) => entry.key),
+    remake: true,
+    actor,
+  }).catch((error: unknown): ReadonlyMap<string, ScientSourcePlacedCollection> => {
+    const why = message(error);
+    return new Map(wanted.map((entry) => [entry.key, { collection: null, why }]));
+  });
+  let count = 0;
+  for (const [key, result] of placed) {
+    const entry = entries.find((other) => other.key === key)!;
+    try {
+      if (result.collection === null) throw new Error(result.why);
+      const { collectionId } = result.collection;
+      const change =
+        entry.sourceIds.length > 0
+          ? await changeScientSourceCollectionMembers({
+              root: library,
+              collectionId,
+              add: entry.sourceIds,
+              actor,
+            })
+          : null;
+      if (change && !change.collection) throw new Error("The collection is no longer here.");
+      if (result.created) {
+        state.receipt.collections.push(collectionId);
         state.created.collections.push({
-          collectionId: change.collection.collectionId,
-          updatedAt: change.collection.updatedAt,
+          collectionId,
+          updatedAt: (change?.collection ?? result.collection).updatedAt,
         });
       } else {
-        state.joinedCollectionIds.add(change.collection.collectionId);
-        if ("addedSourceIds" in change && change.addedSourceIds.length > 0) {
+        state.joinedCollectionIds.add(collectionId);
+        if (change && "addedSourceIds" in change && change.addedSourceIds.length > 0) {
           state.evidence.push(
-            `${change.addedSourceIds.length} papers in collection ${change.collection.collectionId}`,
+            `${change.addedSourceIds.length} papers in collection ${collectionId}`,
           );
         }
       }

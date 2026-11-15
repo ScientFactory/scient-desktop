@@ -40,6 +40,20 @@ describe("Library filters", () => {
         updatedAt: "2026-11-10T00:00:00.000Z",
         updatedBy: "user" as const,
       },
+      ...(
+        [
+          ["collection_2", "Thesis", undefined, []],
+          ["collection_3", "Methods", "collection_2", ["b"]],
+          ["collection_4", "fMRI", "collection_3", ["a"]],
+        ] as const
+      ).map(([collectionId, name, parentCollectionId, sourceIds]) => ({
+        collectionId,
+        name,
+        ...(parentCollectionId ? { parentCollectionId } : {}),
+        sourceIds: [...sourceIds],
+        updatedAt: "2026-11-10T00:00:00.000Z",
+        updatedBy: "user" as const,
+      })),
     ],
   };
   const ids = (filter: Parameters<typeof compileScientSourceFilter>[0]) => {
@@ -51,6 +65,7 @@ describe("Library filters", () => {
     ["tags match without regard to case and all must match", { tags: ["METHODS"] }, ["a", "b"]],
     ["several tags narrow", { tags: ["methods", "rct"] }, ["a"]],
     ["collection limits to its members", { collectionId: "collection_1" }, ["b", "c"]],
+    ["a collection shows every level under it", { collectionId: "collection_2" }, ["a", "b"]],
     ["an unknown collection matches nothing", { collectionId: "collection_gone" }, []],
     ["type", { type: "book" as const }, ["b"]],
     ["has a PDF", { hasPdf: true }, ["a"]],
