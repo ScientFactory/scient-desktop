@@ -80,6 +80,7 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
+import { resolveParcelWatcherNativeDependencies } from "./lib/scient-parcel-watcher-build.ts";
 import { validatePackagedFilePublication } from "./lib/scient-file-publication-build.ts";
 import { resolveTaggedSourceVersion } from "./lib/tagged-source-version.ts";
 
@@ -1377,6 +1378,8 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/node-pty/build",
   "node_modules/node-pty/third_party/conpty",
   "node_modules/@ff-labs/fff-bin-win32-",
+  // SCIENT-FORK
+  "node_modules/@parcel/watcher-win32-",
   "node_modules/@yuuang/ffi-rs-win32-",
   // These loaders select separate Linux packages when the WSL Node host runs.
   // Exclude only their Windows variants from this tarball, not the sidecar.
@@ -1755,6 +1758,12 @@ export function resolveMergedStageDependencies(input: {
     ...selectCliRuntimeExternalDependencies(input.serverDependencies),
     ...input.desktopDependencies,
     ...resolveFffNativeDependencies(input.platform, input.arch, input.fffNodeVersion),
+    // SCIENT-FORK
+    ...resolveParcelWatcherNativeDependencies(
+      input.platform,
+      input.arch,
+      input.serverDependencies["@parcel/watcher"],
+    ),
   };
 }
 
@@ -3666,6 +3675,18 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
       // ffi-rs) from the extracted copy of this same tree.
       ...resolveFffNativeDependencies("win", input.arch, input.fffNodeVersion),
       ...resolveFffNativeDependencies("linux", input.arch, input.fffNodeVersion),
+      // SCIENT-FORK:START
+      ...resolveParcelWatcherNativeDependencies(
+        "win",
+        input.arch,
+        input.runtimeExternalDependencies["@parcel/watcher"],
+      ),
+      ...resolveParcelWatcherNativeDependencies(
+        "linux",
+        input.arch,
+        input.runtimeExternalDependencies["@parcel/watcher"],
+      ),
+      // SCIENT-FORK:END
     },
   });
   const sidecarPatchedDependencies = createStagePatchedDependencies(

@@ -15,7 +15,7 @@ import { ServerConfig } from "../../config.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { moveProjectIntoLibrary, type ScientLibraryMoveRunOutcome } from "./LibraryMove.ts";
-import { ScientSourcesBackend } from "./SourcesBackend.ts";
+import { finishInterruptedLibraryMerges, ScientSourcesBackend } from "./SourcesBackend.ts";
 
 /** A folder that is not there (an unattached drive) waits for a later pass. */
 async function scientProjectPresent(root: string): Promise<boolean> {
@@ -45,6 +45,8 @@ export const runLibraryMovePass = Effect.fn("ScientLibraryMove.pass")(function* 
     }
     if (!ensured) {
       yield* Effect.promise(() => ensureScientLibrary(libraryRoot));
+      // Write calls do this too; the pass covers a server that only gets read-only sessions.
+      yield* finishInterruptedLibraryMerges(scientLibraryLocation(libraryRoot));
       ensured = true;
     }
     const outcome = yield* moveProjectIntoLibrary({

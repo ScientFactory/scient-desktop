@@ -135,16 +135,17 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
     const list = Effect.fn("ScientAgentPluginInventory.list")(
       function* (cwd: string | undefined) {
         const sequence = yield* nextInventoryReadSequence;
-        const data = yield* run(cwd, ["plugin", "list", "--json"]).pipe(
-          Effect.flatMap(decodeInstalled),
+        const [data, foreignPlugins] = yield* Effect.all(
+          [
+            run(cwd, ["plugin", "list", "--json"]).pipe(Effect.flatMap(decodeInstalled)),
+            foreign(cwd).pipe(Effect.orElseSucceed(() => [])),
+          ],
+          { concurrency: "unbounded" },
         );
         const own = scientAgentInstalledPlugins(data);
         const ownNames = new Set(own.map((plugin) => plugin.name));
         return {
-          plugins: [
-            ...own,
-            ...(yield* foreign(cwd)).filter((plugin) => !ownNames.has(plugin.name)),
-          ],
+          plugins: [...own, ...foreignPlugins.filter((plugin) => !ownNames.has(plugin.name))],
           sequence,
         };
       },
@@ -180,11 +181,12 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
             const now = yield* Clock.currentTimeMillis;
             const previous = yield* Ref.get(lastRead);
             if (!force && previous !== undefined && now - previous < 600_000) return;
-            const listing = yield* list(undefined);
+            const [listing, configured] = yield* Effect.all([list(undefined), standalone()], {
+              concurrency: "unbounded",
+            });
             const pluginServers = (yield* Effect.forEach(listing.plugins, (plugin) =>
               pluginMcpServers(plugin).pipe(Effect.provideService(Path.Path, path)),
             )).flat();
-            const configured = yield* standalone();
             const names = new Set(configured.map((server) => server.name));
             const mcpServers = [
               ...configured,

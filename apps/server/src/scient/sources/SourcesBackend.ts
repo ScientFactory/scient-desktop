@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import { readScientProjectIdentity } from "@scientfactory/project-init";
 import type { ScientSourceActor } from "@scientfactory/scient-sources";
+import { settleScientLibraryMerges } from "@scientfactory/scient-sources/library-merge";
 import { readScientLibraryMoveState } from "@scientfactory/scient-sources/library-move";
 import {
   ensureScientLibrary,
@@ -78,6 +79,18 @@ const projectStore = (project: ScientSourcesProject): ScientSourcesStore => ({
 });
 
 /**
+ * Finishes merges and Undos that stopped halfway, before anything else is written: a killed
+ * process, or an error that left the process running. Cheap when nothing is pending. A failure is
+ * logged and tried again on the next write call; it never fails that call.
+ */
+export const finishInterruptedLibraryMerges = (library: ScientLibraryLocation) =>
+  Effect.promise(() => settleScientLibraryMerges(library)).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not finish the Library's interrupted merges.", { cause }),
+    ),
+  );
+
+/**
  * Where a Sources call reads and writes: today's project root, or the project root plus the
  * personal library under the server's state folder. A write call creates the library once and
  * moves the project into it first (section 5); a read on a project not yet moved reads its v1
@@ -103,6 +116,7 @@ export const resolveScientSourcesStoreFor = Effect.fn("ScientSourcesBackend.reso
   if (access === "write") {
     yield* Effect.promise(() => ensureScientLibrary(root));
     exists = true;
+    yield* finishInterruptedLibraryMerges(library);
     const outcome = yield* moveProjectIntoLibrary({ root: project.root, library, actor, wait });
     if (outcome === "moved-back" || outcome === "waiting-import") return projectStore(project);
     if (outcome === "failed" && (yield* projectNotMoved(project.root, library))) {

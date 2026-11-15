@@ -36,6 +36,9 @@ export interface McpCredentialRequest {
   readonly connectors?: ReadonlyArray<McpCredentialConnector>;
   // SCIENT-FORK:END
   readonly subagent?: boolean;
+  // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
+  readonly backgroundWait?: boolean;
+  // SCIENT-FORK:END
 }
 
 // SCIENT-FORK:START Scient Extensions connectors
@@ -209,6 +212,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
+          // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
+          backgroundWait: request.backgroundWait === true,
+          // SCIENT-FORK:END
         },
         client: undefined,
         // SCIENT-FORK:START — the caller's explicit grant is the whole grant; no base

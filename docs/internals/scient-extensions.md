@@ -22,7 +22,9 @@ remain in the account layer; Scient does not add Google's official MCP servers.
 the services that exist only as account apps: Gmail, Google Calendar and Google
 Drive, each mapped to its ChatGPT app id and its claude.ai connector name. Each
 shows as one row, in Discover's categories and search and, once any agent has
-it, in Installed → Connected services. Each agent's route comes from its own
+it, in Installed. Every other ChatGPT app an agent reports is a service too
+(`accountServicesFrom`), installed when an agent holds a row for it or reaches
+it through its account (`installedAccountServices`). Each agent's route comes from its own
 inventory:
 
 - Scient Agent: its `chatgpt` server rows.
@@ -34,7 +36,15 @@ inventory:
 agent still needs (connect, or sign in). **Connect** opens the next provider
 page in the system browser: ChatGPT's page for the app first, since one
 ChatGPT connection serves Codex and Scient Agent, then claude.ai's connector
-settings. Returning refreshes the agents' inventories. The provider sections
+page.
+
+Links are never guessed. ChatGPT pages are built exactly as Codex builds its
+install links (`chatgpt.com/apps/<name with each other character as ->/<app id>`).
+claude.ai links come only from `claudeConnectors.json`: each connector's "Add to
+Claude" address (`claude.ai/directory/<id>`) from Anthropic's public directory,
+refreshed with `node scripts/generate-claude-connectors.mjs`. A ChatGPT app with
+no claude.ai connector of the same name (or an alias, such as Outlook to
+Microsoft 365) gets no Claude route at all. Returning refreshes the agents' inventories. The provider sections
 no longer repeat these services' rows, and a category's store list hides a
 Codex store entry for one of them. Adding a service is a data change in that
 file.
@@ -69,19 +79,26 @@ access.
   `https://` address (handed to the URL form), or **Run a command…** (connectors tab only). The
   import list leaves out servers that cannot start here (program not found, or
   Codex `env_vars` that are neither in the environment nor keys).
-- **Installed** (`/settings/extensions/installed`) — Connected services,
-  Scient plugins, then one
-  **From <agent>** section per provider instance with its plugins and MCP
-  servers. A **Works with** filter narrows every section to what one provider
-  instance can use. Provider sections show six entries with a header toggle to
-  show the rest.
+- **Installed** (`/settings/extensions/installed`) — one **Yours** table:
+  Scient's connectors and installed bundles, account apps (one row per service,
+  naming every agent that has it), then each agent's plugins and own MCP
+  servers; **Built into Scient** follows. Each thing is one row: a plugin two
+  agents share, a server that belongs to a plugin or stands behind a listed
+  app, and Codex's `codex_apps` gateway add none. Type is Connector, App,
+  Plugin, MCP server or Built in. A **Works with** filter narrows the table to
+  what one of the person's agents can use, honouring a connector's chosen
+  agents. The table shows 24 rows with a header toggle to show the rest.
 - **Detail pages** (`/settings/extensions/item/…`) — one per connector, catalog
   or registry entry, Scient plugin, provider plugin and provider MCP server. The
   header carries the entry's identity and its primary action (Add, Remove,
   Uninstall, or who manages it). Below it, cards:
   - **Connection** (connectors) — status with Sign in or Reconnect, Test, the
-    Use with agents switch, and Available in (all projects or selected
-    projects).
+    Use with agents switch, Agents (all agents or selected agents) and
+    Projects (all projects or selected projects). A connector's
+    optional `agents` list is stored on its record; delivery skips other agents
+    with `agent-deselected`, and the proxy re-checks the session's agent on
+    every request. Discover's **+** asks for the agents first when more than one
+    takes connectors.
   - **Tools** (connectors) — listed only on request ("See tools" runs Test);
     the result belongs to the connector's current sign-in generation and is
     discarded when it changes.
@@ -1004,8 +1021,10 @@ rejected with a named reason.
 **Curated catalog.** `apps/server/src/scient/extensions/discover/curatedCatalog.ts`
 lists remote MCP servers chosen for a research-focused audience, each with an
 https Streamable HTTP URL, a display name, a plain tagline (≤ 60 characters),
-a short description, categories (`featured`, `research`, `data`, `code`,
-`writing`, `communication`, `design`), a website, the MCP Registry entry when
+a short description, categories (`most-used`, then `papers`, `biology`,
+`code`, `data`, `physics-math`, `files`, `communication`, `projects`,
+`figures`, `chemistry`, `earth`, `social-science`, in that home-page order),
+a website, the MCP Registry entry when
 the registry publishes that exact remote, and a bundled icon. Every
 URL is verified live before it is added (a POST `initialize` answered 200 with
 an initialize result, or 401 with `WWW-Authenticate`); the verification date
@@ -1015,7 +1034,7 @@ named `scient.curated/<id>` with the verification date as its version; clients
 install it by URL.
 
 `extensions.discover.catalog` returns the non-empty categories in that order,
-each with up to 6 preview entries (entries whose first non-featured category is
+each with up to 6 preview entries (entries whose first category other than `most-used` is
 the section come first, then the rest, in catalog order) and its `total`.
 `extensions.discover.search` takes a required `scope`, so local results never
 wait on the network:

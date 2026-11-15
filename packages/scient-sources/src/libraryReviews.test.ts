@@ -8,6 +8,7 @@ import { initializeScientProject } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { editableMetadataFromRecord } from "./editable.ts";
+import { mergeScientLibrarySources, undoScientLibraryMerge } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import {
   changeScientLibraryReview,
@@ -18,7 +19,12 @@ import {
   refreshScientLibraryReviewSnapshot,
 } from "./libraryReviews.ts";
 import type { ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
-import { importScientSource, readScientSourceRecord, updateScientSourceMetadata } from "./store.ts";
+import {
+  importScientSource,
+  readScientSourceRecord,
+  removeScientSource,
+  updateScientSourceMetadata,
+} from "./store.ts";
 import { changeScientSystematicReview } from "./systematicReviewStore.ts";
 
 const fixtures: string[] = [];
@@ -113,8 +119,11 @@ function reviewFile(projectRoot: string, reviewId: string, suffix = ".json"): st
 
 async function snapshotEntries(projectRoot: string, reviewId: string) {
   const text = await NodeFSP.readFile(reviewFile(projectRoot, reviewId, ".works.json"), "utf8");
-  return (JSON.parse(text) as { records: Record<string, { abstract: string; capturedAt: string }> })
-    .records;
+  return (
+    JSON.parse(text) as {
+      records: Record<string, { title: string; abstract: string; capturedAt: string }>;
+    }
+  ).records;
 }
 
 async function tree(root: string): Promise<ReadonlyArray<string>> {
@@ -355,6 +364,86 @@ describe("review record snapshots", () => {
       from: "library",
       abstractFrom: "snapshot",
       record: { title: "Corrected title", abstract: "Imported abstract." },
+    });
+  });
+
+  it("a removed record's snapshot describes that record again after its merge was undone", async () => {
+    const base = await fixture();
+    const library = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const kept = await addRecord(library, 1, "Abstract of the first trial.");
+    const merged = await addRecord(library, 2, "Abstract of the second trial.");
+    const reviewId = await createReview(projectRoot, library);
+    await changeScientLibraryReview({
+      projectRoot,
+      library,
+      change: { action: "add-sources", reviewId, sourceIds: [merged.sourceId] },
+      actor: "user",
+    });
+    const refresh = { projectRoot, library, reviewId };
+    const result = await mergeScientLibrarySources({
+      library,
+      sourceIds: [kept.sourceId, merged.sourceId],
+      survivorId: kept.sourceId,
+    });
+    if (result.outcome !== "merged") throw new Error("Expected a merge.");
+    await refreshScientLibraryReviewSnapshot(refresh);
+    // While the merge stands, the review's copy follows the record that was kept.
+    expect((await snapshotEntries(projectRoot, reviewId))[merged.sourceId]).toMatchObject({
+      title: "Randomised trial number 1",
+    });
+
+    await undoScientLibraryMerge({ library, mergeId: result.merge.mergeId });
+    const restored = await readScientSourceRecord(library, merged.sourceId);
+    if (!restored) throw new Error("Expected the merged record back.");
+    await removeScientSource({
+      root: library,
+      sourceId: restored.sourceId,
+      expectedRevision: restored.revision,
+    });
+    await refreshScientLibraryReviewSnapshot(refresh);
+
+    expect((await snapshotEntries(projectRoot, reviewId))[merged.sourceId]).toMatchObject({
+      title: "Randomised trial number 2",
+      abstract: "Abstract of the second trial.",
+    });
+  });
+
+  // regression: review H1-d-1 finding 3, a read filled the abstract from the stale snapshot.
+  it("a read gives an unmerged record no abstract from a snapshot taken while it was merged", async () => {
+    const base = await fixture();
+    const library = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const kept = await addRecord(library, 1, "Abstract of the first trial.");
+    const merged = await addRecord(library, 2);
+    const reviewId = await createReview(projectRoot, library);
+    await changeScientLibraryReview({
+      projectRoot,
+      library,
+      change: { action: "add-sources", reviewId, sourceIds: [merged.sourceId] },
+      actor: "user",
+    });
+    const result = await mergeScientLibrarySources({
+      library,
+      sourceIds: [kept.sourceId, merged.sourceId],
+      survivorId: kept.sourceId,
+    });
+    if (result.outcome !== "merged") throw new Error("Expected a merge.");
+    await refreshScientLibraryReviewSnapshot({ projectRoot, library, reviewId });
+    await undoScientLibraryMerge({ library, mergeId: result.merge.mergeId });
+
+    expect(
+      await readScientLibraryReviewRecord({
+        projectRoot,
+        library,
+        reviewId,
+        sourceId: merged.sourceId,
+        mode: "read",
+      }),
+    ).toMatchObject({
+      from: "library",
+      abstractFrom: null,
+      record: { title: "Randomised trial number 2", abstract: null },
     });
   });
 

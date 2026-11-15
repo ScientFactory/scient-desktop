@@ -19,6 +19,7 @@ import {
   type GrantScope,
   isReservedConnectorServerName,
   type ProjectId,
+  type ProviderInstanceId,
   type VaultSecretRef,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -213,6 +214,16 @@ const isAvailableIn = (record: ConnectorRecord, projectId: ProjectId | undefined
   record.availability.type === "all-projects" ||
   (projectId !== undefined && record.availability.projectIds.includes(projectId));
 
+/** Names nothing: the agent that asked may not learn what the connector is called. */
+const NOT_FOR_THIS_AGENT =
+  "This connector is not available to this agent. The person can choose this agent on its page in Settings → Extensions.";
+
+/** Whether the agent is one the person chose; every agent when none were chosen or it is unknown. */
+const isForAgent = (record: ConnectorRecord, providerInstanceId: ProviderInstanceId | undefined) =>
+  record.agents === undefined ||
+  providerInstanceId === undefined ||
+  record.agents.includes(providerInstanceId);
+
 const authSummary = (auth: ConnectorAuthRecord): ConnectorAuthSummary => {
   switch (auth.type) {
     case "none":
@@ -248,6 +259,7 @@ const toSummary = (record: ConnectorRecord): ConnectorSummary => ({
   enabled: record.enabled,
   authRevision: record.authRevision,
   availability: record.availability,
+  ...(record.agents === undefined ? {} : { agents: record.agents }),
   createdAt: record.createdAt,
   updatedAt: record.updatedAt,
   ...(record.lastError === undefined ? {} : { lastError: record.lastError }),
@@ -504,7 +516,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     record: ConnectorRecord,
     projectId: ProjectId | undefined,
     offAllowed = false,
+    providerInstanceId?: ProviderInstanceId,
   ) {
+    if (!isForAgent(record, providerInstanceId)) return NOT_FOR_THIS_AGENT;
     if (!(yield* isPluginEligible(record)))
       return `${record.displayName} belongs to a plugin that is off or not verified.`;
     if (!record.enabled && !offAllowed)
@@ -1372,6 +1386,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       readonly displayName: string;
       readonly description: string | undefined;
       readonly account: string | undefined;
+      readonly agents: ConnectorRecord["agents"];
     }) {
       if (Option.isNone(github) || !isCredentialDestination(input.url, github.value.mcpUrl)) {
         return yield* extensionsError(
@@ -1424,6 +1439,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         enabled: true,
         authRevision: 0,
         availability: { type: "all-projects" },
+        ...(input.agents === undefined ? {} : { agents: input.agents }),
         createdAt: updatedAt,
         updatedAt,
       };
@@ -1438,6 +1454,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         // On, off and the projects it reaches stay as the user left them.
         const repointed: ConnectorRecord = {
           ...existing,
+          ...(input.agents === undefined ? {} : { agents: input.agents }),
           auth,
           status: "connected",
           lastError: undefined,
@@ -1503,6 +1520,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       enabled: true,
       authRevision: 0,
       availability: { type: "all-projects" },
+      ...(input.agents === undefined ? {} : { agents: input.agents }),
       createdAt,
       updatedAt: createdAt,
       local: { ...prepared.local, changedBy: input.changedBy ?? "you" },
@@ -1578,6 +1596,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         displayName,
         description,
         account: input.credential.account,
+        agents: input.agents,
       });
     }
     const connectorId = yield* newConnectorId;
@@ -1702,6 +1721,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       enabled: true,
       authRevision: 0,
       availability: { type: "all-projects" },
+      ...(input.agents === undefined ? {} : { agents: input.agents }),
       createdAt,
       updatedAt: createdAt,
     };
@@ -1990,6 +2010,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const test: ConnectorRuntimeShape["test"] = Effect.fn("ConnectorRuntime.test")(function* (input) {
     const record = yield* requireRecord(input.connectorId);
     const checkedAt = yield* isoNow;
+    const localLocation =
+      input.location?.projectId === undefined
+        ? undefined
+        : { projectId: input.location.projectId, worktreePath: input.location.worktreePath };
     const result = (
       outcome: ConnectorTestResult["outcome"],
       message?: string,
@@ -2000,10 +2024,19 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       tools: [],
       ...(message === undefined ? {} : { message }),
     });
+    // An agent that was not chosen learns nothing about it, not even that it needs a sign-in; a
+    // plain check of one that is merely off still works, as before.
+    if (!isForAgent(record, input.location?.providerInstanceId))
+      return result("error", NOT_FOR_THIS_AGENT);
     if (record.status === "needs-auth") return result("needs-auth", "Sign in to use this service.");
     // Calling its tools is using it: only where a chat would get it (on, eligible, this project).
     if ((input.calls?.length ?? 0) > 0) {
-      const unusable = yield* unusableIn(record, input.location?.projectId);
+      const unusable = yield* unusableIn(
+        record,
+        input.location?.projectId,
+        false,
+        input.location?.providerInstanceId,
+      );
       if (unusable !== undefined) return result("error", unusable);
     }
     if (record.local !== undefined) {
@@ -2014,7 +2047,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       // What the caller's project may use: a sign-in or key scoped elsewhere is missing here.
       const ready = yield* localConnectors
-        .start(record, record.serverName, input.location, { checking: true })
+        .start(record, record.serverName, localLocation, { checking: true })
         .pipe(Effect.result);
       if (ready._tag === "Success" && ready.success.missing.length > 0)
         return result("needs-setup", `Needs ${ready.success.missing.join(", ")}.`);
@@ -2044,7 +2077,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
               body: typeof body === "string" ? new TextEncoder().encode(body) : undefined,
               signal: init?.signal ?? new AbortController().signal,
             },
-            input.location,
+            localLocation,
           ),
         );
         applied.push(...outcome.secrets);
@@ -2542,8 +2575,17 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         }
         yield* updateRecord(input.connectorId, (current, updatedAt) => {
           const nextLocal = local ?? current.local;
+          // null gives it to every agent again; a list keeps each agent once.
+          const { agents: _previous, ...base } = current;
+          const agents =
+            input.agents === undefined
+              ? current.agents
+              : input.agents === null
+                ? undefined
+                : [...new Set(input.agents)];
           return {
-            ...current,
+            ...base,
+            ...(agents === undefined ? {} : { agents }),
             ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
             ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
             ...(availability === undefined ? {} : { availability }),
@@ -2632,9 +2674,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             ? "disabled"
             : !isAvailableIn(record, input.projectId)
               ? "project-deselected"
-              : record.status === "connected"
-                ? undefined
-                : record.status;
+              : !isForAgent(record, input.providerInstanceId)
+                ? "agent-deselected"
+                : record.status === "connected"
+                  ? undefined
+                  : record.status;
         if (reason === undefined) eligible.push(eligibleOf(record));
         else skipped.push({ ...eligibleOf(record), reason });
       }
@@ -2651,6 +2695,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         record.enabled &&
         record.status === "connected" &&
         isAvailableIn(record, input.projectId) &&
+        isForAgent(record, input.providerInstanceId) &&
         (yield* isPluginEligible(record))
       );
     }),

@@ -9,6 +9,7 @@ import * as NodePath from "node:path";
 import {
   type ConnectorAddInput,
   type ConnectorSummary,
+  type ProviderInstanceId,
   type DiscoverEntry,
   ExtensionsError,
   type VaultSecretRef,
@@ -65,6 +66,16 @@ const requireSummary = Effect.fn("ConnectorAgentControl.find")(function* (name: 
     return yield* notFound(`No connector is named ${name}. scient_connector_list shows them.`);
   return found;
 });
+
+/** Whether the person gave this connector to the calling agent; every agent when none were chosen. */
+const forThisAgent = (
+  summary: Pick<ConnectorSummary, "agents">,
+  caller: ProviderInstanceId | undefined,
+) => summary.agents === undefined || caller === undefined || summary.agents.includes(caller);
+
+/** Said with the name the agent asked for, so it learns nothing it did not already say. */
+const notForThisAgent = (asked: string) =>
+  `${asked} is not available to this agent. The person can choose this agent on its page in Settings → Extensions.`;
 
 /** Who runs a hosted connector, and so sees what passes through it. */
 const hostOf = (url: string) => (URL.canParse(url) ? new URL(url).host : undefined);
@@ -139,9 +150,19 @@ const agentAddTarget = (
   return { reason: entry.unsupportedReason ?? "Scient can't run it." };
 };
 
-const foundRow = (entry: DiscoverEntry, connectors: ReadonlyArray<ConnectorSummary>) => {
+/**
+ * `connectors` are the ones this agent may use. One added for other agents only is named neither
+ * as added nor as addable: adding it again would make a second copy.
+ */
+const foundRow = (
+  entry: DiscoverEntry,
+  connectors: ReadonlyArray<ConnectorSummary>,
+  elsewhere: ReadonlySet<string>,
+) => {
   const choice = agentAddTarget(entry);
   const added = connectors.find((item) => item.connectorId === entry.installedConnectorId);
+  const forOthers =
+    entry.installedConnectorId !== undefined && elsewhere.has(entry.installedConnectorId);
   const description = entry.tagline ?? entry.description;
   const host = "target" in choice && "url" in choice.target ? hostOf(choice.target.url) : undefined;
   return {
@@ -149,8 +170,15 @@ const foundRow = (entry: DiscoverEntry, connectors: ReadonlyArray<ConnectorSumma
     ...(entry.title === undefined ? {} : { title: entry.title }),
     ...(description === undefined ? {} : { description: oneLine(description, 200) }),
     ...(host === undefined ? {} : { host }),
-    addable: "target" in choice && added === undefined,
-    ...("reason" in choice ? { reason: choice.reason } : {}),
+    addable: "target" in choice && added === undefined && !forOthers,
+    ...(forOthers
+      ? {
+          reason:
+            "Already added for other agents. The person can choose this agent on its page in Settings → Extensions.",
+        }
+      : "reason" in choice
+        ? { reason: choice.reason }
+        : {}),
     ...(added === undefined ? {} : { added: added.serverName }),
   };
 };
@@ -158,6 +186,7 @@ const foundRow = (entry: DiscoverEntry, connectors: ReadonlyArray<ConnectorSumma
 /** The user's connectors and, for a query, ones Scient can add (its own picks, then the Registry). */
 export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* (input: {
   readonly query?: string | undefined;
+  readonly providerInstanceId?: ProviderInstanceId | undefined;
 }) {
   const { runtime, discover, observed } = yield* services;
   // A blank query is no query.
@@ -165,7 +194,13 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
   return yield* observed("connectors.agent.list", { searched: query !== undefined })(
     Effect.gen(function* () {
       const { connectors } = yield* runtime.list();
-      const rows = connectors.map(rowOf);
+      const mine = connectors.filter((connector) =>
+        forThisAgent(connector, input.providerInstanceId),
+      );
+      const elsewhere = new Set(
+        connectors.filter((item) => !mine.includes(item)).map((item) => item.connectorId),
+      );
+      const rows = mine.map(rowOf);
       if (query === undefined) return { connectors: rows };
       if (Option.isNone(discover))
         return { connectors: rows, found: [], message: "Discover is unavailable here." };
@@ -185,7 +220,7 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
       const entries = [...byName.values()];
       return {
         connectors: rows,
-        found: entries.slice(0, MAX_FOUND).map((entry) => foundRow(entry, connectors)),
+        found: entries.slice(0, MAX_FOUND).map((entry) => foundRow(entry, mine, elsewhere)),
         ...(registry._tag === "Failure"
           ? {
               message: "The MCP Registry could not be searched just now; these are Scient's picks.",
@@ -290,6 +325,7 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
   const variant = /^https?:\/\//iu.test(from) ? "url" : isPath(from) ? "bundle" : "discover";
   return yield* observed("connectors.agent.add", { variant })(
     Effect.gen(function* () {
+      const caller = input.location?.providerInstanceId;
       let request: ConnectorAddInput;
       if (variant === "url") request = { target: { type: "url", url: from } };
       else if (variant === "bundle") {
@@ -316,6 +352,11 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
           entry.installedConnectorId === undefined
             ? undefined
             : findSummary((yield* runtime.list()).connectors, entry.installedConnectorId);
+        // Given to other agents only: this agent learns no more than that, and adds no second copy.
+        if (existing !== undefined && !forThisAgent(existing, caller))
+          return yield* invalid(
+            `${entry.title ?? entry.name} is already added for other agents. The person can choose this agent on its page in Settings → Extensions.`,
+          );
         if (existing !== undefined) {
           const status = agentStatusOf(existing);
           return {
@@ -342,15 +383,26 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
             : yield* askedSetup(entry, choice.target, choice.needs, displayName, input.asks)),
         };
       }
-      const added = yield* runtime
-        .add({ ...request, changedBy: "agent" })
-        .pipe(
-          Effect.mapError((error) =>
-            error.reason === "sign-in-failed" && request.credential?.type === "bound"
-              ? rejectedKey(request.displayName ?? "The service", request.credential.secretRef)
-              : error,
+      const added = yield* runtime.add({ ...request, changedBy: "agent" }).pipe(
+        Effect.mapError((error) =>
+          error.reason === "sign-in-failed" && request.credential?.type === "bound"
+            ? rejectedKey(request.displayName ?? "The service", request.credential.secretRef)
+            : error,
+        ),
+        // The runtime names the connector an address already belongs to; one given to other
+        // agents only is not named to this one.
+        Effect.catch((error) =>
+          Effect.flatMap(runtime.list(), ({ connectors }) =>
+            connectors.some(
+              (item) => !forThisAgent(item, caller) && error.message.includes(item.displayName),
+            )
+              ? invalid(
+                  "That service is already added for other agents. The person can choose this agent on its page in Settings → Extensions.",
+                )
+              : Effect.fail(error),
           ),
-        );
+        ),
+      );
       const summary = added.connector;
       if (agentStatusOf(summary) !== "ready") return changeReport("Added", summary, []);
       const tested = yield* testedTools(summary, input.location);
@@ -440,11 +492,14 @@ export type ControlAction = "on" | "off" | "restart" | "sign-in";
 export const controlConnector = Effect.fn("ConnectorAgentControl.control")(function* (
   input: { readonly connector: string; readonly action: ControlAction },
   open: (url: string) => Effect.Effect<boolean>,
+  providerInstanceId?: ProviderInstanceId,
 ) {
   const { runtime, observed } = yield* services;
   return yield* observed("connectors.agent.control", { variant: input.action })(
     Effect.gen(function* () {
       const summary = yield* requireSummary(input.connector);
+      if (!forThisAgent(summary, providerInstanceId))
+        return yield* invalid(notForThisAgent(input.connector));
       const name = summary.displayName;
       const server = summary.serverName;
       const now = Effect.map(
@@ -550,6 +605,9 @@ export const testConnector = Effect.fn("ConnectorAgentControl.test")(function* (
   return yield* observed("connectors.agent.check", { variant: "installed" })(
     Effect.gen(function* () {
       const summary = yield* requireSummary(name);
+      // Before anything of its own is read: its setup and sign-in are not this agent's to learn.
+      if (!forThisAgent(summary, location?.providerInstanceId))
+        return { ok: false, tools: [], calls: [], missing: [], error: notForThisAgent(name) };
       const tested = yield* runtime.test({
         connectorId: summary.connectorId,
         location,

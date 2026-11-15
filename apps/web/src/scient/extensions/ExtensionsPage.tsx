@@ -7,7 +7,7 @@ import {
   type ProjectId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ChevronDownIcon,
@@ -16,7 +16,7 @@ import {
   ChevronUpIcon,
   type LucideIcon,
 } from "lucide-react";
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, type ReactNode, useContext, useEffect } from "react";
 
 import {
   SettingsPageContainer,
@@ -220,16 +220,19 @@ export function ExtensionsTopBar({
             </Toggle>
           ))}
         </ToggleGroup>
-        <Link
-          to="/settings/extensions/all"
-          className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
-        >
-          Browse all MCP servers
-          <ChevronRightIcon
-            aria-hidden
-            className="size-3.5 transition-transform group-hover:translate-x-0.5"
-          />
-        </Link>
+        {/* MCP servers are plugins' business; the Skills tab has none to browse. */}
+        {kind === "skills" ? null : (
+          <Link
+            to="/settings/extensions/all"
+            className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
+          >
+            Browse all MCP servers
+            <ChevronRightIcon
+              aria-hidden
+              className="size-3.5 transition-transform group-hover:translate-x-0.5"
+            />
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -348,6 +351,64 @@ export function SectionTitleChevron() {
       aria-hidden
       className="size-4.5 text-muted-foreground/70 transition-transform group-hover:translate-x-0.5"
     />
+  );
+}
+
+/**
+ * The list an item's page was opened from (Discover, a category, a store,
+ * Installed), with its search and filters, so the page's back link returns
+ * there. Remembered for this window only.
+ */
+let lastListPage: { readonly href: string; readonly label: string } | null = null;
+const ITEM_PATH_PREFIX = "/settings/extensions/item/";
+
+/** Forgets the remembered list, as a new window starts; tests start each case this way. */
+export function forgetListPage() {
+  lastListPage = null;
+}
+
+/** Called by every list page so the item pages opened from it can go back to it. */
+export function useRememberListPage(label: string) {
+  const href = useLocation({ select: (location) => location.href });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the list in a module store item pages read later
+  useEffect(() => {
+    // A list page still mounted while the router moves on sees the next page's address.
+    if (!href.startsWith(ITEM_PATH_PREFIX)) lastListPage = { href, label };
+  }, [href, label]);
+}
+
+/** Goes to the list an item's page was opened from, or to Installed when it was opened directly. */
+export function useBackToList(): () => void {
+  const router = useRouter();
+  return () => router.history.push(lastListPage?.href ?? "/settings/extensions/installed");
+}
+
+/**
+ * An item page's back link: to the list it was opened from, or to `fallback`
+ * when it was opened directly.
+ */
+export function BackToList({
+  fallback,
+  fallbackLabel,
+}: {
+  readonly fallback: "/settings/extensions" | "/settings/extensions/installed";
+  readonly fallbackLabel: string;
+}) {
+  const router = useRouter();
+  const remembered = lastListPage;
+  if (remembered === null) return <BackLink to={fallback}>{fallbackLabel}</BackLink>;
+  return (
+    <div>
+      <Button
+        size="sm"
+        variant="ghost-muted"
+        className="-ms-2.5"
+        onClick={() => router.history.push(remembered.href)}
+      >
+        <ChevronLeftIcon aria-hidden />
+        {remembered.label}
+      </Button>
+    </div>
   );
 }
 

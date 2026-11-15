@@ -31,6 +31,7 @@ import {
   publishProjectPdfOutput,
   type ProjectDocumentBuildBoundaryError,
   resolveDocumentBuildProject,
+  projectRelativePath,
   resolveProjectPdfOutput,
   prepareProjectPdfOutputIntent,
 } from "./projectDocumentBuild.ts";
@@ -149,7 +150,14 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
     const path = yield* Path.Path;
     const authority = yield* resolveDocumentBuildProject().pipe(Effect.mapError(boundaryToolError));
     const { invocation, root } = authority;
-    if (!isMarkdownDocumentPath(path, input.sourcePath)) {
+    const sourcePath = yield* projectRelativePath([root], input.sourcePath);
+    if (sourcePath === undefined) {
+      return yield* toolError(
+        "invalid-source-path",
+        `sourcePath ${input.sourcePath} is not inside this project (${root}). Pass a path inside it, relative to it or absolute.`,
+      );
+    }
+    if (!isMarkdownDocumentPath(path, sourcePath)) {
       return yield* toolError(
         "invalid-source-path",
         "sourcePath must identify a project-relative .md or .markdown document.",
@@ -166,7 +174,7 @@ export const exportScientDocumentForInvocation = Effect.fn("ScientDocumentExport
     );
     const { record, inputRelativeUrl, file } = yield* captureProjectMarkdownFile({
       workspaceRoot: root,
-      relativePath: input.sourcePath,
+      relativePath: sourcePath,
     }).pipe(Effect.mapError(exportErrorToToolError));
     const captureId = record.expected.captureId;
 

@@ -36,10 +36,25 @@ import * as yazl from "yazl";
 
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
-import type { McpThreadInvocationScope } from "../../../mcp/McpInvocationContext.ts";
+import {
+  McpInvocationContext,
+  type McpThreadInvocationScope,
+} from "../../../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../../mcp/McpSessionRegistry.ts";
 import { type ProjectRow, ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
+import { setUpConnector } from "../../accounts/agent/connectorSetup.ts";
+import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
+import { SecretRequests } from "../../../secrets/SecretRequests.ts";
+import { checkConnector as checkFromAgent } from "../../accounts/agent/connectorAuthoring.ts";
+import {
+  WorkspaceBindingRecordV1,
+  WorkspaceAuthorityScopeRevision,
+} from "../../projectScope/WorkspaceBinding.ts";
+import { WorkspaceBindingResolver } from "../../projectScope/WorkspaceBindingResolver.ts";
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import * as Schema from "effect/Schema";
 import { AccountsService } from "../../accounts/AccountsService.ts";
 import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import { noKeychain } from "../../accounts/Accounts.testkit.ts";
@@ -80,6 +95,8 @@ import type { RunTool } from "./PackageSource.ts";
 import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
+
+const decodeWorkspaceBinding = Schema.decodeEffect(WorkspaceBindingRecordV1);
 
 /**
  * A fake vendor: MCP endpoints without auth, behind OAuth (with and without
@@ -1560,6 +1577,367 @@ describe("connector proxy", () => {
       expect(yield* granted(PROJECT)).toBe(false);
     }).pipe(Effect.provide(testLayer)),
   );
+
+  it.live(
+    "refuses excluded agents through the connector check tool and proxy, keeping Settings tests",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const codex = ProviderInstanceId.make("codex");
+        const claude = ProviderInstanceId.make("claude");
+        const added = yield* harness.runtime.add({
+          target: { type: "url", url: `${vendor.base}/open/mcp` },
+          agents: [claude],
+        });
+        const connectorId = added.connector.connectorId;
+        harness.delivered.add(connectorId);
+        const location = { projectId: PROJECT, worktreePath: null, providerInstanceId: codex };
+        const before = vendor.upstream.length;
+        const environmentId = EnvironmentId.make("agent-choice-environment");
+        const thread = {
+          threadId: ThreadId.make("agent-choice-thread"),
+          providerSessionId: "agent-choice-session",
+          providerInstanceId: codex,
+        };
+        const scope: McpThreadInvocationScope = {
+          environmentId,
+          requestNamespace: "agent-choice",
+          issuedAt: 0,
+          capabilities: new Set(),
+          thread,
+          client: undefined,
+        };
+        const checked = yield* checkFromAgent({
+          connector: added.connector.serverName,
+          calls: [{ tool: "search" }],
+        }).pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provideService(McpInvocationContext, scope),
+          Effect.provideService(AgentInvocationContext, {
+            environmentId,
+            ...thread,
+            capabilities: new Set(["accounts"] as const),
+            issuedAt: 0,
+            workspace: {
+              binding: yield* decodeWorkspaceBinding({
+                schemaVersion: 1,
+                bindingId: "binding-agent-choice",
+                environmentId,
+                hostProjectId: PROJECT,
+                canonicalRoot: harness.config.stateDir,
+                rootFileSystemIdentity: null,
+                scientProjectId: null,
+                repositoryIdentity: null,
+                worktreeIdentity: null,
+                lineageBindingId: null,
+                trustState: "verified",
+                authorityGeneration: 1,
+                createdAt: "2026-11-14T00:00:00.000Z",
+                lastVerifiedAt: "2026-11-14T00:00:00.000Z",
+                supersededBy: null,
+              }),
+              relation: "only-binding",
+              relatedBindingCount: 0,
+              scopeRevision: WorkspaceAuthorityScopeRevision.make(1),
+            },
+          }),
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(WorkspaceBindingResolver)({}),
+              Layer.mock(ProjectionStoreV2)({}),
+            ),
+          ),
+        );
+        expect(checked).toMatchObject({
+          ok: false,
+          error: expect.stringContaining("not available to this agent"),
+        });
+        const listed = yield* listConnectors({ providerInstanceId: codex }).pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+        );
+        expect(listed.connectors).toEqual([]);
+        const control = yield* controlConnector(
+          { connector: added.connector.serverName, action: "sign-in" },
+          () => Effect.die("must not open"),
+          codex,
+        ).pipe(Effect.provideService(ConnectorRuntime, harness.runtime), Effect.flip);
+        expect(control.message).toContain("not available to this agent");
+        expect((yield* harness.runtime.test({ connectorId, location })).outcome).toBe("error");
+        const refused = yield* harness.proxy(connectorId, toolCall(3));
+        expect(yield* readJson(refused)).toMatchObject({
+          id: 3,
+          error: { message: expect.stringContaining("Settings → Extensions") },
+        });
+        expect(vendor.upstream).toHaveLength(before);
+        expect((yield* harness.runtime.test({ connectorId })).outcome).toBe("ok");
+        expect(
+          (yield* testConnector(
+            added.connector.serverName,
+            { ...location, providerInstanceId: claude },
+            [{ tool: "search" }],
+          ).pipe(Effect.provideService(ConnectorRuntime, harness.runtime))).ok,
+        ).toBe(true);
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("refuses local connector setup for excluded agents before Accounts or changes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const codex = ProviderInstanceId.make("codex");
+      const claude = ProviderInstanceId.make("claude");
+      const folder = NodePath.join(harness.config.stateDir, "setup-agent-choice");
+      yield* writeConnectorFolder(folder, { version: "1.0.0", keyRequired: false, region: true });
+      const added = yield* harness.runtime.add({
+        agents: [claude],
+        target: { type: "local-bundle", path: folder, settings: {}, keys: {} },
+      });
+      const before = (yield* harness.runtime.list()).connectors;
+      let accountLookups = 0;
+      let cards = 0;
+      const environmentId = EnvironmentId.make("agent-choice-environment");
+      const thread = {
+        threadId: ThreadId.make("agent-choice-thread"),
+        providerSessionId: "agent-choice-session",
+        providerInstanceId: codex,
+      };
+      const scope: McpThreadInvocationScope = {
+        environmentId,
+        requestNamespace: "agent-choice",
+        issuedAt: 0,
+        capabilities: new Set(),
+        thread,
+        client: undefined,
+      };
+      const binding = yield* decodeWorkspaceBinding({
+        schemaVersion: 1,
+        bindingId: "binding-agent-choice",
+        environmentId,
+        hostProjectId: PROJECT,
+        canonicalRoot: harness.config.stateDir,
+        rootFileSystemIdentity: null,
+        scientProjectId: null,
+        repositoryIdentity: null,
+        worktreeIdentity: null,
+        lineageBindingId: null,
+        trustState: "verified",
+        authorityGeneration: 1,
+        createdAt: "2026-11-14T00:00:00.000Z",
+        lastVerifiedAt: "2026-11-14T00:00:00.000Z",
+        supersededBy: null,
+      });
+      const invoke = (providerInstanceId: ProviderInstanceId) =>
+        setUpConnector({
+          connector: added.connector.serverName,
+          settings: { region: "eu" },
+        }).pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provideService(McpInvocationContext, scope),
+          Effect.provideService(AgentInvocationContext, {
+            environmentId,
+            ...thread,
+            providerInstanceId,
+            capabilities: new Set(["accounts"] as const),
+            issuedAt: 0,
+            workspace: {
+              binding,
+              relation: "only-binding",
+              relatedBindingCount: 0,
+              scopeRevision: WorkspaceAuthorityScopeRevision.make(1),
+            },
+          }),
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(WorkspaceBindingResolver)({}),
+              Layer.mock(ProjectionStoreV2)({
+                getThreadRecords: () =>
+                  Effect.succeed({
+                    thread: { projectId: PROJECT },
+                    runs: [],
+                    messages: [],
+                  } as unknown as Effect.Success<
+                    ReturnType<ProjectionStoreV2["Service"]["getThreadRecords"]>
+                  >),
+              }),
+              Layer.mock(AccountsService)({
+                forSession: () =>
+                  Effect.sync(() => {
+                    accountLookups++;
+                    return { agentAccess: true, accounts: [], profiles: [] };
+                  }),
+              }),
+              Layer.mock(OrchestratorMcpService)({
+                requestSecret: () =>
+                  Effect.sync(() => {
+                    cards++;
+                    return { status: "cancelled" as const };
+                  }),
+              }),
+              // A plain setting asks for no key, so nothing here is called.
+              Layer.mock(SecretRequests)({}),
+            ),
+          ),
+        );
+
+      const refused = yield* invoke(codex).pipe(Effect.flip);
+      expect(refused).toBeInstanceOf(AccountsError);
+      expect(refused.reason).toBe("invalid-input");
+      // Said with the name the agent gave, never the saved one.
+      expect(refused.message).toBe(
+        `${added.connector.serverName} is not available to this agent. The person can choose this agent on its page in Settings → Extensions.`,
+      );
+      expect((yield* harness.runtime.list()).connectors).toEqual(before);
+      expect(accountLookups).toBe(0);
+      expect(cards).toBe(0);
+      expect(yield* invoke(claude)).toMatchObject({ status: "ready" });
+      expect(accountLookups).toBe(1);
+      expect((yield* harness.runtime.list()).connectors[0]?.local?.setup).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: expect.objectContaining({ key: "region" }),
+            value: "eu",
+          }),
+        ]),
+      );
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("hides other agents' installed server names in connector discovery", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const codex = ProviderInstanceId.make("codex");
+      const claude = ProviderInstanceId.make("claude");
+      const added = yield* harness.runtime.add({
+        agents: [claude],
+        target: { type: "url", url: `${vendor.base}/open/mcp` },
+      });
+      const entry: DiscoverEntry = {
+        name: "io.example/search-choice",
+        version: "1.0.0",
+        remotes: [
+          { type: "streamable-http", url: `${vendor.base}/open/mcp`, requiresInput: false },
+        ],
+        categories: [],
+        installable: true,
+        installedConnectorId: added.connector.connectorId,
+      };
+      const discover = Layer.mock(ExtensionsDiscover)({
+        search: ({ scope }) =>
+          Effect.succeed({
+            entries: scope === "curated" ? [entry] : [],
+            fetchedAt: "2026-11-15T00:00:00.000Z",
+          }),
+        entry: () => Effect.succeed(entry),
+      });
+      const list = (providerInstanceId: ProviderInstanceId) =>
+        listConnectors({ query: "search-choice", providerInstanceId }).pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provide(discover),
+        );
+      const excluded = yield* list(codex);
+      expect(excluded.connectors).toEqual([]);
+      if (!("found" in excluded)) throw new Error("Expected discovery results");
+      expect(excluded.found).toHaveLength(1);
+      expect(excluded.found?.[0]).toMatchObject({
+        addable: false,
+        reason: expect.stringMatching(/^Already added for other agents/),
+      });
+      expect(excluded.found?.[0]).not.toHaveProperty("added");
+      expect(JSON.stringify(excluded)).not.toContain(added.connector.serverName);
+      const chosen = yield* list(claude);
+      if (!("found" in chosen)) throw new Error("Expected discovery results");
+      expect(chosen.found?.[0]?.added).toBe(added.connector.serverName);
+
+      // Adding it by its catalog name, or copying it, tells the excluded agent no more.
+      const addAs = (providerInstanceId: ProviderInstanceId) =>
+        addConnector({
+          from: entry.name,
+          location: { projectId: PROJECT, worktreePath: null, providerInstanceId },
+        }).pipe(Effect.provideService(ConnectorRuntime, harness.runtime), Effect.provide(discover));
+      const refusedAdd = yield* addAs(codex).pipe(Effect.flip);
+      expect(refusedAdd.message).toContain("already added for other agents");
+      expect(refusedAdd.message).not.toContain(added.connector.serverName);
+      expect(yield* addAs(claude)).toMatchObject({ connector: added.connector.serverName });
+      const copyAs = (providerInstanceId: ProviderInstanceId) =>
+        harness.runtime
+          .copyForAgent({
+            workingFolder: harness.config.stateDir,
+            connector: added.connector.serverName,
+            providerInstanceId,
+          })
+          .pipe(Effect.flip);
+      // The excluded agent finds nothing by that name; the chosen one learns it runs online.
+      expect((yield* copyAs(codex)).message).toContain("No local connector is named");
+      expect((yield* copyAs(claude)).message).toContain("runs online");
+      expect((yield* harness.runtime.list()).connectors).toHaveLength(1);
+
+      // Its address, added again, is refused without its name; a check reads nothing of it.
+      const addUrlAs = (providerInstanceId: ProviderInstanceId) =>
+        addConnector({
+          from: `${vendor.base}/open/mcp`,
+          location: { projectId: PROJECT, worktreePath: null, providerInstanceId },
+        }).pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provide(discover),
+          Effect.flip,
+        );
+      const hidden = (yield* addUrlAs(codex)).message;
+      expect(hidden).toContain("already added for other agents");
+      expect(hidden).not.toContain(added.connector.displayName);
+      expect((yield* addUrlAs(claude)).message).toContain(added.connector.displayName);
+      const checkedAs = (providerInstanceId: ProviderInstanceId) =>
+        testConnector(added.connector.serverName, {
+          projectId: PROJECT,
+          worktreePath: null,
+          providerInstanceId,
+        }).pipe(Effect.provideService(ConnectorRuntime, harness.runtime));
+      expect(yield* checkedAs(codex)).toEqual({
+        ok: false,
+        tools: [],
+        calls: [],
+        missing: [],
+        error: expect.stringContaining("not available to this agent"),
+      });
+      expect((yield* checkedAs(claude)).ok).toBe(true);
+      expect((yield* harness.runtime.list()).connectors).toHaveLength(1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("gives a connector only to the agents chosen for it, and to every agent again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const codex = ProviderInstanceId.make("codex");
+      const claude = ProviderInstanceId.make("claude");
+      const added = yield* harness.runtime.add({
+        target: { type: "url", url: `${vendor.base}/open/mcp` },
+        agents: [codex],
+      });
+      const connectorId = added.connector.connectorId;
+      expect(added.connector.agents).toEqual([codex]);
+      const granted = (providerInstanceId: ProviderInstanceId) =>
+        harness.runtime.isGranted({ connectorId, projectId: PROJECT, providerInstanceId });
+      const reasons = (providerInstanceId: ProviderInstanceId) =>
+        harness.runtime
+          .resolveDelivery({ projectId: PROJECT, providerInstanceId })
+          .pipe(
+            Effect.map(({ eligible, skipped }) => [eligible.length, skipped.map((e) => e.reason)]),
+          );
+      expect(yield* granted(codex)).toBe(true);
+      expect(yield* granted(claude)).toBe(false);
+      expect(yield* reasons(codex)).toEqual([1, []]);
+      expect(yield* reasons(claude)).toEqual([0, ["agent-deselected"]]);
+
+      // Chosen again with a repeat: each agent once.
+      yield* harness.runtime.update({ connectorId, agents: [codex, claude, codex] });
+      expect((yield* harness.runtime.list()).connectors[0]?.agents).toEqual([codex, claude]);
+      expect(yield* granted(claude)).toBe(true);
+
+      // null gives it to every agent again, and the field is gone.
+      yield* harness.runtime.update({ connectorId, agents: null });
+      const all = (yield* harness.runtime.list()).connectors[0];
+      expect(all && "agents" in all).toBe(false);
+      expect(yield* granted(ProviderInstanceId.make("cursor"))).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
 });
 
 describe("connector token lifecycle", () => {
@@ -2324,6 +2702,30 @@ describe("GitHub with Source Control's account", () => {
         yield* Effect.promise(() => NodeFSP.readFile(harness.statePath, "utf8")),
       ).not.toContain(OCTO_TOKEN);
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "applies explicit agent choices on Source Control add and reuse, preserving omitted choices",
+    () =>
+      Effect.gen(function* () {
+        vendor.validTokens.add(OCTO_TOKEN);
+        const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
+        const harness = yield* makeHarness({ github: github.service });
+        const codex = ProviderInstanceId.make("codex");
+        const claude = ProviderInstanceId.make("claude");
+        const add = (agents?: ReadonlyArray<ProviderInstanceId>) =>
+          harness.runtime.add({
+            target: { type: "url", url: `${vendor.base}/gh/mcp/` },
+            credential: { type: "source-control" },
+            ...(agents === undefined ? {} : { agents }),
+          });
+        const first = yield* add([codex]);
+        expect(first.connector.agents).toEqual([codex]);
+        const changed = yield* add([claude]);
+        expect(changed.connector.connectorId).toBe(first.connector.connectorId);
+        expect(changed.connector.agents).toEqual([claude]);
+        expect((yield* add()).connector.agents).toEqual([claude]);
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("hands a refused token back to Source Control and replays once with its successor", () =>
@@ -3577,7 +3979,10 @@ describe("connectors agents make and fix", () => {
   it.live("copies a package connector with its code, which starts, saves and exports", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ runTool: FAKE_NPM });
+      const codex = ProviderInstanceId.make("codex");
+      const claude = ProviderInstanceId.make("claude");
       const added = yield* harness.runtime.add({
+        agents: [codex],
         target: {
           type: "local-package",
           name: "io.example/acme",
@@ -3601,6 +4006,18 @@ describe("connectors agents make and fix", () => {
       expect(copied).toMatchObject({
         source: expect.stringContaining("@acme/mcp 1.0.0 is in package/"),
       });
+      expect(added.connector.agents).toEqual([codex]);
+      const excluded = { projectId: PROJECT, worktreePath: chat, providerInstanceId: claude };
+      const check = { folder: copied.folder, connector: connectorId };
+      // For an agent that was not chosen it is not there: nothing of it is named back.
+      for (const refused of [
+        yield* Effect.flip(harness.runtime.checkFolder(check, excluded)),
+        yield* Effect.flip(harness.runtime.saveFolder(check, excluded)),
+      ]) {
+        expect(refused.message).toContain(`No local connector is named ${connectorId}`);
+        expect(refused.message).not.toContain(added.connector.displayName);
+        expect(refused.message).not.toContain(added.connector.serverName);
+      }
       // The agent's edit, in the package's own code.
       yield* Effect.promise(() =>
         NodeFSP.writeFile(

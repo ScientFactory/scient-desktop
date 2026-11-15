@@ -8766,8 +8766,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 "failed",
                 makeProviderFailure({
                   class: "provider_error",
-                  // SCIENT-FORK:START — user-visible text names Scient.
+                  // SCIENT-FORK:START — user-visible text names Scient; analytics count the watchdog.
                   message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so Scient stopped the turn and restarted the agent. Send a message to continue.`,
+                  code: "prompt_inactivity",
                   // SCIENT-FORK:END
                 }),
               );

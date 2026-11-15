@@ -100,6 +100,13 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+// SCIENT-FORK:START — background-wait recovery: finished ids and the live roster.
+import {
+  backgroundTaskSummary,
+  classifyBackgroundWait,
+  rememberSettledBackgroundTask,
+} from "@t3tools/provider-core/server/scientBackgroundWait";
+// SCIENT-FORK:END
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
 import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
@@ -1036,6 +1043,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     };
 
     const shellInfo = new Map<string, Shell.Info>();
+    // SCIENT-FORK:START — background-wait recovery: shell id → thread state it finished on.
+    const settledShells = new Map<string, ThreadState>();
+    // SCIENT-FORK:END
     const shells = new Map<
       string,
       {
@@ -1824,6 +1834,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     ) {
       const shell = shells.get(id);
       if (shell === undefined) return;
+      // SCIENT-FORK:START — background-wait recovery: a registration after this reads as finished.
+      if (status !== "running") rememberSettledBackgroundTask(settledShells, id, shell.state);
+      // SCIENT-FORK:END
       if (shell.turn === undefined || shell.toolId === undefined || shell.tool === undefined) {
         const updatedAt = yield* DateTime.now;
         yield* emit({
@@ -4421,7 +4434,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         // SCIENT-FORK:END
         mcpAvailable
           ? agentCopy(
-              "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs.",
+              // SCIENT-FORK:START — background-wait recovery: the ID exists only once the start result returns.
+              "To wait for a background shell you started (tests, a build), call `t3_background_wait` with `taskIds: [id]` in a later response, once the start result shows the shell ID, before you end your turn. Do not mark work you leave running, or PRs.",
+              // SCIENT-FORK:END
             )
           : undefined,
       ]
@@ -5258,17 +5273,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           const state = nativeThreadId == null ? undefined : threads.get(nativeThreadId);
           if (state === undefined) return { matched: [] };
           const sessions = sessionsOf(state);
-          const matched = [...new Set(taskIds)].filter((taskId) => {
-            const shell = shells.get(taskId);
-            return shell !== undefined && shell.running && sessions.includes(shell.state);
+          // SCIENT-FORK:START — background-wait recovery: finished ids and the live roster.
+          const waitOutcome = classifyBackgroundWait({
+            taskIds,
+            isRunning: (taskId) => {
+              const shell = shells.get(taskId);
+              return shell !== undefined && shell.running && sessions.includes(shell.state);
+            },
+            isSettled: (taskId) => {
+              const finishedOn = settledShells.get(taskId);
+              return finishedOn !== undefined && sessions.includes(finishedOn);
+            },
+            unawaited: () =>
+              [...shells]
+                .filter(
+                  ([, shell]) =>
+                    shell.running && shell.awaited !== true && sessions.includes(shell.state),
+                )
+                .map(([taskId, shell]) => backgroundTaskSummary(taskId, shell.command)),
           });
-          if (matched.length === 0) return { matched };
+          const { matched } = waitOutcome;
+          if (matched.length === 0) return waitOutcome;
+          // SCIENT-FORK:END
           for (const taskId of matched) {
             const shell = shells.get(taskId)!;
             shell.awaited = awaited;
             yield* syncRosterAncestors(shell.state);
           }
-          return { matched };
+          // SCIENT-FORK:START — background-wait recovery: report finished ids beside the matched ones.
+          return waitOutcome;
+          // SCIENT-FORK:END
         },
         (effect) => effect.pipe(lock.withPermit),
       ),
@@ -5546,6 +5580,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     instanceId,
     driver,
     mcpSessionInjection: options.mcpSessionInjection === true,
+    // SCIENT-FORK:START — background-wait recovery: sessions implement awaitBackgroundTasks.
+    backgroundWait: Effect.succeed(true),
+    // SCIENT-FORK:END
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
       return Effect.succeed({
         ...OpenCode2ProviderCapabilities,

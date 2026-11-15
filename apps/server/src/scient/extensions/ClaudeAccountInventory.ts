@@ -18,7 +18,7 @@ const encodeServers = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(ServerProviderMcpServer)),
 );
 
-const CLAUDE_CONNECTORS_URL = "https://claude.ai/settings/connectors";
+const CLAUDE_CONNECTORS_URL = "https://claude.ai/customize/connectors";
 
 class ClaudeAccountServersError extends Schema.TaggedError<ClaudeAccountServersError>()(
   "ClaudeAccountServersError",
@@ -116,6 +116,7 @@ export const makeClaudeAccountInventoryRefresh = Effect.fn("makeClaudeAccountInv
   ) {
     const lock = yield* Semaphore.make(1);
     const lastRead = yield* Ref.make<number | undefined>(undefined);
+    const lastFailure = yield* Ref.make<number | undefined>(undefined);
     return ({ force = false }: { readonly force?: boolean | undefined } = {}) =>
       lock.withPermits(1)(
         Effect.gen(function* () {
@@ -126,10 +127,22 @@ export const makeClaudeAccountInventoryRefresh = Effect.fn("makeClaudeAccountInv
           }
           const now = yield* Clock.currentTimeMillis;
           const last = yield* Ref.get(lastRead);
-          if (!force && last !== undefined && now - last < 600_000) return;
-          yield* Ref.set(lastRead, now);
-          const servers = yield* probe;
+          const failed = yield* Ref.get(lastFailure);
+          if (
+            !force &&
+            (failed === undefined
+              ? last !== undefined && now - last < 600_000
+              : now - failed < 15_000)
+          )
+            return;
+          const servers = yield* probe.pipe(
+            Effect.tapError(() =>
+              Clock.currentTimeMillis.pipe(Effect.flatMap((time) => Ref.set(lastFailure, time))),
+            ),
+          );
           yield* publish(servers);
+          yield* Ref.set(lastRead, yield* Clock.currentTimeMillis);
+          yield* Ref.set(lastFailure, undefined);
         }).pipe(
           Effect.mapError(() => ({ message: "Could not read Claude's account connectors." })),
         ),

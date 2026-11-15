@@ -239,7 +239,7 @@ describe("Scient analytics background runtime", () => {
               deliveryClass: "delivered",
               queuedCountBucket: "0",
               retryCountBucket: "0",
-              droppedCountBucket: "unknown",
+              droppedCountBucket: "0",
             },
           },
         ],

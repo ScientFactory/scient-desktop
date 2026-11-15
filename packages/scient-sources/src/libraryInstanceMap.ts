@@ -13,6 +13,7 @@ import {
   resolveScientLibraryAlias,
   type ScientLibraryAliases,
 } from "./libraryAliases.ts";
+import { readScientLibraryExclusions, type ScientLibraryExclusions } from "./libraryExclusions.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   listScientLibraryInstances,
@@ -78,6 +79,11 @@ const InstanceMapEntry = Schema.Struct({
   replaced: Schema.optionalKey(Schema.Struct(InstanceMapEntryFields)),
   /** A Keep separate decision the link withdrew; its Undo restores it. */
   replacedSeparate: Schema.optionalKey(KeptSeparate),
+  /**
+   * What the project's files held for the source when it was first linked (its pin's and its
+   * review entries' saved copies, as stored), so Unlink puts them back. Opaque here.
+   */
+  replacedCopies: Schema.optionalKey(Schema.Unknown),
 });
 type InstanceMapEntry = typeof InstanceMapEntry.Type;
 
@@ -196,6 +202,7 @@ async function writeInstanceMap(
         ...(entry.linkedBy ? { linkedBy: entry.linkedBy } : {}),
         ...(entry.replaced ? { replaced: entry.replaced } : {}),
         ...(entry.replacedSeparate ? { replacedSeparate: entry.replacedSeparate } : {}),
+        ...(entry.replacedCopies !== undefined ? { replacedCopies: entry.replacedCopies } : {}),
       })),
       ...(separate.size > 0 ? { keptSeparate: byProjectSourceId(separate.values()) } : {}),
     },
@@ -301,6 +308,21 @@ async function readRemovedSources(
     }
   }
   return { libraryId, records };
+}
+
+/**
+ * The records this Library keeps in the Trash or as deleted markers, by their exact ID: where a
+ * removed, unmerged source's project copy is taken from.
+ */
+export async function readScientRemovedLibraryRecords(
+  library: ScientLibraryLocation,
+): Promise<ReadonlyMap<string, ScientSourceRecord>> {
+  const [entries, deleted] = await Promise.all([
+    readScientSourceTrashEntries(library),
+    readScientSourceTombstones(library),
+  ]);
+  // A source both trashed and marked deleted was stopped mid-deletion: the Trash copy is whole.
+  return new Map([...deleted, ...entries].map((entry) => [entry.sourceId, entry.record]));
 }
 
 /** The removed records a project source names: by ID, alias or hydration identity, else its work. */
@@ -450,12 +472,30 @@ async function resolveAt(
     return removedIdsFor(await removedSources, aliases, request);
   };
 
+  // Read only when a saved copy matched a record: receipts are one file per merge.
+  let exclusions: Promise<ScientLibraryExclusions> | undefined;
+  const idsHeldApart = async (own: ReadonlyArray<string>) => {
+    const { isDistinct, keptApart } = await (exclusions ??= readScientLibraryExclusions(
+      root,
+      live,
+    ));
+    return new Set(
+      [...live].filter((candidate) =>
+        own.some(
+          (id) =>
+            id !== candidate &&
+            (isDistinct(id, candidate) || keptApart(id, candidate) === "merge-undone"),
+        ),
+      ),
+    );
+  };
+
   const results: ScientProjectSourceResolution[] = [];
   for (const request of input.sources) {
     const { projectSourceId } = request;
     const mapped = recorded.get(projectSourceId);
     const mappedTarget = mapped ? liveTarget(mapped.sourceId) : null;
-    if (mappedTarget) {
+    if (mapped && mappedTarget) {
       results.push({
         kind: "resolved",
         projectSourceId,
@@ -478,14 +518,24 @@ async function resolveAt(
       ]),
     );
     const found = request.work ? matchWork(request.work, records, projectSourceId) : null;
+    // The Library's own decisions bind too: a record held apart from this source (Not
+    // duplicates, or a merge that was undone) never resolves it, whatever the saved copy says.
+    // Every record is vetted, so a second match the first one hid is vetted too.
+    const heldApart = found
+      ? await idsHeldApart([projectSourceId, ...(mapped ? [mapped.sourceId] : [])])
+      : new Set<string>();
+    const suppressed = found ? found.ids.filter((id) => heldApart.has(id)) : [];
     // Keep separate holds until withdrawn: a rejected source never resolves this ID again.
     const match =
-      separate && request.work && found
+      (separate || suppressed.length > 0) && request.work && found
         ? (matchWork(
             request.work,
-            records.filter((candidate) => !rejected.has(candidate.sourceId)),
+            records.filter(
+              (candidate) =>
+                !rejected.has(candidate.sourceId) && !heldApart.has(candidate.sourceId),
+            ),
             projectSourceId,
-          ) ?? { by: "contradicted" as const, ids: found.ids })
+          ) ?? (separate ? { by: "contradicted" as const, ids: found.ids } : null))
         : found;
     if (match && match.by !== "contradicted" && match.ids.length === 1) {
       const sourceId = match.ids[0]!;
@@ -525,6 +575,17 @@ async function resolveAt(
         projectSourceId,
         reason: "removed",
         candidateIds: removed,
+      });
+      continue;
+    }
+    // Only records held apart matched, and nothing says the source was removed: its saved copy
+    // describes one of them, so it is never hydrated into a twin.
+    if (suppressed.length > 0) {
+      results.push({
+        kind: "unresolved",
+        projectSourceId,
+        reason: "contradicted",
+        candidateIds: suppressed,
       });
       continue;
     }
@@ -616,6 +677,8 @@ export async function linkScientProjectSource(input: {
   readonly projectSourceId: string;
   readonly sourceId: string;
   readonly actor: ScientSourceActor;
+  /** The project's saved copies of the source now, before any refresh writes the linked record's. */
+  readonly replacedCopies?: unknown;
 }): Promise<ScientProjectSourceLinkResult> {
   assertSafeIdentifier(input.projectSourceId, "Source ID");
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -646,6 +709,9 @@ export async function linkScientProjectSource(input: {
     const replacedSeparate =
       keptSeparate.get(input.projectSourceId) ??
       (current?.resolvedBy === "linked" ? current.replacedSeparate : undefined);
+    // A second link keeps the first one's copies: by now the files hold the linked record's.
+    const replacedCopies =
+      current?.resolvedBy === "linked" ? current.replacedCopies : input.replacedCopies;
     entries.set(input.projectSourceId, {
       projectSourceId: input.projectSourceId,
       sourceId: target,
@@ -654,6 +720,7 @@ export async function linkScientProjectSource(input: {
       linkedBy: input.actor,
       ...(replaced ? { replaced } : {}),
       ...(replacedSeparate ? { replacedSeparate } : {}),
+      ...(replacedCopies !== undefined ? { replacedCopies } : {}),
     });
     keptSeparate.delete(input.projectSourceId);
     await writeInstanceMap(root, instanceId, entries, keptSeparate);
@@ -661,14 +728,34 @@ export async function linkScientProjectSource(input: {
   });
 }
 
+/** A source's deliberate link on this checkout, with the copies its Unlink puts back; reads only. */
+export async function readScientProjectSourceLink(input: {
+  readonly library: ScientLibraryLocation;
+  readonly projectRoot: string;
+  readonly projectSourceId: string;
+}): Promise<{ readonly sourceId: string; readonly replacedCopies?: unknown } | null> {
+  const root = await NodeFSP.realpath(input.library.root);
+  const instanceId = await projectInstanceId(input.library, input.projectRoot, "read");
+  if (!instanceId) return null;
+  const current = (await readInstanceMapFile(root, instanceId)).entries.get(input.projectSourceId);
+  if (current?.resolvedBy !== "linked") return null;
+  return {
+    sourceId: current.sourceId,
+    ...(current.replacedCopies !== undefined ? { replacedCopies: current.replacedCopies } : {}),
+  };
+}
+
 /**
- * Undoes `linkScientProjectSource`: the pin resolves as it did before, or from its snapshot, and
- * a Keep separate decision the link withdrew holds again.
+ * Undoes `linkScientProjectSource`: the map entry and a Keep separate decision the link withdrew
+ * are back, and the record that was linked is kept out of automatic matching for this source
+ * (through its Keep separate entry) until a new Link or Ask again: unlinking means "not this one
+ * unless I say so". `unlinkScientProjectSourceRestoringCopies` also puts the saved copies back.
  */
 export async function unlinkScientProjectSource(input: {
   readonly library: ScientLibraryLocation;
   readonly projectRoot: string;
   readonly projectSourceId: string;
+  readonly actor: ScientSourceActor;
 }): Promise<{ readonly outcome: "unlinked" | "not-linked" }> {
   assertSafeIdentifier(input.projectSourceId, "Source ID");
   const root = await NodeFSP.realpath(input.library.root);
@@ -680,9 +767,12 @@ export async function unlinkScientProjectSource(input: {
     if (current?.resolvedBy !== "linked") return { outcome: "not-linked" as const };
     if (current.replaced) entries.set(input.projectSourceId, { ...current.replaced });
     else entries.delete(input.projectSourceId);
-    if (current.replacedSeparate) {
-      keptSeparate.set(input.projectSourceId, current.replacedSeparate);
-    }
+    keptSeparate.set(input.projectSourceId, {
+      projectSourceId: input.projectSourceId,
+      sourceIds: [...new Set([...(current.replacedSeparate?.sourceIds ?? []), current.sourceId])],
+      decidedAt: new Date().toISOString(),
+      decidedBy: input.actor,
+    });
     await writeInstanceMap(root, instanceId, entries, keptSeparate);
     return { outcome: "unlinked" as const };
   });

@@ -174,7 +174,7 @@ apps never touch the installed app's library.
 ├── aliases.json             merged source ID → survivor, with Undo tombstones
 ├── distinct-pairs.json      pairs never merged automatically
 ├── merges/<merge-id>.json   one per merge: report and what Undo reverts
-├── merges/pending/          merges a crash interrupted, finished by the next write
+├── merges/pending/          merges and Undos a stopped process left halfway
 ├── zotero/<source-id>.json  Zotero merge bases
 ├── annotations/v1/<sha256>.json  highlights on the library's PDFs
 ├── migrations/<instance-id>/    each checkout's move: journal, move lock, kept v1 copy, review backups
@@ -391,10 +391,26 @@ pairs and what is left as possible duplicates. One merge:
   tombstones; the instance map (5c) resolves through it.
 
 A merge first writes `merges/pending/<id>.json`, then the survivor revision,
-then the trash entry, then membership, aliases and the final merge file. The
-next merge, bulk pass or Undo finishes a pending merge whose loser is in the
+then the trash entry, then membership, aliases and the final merge file.
+`settleScientLibraryMerges` finishes a pending merge whose loser is in the
 trash or whose survivor revision landed, and drops one that stopped earlier;
-the pair is then found again.
+the pair is then found again. An Undo first writes
+`merges/pending/undo_<merge-id>.json` (who started it and when); settling runs
+that Undo's writes again, each of which is safe to repeat, and skips a source
+that has gone since. Every merge, bulk pass and Undo settles first, and so does
+every server write call (`finishInterruptedLibraryMerges` in
+`SourcesBackend.ts`) and the background pass, which covers a server that only
+gets read-only sessions. With nothing pending, settling reads one directory and
+takes no lock. So neither a killed process nor an error in a process that
+stays up (a full disk) leaves a merged source in the Trash without its alias,
+or a restored one with an alias to the survivor, past the next write. A failed
+settle is logged and tried again on the next write call; it never fails that
+call. Known limit: settling and the write that follows are not one step under
+the lock. If, between a write call's check and its write, another process
+stops halfway through an Undo (or the settle itself fails), and that write
+changes the same collection's membership of the two sources or sets a merged
+field back to the merged value, the later settle replays the Undo over that
+change.
 
 `undoScientLibraryMerge` restores the loser as a new revision, reverts each
 field the merge set only where the survivor still holds the merged value,
@@ -608,7 +624,25 @@ sources in `<project>/.scient/library/pins.json`:
   known snapshot value when the resolving record lacks it
   (`withKnownPinCitationValues`; a bare year, or a year with no stored date, is
   less than a full date of that year), unless the record's provenance shows a person or agent edit of that
-  field (a deliberate correction). A refresh from a record hydrated from an
+  field (a deliberate correction). A source is _unmerged_ when an alias with `undoneAt` names it
+  as merged-away or as kept (`scientUnmergedSourceIds`): a refresh made while
+  that merge stood may have written the other source's values into project
+  copies, on both sides (the kept record held the merged-away one's values
+  until the Undo reverted them). For an unmerged source the snapshot is its
+  Library record whole, with no known values kept from the old snapshot:
+  from the live record when the pin resolves to it, and, for a pin that is
+  `removed`, from the source's own Trash entry or tombstone (the pin's ID
+  through aliases, `readScientRemovedLibraryRecords`). A field the old
+  snapshot did not know and the record has no information on stays unknown
+  (`scientPinWorkKeepingUnknown`), so a fuller managed entry is still kept.
+  `listScientProjectPinnedWorks` applies the same rule when it reads, for a
+  live and for a removed source, so the bibliography never cites the stale
+  snapshot before the refresh; a review read gives an unmerged record no
+  abstract from its snapshot. Any other removed pin keeps its
+  snapshot untouched. Limits: what a project knew about an unmerged source
+  beyond the Library is not kept; a pin whose ID is another computer's and
+  was matched here by its data is not repaired after removal; a source merged
+  again and unmerged again marks only its latest pair. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not
   know is read as `other`.
 - `listScientProjectPinnedWorks` returns the pins under the project's keys for
@@ -645,6 +679,16 @@ ID with its snapshot (a pin's `work`, later a review's record snapshot):
    conflicting identifier). More than one corroborated match is `ambiguous`;
    matches of which none corroborates are `contradicted` (for example a
    Library record carrying the work's DOI by mistake). Both stay unresolved.
+   A record the Library holds apart from the project source ID or from its
+   mapped ID (Not duplicates, or a merge that was undone:
+   `readScientLibraryExclusions`, read only when a snapshot matched) is never
+   a candidate: every live record is vetted, not only the first match, so a
+   title match that an identifier match hid is vetted too. A refresh while a merge stood may have left the survivor's
+   data in the snapshot, so after the Undo the snapshot is no evidence for
+   that record. With only such matches the source is `removed` when its own
+   record is gone, else `contradicted` with those records as candidates, and
+   it is never hydrated. A damaged merge receipt does not block resolution;
+   only decisions that can be read do.
 4. Otherwise unresolved: `no-match`, or `removed` when the map named a record
    that is gone and nothing else matched. Only a corroborated match in the
    trash counts as removed.
@@ -705,11 +749,28 @@ no pin names gets the same: the review record carries its resolution
 review read (`libraryReviewRecordMatches`) carry `libraryMatch`, and the repair
 actions take its project source ID; Keep separate looks for the match among
 pins, then the project's reviews. It never becomes a pin.
-`link-pin` (`linkScientProjectSource`) writes a `linked` map entry with
-`linkedBy` and the entry it replaced, under the library lock; the pin's key,
-project note and review membership hang on the project source ID, so they all
-stay, and the managed bibliography is rebuilt. `unlink-pin` puts the replaced
-entry back (or none). `keep-pin-separate` records the decision in the map's
+`link-pin` (`linkScientProjectSourceKeepingCopies` in `projectSourceLink.ts`)
+writes a `linked` map entry with `linkedBy` and the entry it replaced, under
+the library lock; the pin's key, project note and review membership hang on
+the project source ID, so they all stay, and the managed bibliography is
+rebuilt. The entry also keeps what the project's files held for the source at
+that moment (`replacedCopies`: the pin's stored `work` and each review's stored
+entry, as they are in the files): the next refresh writes the linked record's
+data over them, and without the originals an Unlink could not hold, because
+the rewritten copy would match the record and link again. They live with the
+link, in this checkout's map, because only this checkout can undo it; a second
+link keeps the first one's copies. `unlink-pin`
+(`unlinkScientProjectSourceRestoringCopies`) holds the review lock and the
+pins lock (the move's order), puts the copies back where the pin or review
+still has the source (a review that took the source while it was linked gets
+another review's copy, else one built from the pin's), then puts the replaced
+entry back (or none) under the
+library lock, and keeps the record that was linked out of automatic matching
+for this source through its `keptSeparate` entry, until a new link or Ask
+again: the restored copy may by now match that record alone (another
+candidate was removed meanwhile). A stop between the two steps leaves the
+source linked with its copies still kept; the next refresh rewrites the files
+and it is fully linked again. `keep-pin-separate` records the decision in the map's
 `keptSeparate` list with actor and time; the resolution then carries
 `keptSeparate: true`, and `clear-pin-separate` withdraws it. The decision
 holds: resolution leaves the rejected IDs (and what their aliases resolve to)
@@ -804,7 +865,9 @@ without the author's library can still list, screen and count:
   survives), `capturedAt` and `capturedRevision` change only with the content,
   entries the review no longer names anywhere (searches, records, duplicates,
   distinct pairs, screening, retrieval) are dropped, and nothing is written
-  when nothing changed.
+  when nothing changed. An unmerged source's entry (see pins above) is its
+  Library record whole, live or from its own Trash entry or tombstone (a
+  tombstone has no abstract, so the entry then has none).
 - Recovery: entries the review does not name (a crash after the snapshot, before
   the review) are ignored by readers and reused by a retry. A file that does not
   decode is read as empty; a `write` call renames it to
@@ -3150,6 +3213,60 @@ bibliographies are implemented in the sections above. LaTeX bibliography
 styles remain the document's own choice.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
+
+## Rules the stores keep
+
+Whatever happened before (any order of actions, a killed process, a full disk),
+a Library and its projects keep these rules. `src/testing/libraryRules.ts` in
+`@scientfactory/scient-sources` checks them against an expected state kept
+apart from the stores (`libraryModel.ts`).
+
+1. Published files decode, belong to this Library or project, and are plain
+   files inside their roots.
+2. Project keys are unique and cite the right work, through a live record or
+   the saved copy; aliases end and never pick another work.
+3. PDFs of live and trashed sources keep their exact bytes.
+4. Recovery and hydration never bring back a source deleted for good.
+5. A merge keeps both sources' evidence; an eligible Undo brings the merged
+   source back and keeps later edits.
+6. Notes are current, and earlier project notes are in the kept versions.
+7. An interrupted action leaves every source and key as before it or as after
+   it; once the next process has recovered, the whole Library is one or the
+   other; doing the action again finishes it.
+
+Limits, by design: an import keeps the items it finished; importing a deleted
+paper again on purpose brings it back; Undo keeps newer edits and stops being
+available once the Trash is emptied; history is bounded (50 revisions per
+source, 20 project note versions and the first).
+
+**What a write guarantees.** JSON and PDF files are written to a temporary
+file, flushed, then published by a rename or an exclusive link, so a killed
+process leaves each published file whole: as it was, or as written. The
+containing directory is not flushed: after a power cut a journaling file system
+may drop the last seconds of changes, never tear a file. Temporary files of a
+killed write (`*.tmp-<uuid>`) are ignored by every reader; nothing removes
+them, and a crash leaves at most one per interrupted write.
+
+**How the rules are tested.**
+
+- `libraryRules.random.test.ts`: seeded random sequences of adds, edits, notes,
+  Trash, restore, delete for good, project keys and notes, refreshes, merges
+  and Undos on a Library with three projects, checked after every step. A long
+  hunt: `LIBRARY_RULES_SEEDS=300 LIBRARY_RULES_STEPS=150`.
+- `libraryRules.crash.test.ts`: each action is stopped at its file changes in a
+  child process (`libraryWorker.ts`) by a real SIGKILL, plainly or with half of
+  a file written, or by a disk that is full from that change on
+  (`fileFaults.ts` instruments `node:fs/promises`, including the handles `open`
+  returns). A fresh process checks rule 7 before and after recovery, repeats
+  the action and checks again; the action also runs once on a volume that
+  refuses hard links. The default run samples each action's changes;
+  `LIBRARY_CRASH_SWEEP=full` runs every one, and is the run to make after
+  changing a store's write order.
+- `libraryRules.cases.test.ts`: the short sequences those runs found, kept as
+  regressions.
+
+This is bounded coverage of process death on one machine's file system, not a
+proof of every schedule and not a power-cut test.
 
 ## Verification boundary
 

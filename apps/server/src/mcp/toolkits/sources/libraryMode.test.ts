@@ -22,6 +22,7 @@ import {
 import {
   pinScientLibrarySource,
   readScientProjectPins,
+  refreshScientProjectPinSnapshots,
 } from "@scientfactory/scient-sources/project-pins";
 import {
   importScientSource,
@@ -784,6 +785,28 @@ describe("Sources tools on the library backend", () => {
         },
       ]);
       expect(after.records[0]).not.toHaveProperty("fromSnapshot");
+
+      // regression: once a refresh had written the linked record into the project's saved copy,
+      // Unlink changed nothing: the copy matched the record and linked again by itself.
+      yield* Effect.promise(() =>
+        refreshScientProjectPinSnapshots({ projectRoot: fixture.root, library: fixture.library }),
+      );
+      const unlinked = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "unlink-pin", sourceId: cited.record!.sourceId },
+        }),
+        fixture,
+      );
+      expect(unlinked.outcome).toBe("unlinked");
+      const undone = yield* run(listScientSourcesForInvocation({}), fixture);
+      expect(undone.records).toMatchObject([
+        {
+          sourceId: cited.record!.sourceId,
+          title: "Early therapy",
+          fromSnapshot: true,
+          libraryMatch: { keptSeparate: true, candidates: [{ sourceId: local.sourceId }] },
+        },
+      ]);
     }),
   );
 
