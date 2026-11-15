@@ -143,8 +143,9 @@ const refreshed = (model: Model): Model =>
 const PUBLISHES = new Set(["rename", "link", "unlink", "rm", "rmdir", "copyFile"]);
 
 /**
- * The changes to stop at: every one in a full sweep; otherwise an even spread over the changes
- * just before and just after each publication, which is where a half-done state can show.
+ * The changes to stop at: every one in a full sweep; otherwise an even spread inside the changes
+ * just before and just after each publication, where a half-done state shows. The first and the
+ * last are left out: stopping there leaves nothing, or everything, for recovery to finish.
  */
 function sample(points: ReadonlyArray<{ readonly call: string; readonly path: string }>) {
   const all = points.map((_, index) => index + 1);
@@ -159,7 +160,7 @@ function sample(points: ReadonlyArray<{ readonly call: string; readonly path: st
     ...new Set(
       Array.from(
         { length: SAMPLE_SIZE },
-        (_, index) => from[Math.round((index * (from.length - 1)) / (SAMPLE_SIZE - 1))]!,
+        (_, index) => from[Math.round(((index + 1) * (from.length - 1)) / (SAMPLE_SIZE + 1))]!,
       ),
     ),
   ];
