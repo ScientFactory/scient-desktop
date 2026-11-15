@@ -1070,6 +1070,7 @@ export const isLibraryOrganizeAction = (
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
   change.action === "dismiss-move-summary" ||
+  change.action === "retry-move" ||
   change.action === "restore-pre-move" ||
   change.action === "export-package" ||
   change.action === "list-packages" ||
@@ -1192,6 +1193,9 @@ export async function organizeLibrarySources(
           projectRoot: store.root,
         }),
       };
+    case "retry-move":
+      // Every change runs the move first; one served from the Library has moved.
+      return { outcome: "moved" as const };
     case "link-pin":
     case "unlink-pin":
     case "keep-pin-separate":

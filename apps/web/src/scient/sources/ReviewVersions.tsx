@@ -187,7 +187,7 @@ export function ReviewVersionsLine(props: {
     <>
       <button
         type="button"
-        className="block w-full cursor-pointer text-left text-sm text-muted-foreground outline-none hover:underline focus-visible:underline"
+        className="group block w-full cursor-pointer text-left text-sm text-muted-foreground outline-none"
         onClick={() => {
           setOpen(true);
           setVersions(null);
@@ -195,7 +195,10 @@ export function ReviewVersionsLine(props: {
           void load();
         }}
       >
-        This review has another version from a copy of this project.
+        This review has another version from a copy of this project.{" "}
+        <span className="text-foreground underline underline-offset-2 group-hover:decoration-2 group-focus-visible:decoration-2">
+          Show versions
+        </span>
       </button>
       {open ? (
         <ReviewVersionsDialog

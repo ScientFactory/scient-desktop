@@ -1428,7 +1428,7 @@ export function ScientSourcesPanel(props: {
               exportScope={
                 organize.selection.size > 0
                   ? { kind: "selected", sourceIds: [...organize.selection] }
-                  : sourceQuery.trim() || listFilterActive
+                  : listQuery.trim() || listFilterActive
                     ? {
                         kind: "shown",
                         sourceIds: filteredSourceRecords.map((record) => record.sourceId),
@@ -1485,6 +1485,7 @@ export function ScientSourcesPanel(props: {
         state={zoteroSync.refresh}
         resolving={zoteroSync.resolving}
         onClose={zoteroSync.closeRefresh}
+        onCheckAgain={() => void zoteroSync.startRefresh()}
         onResolve={(sourceId, field, side) =>
           void zoteroSync.resolveConflict(sourceId, field, side)
         }
@@ -1512,7 +1513,18 @@ export function ScientSourcesPanel(props: {
                 type: "success",
                 title: added.length === 1 ? "Added 1 source" : `Added ${added.length} sources`,
                 ...(sources.overview?.scopes?.listed === "library"
-                  ? { description: inLibraryNotProjectLabel(added.length) }
+                  ? {
+                      description: inLibraryNotProjectLabel(added.length),
+                      ...(canChangeProject
+                        ? {
+                            actionProps: {
+                              children: LIBRARY_LABELS.addToProject,
+                              onClick: () =>
+                                void addToProject(added.map((sourceId) => ({ sourceId }))),
+                            },
+                          }
+                        : {}),
+                    }
                   : {}),
               });
             }

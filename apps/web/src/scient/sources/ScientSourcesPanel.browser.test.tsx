@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   detail: vi.fn(),
   personalNote: vi.fn(),
   organize: vi.fn(),
+  addByIdentifier: vi.fn(),
   menu: vi.fn(),
   canChange: true,
   accountCommand: vi.fn(async () => undefined),
@@ -28,6 +29,7 @@ vi.mock("./client", async (original) => ({
   readScientSource: mocks.detail,
   updateScientSourcePersonalNote: mocks.personalNote,
   organizeScientSources: mocks.organize,
+  addScientSourcesByIdentifier: mocks.addByIdentifier,
 }));
 vi.mock("../../localApi", async (original) => ({
   ...(await original<typeof import("../../localApi")>()),
@@ -165,6 +167,64 @@ describe("Sources project scope", () => {
       await userEvent.click(screen.getByRole("button", { name: "More source actions" }));
     }
     await expect.element(screen.getByRole("button", { name: "Choose from Library" })).toBeVisible();
+  });
+
+  it("offers Add to project on the confirmation of a source added to the Library only", async () => {
+    setup();
+    mocks.addByIdentifier.mockReset();
+    mocks.addByIdentifier.mockResolvedValue({
+      results: [
+        {
+          input: "10.1000/abc.123",
+          identifier: { scheme: "doi", value: "10.1000/abc.123" },
+          outcome: "imported",
+          sourceId: "source_new",
+          title: "Measured outcomes",
+          verification: "verified",
+          message: null,
+        },
+      ],
+    });
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    await expect.element(screen.getByRole("button", { name: /Existing study/u })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Import sources" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Add by identifier" }));
+    await page.getByRole("textbox", { name: "Identifiers to add" }).fill("10.1000/abc.123");
+    await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
+
+    await vi.waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Added 1 source",
+          description: "It is in your Library, not in this project.",
+          actionProps: expect.objectContaining({ children: "Add to project" }),
+        }),
+      ),
+    );
+    expect(mocks.addByIdentifier).toHaveBeenCalledWith(
+      "environment-1",
+      expect.objectContaining({ pin: false }),
+    );
+    const added = mocks.toast.mock.calls.find(([toast]) => toast.title === "Added 1 source")![0];
+    await act(async () => added.actionProps.onClick());
+    await vi.waitFor(() =>
+      expect(mocks.organize).toHaveBeenCalledWith(
+        "environment-1",
+        expect.objectContaining({
+          change: { action: "change-pins", changes: [{ action: "pin", sourceId: "source_new" }] },
+        }),
+      ),
+    );
   });
 
   it("shows only papers retained by package Undo, then clears that view", async () => {

@@ -65,21 +65,29 @@ export async function showSourceRowMenu(input: {
           },
         ]
       : [];
-  // In "This project" the source leaves the project and stays in the Library.
-  const removeItem: Item =
+  // In "This project" a source can leave the project and stay in the Library.
+  const removeFromProjectItems: Item[] =
     listed === "project"
-      ? {
-          id: "remove-from-project",
-          label: LIBRARY_LABELS.removeFromProject,
-          disabled: input.busy || !input.canChangeProject,
-        }
-      : {
+      ? [
+          {
+            id: "remove-from-project",
+            label: LIBRARY_LABELS.removeFromProject,
+            disabled: input.busy || !input.canChangeProject,
+          },
+        ]
+      : [];
+  // A project's saved copy of a source the Library no longer has is not in the Library to trash.
+  const trashItems: Item[] = record.fromSnapshot
+    ? []
+    : [
+        {
           id: "remove",
           label: "Move to Trash",
           destructive: true,
           disabled: input.busy || !input.canChange,
           icon: "trash",
-        };
+        },
+      ];
   const items: Item[] = [
     { id: "view", label: "View source details" },
     { id: "edit", label: "Edit source details", icon: "pencil", disabled: !input.canChange },
@@ -87,7 +95,8 @@ export async function showSourceRowMenu(input: {
     { id: "select", label: input.selected ? "Deselect" : "Select" },
     ...readingItems,
     ...addItems,
-    removeItem,
+    ...removeFromProjectItems,
+    ...trashItems,
   ];
   const action = await api.contextMenu.show(items, {
     x: input.anchorPoint.x,

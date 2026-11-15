@@ -60,6 +60,7 @@ export function useLibraryMoveStatus(input: {
   const status = tracked && reading?.context === context ? reading.status : null;
   const [asks, setAsks] = useState(0);
   const [movingBack, setMovingBack] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [unconfirmed, setUnconfirmed] = useState<{
     readonly context: string;
     readonly checksLeft: number;
@@ -139,6 +140,24 @@ export function useLibraryMoveStatus(input: {
       });
     });
 
+  // Any change runs a failed move again; this one does nothing else. The line shows the result.
+  const retry = () => {
+    setRetrying(true);
+    void settle(
+      () =>
+        organizeScientSources(input.environmentId, {
+          root: input.root,
+          change: { action: "retry-move" },
+        }).catch(() => undefined),
+      () => {
+        setRetrying(false);
+        setAsks((value) => value + 1);
+        onStoreChanged();
+      },
+    );
+    setAsks((value) => value + 1);
+  };
+
   const moveBack = () => {
     setMovingBack(true);
     return settle(
@@ -182,7 +201,8 @@ export function useLibraryMoveStatus(input: {
     canChange,
     canMoveBack: canChange && !movingBack && !backUnconfirmed && libraryMoveCanGoBack(status),
     dismiss,
-    retry: () => setAsks((value) => value + 1),
+    retry,
+    retrying,
     moveBack,
   };
 }

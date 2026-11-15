@@ -136,6 +136,8 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "clear-distinct": ["clear-distinct"],
   "move-back": ["move-back"],
   "dismiss-move-summary": ["dismiss-move-summary"],
+  // Every change an agent makes runs a failed move again first.
+  "retry-move": [],
   "link-pin": ["link-pin"],
   "unlink-pin": ["unlink-pin"],
   "keep-pin-separate": ["keep-pin-separate"],
