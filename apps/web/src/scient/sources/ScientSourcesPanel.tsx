@@ -110,7 +110,9 @@ import {
   LIBRARY_LABELS,
   matchesReadingFilter,
   type ReadingStateChange,
+  libraryElsewhereLabel,
 } from "./libraryLabels";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { SnapshotRemovalDialog, useLibraryProjectActions } from "./useLibraryProjectActions";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
@@ -209,6 +211,10 @@ export function ScientSourcesPanel(props: {
     props.environmentId,
   );
   const canChangeProject = useCanRunSourcesCommand(sourcesCommands.organize, props.environmentId);
+  // Each computer has its own Library: one that is not this computer's is named.
+  const environment = useEnvironment(props.environmentId);
+  const thisComputer = usePrimaryEnvironmentId();
+  const elsewhere = environment && props.environmentId !== thisComputer ? environment.label : null;
   const canSavePersonalNote = useCanRunSourcesCommand(
     sourcesCommands.updatePersonalNote,
     props.environmentId,
@@ -1376,6 +1382,7 @@ export function ScientSourcesPanel(props: {
       />
       <PanelHeader
         title="Library"
+        {...(elsewhere ? { description: libraryElsewhereLabel(elsewhere) } : {})}
         action={
           <div className="flex shrink-0 items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />

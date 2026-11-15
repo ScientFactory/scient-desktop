@@ -20,6 +20,10 @@ Library beside the conversation or expand it when you need more room. If the
 folder is not yet set up as a Scient project, the Library offers the same optional
 project setup used by **Add project**.
 
+Each computer has its own Library. When a project runs on another computer,
+the Library shown is that computer's, and the line under the title names it
+("On lab-server").
+
 Use **This project / All Library** above the list to choose what to browse.
 The choice stays available in an empty project and when you can only read.
 An empty project says **No sources in this project**; **Choose from Library**

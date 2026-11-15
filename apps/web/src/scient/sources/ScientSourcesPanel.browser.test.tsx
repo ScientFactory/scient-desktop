@@ -45,6 +45,9 @@ vi.mock("./sourcesCommands", async (original) => ({
 vi.mock("../../state/environments", async (original) => ({
   ...(await original<typeof import("../../state/environments")>()),
   usePrimaryEnvironmentId: () => "environment-1",
+  useEnvironment: (environmentId: string) => ({
+    label: environmentId === "environment-1" ? "This Mac" : "lab-server",
+  }),
 }));
 vi.mock("../accounts/useAccounts", () => ({
   useAccounts: () => ({ data: null }),
@@ -227,6 +230,27 @@ describe("Sources project scope", () => {
         }),
       ),
     );
+  });
+
+  it("names the computer under the title only when the Library is another computer's", async () => {
+    setup();
+    const panel = (environmentId: string) => (
+      <ScientSourcesPanel
+        environmentId={environmentId as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />
+    );
+    await using screen = await render(panel("environment-2"), { router: false });
+    await expect.element(screen.getByText("On lab-server")).toBeVisible();
+
+    await screen.rerender(panel("environment-1"));
+    await expect
+      .element(screen.getByRole("heading", { name: "No sources in this project" }))
+      .toBeVisible();
+    await expect.element(screen.getByText(/^On /u)).not.toBeInTheDocument();
   });
 
   it("opens Recent changes from the Library's menu and shows an import's sources", async () => {

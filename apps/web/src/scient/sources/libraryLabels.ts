@@ -83,6 +83,11 @@ export function libraryCopyProblemLabel(problem: ScientSourceIdentityProblem | u
 
 const sources = (count: number) => (count === 1 ? "1 source" : `${count} sources`);
 
+/** Under the panel's title when the Library shown is another computer's, named as the app names it. */
+export function libraryElsewhereLabel(computer: string): string {
+  return `On ${computer}`;
+}
+
 /** An import or add started from "All" brings sources into the Library only. */
 export function inLibraryNotProjectLabel(count: number): string {
   return count === 1
