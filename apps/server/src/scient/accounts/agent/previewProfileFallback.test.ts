@@ -4,14 +4,20 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  PreviewAutomationTimeoutError,
   ThreadId,
   type AccountSummary,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
-import { Effect, Fiber, Layer, Stream } from "effect";
+import { Duration, Effect, Fiber, Layer, Stream } from "effect";
+import { TestClock } from "effect/testing";
 
 import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
-import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
+import {
+  PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS,
+  PreviewAutomationBroker,
+  type PreviewAutomationInvokeInput,
+} from "../../../mcp/PreviewAutomationBroker.ts";
 import { makeHarness } from "../Accounts.testkit.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { findProfiles } from "./findProfiles.ts";
@@ -43,35 +49,34 @@ function browser(
     profiles,
     tabs: [{ tabId: "tab-work", url: urls.get("tab-work") ?? null, profileId: tabProfile }],
   });
-  const layer = Layer.mock(PreviewAutomationBroker)({
-    invoke: <A>(request: { operation: string; input: unknown; tabId?: string }) =>
-      Effect.sync(() => {
-        const input = (request.input ?? {}) as Record<string, unknown>;
-        calls.push({ operation: request.operation, input });
-        const tabId = request.tabId ?? "tab-work";
-        if (request.operation === "open") {
-          const opened = `tab-${String(input.profileId)}`;
-          urls.set(opened, String(input.url));
-          return status(opened) as A;
-        }
-        if (request.operation === "navigate") urls.set(tabId, String(input.url));
-        if (request.operation === "evaluate") {
-          const url = urls.get(tabId)!;
-          return (
-            opens(url, tabId)
-              ? { finalUrl: url, title: "Docs", passwordField: false, deniedText: false, ...shown }
-              : {
-                  finalUrl: "https://accounts.google.com/signin",
-                  title: "Sign in",
-                  passwordField: true,
-                  deniedText: false,
-                }
-          ) as A;
-        }
-        return (request.operation === "status" ? status(tabId) : {}) as A;
-      }),
-  });
-  return { layer, calls, status, urls };
+  const invoke = <A>(request: { operation: string; input: unknown; tabId?: string }) =>
+    Effect.sync(() => {
+      const input = (request.input ?? {}) as Record<string, unknown>;
+      calls.push({ operation: request.operation, input });
+      const tabId = request.tabId ?? "tab-work";
+      if (request.operation === "open") {
+        const opened = `tab-${String(input.profileId)}`;
+        urls.set(opened, String(input.url));
+        return status(opened) as A;
+      }
+      if (request.operation === "navigate") urls.set(tabId, String(input.url));
+      if (request.operation === "evaluate") {
+        const url = urls.get(tabId)!;
+        return (
+          opens(url, tabId)
+            ? { finalUrl: url, title: "Docs", passwordField: false, deniedText: false, ...shown }
+            : {
+                finalUrl: "https://accounts.google.com/signin",
+                title: "Sign in",
+                passwordField: true,
+                deniedText: false,
+              }
+        ) as A;
+      }
+      return (request.operation === "status" ? status(tabId) : {}) as A;
+    });
+  const layer = Layer.mock(PreviewAutomationBroker)({ invoke });
+  return { layer, invoke, calls, status, urls };
 }
 
 const invocation = Layer.succeed(McpInvocationContext, {
@@ -296,4 +301,51 @@ it.effect(
       );
       expect(yield* needsYou).toBeUndefined();
     }).pipe(Effect.scoped),
+);
+
+it.effect("a page whose load never ends opens at once, left unchecked", () =>
+  Effect.gen(function* () {
+    const { service } = yield* makeHarness();
+    // Checked, this page would ask to sign in and send the agent to another profile.
+    const fake = browser(() => false);
+    const url = "https://example.com/stalled-resource";
+    fake.urls.set("tab-work", url);
+    // The host waits as long as it is asked to, then reports that the page never loaded.
+    const neverLoads = Layer.mock(PreviewAutomationBroker)({
+      invoke: <A>(request: PreviewAutomationInvokeInput) =>
+        request.operation === "accountWaitForLoad"
+          ? Effect.sleep(request.timeoutMs ?? PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS).pipe(
+              Effect.andThen(
+                new PreviewAutomationTimeoutError({
+                  operation: "accountWaitForLoad",
+                  environmentId: EnvironmentId.make("fallback-environment"),
+                  threadId,
+                  clientId: "server-browser",
+                  connectionId: "fallback-connection",
+                  requestId: "preview-1",
+                  timeoutMs: request.timeoutMs ?? PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS,
+                  remoteTag: "PreviewAutomationTimeoutError",
+                }),
+              ),
+            )
+          : fake.invoke<A>(request),
+    });
+    const opening = yield* Effect.timed(
+      previewProfileFallback(scope, fake.status(), {
+        operation: "open",
+        requestedUrl: url,
+        targetsExistingTab: false,
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(neverLoads, invocation, Layer.succeed(AccountsService, service)),
+      ),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust("1 minute");
+    const [took, opened] = yield* Fiber.join(opening);
+    expect(opened).toEqual(fake.status());
+    expect(Duration.toMillis(took)).toBeLessThanOrEqual(3_000);
+    expect(fake.calls.map(({ operation }) => operation)).toEqual([]);
+  }).pipe(Effect.scoped),
 );

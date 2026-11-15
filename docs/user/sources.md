@@ -59,8 +59,8 @@ above the list to browse papers from every project. Use
 **Add to project** to bring a paper from your Library into this project, and
 **Remove from this project** to take it out; the paper stays in your Library
 and in other projects. Importing or adding by identifier while **All Library** is shown
-adds the papers to your Library only; the import's summary offers **Add to
-project**.
+adds the papers to your Library only; the import's summary, and the message
+after adding by identifier, offer **Add to project**.
 
 Sort the list by **Last added**, **Publication year**, **Title** or **Author**
 with the sort button beside the filter button.
@@ -122,8 +122,8 @@ bulk-edit Undo history. **Review**, when shown there, opens the merges that
 kept different values. Dismiss the line when you have read it. If a PDF from
 the project was still open, the expanded details also say how many files will
 be removed from the project later. If the move fails, the line
-says why; Scient tries again with the next change to the Library or its next
-background pass, and **Check again** shows the latest state. If the project's `.scient` folder is tracked in git, commit the
+says why. **Try again** runs the move again; Scient also tries with the next
+change to the Library and on its next background pass. If the project's `.scient` folder is tracked in git, commit the
 change: the project's live sources then no longer hold PDFs, though the copy
 from before the move (below) still does until you delete it.
 
@@ -173,8 +173,8 @@ not move it again on its own.
 
 **A review with another version.** If a copy of the project (for example one
 pulled from git) changed a systematic review differently, the review shows
-"This review has another version from a copy of this project." Open it to see
-both versions side by side: who changed each one last, and their searches,
+"This review has another version from a copy of this project." Choose **Show
+versions** on that line to see both versions side by side: who changed each one last, and their searches,
 records and decisions. Choose **Keep this version**, **Use the other**, or
 **Combine**. Combine keeps the searches and sources of both versions and
 reopens any source the two decided differently, so you can decide it again. The
@@ -332,7 +332,9 @@ new notes and PDFs come in, and tags you added or removed in Zotero are added or
 removed here. When you changed the same field both here and in Zotero, your
 version here is kept and the refresh lists it: choose **Use Zotero's** or **Keep
 mine**. An empty field in Zotero never clears one here, and an item you deleted
-in Zotero stays in your Library.
+in Zotero stays in your Library. If Zotero cannot be read (for example it is
+not open), the dialog says what to do; **Check again** then refreshes without
+leaving it.
 
 ### Send to Zotero
 
@@ -592,8 +594,8 @@ missing PDFs**) for every such source in the list; see
 [Accounts](accounts.md) for how Scient reaches closed papers.
 
 Use **Move to Trash** from the source actions to remove a source from your
-Library; in **This project** a row's menu offers **Remove from this project**
-instead, and **Move to Trash** is in the source's details and in **All**. Choose
+Library; in **This project** a row's menu also offers **Remove from this
+project**, which keeps the paper in your Library. Choose
 **Undo** in the message that appears to put it straight back, or choose
 **Trash** in the **⋯** menu at the top of the Library later to restore it. Its PDFs stay in
 your Library while it is in the trash. **Empty trash** deletes the sources in
@@ -610,8 +612,9 @@ Only a deliberate import puts it back: adding the paper again, or importing a
 project package that has it. Moving another project into your Library, or an
 old copy of a project, brings back neither the paper nor its PDF. Opening a
 fresh checkout keeps it deleted even when the project's saved citation details
-contain only a title. The Trash also holds the copies that merges took away: only the merge's **Undo** brings
-those back, and once the trash is emptied those merges can no longer be undone.
+contain only a title. A copy that a merge took away is not in the Trash: the
+merge's **Undo** brings it back, also after the Trash is emptied, until the
+merged paper itself is deleted for good.
 
 Every change to a source is kept as a version. Choose **History** from the
 source actions to see who changed what and when, and **Restore** an earlier
@@ -859,8 +862,16 @@ update it yourself.
 
 - **Markdown:** type `[@` and pick a source from the list (by key, author, year
   or title). Press Enter or Tab to insert it; Escape closes the list.
-- **LaTeX:** **Insert citation** lists Library sources after the document's own
-  `.bib` entries.
+- **LaTeX:** type `\cite{` (or `\citep{`, `\citet{`, `\parencite{`,
+  `\textcite{` and the other natbib and biblatex forms) and pick a source from
+  the list, by key, author, year or title, in Visual and in Source. Before
+  you type, the list starts with the entries of the `.bib` files the document
+  links (the first 24), then this project's Library sources; once you type,
+  both are ranked together by how well they match. If the document does not load
+  `references.bib` yet, the list says which line to add. In Source, a file that
+  another file includes is offered Library sources only, because its `.bib`
+  files are named in the main file. **Insert citation** lists Library sources
+  after the document's own `.bib` entries.
 - **Open a source from a citation:** click it while reading, or Control-click
   (Command-click on a Mac) while writing.
 

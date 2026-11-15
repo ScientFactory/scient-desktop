@@ -21,6 +21,8 @@ interface CrashCase {
   readonly name: string;
   readonly setup: ReadonlyArray<Step>;
   readonly step: Step;
+  /** Step sequences from the setup that a stop part way may also leave, each a whole state. */
+  readonly partWay?: ReadonlyArray<ReadonlyArray<Step>>;
 }
 
 const two: ReadonlyArray<Step> = [
@@ -53,6 +55,25 @@ const CASES: ReadonlyArray<CrashCase> = [
     name: "delete for good",
     setup: [...two, { op: "trash", work: "w1" }],
     step: { op: "deleteForGood", work: "w1" },
+  },
+  {
+    name: "delete for good a paper that copies were merged into",
+    setup: [
+      ...two,
+      { op: "add", label: "w3", pdf: false },
+      { op: "merge", survivor: "w2", loser: "w1" },
+      { op: "merge", survivor: "w3", loser: "w2" },
+      { op: "trash", work: "w3" },
+    ],
+    step: { op: "deleteForGood", work: "w3" },
+    // The copies go first, so the paper stays in the Trash to delete again until they are gone.
+    partWay: [
+      [{ op: "deleteForGood", work: "w1" }],
+      [
+        { op: "deleteForGood", work: "w1" },
+        { op: "deleteForGood", work: "w2" },
+      ],
+    ],
   },
   {
     name: "add to a project with a note",
@@ -143,8 +164,9 @@ const refreshed = (model: Model): Model =>
 const PUBLISHES = new Set(["rename", "link", "unlink", "rm", "rmdir", "copyFile"]);
 
 /**
- * The changes to stop at: every one in a full sweep; otherwise an even spread over the changes
- * just before and just after each publication, which is where a half-done state can show.
+ * The changes to stop at: every one in a full sweep; otherwise an even spread inside the changes
+ * just before and just after each publication, where a half-done state shows. The first and the
+ * last are left out: stopping there leaves nothing, or everything, for recovery to finish.
  */
 function sample(points: ReadonlyArray<{ readonly call: string; readonly path: string }>) {
   const all = points.map((_, index) => index + 1);
@@ -159,7 +181,7 @@ function sample(points: ReadonlyArray<{ readonly call: string; readonly path: st
     ...new Set(
       Array.from(
         { length: SAMPLE_SIZE },
-        (_, index) => from[Math.round((index * (from.length - 1)) / (SAMPLE_SIZE - 1))]!,
+        (_, index) => from[Math.round(((index + 1) * (from.length - 1)) / (SAMPLE_SIZE + 1))]!,
       ),
     ),
   ];
@@ -199,6 +221,9 @@ async function sweep(crashCase: CrashCase, part: number): Promise<ReadonlyArray<
       ];
     }
     const after = applyStep(before, crashCase.step, first.facts);
+    const partWay = (crashCase.partWay ?? []).map((steps) =>
+      steps.reduce((model, step) => applyStep(model, step, {}), before),
+    );
     const { points } = first;
 
     const plans: FileFaultPlan[] = [];
@@ -267,9 +292,9 @@ async function sweep(crashCase: CrashCase, part: number): Promise<ReadonlyArray<
         }
       }
       const { results, stderr } = await run([
-        { kind: "check", models: [before, after] },
+        { kind: "check", models: [before, after, ...partWay] },
         { kind: "recover" },
-        { kind: "check", models: [refreshed(before)] },
+        { kind: "check", models: [refreshed(before), ...partWay.map(refreshed)] },
         { kind: "check", models: [refreshed(after)] },
         { kind: "step", step: crashCase.step },
         { kind: "recover" },

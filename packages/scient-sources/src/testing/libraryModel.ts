@@ -210,8 +210,25 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
       return replaceWork(model, { ...workOf(model, step.work), state: "trash" });
     case "restore":
       return replaceWork(model, { ...workOf(model, step.work), state: "live" });
-    case "deleteForGood":
-      return replaceWork(model, { ...workOf(model, step.work), state: "deleted" });
+    case "deleteForGood": {
+      // Copies merged into the work, directly or through another, go with it.
+      const going = new Set([step.work]);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const work of model.works) {
+          if (going.has(work.label) || work.state !== "trash") continue;
+          if (work.mergedInto === null || !going.has(work.mergedInto)) continue;
+          going.add(work.label);
+          grew = true;
+        }
+      }
+      return {
+        ...model,
+        works: model.works.map((work) =>
+          going.has(work.label) ? { ...work, state: "deleted" as const } : work,
+        ),
+      };
+    }
     case "pin":
       return {
         ...model,

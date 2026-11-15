@@ -10,6 +10,7 @@ import {
   latestHistory,
   removeFolder,
   restoreFolder,
+  sweepRemovedHistory,
   writeFolder,
 } from "./FolderHistory.ts";
 
@@ -84,6 +85,36 @@ describe("FolderHistory", () => {
     const undone = await restoreFolder({ ...where, name: "item" });
     expect(new TextDecoder().decode(undone.meta)).toBe("m");
     expect(await read(NodePath.join(where.root, "item/f"))).toBe("x");
+  });
+
+  it("forgets only folders removed long ago and not brought back", async () => {
+    const where = await scratch();
+    const make = async (key: string, removedAt: string | undefined) => {
+      await writeFolder({
+        ...where,
+        name: key,
+        key,
+        source: { files: { f: bytes(key) } },
+        stamp: "2026-01-01T00-00-00-000Z",
+      });
+      if (removedAt !== undefined)
+        await removeFolder({ ...where, name: key, key, stamp: removedAt });
+    };
+    await make("old", "2026-09-01T10-00-00-000Z");
+    await make("recent", "2026-11-01T10-00-00-000Z");
+    await make("kept", undefined);
+    await make("back", "2026-09-01T10-00-00-000Z");
+    const forgotten = await sweepRemovedHistory(where.historyRoot, {
+      now: Date.parse("2026-11-13T00:00:00Z"),
+      olderThanMs: 30 * 24 * 60 * 60 * 1000,
+      live: (key) => key === "back",
+    });
+    expect(forgotten).toBe(1);
+    expect((await NodeFSP.readdir(where.historyRoot)).toSorted()).toEqual([
+      "back",
+      "kept",
+      "recent",
+    ]);
   });
 
   it("copies a folder, keeps changes within one stamp in order, and keeps ten", async () => {

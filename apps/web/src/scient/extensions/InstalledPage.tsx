@@ -32,7 +32,6 @@ import {
 } from "./ExtensionsPage";
 import { ExtensionTable } from "./ExtensionRow";
 import {
-  catalogEntries,
   collectProviderExtensionGroups,
   connectorsReach,
   type ExtensionKind,
@@ -42,6 +41,7 @@ import {
   showsKind,
   worksWithOptions,
 } from "./extensionsView";
+import { useInstalledEntries } from "./installedEntries";
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AccountServiceItem } from "./AccountServicePages";
@@ -143,7 +143,7 @@ function YoursTable({
   readonly connectorsNote: string | undefined;
   readonly groups: ReadonlyArray<ProviderExtensionGroup>;
   readonly accountServices: ReadonlyArray<AccountService>;
-  readonly curated: ReturnType<typeof catalogEntries>;
+  readonly curated: ReturnType<typeof useInstalledEntries>;
   readonly plugins: ReadonlyArray<ScientPluginSummary>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -285,15 +285,8 @@ const CLAUDE_CONNECTORS_PAGE = "https://claude.ai/customize/connectors";
 
 function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
   useRememberListPage("Installed");
-  const {
-    environmentId,
-    inventory,
-    inventoryError,
-    catalog,
-    providers,
-    providerInventory,
-    canWrite,
-  } = useExtensionsEnvironment();
+  const { environmentId, inventory, inventoryError, providers, providerInventory, canWrite } =
+    useExtensionsEnvironment();
   const [worksWith, setWorksWith] = useState<ProviderInstanceId | null>(null);
   // The agents this person has; ones Scient merely knows about are not worth filtering by.
   const options = worksWithOptions(inventory?.providerSupport ?? [], providers).filter((option) =>
@@ -306,7 +299,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
     providerInventory.providers,
     selected?.instanceId ?? null,
   );
-  const curated = catalogEntries(catalog);
+  const curated = useInstalledEntries();
   // Each agent's inventory counts as it arrives; one that never reports holds nothing back.
   const accountServices = installedAccountServices(
     providerInventory.providers,

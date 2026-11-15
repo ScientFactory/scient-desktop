@@ -45,6 +45,9 @@ import * as AgentInvocationContext from "../scient/operations/AgentInvocationCon
 // SCIENT-FORK:END
 
 const HOST_RESPONSE_GRACE_MS = 1_000;
+// SCIENT-FORK:START — Scient's account check before an action spends this same budget.
+export const PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS = 15_000;
+// SCIENT-FORK:END
 
 export interface PreviewAutomationInvokeInput {
   // SCIENT-FORK:START — Scient callers pass the transport-neutral invocation scope.
@@ -583,7 +586,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         input.timeoutMs ??
         ((input.operation === "open" || input.operation === "status") && connection.preferred
           ? 660_000
-          : 15_000);
+          : PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS);
       // SCIENT-FORK:END
       const canReuseAssignedTab =
         assigned !== undefined &&

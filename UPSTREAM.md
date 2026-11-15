@@ -1434,6 +1434,11 @@ handles separate text-generation requests. `OmpManagedRuntimeActions.ts`,
 version-cap ownership. Sharing the RPC implementation does not merge the two
 products' executable identities or state.
 
+Native question publication stays in `orchestration-v2/scient-provider/NativeQuestionPublication.ts`:
+the question item precedes its pending runtime request, and repeated notifications retain the
+request's identity and response authority. `NativeSessionAdapterV2.ts` calls it through marked
+seams; the MCP regression lives in `mcp/toolkits/thread/handlers.scient.integration.test.ts`.
+
 Scient's native subagent observations and compact chat disclosure are gated by
 `driverKind === "scient"` (and all-Scient groups in the renderer). Preserve the
 separate assignment/label, observed-only progress/model/usage, sparse terminal

@@ -1198,6 +1198,8 @@ export function EditableFileEditor({
   };
   const { mathInput, onCompositionEnd, onKeyDownCapture } = useScientFileEditorBindings({
     editor,
+    environmentId,
+    cwd,
     relativePath,
     editingBlocked: editingBlocked || restorationBlocked,
     surfaceRef,

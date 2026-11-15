@@ -9,7 +9,7 @@ import { vi } from "vite-plus/test";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
-import { generatedManifest } from "./LocalConnectorBundle.ts";
+import { envTitle, generatedManifest } from "./LocalConnectorBundle.ts";
 import { bringInPackage, makeRunTool, packageOf, type RunTool } from "./PackageSource.ts";
 
 /** Folders under this path sit on another drive: a rename across it fails as on Windows `D:`. */
@@ -96,6 +96,14 @@ const fakeTools =
         "bin/acme-mcp": "#!/usr/bin/env python",
       });
     });
+
+describe("generated setup titles", () => {
+  it("titles an environment name in words and keeps names that are already titles", () => {
+    expect(envTitle("GOOGLE_ACCESS_TOKEN")).toBe("Google access token");
+    expect(envTitle("OPENAI_API_KEY")).toBe("Openai API key");
+    expect(envTitle("Region")).toBe("Region");
+  });
+});
 
 describe("package connector code", () => {
   it("reads every runner form a connector names, or says why it can't", () => {

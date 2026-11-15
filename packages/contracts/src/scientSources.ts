@@ -450,6 +450,8 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("move-back") }),
   /** Hides the move's summary lines in this checkout's status, until a later run. */
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
+  /** Runs a move that failed again now: `moved`, or `not-moved` when it failed again. */
+  Schema.Struct({ action: Schema.Literal("retry-move") }),
   ...ScientSourcesPinRepairAction.members,
   /**
    * Puts the sealed copy from before a move (the newest, or archiveId) back in the project;
@@ -574,6 +576,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "survivor-missing",
     "loser-missing",
     "moved-back",
+    "moved",
     "not-moved",
     "project-store-present",
     "dismissed",

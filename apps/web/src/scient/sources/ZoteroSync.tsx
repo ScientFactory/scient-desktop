@@ -229,6 +229,8 @@ export function ZoteroRefreshDialog(props: {
   readonly state: RefreshState | null;
   readonly resolving: string | null;
   readonly onClose: () => void;
+  /** Reads Zotero again after a refresh that could not reach it. */
+  readonly onCheckAgain: () => void;
   readonly onResolve: (
     sourceId: string,
     field: ScientSourceZoteroRefreshField,
@@ -322,6 +324,11 @@ export function ZoteroRefreshDialog(props: {
           <Button size="sm" variant="ghost" onClick={props.onClose}>
             {state?.phase === "running" ? "Close" : "Done"}
           </Button>
+          {state?.phase === "problem" ? (
+            <Button size="sm" onClick={props.onCheckAgain}>
+              Check again
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogPopup>
     </Dialog>

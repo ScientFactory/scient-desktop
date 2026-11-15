@@ -264,7 +264,10 @@ const add = metadata(
         accountId: AccountId,
         name: Schema.String,
       }),
-      Schema.Struct({ status: Schema.Literals(["declined", "cancelled", "timed_out"]) }),
+      Schema.Struct({
+        status: Schema.Literals(["declined", "cancelled", "timed_out"]),
+        note: Schema.String,
+      }),
       Schema.Struct({ status: Schema.Literal("unavailable"), message: Schema.String }),
       Schema.Struct({
         status: Schema.Literal("choose").annotate({
@@ -287,7 +290,7 @@ const connectorSetup = metadata(
       SecretRequests,
     ],
     description:
-      "When a local connector says it needs setup: saves settings you asked the user in chat, and asks for each missing key in a private card (or links their saved key). Then call its tool again. replaceKeys asks again for a key the program rejected.",
+      "When a connector says it needs setup. A local one: saves settings you asked the user in chat, and asks for each missing key in a private card (or links their saved key); then call its tool again. replaceKeys asks again for a key the program rejected. A hosted one: says what it needs and who gives it.",
     parameters: Schema.Struct({
       connector: TrimmedNonEmptyString.annotate({ description: "Its MCP server name." }),
       settings: Schema.optional(
@@ -312,7 +315,7 @@ const connectorSetup = metadata(
     }),
   }),
   "connector-setup",
-  "Set up a local connector",
+  "Set up a connector",
 );
 const connectorDependencies = [
   ...common.dependencies,
@@ -391,7 +394,8 @@ const connectorAdd = metadata(
 const connectorControl = metadata(
   Tool.make("scient_connector_control", {
     failure: AccountsError,
-    dependencies: common.dependencies,
+    // A restart starts the connector once, with only what the chat's project may use.
+    dependencies: connectorDependencies,
     description:
       "Turn a connector on or off, restart a local one, or sign in: a hosted connector's sign-in opens in this chat's browser as the user's own tab, which your preview tools don't see, for them to finish. Removing stays the user's.",
     parameters: Schema.Struct({

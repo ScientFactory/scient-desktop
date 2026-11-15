@@ -1059,12 +1059,57 @@ export async function readScientSourceTrashEntries(
   return (await scanTrash(await sourceStorePaths(root))).entries;
 }
 
+/**
+ * What a person moved to the Trash. A copy a merge took away is kept there for the merge's Undo
+ * only: it is not listed, counted or emptied, and goes when the paper it joined is deleted.
+ */
+function removedByPerson(
+  entries: ReadonlyArray<ScientSourceTrashEntry>,
+): ReadonlyArray<ScientSourceTrashEntry> {
+  return entries.filter((entry) => !entry.mergedInto);
+}
+
+function trashedCountOf(entries: ReadonlyArray<ScientSourceTrashEntry>): {
+  readonly trashedCount?: number;
+} {
+  const count = removedByPerson(entries).length;
+  return count > 0 ? { trashedCount: count } : {};
+}
+
+/** The Trash as a person or an agent is shown it: what was removed, without merges' copies. */
+export async function readScientSourcesRemovedByPerson(
+  root: ScientSourceStoreLocation,
+): Promise<ReadonlyArray<ScientSourceTrashEntry>> {
+  return removedByPerson((await scanTrash(await sourceStorePaths(root))).entries);
+}
+
+/**
+ * The chosen entries and every copy merged into them, directly or through another, copies
+ * first: a deletion stopped part way leaves the chosen entry in the Trash to delete again.
+ */
+function withCopiesMergedInto(
+  all: ReadonlyArray<ScientSourceTrashEntry>,
+  chosen: ReadonlyArray<ScientSourceTrashEntry>,
+): ReadonlyArray<ScientSourceTrashEntry> {
+  const going = new Map(chosen.map((entry) => [entry.sourceId, entry]));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const entry of all) {
+      if (going.has(entry.sourceId) || !entry.mergedInto) continue;
+      if (!going.has(entry.mergedInto.sourceId)) continue;
+      going.set(entry.sourceId, entry);
+      grew = true;
+    }
+  }
+  return [...going.values()].toReversed();
+}
+
 export async function listScientSourceTrash(
   root: ScientSourceStoreLocation,
 ): Promise<ScientSourceTrashListing> {
   const { entries, issues } = await scanTrash(await sourceStorePaths(root));
   return {
-    entries: entries.map(({ record, removedAt, removedBy }) => ({
+    entries: removedByPerson(entries).map(({ record, removedAt, removedBy }) => ({
       sourceId: record.sourceId,
       revision: record.revision,
       type: record.type,
@@ -1130,10 +1175,11 @@ export async function deleteScientSourcesPermanently(input: {
   return withStoreLock(paths, "source-write", async () => {
     const { entries } = await scanTrash(paths);
     const selected = input.sourceIds ? new Set(input.sourceIds) : null;
-    return deleteTrashEntries(
-      paths,
-      entries.filter((entry) => !selected || selected.has(entry.sourceId)),
-    );
+    // Named sources go as named; emptying the Trash takes what a person put there.
+    const chosen = selected
+      ? entries.filter((entry) => selected.has(entry.sourceId))
+      : removedByPerson(entries);
+    return deleteTrashEntries(paths, withCopiesMergedInto(entries, chosen));
   });
 }
 
@@ -1155,14 +1201,16 @@ export async function deleteTrashedScientSource(input: {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
   return withStoreLock(paths, "source-write", async () => {
-    const entry = (await scanTrash(paths)).entries.find(
-      (candidate) => candidate.sourceId === input.sourceId,
-    );
+    const { entries } = await scanTrash(paths);
+    const entry = entries.find((candidate) => candidate.sourceId === input.sourceId);
     if (!entry) return { outcome: "not-found", sourceId: input.sourceId };
     if (entry.record.revision !== input.expectedRevision) {
       return { outcome: "stale", sourceId: input.sourceId, revision: entry.record.revision };
     }
-    const { removedFileCount } = await deleteTrashEntries(paths, [entry]);
+    const { removedFileCount } = await deleteTrashEntries(
+      paths,
+      withCopiesMergedInto(entries, [entry]),
+    );
     return { outcome: "deleted", sourceId: input.sourceId, removedFileCount };
   });
 }
@@ -1793,7 +1841,7 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
     records: scan.records,
     activeOperation,
     ...(scan.issues.length > 0 ? { unreadableRecords: scan.issues } : {}),
-    ...(trash.entries.length > 0 ? { trashedCount: trash.entries.length } : {}),
+    ...trashedCountOf(trash.entries),
   };
 }
 
@@ -1814,7 +1862,7 @@ export async function inspectScientLibrarySources(library: ScientLibraryLocation
     records: scan.records,
     activeOperation,
     ...(scan.issues.length > 0 ? { unreadableRecords: scan.issues } : {}),
-    ...(trash.entries.length > 0 ? { trashedCount: trash.entries.length } : {}),
+    ...trashedCountOf(trash.entries),
   };
 }
 

@@ -121,7 +121,7 @@ function view() {
   );
 }
 
-const versionsLine = "This review has another version from a copy of this project.";
+const versionsLine = "This review has another version from a copy of this project. Show versions";
 
 describe("versions of a review from a copy of the project", () => {
   it("shows both versions and uses the other, then reloads the review", async () => {
@@ -145,7 +145,9 @@ describe("versions of a review from a copy of the project", () => {
         },
       }),
     );
-    await expect.element(screen.getByText(versionsLine)).not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: versionsLine }))
+      .not.toBeInTheDocument();
     expect(mocks.readSystematicReview).toHaveBeenCalledTimes(2);
   });
 

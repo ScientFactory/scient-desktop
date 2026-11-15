@@ -269,4 +269,36 @@ describe("Sources list at Library size", () => {
     );
     expect(mocks.organizeScientSources).not.toHaveBeenCalled();
   });
+
+  it("offers Move to Trash on a row of this project, but not on a saved copy the Library lacks", async () => {
+    setup();
+    mocks.readScientSources.mockResolvedValue(overview());
+    mocks.showContextMenu.mockResolvedValue(null);
+    await using screen = await render(<Harness />, { router: false });
+    await expect.element(screen.getByText("Source 0000")).toBeVisible();
+    const offered = (call: number) =>
+      (mocks.showContextMenu.mock.calls[call]![0] as ReadonlyArray<{ id: string }>).map(
+        (item) => item.id,
+      );
+
+    await userEvent.click(
+      rowTitled(screen.container, "Source 0000")!.querySelector<HTMLElement>(
+        '[aria-label="More source actions"]',
+      )!,
+    );
+    await vi.waitFor(() => expect(mocks.showContextMenu).toHaveBeenCalledTimes(1));
+    expect(offered(0).slice(-2)).toEqual(["remove-from-project", "remove"]);
+
+    const scroller = scrollerOf(rowTitled(screen.container, "Source 0000")!);
+    scroller.scrollTop = SNAPSHOT_INDEX * SOURCE_ROW_ESTIMATED_SIZE - 120;
+    await expect.element(screen.getByText("Snapshot source")).toBeVisible();
+    await userEvent.click(
+      rowTitled(screen.container, "Snapshot source")!.querySelector<HTMLElement>(
+        '[aria-label="More source actions"]',
+      )!,
+    );
+    await vi.waitFor(() => expect(mocks.showContextMenu).toHaveBeenCalledTimes(2));
+    expect(offered(1)).toContain("remove-from-project");
+    expect(offered(1)).not.toContain("remove");
+  });
 });

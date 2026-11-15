@@ -1,3 +1,5 @@
+import "../../index.css";
+
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ScientSourceZoteroRefreshItem } from "@scientfactory/scient-sources";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -56,6 +58,7 @@ function Harness(props: { readonly onChanged: () => void }) {
         state={sync.refresh}
         resolving={sync.resolving}
         onClose={sync.closeRefresh}
+        onCheckAgain={() => void sync.startRefresh()}
         onResolve={(sourceId, field, side) => void sync.resolveConflict(sourceId, field, side)}
       />
     </>
@@ -95,5 +98,16 @@ describe("Refresh from Zotero", () => {
 
     await expect.element(page.getByText(/^Open Zotero on the computer/u)).toBeVisible();
     expect(mocks.refreshZoteroSources).not.toHaveBeenCalled();
+
+    // With Zotero open, Check again refreshes without leaving the dialog.
+    mocks.readZoteroStatus.mockResolvedValue({
+      state: "ready",
+      apiVersion: 3,
+      connection: "local",
+      message: "Ready.",
+    });
+    await page.getByRole("button", { name: "Check again" }).click();
+    await expect.element(page.getByText("Here: Mine")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Check again" })).not.toBeInTheDocument();
   });
 });

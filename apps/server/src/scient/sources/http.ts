@@ -413,7 +413,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 if (library) return organizeLibrarySources(library, args.payload);
                 const { change } = args.payload;
                 // Already moved back: the project keeps its own store, so a repeat has nothing to do.
-                if (libraryBackend && change.action === "move-back") {
+                // A retried move that failed again leaves the project in its own store too.
+                if (
+                  libraryBackend &&
+                  (change.action === "move-back" || change.action === "retry-move")
+                ) {
                   return { outcome: "not-moved" as const };
                 }
                 if (isLibraryOrganizeAction(change)) {

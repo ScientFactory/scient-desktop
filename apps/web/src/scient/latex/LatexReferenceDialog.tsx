@@ -21,7 +21,10 @@ import {
   inlineBibliographyChoices,
   type LatexReferenceChoice,
 } from "./latexAuthoringModel";
-import { libraryLatexCitationChoices } from "../sources/libraryCitations";
+import {
+  LIBRARY_BIBLIOGRAPHY_HINT,
+  libraryLatexCitationChoices,
+} from "../sources/libraryCitations";
 import { useLibraryCitations } from "../sources/useLibraryCitations";
 
 export const LatexReferenceDialog = memo(
@@ -326,10 +329,7 @@ export const LatexReferenceDialog = memo(
                     Appearance follows the document; final numbers appear after compilation.
                   </p>
                   {librarySelectedWithoutBibliography ? (
-                    <p className="text-sm text-muted-foreground">
-                      Add \bibliography{"{references}"} to this document so LaTeX finds Library
-                      sources.
-                    </p>
+                    <p className="text-sm text-muted-foreground">{LIBRARY_BIBLIOGRAPHY_HINT}</p>
                   ) : null}
                   <Button disabled={!validKeys(keys)} onClick={() => insert(command, keys)}>
                     {mode === "citation" ? "Insert citation" : "Insert reference"}

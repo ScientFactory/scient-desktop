@@ -71,6 +71,7 @@ import {
   citeScientSourcesForInvocation,
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
+  removeScientSourceForInvocation,
   organizeLibrarySourcesForInvocation,
   readScientSourceTextForInvocation,
   resolveScientSourcesStore,
@@ -1082,6 +1083,37 @@ describe("Sources tools on the library backend", () => {
       );
       expect(control).toMatchObject({ outcome: "not-found" });
       expect(control).not.toHaveProperty("notMerged");
+    }),
+  );
+
+  it.effect("the Trash an agent lists holds what was removed, not a copy a merge took away", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const kept = yield* addSource(fixture, "Merged sepsis trial", "10.1000/trash-merge");
+      const twin = yield* Effect.promise(() =>
+        libraryRecord(fixture, "twin-trash", { title: "Merged sepsis trial" }),
+      );
+      const other = yield* Effect.promise(() =>
+        libraryRecord(fixture, "other-trash", { title: "Another paper" }),
+      );
+      const merged = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "merge", sourceIds: [kept.sourceId!, twin.sourceId] },
+        }),
+        fixture,
+      );
+      expect(merged.outcome).toBe("merged");
+      yield* run(
+        removeScientSourceForInvocation({
+          sourceId: other.sourceId,
+          expectedRevision: other.revision,
+        }),
+        fixture,
+      );
+
+      const listed = yield* run(listScientSourcesForInvocation({ inTrash: true }), fixture);
+      expect(listed.records.map((record) => record.sourceId)).toEqual([other.sourceId]);
+      expect(listed.total).toBe(1);
     }),
   );
 

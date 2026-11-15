@@ -500,7 +500,12 @@ export interface RedactionContext {
   readonly agentIds: ReadonlySet<string>;
   /** A Scient-written JSON-RPC error carrying the agent's request id. */
   readonly refusal: string;
+  /** Applied to each redacted JSON-RPC document, the refusal included (`discoveryFinisher`). */
+  readonly finish?: ((document: string) => string) | undefined;
 }
+
+const finished = (document: string, context: RedactionContext) =>
+  context.finish === undefined ? document : context.finish(document);
 
 /** A complete JSON response body, redacted; anything unverifiable becomes the refusal. */
 export const redactJsonStream = (
@@ -517,7 +522,9 @@ export const redactJsonStream = (
       flush(controller) {
         parts.push(decoder.decode());
         const redacted = safelyRedactJson(parts.join(""), context.credentials, context.agentIds);
-        controller.enqueue(new TextEncoder().encode(redacted ?? context.refusal));
+        controller.enqueue(
+          new TextEncoder().encode(finished(redacted ?? context.refusal, context)),
+        );
       },
     }),
   );
@@ -554,7 +561,8 @@ const renderEvent = (event: SseEvent, context: RedactionContext): string | undef
       const redacted = safelyRedactJson(data, credentials, context.agentIds);
       if (redacted === undefined) return undefined;
       // JSON keeps line breaks only in whitespace; each becomes its own data line.
-      for (const line of redacted.split(/\r\n|\r|\n/)) lines.push(`data: ${line}`);
+      for (const line of finished(redacted, context).split(/\r\n|\r|\n/))
+        lines.push(`data: ${line}`);
     }
   }
   return lines.length === 0 ? "" : `${lines.join("\n")}\n\n`;
@@ -570,7 +578,9 @@ export const redactEventStream = (
   now: () => number = () => performance.now(),
 ): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
-  const refusalEvent = encoder.encode(`event: message\ndata: ${context.refusal}\n\n`);
+  const refusalEvent = encoder.encode(
+    `event: message\ndata: ${finished(context.refusal, context)}\n\n`,
+  );
   const parser = makeSseParser(MAX_SSE_EVENT_BYTES);
   let lastOutputAt = Number.NEGATIVE_INFINITY;
 

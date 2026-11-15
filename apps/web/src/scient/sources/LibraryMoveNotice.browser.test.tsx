@@ -95,7 +95,9 @@ function setup(statuses: ReadonlyArray<ScientSourcesMoveStatus>) {
     libraryWriteSettled(id);
     return input.change.action === "move-back"
       ? { outcome: "not-moved" }
-      : { outcome: "dismissed" };
+      : input.change.action === "retry-move"
+        ? { outcome: "moved" }
+        : { outcome: "dismissed" };
   });
 }
 
@@ -129,6 +131,30 @@ describe("the Library's move line", () => {
       }),
     );
     await expect.element(screen.getByText(summary, { exact: false })).not.toBeInTheDocument();
+  });
+
+  it("runs a failed move again from Try again, and shows what came of it", async () => {
+    setup([
+      { state: "failed", reason: "The disk is full." },
+      { state: "failed", reason: "The disk is full." },
+      { state: "done", lines: [summary] },
+    ]);
+    await using screen = await render(<Harness libraryBackend />, { router: false });
+
+    await expect
+      .element(screen.getByText("Moving the Library failed: The disk is full."))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    await vi.waitFor(() =>
+      expect(mocks.organizeScientSources).toHaveBeenCalledWith(environmentId, {
+        root: "/project",
+        change: { action: "retry-move" },
+      }),
+    );
+    await expect
+      .element(screen.getByText("Moved into your Library.", { exact: false }))
+      .toBeVisible();
   });
 
   it("sends no status request on the project backend", async () => {

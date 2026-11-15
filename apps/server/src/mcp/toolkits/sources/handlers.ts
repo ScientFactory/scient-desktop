@@ -57,7 +57,7 @@ import {
   listScientSourceRecords,
   listScientSourceRevisions,
   readScientSourceRecord,
-  readScientSourceTrashEntries,
+  readScientSourcesRemovedByPerson,
   restoreScientSource,
   revertScientSource,
 } from "@scientfactory/scient-sources/store";
@@ -623,13 +623,14 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     const trash =
       input.inTrash && readable
         ? new Map(
-            (yield* attempt(() => readScientSourceTrashEntries(root))).map((entry) => [
+            // As the panel's Trash: a copy a merge took away is that merge's Undo, not a removal.
+            (yield* attempt(() => readScientSourcesRemovedByPerson(root))).map((entry) => [
               entry.record.sourceId,
               entry,
             ]),
           )
         : input.inTrash
-          ? new Map<string, Awaited<ReturnType<typeof readScientSourceTrashEntries>>[number]>()
+          ? new Map<string, Awaited<ReturnType<typeof readScientSourcesRemovedByPerson>>[number]>()
           : null;
     const pinnedWorks =
       listsPins && library

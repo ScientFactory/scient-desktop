@@ -50,9 +50,14 @@ export function LibraryMoveNotice(props: {
             Dismiss
           </Button>
         ) : null}
-        {line.action === "retry" ? (
-          <Button size="xs" variant="ghost" onClick={props.move.retry}>
-            Check again
+        {line.action === "retry" && props.move.canChange ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={props.move.retrying}
+            onClick={props.move.retry}
+          >
+            {props.move.retrying ? "Trying again…" : "Try again"}
           </Button>
         ) : null}
       </div>

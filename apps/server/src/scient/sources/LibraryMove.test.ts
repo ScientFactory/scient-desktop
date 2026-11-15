@@ -296,6 +296,25 @@ describe("the lazy move on the library backend", () => {
       expect((yield* writeStore(fixture)).kind).toBe("project");
     }),
   );
+
+  it.effect("retry-move runs a failed move again and answers from the Library", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(() => setup());
+      yield* Effect.promise(() => addV1Source(fixture.root, "again"));
+      const failed = yield* writeStore(fixture, { faults: { crashAt: "after-library-copy" } });
+      expect(failed.kind).toBe("project");
+      expect(yield* statusOf(fixture)).toMatchObject({ state: "failed" });
+      // Try again is a write call like any other: resolving its store runs the move first.
+      const store = yield* writeStore(fixture);
+      if (store.kind !== "library") throw new Error("Expected the library backend.");
+      expect(
+        yield* Effect.promise(() =>
+          organizeLibrarySources(store, { change: { action: "retry-move" } }),
+        ),
+      ).toEqual({ outcome: "moved" });
+      expect(yield* statusOf(fixture)).toMatchObject({ state: "done" });
+    }),
+  );
 });
 
 describe("the background pass", () => {

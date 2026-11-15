@@ -306,10 +306,12 @@ export async function libraryOverview(
       ? { trashedCount: inspected.trashedCount }
       : {}),
     records: listed.map((entry) => overviewRow(entry, categories)),
-    recordDiagnostics: listed.map(({ record }) => ({
-      sourceId: record.sourceId,
-      diagnostics: sourceMetadataDiagnostics(record),
-    })),
+    // Only the sources that have one: the list looks each source up and takes a missing entry
+    // as none, and at 20,000 sources the empty entries were 1.6 MB of the answer.
+    recordDiagnostics: listed.flatMap(({ record }) => {
+      const diagnostics = sourceMetadataDiagnostics(record);
+      return diagnostics.length > 0 ? [{ sourceId: record.sourceId, diagnostics }] : [];
+    }),
     ...(organization ? { organization } : {}),
     scopes: {
       listed: input.scope,
@@ -1068,6 +1070,7 @@ export const isLibraryOrganizeAction = (
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
   change.action === "dismiss-move-summary" ||
+  change.action === "retry-move" ||
   change.action === "restore-pre-move" ||
   change.action === "export-package" ||
   change.action === "list-packages" ||
@@ -1190,6 +1193,9 @@ export async function organizeLibrarySources(
           projectRoot: store.root,
         }),
       };
+    case "retry-move":
+      // Every change runs the move first; one served from the Library has moved.
+      return { outcome: "moved" as const };
     case "link-pin":
     case "unlink-pin":
     case "keep-pin-separate":

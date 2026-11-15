@@ -83,7 +83,10 @@ const NO_CREDENTIALS = credentialSet([]);
 
 const decodeRecord = Schema.decodeUnknownExit(Schema.fromJsonString(ConnectorRecord));
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(ConnectorRecord));
-const CopyMarker = Schema.fromJsonString(Schema.Struct({ connectorId: Schema.String }));
+/** Which installed connector a working copy came from, and which chat's draft it is. */
+const CopyMarker = Schema.fromJsonString(
+  Schema.Struct({ connectorId: Schema.String, owner: Schema.optional(Schema.String) }),
+);
 const decodeMarker = Schema.decodeUnknownExit(CopyMarker);
 const toJsonText = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const encodeMarker = Schema.encodeSync(CopyMarker);
@@ -318,6 +321,12 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
       ),
     );
 
+  /** Whether the person gave this connector to the agent; every agent when none were chosen. */
+  const forAgent = (record: ConnectorRecord, providerInstanceId: ProviderInstanceId | undefined) =>
+    providerInstanceId === undefined ||
+    record.agents === undefined ||
+    record.agents.includes(providerInstanceId);
+
   const findConnector = Effect.fn("LocalConnectorAuthoring.find")(function* (
     name: string,
     // Given: connectors the person gave to other agents only are not found.
@@ -326,9 +335,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     const wanted = name.trim().toLowerCase();
     const named = (yield* deps.records).filter(
       (item) =>
-        (providerInstanceId === undefined ||
-          item.agents === undefined ||
-          item.agents.includes(providerInstanceId)) &&
+        forAgent(item, providerInstanceId) &&
         (item.serverName === name.trim() ||
           item.connectorId === name.trim() ||
           item.displayName.toLowerCase() === wanted),
@@ -342,6 +349,31 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
           `${hosted.displayName} runs online, so it has no code here. scient_connector_check {"connector":"${hosted.serverName}"} tests it; scient_connector_control signs in again.`,
         );
   });
+
+  /** An installed connector (local or hosted) this name already belongs to. */
+  const installedNamed = Effect.fn("LocalConnectorAuthoring.installedNamed")(function* (
+    name: string,
+  ) {
+    const wanted = name.trim().toLowerCase();
+    return (yield* deps.records).find(
+      (item) =>
+        item.serverName.toLowerCase() === wanted ||
+        item.connectorId === name.trim() ||
+        item.displayName.toLowerCase() === wanted ||
+        slug(item.displayName) === slug(name),
+    );
+  });
+
+  /** The installed connector a working copy was made from, from its copy marker. */
+  const copiedFrom = (folder: string) =>
+    Effect.promise(async () => {
+      const marker = await NodeFSP.readFile(
+        NodePath.join(NodePath.resolve(folder), COPY_MARKER),
+        "utf8",
+      ).catch(() => "");
+      const decoded = decodeMarker(marker);
+      return decoded._tag === "Success" ? decoded.value.connectorId : undefined;
+    });
 
   const requireFolder = Effect.fn("LocalConnectorAuthoring.requireFolder")(function* (
     folder: string,
@@ -366,9 +398,20 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     readonly connector?: string | undefined;
     readonly name?: string | undefined;
     readonly providerInstanceId?: ProviderInstanceId | undefined;
+    /** The chat making the copy: it reuses only its own earlier draft. */
+    readonly owner?: string | undefined;
   }) {
     if (input.connector === undefined && input.name === undefined)
       return yield* invalid("Give connector (to fix one) or name (to make one).");
+    if (input.connector === undefined && input.name !== undefined) {
+      const installed = yield* installedNamed(input.name);
+      if (installed !== undefined)
+        return yield* invalid(
+          forAgent(installed, input.providerInstanceId)
+            ? `${installed.displayName} is installed. To copy its code, call scient_connector_copy {"connector":"${installed.serverName}"}; name starts a new connector from the example, so give it a name no connector has.`
+            : `The name ${input.name} is taken. Give the new connector a name of its own.`,
+        );
+    }
     const found =
       input.connector === undefined
         ? undefined
@@ -380,12 +423,16 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
   });
 
   const copyInto = Effect.fn("LocalConnectorAuthoring.copyInto")(function* (
-    input: { readonly workingFolder: string; readonly name?: string | undefined },
+    input: {
+      readonly workingFolder: string;
+      readonly name?: string | undefined;
+      readonly owner?: string | undefined;
+    },
     record: ConnectorRecord | undefined,
   ) {
     const displayName = (record?.displayName ?? input.name ?? "").trim() || "Connector";
-    // Never over someone's files: an earlier copy of this connector is replaced, else the
-    // first free name (`name`, `name-2`, …) is used.
+    // Never over someone's files: this chat's earlier copy of this connector is replaced, else
+    // the first free name (`name`, `name-2`, …) is used. Another chat's draft is never touched.
     const base = NodePath.join(input.workingFolder, "connectors", slug(displayName));
     // Only inside the chat's own folder: never through a link to somewhere else.
     const linked = yield* Effect.promise(async () => {
@@ -407,7 +454,12 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
           () => "",
         );
         const decoded = decodeMarker(marker);
-        if (decoded._tag === "Success" && decoded.value.connectorId === record?.connectorId)
+        if (
+          decoded._tag === "Success" &&
+          decoded.value.connectorId === record?.connectorId &&
+          input.owner !== undefined &&
+          decoded.value.owner === input.owner
+        )
           return candidate;
       }
       return undefined;
@@ -432,7 +484,10 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
           });
           await NodeFSP.writeFile(
             NodePath.join(target, COPY_MARKER),
-            encodeMarker({ connectorId: record.connectorId }),
+            encodeMarker({
+              connectorId: record.connectorId,
+              ...(input.owner === undefined ? {} : { owner: input.owner }),
+            }),
           );
           return;
         }
@@ -668,11 +723,37 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     input: { readonly folder: string; readonly connector?: string | undefined },
     location: ConnectorLocation | undefined,
   ) {
+    const caller = location?.providerInstanceId;
     const found =
-      input.connector === undefined
+      input.connector === undefined ? undefined : yield* findConnector(input.connector, caller);
+    const sourceId = yield* copiedFrom(input.folder);
+    const source =
+      sourceId === undefined
         ? undefined
-        : yield* findConnector(input.connector, location?.providerInstanceId);
-    if (found === undefined) return yield* saveAs(input.folder, location, undefined);
+        : (yield* deps.records).find(
+            (record) => record.connectorId === sourceId && forAgent(record, caller),
+          );
+    if (source !== undefined && found !== undefined && source.connectorId !== found.connectorId)
+      return yield* invalid(
+        `Not saved: this folder is a copy of ${source.displayName}, not ${found.displayName}. Save it with "connector":"${source.serverName}", or copy ${found.displayName} to fix that one.`,
+      );
+    if (found === undefined) {
+      // A new connector needs a name of its own; a copy that kept its name is a fix.
+      const manifest = yield* readFolderManifest(NodePath.resolve(input.folder)).pipe(
+        Effect.option,
+      );
+      const manifestName = Option.isNone(manifest) ? undefined : manifest.value.name;
+      const named = manifestName === undefined ? undefined : yield* installedNamed(manifestName);
+      if (named !== undefined)
+        return yield* invalid(
+          !forAgent(named, caller)
+            ? `Not saved: the name ${manifestName} is taken. Give manifest.json a new name and display_name.`
+            : named.connectorId === source?.connectorId
+              ? `Not saved: this folder is a copy of ${named.displayName}. To save the fix over it, pass "connector":"${named.serverName}". To keep both, give manifest.json a new name and display_name.`
+              : `Not saved: ${named.displayName} is already installed under this name. To replace it, pass "connector":"${named.serverName}"; for a separate connector, give manifest.json a new name and display_name.`,
+        );
+      return yield* saveAs(input.folder, location, undefined);
+    }
     return yield* exclusive(found.connectorId)(
       Effect.flatMap(recordNow(found.connectorId), (record) =>
         saveAs(input.folder, location, record),
