@@ -342,7 +342,9 @@ describe("the Library keeps its rules when a write is interrupted", () => {
       })),
   );
   // Side by side only in a full sweep on a developer's machine; CI has few cores.
-  (FULL ? it.concurrent.each(runs) : it.each(runs))("$name", async ({ crashCase, part }) => {
-    expect(await sweep(crashCase, part)).toEqual([]);
+  (FULL ? it.concurrent.each(runs) : it.each(runs))("$name", async ({ crashCase, part, name }) => {
+    const failures = await sweep(crashCase, part);
+    const replay = `Run this again, in packages/scient-sources: ${FULL ? "LIBRARY_CRASH_SWEEP=full " : ""}vp test run src/testing/libraryRules.crash.test.ts -t "${name}$"`;
+    expect(failures.length > 0 ? [replay, ...failures] : []).toEqual([]);
   });
 });
