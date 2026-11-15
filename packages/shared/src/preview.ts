@@ -183,8 +183,9 @@ export function resolveAddressBarInput(
   rawInput: string,
   searchUrlTemplate: string = BROWSER_SEARCH_URL_TEMPLATES.duckduckgo,
 ): string {
-  // SCIENT-FORK:START — typed hosts lose characters no domain can hold.
-  const trimmed = cleanTypedHost(rawInput.trim());
+  // SCIENT-FORK:START — typed hosts lose characters no domain can hold; searches stay as typed.
+  const typed = rawInput.trim();
+  const trimmed = cleanTypedHost(typed);
   // SCIENT-FORK:END
   if (URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed) || trimmed.length === 0)
     return normalizePreviewUrl(trimmed);
@@ -220,7 +221,8 @@ export function resolveAddressBarInput(
       } catch {}
     }
   }
-  return fillSearchUrlTemplate(searchUrlTemplate, trimmed);
+  // SCIENT-FORK: a search uses exactly what was typed.
+  return fillSearchUrlTemplate(searchUrlTemplate, typed);
 }
 
 export function normalizePreviewUrl(rawUrl: string): string {

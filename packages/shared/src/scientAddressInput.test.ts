@@ -37,6 +37,9 @@ describe("cleanTypedHost", () => {
     ["a word, not an address", `app${RAFE}`],
     ["a search with spaces", `hello app${RAFE}.com now`],
     ["an ordinary address", "https://example.com:8443/a.b?c=d#e"],
+    ["a sentence with a dotted word", `what is ${RLM}example.com`],
+    ["a path after a backslash", `https://example.com\\a${RLM}b?x=1`],
+    ["an @ in a path after a backslash", `https://example.com\\user@evil${RAFE}.com/path`],
   ])("leaves %s as typed", (_name, typed) => {
     expect(cleanTypedHost(typed)).toBe(typed);
   });
@@ -53,9 +56,11 @@ describe("resolveAddressBarInput with stray characters", () => {
     expect(resolveAddressBarInput(`example.com${RLM}`)).toBe("https://example.com/");
   });
 
-  it("still searches for words", () => {
-    expect(resolveAddressBarInput(`app${RAFE}`, "https://search.example/?q=%s")).toBe(
-      `https://search.example/?q=${encodeURIComponent(`app${RAFE}`)}`,
-    );
+  it("still searches for exactly what was typed", () => {
+    for (const typed of [`app${RAFE}`, `what is ${RLM}example.com`]) {
+      expect(resolveAddressBarInput(typed, "https://search.example/?q=%s")).toBe(
+        `https://search.example/?q=${encodeURIComponent(typed)}`,
+      );
+    }
   });
 });

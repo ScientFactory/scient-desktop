@@ -26,17 +26,18 @@ function withoutStrayMarks(label: string): string {
 /**
  * Typed address-bar input with what can't be part of its host taken out of the host: invisible
  * characters, and stray marks of another script on plain labels. Only an address is touched (a
- * scheme, or a dotted host), and only its host: path, query and port stay exactly as typed.
+ * scheme, or a dotted host without spaces), and only its host: path, query and port stay as typed.
  */
 export function cleanTypedHost(input: string): string {
   const start = SCHEME.exec(input)?.[0].length ?? 0;
   const rest = input.slice(start);
-  const authorityEnd = rest.search(/[/?#]/u);
+  // http(s) addresses end their host at a backslash too, as browsers read one as a slash.
+  const authorityEnd = rest.search(/[/?#\\]/u);
   const authority = authorityEnd === -1 ? rest : rest.slice(0, authorityEnd);
   const hostStart = authority.lastIndexOf("@") + 1;
   const port = /:\d*$/u.exec(authority.slice(hostStart))?.[0] ?? "";
   const host = authority.slice(hostStart, authority.length - port.length);
-  if (start === 0 && !host.includes(".")) return input;
+  if (/\s/u.test(host) || (start === 0 && !host.includes("."))) return input;
   const cleaned = host.replace(INVISIBLE, "").split(".").map(withoutStrayMarks).join(".");
   if (cleaned === host) return input;
   return (
