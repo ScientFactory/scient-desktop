@@ -579,10 +579,36 @@ full, or cannot be made), it still arrives, and the message names the
 collection so you can file it by hand.
 
 It never changes a source that is already in your Library. Sources that both
-Libraries hold and that differ, for example a note you wrote on the other
-computer, are counted in the message at the end and left as they are here. So
-are papers that may be the same one entered twice: they are not added a second
-time. A source you moved to the Trash or deleted here is not brought back.
+Libraries hold are left as they are here, also when the other Library has
+something more for one of them, for example a note you wrote on the other
+computer. So are papers that may be the same one entered twice: they are not
+added a second time. A source you moved to the Trash or deleted here is not
+brought back. The message at the end counts each of these.
+
+### See what the other Library has more of
+
+In **Recent changes**, the line of the addition has **Show differences**. It
+lists the papers both Libraries have where the other one has something this
+one lacks, each with both sides: the two notes, the PDFs only the other has,
+tags, whether it was read or starred there, and each detail that differs
+(title, authors, date and so on). Looking changes nothing.
+
+You can take three things, one at a time:
+
+- **Add to my note** puts the other note under your own note for that paper,
+  with a line saying where it came from. Your note is not replaced.
+- **Attach** adds one PDF to the paper. Its highlights are not brought.
+- **Add separately**, for a paper that may be one you already have, adds it as
+  its own source and marks the two as not duplicates.
+
+Each is an ordinary edit of that paper, so it appears in the paper's History.
+If a paper changed after the list was shown, nothing is done and the list is
+shown again as it is now. Details, tags, and read or star are shown but not
+copied: change them on the paper if you want to.
+
+The other versions are read from the folder you added from. If that folder is
+not there (a backup on a drive that is unplugged), the list still shows which
+papers differ, and the actions come back when the folder does.
 
 You can add from the same backup again, or from a newer one, as often as you
 like: what is already here is skipped.
@@ -592,14 +618,11 @@ Trash, but only those you have not used since. A source you edited, read or
 starred, one a project now cites, one you put in a collection, or one whose
 PDF you highlighted stays.
 
-If a paper is in both Libraries and differs, adding from the other one does
-not bring the other version here, and Scient does not yet show you which
-papers those are; it only counts them. So do not use **Restore from a
-backup…** to make one computer equal to the other after you have worked on
-both: the restore replaces that Library, and a note you wrote only there would
-no longer be in it (it stays in the folder the restore keeps). Add from the
-other Library in both directions instead; that brings every new source across
-and changes nothing else.
+Do not use **Restore from a backup…** to make one computer equal to the other
+after you have worked on both: the restore replaces that Library, and a note
+you wrote only there would no longer be in it (it stays in the folder the
+restore keeps). Add from the other Library in both directions instead, and
+take what differs from **Show differences**.
 
 If you always finish on one computer before you start on the other, restoring
 is the simple way: back up there, restore here, and this Library is exactly

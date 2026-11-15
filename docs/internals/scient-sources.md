@@ -2676,8 +2676,7 @@ Library with `standingOf`:
   note, read and star, PDFs or highlights differ), `merged-here`,
   `rebuilt-there` / `rebuilt-here`, `same-paper` (one strong intake match),
   `possibly-same` (a metadata match, or several candidates, then none is
-  named). Except for `same-id` the parts listed are what the other has that
-  the source here lacks. Details are compared by bibliographic fields only.
+  named). What each difference lists is under "The differences" below.
 - **removed here** (Trash or deleted for good): not added, counted.
 - identical, and live here but removed there: counted.
 
@@ -2749,10 +2748,39 @@ answers the join (running with a count, done with what it added and what it
 left, failed with the reason and how many had arrived). "Recent changes"
 lists each join (kind `join`, with Undo) and offers **Add its sources** on a
 restore whose replaced Library is kept. Agents have neither action yet
-(recorded with the backup's gap). Not built: a view of the differences with
-one-click "use the other"; joining an existing source's note, PDFs or
-details; carrying merges made in the other Library. The reasons (a repeatable
-join of existing sources needs what a sync engine needs) are in
+(recorded with the backup's gap).
+
+**The differences.** A difference lists what the other Library's source has
+that the one here lacks (tags, a note not contained in this one, read or star,
+PDFs, highlights), plus `details` where the two are the same record or paper
+and their bibliographic fields differ. What only this Library has is not a
+difference. Each is recorded with the other's title and, for `possibly-same`,
+every candidate here. `readScientLibraryJoinDifferences` (the `recentChanges`
+endpoint with `differencesOfJoin`, a page of 50 recorded differences at a
+time) reads both sides as they are now: this Library's record, and the other
+Library's from the folder the join read, in place. A row that no longer
+differs, and a possibly-same paper that is now here under its own ID, are left
+out. The folder must still be the same snapshot (the backup's ID, or the
+Library this Library's `restores.json` names); otherwise `available` is false
+and rows carry only what was recorded.
+
+`takeFromScientLibraryJoin` (organize action `take-from-library`) takes one
+thing: `note` (this note, a line saying where the rest is from, the other
+note; refused beyond the note limit; never when the other note is empty or
+already contained), `pdf` (one attachment by hash, through
+`attachScientSourcePdf`, without its highlights), or `add-separately` (the
+whole paper as a join adds one, kept apart from every candidate before its
+record exists). Under the Library's lock it requires that both records still
+have the fingerprints the row showed (a hash of the whole record, so read and
+star count too), that the pair stands as recorded, and that the request's
+`operationId` has no file under `joins/<joinId>/taken/`; then it uses the
+ordinary store function with the revision it read. Otherwise it answers
+`changed`, `unavailable`, `too-long` or `already` and writes nothing. No
+action copies details, tags, or read and star; none marks the Libraries as
+equal. Not built: joining highlights of one PDF, taking several things at
+once, applying a removal made in the other Library, carrying merges made
+there. Why existing sources are never changed by the join itself (a repeatable
+join of them needs what a sync engine needs) is in
 `reviews/sources-improve-20261115/DECISIONS.md`.
 
 ## Citing
