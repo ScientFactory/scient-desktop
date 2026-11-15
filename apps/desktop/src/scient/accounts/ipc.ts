@@ -19,6 +19,8 @@ import { PreviewManager } from "../../preview/Manager.ts";
 import { safeHttpOrigin } from "../../preview/FaviconCapture.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { discoverSourceProfiles } from "./sourceProfiles.ts";
+import { BROWSER_IMPORT_SOURCES, sourcePathContext } from "../../preview/BrowserImport/Sources.ts";
+import { throughBrowserIsOn } from "./browserConnectionImport.ts";
 import { makeSiteIcons } from "./siteIcons.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { groupSignedInSites } from "./signedInSites.ts";
@@ -335,6 +337,22 @@ const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
   return yield* discoverSourceProfiles();
 });
 
+const decodeSourceId = Schema.decodeUnknownOption(BrowserImportSourceId);
+/** Whether a browser that hands its cookies over itself has remote debugging on; never asks. */
+const browserConnection = Effect.fn("DesktopAccounts.browserConnection")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* appWindowSender(event))) return null;
+  const sourceId = decodeSourceId(raw);
+  const definition = Option.isSome(sourceId)
+    ? BROWSER_IMPORT_SOURCES.find(({ id }) => id === sourceId.value)
+    : undefined;
+  if (definition === undefined) return null;
+  const on = yield* throughBrowserIsOn(definition, yield* sourcePathContext);
+  return on === undefined ? null : { on };
+});
+
 const decodePasswordSource = Schema.decodeUnknownOption(
   Schema.Struct({
     sourceId: BrowserImportSourceId,
@@ -378,6 +396,7 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
     handler: readBrowserPasswordsCsv,
   });
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
+  yield* ipc.handle({ channel: Channels.BROWSER_CONNECTION, handler: browserConnection });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
   yield* ipc.handle({ channel: Channels.COOKIE_METADATA, handler: cookieMetadata });
   yield* ipc.handle({ channel: Channels.GOOGLE_SESSIONS, handler: googleSessions });

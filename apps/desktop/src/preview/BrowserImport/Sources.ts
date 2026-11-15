@@ -37,6 +37,11 @@ export interface BrowserImportSourceDefinition {
   readonly windowsImportBlock?: {
     readonly reason: "appBoundEncryption";
     readonly userDataDirectory: (context: BrowserImportPathContext) => string | undefined;
+    /**
+     * Its cookies come through the browser itself once the person allows remote debugging
+     * (Chrome 144+, Edge): `browser` names the installed browser that opens its profiles.
+     */
+    readonly connection?: { readonly browser: string; readonly settingsUrl: string };
   };
   // SCIENT-FORK:END
 }
@@ -50,8 +55,12 @@ const macApplicationSupport = (
 const appBoundBlock = (folder: {
   readonly root: "localAppData" | "appData";
   readonly segments: ReadonlyArray<string>;
+  readonly connection?: NonNullable<
+    BrowserImportSourceDefinition["windowsImportBlock"]
+  >["connection"];
 }): NonNullable<BrowserImportSourceDefinition["windowsImportBlock"]> => ({
   reason: "appBoundEncryption",
+  ...(folder.connection === undefined ? {} : { connection: folder.connection }),
   userDataDirectory: (context) => {
     const root = context[folder.root];
     return context.platform === "win32" && root
@@ -119,7 +128,11 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     linuxSegments: ["google-chrome"],
     linuxSecretApplication: "chrome",
     // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
-    windowsAppBound: { root: "localAppData", segments: ["Google", "Chrome", "User Data"] },
+    windowsAppBound: {
+      root: "localAppData",
+      segments: ["Google", "Chrome", "User Data"],
+      connection: { browser: "Chrome", settingsUrl: "chrome://inspect/#remote-debugging" },
+    },
     // SCIENT-FORK:END
   }),
   chromiumSource({
@@ -131,7 +144,11 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     linuxSegments: ["microsoft-edge"],
     linuxSecretApplication: "msedge",
     // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
-    windowsAppBound: { root: "localAppData", segments: ["Microsoft", "Edge", "User Data"] },
+    windowsAppBound: {
+      root: "localAppData",
+      segments: ["Microsoft", "Edge", "User Data"],
+      connection: { browser: "Edge", settingsUrl: "edge://inspect/#remote-debugging" },
+    },
     // SCIENT-FORK:END
   }),
   chromiumSource({
@@ -866,4 +883,23 @@ export const windowsImportBlockReason = Effect.fn("BrowserImportSources.windowsI
     return installed ? block.reason : "notInstalled";
   },
 );
+
+/**
+ * A browser Windows keeps from other apps whose cookies its own process hands over instead: the
+ * definition reading its real profile folder, with how to connect. Undefined elsewhere.
+ */
+export const connectableDefinition = (
+  definition: BrowserImportSourceDefinition,
+  context: BrowserImportPathContext,
+) => {
+  const block = definition.windowsImportBlock;
+  const connection = block?.connection;
+  const userDataDirectory = block?.userDataDirectory(context);
+  if (connection === undefined || userDataDirectory === undefined) return undefined;
+  return {
+    connection,
+    userDataDirectory,
+    definition: { ...definition, userDataDirectory: () => userDataDirectory },
+  };
+};
 // SCIENT-FORK:END
