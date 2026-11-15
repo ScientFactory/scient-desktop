@@ -8,11 +8,13 @@ import {
   missingBibtexFields,
   normalizePersistentIdentifier,
   readReferenceDocument,
+  readWordReferences,
   referenceDocumentKind,
   SCIENT_REFERENCE_CHECK_LIMITS,
   SCIENT_REFERENCE_FINDING_SEVERITY,
   SCIENT_REFERENCE_IGNORE_FILE,
   ScientReferenceIgnoreList,
+  type ReferenceCitation,
   type ReferenceEntry,
   type ScientReferenceCheckReport,
   type ScientReferenceCheckTarget,
@@ -26,6 +28,7 @@ import {
   type ScientSourceType,
   sourceIdentifierLabel,
   sourceIdentifierRegistryName,
+  workLevelIdentifierKey,
 } from "@scientfactory/scient-sources";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
 import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
@@ -52,6 +55,7 @@ import {
   type ComparableField,
   type FindingDraft,
 } from "./referenceComparison.ts";
+import { isWordFileError, readWordFile } from "./WordFile.ts";
 
 /** A user-safe failure: its message names project paths only, never absolute ones. */
 export class ReferenceCheckError extends Schema.TaggedError<ReferenceCheckError>()(
@@ -69,6 +73,7 @@ const PARALLEL_CHUNKS = 2;
 /** Lookups not started by then count as unavailable, so a slow registry cannot hold a check open. */
 const LOOKUP_BUDGET_MS = 90_000;
 const DOCUMENT_EXTENSIONS = [".md", ".markdown", ".qmd", ".rmd", ".tex", ".ltx", ".bib"];
+const WORD_EXTENSION = ".docx";
 export const SKIPPED_DIRECTORIES = new Set([
   "node_modules",
   "__pycache__",
@@ -113,8 +118,8 @@ interface Placed {
   readonly subject: Subject | null;
   readonly draft: FindingDraft;
   readonly registry: ScientReferenceFinding["registry"];
-  /** For findings about a citation rather than a listed reference. */
-  readonly citation?: { readonly key: string; readonly location: ScientReferenceLocation };
+  /** For findings about a citation rather than a listed reference; a Word file has no lines. */
+  readonly citation?: { readonly key: string; readonly location: ScientReferenceLocation | null };
 }
 
 const text = (value: string | null | undefined) => {
@@ -333,6 +338,23 @@ const decodeCslItems = Schema.decodeUnknownSync(Schema.Array(Schema.Unknown));
 const decodeCslItem = Schema.decodeUnknownOption(CslItem);
 const decodeIgnoreList = Schema.decodeUnknownSync(ScientReferenceIgnoreList);
 
+function cslClaimed(csl: typeof CslItem.Type): ClaimedReference {
+  const identifiers: Array<ScientSourceIdentifier> = [];
+  if (text(csl.DOI)) identifiers.push({ scheme: "doi", value: csl.DOI!.trim() });
+  if (text(csl.PMID)) identifiers.push({ scheme: "pmid", value: csl.PMID!.trim() });
+  const issued = csl.issued?.["date-parts"]?.[0]?.[0];
+  return {
+    title: text(csl.title),
+    firstAuthor: text(csl.author?.[0]?.family ?? csl.author?.[0]?.literal),
+    year: issued === undefined ? parseYear(csl.issued?.raw) : parseYear(String(issued)),
+    container: text(csl["container-title"]),
+    volume: csl.volume === undefined ? null : text(String(csl.volume)),
+    pages: text(csl.page),
+    raw: null,
+    identifiers,
+  };
+}
+
 function cslSubjects(source: string, path: string): ReadonlyArray<Subject> {
   return decodeCslItems(JSON.parse(source)).flatMap((value) => {
     const item = decodeCslItem(value);
@@ -341,10 +363,6 @@ function cslSubjects(source: string, path: string): ReadonlyArray<Subject> {
     const key = String(csl.id);
     const at = source.indexOf(JSON.stringify(key));
     const line = at < 0 ? 1 : source.slice(0, at).split("\n").length;
-    const identifiers: Array<ScientSourceIdentifier> = [];
-    if (text(csl.DOI)) identifiers.push({ scheme: "doi", value: csl.DOI!.trim() });
-    if (text(csl.PMID)) identifiers.push({ scheme: "pmid", value: csl.PMID!.trim() });
-    const issued = csl.issued?.["date-parts"]?.[0]?.[0];
     return [
       {
         scopeKey: `${path}#${key}`,
@@ -352,16 +370,7 @@ function cslSubjects(source: string, path: string): ReadonlyArray<Subject> {
         label: label(text(csl.title)),
         location: { path, line },
         sourceId: null,
-        claimed: {
-          title: text(csl.title),
-          firstAuthor: text(csl.author?.[0]?.family ?? csl.author?.[0]?.literal),
-          year: issued === undefined ? parseYear(csl.issued?.raw) : parseYear(String(issued)),
-          container: text(csl["container-title"]),
-          volume: csl.volume === undefined ? null : text(String(csl.volume)),
-          pages: text(csl.page),
-          raw: null,
-          identifiers,
-        },
+        claimed: cslClaimed(csl),
         missing: [],
         fixFor: () => null,
       },
@@ -382,15 +391,28 @@ async function canonicalRoot(root: string): Promise<string> {
   });
 }
 
+function projectFile(
+  root: string,
+  relativePath: string,
+  extensions: ReadonlyArray<string>,
+  description: string,
+) {
+  return resolveScientProjectFile(root, relativePath, { extensions, description }).catch(
+    (error: unknown) => {
+      throw new ReferenceCheckError({
+        message: error instanceof Error ? error.message : "The file could not be read.",
+      });
+    },
+  );
+}
+
 async function readProjectText(root: string, relativePath: string, description: string) {
-  const file = await resolveScientProjectFile(root, relativePath, {
-    extensions: DOCUMENT_EXTENSIONS.concat(".json"),
+  const file = await projectFile(
+    root,
+    relativePath,
+    DOCUMENT_EXTENSIONS.concat(".json"),
     description,
-  }).catch((error: unknown) => {
-    throw new ReferenceCheckError({
-      message: error instanceof Error ? error.message : "The file could not be read.",
-    });
-  });
+  );
   const stats = await NodeFSP.stat(file.absolutePath);
   if (stats.size > MAX_DOCUMENT_BYTES) {
     throw new ReferenceCheckError({
@@ -485,16 +507,227 @@ function libraryKey(key: string, byKey: ReadonlyMap<string, ReadonlyArray<Subjec
   return key;
 }
 
+/** What a document cites against what it lists; `lines` is false for a Word file. */
+function citationBookkeeping(input: {
+  readonly path: string;
+  readonly lines: boolean;
+  readonly citations: ReadonlyArray<ReferenceCitation>;
+  readonly subjects: ReadonlyArray<Subject>;
+  readonly namesBibliography: boolean;
+  readonly citesEverything: boolean;
+}): { readonly bookkeeping: ReadonlyArray<Placed>; readonly unmatched: string | null } {
+  const { path, citations, subjects } = input;
+  const citedLines = new Map<string, number>();
+  for (const citation of citations) {
+    if (!citedLines.has(citation.key)) citedLines.set(citation.key, citation.line);
+  }
+  const bookkeeping: Array<Placed> = [];
+  const byKey = new Map<string, Array<Subject>>();
+  for (const subject of subjects) {
+    if (subject.key === null) continue;
+    byKey.set(subject.key, [...(byKey.get(subject.key) ?? []), subject]);
+  }
+  for (const [key, listed] of byKey) {
+    if (listed.length < 2) continue;
+    bookkeeping.push({
+      subject: listed[1]!,
+      draft: {
+        kind: "duplicate-key",
+        message: `The key ${key} is used by ${listed.length} entries; citations can only reach one of them.`,
+        detail: key,
+      },
+      registry: null,
+    });
+  }
+  const hasBibliography = subjects.length > 0 || input.namesBibliography;
+  const isListed = (key: string) => byKey.has(key) || byKey.has(libraryKey(key, byKey));
+  if (hasBibliography) {
+    for (const [key, line] of citedLines) {
+      if (isListed(key)) continue;
+      bookkeeping.push({
+        subject: null,
+        draft: {
+          kind: "cited-not-listed",
+          message: `${key} is cited but has no bibliography entry.`,
+          detail: key,
+        },
+        registry: null,
+        citation: { key, location: input.lines ? { path, line } : null },
+      });
+    }
+  }
+  if (citedLines.size > 0 && !input.citesEverything) {
+    for (const [key, listed] of byKey) {
+      if (citedLines.has(key) || listed[0]!.sourceId !== null) continue;
+      bookkeeping.push({
+        subject: listed[0]!,
+        draft: {
+          kind: "listed-not-cited",
+          message: `${key} is in the bibliography but never cited.`,
+          detail: key,
+        },
+        registry: null,
+      });
+    }
+  }
+  return {
+    bookkeeping,
+    unmatched:
+      citations.length > 0 && !hasBibliography
+        ? `No bibliography was found for ${path}, so its ${citations.length} citations could not be matched.`
+        : null,
+  };
+}
+
+const count = (value: number, one: string, many: string) =>
+  `${value === 1 ? "One" : value} ${value === 1 ? one : many}`;
+
+/** Finds the Library source a cited work is, by its Zotero item or a work-level identifier. */
+function librarySourceFinder(records: ReadonlyArray<ScientSourceRecord>) {
+  const sources = new Map<string, string>();
+  for (const record of records) {
+    for (const reference of record.externalReferences) {
+      if (reference.system === "zotero")
+        sources.set(`zotero:${reference.itemKey}`, record.sourceId);
+    }
+    for (const identifier of record.identifiers) {
+      const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
+      if (key) sources.set(key, record.sourceId);
+    }
+  }
+  return (workId: string, identifiers: ReadonlyArray<ScientSourceIdentifier>): string | null => {
+    const zoteroItem = /^https?:\/\/zotero\.org\/.*\/items\/(\w+)$/u.exec(workId)?.[1];
+    const keys = [
+      ...(zoteroItem ? [`zotero:${zoteroItem}`] : []),
+      ...identifiers.flatMap(({ scheme, value }) => workLevelIdentifierKey(scheme, value) ?? []),
+    ];
+    return keys.map((key) => sources.get(key)).find((sourceId) => sourceId !== undefined) ?? null;
+  };
+}
+
+async function collectWordDocument(
+  root: string,
+  path: string,
+  library: () => Promise<ReadonlyArray<ScientSourceRecord>>,
+): Promise<Collected> {
+  const file = await projectFile(root, path, [WORD_EXTENSION], "document");
+  const word = await readWordFile(file.absolutePath);
+  if (isWordFileError(word)) {
+    throw new ReferenceCheckError({
+      message:
+        word.problem === "too-large"
+          ? `${file.relativePath} is too large to check.`
+          : `${file.relativePath} could not be read as a Word document.`,
+    });
+  }
+  const notes: Array<string> = [];
+  if (word.trackedChanges) notes.push("Tracked changes were read as if accepted.");
+  if (word.comments) notes.push("Comments were not read.");
+  const references = readWordReferences(word.content);
+  if (references.kind === "text") {
+    const subjects = bibtexSubjects(references.entries, file.relativePath).map(
+      (subject): Subject => ({ ...subject, location: null }),
+    );
+    const { bookkeeping, unmatched } = citationBookkeeping({
+      path: file.relativePath,
+      lines: false,
+      citations: references.citations,
+      subjects,
+      namesBibliography: false,
+      citesEverything: false,
+    });
+    if (unmatched) notes.push(unmatched);
+    return {
+      subjects,
+      files: [file.relativePath],
+      citations: references.citations.length,
+      bookkeeping,
+      notes,
+      complete: unmatched === null,
+    };
+  }
+
+  const sourceOf = librarySourceFinder(await library().catch(() => []));
+  const subjects: Array<Subject> = [];
+  const bookkeeping: Array<Placed> = [];
+  let unreadable = references.unreadable;
+  for (const work of references.works) {
+    const item = decodeCslItem({ id: work.id, ...work.item });
+    if (item._tag === "None") {
+      unreadable++;
+      continue;
+    }
+    const claimed = cslClaimed(item.value);
+    const subject: Subject = {
+      scopeKey: `${file.relativePath}#${work.id}`,
+      key: null,
+      label: label(claimed.title),
+      location: null,
+      sourceId: sourceOf(work.id, claimed.identifiers),
+      claimed,
+      missing: [],
+      fixFor: () => null,
+    };
+    subjects.push(subject);
+    if (work.listed) continue;
+    bookkeeping.push({
+      subject,
+      draft: {
+        kind: "cited-not-listed",
+        message: "This work is cited but was left out of the reference list.",
+        detail: work.id,
+      },
+      registry: null,
+    });
+  }
+  notes.push(
+    "Citations inserted with a reference manager were read. Citations typed by hand were not.",
+  );
+  const absent = subjects.filter((subject) => subject.sourceId === null).length;
+  if (absent > 0) {
+    notes.push(
+      absent === subjects.length
+        ? "None of the cited works is in the Library."
+        : `${absent} of the ${subjects.length} cited works ${absent === 1 ? "is" : "are"} not in the Library.`,
+    );
+  }
+  if (!references.hasList) {
+    notes.push("The document has no reference list made by the reference manager.");
+  }
+  if (references.listedOnly > 0) {
+    notes.push(
+      `${count(references.listedOnly, "work is", "works are")} in the reference list without being cited and could not be checked.`,
+    );
+  }
+  if (unreadable > 0) {
+    notes.push(
+      `${count(unreadable, "citation holds", "citations hold")} no reference details and could not be checked.`,
+    );
+  }
+  return {
+    subjects,
+    files: [file.relativePath],
+    citations: references.citations,
+    bookkeeping,
+    notes,
+    complete: unreadable === 0 && references.listedOnly === 0,
+  };
+}
+
 async function collectDocument(
   root: string,
   path: string,
   citable: () => Promise<ReadonlyArray<ScientSourceRecord>>,
+  library: () => Promise<ReadonlyArray<ScientSourceRecord>>,
 ): Promise<Collected> {
+  if (path.trim().toLowerCase().endsWith(WORD_EXTENSION)) {
+    return collectWordDocument(root, path, library);
+  }
   const document = await readProjectText(root, path, "document");
   const kind = referenceDocumentKind(document.relativePath);
   if (kind === null) {
     throw new ReferenceCheckError({
-      message: "Choose a Markdown (.md), LaTeX (.tex) or BibTeX (.bib) file.",
+      message: "Choose a Markdown (.md), LaTeX (.tex), BibTeX (.bib) or Word (.docx) file.",
     });
   }
   const parsed = readReferenceDocument(kind, document.text);
@@ -539,12 +772,10 @@ async function collectDocument(
     }
   }
 
-  const citedLines = new Map<string, number>();
-  for (const citation of parsed.citations) {
-    if (!citedLines.has(citation.key)) citedLines.set(citation.key, citation.line);
-  }
   const listedKeys = new Set(subjects.flatMap((subject) => (subject.key ? [subject.key] : [])));
-  const unlisted = [...citedLines.keys()].filter((key) => !listedKeys.has(key));
+  const unlisted = [...new Set(parsed.citations.map(({ key }) => key))].filter(
+    (key) => !listedKeys.has(key),
+  );
   if (kind !== "bibtex" && unlisted.length > 0) {
     // Citations can name Library sources by citation key, as Markdown [@key] inserts them.
     const wanted = new Set(unlisted.map((key) => key.toLowerCase()));
@@ -555,62 +786,17 @@ async function collectDocument(
         .map(sourceSubject),
     );
   }
-
-  const bookkeeping: Array<Placed> = [];
-  const byKey = new Map<string, Array<Subject>>();
-  for (const subject of subjects) {
-    if (subject.key === null) continue;
-    byKey.set(subject.key, [...(byKey.get(subject.key) ?? []), subject]);
-  }
-  for (const [key, listed] of byKey) {
-    if (listed.length < 2) continue;
-    bookkeeping.push({
-      subject: listed[1]!,
-      draft: {
-        kind: "duplicate-key",
-        message: `The key ${key} is used by ${listed.length} entries; citations can only reach one of them.`,
-        detail: key,
-      },
-      registry: null,
-    });
-  }
-  const hasBibliography = subjects.length > 0 || parsed.bibliographyPaths.length > 0;
-  if (kind !== "bibtex" && parsed.citations.length > 0 && !hasBibliography) {
-    notes.push(
-      `No bibliography was found for ${document.relativePath}, so its ${parsed.citations.length} citations could not be matched.`,
-    );
+  const { bookkeeping, unmatched } = citationBookkeeping({
+    path: document.relativePath,
+    lines: true,
+    citations: parsed.citations,
+    subjects,
+    namesBibliography: parsed.bibliographyPaths.length > 0,
+    citesEverything: kind === "latex" && /\\nocite\s*\{\s*\*\s*\}/u.test(document.text),
+  });
+  if (unmatched) {
+    notes.push(unmatched);
     complete = false;
-  }
-  const isListed = (key: string) => byKey.has(key) || byKey.has(libraryKey(key, byKey));
-  if (hasBibliography) {
-    for (const [key, line] of citedLines) {
-      if (isListed(key)) continue;
-      bookkeeping.push({
-        subject: null,
-        draft: {
-          kind: "cited-not-listed",
-          message: `${key} is cited but has no bibliography entry.`,
-          detail: key,
-        },
-        registry: null,
-        citation: { key, location: { path: document.relativePath, line } },
-      });
-    }
-  }
-  const citesEverything = kind === "latex" && /\\nocite\s*\{\s*\*\s*\}/u.test(document.text);
-  if (kind !== "bibtex" && citedLines.size > 0 && !citesEverything) {
-    for (const [key, listed] of byKey) {
-      if (citedLines.has(key) || listed[0]!.sourceId !== null) continue;
-      bookkeeping.push({
-        subject: listed[0]!,
-        draft: {
-          kind: "listed-not-cited",
-          message: `${key} is in the bibliography but never cited.`,
-          detail: key,
-        },
-        registry: null,
-      });
-    }
   }
   return {
     subjects,
@@ -709,15 +895,11 @@ export async function checkReferences(
   const now = options.now ?? (() => new Date());
   const startedAt = now().getTime();
   const store = input.store === undefined ? root : input.store;
+  const library = () => (store === null ? Promise.resolve([]) : listScientSourceRecords(store));
   const collected =
     input.target.kind === "library"
       ? await collectLibrary(store, input.target.sourceIds)
-      : await collectDocument(
-          root,
-          input.target.path,
-          input.citable ??
-            (() => (store === null ? Promise.resolve([]) : listScientSourceRecords(store))),
-        );
+      : await collectDocument(root, input.target.path, input.citable ?? library, library);
   const scope = input.target.kind === "library" ? "library" : collected.files[0]!;
   const notes = [...collected.notes];
   let complete = collected.complete;
@@ -860,6 +1042,11 @@ export async function checkReferences(
   };
 }
 
+/** Word keeps a lock file named "~$…" beside an open document. */
+const isReferenceDocument = (name: string) =>
+  referenceDocumentKind(name) !== null ||
+  (name.toLowerCase().endsWith(WORD_EXTENSION) && !name.startsWith("~$"));
+
 /** Project files a reference check can read, nearest first; hidden and tool folders are skipped. */
 export async function listReferenceDocuments(
   root: string,
@@ -883,7 +1070,7 @@ export async function listReferenceDocuments(
         if (depth < 6 && !SKIPPED_DIRECTORIES.has(entry.name)) {
           queue.push({ directory: relative, depth: depth + 1 });
         }
-      } else if (entry.isFile() && referenceDocumentKind(entry.name) !== null) {
+      } else if (entry.isFile() && isReferenceDocument(entry.name)) {
         if (paths.length >= limit) {
           truncated = true;
           break;
