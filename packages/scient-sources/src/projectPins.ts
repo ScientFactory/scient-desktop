@@ -11,6 +11,7 @@ import { readScientLibraryAliases, resolveScientLibraryAlias } from "./libraryAl
 import {
   readScientRemovedLibraryRecords,
   resolveScientProjectSources,
+  scientForeignCopyOwnRecord,
   scientSourceTypeFromSnapshot,
   type ScientProjectSourceResolution,
 } from "./libraryInstanceMap.ts";
@@ -44,7 +45,6 @@ import {
   readScientSourceRecord,
   scientSourceStoreInternals,
 } from "./store.ts";
-import { scientLibraryIdentityProblem } from "./sourceIdentity.ts";
 import { atomicWriteJson, snapshot } from "./storeFiles.ts";
 
 const SCIENT_PROJECT_LIBRARY_PATH = [".scient", "library"] as const;
@@ -94,6 +94,12 @@ export const ScientProjectPin = Schema.Struct({
     Schema.String.pipe(Schema.check(Schema.isMaxLength(MAX_PIN_NOTE_LENGTH))),
   ),
   work: ScientPinWork,
+  /**
+   * The Library record `work` was last refreshed from when that is not the pin's own: a merge
+   * stood then. If the merge is undone and the pin's source removed, `work` is taken from the
+   * source's own record again. An ID of another computer's Library means nothing here.
+   */
+  workFrom: Schema.optionalKey(NonEmptyString),
 });
 export type ScientProjectPin = typeof ScientProjectPin.Type;
 
@@ -191,6 +197,7 @@ function encodePins(document: Pick<PinsDocument, "pins" | "extra">) {
         pinnedBy: pin.pinnedBy,
         ...(pin.note !== undefined ? { note: pin.note } : {}),
         work: encodeWork(pin.work, workExtra),
+        ...(pin.workFrom !== undefined ? { workFrom: pin.workFrom } : {}),
         ...sortedExtra(extra),
       })),
     ...sortedExtra(document.extra),
@@ -890,29 +897,32 @@ export async function refreshScientProjectPinSnapshots(input: {
     for (const [index, stored] of document.pins.entries()) {
       const resolution = resolutions[index]!;
       const record = resolution.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
-      if (record) {
+      const { workFrom: copiedFrom, ...pin } = stored.pin;
+      if (resolution.kind === "resolved" && record) {
         const work = scientPinWorkKeepingUnknown(
-          stored.pin.work,
-          scientPinWorkFromRecord(withKnownPinCitationValues(record, stored.pin.work)),
+          pin.work,
+          scientPinWorkFromRecord(withKnownPinCitationValues(record, pin.work)),
           record,
         );
-        pins.push({ ...stored, pin: { ...stored.pin, work } });
+        // Reached through a merge's alias: the copy now holds the survivor's data, and says so.
+        pins.push({
+          ...stored,
+          pin: { ...pin, work, ...(resolution.aliasOf ? { workFrom: record.sourceId } : {}) },
+        });
         continue;
       }
-      // A removed source is cited from its saved copy, which must describe that source. One that
-      // disagrees with the source's own record (a merge since undone can leave another work's
-      // data there) is taken whole from that record, never filled in from the copy.
+      // A removed source is cited from its saved copy. One taken from another record while a
+      // merge stood is taken whole from the source's own record, never filled in from the copy.
       const own =
-        resolution.kind === "unresolved" && resolution.reason === "removed"
-          ? (await (removed ??= readScientRemovedLibraryRecords(input.library))).get(
-              stored.pin.sourceId,
-            )
+        copiedFrom !== undefined && resolution.kind === "unresolved" && resolution.ownRecordId
+          ? scientForeignCopyOwnRecord({
+              resolution,
+              copiedFrom,
+              live: records,
+              removed: await (removed ??= readScientRemovedLibraryRecords(input.library)),
+            })
           : undefined;
-      pins.push(
-        own && scientLibraryIdentityProblem(stored.pin.work, own) !== null
-          ? { ...stored, pin: { ...stored.pin, work: scientPinWorkFromRecord(own) } }
-          : stored,
-      );
+      pins.push(own ? { ...stored, pin: { ...pin, work: scientPinWorkFromRecord(own) } } : stored);
     }
     const changed = await writePinsDocument(root, document, pins);
     return { changed, pins: pins.map(({ pin }) => pin).toSorted(comparePins) };

@@ -405,10 +405,12 @@ takes no lock. So neither a killed process nor an error in a process that
 stays up (a full disk) leaves a merged source in the Trash without its alias,
 or a restored one with an alias to the survivor, past the next write. A failed
 settle is logged and tried again on the next write call; it never fails that
-call. Known limit: a settle that fails, followed at once by a write that
-changes the same collection's membership of the two sources (or sets a merged
-field back to the merged value), is replayed over that change when settling
-later succeeds.
+call. Known limit: settling and the write that follows are not one step under
+the lock. If, between a write call's check and its write, another process
+stops halfway through an Undo (or the settle itself fails), and that write
+changes the same collection's membership of the two sources or sets a merged
+field back to the merged value, the later settle replays the Undo over that
+change.
 
 `undoScientLibraryMerge` restores the loser as a new revision, reverts each
 field the merge set only where the survivor still holds the merged value,
@@ -622,14 +624,18 @@ sources in `<project>/.scient/library/pins.json`:
   known snapshot value when the resolving record lacks it
   (`withKnownPinCitationValues`; a bare year, or a year with no stored date, is
   less than a full date of that year), unless the record's provenance shows a person or agent edit of that
-  field (a deliberate correction). A pin that is `removed` keeps its snapshot,
-  with one repair: when this Library still has the pin's own record (by exact
-  ID, in the Trash or as a tombstone, `readScientRemovedLibraryRecords`) and
-  the snapshot disagrees with it about which work it is
-  (`scientLibraryIdentityProblem`), the snapshot is taken whole from that
-  record, never filled in from the old snapshot: a merge since undone can
-  leave the survivor's data there, and a hybrid of two works is worse than a
-  sparse citation of the right one. A refresh from a record hydrated from an
+  field (a deliberate correction). A refresh that reaches its record through a merge's alias
+  (the resolution's `aliasOf`) writes the survivor's data and records where it
+  came from in the pin's `workFrom` (the survivor's Library ID); a refresh from
+  the pin's own record removes it. A pin that is `removed` keeps its snapshot,
+  with one repair: when `workFrom` names another record of this Library than
+  the pin's own removed record (`ownRecordId` on the resolution: the mapped ID
+  through aliases, or its hydration identity, never a match by data), the
+  merge was undone since, and the snapshot is taken whole from the pin's own
+  Trash entry or tombstone (`scientForeignCopyOwnRecord`), never filled in from
+  the old snapshot. A snapshot of the pin's own source is never touched, so
+  what the project knows beyond the Library stays; a `workFrom` from another
+  computer's Library names nothing here and is ignored. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not
   know is read as `other`.
 - `listScientProjectPinnedWorks` returns the pins under the project's keys for
@@ -669,7 +675,8 @@ ID with its snapshot (a pin's `work`, later a review's record snapshot):
    A record the Library holds apart from the project source ID or from its
    mapped ID (Not duplicates, or a merge that was undone:
    `readScientLibraryExclusions`, read only when a snapshot matched) is never
-   a candidate. A refresh while a merge stood may have left the survivor's
+   a candidate: every live record is vetted, not only the first match, so a
+   title match that an identifier match hid is vetted too. A refresh while a merge stood may have left the survivor's
    data in the snapshot, so after the Undo the snapshot is no evidence for
    that record. With only such matches the source is `removed` when its own
    record is gone, else `contradicted` with those records as candidates, and
@@ -834,9 +841,10 @@ without the author's library can still list, screen and count:
   survives), `capturedAt` and `capturedRevision` change only with the content,
   entries the review no longer names anywhere (searches, records, duplicates,
   distinct pairs, screening, retrieval) are dropped, and nothing is written
-  when nothing changed. A removed record's entry gets the same repair as a
-  removed pin's snapshot: when it disagrees with the record's own Trash entry
-  or tombstone about which work it is, it is taken whole from that record (a
+  when nothing changed. An entry refreshed through a merge's alias records the
+  survivor's ID in `capturedFrom`, and a removed record's entry gets the same
+  repair as a removed pin's snapshot: taken from another record while a merge
+  stood, it is taken whole from the record's own Trash entry or tombstone (a
   tombstone has no abstract, so the entry then has none).
 - Recovery: entries the review does not name (a crash after the snapshot, before
   the review) are ignored by readers and reused by a retry. A file that does not

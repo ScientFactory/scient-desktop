@@ -16,8 +16,14 @@ import { changeScientLibraryReview, listScientLibraryReviewRecords } from "./lib
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import type { ScientSourceCandidate } from "./model.ts";
 import {
+  markScientLibrarySourcesDistinct,
+  mergeScientLibrarySources,
+  undoScientLibraryMerge,
+} from "./libraryMerge.ts";
+import {
   listScientProjectPinnedWorks,
   pinScientLibrarySource,
+  refreshScientProjectPinSnapshots,
   resolveScientProjectPins,
   setScientProjectPinNote,
 } from "./projectPins.ts";
@@ -148,6 +154,7 @@ describe("resolving a copied project's sources", () => {
       projectSourceId: cited.sourceId,
       reason: "removed",
       candidateIds: [alternate.sourceId],
+      ownRecordId: alternate.sourceId,
     });
     expect((await listScientSourceRecords(collaborator)).map(({ sourceId }) => sourceId)).toEqual([
       original.sourceId,
@@ -428,5 +435,158 @@ describe("resolving a copied project's sources", () => {
       actor: "user",
     });
     expect(await resolvePin()).toMatchObject({ kind: "resolved", by: "hydrated" });
+  });
+});
+
+describe("records the Library holds apart from a source", () => {
+  async function newProject(base: string) {
+    const project = NodePath.join(base, "project");
+    await NodeFSP.mkdir(project);
+    await initializeScientProject({ root: project });
+    return project;
+  }
+  async function newBase() {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-held-apart-")),
+    );
+    fixtures.push(base);
+    return base;
+  }
+  const trash = async (library: Library, sourceId: string) => {
+    const record = (await readScientSourceRecord(library, sourceId))!;
+    await removeScientSource({ root: library, sourceId, expectedRevision: record.revision });
+  };
+
+  // regression: review H1-b-1 finding 1, only the first match was vetted.
+  it("never resolve it, also a second match the first one hid", async () => {
+    const base = await newBase();
+    const library = await newLibrary(base, "library");
+    const project = await newProject(base);
+    const cited = await add(library, work("Shared title"));
+    // The same DOI on another record, and a third with the same title, author and year only.
+    const sameDoi = (
+      await importScientSource({
+        root: library,
+        operationId: NodeCrypto.randomUUID(),
+        candidate: { ...work("Shared title"), sourceKey: "same-doi" },
+        refusedSourceIds: [cited.sourceId],
+      })
+    ).record!;
+    const sameTitle = (
+      await importScientSource({
+        root: library,
+        operationId: NodeCrypto.randomUUID(),
+        candidate: { ...work("Shared title"), sourceKey: "same-title", identifiers: [] },
+        refusedSourceIds: [cited.sourceId, sameDoi.sourceId],
+        allowPossibleMetadataMatch: true,
+      })
+    ).record!;
+    await pinScientLibrarySource({
+      projectRoot: project,
+      library,
+      sourceId: cited.sourceId,
+      actor: "user",
+    });
+    for (const other of [sameDoi, sameTitle]) {
+      await markScientLibrarySourcesDistinct({
+        library,
+        sourceIds: [cited.sourceId, other.sourceId],
+        actor: "user",
+      });
+    }
+    await trash(library, cited.sourceId);
+
+    const [resolved] = await resolveScientProjectPins({
+      projectRoot: project,
+      library,
+      mode: "write",
+      actor: "user",
+    });
+    expect(resolved?.resolution).toEqual({
+      kind: "unresolved",
+      projectSourceId: cited.sourceId,
+      reason: "removed",
+      candidateIds: [cited.sourceId],
+      ownRecordId: cited.sourceId,
+    });
+  });
+
+  // regression: review H1-b-1 finding 2, the repair looked the record up by the project's ID.
+  it("a copy taken from one is repaired from the record the project's ID is mapped to", async () => {
+    const base = await newBase();
+    const author = await newLibrary(base, "author");
+    const project = await newProject(base);
+    const elsewhere = await add(author, work("The cited study"));
+    await pinScientLibrarySource({
+      projectRoot: project,
+      library: author,
+      sourceId: elsewhere.sourceId,
+      actor: "user",
+    });
+    // On this computer the same work has another ID, which the project's ID is mapped to.
+    const library = await newLibrary(base, "collaborator");
+    const own = await add(library, work("The cited study"));
+    const other = await add(library, {
+      ...work("Another study"),
+      identifiers: [{ scheme: "doi", value: "10.1000/another" }],
+    });
+    const refresh = async () => {
+      await resolveScientProjectPins({
+        projectRoot: project,
+        library,
+        mode: "write",
+        actor: "user",
+      });
+      const { pins } = await refreshScientProjectPinSnapshots({ projectRoot: project, library });
+      return pins[0]!;
+    };
+    expect((await refresh()).workFrom).toBeUndefined();
+    const merged = await mergeScientLibrarySources({
+      library,
+      sourceIds: [other.sourceId, own.sourceId],
+      survivorId: other.sourceId,
+    });
+    if (merged.outcome !== "merged") throw new Error("Expected a merge.");
+    expect(await refresh()).toMatchObject({
+      work: { title: "Another study" },
+      workFrom: other.sourceId,
+    });
+
+    await undoScientLibraryMerge({ library, mergeId: merged.merge.mergeId });
+    await trash(library, own.sourceId);
+
+    const repaired = await refresh();
+    expect(repaired.work.title).toBe("The cited study");
+    expect(repaired.workFrom).toBeUndefined();
+  });
+
+  // regression: review H1-b-1 finding 3, a copy of the source itself was replaced when it differed.
+  it("a removed source's own copy is left as the project has it", async () => {
+    const base = await newBase();
+    const library = await newLibrary(base, "library");
+    const project = await newProject(base);
+    const cited = await add(library, work("Title as first imported"));
+    await pinScientLibrarySource({
+      projectRoot: project,
+      library,
+      sourceId: cited.sourceId,
+      actor: "user",
+    });
+    // The title is corrected in the Library, and the source removed before this project refreshes.
+    await updateScientSourceMetadata({
+      root: library,
+      sourceId: cited.sourceId,
+      expectedRevision: cited.revision,
+      metadata: { ...editableMetadataFromRecord(cited), title: "Title as corrected" },
+      actor: "user",
+    });
+    await trash(library, cited.sourceId);
+
+    const { changed, pins } = await refreshScientProjectPinSnapshots({
+      projectRoot: project,
+      library,
+    });
+    expect(changed).toBe(false);
+    expect(pins[0]?.work.title).toBe("Title as first imported");
   });
 });

@@ -36,6 +36,8 @@ export interface ModelPin {
   readonly note: string | null;
   /** The title the project's saved copy holds: from pinning, or the last refresh. */
   readonly snapshotTitle: string;
+  /** The work the saved copy was taken from when not the pin's own: a merge stood then. */
+  readonly copiedFrom: string | null;
   /** Notes this pin held before, which its history must still list (the latest 20). */
   readonly earlierNotes: ReadonlyArray<string>;
 }
@@ -203,6 +205,7 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
             work: step.work,
             note: step.note,
             snapshotTitle: workOf(model, step.work).title,
+            copiedFrom: null,
             earlierNotes: [],
           },
         ],
@@ -231,11 +234,20 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
         ...model,
         pins: model.pins.map((pin) => {
           if (pin.project !== step.project) return pin;
-          // The saved copy follows the live source the key reaches; with none, the key's own
-          // removed source, so a copy a merge left there never outlives the merge's Undo.
           const target = targetOf(model, pin.work);
-          const own = workOf(model, pin.work);
-          return { ...pin, snapshotTitle: (target.state === "live" ? target : own).title };
+          // The copy follows the live source the key reaches, and remembers when that is not
+          // the key's own source.
+          if (target.state === "live") {
+            return {
+              ...pin,
+              snapshotTitle: target.title,
+              copiedFrom: target.label === pin.work ? null : target.label,
+            };
+          }
+          // Removed: a copy taken from another source goes back to the key's own; its own stays.
+          return pin.copiedFrom !== null && pin.copiedFrom !== target.label
+            ? { ...pin, snapshotTitle: target.title, copiedFrom: null }
+            : pin;
         }),
       };
     case "merge": {

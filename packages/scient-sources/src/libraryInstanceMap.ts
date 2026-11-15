@@ -104,6 +104,11 @@ export type ScientProjectSourceResolution =
       readonly projectSourceId: string;
       readonly sourceId: string;
       readonly by: ResolutionStep;
+      /**
+       * The Library ID the source named before a merge's alias was followed to `sourceId`. A
+       * saved copy refreshed now holds another record's data, which the copy records.
+       */
+      readonly aliasOf?: string;
     }
   | {
       readonly kind: "unresolved";
@@ -117,6 +122,11 @@ export type ScientProjectSourceResolution =
       readonly candidateIds: ReadonlyArray<string>;
       /** Someone decided this pin is none of these candidates. */
       readonly keptSeparate?: true;
+      /**
+       * For `removed`: the source's own record in the Trash or among the deleted, known by ID
+       * (the mapped ID through aliases, or its hydration identity), never by matching its data.
+       */
+      readonly ownRecordId?: string;
     };
 
 export interface ScientProjectSourceResolveInput {
@@ -305,9 +315,8 @@ async function readRemovedSources(
 }
 
 /**
- * The records this Library keeps in the Trash or as deleted markers, by their exact ID. A
- * project's saved copy of a removed source that disagrees with its own record here is replaced
- * by it: a merge since undone may have left another work's data in the copy.
+ * The records this Library keeps in the Trash or as deleted markers, by their exact ID: what a
+ * removed source's saved copy is taken from when the copy holds another record's data.
  */
 export async function readScientRemovedLibraryRecords(
   library: ScientLibraryLocation,
@@ -318,6 +327,28 @@ export async function readScientRemovedLibraryRecords(
   ]);
   // A source both trashed and marked deleted was stopped mid-deletion: the Trash copy is whole.
   return new Map([...deleted, ...entries].map((entry) => [entry.sourceId, entry.record]));
+}
+
+/**
+ * The record a removed source's saved copy is replaced by, or undefined to keep the copy. Only a
+ * copy that says it was taken from another record of this Library is replaced (a merge stood
+ * then and was undone since); a copy of the source itself is never touched, so what the project
+ * knows beyond the Library is kept.
+ */
+export function scientForeignCopyOwnRecord(input: {
+  readonly resolution: ScientProjectSourceResolution;
+  /** The record the copy was taken from, as the copy says; absent for the source's own. */
+  readonly copiedFrom: string | undefined;
+  readonly live: ReadonlyMap<string, ScientSourceRecord>;
+  readonly removed: ReadonlyMap<string, ScientSourceRecord>;
+}): ScientSourceRecord | undefined {
+  const { resolution, copiedFrom } = input;
+  if (resolution.kind !== "unresolved" || resolution.reason !== "removed") return undefined;
+  const { ownRecordId } = resolution;
+  if (!ownRecordId || copiedFrom === undefined || copiedFrom === ownRecordId) return undefined;
+  // An ID from another computer's Library says nothing here.
+  if (!input.live.has(copiedFrom) && !input.removed.has(copiedFrom)) return undefined;
+  return input.removed.get(ownRecordId);
 }
 
 /** The removed records a project source names: by ID, alias or hydration identity, else its work. */
@@ -337,6 +368,25 @@ function removedIdsFor(
   if (byId.length > 0) return [...new Set(byId.map((record) => record.sourceId))];
   const match = work === null ? null : matchWork(work, removed.records);
   return match === null || match.by === "contradicted" ? [] : [...new Set(match.ids)];
+}
+
+/** The removed record that is the source itself, by ID alone; undefined when only its data matched. */
+function ownRemovedId(
+  removed: RemovedSources,
+  aliases: ScientLibraryAliases,
+  projectSourceId: string,
+  mapped: InstanceMapEntry | undefined,
+): string | undefined {
+  const gone = new Set(removed.records.map((record) => record.sourceId));
+  const named = [
+    resolveScientLibraryAlias(aliases, mapped?.sourceId ?? projectSourceId),
+    scientSourceIdFor(removed.libraryId, hydrationSourceKey(projectSourceId)),
+  ].find((sourceId) => gone.has(sourceId));
+  if (named) return named;
+  const hydrated = removed.records.filter(
+    (record) => record.hydratedFromProjectSourceId === projectSourceId,
+  );
+  return hydrated.length === 1 ? hydrated[0]!.sourceId : undefined;
 }
 
 /**
@@ -469,13 +519,13 @@ async function resolveAt(
 
   // Read only when a saved copy matched a record: receipts are one file per merge.
   let exclusions: Promise<ScientLibraryExclusions> | undefined;
-  const idsHeldApart = async (own: ReadonlyArray<string>, candidates: ReadonlyArray<string>) => {
+  const idsHeldApart = async (own: ReadonlyArray<string>) => {
     const { isDistinct, keptApart } = await (exclusions ??= readScientLibraryExclusions(
       root,
       live,
     ));
     return new Set(
-      candidates.filter((candidate) =>
+      [...live].filter((candidate) =>
         own.some(
           (id) =>
             id !== candidate &&
@@ -490,19 +540,26 @@ async function resolveAt(
     const { projectSourceId } = request;
     const mapped = recorded.get(projectSourceId);
     const mappedTarget = mapped ? liveTarget(mapped.sourceId) : null;
-    if (mappedTarget) {
+    if (mapped && mappedTarget) {
       results.push({
         kind: "resolved",
         projectSourceId,
         sourceId: mappedTarget,
         by: "instance-map",
+        ...(mappedTarget !== mapped.sourceId ? { aliasOf: mapped.sourceId } : {}),
       });
       continue;
     }
     const sameId = liveTarget(projectSourceId);
     if (sameId) {
       record(projectSourceId, projectSourceId, "same-id");
-      results.push({ kind: "resolved", projectSourceId, sourceId: sameId, by: "same-id" });
+      results.push({
+        kind: "resolved",
+        projectSourceId,
+        sourceId: sameId,
+        by: "same-id",
+        ...(sameId !== projectSourceId ? { aliasOf: projectSourceId } : {}),
+      });
       continue;
     }
     const separate = file.keptSeparate.get(projectSourceId);
@@ -515,12 +572,14 @@ async function resolveAt(
     const found = request.work ? matchWork(request.work, records, projectSourceId) : null;
     // The Library's own decisions bind too: a record held apart from this source (Not
     // duplicates, or a merge that was undone) never resolves it, whatever the saved copy says.
+    // Every record is vetted, so a second match the first one hid is vetted too.
     const heldApart = found
-      ? await idsHeldApart([projectSourceId, ...(mapped ? [mapped.sourceId] : [])], found.ids)
+      ? await idsHeldApart([projectSourceId, ...(mapped ? [mapped.sourceId] : [])])
       : new Set<string>();
+    const suppressed = found ? found.ids.filter((id) => heldApart.has(id)) : [];
     // Keep separate holds until withdrawn: a rejected source never resolves this ID again.
     const match =
-      (separate || heldApart.size > 0) && request.work && found
+      (separate || suppressed.length > 0) && request.work && found
         ? (matchWork(
             request.work,
             records.filter(
@@ -563,22 +622,25 @@ async function resolveAt(
       ? [resolveScientLibraryAlias(aliases, mapped.sourceId)]
       : await removedIds(request);
     if (removed.length > 0) {
+      removedSources ??= readRemovedSources(root, library, liveTarget);
+      const ownRecordId = ownRemovedId(await removedSources, aliases, projectSourceId, mapped);
       results.push({
         kind: "unresolved",
         projectSourceId,
         reason: "removed",
         candidateIds: removed,
+        ...(ownRecordId ? { ownRecordId } : {}),
       });
       continue;
     }
     // Only records held apart matched, and nothing says the source was removed: its saved copy
     // describes one of them, so it is never hydrated into a twin.
-    if (heldApart.size > 0) {
+    if (suppressed.length > 0) {
       results.push({
         kind: "unresolved",
         projectSourceId,
         reason: "contradicted",
-        candidateIds: [...heldApart],
+        candidateIds: suppressed,
       });
       continue;
     }
