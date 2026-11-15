@@ -9,9 +9,13 @@ import * as Schema from "effect/Schema";
 
 import { readScientSourcesOrganization } from "./collections.ts";
 import {
+  readScientLibraryAliases,
+  resolveScientLibraryAlias,
+  scientUnmergedSourceIds,
+} from "./libraryAliases.ts";
+import {
   readScientRemovedLibraryRecords,
   resolveScientProjectSources,
-  scientForeignCopyOwnRecord,
   scientSourceTypeFromSnapshot,
   type ScientProjectSourceResolution,
 } from "./libraryInstanceMap.ts";
@@ -74,8 +78,6 @@ export const ScientReviewWork = Schema.Struct({
   capturedAt: NonEmptyString,
   /** The library record's revision when captured; it stands in for it when the ID is unresolved. */
   capturedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
-  /** The Library record it was captured from when not the entry's own (as a pin's `workFrom`). */
-  capturedFrom: Schema.optionalKey(NonEmptyString),
 });
 export type ScientReviewWork = typeof ScientReviewWork.Type;
 
@@ -147,7 +149,6 @@ function encodeWork(work: ScientReviewWork, extra: JsonObject) {
     })),
     capturedAt: work.capturedAt,
     capturedRevision: work.capturedRevision,
-    ...(work.capturedFrom !== undefined ? { capturedFrom: work.capturedFrom } : {}),
     ...sortedExtra(extra),
   };
 }
@@ -365,11 +366,8 @@ export function scientReviewNamedIds(review: ScientSystematicReview): ReadonlyAr
 export function scientReviewWorkFromRecord(
   record: ScientSourceRecord,
   capturedAt: string,
-  /** The ID the entry names when `record` was reached through a merge's alias. */
-  aliasOf?: string,
 ): ScientReviewWork {
   return {
-    ...(aliasOf !== undefined ? { capturedFrom: record.sourceId } : {}),
     type: record.type,
     title: record.title,
     creators: record.creators,
@@ -395,9 +393,11 @@ function refreshedWork(
   existing: ScientReviewWork,
   record: ScientSourceRecord,
   now: string,
-  aliasOf: string | undefined,
+  /** An unmerged source: the entry is its record whole, as for a pin's copy. */
+  whole: boolean,
 ): ScientReviewWork {
-  const fresh = scientReviewWorkFromRecord(record, now, aliasOf);
+  const fresh = scientReviewWorkFromRecord(record, now);
+  if (whole) return workContent(fresh) === workContent(existing) ? existing : fresh;
   const next: ScientReviewWork = {
     ...fresh,
     title: fresh.title ?? existing.title,
@@ -576,12 +576,6 @@ function libraryRecordFor(resolved: Resolved, sourceId: string): ScientSourceRec
   return resolution?.kind === "resolved" ? resolved.records.get(resolution.sourceId) : undefined;
 }
 
-/** The ID an entry names when its record was reached through a merge's alias. */
-function aliasOfFor(resolved: Resolved, sourceId: string): string | undefined {
-  const resolution = resolved.resolutions.get(sourceId);
-  return resolution?.kind === "resolved" ? resolution.aliasOf : undefined;
-}
-
 const wasRemoved = (resolution: ScientProjectSourceResolution | undefined) =>
   resolution?.kind === "unresolved" && resolution.reason === "removed";
 
@@ -608,10 +602,7 @@ function filledEntries(
   for (const sourceId of scientReviewNamedIds(review)) {
     if (next.has(sourceId)) continue;
     const record = libraryRecordFor(resolved, sourceId);
-    if (record) {
-      const work = scientReviewWorkFromRecord(record, now, aliasOfFor(resolved, sourceId));
-      next.set(sourceId, { work, extra: {} });
-    }
+    if (record) next.set(sourceId, { work: scientReviewWorkFromRecord(record, now), extra: {} });
   }
   return next;
 }
@@ -992,37 +983,60 @@ export async function refreshScientLibraryReviewSnapshot(input: {
     }
     const now = new Date().toISOString();
     const entries = new Map<string, StoredWork>();
+    const aliases = await readScientLibraryAliases(input.library);
+    const unmerged = scientUnmergedSourceIds(aliases);
     let removed: Promise<ReadonlyMap<string, ScientSourceRecord>> | undefined;
     for (const sourceId of named) {
       const stored = document.entries.get(sourceId);
       const record = libraryRecordFor(resolved, sourceId);
       if (stored && record) {
-        const work = refreshedWork(stored.work, record, now, aliasOfFor(resolved, sourceId));
+        const work = refreshedWork(stored.work, record, now, unmerged.has(record.sourceId));
         entries.set(sourceId, work === stored.work ? stored : { ...stored, work });
       } else if (stored) {
-        // As for a project key: a copy taken from another record while a merge stood is taken
-        // whole from the removed record's own entry (a tombstone has no abstract).
-        const resolution = resolved.resolutions.get(sourceId);
-        const { capturedFrom } = stored.work;
+        // As for a project key: a removed, unmerged source's entry is its own Trash entry or
+        // tombstone whole (a tombstone has no abstract).
+        const ownId = resolveScientLibraryAlias(aliases, sourceId);
         const own =
-          capturedFrom !== undefined && resolution
-            ? scientForeignCopyOwnRecord({
-                resolution,
-                copiedFrom: capturedFrom,
-                live: resolved.records,
-                removed: await (removed ??= readScientRemovedLibraryRecords(input.library)),
-              })
+          wasRemoved(resolved.resolutions.get(sourceId)) && unmerged.has(ownId)
+            ? (await (removed ??= readScientRemovedLibraryRecords(input.library))).get(ownId)
             : undefined;
         entries.set(
           sourceId,
           own ? { ...stored, work: scientReviewWorkFromRecord(own, now) } : stored,
         );
       } else if (record) {
-        const work = scientReviewWorkFromRecord(record, now, aliasOfFor(resolved, sourceId));
-        entries.set(sourceId, { work, extra: {} });
+        entries.set(sourceId, { work: scientReviewWorkFromRecord(record, now), extra: {} });
       }
     }
     const published = await publishSnapshot(folder, review.reviewId, document, entries, []);
     return { changed: published !== document };
   });
 }
+
+/** For linking a source on purpose (`projectSourceLink.ts`). The caller holds the reviews lock. */
+export const scientLibraryReviewsInternals = {
+  /** Each review's saved copy of the source exactly as stored, by review ID. */
+  async readEntryCopies(root: string, projectSourceId: string): Promise<Record<string, unknown>> {
+    const folder = libraryFolder(root);
+    const copies: Record<string, unknown> = {};
+    for (const review of (await readAllReviews(folder)).reviews) {
+      const stored = (await readSnapshotState(folder, review.reviewId, "read")).entries.get(
+        projectSourceId,
+      );
+      if (stored) copies[review.reviewId] = encodeWork(stored.work, stored.extra);
+    }
+    return copies;
+  },
+  /** Puts copies from `readEntryCopies` back, only where the review still has the entry. */
+  async writeEntryCopies(root: string, projectSourceId: string, copies: unknown): Promise<void> {
+    if (!isJsonObject(copies)) return;
+    const folder = libraryFolder(root);
+    for (const [reviewId, raw] of Object.entries(copies)) {
+      const state = await readSnapshotState(folder, reviewId, "write");
+      if (!state.entries.has(projectSourceId)) continue;
+      const entries = new Map(state.entries);
+      entries.set(projectSourceId, { work: decodeWork(raw), extra: extraFields(raw, WORK_FIELDS) });
+      await publishSnapshot(folder, reviewId, state, entries, []);
+    }
+  },
+};

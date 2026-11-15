@@ -181,10 +181,12 @@ describe("sources deleted for good", () => {
         reason: "removed",
         candidateIds: [record.sourceId],
       };
-      // Known by its ID, so a saved copy taken from another record could be repaired from it.
-      const own = { ...removed, projectSourceId: "source_pinned", ownRecordId: record.sourceId };
-      expect(await resolve("source_pinned")).toEqual([own]);
-      expect(await resolve("source_pinned")).toEqual([own]);
+      expect(await resolve("source_pinned")).toEqual([
+        { ...removed, projectSourceId: "source_pinned" },
+      ]);
+      expect(await resolve("source_pinned")).toEqual([
+        { ...removed, projectSourceId: "source_pinned" },
+      ]);
       // Another checkout's ID for the same work, matched by its snapshot alone.
       expect(await resolve("source_other_checkout")).toEqual([
         { ...removed, projectSourceId: "source_other_checkout" },

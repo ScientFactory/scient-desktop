@@ -624,18 +624,20 @@ sources in `<project>/.scient/library/pins.json`:
   known snapshot value when the resolving record lacks it
   (`withKnownPinCitationValues`; a bare year, or a year with no stored date, is
   less than a full date of that year), unless the record's provenance shows a person or agent edit of that
-  field (a deliberate correction). A refresh that reaches its record through a merge's alias
-  (the resolution's `aliasOf`) writes the survivor's data and records where it
-  came from in the pin's `workFrom` (the survivor's Library ID); a refresh from
-  the pin's own record removes it. A pin that is `removed` keeps its snapshot,
-  with one repair: when `workFrom` names another record of this Library than
-  the pin's own removed record (`ownRecordId` on the resolution: the mapped ID
-  through aliases, or its hydration identity, never a match by data), the
-  merge was undone since, and the snapshot is taken whole from the pin's own
-  Trash entry or tombstone (`scientForeignCopyOwnRecord`), never filled in from
-  the old snapshot. A snapshot of the pin's own source is never touched, so
-  what the project knows beyond the Library stays; a `workFrom` from another
-  computer's Library names nothing here and is ignored. A refresh from a record hydrated from an
+  field (a deliberate correction). A source is _unmerged_ when an alias with `undoneAt` names it
+  as merged-away or as kept (`scientUnmergedSourceIds`): a refresh made while
+  that merge stood may have written the other source's values into project
+  copies, on both sides (the kept record held the merged-away one's values
+  until the Undo reverted them). For an unmerged source the snapshot is its
+  Library record whole, with no known values kept from the old snapshot:
+  from the live record when the pin resolves to it, and, for a pin that is
+  `removed`, from the source's own Trash entry or tombstone (the pin's ID
+  through aliases, `readScientRemovedLibraryRecords`). `listScientProjectPinnedWorks`
+  applies the same rule when it reads. Any other removed pin keeps its
+  snapshot untouched. Limits: what a project knew about an unmerged source
+  beyond the Library is not kept; a pin whose ID is another computer's and
+  was matched here by its data is not repaired after removal; a source merged
+  again and unmerged again marks only its latest pair. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not
   know is read as `other`.
 - `listScientProjectPinnedWorks` returns the pins under the project's keys for
@@ -742,11 +744,26 @@ no pin names gets the same: the review record carries its resolution
 review read (`libraryReviewRecordMatches`) carry `libraryMatch`, and the repair
 actions take its project source ID; Keep separate looks for the match among
 pins, then the project's reviews. It never becomes a pin.
-`link-pin` (`linkScientProjectSource`) writes a `linked` map entry with
-`linkedBy` and the entry it replaced, under the library lock; the pin's key,
-project note and review membership hang on the project source ID, so they all
-stay, and the managed bibliography is rebuilt. `unlink-pin` puts the replaced
-entry back (or none). `keep-pin-separate` records the decision in the map's
+`link-pin` (`linkScientProjectSourceKeepingCopies` in `projectSourceLink.ts`)
+writes a `linked` map entry with `linkedBy` and the entry it replaced, under
+the library lock; the pin's key, project note and review membership hang on
+the project source ID, so they all stay, and the managed bibliography is
+rebuilt. The entry also keeps what the project's files held for the source at
+that moment (`replacedCopies`: the pin's stored `work` and each review's stored
+entry, as they are in the files): the next refresh writes the linked record's
+data over them, and without the originals an Unlink could not hold, because
+the rewritten copy would match the record and link again. They live with the
+link, in this checkout's map, because only this checkout can undo it; a second
+link keeps the first one's copies. `unlink-pin`
+(`unlinkScientProjectSourceRestoringCopies`) holds the review lock and the
+pins lock (the move's order), puts the copies back where the pin or review
+still has the source, then puts the replaced entry back (or none) under the
+library lock, and keeps the record that was linked out of automatic matching
+for this source through its `keptSeparate` entry, until a new link or Ask
+again: the restored copy may by now match that record alone (another
+candidate was removed meanwhile). A stop between the two steps leaves the
+source linked with its copies still kept; the next refresh rewrites the files
+and it is fully linked again. `keep-pin-separate` records the decision in the map's
 `keptSeparate` list with actor and time; the resolution then carries
 `keptSeparate: true`, and `clear-pin-separate` withdraws it. The decision
 holds: resolution leaves the rejected IDs (and what their aliases resolve to)
@@ -841,10 +858,8 @@ without the author's library can still list, screen and count:
   survives), `capturedAt` and `capturedRevision` change only with the content,
   entries the review no longer names anywhere (searches, records, duplicates,
   distinct pairs, screening, retrieval) are dropped, and nothing is written
-  when nothing changed. An entry refreshed through a merge's alias records the
-  survivor's ID in `capturedFrom`, and a removed record's entry gets the same
-  repair as a removed pin's snapshot: taken from another record while a merge
-  stood, it is taken whole from the record's own Trash entry or tombstone (a
+  when nothing changed. An unmerged source's entry (see pins above) is its
+  Library record whole, live or from its own Trash entry or tombstone (a
   tombstone has no abstract, so the entry then has none).
 - Recovery: entries the review does not name (a crash after the snapshot, before
   the review) are ignored by readers and reused by a retry. A file that does not

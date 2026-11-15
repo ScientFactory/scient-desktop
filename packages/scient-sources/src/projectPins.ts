@@ -7,11 +7,14 @@ import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
 import { assignCitationKey, citationKeyComparisonValue } from "./citationKeys.ts";
-import { readScientLibraryAliases, resolveScientLibraryAlias } from "./libraryAliases.ts";
+import {
+  readScientLibraryAliases,
+  resolveScientLibraryAlias,
+  scientUnmergedSourceIds,
+} from "./libraryAliases.ts";
 import {
   readScientRemovedLibraryRecords,
   resolveScientProjectSources,
-  scientForeignCopyOwnRecord,
   scientSourceTypeFromSnapshot,
   type ScientProjectSourceResolution,
 } from "./libraryInstanceMap.ts";
@@ -94,12 +97,6 @@ export const ScientProjectPin = Schema.Struct({
     Schema.String.pipe(Schema.check(Schema.isMaxLength(MAX_PIN_NOTE_LENGTH))),
   ),
   work: ScientPinWork,
-  /**
-   * The Library record `work` was last refreshed from when that is not the pin's own: a merge
-   * stood then. If the merge is undone and the pin's source removed, `work` is taken from the
-   * source's own record again. An ID of another computer's Library means nothing here.
-   */
-  workFrom: Schema.optionalKey(NonEmptyString),
 });
 export type ScientProjectPin = typeof ScientProjectPin.Type;
 
@@ -197,7 +194,6 @@ function encodePins(document: Pick<PinsDocument, "pins" | "extra">) {
         pinnedBy: pin.pinnedBy,
         ...(pin.note !== undefined ? { note: pin.note } : {}),
         work: encodeWork(pin.work, workExtra),
-        ...(pin.workFrom !== undefined ? { workFrom: pin.workFrom } : {}),
         ...sortedExtra(extra),
       })),
     ...sortedExtra(document.extra),
@@ -892,37 +888,36 @@ export async function refreshScientProjectPinSnapshots(input: {
     const records = new Map(
       (await listScientSourceRecords(input.library)).map((record) => [record.sourceId, record]),
     );
+    const aliases = await readScientLibraryAliases(input.library);
+    const unmerged = scientUnmergedSourceIds(aliases);
     let removed: Promise<ReadonlyMap<string, ScientSourceRecord>> | undefined;
     const pins: StoredPin[] = [];
     for (const [index, stored] of document.pins.entries()) {
       const resolution = resolutions[index]!;
       const record = resolution.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
-      const { workFrom: copiedFrom, ...pin } = stored.pin;
-      if (resolution.kind === "resolved" && record) {
-        const work = scientPinWorkKeepingUnknown(
-          pin.work,
-          scientPinWorkFromRecord(withKnownPinCitationValues(record, pin.work)),
-          record,
-        );
-        // Reached through a merge's alias: the copy now holds the survivor's data, and says so.
-        pins.push({
-          ...stored,
-          pin: { ...pin, work, ...(resolution.aliasOf ? { workFrom: record.sourceId } : {}) },
-        });
+      if (record) {
+        // An unmerged source's copy is its record whole: what the old copy knew beyond it may
+        // be the other source's, written while the merge stood.
+        const work = unmerged.has(record.sourceId)
+          ? scientPinWorkFromRecord(record)
+          : scientPinWorkKeepingUnknown(
+              stored.pin.work,
+              scientPinWorkFromRecord(withKnownPinCitationValues(record, stored.pin.work)),
+              record,
+            );
+        pins.push({ ...stored, pin: { ...stored.pin, work } });
         continue;
       }
-      // A removed source is cited from its saved copy. One taken from another record while a
-      // merge stood is taken whole from the source's own record, never filled in from the copy.
+      // A removed source is cited from its saved copy, which nothing else rewrites. An unmerged
+      // one takes it from its own Trash entry or tombstone, for the same reason as above.
+      const ownId = resolveScientLibraryAlias(aliases, stored.pin.sourceId);
       const own =
-        copiedFrom !== undefined && resolution.kind === "unresolved" && resolution.ownRecordId
-          ? scientForeignCopyOwnRecord({
-              resolution,
-              copiedFrom,
-              live: records,
-              removed: await (removed ??= readScientRemovedLibraryRecords(input.library)),
-            })
+        resolution.kind === "unresolved" && resolution.reason === "removed" && unmerged.has(ownId)
+          ? (await (removed ??= readScientRemovedLibraryRecords(input.library))).get(ownId)
           : undefined;
-      pins.push(own ? { ...stored, pin: { ...pin, work: scientPinWorkFromRecord(own) } } : stored);
+      pins.push(
+        own ? { ...stored, pin: { ...stored.pin, work: scientPinWorkFromRecord(own) } } : stored,
+      );
     }
     const changed = await writePinsDocument(root, document, pins);
     return { changed, pins: pins.map(({ pin }) => pin).toSorted(comparePins) };
@@ -1032,6 +1027,9 @@ export async function listScientProjectPinnedWorks(input: {
   const records = library
     ? new Map((await listScientSourceRecords(library)).map((record) => [record.sourceId, record]))
     : new Map<string, ScientSourceRecord>();
+  const unmerged = library
+    ? scientUnmergedSourceIds(await readScientLibraryAliases(library))
+    : new Set<string>();
   return pins.map((pin, index) => {
     const resolution = resolutions[index];
     const found = resolution?.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
@@ -1048,7 +1046,10 @@ export async function listScientProjectPinnedWorks(input: {
         incompleteSnapshot: incomplete,
       };
     }
-    const { note: _personal, ...record } = withKnownPinCitationValues(found, pin.work);
+    // As the refresh: an unmerged source is cited from its record alone.
+    const { note: _personal, ...record } = unmerged.has(found.sourceId)
+      ? found
+      : withKnownPinCitationValues(found, pin.work);
     return {
       citationKey: pin.citationKey,
       projectSourceId: pin.sourceId,
@@ -1176,3 +1177,34 @@ export async function joinScientProjectPins(input: {
     };
   });
 }
+
+const decodePinWork = Schema.decodeUnknownSync(ScientPinWork);
+
+/** For linking a source on purpose (`projectSourceLink.ts`). The caller holds the pins lock. */
+export const scientProjectPinsInternals = {
+  /** The pin's saved copy exactly as stored (`work` with its newer fields), or undefined. */
+  async readPinCopy(root: string, projectSourceId: string): Promise<unknown> {
+    const stored = (await readPinsDocument(root)).pins.find(
+      ({ pin }) => pin.sourceId === projectSourceId,
+    );
+    if (!stored) return undefined;
+    return { work: encodeWork(stored.pin.work, stored.workExtra) };
+  },
+  /** Puts a copy from `readPinCopy` back on the pin that names the source now; key and note stay. */
+  async writePinCopy(root: string, projectSourceId: string, copy: unknown): Promise<void> {
+    if (!isJsonObject(copy) || !isJsonObject(copy["work"])) return;
+    const document = await readPinsDocument(root);
+    const found = document.pins.find(({ pin }) => pin.sourceId === projectSourceId);
+    if (!found) return;
+    const restored: StoredPin = {
+      ...found,
+      workExtra: extraFields(copy["work"], WORK_FIELDS),
+      pin: { ...found.pin, work: decodePinWork(copy["work"]) },
+    };
+    await writePinsDocument(
+      root,
+      document,
+      document.pins.map((stored) => (stored === found ? restored : stored)),
+    );
+  },
+};

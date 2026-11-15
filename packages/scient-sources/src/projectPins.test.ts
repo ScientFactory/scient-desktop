@@ -402,7 +402,6 @@ describe("project pins", () => {
         projectSourceId: loser.sourceId,
         sourceId: survivor.sourceId,
         by: "same-id",
-        aliasOf: loser.sourceId,
       },
       {
         kind: "resolved",
@@ -563,7 +562,6 @@ describe("project pins", () => {
         projectSourceId: "source_elsewhere",
         reason: "removed",
         candidateIds: [hydrated.sourceId],
-        ownRecordId: hydrated.sourceId,
       },
     ]);
     expect(await listScientSourceRecords(library)).toHaveLength(0);

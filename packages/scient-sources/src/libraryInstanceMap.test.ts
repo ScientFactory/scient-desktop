@@ -154,7 +154,6 @@ describe("resolving a copied project's sources", () => {
       projectSourceId: cited.sourceId,
       reason: "removed",
       candidateIds: [alternate.sourceId],
-      ownRecordId: alternate.sourceId,
     });
     expect((await listScientSourceRecords(collaborator)).map(({ sourceId }) => sourceId)).toEqual([
       original.sourceId,
@@ -275,7 +274,9 @@ describe("resolving a copied project's sources", () => {
     });
     expect(linkedReview?.map(({ from }) => from)).toEqual(["library"]);
 
-    expect(await unlinkScientProjectSource(repair)).toEqual({ outcome: "unlinked" });
+    expect(await unlinkScientProjectSource({ ...repair, actor: "user" })).toEqual({
+      outcome: "unlinked",
+    });
     await keepScientProjectSourceSeparate({
       ...repair,
       sourceIds: [nearMatch.sourceId],
@@ -353,7 +354,9 @@ describe("resolving a copied project's sources", () => {
 
     await linkScientProjectSource({ ...repair, sourceId: nearMatch.sourceId, actor: "user" });
     expect(await reviewRecord()).toMatchObject({ from: "library" });
-    expect(await unlinkScientProjectSource(repair)).toEqual({ outcome: "unlinked" });
+    expect(await unlinkScientProjectSource({ ...repair, actor: "user" })).toEqual({
+      outcome: "unlinked",
+    });
     expect(await reviewRecord()).toMatchObject({
       from: "snapshot",
       unresolved: { keptSeparate: true },
@@ -507,30 +510,24 @@ describe("records the Library holds apart from a source", () => {
       projectSourceId: cited.sourceId,
       reason: "removed",
       candidateIds: [cited.sourceId],
-      ownRecordId: cited.sourceId,
     });
   });
 
-  // regression: review H1-b-1 finding 2, the repair looked the record up by the project's ID.
-  it("a copy taken from one is repaired from the record the project's ID is mapped to", async () => {
+  /** Two papers a merge joins: the kept one has a publisher, the merged-away one has pages. */
+  async function mergedPair() {
     const base = await newBase();
-    const author = await newLibrary(base, "author");
+    const library = await newLibrary(base, "library");
     const project = await newProject(base);
-    const elsewhere = await add(author, work("The cited study"));
-    await pinScientLibrarySource({
-      projectRoot: project,
-      library: author,
-      sourceId: elsewhere.sourceId,
-      actor: "user",
+    const kept = await add(library, { ...work("The kept paper"), publisher: "Kept Press" });
+    const away = await add(library, {
+      ...work("The merged-away paper"),
+      identifiers: [{ scheme: "doi", value: "10.1000/away" }],
+      pages: "11-19",
     });
-    // On this computer the same work has another ID, which the project's ID is mapped to.
-    const library = await newLibrary(base, "collaborator");
-    const own = await add(library, work("The cited study"));
-    const other = await add(library, {
-      ...work("Another study"),
-      identifiers: [{ scheme: "doi", value: "10.1000/another" }],
-    });
-    const refresh = async () => {
+    for (const { sourceId } of [kept, away]) {
+      await pinScientLibrarySource({ projectRoot: project, library, sourceId, actor: "user" });
+    }
+    const copies = async () => {
       await resolveScientProjectPins({
         projectRoot: project,
         library,
@@ -538,26 +535,41 @@ describe("records the Library holds apart from a source", () => {
         actor: "user",
       });
       const { pins } = await refreshScientProjectPinSnapshots({ projectRoot: project, library });
-      return pins[0]!;
+      const of = (sourceId: string) => pins.find((pin) => pin.sourceId === sourceId)!.work;
+      return { kept: of(kept.sourceId), away: of(away.sourceId) };
     };
-    expect((await refresh()).workFrom).toBeUndefined();
     const merged = await mergeScientLibrarySources({
       library,
-      sourceIds: [other.sourceId, own.sourceId],
-      survivorId: other.sourceId,
+      sourceIds: [kept.sourceId, away.sourceId],
+      survivorId: kept.sourceId,
     });
     if (merged.outcome !== "merged") throw new Error("Expected a merge.");
-    expect(await refresh()).toMatchObject({
-      work: { title: "Another study" },
-      workFrom: other.sourceId,
+    // While the merge stands, both keys carry the one paper: its publisher and the pages it took.
+    expect(await copies()).toMatchObject({
+      kept: { publisher: "Kept Press", pages: "11-19" },
+      away: { title: "The kept paper", publisher: "Kept Press", pages: "11-19" },
     });
-
     await undoScientLibraryMerge({ library, mergeId: merged.merge.mergeId });
-    await trash(library, own.sourceId);
+    return { library, project, kept, away, copies, trash: (id: string) => trash(library, id) };
+  }
 
-    const repaired = await refresh();
-    expect(repaired.work.title).toBe("The cited study");
-    expect(repaired.workFrom).toBeUndefined();
+  // regression: review IDEA-D1c-1, a refresh kept the other paper's value wherever a record had none.
+  it("after an Undo, neither paper's copy keeps a value the merge brought from the other", async () => {
+    const { copies } = await mergedPair();
+    expect(await copies()).toMatchObject({
+      kept: { title: "The kept paper", publisher: "Kept Press", pages: null },
+      away: { title: "The merged-away paper", publisher: null, pages: "11-19" },
+    });
+  });
+
+  it("the same when the unmerged paper is removed before the project refreshes", async () => {
+    const { copies, away, trash } = await mergedPair();
+    await trash(away.sourceId);
+    expect((await copies()).away).toMatchObject({
+      title: "The merged-away paper",
+      publisher: null,
+      pages: "11-19",
+    });
   });
 
   // regression: review H1-b-1 finding 3, a copy of the source itself was replaced when it differed.

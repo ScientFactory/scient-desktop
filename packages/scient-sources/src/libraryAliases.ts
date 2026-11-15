@@ -83,3 +83,18 @@ export function resolveScientLibraryAlias(aliases: ScientLibraryAliases, sourceI
     seen.add(current);
   }
 }
+
+/**
+ * Sources a merge joined and its Undo separated again: the merged-away one and the one kept, of
+ * every alias with `undoneAt`. Project copies of these are taken whole from their Library records,
+ * since a copy refreshed while the merge stood may hold the other one's values.
+ */
+export function scientUnmergedSourceIds(aliases: ScientLibraryAliases): ReadonlySet<string> {
+  const unmerged = new Set<string>();
+  for (const alias of aliases.values()) {
+    if (alias.undoneAt === undefined) continue;
+    unmerged.add(alias.sourceId);
+    unmerged.add(alias.survivorId);
+  }
+  return unmerged;
+}

@@ -79,6 +79,11 @@ const InstanceMapEntry = Schema.Struct({
   replaced: Schema.optionalKey(Schema.Struct(InstanceMapEntryFields)),
   /** A Keep separate decision the link withdrew; its Undo restores it. */
   replacedSeparate: Schema.optionalKey(KeptSeparate),
+  /**
+   * What the project's files held for the source when it was first linked (its pin's and its
+   * review entries' saved copies, as stored), so Unlink puts them back. Opaque here.
+   */
+  replacedCopies: Schema.optionalKey(Schema.Unknown),
 });
 type InstanceMapEntry = typeof InstanceMapEntry.Type;
 
@@ -104,11 +109,6 @@ export type ScientProjectSourceResolution =
       readonly projectSourceId: string;
       readonly sourceId: string;
       readonly by: ResolutionStep;
-      /**
-       * The Library ID the source named before a merge's alias was followed to `sourceId`. A
-       * saved copy refreshed now holds another record's data, which the copy records.
-       */
-      readonly aliasOf?: string;
     }
   | {
       readonly kind: "unresolved";
@@ -122,11 +122,6 @@ export type ScientProjectSourceResolution =
       readonly candidateIds: ReadonlyArray<string>;
       /** Someone decided this pin is none of these candidates. */
       readonly keptSeparate?: true;
-      /**
-       * For `removed`: the source's own record in the Trash or among the deleted, known by ID
-       * (the mapped ID through aliases, or its hydration identity), never by matching its data.
-       */
-      readonly ownRecordId?: string;
     };
 
 export interface ScientProjectSourceResolveInput {
@@ -207,6 +202,7 @@ async function writeInstanceMap(
         ...(entry.linkedBy ? { linkedBy: entry.linkedBy } : {}),
         ...(entry.replaced ? { replaced: entry.replaced } : {}),
         ...(entry.replacedSeparate ? { replacedSeparate: entry.replacedSeparate } : {}),
+        ...(entry.replacedCopies !== undefined ? { replacedCopies: entry.replacedCopies } : {}),
       })),
       ...(separate.size > 0 ? { keptSeparate: byProjectSourceId(separate.values()) } : {}),
     },
@@ -315,8 +311,8 @@ async function readRemovedSources(
 }
 
 /**
- * The records this Library keeps in the Trash or as deleted markers, by their exact ID: what a
- * removed source's saved copy is taken from when the copy holds another record's data.
+ * The records this Library keeps in the Trash or as deleted markers, by their exact ID: where a
+ * removed, unmerged source's project copy is taken from.
  */
 export async function readScientRemovedLibraryRecords(
   library: ScientLibraryLocation,
@@ -327,28 +323,6 @@ export async function readScientRemovedLibraryRecords(
   ]);
   // A source both trashed and marked deleted was stopped mid-deletion: the Trash copy is whole.
   return new Map([...deleted, ...entries].map((entry) => [entry.sourceId, entry.record]));
-}
-
-/**
- * The record a removed source's saved copy is replaced by, or undefined to keep the copy. Only a
- * copy that says it was taken from another record of this Library is replaced (a merge stood
- * then and was undone since); a copy of the source itself is never touched, so what the project
- * knows beyond the Library is kept.
- */
-export function scientForeignCopyOwnRecord(input: {
-  readonly resolution: ScientProjectSourceResolution;
-  /** The record the copy was taken from, as the copy says; absent for the source's own. */
-  readonly copiedFrom: string | undefined;
-  readonly live: ReadonlyMap<string, ScientSourceRecord>;
-  readonly removed: ReadonlyMap<string, ScientSourceRecord>;
-}): ScientSourceRecord | undefined {
-  const { resolution, copiedFrom } = input;
-  if (resolution.kind !== "unresolved" || resolution.reason !== "removed") return undefined;
-  const { ownRecordId } = resolution;
-  if (!ownRecordId || copiedFrom === undefined || copiedFrom === ownRecordId) return undefined;
-  // An ID from another computer's Library says nothing here.
-  if (!input.live.has(copiedFrom) && !input.removed.has(copiedFrom)) return undefined;
-  return input.removed.get(ownRecordId);
 }
 
 /** The removed records a project source names: by ID, alias or hydration identity, else its work. */
@@ -368,25 +342,6 @@ function removedIdsFor(
   if (byId.length > 0) return [...new Set(byId.map((record) => record.sourceId))];
   const match = work === null ? null : matchWork(work, removed.records);
   return match === null || match.by === "contradicted" ? [] : [...new Set(match.ids)];
-}
-
-/** The removed record that is the source itself, by ID alone; undefined when only its data matched. */
-function ownRemovedId(
-  removed: RemovedSources,
-  aliases: ScientLibraryAliases,
-  projectSourceId: string,
-  mapped: InstanceMapEntry | undefined,
-): string | undefined {
-  const gone = new Set(removed.records.map((record) => record.sourceId));
-  const named = [
-    resolveScientLibraryAlias(aliases, mapped?.sourceId ?? projectSourceId),
-    scientSourceIdFor(removed.libraryId, hydrationSourceKey(projectSourceId)),
-  ].find((sourceId) => gone.has(sourceId));
-  if (named) return named;
-  const hydrated = removed.records.filter(
-    (record) => record.hydratedFromProjectSourceId === projectSourceId,
-  );
-  return hydrated.length === 1 ? hydrated[0]!.sourceId : undefined;
 }
 
 /**
@@ -546,20 +501,13 @@ async function resolveAt(
         projectSourceId,
         sourceId: mappedTarget,
         by: "instance-map",
-        ...(mappedTarget !== mapped.sourceId ? { aliasOf: mapped.sourceId } : {}),
       });
       continue;
     }
     const sameId = liveTarget(projectSourceId);
     if (sameId) {
       record(projectSourceId, projectSourceId, "same-id");
-      results.push({
-        kind: "resolved",
-        projectSourceId,
-        sourceId: sameId,
-        by: "same-id",
-        ...(sameId !== projectSourceId ? { aliasOf: projectSourceId } : {}),
-      });
+      results.push({ kind: "resolved", projectSourceId, sourceId: sameId, by: "same-id" });
       continue;
     }
     const separate = file.keptSeparate.get(projectSourceId);
@@ -622,14 +570,11 @@ async function resolveAt(
       ? [resolveScientLibraryAlias(aliases, mapped.sourceId)]
       : await removedIds(request);
     if (removed.length > 0) {
-      removedSources ??= readRemovedSources(root, library, liveTarget);
-      const ownRecordId = ownRemovedId(await removedSources, aliases, projectSourceId, mapped);
       results.push({
         kind: "unresolved",
         projectSourceId,
         reason: "removed",
         candidateIds: removed,
-        ...(ownRecordId ? { ownRecordId } : {}),
       });
       continue;
     }
@@ -732,6 +677,8 @@ export async function linkScientProjectSource(input: {
   readonly projectSourceId: string;
   readonly sourceId: string;
   readonly actor: ScientSourceActor;
+  /** The project's saved copies of the source now, before any refresh writes the linked record's. */
+  readonly replacedCopies?: unknown;
 }): Promise<ScientProjectSourceLinkResult> {
   assertSafeIdentifier(input.projectSourceId, "Source ID");
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -762,6 +709,9 @@ export async function linkScientProjectSource(input: {
     const replacedSeparate =
       keptSeparate.get(input.projectSourceId) ??
       (current?.resolvedBy === "linked" ? current.replacedSeparate : undefined);
+    // A second link keeps the first one's copies: by now the files hold the linked record's.
+    const replacedCopies =
+      current?.resolvedBy === "linked" ? current.replacedCopies : input.replacedCopies;
     entries.set(input.projectSourceId, {
       projectSourceId: input.projectSourceId,
       sourceId: target,
@@ -770,6 +720,7 @@ export async function linkScientProjectSource(input: {
       linkedBy: input.actor,
       ...(replaced ? { replaced } : {}),
       ...(replacedSeparate ? { replacedSeparate } : {}),
+      ...(replacedCopies !== undefined ? { replacedCopies } : {}),
     });
     keptSeparate.delete(input.projectSourceId);
     await writeInstanceMap(root, instanceId, entries, keptSeparate);
@@ -777,14 +728,34 @@ export async function linkScientProjectSource(input: {
   });
 }
 
+/** A source's deliberate link on this checkout, with the copies its Unlink puts back; reads only. */
+export async function readScientProjectSourceLink(input: {
+  readonly library: ScientLibraryLocation;
+  readonly projectRoot: string;
+  readonly projectSourceId: string;
+}): Promise<{ readonly sourceId: string; readonly replacedCopies?: unknown } | null> {
+  const root = await NodeFSP.realpath(input.library.root);
+  const instanceId = await projectInstanceId(input.library, input.projectRoot, "read");
+  if (!instanceId) return null;
+  const current = (await readInstanceMapFile(root, instanceId)).entries.get(input.projectSourceId);
+  if (current?.resolvedBy !== "linked") return null;
+  return {
+    sourceId: current.sourceId,
+    ...(current.replacedCopies !== undefined ? { replacedCopies: current.replacedCopies } : {}),
+  };
+}
+
 /**
- * Undoes `linkScientProjectSource`: the pin resolves as it did before, or from its snapshot, and
- * a Keep separate decision the link withdrew holds again.
+ * Undoes `linkScientProjectSource`: the map entry and a Keep separate decision the link withdrew
+ * are back, and the record that was linked is kept out of automatic matching for this source
+ * (through its Keep separate entry) until a new Link or Ask again: unlinking means "not this one
+ * unless I say so". `unlinkScientProjectSourceRestoringCopies` also puts the saved copies back.
  */
 export async function unlinkScientProjectSource(input: {
   readonly library: ScientLibraryLocation;
   readonly projectRoot: string;
   readonly projectSourceId: string;
+  readonly actor: ScientSourceActor;
 }): Promise<{ readonly outcome: "unlinked" | "not-linked" }> {
   assertSafeIdentifier(input.projectSourceId, "Source ID");
   const root = await NodeFSP.realpath(input.library.root);
@@ -796,9 +767,12 @@ export async function unlinkScientProjectSource(input: {
     if (current?.resolvedBy !== "linked") return { outcome: "not-linked" as const };
     if (current.replaced) entries.set(input.projectSourceId, { ...current.replaced });
     else entries.delete(input.projectSourceId);
-    if (current.replacedSeparate) {
-      keptSeparate.set(input.projectSourceId, current.replacedSeparate);
-    }
+    keptSeparate.set(input.projectSourceId, {
+      projectSourceId: input.projectSourceId,
+      sourceIds: [...new Set([...(current.replacedSeparate?.sourceIds ?? []), current.sourceId])],
+      decidedAt: new Date().toISOString(),
+      decidedBy: input.actor,
+    });
     await writeInstanceMap(root, instanceId, entries, keptSeparate);
     return { outcome: "unlinked" as const };
   });

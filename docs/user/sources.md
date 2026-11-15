@@ -265,7 +265,10 @@ compared it with and why it did not link them. A review's source opens its
 details from the review, and it does not become a citation. Choose **Link to
 this Library copy** when it is the same paper: the project then uses that copy
 and its PDF, and keeps the paper's citation key, its note for this project and
-its place in reviews. **Undo** in the confirmation goes back. Choose **Keep
+its place in reviews. **Undo** in the confirmation goes back: the project shows
+the paper as it recorded it again, also when your copy's details were written
+over the project's in the meantime, and Scient does not link that copy again on
+its own until you link it yourself or choose **Ask again**. Choose **Keep
 separate** when it is not: Scient never links the paper to those copies on its
 own, even if their details change later to agree, until you choose **Ask
 again** or link it yourself. If those copies change so that they no longer

@@ -19,6 +19,8 @@ export interface ModelWork {
   readonly pdfs: ReadonlyArray<ModelPdf>;
   /** The label of the work this one was merged into, while that merge stands. */
   readonly mergedInto: string | null;
+  /** Its latest merge into another work, as the Library's alias keeps it, also once undone. */
+  readonly alias: { readonly survivor: string; readonly undone: boolean } | null;
   /** What Undo of each merge into this work puts back, newest last. */
   readonly merges: ReadonlyArray<{
     readonly loser: string;
@@ -36,8 +38,6 @@ export interface ModelPin {
   readonly note: string | null;
   /** The title the project's saved copy holds: from pinning, or the last refresh. */
   readonly snapshotTitle: string;
-  /** The work the saved copy was taken from when not the pin's own: a merge stood then. */
-  readonly copiedFrom: string | null;
   /** Notes this pin held before, which its history must still list (the latest 20). */
   readonly earlierNotes: ReadonlyArray<string>;
 }
@@ -100,6 +100,13 @@ export function targetOf(model: Model, label: string): ModelWork {
     seen.add(work.label);
   }
   return work;
+}
+
+/** Both works of every merge that was undone, as the Library's aliases remember them. */
+function unmergedLabels(model: Model): ReadonlySet<string> {
+  return new Set(
+    model.works.flatMap((work) => (work.alias?.undone ? [work.label, work.alias.survivor] : [])),
+  );
 }
 
 const pinOf = (model: Model, project: number, work: string) =>
@@ -173,6 +180,7 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
             noteParts: null,
             pdfs: facts.pdf ? [facts.pdf] : [],
             mergedInto: null,
+            alias: null,
             merges: [],
           },
         ],
@@ -205,7 +213,6 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
             work: step.work,
             note: step.note,
             snapshotTitle: workOf(model, step.work).title,
-            copiedFrom: null,
             earlierNotes: [],
           },
         ],
@@ -229,27 +236,21 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
             : pin,
         ),
       };
-    case "resolveProject":
+    case "resolveProject": {
+      const unmerged = unmergedLabels(model);
       return {
         ...model,
         pins: model.pins.map((pin) => {
           if (pin.project !== step.project) return pin;
+          // The copy follows the live source the key reaches. A removed source's copy stays as
+          // it is, unless the source was unmerged: then it is the source's own last details.
           const target = targetOf(model, pin.work);
-          // The copy follows the live source the key reaches, and remembers when that is not
-          // the key's own source.
-          if (target.state === "live") {
-            return {
-              ...pin,
-              snapshotTitle: target.title,
-              copiedFrom: target.label === pin.work ? null : target.label,
-            };
-          }
-          // Removed: a copy taken from another source goes back to the key's own; its own stays.
-          return pin.copiedFrom !== null && pin.copiedFrom !== target.label
-            ? { ...pin, snapshotTitle: target.title, copiedFrom: null }
+          return target.state === "live" || unmerged.has(target.label)
+            ? { ...pin, snapshotTitle: target.title }
             : pin;
         }),
       };
+    }
     case "merge": {
       const survivor = workOf(model, step.survivor);
       const loser = workOf(model, step.loser);
@@ -286,6 +287,7 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
         ...loser,
         state: "trash",
         mergedInto: survivor.label,
+        alias: { survivor: survivor.label, undone: false },
       });
     }
     case "undoMerge": {
@@ -300,7 +302,12 @@ export function applyStep(model: Model, step: Step, facts: StepFacts = {}): Mode
           pdfs: merge.pdfs,
           merges: survivor.merges.slice(0, -1),
         }),
-        { ...loser, state: "live", mergedInto: null },
+        {
+          ...loser,
+          state: "live",
+          mergedInto: null,
+          alias: { survivor: survivor.label, undone: true },
+        },
       );
     }
   }

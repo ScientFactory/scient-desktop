@@ -49,10 +49,12 @@ import {
 } from "@scientfactory/scient-sources/library-reviews";
 import {
   keepScientProjectSourceSeparate,
-  linkScientProjectSource,
-  unlinkScientProjectSource,
   type ScientProjectSourceResolution,
 } from "@scientfactory/scient-sources/library-instance-map";
+import {
+  linkScientProjectSourceKeepingCopies,
+  unlinkScientProjectSourceRestoringCopies,
+} from "@scientfactory/scient-sources/project-source-link";
 import {
   changeScientProjectPins,
   listScientProjectPinnedWorks,
@@ -705,7 +707,7 @@ export async function repairLibraryPin(
   };
   switch (change.action) {
     case "link-pin": {
-      const linked = await linkScientProjectSource({
+      const linked = await linkScientProjectSourceKeepingCopies({
         ...repair,
         sourceId: change.librarySourceId,
         actor,
@@ -714,7 +716,7 @@ export async function repairLibraryPin(
       return { outcome: linked.outcome };
     }
     case "unlink-pin": {
-      const unlinked = await unlinkScientProjectSource(repair);
+      const unlinked = await unlinkScientProjectSourceRestoringCopies({ ...repair, actor });
       if (unlinked.outcome === "unlinked") await syncProjectBibliography(store, actor);
       return { outcome: unlinked.outcome };
     }
