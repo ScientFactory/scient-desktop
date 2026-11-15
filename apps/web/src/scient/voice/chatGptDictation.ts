@@ -5,6 +5,7 @@ import {
   createEnvironmentRpcCommand,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  ChatGptDictationError,
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerProvider,
@@ -20,8 +21,9 @@ import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { scientAgentChatGptSignedIn } from "../liveVoice/liveVoiceAvailability.ts";
 import type { VoiceJobTranscriber } from "./voiceProcessing.ts";
 
-export const SIGN_IN_TO_DICTATE_MESSAGE =
-  "Sign in to ChatGPT in Scient Agent or Codex to dictate with ChatGPT.";
+export const SIGN_IN_TO_DICTATE_MESSAGE = new ChatGptDictationError({ reason: "signed-out" })
+  .message;
+const UPDATE_TO_DICTATE_MESSAGE = new ChatGptDictationError({ reason: "update-required" }).message;
 
 /** The first Scient Agent release with dictation; the server refuses an older one. */
 const SCIENT_AGENT_DICTATION_VERSION = "0.1.9";
@@ -32,31 +34,53 @@ const chatGptDictationCommand = createEnvironmentRpcCommand(connectionAtomRuntim
   concurrency: { mode: "parallel" },
 });
 
+function signedInToChatGpt(provider: ServerProvider): boolean {
+  if (!provider.enabled) return false;
+  if (provider.driver === "scient") return scientAgentChatGptSignedIn(provider) === true;
+  return (
+    provider.driver === "codex" &&
+    provider.auth.status === "authenticated" &&
+    provider.auth.type === "chatgpt"
+  );
+}
+
+function agentTooOldToDictate(provider: ServerProvider): boolean {
+  const version = provider.version;
+  return (
+    provider.driver === "scient" &&
+    Boolean(version) &&
+    compareSemverVersions(version ?? "", SCIENT_AGENT_DICTATION_VERSION) < 0
+  );
+}
+
 /**
- * The provider instance that dictates with ChatGPT in this environment, if any: an enabled
- * Scient Agent signed in to ChatGPT, else an enabled Codex signed in with ChatGPT. A Scient Agent
- * too old to dictate comes after Codex, since it would only ask for an update.
+ * The provider instance that can dictate with ChatGPT in this environment, if any: an enabled
+ * Scient Agent signed in to ChatGPT and new enough to dictate, else an enabled Codex signed in
+ * with ChatGPT.
  */
 export function chatGptDictationInstance(
   providers: ReadonlyArray<ServerProvider> | undefined,
 ): ProviderInstanceId | null {
-  const signedIn = (providers ?? []).filter(
-    (provider) =>
-      provider.enabled &&
-      (provider.driver === "scient"
-        ? scientAgentChatGptSignedIn(provider) === true
-        : provider.driver === "codex" &&
-          provider.auth.status === "authenticated" &&
-          provider.auth.type === "chatgpt"),
+  const capable = (providers ?? []).filter(
+    (provider) => signedInToChatGpt(provider) && !agentTooOldToDictate(provider),
   );
-  const dictatingAgent = signedIn.find(
-    (provider) =>
-      provider.driver === "scient" &&
-      (!provider.version ||
-        compareSemverVersions(provider.version, SCIENT_AGENT_DICTATION_VERSION) >= 0),
+  return (
+    (
+      capable.find((provider) => provider.driver === "scient") ??
+      capable.find((provider) => provider.driver === "codex")
+    )?.instanceId ?? null
   );
-  const codex = signedIn.find((provider) => provider.driver === "codex");
-  return (dictatingAgent ?? codex ?? signedIn[0])?.instanceId ?? null;
+}
+
+/** Why no instance can dictate: an update when only an outdated Scient Agent is signed in. */
+export function chatGptDictationUnavailableMessage(
+  providers: ReadonlyArray<ServerProvider> | undefined,
+): string {
+  return (providers ?? []).some(
+    (provider) => signedInToChatGpt(provider) && agentTooOldToDictate(provider),
+  )
+    ? UPDATE_TO_DICTATE_MESSAGE
+    : SIGN_IN_TO_DICTATE_MESSAGE;
 }
 
 function failureMessage(cause: Cause.Cause<unknown>): string {
@@ -67,7 +91,7 @@ function failureMessage(cause: Cause.Cause<unknown>): string {
   return "ChatGPT dictation isn't responding. Try again.";
 }
 
-/** Transcribes committed dictation with ChatGPT through one Scient Agent instance. */
+/** Transcribes committed dictation with ChatGPT through one provider instance. */
 export function makeChatGptDictationTranscriber<E>(
   run: (target: {
     readonly environmentId: EnvironmentId;
@@ -96,15 +120,25 @@ export function makeChatGptDictationTranscriber<E>(
   };
 }
 
-/** ChatGPT dictation in this environment, or null while no Scient Agent there is signed in to ChatGPT. */
-export function useChatGptDictation(
-  environmentId: EnvironmentId | undefined,
-): VoiceJobTranscriber | null {
+export interface ChatGptDictation {
+  /** Null while no provider here can dictate with ChatGPT. */
+  readonly transcriber: VoiceJobTranscriber | null;
+  /** What to tell the user while `transcriber` is null. */
+  readonly unavailableMessage: string;
+}
+
+/** ChatGPT dictation in this environment, through its Scient Agent or Codex. */
+export function useChatGptDictation(environmentId: EnvironmentId | undefined): ChatGptDictation {
   const providersByEnvironment = useEnvironmentProviders();
   const run = useAtomCommand(chatGptDictationCommand, { reportFailure: false });
-  if (environmentId === undefined) return null;
-  const instanceId = chatGptDictationInstance(providersByEnvironment.get(environmentId));
-  return instanceId === null
-    ? null
-    : makeChatGptDictationTranscriber(run, environmentId, instanceId);
+  const providers =
+    environmentId === undefined ? undefined : providersByEnvironment.get(environmentId);
+  const instanceId = chatGptDictationInstance(providers);
+  return {
+    transcriber:
+      environmentId === undefined || instanceId === null
+        ? null
+        : makeChatGptDictationTranscriber(run, environmentId, instanceId),
+    unavailableMessage: chatGptDictationUnavailableMessage(providers),
+  };
 }

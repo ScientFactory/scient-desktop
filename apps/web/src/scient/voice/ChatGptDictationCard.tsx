@@ -15,7 +15,7 @@ export function ChatGptDictationCard({
   readonly selected: boolean;
   /** Whether a Scient Agent or Codex here is signed in to ChatGPT. */
   readonly signedIn: boolean;
-  /** No engine is chosen yet and no local model is set up, so the microphone offers ChatGPT. */
+  /** No engine is chosen yet, so the microphone offers ChatGPT first the next time it is used. */
   readonly offeredOnFirstUse: boolean;
   readonly onSelect: () => void;
 }): ReactNode {

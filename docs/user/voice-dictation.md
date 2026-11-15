@@ -11,11 +11,12 @@ resulting transcript text before Scient inserts or sends it.
    - A local model: **Multilingual Small** for faster setup,
      **Multilingual Medium** for higher expected accuracy, or
      **Multilingual Turbo** for the most demanding dictation on a powerful
-     computer. Scient downloads and verifies the selected model. You can
-     cancel setup and resume the download later.
+     computer. Scient downloads and verifies the selected model; a model you
+     already downloaded is used as it is. You can cancel setup and resume the
+     download later.
 
-   Scient remembers your choice. If a local model is already set up, Scient
-   keeps using it and does not ask.
+   Scient remembers your choice and doesn't ask again. Without a ChatGPT
+   sign-in, a local model that is already set up is used without asking.
 
 3. Allow microphone access when macOS, Windows, or Linux asks.
 4. While recording, choose cancel, insert the transcript, or transcribe and
@@ -52,12 +53,13 @@ If the sign-in ends, Scient asks you to sign in again rather than switching to
 a local model.
 
 **Correct transcripts with an LLM** in **Settings → Voice** is off by default.
-When it remains off, the transcript stays local. When you turn it on, Scient
-sends the transcript text—not the recording—to the selected, authenticated AI
-provider, together with the selected language when one is set. While correction
-is pending, you can use the original local transcript immediately. If the
-provider is unavailable, unsupported, not authenticated, times out, or returns
-an invalid correction, Scient falls back to the exact local transcript.
+When it remains off, a local model's transcript stays on your computer. When
+you turn it on, Scient sends the transcript text—not the recording—to the
+selected, authenticated AI provider, together with the selected language when
+one is set. While correction is pending, you can use the original transcript
+immediately. If the provider is unavailable, unsupported, not authenticated,
+times out, or returns an invalid correction, Scient falls back to the exact
+original transcript.
 
 The model download, dictation with ChatGPT and an enabled provider correction
 are therefore the possible network paths for voice dictation. Provider correction follows that

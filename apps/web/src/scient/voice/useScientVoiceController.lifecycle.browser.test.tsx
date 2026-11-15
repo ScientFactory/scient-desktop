@@ -254,22 +254,40 @@ describe("voice operation ownership", () => {
       );
     }
 
-    it("keeps dictating on this computer with a model already set up", async () => {
+    it("asks once even with a model already set up, which it uses without downloading", async () => {
       await using _fixture = _createFixture();
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
       const transcribe = vi.fn(async () => ({ text: "from ChatGPT" }));
       chatGpt = { transcribe };
+      client.downloadModel = vi.fn(async () => snapshot);
+      await render(_fixture);
+
+      await start(_fixture);
+      expect(control(_fixture).phase).toBe("setup-prompt");
+      expect(control(_fixture).chatGptOffered).toBe(true);
+      expect(recorder.start).not.toHaveBeenCalled();
+
+      await act(() => control(_fixture).setupModel(model.id));
+      now += 300;
+      expect(client.downloadModel).not.toHaveBeenCalled();
+      expect(chosen).toHaveBeenCalledExactlyOnceWith("local");
+      const { completion } = await stop(_fixture);
+      await finish(completion, "on this computer");
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(delivered).toHaveBeenCalledWith("owner", "on this computer");
+    });
+
+    it("keeps dictating with a model set up when there is no ChatGPT sign-in", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      chatGpt = null;
       await render(_fixture);
 
       await start(_fixture);
       expect(control(_fixture).phase).toBe("recording");
-      const { completion } = await stop(_fixture);
-      await finish(completion, "on this computer");
-      expect(client.transcribe).toHaveBeenCalledOnce();
-      expect(transcribe).not.toHaveBeenCalled();
       expect(chosen).not.toHaveBeenCalled();
-      expect(delivered).toHaveBeenCalledWith("owner", "on this computer");
     });
 
     it("offers ChatGPT without recording, then dictates with it once chosen", async () => {

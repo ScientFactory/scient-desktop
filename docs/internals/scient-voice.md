@@ -68,21 +68,25 @@ names and uses concise copy for recording-duration validation.
 The client setting `voiceDictationEngine` is `auto` (the default), `local` or
 `chatgpt`. `auto` means nothing has been chosen yet:
 
-- A selected local model that is ready keeps dictating locally, so people who
-  already set up Whisper see no change.
-- Otherwise, when an enabled Scient Agent or Codex in the environment is signed
-  in to ChatGPT, the microphone opens the setup picker with ChatGPT first, its
-  OpenAI retention notice, and the local models below. No audio leaves the
-  computer until ChatGPT is chosen; choosing it saves `chatgpt`, and a local
-  download that completes from that picker saves `local`.
-- Without a ChatGPT sign-in, `auto` behaves as `local` did.
+- When an enabled Scient Agent (0.1.9 or newer) or Codex in the environment is
+  signed in to ChatGPT, the microphone opens the setup picker with ChatGPT
+  first and its OpenAI retention notice, then the local models. A model already
+  downloaded is listed as ready and is only selected, not downloaded again.
+  No audio leaves the computer until ChatGPT is chosen; choosing it saves
+  `chatgpt`, and a local model that becomes ready from that picker saves
+  `local`. This includes people who set up Whisper before ChatGPT dictation
+  existed: they never chose local over ChatGPT, so they are asked once.
+- Without such a sign-in, `auto` behaves as `local` did: a ready model
+  dictates, otherwise the picker offers the local models.
 
 An explicit `chatgpt` never falls back to Whisper: a missing sign-in asks for
-one. The web client prefers a signed-in Scient Agent new enough to dictate,
-then a Codex signed in with ChatGPT. Client settings are saved whole, so reset
+one, and an outdated Scient Agent asks for an update rather than being offered.
+The web client prefers a signed-in Scient Agent new enough to dictate, then a
+Codex signed in with ChatGPT. Client settings are saved whole, so reset
 revision 2 (`scientClientSettingsResets.ts`) turns a saved `local` from before
-`auto` existed back into `auto`; `auto` still dictates with a model that is set
-up.
+`auto` existed back into `auto`. Settings → Voice shows a ready model as in use
+under `auto` only while ChatGPT is not on offer, and the citation-comment
+microphone stays hidden until the choice is made in the composer.
 
 ## Reliability invariants
 

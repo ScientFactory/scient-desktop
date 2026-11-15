@@ -388,10 +388,16 @@ export function ScientVoiceSettingsPanel(): ReactNode {
   );
   const languagePreference = useClientSettings((settings) => settings.voiceLanguagePreference);
   const engine = useClientSettings((settings) => settings.voiceDictationEngine);
-  const chatGptSignedIn = useChatGptDictation(usePrimaryEnvironmentId() ?? undefined) !== null;
+  const chatGptSignedIn =
+    useChatGptDictation(usePrimaryEnvironmentId() ?? undefined).transcriber !== null;
   const [snapshot, setSnapshot] = useState<VoiceModelsSnapshot | null>(null);
-  // Before an engine is chosen, a local model that is set up keeps dictating.
-  const localModelSetUp = snapshot !== null && hasReadySelectedVoiceModel(snapshot);
+  // Before an engine is chosen, a model set up here dictates only while ChatGPT is not on offer.
+  const localInUse =
+    engine === "local" ||
+    (engine === "auto" &&
+      !chatGptSignedIn &&
+      snapshot !== null &&
+      hasReadySelectedVoiceModel(snapshot));
   const [busyModelId, setBusyModelId] = useState<VoiceModelId | null>(null);
   const [localDownloadModelId, setLocalDownloadModelId] = useState<VoiceModelId | null>(null);
   const [queuedDownload, setQueuedDownload] = useState<{
@@ -583,7 +589,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
             <ChatGptDictationCard
               selected={engine === "chatgpt"}
               signedIn={chatGptSignedIn}
-              offeredOnFirstUse={engine === "auto" && snapshot !== null && !localModelSetUp}
+              offeredOnFirstUse={engine === "auto"}
               onSelect={() => updateClientSettings({ voiceDictationEngine: "chatgpt" })}
             />
             {snapshot?.models.map((model) => (
@@ -591,10 +597,7 @@ export function ScientVoiceSettingsPanel(): ReactNode {
                 key={model.id}
                 model={model}
                 runtimeAvailable={snapshot.runtimeAvailable}
-                selected={
-                  (engine === "local" || (engine === "auto" && localModelSetUp)) &&
-                  snapshot.selectedModelId === model.id
-                }
+                selected={localInUse && snapshot.selectedModelId === model.id}
                 recommended={snapshot.recommendation?.modelId === model.id}
                 busy={busyModelId !== null}
                 activeDownload={observedActiveDownloadModelId === model.id}

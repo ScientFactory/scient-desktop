@@ -1,7 +1,7 @@
 /**
  * One-time resets of saved client preferences, applied when older settings are read.
- * 1: appearance contrast returns to upstream's 100. 2: a saved `local` dictation engine,
- * mostly the old default, returns to `auto`, which still uses a local model already set up.
+ * 1: appearance contrast returns to upstream's 100. 2: a saved `local` dictation engine, mostly
+ * the old default from before ChatGPT dictation, returns to `auto` so ChatGPT is offered once.
  */
 import type { ClientSettings } from "./settings.ts";
 

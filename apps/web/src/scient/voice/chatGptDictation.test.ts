@@ -10,7 +10,11 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { chatGptDictationInstance, makeChatGptDictationTranscriber } from "./chatGptDictation.ts";
+import {
+  chatGptDictationInstance,
+  chatGptDictationUnavailableMessage,
+  makeChatGptDictationTranscriber,
+} from "./chatGptDictation.ts";
 
 const environmentId = EnvironmentId.make("primary");
 
@@ -102,6 +106,20 @@ describe("chatGptDictationInstance", () => {
     expect(
       chatGptDictationInstance([{ ...agent, version: "0.1.8" }, codex("codex", "chatgpt")]),
     ).toBe("codex");
+  });
+
+  it("never offers an agent too old to dictate, and asks for its update instead", () => {
+    const outdated = {
+      ...scientAgent("scient", [{ id: "openai-codex", connected: true }]),
+      version: "0.1.8",
+    };
+    expect(chatGptDictationInstance([outdated])).toBeNull();
+    expect(chatGptDictationUnavailableMessage([outdated])).toBe(
+      "Update Scient Agent to dictate with ChatGPT.",
+    );
+    expect(chatGptDictationUnavailableMessage([])).toBe(
+      "Sign in to ChatGPT in Scient Agent or Codex to dictate with ChatGPT.",
+    );
   });
 });
 

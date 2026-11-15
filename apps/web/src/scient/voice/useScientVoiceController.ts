@@ -44,11 +44,6 @@ export type VoicePhase =
   | "transcribing"
   | "correcting";
 
-/** ChatGPT dictation whose sign-in ended while recording: it fails instead of going local. */
-const signedOutOfChatGpt: VoiceJobTranscriber = {
-  transcribe: () => Promise.reject(new Error(SIGN_IN_TO_DICTATE_MESSAGE)),
-};
-
 const MODEL_SETUP_FAILED_MESSAGE = "Voice setup didn't finish. Try again.";
 const ARM_DELAY_MS = 250;
 
@@ -58,11 +53,13 @@ interface VoiceControllerOptions {
   readonly correctionEnabled?: boolean;
   readonly languagePreference?: VoiceLanguagePreference;
   /**
-   * Who transcribes. ChatGPT needs `chatGpt`, a provider signed in to ChatGPT. `auto` dictates
-   * with a local model that is already set up, and otherwise offers ChatGPT beside the models.
+   * Who transcribes. ChatGPT needs `chatGpt`, a provider signed in to ChatGPT. `auto` offers
+   * ChatGPT beside the local models when a sign-in exists, and otherwise dictates locally.
    */
   readonly engine?: VoiceDictationEngine;
   readonly chatGpt?: VoiceJobTranscriber | null;
+  /** Why ChatGPT can't dictate while `chatGpt` is null: a missing sign-in, or an old agent. */
+  readonly chatGptUnavailableMessage?: string;
   /** Saves the engine chosen when `auto` offered ChatGPT beside the local models. */
   readonly onEngineChosen?: (engine: "local" | "chatgpt") => void;
   readonly environmentId?: EnvironmentId;
@@ -176,6 +173,7 @@ export function useScientVoiceController({
   languagePreference = "auto",
   engine = "local",
   chatGpt = null,
+  chatGptUnavailableMessage = SIGN_IN_TO_DICTATE_MESSAGE,
   onEngineChosen,
   environmentId,
   draftOrigin = null,
@@ -321,7 +319,13 @@ export function useScientVoiceController({
       ownerKey,
       clip,
       send,
-      voiceBridge: recordingEngine === "chatgpt" ? (chatGpt ?? signedOutOfChatGpt) : client,
+      // ChatGPT whose sign-in ended while recording fails instead of going local.
+      voiceBridge:
+        recordingEngine === "chatgpt"
+          ? (chatGpt ?? {
+              transcribe: () => Promise.reject(new Error(chatGptUnavailableMessage)),
+            })
+          : client,
       engineClass: engineClassOf(recordingEngine),
       correction: correctionRequested ? { corrector: correctionClient, environmentId } : null,
       language: languagePreference === "auto" ? undefined : languagePreference,
@@ -388,13 +392,14 @@ export function useScientVoiceController({
     if (engine === "chatgpt") {
       clearErrors();
       if (chatGpt) await beginRecording("chatgpt");
-      else setErrorMessage(SIGN_IN_TO_DICTATE_MESSAGE);
+      else setErrorMessage(chatGptUnavailableMessage);
       return;
     }
     const operation = (operationRef.current += 1);
     clearErrors();
-    // Not chosen yet: a local model already set up keeps dictating; otherwise ChatGPT is offered
-    // beside the local models, and nothing leaves this computer until it is chosen.
+    // Not chosen yet: with a ChatGPT sign-in, the choices open with ChatGPT first, including a local
+    // model that is already set up, and nothing leaves this computer until ChatGPT is chosen.
+    // Without one, this computer dictates as it always has.
     const offerChatGpt = engine === "auto" && chatGpt !== null;
     setChatGptOffered(offerChatGpt);
     let state: VoiceModelsSnapshot | null;
@@ -413,11 +418,8 @@ export function useScientVoiceController({
     }
     const selectedModelId = state?.selectedModelId;
     const selectedModel = state?.models.find((model) => model.id === selectedModelId);
-    // With ChatGPT on offer, a model this computer cannot run does not stand in its way.
-    const localReady =
-      selectedModel?.state.state === "ready" && (!offerChatGpt || state?.runtimeAvailable === true);
-    if (localReady) await beginRecording("local");
-    else if (offerChatGpt) setPhase("setup-prompt");
+    if (offerChatGpt) setPhase("setup-prompt");
+    else if (selectedModel?.state.state === "ready") await beginRecording("local");
     else if (state && !state.runtimeAvailable) {
       setErrorMessage(state.runtimeMessage ?? "Offline voice is unavailable.");
     } else {
@@ -435,13 +437,34 @@ export function useScientVoiceController({
     // The sign-in ended while the prompt was open; the choice stands and asks for it again.
     operationRef.current += 1;
     setPhase("idle");
-    setErrorMessage(SIGN_IN_TO_DICTATE_MESSAGE);
+    setErrorMessage(chatGptUnavailableMessage);
   };
 
   const setupModel = async (requestedModelId?: VoiceModelId): Promise<void> => {
     if (!client) return;
-    // Downloading a model where ChatGPT was offered chooses this computer, once it is set up.
+    // Picking a local model where ChatGPT was offered chooses this computer, once it is set up.
     const choosesLocal = phaseRef.current === "setup-prompt" && chatGptOfferedState;
+    // A model already on this computer is only selected; there is nothing to download.
+    if (
+      requestedModelId !== undefined &&
+      modelSnapshot?.models.find((model) => model.id === requestedModelId)?.state.state === "ready"
+    ) {
+      const operation = (operationRef.current += 1);
+      clearErrors();
+      try {
+        if (modelSnapshot.selectedModelId !== requestedModelId)
+          setModelSnapshot(await client.selectModel({ modelId: requestedModelId }));
+      } catch (error) {
+        if (operation !== operationRef.current) return;
+        setPhase("idle");
+        setErrorMessage(describeVoiceError(error));
+        return;
+      }
+      if (operation !== operationRef.current) return;
+      if (choosesLocal) onEngineChosen?.("local");
+      await beginRecording("local");
+      return;
+    }
     const operation = (operationRef.current += 1);
     clearErrors();
     setDownloadProgress(null);

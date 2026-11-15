@@ -187,11 +187,12 @@ function VoiceModelSetupPicker({
           ) : null}
           {onChooseChatGpt && models.length > 0 ? (
             <p className="px-2.5 pt-1.5 text-muted-foreground text-xs">
-              Or download a model to keep recordings on this computer
+              Or keep recordings on this computer
             </p>
           ) : null}
           {models.map((model) => {
             const recommended = model.id === recommendedModelId;
+            const downloaded = model.state.state === "ready";
             return (
               <button
                 key={model.id}
@@ -210,10 +211,15 @@ function VoiceModelSetupPicker({
                     ) : null}
                   </span>
                   <span className="block text-muted-foreground text-xs leading-4">
-                    {model.description} · {formatModelSize(model.byteSize)}
+                    {model.description} ·{" "}
+                    {downloaded ? "On this computer" : formatModelSize(model.byteSize)}
                   </span>
                 </span>
-                <DownloadIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
+                {downloaded ? (
+                  <MicIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
+                ) : (
+                  <DownloadIcon className={SETUP_OPTION_ICON_CLASS_NAME} />
+                )}
               </button>
             );
           })}
@@ -262,7 +268,8 @@ export function ScientVoiceComposerControl({
     correctionEnabled,
     languagePreference,
     engine,
-    chatGpt,
+    chatGpt: chatGpt.transcriber,
+    chatGptUnavailableMessage: chatGpt.unavailableMessage,
     onEngineChosen: (chosen) => void updateClientSettings({ voiceDictationEngine: chosen }),
     ...(environmentId === undefined ? {} : { environmentId }),
     draftOrigin,
