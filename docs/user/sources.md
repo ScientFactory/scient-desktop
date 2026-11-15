@@ -310,19 +310,30 @@ A line of Extra that names a creator (`editor: Smith || Jane`) adds that
 creator, as it does in Zotero.
 Software, presentations and manuscripts keep their type; a program is cited
 by its programmer, a film by its director, a legal case by its name. A citation key the item
-already has, from Zotero or Better BibTeX, is kept. Each source also joins a
-Library collection named after each Zotero collection it is in. The Library
-keeps one level of nesting, so **Chapter 2** inside **Thesis** stays inside it;
-a collection nested deeper joins its ancestor one level down, and the import
-result says which ones did. The original Zotero references and attachments are
-never changed by an import.
+already has, from Zotero or Better BibTeX, is kept. The original Zotero
+references and attachments are never changed by an import.
+
+Your collections arrive as a tree, as they are in Zotero. When you import a
+library or a collection, Scient makes its collections with their
+subcollections, to ten levels, also the ones that hold no reference yet, and
+each imported reference joins the collection of every Zotero collection it is
+in. Two collections with the same name in the same place stay two. A
+collection you already have here with the same name in the same place (one
+you made, or one from an earlier import) is used, not doubled, and a later
+import finds every collection again even after you renamed or moved it here.
+A collection you deleted here is not made again by a later import, unless
+that import brings a reference that is filed in it. References that were
+already in your Library are not filed again.
 
 When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
 many references it concerns: highlights and comments on PDFs, files that are
 not PDFs, links
 kept as attachments, PDFs Zotero could not hand over, notes whose links or
-tables became plain text, and notes and files that belong to no reference.
+tables became plain text, notes and files that belong to no reference, and
+collections that could not be made or filled here (the Library holds 500
+collections, ten levels, names of 200 characters, and 20,000 sources in one
+collection).
 A reference that was already in your Library (the same DOI, or a possible
 match you did not import) is listed too: nothing was taken from Zotero's copy
 of it. **Show** on a line shows the references it concerns. All of it is
@@ -376,7 +387,8 @@ these details gets them on its next refresh. A large Library is read again
 200 sources at a time, and the dialog says how far it is; closing it stops
 there and keeps what was read. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
-leaving it.
+leaving it. A refresh does not file sources again: a reference you moved
+between collections in Zotero stays in its collections here.
 
 ### Send to Zotero
 
@@ -952,10 +964,14 @@ details, the **Collections** row shows where it belongs; use **+ Collection** to
 add it to more. Deleting a collection keeps all of its sources, and **Undo** in
 the message brings the collection back.
 
-A collection can hold one level of subcollections. Show a top-level collection
-and choose **New subcollection…** from the actions beside the filter row.
-Showing a collection lists its subcollections' sources too. Two parents can
-each have a subcollection with the same name.
+A collection can hold subcollections, and those can hold their own, to ten
+levels. Show a collection and choose **New subcollection…** from the actions
+beside the filter row. In the **Collection** list, the arrow beside a
+collection folds and unfolds what is under it (on the keyboard, Right and
+Left); the number beside it counts its sources with those of everything under
+it, and showing a collection lists them all. Two collections in different
+places can have the same name. Deleting a collection that has subcollections
+moves them up one level, and **Undo** puts them back under it.
 
 **Tags** are short labels such as a method or a screening decision. In a
 source's details, use **+ Tag** to add an existing tag or create a new one, and
