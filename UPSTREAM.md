@@ -2368,3 +2368,15 @@ same behaviour (the upstream issue draft is in the analytics-failures review fol
   (`DelegatedTaskOwner.ts`). The task and thread inputs say which ID they take.
 
 When T3 ships any of these, take its version and delete the matching seam, helper and test.
+
+## Thread route deletion
+
+`ThreadRouteView` takes T3's rule: a thread the sidebar shell lists is deleted only when the shell
+says so (`deletedAt`), and its detail status is consulted only while the shell does not list it
+(T3's `unlistedThreadDetail`, #19724). Scient no longer carries its `deleted thread status` seam,
+which also treated a listed thread as deleted when its detail status read `deleted`. That seam
+predates T3's unlisted-detail path and was written when a 404 was final. Since T3's #27722 and
+#25919, a 404 also means "not created yet" and is retried, so the seam sent a just-sent new thread,
+and clicks on it, to the start page until the next retry. Scient keeps one divergence here:
+`resolveThreadRouteRenderState` admits an archived unlisted thread, so archived originals stay
+readable through fork lineage.
