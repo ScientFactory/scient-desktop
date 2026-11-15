@@ -779,14 +779,26 @@ class TestWriteRecorder(unittest.TestCase):
         self.root = os.path.realpath(self.directory.name)
         self.addCleanup(self.directory.cleanup)
 
-    def cell(self, body):
+    def pre(self, code):
+        info = types.SimpleNamespace(raw_cell=code)
         for callback in self.events["pre_run_cell"]:
-            callback(None)
+            callback(info)
+        return info
+
+    def post(self, info):
+        for callback in self.events["post_run_cell"]:
+            callback(types.SimpleNamespace(info=info))
+
+    def run_cell(self, code, body):
+        # IPython's order: no pre_run_cell for a blank cell, post_run_cell always.
+        info = types.SimpleNamespace(raw_cell=code) if not code.strip() else self.pre(code)
         try:
             body()
         finally:
-            for callback in self.events["post_run_cell"]:
-                callback(None)
+            self.post(info)
+
+    def cell(self, body):
+        self.run_cell("the cell", body)
         return json.loads(self.take())
 
     def path(self, *parts):
@@ -824,8 +836,6 @@ class TestWriteRecorder(unittest.TestCase):
                 self.path("e.png"),
             ]),
         )
-        self.assertTrue(record["complete"])
-        self.assertFalse(record["spawnedProcess"])
 
     def test_a_cell_that_raises_after_saving_still_reports_the_save(self):
         def body():
@@ -838,29 +848,51 @@ class TestWriteRecorder(unittest.TestCase):
         # The bridge reads the record after the reply, whatever the cell's outcome.
         self.assertEqual(json.loads(self.take())["paths"], [self.path("saved.png")])
 
-    def test_flags_a_cell_that_started_another_process(self):
-        record = self.cell(lambda: subprocess.run([sys.executable, "-c", "pass"], check=True))
-        self.assertTrue(record["spawnedProcess"])
-
     def test_records_only_inside_a_cell_and_hands_each_record_out_once(self):
         with open(self.path("outside.png"), "wb") as file:
             file.write(b"png")
-        # IPython sends post_run_cell without pre_run_cell for a blank cell.
-        for callback in self.events["post_run_cell"]:
-            callback(None)
+        self.run_cell("  ", lambda: None)
         self.assertEqual(json.loads(self.take())["paths"], [])
         record = self.cell(lambda: open(self.path("inside.svg"), "w").close())
         self.assertEqual(record["paths"], [self.path("inside.svg")])
         self.assertEqual(json.loads(self.take())["paths"], [])
 
-    def test_an_overflowing_record_says_it_is_incomplete(self):
+    def test_a_nested_blank_cell_does_not_end_the_cell_that_ran_it(self):
+        def body():
+            self.run_cell("", lambda: None)
+            open(self.path("after-nested.svg"), "w").close()
+
+        self.assertEqual(self.cell(body)["paths"], [self.path("after-nested.svg")])
+
+    def test_a_lost_cell_lifecycle_gives_no_record(self):
+        def body():
+            self.pre("nested, never finished")
+            open(self.path("lost.svg"), "w").close()
+
+        self.assertIsNone(self.cell(body))
+        # An interrupted async cell ends with a result of None.
+        self.pre("interrupted")
+        for callback in self.events["post_run_cell"]:
+            callback(None)
+        self.assertIsNone(json.loads(self.take()))
+        self.assertEqual(
+            self.cell(lambda: open(self.path("next.svg"), "w").close())["paths"],
+            [self.path("next.svg")],
+        )
+
+    def test_the_line_that_installed_the_recorder_does_not_spoil_the_next_record(self):
+        self.post(types.SimpleNamespace(raw_cell="exec(setup)"))
+        self.assertEqual(
+            self.cell(lambda: open(self.path("first.svg"), "w").close())["paths"],
+            [self.path("first.svg")],
+        )
+
+    def test_keeps_a_bounded_record(self):
         def body():
             for index in range(300):
                 open(self.path("figure-%d.png" % index), "wb").close()
 
-        record = self.cell(body)
-        self.assertEqual(len(record["paths"]), 256)
-        self.assertFalse(record["complete"])
+        self.assertEqual(len(self.cell(body)["paths"]), 256)
 
 
 class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
@@ -1284,7 +1316,7 @@ class TestBridgeCorrelation(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.b._mapping.active_request_id)
 
     async def test_completion_carries_the_kernels_record_of_written_files(self):
-        record = {"paths": ["/project/out/a.png"], "complete": True, "spawnedProcess": False}
+        record = {"paths": ["/project/out/a.png"]}
         client = FakeKernelClient(
             iopub=[iopub("status", {"execution_state": "idle"})],
             shell=[

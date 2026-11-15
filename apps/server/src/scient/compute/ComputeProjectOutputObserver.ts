@@ -71,7 +71,7 @@ export interface ComputeProjectOutputWatch {
   readonly ready: Effect.Effect<void>;
   /** Touches no files, so it can sit on the execution admission path. */
   readonly begin: Effect.Effect<ComputeProjectOutputObservation>;
-  /** `writes` is what the runtime saw the execution write; it is checked, never trusted. */
+  /** `writes` is what the runtime saw the execution write: extra candidates, checked, never trusted. */
   readonly collect: (
     observation: ComputeProjectOutputObservation,
     limits: ComputeProjectOutputLimits,
@@ -181,21 +181,41 @@ async function scanRecentOutputs(
   return { files, limited: unreadable ? "unreadable directory" : null };
 }
 
+const isGone = (error: unknown) =>
+  error instanceof Error &&
+  "code" in error &&
+  (error.code === "ENOENT" || error.code === "ENOTDIR");
+
 /** Output files inside folders created during the window, which inotify may not have reported. */
 async function filesInCreatedEntries(
   created: ReadonlyArray<string>,
   signal: AbortSignal,
-): Promise<ReadonlyArray<string>> {
+): Promise<{
+  readonly files: ReadonlyArray<string>;
+  readonly limited: "scan-entry-limit" | "scan-unreadable" | null;
+}> {
   const files: string[] = [];
   const queue: string[] = [];
+  let unreadable = false;
   for (const path of created) {
-    const metadata = await NodeFSP.lstat(path).catch(() => null);
+    const metadata = await NodeFSP.lstat(path).catch((error: unknown) => {
+      if (!isGone(error)) unreadable = true;
+      return null;
+    });
     if (metadata?.isDirectory()) queue.push(path);
   }
   let listed = 0;
-  for (let index = 0; index < queue.length && listed < CREATED_DIRECTORY_ENTRIES; index += 1) {
-    if (signal.aborted) break;
-    const entries = await NodeFSP.readdir(queue[index]!, { withFileTypes: true }).catch(() => []);
+  let index = 0;
+  for (; index < queue.length && listed < CREATED_DIRECTORY_ENTRIES; index += 1) {
+    signal.throwIfAborted();
+    let entries: NodeFS.Dirent[];
+    try {
+      entries = await NodeFSP.readdir(queue[index]!, { withFileTypes: true });
+    } catch (error) {
+      // A folder removed again before the run ended held nothing to show.
+      if (!isGone(error)) unreadable = true;
+      continue;
+    }
     listed += entries.length;
     for (const entry of entries) {
       const path = NodePath.join(queue[index]!, entry.name);
@@ -203,7 +223,10 @@ async function filesInCreatedEntries(
       else if (entry.isFile() && OUTPUT_FILE.test(entry.name)) files.push(path);
     }
   }
-  return files;
+  return {
+    files,
+    limited: index < queue.length ? "scan-entry-limit" : unreadable ? "scan-unreadable" : null,
+  };
 }
 
 /** Whole-second times come from a coarse file system; others are near the wall clock. */
@@ -364,26 +387,30 @@ async function collectProjectOutputs(input: {
 }): Promise<ComputeProjectOutputCollection> {
   const { projectRoot, observation, writes, signal } = input;
   const since = BigInt(observation.startedAt) * 1_000_000n;
-  const exact = writes?.complete === true;
+  // A runtime's own record adds what the watch may have lost; only the watch can vouch for coverage.
   const reported = new Set(writes?.paths ?? []);
   const warnings: string[] = [];
   let coverageReason: ComputeCaptureReason | undefined;
-  // A runtime's record is exact for its own process; anything it started is only watched.
-  if (!exact || writes.spawnedProcess) {
-    const window =
-      input.projectWatch === null || observation.mark === null
-        ? ({ healthy: false, reason: "watch-unavailable" } as const)
-        : await input.projectWatch.read(observation.mark, signal);
-    if (window.healthy) {
-      for (const path of window.files) reported.add(path);
-      for (const path of await filesInCreatedEntries(window.created, signal)) reported.add(path);
-    } else {
-      coverageReason = window.reason;
-      const scan = await scanRecentOutputs(projectRoot, since, signal, input.now);
-      for (const path of scan.files) reported.add(path);
-      if (scan.limited !== null)
-        warnings.push(`Some project files could not be checked (${scan.limited}).`);
-    }
+  const window =
+    input.projectWatch === null || observation.mark === null
+      ? ({ healthy: false, reason: "watch-unavailable" } as const)
+      : await input.projectWatch.read(observation.mark, signal);
+  if (window.healthy) {
+    for (const path of window.files) reported.add(path);
+    const recovered = await filesInCreatedEntries(window.created, signal);
+    for (const path of recovered.files) reported.add(path);
+    if (recovered.limited !== null)
+      warnings.push(
+        `Some project files could not be checked (${recovered.limited === "scan-entry-limit" ? "entry limit" : "unreadable directory"}).`,
+      );
+    coverageReason =
+      recovered.limited ?? (window.lossDetectable ? undefined : "watch-unverifiable");
+  } else {
+    coverageReason = window.reason;
+    const scan = await scanRecentOutputs(projectRoot, since, signal, input.now);
+    for (const path of scan.files) reported.add(path);
+    if (scan.limited !== null)
+      warnings.push(`Some project files could not be checked (${scan.limited}).`);
   }
   const written = new Map<string, ProjectImageState>();
   for (const path of reported) {

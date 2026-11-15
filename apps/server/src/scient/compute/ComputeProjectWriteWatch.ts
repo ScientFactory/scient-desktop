@@ -26,6 +26,8 @@ export type ProjectWriteWindow =
       readonly files: ReadonlyArray<string>;
       /** Entries created in the window that may be folders whose files were never reported. */
       readonly created: ReadonlyArray<string>;
+      /** False where the backend can drop events without reporting it, so loss cannot be ruled out. */
+      readonly lossDetectable: boolean;
     }
   | { readonly healthy: false; readonly reason: "watch-unavailable" | "watch-overflow" };
 
@@ -62,6 +64,7 @@ export const ENVIRONMENT_MARKERS = ["pyvenv.cfg", "conda-meta"] as const;
 
 const COOKIE_PREFIX = ".scient-compute-sync-";
 const COOKIE_TIMEOUT_MS = 1_000;
+const START_SYNC_ATTEMPTS = 4;
 const MAXIMUM_JOURNAL_ENTRIES = 8_192;
 const IGNORE_SEARCH_DEPTH = 4;
 const IGNORE_SEARCH_DIRECTORIES = 2_048;
@@ -130,6 +133,9 @@ export function makeProjectWriteWatches(input: {
 }) {
   const roots = new Map<string, RootWatch>();
   let cookieCount = 0;
+  // FSEvents and ReadDirectoryChangesW report dropped events as errors; @parcel/watcher's inotify
+  // backend skips IN_Q_OVERFLOW without telling subscribers.
+  const lossDetectable = input.platform === "darwin" || input.platform === "win32";
 
   const record = (watch: RootWatch, path: string, created: boolean) => {
     watch.sequence += 1;
@@ -197,8 +203,7 @@ export function makeProjectWriteWatches(input: {
         if (OUTPUT_FILE.test(name)) record(watch, event.path, false);
         // inotify adds a new folder's watch after the folder appears, so files made at once
         // inside it are never reported. Other backends watch the whole tree natively.
-        else if (event.type === "create" && input.platform === "linux")
-          record(watch, event.path, true);
+        if (event.type === "create" && input.platform === "linux") record(watch, event.path, true);
       }
     };
     void (async () => {
@@ -213,9 +218,17 @@ export function makeProjectWriteWatches(input: {
           return;
         }
         watch.unsubscribe = subscription.unsubscribe;
-        // FSEvents can still report a burst from just before subscribing, or that it dropped
-        // it, until a fresh change has come through. A folder Scient cannot write fails here.
-        watch.status = (await sync(root, watch, new AbortController().signal)) ? "ready" : "failed";
+        // After a burst just before subscribing, FSEvents reports dropped events, sometimes with
+        // the sync file itself, until one sync comes through clean. A folder Scient cannot write
+        // fails here.
+        let synced = false;
+        for (let attempt = 0; attempt < START_SYNC_ATTEMPTS && !synced; attempt += 1) {
+          const faultedAt = watch.faultedAt;
+          synced =
+            (await sync(root, watch, new AbortController().signal)) &&
+            watch.faultedAt === faultedAt;
+        }
+        watch.status = synced ? "ready" : "failed";
       } catch {
         watch.status = "failed";
       } finally {
@@ -238,17 +251,17 @@ export function makeProjectWriteWatches(input: {
       read: async (mark, signal) => {
         if (!mark.ready || watch.status !== "ready")
           return { healthy: false, reason: "watch-unavailable" };
-        if (!(await sync(root, watch, signal)))
-          return { healthy: false, reason: "watch-unavailable" };
+        const synced = await sync(root, watch, signal);
         if (watch.faultedAt > mark.sequence || watch.trimmedThrough > mark.sequence)
           return { healthy: false, reason: "watch-overflow" };
+        if (!synced) return { healthy: false, reason: "watch-unavailable" };
         const files = new Set<string>();
         const created = new Set<string>();
         for (const entry of watch.journal) {
           if (entry.sequence <= mark.sequence) continue;
           (entry.created ? created : files).add(entry.path);
         }
-        return { healthy: true, files: [...files], created: [...created] };
+        return { healthy: true, files: [...files], created: [...created], lossDetectable };
       },
       close: async () => {
         if (closed) return;

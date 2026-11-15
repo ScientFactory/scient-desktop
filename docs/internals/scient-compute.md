@@ -85,19 +85,27 @@ without replacing an existing file.
 Figures a run saves into the project are found from what the run wrote, never by scanning the
 project before and after it (`ComputeProjectOutputObserver`):
 
-- Python kernels carry an audit-hook recorder that notes figure and table files each cell opens for
-  writing, renames or copies. The bridge reads it after the reply and sends it as `writes` on
-  `execution-complete`. It is a list of candidates; the observer authorizes each one (inside the
-  project, regular file, changed since the run began) and reads it with the safe-read checks.
-- Everything else — other languages, processes a cell starts, file runs — uses one
-  `@parcel/watcher` subscription per project folder (`ComputeProjectWriteWatch`), held for the
-  session's runtime scope or one file run. `begin` only records a journal position, so admission
-  never touches the disk. `collect` writes a sync file and waits for its event, which proves every
-  earlier change was delivered. On Linux, files inside newly created folders are listed, because
-  inotify watches a new folder only after it appears.
+- Every session and file run reads one `@parcel/watcher` subscription per project folder
+  (`ComputeProjectWriteWatch`), held for the session's runtime scope or one file run. `begin` only
+  records a journal position, so admission never touches the disk. `collect` writes a sync file and
+  waits for its event, which proves every earlier change was delivered. Coverage comes from this
+  watch alone.
+- Python kernels also carry an audit-hook recorder that notes figure and table files each cell opens
+  for writing, renames or copies; the bridge sends it as `writes` on `execution-complete`. It adds
+  candidates the watch may have lost and proves nothing about coverage: a write through a handle
+  opened in an earlier cell, or relative to a `dir_fd`, raises no audit event. Callbacks are matched
+  by their `ExecutionInfo`, so a nested blank `run_cell` keeps the outer cell recording; a lost
+  lifecycle drops that cell's record. The observer authorizes every candidate (inside the project,
+  regular file, changed since the run began) and reads it with the safe-read checks.
 - A watch that is not ready, failed, or reported dropped events gives `watch-unavailable` or
   `watch-overflow`: the observer then searches for recently changed files without a baseline, and
-  coverage is `partial`. `complete` coverage with no output means the run wrote no figure.
+  coverage is `partial`.
+- On Linux, inotify watches a new folder only after it appears, so every created entry is listed if
+  it turns out to be a folder (bounded; hitting the bound or an unreadable folder gives
+  `scan-entry-limit` or `scan-unreadable`). inotify can also drop its queue without telling
+  `@parcel/watcher`, so a healthy Linux watch still reports `partial` with `watch-unverifiable`.
+- `complete` coverage with no output means the run wrote no figure. Only the macOS and Windows
+  watches can give it.
 
 ## Agents
 

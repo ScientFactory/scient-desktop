@@ -346,41 +346,51 @@ function alternatives(
 
 const WATCH_READY_TIMEOUT = "2 seconds";
 
+interface WatchedRun {
+  readonly scope: Scope.Closeable;
+  prepared?: {
+    readonly watch: ComputeProjectOutputWatch;
+    readonly observation: ComputeProjectOutputObservation;
+  };
+}
+
 /** What a run left in the project: its pictures become results, its tables are pointed at. */
 function projectOutputCapture(observer: ComputeProjectOutputObserverPort) {
-  const runs = new WeakMap<
-    AnalysisRunContext,
-    {
-      readonly scope: Scope.Closeable;
-      readonly watch: ComputeProjectOutputWatch;
-      readonly observation: ComputeProjectOutputObservation;
-    }
-  >();
+  const runs = new WeakMap<AnalysisRunContext, WatchedRun>();
+  const release = async (context: AnalysisRunContext) => {
+    const run = runs.get(context);
+    runs.delete(context);
+    // A watch still being acquired into the closed scope is released as soon as it exists.
+    if (run !== undefined) await Effect.runPromise(Scope.close(run.scope, Exit.void));
+  };
   return {
     // The program is a child process the server cannot ask, so its writes are watched.
     prepareRun: async (context: AnalysisRunContext): Promise<void> => {
-      const scope = Scope.makeUnsafe();
-      const watch = await Effect.runPromise(
-        observer.watch(context.source.cwd).pipe(Scope.provide(scope)),
-      );
-      const observation = await Effect.runPromise(
-        watch.ready.pipe(
-          Effect.timeoutOrElse({ duration: WATCH_READY_TIMEOUT, orElse: () => Effect.void }),
-          Effect.andThen(watch.begin),
-        ),
-      );
-      runs.set(context, { scope, watch, observation });
+      // Owned before the first await, so a release during preparation still closes it.
+      const run: WatchedRun = { scope: Scope.makeUnsafe() };
+      runs.set(context, run);
+      try {
+        const watch = await Effect.runPromise(
+          observer.watch(context.source.cwd).pipe(Scope.provide(run.scope)),
+        );
+        const observation = await Effect.runPromise(
+          watch.ready.pipe(
+            Effect.timeoutOrElse({ duration: WATCH_READY_TIMEOUT, orElse: () => Effect.void }),
+            Effect.andThen(watch.begin),
+          ),
+        );
+        run.prepared = { watch, observation };
+      } catch (error) {
+        await release(context);
+        throw error;
+      }
     },
-    releaseRun: async (context: AnalysisRunContext): Promise<void> => {
-      const run = runs.get(context);
-      runs.delete(context);
-      if (run !== undefined) await Effect.runPromise(Scope.close(run.scope, Exit.void));
-    },
+    releaseRun: release,
     collectArtifacts: async (context: AnalysisRunContext): Promise<AnalysisArtifactCollection> => {
-      const run = runs.get(context);
-      if (run === undefined) return { candidates: [], failureMessage: null };
+      const prepared = runs.get(context)?.prepared;
+      if (prepared === undefined) return { candidates: [], failureMessage: null };
       const { images, tables, capture } = await Effect.runPromise(
-        run.watch.collect(run.observation, { maximumBytes: MAXIMUM_CAPTURED_BYTES }),
+        prepared.watch.collect(prepared.observation, { maximumBytes: MAXIMUM_CAPTURED_BYTES }),
       );
       const files = NodePath.join(context.artifactStagingDirectory, "files");
       await NodeFSP.mkdir(files, { recursive: true });

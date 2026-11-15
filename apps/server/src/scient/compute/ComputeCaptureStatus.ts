@@ -6,6 +6,7 @@ const COMPUTE_CAPTURE_REASONS = [
   "scan-unreadable",
   "watch-unavailable",
   "watch-overflow",
+  "watch-unverifiable",
   "observation-unavailable",
   "output-limit",
   "image-limit",

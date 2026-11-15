@@ -592,7 +592,7 @@ describe("jupyter bridge output mapping", () => {
           expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
           code: "savefig('out/a.png')",
         });
-        const writes = { paths: ["/project/out/a.png"], complete: true, spawnedProcess: false };
+        const writes = { paths: ["/project/out/a.png"] };
         yield* bridge.say({
           type: "execution-complete",
           payload: { outcome: "succeeded", writes },

@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type { ComputeRuntimeWriteReport } from "@scientfactory/compute";
-import { describe, expect, it } from "@effect/vitest";
+import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -52,16 +52,22 @@ function scriptedBackend() {
   };
 }
 
-const observerLayer = (backend: () => Promise<ProjectWatchBackend>, platform?: NodeJS.Platform) =>
-  Layer.effect(
+/** A scripted backend stands in for one that reports lost events, unless told it is inotify. */
+const observerLayer = (
+  backend: () => Promise<ProjectWatchBackend>,
+  platform: NodeJS.Platform = "darwin",
+) =>
+  Layer.succeed(
     ComputeProjectOutputObserver,
-    Effect.map(HostProcess.Platform, (hostPlatform) =>
-      makeComputeProjectOutputObserver(
-        makeProjectWriteWatches({ backend, platform: platform ?? hostPlatform }),
-      ),
-    ),
+    makeComputeProjectOutputObserver(makeProjectWriteWatches({ backend, platform })),
   );
 const unavailableLayer = observerLayer(() => Promise.reject(new Error("no native watch")));
+
+// The real watch cannot rule out lost events on Linux.
+const watchedCoverage =
+  HostProcess.Platform.defaultValue() === "linux"
+    ? ({ coverage: "partial", coverageReason: "watch-unverifiable", rejectedCount: 0 } as const)
+    : ({ coverage: "complete", rejectedCount: 0 } as const);
 
 const write = (path: string, contents: string | Uint8Array = "<svg/>") =>
   Effect.promise(async () => {
@@ -69,26 +75,29 @@ const write = (path: string, contents: string | Uint8Array = "<svg/>") =>
     await NodeFSP.writeFile(path, contents);
   });
 
+const makeRoot = async () =>
+  NodeFSP.realpath(await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-project-output-")));
+
+const withWatch = <A, E, R>(
+  root: string,
+  run: (root: string, watch: ComputeProjectOutputWatch) => Effect.Effect<A, E, R>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const observer = yield* ComputeProjectOutputObserver;
+      const watch = yield* observer.watch(root);
+      yield* watch.ready;
+      return yield* run(root, watch);
+    }),
+  );
+
 function withProject<A, E, R>(
   run: (root: string, watch: ComputeProjectOutputWatch) => Effect.Effect<A, E, R>,
   existing: (root: string) => Effect.Effect<void> = () => Effect.void,
 ) {
   return Effect.acquireUseRelease(
-    Effect.promise(async () =>
-      NodeFSP.realpath(
-        await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-project-output-")),
-      ),
-    ),
-    (root) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* existing(root);
-          const observer = yield* ComputeProjectOutputObserver;
-          const watch = yield* observer.watch(root);
-          yield* watch.ready;
-          return yield* run(root, watch);
-        }),
-      ),
+    Effect.promise(makeRoot),
+    (root) => Effect.andThen(existing(root), withWatch(root, run)),
     (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
   );
 }
@@ -105,62 +114,79 @@ const run = (
     return yield* watch.collect(observation, { maximumBytes }, writes);
   });
 
-/** A project as large and deep as the ones the old before/after scan gave up on. */
-const largeProject = (root: string) =>
-  Effect.promise(async () => {
-    const environment = NodePath.join(root, "venv", "lib", "site-packages");
-    await NodeFSP.mkdir(environment, { recursive: true });
-    await NodeFSP.writeFile(NodePath.join(root, "venv", "pyvenv.cfg"), "home = /usr/bin\n");
-    for (let start = 0; start < 5_000; start += 250)
-      await Promise.all(
-        Array.from({ length: 250 }, (_, offset) =>
-          NodeFSP.writeFile(NodePath.join(environment, `module-${start + offset}.py`), ""),
-        ),
-      );
-    await NodeFSP.mkdir(NodePath.join(root, ...Array.from({ length: 12 }, () => "nested")), {
-      recursive: true,
-    });
+/**
+ * FSEvents reports system-wide loss when any process churns files, and such a run is rightly
+ * partial; a real-watch test asserts on the first run that the OS reported no loss for.
+ */
+const runWithoutReportedLoss = (watch: ComputeProjectOutputWatch, body: Effect.Effect<void>) =>
+  Effect.gen(function* () {
+    for (let attempt = 1; ; attempt += 1) {
+      const collection = yield* run(watch, body);
+      if (collection.capture?.coverageReason !== "watch-overflow" || attempt === 3)
+        return collection;
+    }
   });
+
+/** A project as large and deep as the ones the old before/after scan gave up on. */
+async function fillLargeProject(root: string) {
+  const environment = NodePath.join(root, "venv", "lib", "site-packages");
+  await NodeFSP.mkdir(environment, { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(root, "venv", "pyvenv.cfg"), "home = /usr/bin\n");
+  for (let start = 0; start < 5_000; start += 250)
+    await Promise.all(
+      Array.from({ length: 250 }, (_, offset) =>
+        NodeFSP.writeFile(NodePath.join(environment, `module-${start + offset}.py`), ""),
+      ),
+    );
+  await NodeFSP.mkdir(NodePath.join(root, ...Array.from({ length: 12 }, () => "nested")), {
+    recursive: true,
+  });
+}
+
+// Made once, ahead of the real-watch runs: creating or deleting thousands of files can make
+// FSEvents report system-wide event loss, which those runs would then rightly call partial.
+const largeProjects: string[] = [];
+beforeAll(async () => {
+  for (const _ of [0, 1]) {
+    const root = await makeRoot();
+    await fillLargeProject(root);
+    largeProjects.push(root);
+  }
+});
+afterAll(async () => {
+  for (const root of largeProjects) await NodeFSP.rm(root, { recursive: true, force: true });
+});
 
 describe("ComputeProjectOutputObserver", () => {
   it.live("retains figures saved twelve folders deep and beside a large environment", () =>
-    withProject(
-      (root, watch) =>
-        Effect.gen(function* () {
-          const deep = NodePath.join(
-            root,
-            ...Array.from({ length: 12 }, () => "deeper"),
-            "plot.svg",
-          );
-          const collection = yield* run(
-            watch,
-            Effect.all([
-              write(deep),
-              write(NodePath.join(root, "figures", "plot.png"), PIXEL),
-            ]).pipe(Effect.asVoid),
-          );
-          expect(collection.images.map((image) => image.relativePath)).toEqual([
-            `${Array.from({ length: 12 }, () => "deeper").join("/")}/plot.svg`,
-            "figures/plot.png",
-          ]);
-          expect(collection.images[1]).toMatchObject({ mediaType: "image/png", width: 1 });
-          expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
-          expect(collection.warnings).toEqual([]);
-        }),
-      largeProject,
+    withWatch(largeProjects[0]!, (root, watch) =>
+      Effect.gen(function* () {
+        const deep = NodePath.join(root, ...Array.from({ length: 12 }, () => "deeper"), "plot.svg");
+        const collection = yield* runWithoutReportedLoss(
+          watch,
+          Effect.all([write(deep), write(NodePath.join(root, "figures", "plot.png"), PIXEL)]).pipe(
+            Effect.asVoid,
+          ),
+        );
+        expect(collection.images.map((image) => image.relativePath)).toEqual([
+          `${Array.from({ length: 12 }, () => "deeper").join("/")}/plot.svg`,
+          "figures/plot.png",
+        ]);
+        expect(collection.images[1]).toMatchObject({ mediaType: "image/png", width: 1 });
+        expect(collection.capture).toEqual(watchedCoverage);
+        expect(collection.warnings).toEqual([]);
+      }),
     ).pipe(Effect.provide(liveLayer)),
   );
 
   it.live("says a run in a large, deep project wrote nothing when it wrote nothing", () =>
-    withProject(
-      (_root, watch) =>
-        Effect.gen(function* () {
-          const collection = yield* run(watch, Effect.void);
-          expect(collection.images).toEqual([]);
-          expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
-          expect(collection.warnings).toEqual([]);
-        }),
-      largeProject,
+    withWatch(largeProjects[1]!, (_root, watch) =>
+      Effect.gen(function* () {
+        const collection = yield* runWithoutReportedLoss(watch, Effect.void);
+        expect(collection.images).toEqual([]);
+        expect(collection.capture).toEqual(watchedCoverage);
+        expect(collection.warnings).toEqual([]);
+      }),
     ).pipe(Effect.provide(liveLayer)),
   );
 
@@ -190,15 +216,16 @@ describe("ComputeProjectOutputObserver", () => {
         const second = yield* watch.collect(
           yield* begin,
           { maximumBytes: 1024 * 1024 },
-          { paths: [fresh], complete: true, spawnedProcess: false },
+          { paths: [fresh] },
         );
         expect(second.images).toEqual([]);
       }),
     ).pipe(Effect.provide(observerLayer(async () => scripted.backend)));
   });
 
-  it.live("checks every path a runtime reports instead of trusting it", () =>
-    withProject((root, watch) =>
+  it.live("checks every path a runtime reports instead of trusting it", () => {
+    const scripted = scriptedBackend();
+    return withProject((root, watch) =>
       Effect.gen(function* () {
         const outside = yield* Effect.promise(() =>
           NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-outside-")),
@@ -230,8 +257,6 @@ describe("ComputeProjectOutputObserver", () => {
               NodePath.join(root, "never-written.svg"),
               "relative.svg",
             ],
-            complete: true,
-            spawnedProcess: false,
           },
         );
         yield* Effect.promise(() => NodeFSP.rm(outside, { recursive: true, force: true }));
@@ -241,26 +266,27 @@ describe("ComputeProjectOutputObserver", () => {
         ]);
         expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
       }),
-    ).pipe(Effect.provide(unavailableLayer)),
-  );
+    ).pipe(Effect.provide(observerLayer(async () => scripted.backend)));
+  });
 
-  it.live("adds what a started process wrote to what the runtime saw", () => {
+  it.live("still reads the watch when the runtime reported what it wrote", () => {
     const scripted = scriptedBackend();
     return withProject((root, watch) =>
       run(
         watch,
         Effect.gen(function* () {
           yield* write(NodePath.join(root, "own.svg"));
-          yield* write(NodePath.join(root, "child.svg"));
-          scripted.emit(null, [NodePath.join(root, "child.svg")]);
+          // Writes through a handle opened in an earlier cell, or by a child process.
+          yield* write(NodePath.join(root, "unseen.svg"));
+          scripted.emit(null, [NodePath.join(root, "unseen.svg")]);
         }),
-        { paths: [NodePath.join(root, "own.svg")], complete: true, spawnedProcess: true },
+        { paths: [NodePath.join(root, "own.svg")] },
       ).pipe(
         Effect.tap((collection) =>
           Effect.sync(() => {
             expect(collection.images.map((image) => image.relativePath)).toEqual([
-              "child.svg",
               "own.svg",
+              "unseen.svg",
             ]);
             expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
           }),
@@ -276,20 +302,88 @@ describe("ComputeProjectOutputObserver", () => {
         watch,
         Effect.gen(function* () {
           yield* write(NodePath.join(root, "made", "now", "plot.svg"));
-          scripted.emit(null, [NodePath.join(root, "made")]);
+          yield* write(NodePath.join(root, "plots.svg", "figure.svg"));
+          scripted.emit(null, [NodePath.join(root, "made"), NodePath.join(root, "plots.svg")]);
         }),
       ).pipe(
         Effect.tap((collection) =>
           Effect.sync(() => {
             expect(collection.images.map((image) => image.relativePath)).toEqual([
               "made/now/plot.svg",
+              "plots.svg/figure.svg",
             ]);
-            expect(collection.capture).toEqual({ coverage: "complete", rejectedCount: 0 });
+            expect(collection.capture).toEqual({
+              coverage: "partial",
+              coverageReason: "watch-unverifiable",
+              rejectedCount: 0,
+            });
           }),
         ),
       ),
     ).pipe(Effect.provide(observerLayer(async () => scripted.backend, "linux")));
   });
+
+  it.live("reports partial coverage when a created folder is too large to search", () => {
+    const scripted = scriptedBackend();
+    return withProject((root, watch) =>
+      run(
+        watch,
+        Effect.gen(function* () {
+          const batch = NodePath.join(root, "batch");
+          yield* Effect.promise(async () => {
+            await NodeFSP.mkdir(batch);
+            await Promise.all(
+              Array.from({ length: 1_025 }, (_, index) =>
+                NodeFSP.mkdir(NodePath.join(batch, `run-${String(index)}`)),
+              ),
+            );
+          });
+          yield* write(NodePath.join(batch, "run-7", "plot.svg"));
+          scripted.emit(null, [batch]);
+        }),
+      ).pipe(
+        Effect.tap((collection) =>
+          Effect.sync(() => {
+            expect(collection.capture).toMatchObject({
+              coverage: "partial",
+              coverageReason: "scan-entry-limit",
+            });
+            expect(collection.warnings).toContain(
+              "Some project files could not be checked (entry limit).",
+            );
+          }),
+        ),
+      ),
+    ).pipe(Effect.provide(observerLayer(async () => scripted.backend, "linux")));
+  });
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "reports partial coverage when a created folder cannot be read",
+    () => {
+      const scripted = scriptedBackend();
+      const locked = (root: string) => NodePath.join(root, "locked");
+      return withProject((root, watch) =>
+        run(
+          watch,
+          Effect.gen(function* () {
+            yield* write(NodePath.join(locked(root), "plot.svg"));
+            yield* Effect.promise(() => NodeFSP.chmod(locked(root), 0o000));
+            scripted.emit(null, [locked(root)]);
+          }),
+        ).pipe(
+          Effect.tap((collection) =>
+            Effect.sync(() => {
+              expect(collection.capture).toMatchObject({
+                coverage: "partial",
+                coverageReason: "scan-unreadable",
+              });
+            }),
+          ),
+          Effect.ensuring(Effect.promise(() => NodeFSP.chmod(locked(root), 0o700))),
+        ),
+      ).pipe(Effect.provide(observerLayer(async () => scripted.backend, "linux")));
+    },
+  );
 
   it.live("falls back to a scan and reports partial coverage when the watch lost events", () => {
     const scripted = scriptedBackend();
@@ -345,7 +439,11 @@ describe("ComputeProjectOutputObserver", () => {
             rejectedCount: 0,
           });
         }),
-      (root) => Effect.andThen(write(NodePath.join(root, "old.svg")), largeProject(root)),
+      (root) =>
+        Effect.andThen(
+          write(NodePath.join(root, "old.svg")),
+          Effect.promise(() => fillLargeProject(root)),
+        ),
     ).pipe(Effect.provide(unavailableLayer)),
   );
 
@@ -358,11 +456,10 @@ describe("ComputeProjectOutputObserver", () => {
         const collection = yield* run(
           watch,
           Effect.forEach(paths, (path) => write(path), { discard: true }),
-          { paths, complete: true, spawnedProcess: false },
+          { paths },
         );
         expect(collection.images).toHaveLength(32);
         expect(collection.capture).toMatchObject({
-          coverage: "complete",
           rejectedCount: 2,
           rejectionReason: "image-limit",
         });
@@ -378,7 +475,7 @@ describe("ComputeProjectOutputObserver", () => {
         const collection = yield* run(
           watch,
           Effect.forEach(paths, (path) => write(path), { discard: true }),
-          { paths, complete: true, spawnedProcess: false },
+          { paths },
           6,
         );
         expect(collection.images.map((image) => image.relativePath)).toEqual(["a.svg"]);

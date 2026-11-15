@@ -454,11 +454,10 @@ Reopening a result never starts a kernel or replays code. Source links in the se
 surface return to the ordinary project editor. Python errors keep their full bounded traceback and
 show project-local frames as source links; dependency and standard-library frames stay readable but
 cannot become filesystem links. Files created by code are ordinary project files;
-Scient learns which SVG/PNG files an execution wrote and retains verified static figures. Python
-reports the files each cell writes, through any library and at any depth. Other languages, programs
-a cell starts, and file runs are seen through one watch on the project folder, kept for the session
-or run; hidden folders, `node_modules`, and Python or conda environments are left out. Scient reads
-only files inside the project that changed during the execution.
+Scient learns which SVG/PNG files an execution wrote and retains verified static figures, at any
+depth and through any library. It watches the project folder for the session or run; hidden folders,
+`node_modules`, and Python or conda environments are left out. Python also reports the files each
+cell saves. Scient reads only files inside the project that changed during the execution.
 
 If the watch cannot start or loses events, for example while thousands of files change at once or on
 some network folders, Scient falls back to a bounded search for recently changed files. When that

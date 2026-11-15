@@ -161,6 +161,7 @@ const CAPTURE_OWNERS: Readonly<Record<ComputeCaptureReason, FailureOwner>> = {
   "scan-unreadable": "environment",
   "watch-unavailable": "scient",
   "watch-overflow": "environment",
+  "watch-unverifiable": "environment",
   "observation-unavailable": "scient",
   "output-limit": "scient",
   "image-limit": "scient",

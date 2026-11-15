@@ -323,14 +323,11 @@ export const ComputeTransportResourceEvent = Schema.Struct({
 export type ComputeTransportResourceEvent = typeof ComputeTransportResourceEvent.Type;
 
 /**
- * Files a runtime saw one execution write, at any depth. They are candidates for the server to
- * authorize and read, never permission to read them. Incomplete when the record overflowed.
+ * Files a runtime saw one execution write, at any depth. They add to what the server watched, for
+ * it to authorize and read; they never prove the run wrote nothing else.
  */
 export const ComputeRuntimeWriteReport = Schema.Struct({
   paths: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(Schema.isMaxLength(256)),
-  complete: Schema.Boolean,
-  /** The run started another process, whose writes the runtime cannot see. */
-  spawnedProcess: Schema.Boolean,
 });
 export type ComputeRuntimeWriteReport = typeof ComputeRuntimeWriteReport.Type;
 

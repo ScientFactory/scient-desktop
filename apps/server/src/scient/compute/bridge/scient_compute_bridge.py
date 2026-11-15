@@ -262,8 +262,9 @@ _scient_shell.events.register("post_run_cell", lambda _result: _scient_restore_s
 # Inline figures also carry a PDF, so a shown figure can be saved as vector graphics.
 _scient_shell.config.InlineBackend.figure_formats = {"png", "pdf"}
 
-# Note which figure and table files each cell writes, at any depth and through any library, so
-# the server need not scan the project. Paths are hints the server checks; the hook never raises.
+# Note which figure and table files each cell writes, at any depth and through any library. The
+# paths are extra candidates for the server, which still watches the project: writes through an
+# already-open handle or a dir_fd are not seen here. The hook never raises.
 def _scient_install_write_recorder():
     import types
     if not hasattr(sys, "addaudithook"):
@@ -271,11 +272,8 @@ def _scient_install_write_recorder():
     extensions = frozenset({".png", ".svg", ".csv", ".tsv", ".parquet", ".xlsx"})
     write_flags = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
     destination_events = frozenset({"os.rename", "shutil.copyfile", "os.link"})
-    spawn_events = frozenset({
-        "subprocess.Popen", "os.system", "os.posix_spawn", "os.spawn", "os.exec",
-        "os.fork", "os.forkpty", "os.startfile",
-    })
-    record = {"depth": 0, "paths": {}, "overflow": False, "spawned": False}
+    # Cells being run, outermost first; nested run_cell calls stack up.
+    record = {"cells": [], "paths": {}, "invalid": False}
     fspath, fsdecode, abspath, splitext = os.fspath, os.fsdecode, os.path.abspath, os.path.splitext
 
     def note(path):
@@ -286,15 +284,11 @@ def _scient_install_write_recorder():
             return
         path = abspath(path)
         paths = record["paths"]
-        if path in paths:
-            return
-        if len(paths) >= 256:
-            record["overflow"] = True
-            return
-        paths[path] = None
+        if path not in paths and len(paths) < 256:
+            paths[path] = None
 
     def hook(event, args):
-        if record["depth"] == 0:
+        if not record["cells"]:
             return
         try:
             if event == "open":
@@ -305,32 +299,37 @@ def _scient_install_write_recorder():
                     note(args[0])
             elif event in destination_events:
                 note(args[1])
-            elif event in spawn_events:
-                record["spawned"] = True
         except Exception:
             pass
 
-    def clear():
-        record["paths"] = {}
-        record["overflow"] = False
-        record["spawned"] = False
+    def pre_run(info):
+        record["cells"].append(info)
 
-    def pre_run(_info):
-        if record["depth"] == 0:
-            clear()
-        record["depth"] += 1
+    # post_run_cell carries the ExecutionResult whose info pre_run_cell received. With no cell
+    # open nothing was recorded, as after the startup line that installed this recorder.
+    def post_run(result):
+        cells = record["cells"]
+        if not cells:
+            return
+        info = getattr(result, "info", None)
+        for depth in range(len(cells) - 1, -1, -1):
+            if cells[depth] is info:
+                if depth != len(cells) - 1:
+                    record["invalid"] = True
+                del cells[depth:]
+                return
+        raw_cell = getattr(info, "raw_cell", None)
+        # IPython skips pre_run_cell for a blank cell but still sends post_run_cell.
+        if info is None or (raw_cell and not (isinstance(raw_cell, str) and raw_cell.isspace())):
+            record["invalid"] = True
 
-    # IPython skips pre_run_cell for a blank cell but still sends post_run_cell.
-    def post_run(_result):
-        record["depth"] = max(0, record["depth"] - 1)
-
+    # Read between cells, so a cell still open means its lifecycle was lost.
     def take():
-        taken = json.dumps({
-            "paths": list(record["paths"]),
-            "complete": not record["overflow"],
-            "spawnedProcess": record["spawned"],
-        })
-        clear()
+        invalid = record["invalid"] or bool(record["cells"])
+        taken = json.dumps(None if invalid else {"paths": list(record["paths"])})
+        record["cells"] = []
+        record["paths"] = {}
+        record["invalid"] = False
         return taken
 
     module = types.ModuleType("_scient_compute_writes")
@@ -1949,7 +1948,7 @@ class ScientBridge:
             await self._fail_fatal(f"Kernel communication failed: {error}")
 
     async def _read_write_record(self) -> Optional[dict[str, Any]]:
-        """What the finished cell wrote, or None so the server watches the project instead."""
+        """Files the finished cell was seen writing, or None when there is no usable record."""
         if not self._records_writes:
             return None
         try:
@@ -1959,19 +1958,15 @@ class ScientBridge:
             record = self._expression_value(result) if result.get("status") == "ok" else None
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
-        except Exception:  # noqa: BLE001 - a missing record only widens what the server checks
+        except Exception:  # noqa: BLE001 - the server watches the project either way
             return None
         if not isinstance(record, dict):
             return None
         paths = record.get("paths")
         if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
             return None
-        kept = [path for path in paths if len(path) <= MAX_WRITE_RECORD_PATH][:MAX_WRITE_RECORD_PATHS]
-        return {
-            "paths": kept,
-            "complete": record.get("complete") is True and len(kept) == len(paths),
-            "spawnedProcess": record.get("spawnedProcess") is not False,
-        }
+        kept = [path for path in paths if len(path) <= MAX_WRITE_RECORD_PATH]
+        return {"paths": kept[:MAX_WRITE_RECORD_PATHS]}
 
     async def _drain_iopub(self, request_id: str, msg_id: str) -> bool:
         drained = 0
