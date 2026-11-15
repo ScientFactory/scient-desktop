@@ -93,10 +93,10 @@ function customProperties(customXml: string | null): ReadonlyMap<string, string>
 }
 
 /**
- * Content the document shows elsewhere: text moved away, and a text box's fallback copy.
- * Deleted text needs no rule: Word writes it as `w:delText` and `w:delInstrText`.
+ * Content the document no longer shows or shows elsewhere: tracked deletions (with the content
+ * controls, bookmarks and fields inside them), text moved away, and a text box's fallback copy.
  */
-const HIDDEN = new Set(["moveFrom", "Fallback"]);
+const HIDDEN = new Set(["del", "moveFrom", "Fallback"]);
 const TRACKED = new Set(["ins", "del", "moveFrom", "moveTo"]);
 
 interface Reading {

@@ -609,27 +609,32 @@ describe("checkReferences on a Word document", () => {
       "2020",
       "10.1000/smith",
     );
-    const ghost = zoteroCitation([
-      article("GHOST001", "Roe", "A study that was never published", "2020", "10.1000/missing"),
-    ]);
+    const roe = article(
+      "GHOST001",
+      "Roe",
+      "A study that was never published",
+      "2020",
+      "10.1000/missing",
+    );
+    const ghost = zoteroCitation([roe]);
     const bookmarkCode = `ZOTERO_ITEM CSL_CITATION ${JSON.stringify({ citationItems: [{ id: 6, uris: ["http://zotero.org/users/40613/items/EIZFK2E5"], itemData: article("6", "Doe", "Sleep in shift workers", "2019", "10.1000/wrong") }] })}`;
     const endNote = Buffer.from(
       `<EndNote><Cite><Author>Wakefield</Author><Year>1998</Year><RecNum>4</RecNum><record><rec-number>4</rec-number><contributors><authors><author>Wakefield, A.</author></authors></contributors><titles><title>Vaccines and autism</title><secondary-title>The Lancet</secondary-title></titles><dates><year>1998</year></dates><electronic-resource-num>10.1000/retracted</electronic-resource-num></record></Cite></EndNote>`,
     ).toString("base64");
     // Mendeley Cite keeps the citation as base64 in a content control's tag, without padding.
-    const mendeleyCite = `MENDELEY_CITATION_v3_${Buffer.from(
-      JSON.stringify({
-        citationID: "MENDELEY_CITATION_1de18c13",
-        citationItems: [
-          {
-            id: "f3a0c1d2",
-            itemData: { ...article("f3a0c1d2", "Ng", "Handbook of sleep", "2010"), type: "book" },
-          },
-        ],
-      }),
-    )
-      .toString("base64")
-      .replace(/=+$/u, "")}`;
+    const mendeleyTag = (itemData: Readonly<Record<string, unknown>>) =>
+      `MENDELEY_CITATION_v3_${Buffer.from(
+        JSON.stringify({
+          citationID: "MENDELEY_CITATION_1de18c13",
+          citationItems: [{ id: itemData.id, itemData }],
+        }),
+      )
+        .toString("base64")
+        .replace(/=+$/u, "")}`;
+    const mendeleyCite = mendeleyTag({
+      ...article("f3a0c1d2", "Ng", "Handbook of sleep", "2010"),
+      type: "book",
+    });
     const property = (name: string, value: string) =>
       `<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="${name}"><vt:lpwstr>${escapeXml(value)}</vt:lpwstr></property>`;
     await fixture.write(
@@ -640,8 +645,9 @@ describe("checkReferences on a Word document", () => {
             run("Light matters ") +
               field(zoteroCitation([smith]), run("(Smith, 2020)")) +
               fieldMark("end") +
-              // A citation deleted or moved away with tracked changes is no longer here.
-              `<w:del w:id="1" w:author="B" w:date="2026-11-01T10:00:00Z">${fieldMark("begin")}<w:r><w:delInstrText xml:space="preserve">${escapeXml(ghost)}</w:delInstrText></w:r>${fieldMark("separate")}<w:r><w:delText>(Roe, 2020)</w:delText></w:r>${fieldMark("end")}</w:del>` +
+              // A citation deleted or moved away with tracked changes is no longer here, whether
+              // a field, a content control or a Zotero bookmark.
+              `<w:del w:id="1" w:author="B" w:date="2026-11-01T10:00:00Z">${fieldMark("begin")}<w:r><w:delInstrText xml:space="preserve">${escapeXml(ghost)}</w:delInstrText></w:r>${fieldMark("separate")}<w:r><w:delText>(Roe, 2020)</w:delText></w:r>${fieldMark("end")}<w:sdt><w:sdtPr><w:tag w:val="${mendeleyTag(roe)}"/></w:sdtPr><w:sdtContent><w:r><w:delText>(Roe, 2020)</w:delText></w:r></w:sdtContent></w:sdt><w:bookmarkStart w:id="3" w:name="ZOTERO_BREF_deletedRoe01"/><w:r><w:delText>(Roe, 2020)</w:delText></w:r><w:bookmarkEnd w:id="3"/></w:del>` +
               `<w:moveFrom w:id="2" w:author="B" w:date="2026-11-01T10:00:00Z">${field(ghost, run("(Roe, 2020)"))}${fieldMark("end")}</w:moveFrom>` +
               run(" and again ") +
               field(zoteroCitation([smith]), run("(Smith, 2020)")) +
@@ -669,7 +675,7 @@ describe("checkReferences on a Word document", () => {
           `${fieldMark("begin", endNote)}<w:r><w:instrText xml:space="preserve"> ADDIN EN.CITE </w:instrText></w:r>${fieldMark("begin", endNote)}<w:r><w:instrText xml:space="preserve"> ADDIN EN.CITE.DATA </w:instrText></w:r>${fieldMark("end")}${fieldMark("separate")}${run("(Wakefield, 1998)")}${fieldMark("end")}`,
         )}</w:footnote></w:footnotes>`,
         "word/comments.xml": `<w:comments ${WORD_NS}><w:comment w:id="0" w:author="B">${paragraph(run("Cite (Nobody, 1999) here?"))}</w:comment></w:comments>`,
-        "docProps/custom.xml": `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">${property("ZOTERO_BREF_Jx3kq8mZ1aPl_1", bookmarkCode.slice(0, 255))}${property("ZOTERO_BREF_Jx3kq8mZ1aPl_2", bookmarkCode.slice(255))}</Properties>`,
+        "docProps/custom.xml": `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">${property("ZOTERO_BREF_Jx3kq8mZ1aPl_1", bookmarkCode.slice(0, 255))}${property("ZOTERO_BREF_Jx3kq8mZ1aPl_2", bookmarkCode.slice(255))}${property("ZOTERO_BREF_deletedRoe01_1", ghost.trim())}</Properties>`,
       }),
     );
     const library = await listScientSourceRecords(fixture.root);
