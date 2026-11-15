@@ -500,6 +500,8 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     yield* driver.listRefs({ cwd });
 
     assert.deepStrictEqual(commands, [
+      // Local status first reads whether config hides untracked files.
+      { args: ["config", "--get", "status.showUntrackedFiles"] },
       { args: ["rev-parse", "--git-path", "index"], language: "C" },
       { args: ["rev-parse", "--git-common-dir"], language: "C" },
       { args: ["status", "--porcelain=2", "--branch", "-z"], language: "C" },

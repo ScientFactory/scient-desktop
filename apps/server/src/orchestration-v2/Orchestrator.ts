@@ -13334,17 +13334,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     threadId: ThreadId,
     runId: RunId,
   ) =>
-    projectionStore
-      .getThreadRecords(threadId, ["turnItems", "runs", "attempts", "providerTurns"], {
-        turnItemTypes: ["run_interrupt_request"],
-        turnItemRunIds: [runId],
-      })
-      .pipe(
-        // SCIENT-FORK:START — one Stop policy for steering and continuation callers.
-        Effect.map((projection) => hasCurrentRunStop(projection, runId)),
-        // SCIENT-FORK:END
-        mapDispatchError(command),
-      );
+    projectionStore.hasRunInterruptRequest(threadId, runId).pipe(
+      // SCIENT-FORK:START — one Stop policy for steering and continuation callers: a Stop
+      // fences only its own attempt and native turn, so a recorded one is read in full.
+      Effect.flatMap((requested) =>
+        requested
+          ? projectionStore
+              .getThreadRecords(threadId, ["turnItems", "runs", "attempts", "providerTurns"], {
+                turnItemTypes: ["run_interrupt_request"],
+                turnItemRunIds: [runId],
+              })
+              .pipe(Effect.map((projection) => hasCurrentRunStop(projection, runId)))
+          : Effect.succeed(false),
+      ),
+      // SCIENT-FORK:END
+      mapDispatchError(command),
+    );
 
   const markStoppedRun = Effect.fnUntraced(function* (input: {
     readonly command: Extract<

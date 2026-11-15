@@ -764,7 +764,8 @@ it.effect("treats null snapshot options like omitted ones", () =>
       const nulls = yield* callSnapshot({ tabId: null, includeImage: null, save: null });
 
       expect(nulls).toEqual(omitted);
-      expect(inputs).toEqual([{}, {}]);
+      // Without an image or a save, the browser skips the PNG encode.
+      expect(inputs).toEqual([{ pixelsRequired: false }, { pixelsRequired: false }]);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

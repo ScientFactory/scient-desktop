@@ -218,13 +218,19 @@ describe("scan cache round trip", () => {
             return compatible;
           };
           // Every older Claude entry re-parses so advisor usage is counted.
+          // Every pre-v17 Grok entry re-parses, keyed by time.
           const legacy =
             entry.provider === "claude" ||
+            entry.provider === "grok" ||
             (TEST_FORMAT_MAP.get(entry.provider)?.state !== undefined &&
               (version < 6 || entry.provider === "codex"));
+          const timedGrokKey = (record: UsageRecord) =>
+            entry.provider === "grok" && record.dedupeKey === `s:p:${record.model}`
+              ? { ...record, dedupeKey: `s:p:${record.timestampMs}:${record.model}` }
+              : record;
           expected.set(file, {
             ...entry,
-            records: entry.records.map(withoutProvenance),
+            records: entry.records.map(withoutProvenance).map(timedGrokKey),
             tailRecords: entry.tailRecords.map(withoutProvenance),
             ...(legacy
               ? {

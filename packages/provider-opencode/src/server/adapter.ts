@@ -3849,31 +3849,35 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               // SCIENT-FORK:START — native conversations persist their original rules across
               // process replacement. Install this turn's captured authority before prompting.
-              const permission = openCodePermissionRules(turnInput.runtimePolicy);
-              yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
-                client.session.update({ sessionID: sessionId, permission }, { signal }),
-              );
-              const confirmed = unwrapData(
-                "session.get",
-                yield* sdkCall("session.get", { sessionID: sessionId }, (signal) =>
-                  client.session.get({ sessionID: sessionId }, { signal }),
-                ),
-              );
-              const effectivePermission = confirmed.permission;
-              if (
-                confirmed.id !== sessionId ||
-                effectivePermission === undefined ||
-                effectivePermission.length !== permission.length ||
-                !permission.every((rule, index) => {
-                  const effective = effectivePermission[index];
-                  return effective !== undefined && permissionRuleEquals(rule, effective);
-                })
-              ) {
-                return yield* protocolError(
-                  "OpenCode did not confirm this turn's permission rules.",
+              // A continuation sends no prompt: its wake already runs on this process under the
+              // rules confirmed here, and applyPermissionRules below still writes a changed policy.
+              if (!continuation) {
+                const permission = openCodePermissionRules(turnInput.runtimePolicy);
+                yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
+                  client.session.update({ sessionID: sessionId, permission }, { signal }),
                 );
+                const confirmed = unwrapData(
+                  "session.get",
+                  yield* sdkCall("session.get", { sessionID: sessionId }, (signal) =>
+                    client.session.get({ sessionID: sessionId }, { signal }),
+                  ),
+                );
+                const effectivePermission = confirmed.permission;
+                if (
+                  confirmed.id !== sessionId ||
+                  effectivePermission === undefined ||
+                  effectivePermission.length !== permission.length ||
+                  !permission.every((rule, index) => {
+                    const effective = effectivePermission[index];
+                    return effective !== undefined && permissionRuleEquals(rule, effective);
+                  })
+                ) {
+                  return yield* protocolError(
+                    "OpenCode did not confirm this turn's permission rules.",
+                  );
+                }
+                state.permission = permission;
               }
-              state.permission = permission;
               // SCIENT-FORK:END
               yield* applyPermissionRules(state, turnInput.runtimePolicy);
               // A continuation admits a wake OpenCode is already running, so it sends no prompt.

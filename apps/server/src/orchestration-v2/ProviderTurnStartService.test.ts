@@ -1325,6 +1325,9 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(EventSink.EventSinkV2)({
           writeIfRunCurrent,
+          // SCIENT-FORK: a real run start watches for a Stop from the latest cursor.
+          latestSequence: () => Effect.succeed(0),
+          stream: () => Stream.never,
           write: ({ events: incoming }) =>
             Effect.sync(() => {
               for (const event of incoming) {
@@ -1834,19 +1837,22 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
       harness.startRootRun.mockImplementation((input) =>
         Effect.gen(function* () {
           const execution = yield* RunExecutionService.RunExecutionServiceV2;
+          const events = Stream.concat(
+            Stream.succeed({
+              type: "provider_turn.updated" as const,
+              driver: input.providerThread.driver,
+              threadId: run.threadId,
+              providerTurn,
+            }),
+            Stream.never,
+          );
           yield* execution.startRootRun({
             ...input,
             session: {
               ...input.session,
-              events: Stream.concat(
-                Stream.succeed({
-                  type: "provider_turn.updated" as const,
-                  driver: input.providerThread.driver,
-                  threadId: run.threadId,
-                  providerTurn,
-                }),
-                Stream.never,
-              ),
+              events,
+              // SCIENT-FORK: Scient's run start subscribes when the session offers it.
+              subscribeEvents: Effect.succeed({ events, close: Effect.void }),
               startTurn: () =>
                 Effect.gen(function* () {
                   yield* Deferred.await(turnIngested);

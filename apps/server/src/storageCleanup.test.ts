@@ -1201,10 +1201,15 @@ it.live("keeps submodules when stored repository metadata is malformed", () =>
       const childGit = (yield* command(child, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
       yield* command(submodule, ["submodule", "deinit", "child"]);
       yield* fs.writeFileString(`${childGit}/HEAD`, "not a ref\n");
-      yield* fs.writeFileString(`${worktree}/notes.txt`, "keep while the worktree stays\n");
       expect(
         (yield* service.runNow).entries.find((entry) => entry.path === worktree),
       ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("inspected") });
+      yield* fs.writeFileString(`${worktree}/notes.txt`, "keep while the worktree stays\n");
+      // SCIENT-FORK: Scient counts untracked files under every policy, so the note itself keeps
+      // the worktree before the submodule check runs; T3 reaches the submodule reason.
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("uncommitted changes") });
       expect(yield* fs.exists(worktree)).toBe(true);
       expect(yield* fs.readFileString(`${childGit}/HEAD`)).toBe("not a ref\n");
       expect(yield* fs.readFileString(`${worktree}/notes.txt`)).toBe(

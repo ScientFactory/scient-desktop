@@ -3301,7 +3301,7 @@ describe("UsageService", () => {
           await NodeFSP.writeFile(v4Path, v4Text);
           await NodeFSP.rm(transcript);
         });
-        for (const version of [17, "unknown", undefined]) {
+        for (const version of [18, "unknown", undefined]) {
           yield* Effect.promise(() =>
             NodeFSP.writeFile(cachePath, encodeUnknownJsonString({ ...document, version })),
           );

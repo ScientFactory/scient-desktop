@@ -1787,7 +1787,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProviderSessionManagerV2)({}),
       );
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
@@ -1811,7 +1810,14 @@ describe("OrchestratorMcpService provider resolution", () => {
 
         yield* service.waitForThread(scope, { threadId: parentThreadId, ...budget });
         assert.deepEqual(yield* Ref.get(threadWaitBudgets), [scenario.budgetMs]);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }).pipe(
+        Effect.provide(
+          layerOrchestratorService.pipe(
+            Layer.provide(fullAccessCapturedPolicyLayer),
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
     }),
   );
 
@@ -1843,7 +1849,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProviderSessionManagerV2)({}),
       );
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
@@ -1864,7 +1869,14 @@ describe("OrchestratorMcpService provider resolution", () => {
         yield* TestClock.adjust(Duration.millis(1));
         assert.include(yield* Fiber.join(waiting), { status: "timed_out" });
         assert.deepEqual(yield* Ref.get(statuses), ["pending", "cancelled"]);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }).pipe(
+        Effect.provide(
+          layerOrchestratorService.pipe(
+            Layer.provide(fullAccessCapturedPolicyLayer),
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
     }),
   );
 

@@ -3687,7 +3687,8 @@ it.live("drives the desktop's own page for a tab the desktop renders", () =>
       yield* manager.close({ threadId: scope.threadId, tabId: opened.tabId });
       expect(yield* Effect.promise(() => released.promise)).toBe(opened.tabId);
       expect(releasedDesktopTabs).toEqual([opened.tabId]);
-      expect(page.close).not.toHaveBeenCalled();
+      // The desktop page unloads before its tab goes, so its beforeunload handlers run.
+      expect(page.close).toHaveBeenCalledExactlyOnceWith({ runBeforeUnload: true });
     }),
   ).pipe(Effect.provide(layer)),
 );
