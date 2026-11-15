@@ -750,6 +750,80 @@ describe("checkReferences on a Word document", () => {
     expect(report).toMatchObject({ references: 4, citations: 6, noIdentifier: 4 });
   });
 
+  it("links a cited Zotero item to the Library source of the same library, and never guesses", async () => {
+    await using fixture = await project();
+    const zotero = (libraryId: string, itemKey: string) => ({
+      system: "zotero" as const,
+      libraryId,
+      itemKey,
+      itemVersion: 1,
+      rawItemType: "journalArticle",
+    });
+    const held = async (title: string, changes: Partial<LibraryCandidate>) =>
+      addLibrarySource(fixture.root, { sourceKey: title, title, identifiers: [], ...changes });
+    await addLibrarySource(fixture.root);
+    await held("Feeding behaviour of reef fish", {
+      identifiers: [{ scheme: "doi", value: "10.1000/reef" }],
+      externalReferences: [zotero("22", "ABCDEFGH")],
+    });
+    await held("Handbook of sleep", { externalReferences: [zotero("groups/11", "GROUPKEY")] });
+    await held("Vaccines and autism", {
+      identifiers: [{ scheme: "doi", value: "10.1000/retracted" }],
+      externalReferences: [zotero("40613", "CONTRA01")],
+    });
+    await held("Twin study, first copy", { externalReferences: [zotero("40613", "TWICE001")] });
+    await held("Twin study, second copy", { externalReferences: [zotero("40613", "TWICE001")] });
+    const cite = (address: string, itemData: Readonly<Record<string, unknown>>) =>
+      field(
+        ` ADDIN ZOTERO_ITEM CSL_CITATION ${JSON.stringify({ citationItems: [{ id: 1, uris: [address], itemData }] })} `,
+        run("(cited)"),
+      ) + fieldMark("end");
+    await fixture.write(
+      "draft.docx",
+      await wordFile({
+        "word/document.xml": `<w:document ${WORD_NS}><w:body>${paragraph(
+          // The same item key in another library is another item; the DOI finds the source.
+          cite(
+            "http://zotero.org/groups/11/items/ABCDEFGH",
+            article("1", "Smith", "The effect of light on sleep", "2020", "10.1000/smith"),
+          ) +
+            cite(
+              "http://zotero.org/groups/11/items/GROUPKEY",
+              article("2", "Ng", "Handbook of sleep", "2010"),
+            ) +
+            // The item's source has another DOI than the citation.
+            cite(
+              "http://zotero.org/users/40613/items/CONTRA01",
+              article("3", "Roe", "A study that was never published", "2020", "10.1000/missing"),
+            ) +
+            cite(
+              "http://zotero.org/users/40613/items/TWICE001",
+              article("4", "Lee", "Twin study", "2018"),
+            ),
+        )}</w:body></w:document>`,
+      }),
+    );
+    const library = await listScientSourceRecords(fixture.root);
+    const inLibrary = (title: string) => library.find((record) => record.title === title)!.sourceId;
+
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "draft.docx" } },
+      { resolveIdentifiers: registry(works), now },
+    );
+
+    expect(report.ledger.map(({ label, sourceId }) => [label, sourceId])).toEqual([
+      ["The effect of light on sleep", inLibrary("The effect of light on sleep")],
+      ["Handbook of sleep", inLibrary("Handbook of sleep")],
+      ["A study that was never published", null],
+      ["Twin study", null],
+    ]);
+    expect(report.notes).toEqual([
+      "Citations inserted with a reference manager were read. Citations typed by hand were not.",
+      "2 cited works were not linked to a Library source, because more than one could be meant: “A study that was never published”, “Twin study”.",
+      "The document has no reference list made by the reference manager.",
+    ]);
+  });
+
   it("reads typed citations against the reference list of a document without a reference manager", async () => {
     await using fixture = await project();
     const superscript = '<w:vertAlign w:val="superscript"/>';
