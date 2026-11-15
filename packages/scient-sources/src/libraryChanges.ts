@@ -140,6 +140,7 @@ export async function listScientLibraryRecentChanges(
       available: availableNow(entry.importedSourceIds, aliases, present).length,
       failed: entry.failed,
       ...(entry.notBrought > 0 ? { notBrought: entry.notBrought } : {}),
+      ...(entry.remaining ? { remaining: entry.remaining } : {}),
     })),
     ...trash.map((entry) => ({
       kind: "trash" as const,

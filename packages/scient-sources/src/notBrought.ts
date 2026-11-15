@@ -126,12 +126,12 @@ export function summarizeNotBrought(
     Partial<Pick<ScientSourceImportOperation, "adapter">>,
 ): ReadonlyArray<NotBroughtLine> {
   const lines = new Map<string, { line: NotBroughtLine; sourceIds: Set<string> }>();
+  // The same work for certain (its identifier or its PDF). A possible match is not said to
+  // be here: the summary asks the person to look at those.
   const alreadyHere = operation.items.filter(
     (item) =>
       item.state === "skipped" &&
-      item.duplicateKind !== undefined &&
-      item.duplicateKind !== "same-origin" &&
-      item.duplicateKind !== "new",
+      (item.duplicateKind === "same-identifier" || item.duplicateKind === "same-pdf"),
   );
   for (const item of operation.items) {
     if (item.state !== "imported" || !item.sourceId) continue;

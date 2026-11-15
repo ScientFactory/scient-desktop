@@ -1,7 +1,12 @@
 import type { ScientSourceCreator, ScientSourceRecord, ScientSourceType } from "../model.ts";
 import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import { SCIENT_SOURCE_MORE_FIELDS, scientSourceMoreKind } from "../sourceMore.ts";
-import { ZOTERO_PRIMARY_ROLE, ZOTERO_ROLE_CSL, ZOTERO_TYPE_CSL } from "../zoteroSchema.ts";
+import {
+  ZOTERO_PRIMARY_ROLE,
+  ZOTERO_ROLE_CSL,
+  ZOTERO_ROLE_SPELLING,
+  ZOTERO_TYPE_CSL,
+} from "../zoteroSchema.ts";
 import {
   BibliographyEntryBuilder,
   type BibliographyEntry,
@@ -76,13 +81,21 @@ const CUSTOM_TYPE_LABELS: Readonly<Record<string, string>> = {
   collection: "Collection",
 };
 
+/**
+ * Each CSL name variable with the Zotero role it is read as, so what the writer puts under
+ * `director` or `interviewer` comes back. Where two roles share a variable, the one named
+ * like the variable is taken (author, not creator).
+ */
 const NAME_ROLES: ReadonlyArray<readonly [string, string]> = [
-  ["author", "author"],
-  ["editor", "editor"],
-  ["translator", "translator"],
-  ["container-author", "bookAuthor"],
-  ["collection-editor", "seriesEditor"],
-];
+  ...Object.entries(ZOTERO_ROLE_CSL)
+    .reduce((roles, [role, variable]) => {
+      if (!roles.has(variable) || variable.replaceAll("-", "") === role) roles.set(variable, role);
+      return roles;
+    }, new Map<string, string>())
+    .entries(),
+].map(([variable, role]) => [variable, ZOTERO_ROLE_SPELLING[role] ?? role] as const);
+
+const SEASONS = ["Spring", "Summer", "Autumn", "Winter"] as const;
 
 /** Fields with no bibliographic content (Zotero's internal source and the CSL bookkeeping). */
 /** Details read with their own rule in `entryFromItem`, not by the general loop. */
@@ -143,8 +156,13 @@ function cslDate(value: unknown): string | null {
       if (!day) return `${year}-${month.padStart(2, "0")}`;
       return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
     });
-    // A range keeps both ends, as `start/end`.
-    if (written.every((date) => date !== null)) return written.join("/");
+    // A range keeps both ends, as `start/end`; a season and "about" are kept in words.
+    if (written.every((date) => date !== null)) {
+      const season = SEASONS[Number(value["season"]) - 1] ?? stringValue(value["season"]);
+      const date = written.join("/");
+      const worded = season && written.length === 1 ? `${season} ${date}` : date;
+      return value["circa"] ? `circa ${worded}` : worded;
+    }
   }
   return stringValue(value["raw"]) ?? stringValue(value["literal"]);
 }
@@ -192,7 +210,9 @@ function entryFromItem(item: JsonObject, index: number): BibliographyEntry {
   }
   builder.set("title", text("title"), "title");
   builder.set("containerTitle", text("container-title"), "container-title");
-  if (!builder.has("containerTitle")) {
+  // With no full title, the abbreviation is the container's title, and no detail besides.
+  const shortIsTitle = !builder.has("containerTitle");
+  if (shortIsTitle) {
     builder.set(
       "containerTitle",
       stringValue(item["container-title-short"]),
@@ -251,10 +271,7 @@ function entryFromItem(item: JsonObject, index: number): BibliographyEntry {
     stringValue(item["title-short"]) ?? stringValue(item["shortTitle"]),
     item["title-short"] === undefined ? "shortTitle" : "title-short",
   );
-  if (
-    builder.get("containerTitle") !==
-    collapseWhitespace(stringValue(item["container-title-short"]) ?? "")
-  ) {
+  if (!shortIsTitle) {
     builder.setMore(
       "container-title-short",
       stringValue(item["container-title-short"]) ?? stringValue(item["journalAbbreviation"]),
@@ -396,34 +413,46 @@ function cslMore(record: ScientSourceRecord): Readonly<Record<string, unknown>> 
  * parts, anything else ("ca. 1890", "Spring 2020") whole as a literal. Never a part of the
  * text taken for the whole.
  */
-function cslDateFromText(text: string): Readonly<Record<string, unknown>> {
-  const parts = (value: string) => {
+/** Year, then a real month, then a real day: Zotero writes an unknown one as `00`. */
+function dateParts(year: string, month?: string, day?: string): number[] {
+  const parts = [Number(year)];
+  if (!month || Number(month) < 1 || Number(month) > 12) return parts;
+  parts.push(Number(month));
+  if (day && Number(day) >= 1 && Number(day) <= 31) parts.push(Number(day));
+  return parts;
+}
+
+/**
+ * A date kept as text, as CSL takes it. A plain date, a range of two, "circa 1850" and
+ * "Spring 2020" become their parts; any other text is cited whole, as written.
+ */
+export function cslDateFromText(text: string): Readonly<Record<string, unknown>> {
+  const about = /^(?:c\.|ca\.|circa)\s*(.+)$/iu.exec(text.trim());
+  const season = /^(spring|summer|autumn|fall|winter)\s+(\d{4})$/iu.exec(
+    (about?.[1] ?? text).trim(),
+  );
+  const dates = (season?.[2] ?? about?.[1] ?? text).split("/").map((value) => {
     const match = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?(?:[T ]\d{2}:\d{2}(?::\d{2})?Z?)?$/u.exec(
       value.trim(),
     );
-    return match
-      ? [match[1], match[2], match[3]].flatMap((part) => (part ? [Number(part)] : []))
-      : null;
+    return match?.[1] ? dateParts(match[1], match[2], match[3]) : null;
+  });
+  if (dates.length > 2 || !dates.every((date) => date !== null)) return { literal: text };
+  const named = season?.[1]?.toLowerCase().replace("fall", "autumn");
+  return {
+    "date-parts": dates,
+    ...(named ? { season: SEASONS.findIndex((name) => name.toLowerCase() === named) + 1 } : {}),
+    ...(about ? { circa: true } : {}),
   };
-  const dates = text.split("/").map(parts);
-  return dates.length <= 2 && dates.every((date) => date !== null)
-    ? { "date-parts": dates }
-    : { literal: text };
 }
 
+/** The record's own date: as above when it reads as one, else what its beginning says. */
 function cslIssued(raw: string | null, year: number | null) {
+  const read = raw ? cslDateFromText(raw) : null;
+  if (read && "date-parts" in read) return read;
   const match = raw?.match(/^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?/u);
-  const parsedYear = match?.[1] ? Number(match[1]) : year;
-  if (parsedYear !== null && parsedYear !== undefined) {
-    const parts = [parsedYear];
-    const month = match?.[2] ? Number(match[2]) : null;
-    const day = match?.[3] ? Number(match[3]) : null;
-    if (month !== null && month >= 1 && month <= 12) {
-      parts.push(month);
-      if (day !== null && day >= 1 && day <= 31) parts.push(day);
-    }
-    return { "date-parts": [parts] };
-  }
+  if (match?.[1]) return { "date-parts": [dateParts(match[1], match[2], match[3])] };
+  if (year !== null) return { "date-parts": [[year]] };
   return raw ? { literal: raw } : undefined;
 }
 

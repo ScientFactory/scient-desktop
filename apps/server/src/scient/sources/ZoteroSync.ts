@@ -289,16 +289,16 @@ async function refreshOne(input: {
 }
 
 /**
- * Brings Zotero's changes into imported sources, keeping edits made here. `sourceIds` are
- * refreshed as asked. Without them, every source that came from Zotero is (of `among`, when a
- * project's sources are meant); with `start`, a batch of those from that position, and the
- * result says how many there are and where the next batch begins.
+ * Brings Zotero's changes into imported sources, keeping edits made here: the `sourceIds`
+ * asked for, or every source from Zotero (of `among`, for a project's). With `after`, the
+ * batch in ID order that follows that source (null: the first); the result names the source
+ * the next batch follows, so one added or removed meanwhile moves no other.
  */
 export async function refreshZoteroSources(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceIds?: ReadonlyArray<string>;
   readonly among?: ReadonlyArray<string>;
-  readonly start?: number;
+  readonly after?: string | null;
   /** Tests only: a smaller batch. */
   readonly batchSize?: number;
   readonly connection?: ZoteroConnection;
@@ -317,12 +317,16 @@ export async function refreshZoteroSources(input: {
     : (input.among ? await byIds(input.among) : await listScientSourceRecords(input.root))
         .filter((record) => zoteroReference(record))
         .toSorted((left, right) => left.sourceId.localeCompare(right.sourceId));
-  const { start } = input;
+  const { after } = input;
+  const following =
+    after === undefined || after === null
+      ? (fromZotero ?? [])
+      : (fromZotero ?? []).filter((record) => record.sourceId.localeCompare(after) > 0);
   const records = input.sourceIds
     ? await byIds(input.sourceIds)
-    : start === undefined
-      ? (fromZotero ?? [])
-      : (fromZotero ?? []).slice(start, start + (input.batchSize ?? REFRESH_BATCH_SOURCES));
+    : after === undefined
+      ? following
+      : following.slice(0, input.batchSize ?? REFRESH_BATCH_SOURCES);
   if (records.length > MAX_REFRESH_SOURCES) {
     throw new Error(`Refresh at most ${MAX_REFRESH_SOURCES} sources at a time.`);
   }
@@ -363,13 +367,13 @@ export async function refreshZoteroSources(input: {
       });
     }
   }
-  if (!fromZotero || start === undefined) return { connection, items };
-  const nextStart = start + records.length;
+  if (!fromZotero || after === undefined) return { connection, items };
+  const last = records.at(-1);
   return {
     connection,
     items,
     total: fromZotero.length,
-    ...(nextStart < fromZotero.length ? { nextStart } : {}),
+    ...(last && records.length < following.length ? { next: last.sourceId } : {}),
   };
 }
 

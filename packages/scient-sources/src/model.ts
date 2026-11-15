@@ -575,6 +575,8 @@ export const ScientLibraryRecentChange = Schema.Union([
     failed: Schema.Int,
     /** How many kinds of things the import read and did not bring; absent when none. */
     notBrought: Schema.optionalKey(Schema.Int),
+    /** A large import that stopped before its end: how many references are still to come. */
+    remaining: Schema.optionalKey(Schema.Int),
   }),
   Schema.Struct({
     kind: Schema.Literal("trash"),
@@ -985,8 +987,8 @@ export const ScientSourceZoteroRefreshResult = Schema.Struct({
   items: Schema.Array(ScientSourceZoteroRefreshItem),
   /** A batch of a whole-Library refresh: how many sources came from Zotero in all. */
   total: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  /** Where the next batch begins; absent after the last. */
-  nextStart: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** The last source of this batch, to ask for the batch after it; absent after the last. */
+  next: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceZoteroRefreshResult = typeof ScientSourceZoteroRefreshResult.Type;
 

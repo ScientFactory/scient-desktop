@@ -757,16 +757,14 @@ export function formatBibtex(
       if (monthName) fields.push(["month", monthName]);
       add("volume", record.volume);
       const more = record.more ?? {};
-      // `number` is a report's own number and a book's number in its series; an issue beside
-      // one of those is written as `issue`, which is how the reader takes them apart again.
-      const ownNumber =
-        record.type === "report"
-          ? more.number
-          : (record.type === "book" || record.type === "book-chapter") && more["collection-title"]
-            ? more["collection-number"]
-            : undefined;
-      add("number", ownNumber ?? record.issue);
-      if (ownNumber) add("issue", record.issue);
+      // `number` is a report's own number and a book's number in its series. For those the
+      // issue is always written as `issue`, which is how the reader takes them apart again.
+      const inSeries =
+        (record.type === "book" || record.type === "book-chapter") && more["collection-title"];
+      if (record.type === "report" || inSeries) {
+        add("number", inSeries ? more["collection-number"] : more.number);
+        add("issue", record.issue);
+      } else add("number", record.issue);
       add("pages", record.pages?.replace(/\s*[-–—]+\s*/gu, "--"), (value) => value);
       const publisherField =
         record.type === "thesis"

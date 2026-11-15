@@ -37,6 +37,7 @@ import {
   listSystematicReviews,
   beginZoteroImport,
   beginZoteroScopedImport,
+  continueZoteroImportRun,
   cancelSourceImport,
   discardLocalPdfSources,
   getScientSourcesOverview,
@@ -737,7 +738,16 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("beginScopedImport", (args) =>
           route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) => {
-            const { pin, ...payload } = args.payload;
+            const request = args.payload;
+            if ("continueRun" in request) {
+              return continueZoteroImportRun({
+                root: library ? library.library : request.root,
+                runId: request.continueRun,
+                retryFailed: request.retryFailed === true,
+                zotero,
+              });
+            }
+            const { pin, ...payload } = request;
             return beginZoteroScopedImport({ ...payload, ...importTarget(library, pin), zotero });
           }),
         )
@@ -747,15 +757,19 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             AuthOrchestrationOperateScope,
             args.payload.root,
             async (library) => {
-              // Asked for by name, or every Zotero source of the project.
-              const { start } = args.payload;
+              // Asked for by name; or every Zotero source of the project, or of the whole
+              // Library when that is what the panel shows.
+              const { after, allLibrary } = args.payload;
               const named = args.payload.sourceIds;
-              const ids = library ? await libraryZoteroSourceIds(library, named) : named;
+              const ids =
+                library && (named || !allLibrary)
+                  ? await libraryZoteroSourceIds(library, named)
+                  : named;
               const which = !ids ? {} : named ? { sourceIds: ids } : { among: ids };
               const result = await refreshZoteroSources({
                 root: library ? library.library : args.payload.root,
                 ...which,
-                ...(start === undefined ? {} : { start }),
+                ...(after === undefined ? {} : { after }),
                 ...(args.payload.connection ? { connection: args.payload.connection } : {}),
                 choices: {
                   useZotero: new Set(args.payload.useZotero ?? []),

@@ -1119,13 +1119,15 @@ const RefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
 );
 
 /**
- * Without sourceIds, every source imported from Zotero is refreshed: with `start`, a batch of
- * them from that position (the result says where the next begins).
+ * Without sourceIds, every source imported from Zotero is refreshed (of the whole Library
+ * with `allLibrary`, else of the project). With `after`, a batch of them: null begins, and
+ * the result's `next` is the `after` of the batch that follows.
  */
 export const ScientSourcesZoteroRefreshRequest = Schema.Struct({
   root: NonEmptyString,
   sourceIds: Schema.optionalKey(BoundedSourceIds),
-  start: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  after: Schema.optionalKey(Schema.NullOr(NonEmptyString)),
+  allLibrary: Schema.optionalKey(Schema.Boolean),
   connection: Schema.optionalKey(ZoteroConnection),
   useZotero: Schema.optionalKey(RefreshFields),
   keepLocal: Schema.optionalKey(RefreshFields),
@@ -1156,16 +1158,26 @@ export const ZoteroCollectionsRequest = Schema.Struct({
 });
 export type ZoteroCollectionsRequest = typeof ZoteroCollectionsRequest.Type;
 
-export const ZoteroScopedImportRequest = Schema.Struct({
-  root: NonEmptyString,
-  operationId: NonEmptyString,
-  /** The run to continue: the next part of a scope too large for one operation. */
-  continueRun: Schema.optionalKey(NonEmptyString),
-  scope: ZoteroImportScope,
-  connection: Schema.optionalKey(ZoteroConnection),
-  groupId: Schema.optionalKey(ZoteroGroupId),
-  pin: PinRequest,
-});
+/**
+ * Begins the import of a Zotero scope, or the next part of one too large for one operation.
+ * Going on needs the run alone: what it brings, from where and for which project is on its
+ * record. `retryFailed` also takes again the references earlier parts failed on.
+ */
+export const ZoteroScopedImportRequest = Schema.Union([
+  Schema.Struct({
+    root: NonEmptyString,
+    operationId: NonEmptyString,
+    scope: ZoteroImportScope,
+    connection: Schema.optionalKey(ZoteroConnection),
+    groupId: Schema.optionalKey(ZoteroGroupId),
+    pin: PinRequest,
+  }),
+  Schema.Struct({
+    root: NonEmptyString,
+    continueRun: NonEmptyString,
+    retryFailed: Schema.optionalKey(Schema.Boolean),
+  }),
+]);
 export type ZoteroScopedImportRequest = typeof ZoteroScopedImportRequest.Type;
 
 export const ScientSourcesPreflightRequest = Schema.Struct({

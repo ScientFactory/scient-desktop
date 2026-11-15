@@ -542,6 +542,27 @@ describe("Send to Zotero", () => {
     expect(sent).toContain("PMCID: PMC123456");
     expect(sent).toContain("arXiv: 2101.00001");
     expect(sent).toContain("User annotation");
+
+    // An editor the import read from Extra is sent as a creator, so the line goes: Zotero
+    // would cite her twice. A creator Scient does not have stays where Zotero keeps him.
+    const editor = { creatorType: "editor", givenName: "Jane", familyName: "Smith" };
+    const patch = zoteroPatchFor({
+      record: { ...record, creators: [...record.creators, { ...editor, literalName: null }] },
+      current: zoteroItem("OLDA2345", {
+        itemType: "journalArticle",
+        title: "Written in Scient",
+        DOI: "10.1000/notes",
+        extra: "editor: Smith || Jane\ntranslator: Roe || Ann",
+      }),
+    });
+    const lines = String(patch.extra).split("\n");
+    expect(lines).toContain("translator: Roe || Ann");
+    expect(lines).not.toContain("editor: Smith || Jane");
+    expect(patch.creators).toContainEqual({
+      creatorType: "editor",
+      firstName: "Jane",
+      lastName: "Smith",
+    });
   });
 
   it("does not overwrite an item changed in Zotero since Scient read it", async () => {

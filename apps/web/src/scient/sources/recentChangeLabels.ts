@@ -23,6 +23,7 @@ export const RECENT_CHANGES_LABELS = {
   nothingAdded: "Nothing was new",
   addKept: "Add its sources",
   putBack: "Put it back",
+  importRest: "Import the rest",
   importedSources: "Sources from this import",
   notBrought: "Not brought",
   notBroughtAbout: "What the place it was imported from holds for these sources that did not come:",
@@ -87,6 +88,7 @@ export function recentChangeSentence(change: ScientSourcesRecentChange): string 
       return [
         `${change.outcome === "cancelled" ? "Import stopped: imported" : "Imported"} ${sources(change.imported)} from ${INTAKE_WORDS[change.intake]}`,
         ...(change.failed > 0 ? [`${change.failed.toLocaleString()} failed`] : []),
+        ...(change.remaining ? [`${change.remaining.toLocaleString()} still to import`] : []),
         // Merged or removed since: the count a person sees after Show would otherwise look wrong.
         ...(here < change.imported ? [`${here.toLocaleString()} in the Library now`] : []),
       ].join(" · ");

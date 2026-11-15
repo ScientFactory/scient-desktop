@@ -235,6 +235,7 @@ export function ScientSourcesPanel(props: {
   const zoteroSync = useZoteroSync({
     environmentId: props.environmentId,
     root: props.root,
+    allLibrary: sources.overview?.scopes?.listed === "library",
     onChanged: async () => {
       await sources.refreshOverview();
     },
@@ -1548,6 +1549,7 @@ export function ScientSourcesPanel(props: {
             showPackageSources(sourceIds, RECENT_CHANGES_LABELS.importedSources)
           }
           onChanged={sources.refreshOverview}
+          onImportRest={sources.importZoteroRun}
           onAddFromLibrary={backup.addFrom}
           onPutBackLibrary={backup.putBack}
           onShowDifferences={setShowingJoinDifferences}

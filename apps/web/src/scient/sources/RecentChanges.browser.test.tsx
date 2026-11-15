@@ -72,6 +72,7 @@ function setup(listed: ReadonlyArray<ScientSourcesRecentChange> = changes, more 
     onUndoBulkEdit: vi.fn(async () => undefined),
     onShowSources: vi.fn(),
     onChanged: vi.fn(async () => undefined),
+    onImportRest: vi.fn(async () => undefined),
     onAddFromLibrary: vi.fn(async () => undefined),
     onPutBackLibrary: vi.fn(async () => undefined),
     onShowDifferences: vi.fn(),
@@ -284,6 +285,34 @@ describe("Recent changes", () => {
     await userEvent.click(page.getByRole("button", { name: "Show: Place of publication" }));
     expect(handlers.onShowSources).toHaveBeenCalledWith(["s1", "s2"]);
     expect(handlers.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes on with a large import that stopped before its end", async () => {
+    const stopped = {
+      kind: "import",
+      id: "run-1",
+      at: "2026-11-15T09:00:00.000Z",
+      by: "user",
+      intake: "zotero",
+      outcome: "cancelled",
+      imported: 1500,
+      available: 1500,
+      failed: 0,
+      remaining: 3200,
+    } as const;
+    const handlers = setup([stopped]);
+    await using screen = await render(dialog(handlers), { router: false });
+    await expect.element(page.getByText(/3,200 still to import/u)).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: /^Import the rest:/u }));
+    expect(handlers.onImportRest).toHaveBeenCalledWith("run-1", 3200);
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+
+    // Going on changes the Library: a session that may only read is not offered it.
+    await screen.rerender(dialog(handlers, false));
+    await expect.element(page.getByText(/3,200 still to import/u)).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: /^Import the rest:/u }))
+      .not.toBeInTheDocument();
   });
 
   it("says why a merge Undo did not happen, and what a finished Undo left", async () => {

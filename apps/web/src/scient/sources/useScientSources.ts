@@ -80,6 +80,12 @@ export function useScientSources(input: {
   // tokens. Keep import, overview, and Zotero lanes independent so routine refreshes cannot
   // invalidate import progress.
   const requestRef = useRef(0);
+  /** The finished parts of the large Zotero import this panel is showing. */
+  const runSoFar = useRef<{
+    readonly runId: string;
+    readonly items: Array<ScientSourceImportOperation["items"][number]>;
+    notBrought?: ScientSourceImportOperation["notBrought"];
+  } | null>(null);
   const overviewRequestRef = useRef(0);
   const zoteroRequestRef = useRef(0);
   const detailFetchRef = useRef(0);
@@ -418,54 +424,54 @@ export function useScientSources(input: {
     await searchZotero("", 0, scope);
   };
 
-  /** Begins the part of a large Zotero import that follows the one given. */
-  const beginNextZoteroPart = (
-    operation: ScientSourceImportOperation,
-    run: NonNullable<ScientSourceImportOperation["run"]>,
-  ) =>
+  /** Begins the next part of a large Zotero import; its record says what it brings. */
+  const beginNextZoteroPart = (runId: string, retryFailed = false) =>
     beginZoteroScopeImport(input.environmentId, {
       root: input.root,
-      operationId: randomUUID(),
-      continueRun: run.runId,
-      scope: run.scope,
-      ...(operation.adapter === "zotero-web" ? { connection: "web" as const } : {}),
-      ...(operation.zoteroGroupId ? { groupId: operation.zoteroGroupId } : {}),
-      ...(operation.pinInstanceId ? {} : { pin: false }),
+      continueRun: runId,
+      ...(retryFailed ? { retryFailed } : {}),
     });
 
   /**
+   * A part of a large import as the panel shows it: with the parts before it, so the counts
+   * and lists are the whole import's. A reference a later part took again (after a stop, or
+   * a failure tried again) counts once, as it was left last.
+   */
+  const wholeRun = (part: ScientSourceImportOperation): ScientSourceImportOperation => {
+    const before = runSoFar.current;
+    if (!part.run || before?.runId !== part.run.runId || before.items.length === 0) return part;
+    const items = new Map([...before.items, ...part.items].map((item) => [item.itemKey, item]));
+    return {
+      ...part,
+      items: [...items.values()],
+      ...(before.notBrought ? { notBrought: before.notBrought } : {}),
+    };
+  };
+
+  /**
    * Imports a Zotero scope to its end. A scope too large for one operation comes as a run of
-   * parts: when a part completes and something remains, the next is begun, and the summary
-   * shows the parts so far as one import. `begin` starts the first part to run here.
+   * parts: when a part completes and something remains, the next is begun. `begin` starts
+   * the first part to run here; `shown` is the same run's summary when one is on screen.
    */
   const runZoteroScope = async (
     request: number,
     begin: () => Promise<ScientSourceImportOperation>,
     shown: ScientSourceImportOperation | null,
   ): Promise<ScientSourceImportOperation> => {
-    // What earlier parts did, so the summary's counts and lists are the whole import's.
-    // A stopped part's unreached items come again in a later part: they are not listed twice.
-    const earlier = shown?.items.filter((item) => item.state !== "pending") ?? [];
-    const notBrought = shown?.notBrought;
-    const whole = (part: ScientSourceImportOperation): ScientSourceImportOperation =>
-      earlier.length === 0
-        ? part
-        : {
-            ...part,
-            items: [...earlier, ...part.items],
-            ...(notBrought ? { notBrought } : {}),
-          };
     let next = await begin();
     // Nothing was left to bring: the part shown comes back, and what is shown stays.
     if (shown && next.operationId === shown.operationId && next.state !== "running") {
       return { ...shown, ...(next.run ? { run: next.run } : {}) };
+    }
+    if (next.run && runSoFar.current?.runId !== next.run.runId) {
+      runSoFar.current = { runId: next.run.runId, items: [] };
     }
     for (let first = true; ; first = false) {
       if (isCurrentRequest(request)) {
         dispatch({
           type: "operationArrived",
           request,
-          operation: whole(next),
+          operation: wholeRun(next),
           ...(first && shown === null ? { clearLibrary: true } : {}),
         });
       }
@@ -477,18 +483,23 @@ export function useScientSources(input: {
           advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
         onProgress: (value) => {
           if (isCurrentRequest(request)) {
-            dispatch({ type: "operationArrived", request, operation: whole(value) });
+            dispatch({ type: "operationArrived", request, operation: wholeRun(value) });
           }
         },
       });
       const { run } = next;
       if (next.state !== "completed" || !run || run.remaining === 0 || !isCurrentRequest(request)) {
-        return whole(next);
+        return wholeRun(next);
       }
-      const began = await beginNextZoteroPart(next, run);
+      const began = await beginNextZoteroPart(run.runId);
       // Nothing was left after all: the same part comes back, with nothing remaining.
-      if (began.operationId === next.operationId) return whole(began);
-      earlier.push(...next.items);
+      if (began.operationId === next.operationId) return wholeRun(began);
+      const before = runSoFar.current;
+      if (before?.runId === run.runId) {
+        before.items.push(...next.items);
+        // What belongs to no reference was counted once, with the first part.
+        if (!before.notBrought && next.notBrought) before.notBrought = next.notBrought;
+      }
       next = began;
     }
   };
@@ -550,14 +561,18 @@ export function useScientSources(input: {
     return !operation?.run || operation.state === "running" ? 0 : operation.run.remaining;
   })();
 
-  /** Goes on with a large Zotero import that stopped part way, or after Scient was closed. */
+  /** Goes on with a large Zotero import from its line in Recent changes. */
+  const importZoteroRun = (runId: string, count: number) =>
+    zoteroScopeImport({ kind: "zotero", count }, () => beginNextZoteroPart(runId), null);
+
+  /** Goes on with a large Zotero import that stopped part way. */
   const importZoteroRest = async (): Promise<ScientSourcesImportOutcome | null> => {
     const operation = state.operation;
     const run = operation?.run;
     if (!operation || !run || zoteroRunRemaining === 0) return null;
     return zoteroScopeImport(
       { kind: "zotero", count: zoteroRunRemaining },
-      () => beginNextZoteroPart(operation, run),
+      () => beginNextZoteroPart(run.runId),
       operation,
     );
   };
@@ -984,7 +999,7 @@ export function useScientSources(input: {
       const { run } = next;
       const last =
         next.state === "completed" && run && run.remaining > 0 && isCurrentRequest(request)
-          ? await runZoteroScope(request, () => beginNextZoteroPart(next, run), next)
+          ? await runZoteroScope(request, () => beginNextZoteroPart(run.runId), next)
           : next;
       if (isCurrentRequest(request)) {
         dispatch({ type: "operationArrived", request, operation: last });
@@ -1034,7 +1049,8 @@ export function useScientSources(input: {
         operationId: operation.operationId,
       });
       if (isCurrentContext()) {
-        dispatch({ type: "operationArrived", request, operation: cancelled });
+        // A stopped part of a large import stays shown with the parts before it.
+        dispatch({ type: "operationArrived", request, operation: wholeRun(cancelled) });
         dispatch({ type: "zoteroLibraryClosed" });
         await refreshOverview();
       }
@@ -1063,6 +1079,16 @@ export function useScientSources(input: {
       .filter((item) => item.state === "failed")
       .map((item) => item.itemKey);
     if (itemKeys.length === 0) return;
+    // In a large import the failures may be in any part: a further part takes them again.
+    const { run } = operation;
+    if (run) {
+      await zoteroScopeImport(
+        { kind: "zotero", count: itemKeys.length + run.remaining },
+        () => beginNextZoteroPart(run.runId, true),
+        operation,
+      );
+      return;
+    }
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
     const request = nextRequestToken();
@@ -1112,6 +1138,7 @@ export function useScientSources(input: {
     selectZoteroLibrary,
     importZoteroScope,
     importZoteroRest,
+    importZoteroRun,
     zoteroRunRemaining,
     previewImport,
     runImport,

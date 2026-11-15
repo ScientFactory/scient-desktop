@@ -59,6 +59,8 @@ const errorText = (cause: unknown) => scientSourcesErrorMessage(cause, import.me
 export function useZoteroSync(input: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
+  /** The panel shows the whole Library, not one project's sources. */
+  readonly allLibrary: boolean;
   readonly onChanged: () => Promise<void> | void;
 }) {
   const [refresh, setRefresh] = useState<RefreshState | null>(null);
@@ -98,17 +100,18 @@ export function useZoteroSync(input: {
       const connection = status.connection ?? "local";
       // A large Library is read again in batches, so the dialog can say how far it is.
       const items: ScientSourceZoteroRefreshResult["items"][number][] = [];
-      for (let start: number | undefined = 0; start !== undefined;) {
+      for (let after: string | null | undefined = null; after !== undefined;) {
         const batch = await refreshZoteroSources(input.environmentId, {
           root: input.root,
           connection,
-          start,
+          after,
+          ...(input.allLibrary ? { allLibrary: true } : {}),
         });
         items.push(...batch.items);
         // Closed meanwhile: what was read stays, and nothing more is asked.
         if (run.current !== current) break;
-        start = batch.nextStart;
-        if (start !== undefined) {
+        after = batch.next;
+        if (after !== undefined) {
           show({
             phase: "running",
             checked: items.length,

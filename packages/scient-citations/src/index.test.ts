@@ -321,7 +321,8 @@ describe("the details a source has beyond its own fields, in citations", () => {
     const csl = scientSourceToCslJson(page);
     expect(csl).toMatchObject({
       accessed: { "date-parts": [[2026, 3, 10]] },
-      "original-date": { literal: "ca. 1890" },
+      // "About" is said as CSL says it, so a style prints it its own way.
+      "original-date": { "date-parts": [[1890]], circa: true },
     });
     expect(csl).not.toHaveProperty("extra");
     // A range keeps both ends; text that only begins with a year is not cut down to it.
@@ -336,5 +337,10 @@ describe("the details a source has beyond its own fields, in citations", () => {
     expect(
       scientSourceToCslJson(source({ more: { "original-date": "1824 or 1825" } })),
     ).toMatchObject({ "original-date": { literal: "1824 or 1825" } });
+    // The source's own date reads the same way: a range whole, a season, no month "00".
+    const issued = (issuedRaw: string) => scientSourceToCslJson(source({ issuedRaw })).issued;
+    expect(issued("1824/1825")).toEqual({ "date-parts": [[1824], [1825]] });
+    expect(issued("Spring 2020")).toEqual({ "date-parts": [[2020]], season: 1 });
+    expect(issued("2020-00-00")).toEqual({ "date-parts": [[2020]] });
   });
 });

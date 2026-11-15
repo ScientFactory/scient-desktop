@@ -119,10 +119,10 @@ const refreshed = performance.now();
 const before = transport.requests.length;
 let checked = 0;
 let batches = 0;
-for (let start: number | undefined = 0; start !== undefined; batches += 1) {
-  const batch = await refreshZoteroSources({ root, actor: "user", zotero, start });
+for (let after: string | null | undefined = null; after !== undefined; batches += 1) {
+  const batch = await refreshZoteroSources({ root, actor: "user", zotero, after });
   checked += batch.items.length;
-  start = batch.nextStart;
+  after = batch.next;
 }
 console.log(
   `Refresh: ${checked} sources in ${batches} batches, ${seconds(refreshed)} s, ${transport.requests.length - before} requests.`,

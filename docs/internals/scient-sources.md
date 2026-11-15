@@ -3279,9 +3279,15 @@ record's citation key; a record without one gets a free key from the same
 rules for that file only. Project notes are excluded unless requested.
 `exportBibliographyFile` reads the written file back and returns `notKept`:
 identifiers, the source type, each further detail (`more`, by its plain name;
-a date agrees when one is the other's beginning) and creators the format
-could not carry. A report's own number is written as the format's number and
-its issue apart, which is how the readers take them. arXiv IDs go to RIS
+two dates agree when they cite the same, so a time of day left off is no
+loss and a range cut to its first year is), a creator the file does not name
+("Some creators") and one it names under another role ("Creator roles"),
+compared by the words of the name. An abbreviation equal to the container's
+title is carried by the title. A report's own number is written as the
+format's number and its issue always as the issue, which is how the readers
+take them. The CSL-JSON reader reads every name variable Zotero's roles are
+cited under (`NAME_ROLES`, from `ZOTERO_ROLE_CSL`), so a director written
+comes back a director. arXiv IDs go to RIS
 `AN` and EndNote `accession-num` as `arXiv:<id>`, PMCIDs to RIS `C2` and
 EndNote `custom2`, and preprints to `M3`/`work-type` `Preprint`.
 `scient_sources_export` writes a project file atomically and replaces an
@@ -3385,7 +3391,10 @@ creator; an identifier or citation-key line leaves Extra only when the
 record took that very value; a talk's or a recording's `place` is its
 `event-place`, on import and on Send.
 `cslJsonItem` writes every `more` entry but `extra` as its CSL variable (a
-date or a range of two by its parts, any other text whole as a literal),
+date or a range of two by its parts, "circa 1850" and "Spring 2020" with
+CSL's `circa` and `season`, an unknown month or day `00` left out, any other
+text whole as a literal; the source's own date is read by the same
+`cslDateFromText`, and falls back to its beginning or its year),
 every creator under its role's variable (a film's director stays its
 director; only a primary role CSL has no variable for, a program's
 programmer, is the author), and the CSL type of a
@@ -3464,8 +3473,10 @@ import also counts the notes and files in the scope that belong to no
 reference (each once, also when filed in two collections) and stores them
 on the operation, or says that Zotero could not be asked
 (`alone-uncounted`), never zero. `summarizeNotBrought` adds one line for the
-references a Zotero import skipped because they were already here under
-another origin (`already-here`): nothing of Zotero's copy was looked at.
+references a Zotero import skipped because the same work was already here
+under another origin, by its identifier or its PDF (`already-here`): nothing
+of Zotero's copy was looked at. A possible match is not in that line; the
+summary asks the person to review those.
 `summarizeNotBrought`
 and `notBroughtName` (`packages/scient-sources/src/notBrought.ts`) add them up
 and name them for the panel's summary and for the agent's import result alike.
@@ -3498,12 +3509,24 @@ returns it, with no error. Stopping a part adds what it never reached to
 `run.remaining`, and a later part takes those items. The panel begins the
 next part when one completes with something remaining (`runZoteroScope`),
 also for a part that was under way when Scient closed (`resumeImport`), shows
-the parts as one import, and after a stop offers "Import the rest". An
-agent's import returns `remaining` and `runId` and goes on when called with
-that `runId` alone. Each receipt of a part carries `runId`;
-`listScientSourceImports` and `readScientSourceImport` add a run's parts up,
-so Recent changes shows one import under the run's ID, with its sources and
-its "not brought" list over all parts (`wholeSourceImport`). A scope of 500
+the parts as one import (`wholeRun`; the finished parts of the run on screen
+are kept in the hook, so a stopped part stays shown with them), and after a
+stop offers "Import the rest". The request to go on is its own shape of
+`ZoteroScopedImportRequest`: `{ root, continueRun, retryFailed? }`, passed
+through the client layer whole. `retryFailed` ("Try failed items again" in a
+run) makes the next part take the references earlier parts failed on; a
+reference a later part took again counts once, as that part left it
+(`wholeSourceImport`, `wholeRun`). After a restart the panel's summary counts
+from the part it resumed; the record counts all of it. An agent's import
+returns `remaining` and `runId` and goes on when called with that `runId`
+alone; when a person stopped the part it returns no `runId`, so it does not
+go on by itself; a part of a run lists only the references that need a look.
+Each receipt of a part carries `runId`; `listScientSourceImports` and
+`readScientSourceImport` add a run's parts up, so Recent changes shows one
+import under the run's ID, with its sources, its failures and its "not
+brought" list over all parts, and `remaining` when its last part is not
+running and something is still to come: the line then offers "Import the
+rest". A scope of 500
 or fewer is one operation as before, already-imported items included as
 skips. Scope discovery is capped at 100,000 references and fails with a
 request to choose a smaller scope above that bound. Send takes at most 500
@@ -3512,10 +3535,14 @@ sources at a time and says so instead of leaving the rest out.
 **Refresh** (`refreshZoteroSources`) reads named sources again as asked.
 Without names it reads every source that came from Zotero, of `among` when a
 project's sources are meant (its other sources are not reported as failures),
-in ID order; with `start` it reads a batch of 200 from that position and
-returns `total` and `nextStart`. The panel asks batch after batch and shows
-how far it is; closing the dialog stops asking and keeps what was read.
-Without `start` (an agent) more than 500 is refused with a sentence. Collection and whole-library actions skip the separate preflight
+in ID order; with `after` it reads the batch of 200 that follows that source
+(null: from the first) and returns `total` and `next`, so a source added or
+removed between batches moves no other. The panel asks batch after batch and
+shows how far it is; closing the dialog stops asking and keeps what was
+read. In a project the route gives the project's pins as `among`; with
+`allLibrary` (the panel shows the whole Library) it gives none, and every
+Zotero source of the Library is read. Without `after` (an agent) more than
+500 is refused with a sentence. Collection and whole-library actions skip the separate preflight
 screen; each item is still validated, duplicate-assessed and committed by the
 normal importer, and exact or possible matches are skipped. A zotero.org
 preflight does not hash PDFs (that would download every file); identifier,
