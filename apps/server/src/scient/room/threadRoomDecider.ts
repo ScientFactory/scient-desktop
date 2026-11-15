@@ -61,7 +61,7 @@ export function roomAnchorRunOrdinal(
   return latest;
 }
 
-const isExpired = (participant: Pick<RoomParticipant, "expiresAt">, now: DateTime.Utc) =>
+export const isExpired = (participant: Pick<RoomParticipant, "expiresAt">, now: DateTime.Utc) =>
   DateTime.toEpochMillis(now) >= Date.parse(participant.expiresAt);
 
 /** A participant who joined and can still use the room. */
@@ -135,18 +135,12 @@ export interface RoomDecision {
 
 const unchanged: RoomDecision = { thread: null, items: [], releasedAttachmentIds: [] };
 
+// People whose access ended stay in the room, so the owner can renew them.
 const withRoom = (
   thread: OrchestrationV2AppThread,
   room: ThreadRoom | null,
   now: DateTime.Utc,
-): OrchestrationV2AppThread => ({
-  ...thread,
-  room:
-    room === null
-      ? null
-      : { ...room, participants: room.participants.filter((p) => !isExpired(p, now)) },
-  updatedAt: now,
-});
+): OrchestrationV2AppThread => ({ ...thread, room, updatedAt: now });
 
 const WAITING_LIMIT = 50;
 
@@ -170,8 +164,6 @@ export function roomAfterVisit(thread: OrchestrationV2AppThread): OrchestrationV
   const room = thread.room ?? null;
   return room === null || (room.waiting?.length ?? 0) === 0 ? room : { ...room, waiting: [] };
 }
-
-/** Participants whose access ended are dropped whenever the room changes. */
 
 const newRoomMessage = (input: {
   readonly thread: OrchestrationV2AppThread;
@@ -348,6 +340,12 @@ export function decideServerRoomAction(
             { ...room, host: action.host };
       const live = base.participants.filter((p) => !isExpired(p, now));
       if (live.length >= ROOM_PARTICIPANT_LIMIT) return Result.fail("full");
+      // Only people who can still use the room count; the longest-expired make way for the new one.
+      const expired = base.participants
+        .filter((p) => isExpired(p, now))
+        .toSorted((a, b) => Date.parse(b.expiresAt) - Date.parse(a.expiresAt))
+        .slice(0, ROOM_PARTICIPANT_LIMIT - live.length - 1);
+      const kept = base.participants.filter((p) => !isExpired(p, now) || expired.includes(p));
       const participant: RoomParticipant = {
         id: action.participantId,
         name: null,
@@ -358,7 +356,7 @@ export function decideServerRoomAction(
       };
       return Result.succeed({
         ...unchanged,
-        thread: withRoom(thread, { ...base, participants: [...live, participant] }, now),
+        thread: withRoom(thread, { ...base, participants: [...kept, participant] }, now),
       });
     }
     case "join": {
@@ -409,6 +407,7 @@ export function decideServerRoomAction(
     case "guest-delete": {
       const participant = activeParticipant(room, action.participantId, now);
       if (participant === null) return Result.fail(ROOM_FAILURE.notMember);
+      if (!roleCanPost(participant.role)) return Result.fail(ROOM_FAILURE.role);
       const item = input.target;
       if (
         item?.type !== "room_message" ||

@@ -1710,6 +1710,7 @@ function renderFeedEntry(
       <ThreadRoomMessage
         threadRef={scopeThreadRef(props.environmentId, props.threadId)}
         item={entry.item}
+        readOnly={entry.inherited}
         bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
         renderAttachments={(attachments) => (
           <MessageAttachmentList

@@ -15,6 +15,8 @@ import { roomCommandSucceeded } from "./room-command-result";
 export function ThreadRoomMessage(props: {
   readonly threadRef: ScopedThreadRef;
   readonly item: RoomMessageItem;
+  /** A message a fork shows from its source thread. */
+  readonly readOnly: boolean;
   readonly bubbleMaxWidth: number | `${number}%`;
   readonly renderAttachments: (attachments: ReadonlyArray<ChatAttachment>) => ReactNode;
 }) {
@@ -62,7 +64,7 @@ export function ThreadRoomMessage(props: {
         ) : null}
         {props.renderAttachments(item.attachments ?? [])}
       </View>
-      {canOperate ? (
+      {canOperate && !props.readOnly ? (
         <View className="flex-row gap-1">
           <Button
             size="compact"

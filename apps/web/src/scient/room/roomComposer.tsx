@@ -6,23 +6,20 @@ import {
   RoomMessageId,
   type ScopedThreadRef,
   type ThreadId,
-  type ThreadRoom,
 } from "@t3tools/contracts";
 import type { RefObject } from "react";
 
 import { prepareTurnAttachments } from "~/components/chat/chatViewSend";
 import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraftStore";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { randomUUID } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
 import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { RoomAgentToggle } from "./RoomAgentToggle";
+import { roomHasPeople } from "./roomComposerRouting";
 import { useRoomDirectStore } from "./roomDirectStore";
-
-/** People are in the thread once someone has opened their invite. */
-const hasPeople = (room: ThreadRoom | null): room is ThreadRoom =>
-  room !== null && room.participants.some((participant) => participant.name !== null);
 
 /** The owner's "straight to the agent" switch, shown while people are in the thread. */
 export function OwnerRoomAgentToggle({
@@ -37,7 +34,8 @@ export function OwnerRoomAgentToggle({
   );
   const key = threadRef === null ? "" : scopedThreadKey(threadRef);
   const on = useRoomDirectStore((state) => state.direct[key] === true);
-  if (threadRef === null || !canOperate || !hasPeople(room)) return null;
+  const nowMs = Date.parse(`${useNowMinute()}Z`);
+  if (threadRef === null || !canOperate || !roomHasPeople(room, nowMs)) return null;
   return (
     <RoomAgentToggle
       size="icon-sm"
@@ -70,7 +68,7 @@ export function useRoomComposerPost(input: {
   const key = threadRef === null ? "" : scopedThreadKey(threadRef);
   const direct = useRoomDirectStore((state) => state.direct[key] === true);
   // Decided synchronously, so a send to the agent goes out with no extra wait.
-  const applies = () => input.threadId !== null && !direct && hasPeople(room);
+  const applies = () => input.threadId !== null && !direct && roomHasPeople(room, Date.now());
   const post = async () => {
     if (input.threadId === null) return;
     const threadId = input.threadId;
@@ -86,7 +84,8 @@ export function useRoomComposerPost(input: {
       (draft?.reviewComments.length ?? 0) > 0 ||
       (draft?.threadContexts.length ?? 0) > 0 ||
       (draft?.environmentContexts.length ?? 0) > 0 ||
-      (draft?.previewAnnotations.length ?? 0) > 0
+      (draft?.previewAnnotations.length ?? 0) > 0 ||
+      (draft?.replyTo ?? null) !== null
     ) {
       input.onError(
         threadId,

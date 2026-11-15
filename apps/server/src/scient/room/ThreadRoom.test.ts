@@ -17,6 +17,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -25,6 +27,10 @@ import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import {
+  forkHistoryEntry,
+  writeForkHistory,
+} from "../../orchestration-v2/scient-fork/ForkHistory.ts";
 import { roomMessageItemId } from "./threadRoomDecider.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -514,5 +520,125 @@ it.effect("keeps a deleted message's file ids for the thread's cleanup, without 
     assert.isUndefined(deleted.attachments);
     assert.deepEqual(deleted.heldFileIds, [fileId]);
     assert.include(yield* room.projections.getThreadAttachmentIds(threadId), fileId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a person whose access ended, so the owner can renew them", () =>
+  Effect.gen(function* () {
+    const room = yield* setup;
+    yield* room.invite("a", "discuss");
+    yield* room.invite("b", "discuss");
+    yield* room.join("a", "Ann");
+    yield* room.join("b", "Ben");
+    const renew = (id: string) =>
+      room.orchestrator.dispatch({
+        type: "thread.room",
+        commandId: nextCommandId("renew"),
+        threadId,
+        action: { type: "renew", participantId: RoomParticipantId.make(id), duration: "week" },
+      });
+    yield* TestClock.adjust("6 days");
+    yield* renew("b");
+    yield* TestClock.adjust("2 days");
+    // Ann's access has ended; Ben's post changes the room and must not drop her.
+    assert.isTrue(yield* fails(room.guestPost("a", "a1", "Too late")));
+    yield* room.guestPost("b", "b1", "Still here");
+    yield* renew("a");
+    yield* room.guestPost("a", "a2", "Back");
+    assert.equal((yield* room.roomItem("a2")).text, "Back");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses a delete from a guest who can no longer write", () =>
+  Effect.gen(function* () {
+    const room = yield* setup;
+    yield* room.invite("a", "discuss");
+    yield* room.join("a", "Ann");
+    yield* room.guestPost("a", "a1", "Mine");
+    yield* room.orchestrator.dispatch({
+      type: "thread.room",
+      commandId: nextCommandId("demote"),
+      threadId,
+      action: { type: "set-role", participantId: RoomParticipantId.make("a"), role: "watch" },
+    });
+    assert.isTrue(
+      yield* fails(
+        room.orchestrator.dispatch({
+          type: "thread.room.server",
+          commandId: nextCommandId("guest-delete"),
+          threadId,
+          action: {
+            type: "guest-delete",
+            participantId: RoomParticipantId.make("a"),
+            itemId: roomMessageItemId(RoomMessageId.make("a1")),
+          },
+        }),
+      ),
+    );
+    assert.equal((yield* room.roomItem("a1")).text, "Mine");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("leaves a room message with its own thread when a fork that shows it acts on it", () =>
+  Effect.gen(function* () {
+    const room = yield* setup;
+    yield* room.invite("a", "discuss");
+    yield* room.join("a", "Ann");
+    yield* room.ownerPost("m1", "For people");
+    const original = yield* room.roomItem("m1");
+    const forkId = ThreadId.make("thread:room-fork");
+    yield* room.orchestrator.dispatch({
+      type: "thread.create",
+      commandId: nextCommandId("create-fork"),
+      threadId: forkId,
+      projectId: ProjectId.make("project:room"),
+      title: "Fork",
+      modelSelection: { instanceId, model: "gpt-5.1-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql.withTransaction(
+      writeForkHistory(sql, forkId, [forkHistoryEntry(threadId, original.id, original)]),
+    );
+    // The fork shows the message.
+    assert.equal(
+      (yield* room.projections.getTurnItem({ threadId: forkId, itemId: original.id }))?.type,
+      "room_message",
+    );
+    assert.isTrue(
+      yield* fails(
+        room.orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: nextCommandId("fork-send"),
+          threadId: forkId,
+          messageId: MessageId.make("fork-send"),
+          roomItemId: original.id,
+          text: "",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        }),
+      ),
+    );
+    assert.isTrue(
+      yield* fails(
+        room.orchestrator.dispatch({
+          type: "thread.room",
+          commandId: nextCommandId("fork-delete"),
+          threadId: forkId,
+          action: { type: "delete", itemId: original.id },
+        }),
+      ),
+    );
+    const kept = yield* room.roomItem("m1");
+    assert.equal(kept.threadId, threadId);
+    assert.equal(kept.text, "For people");
+    assert.isUndefined(kept.deliveries);
   }).pipe(Effect.provide(layerTest)),
 );

@@ -30,10 +30,15 @@ and a T3 share already open at upgrade keeps working until it ends.
   is `sent` (a cancelled send brings it back); the dispatched message stands in for
   it, coloured by `context.room.author`. With people in the room, the owner's
   composer posts (`scient/room/roomComposer.tsx`, a seam in `useComposerSend`) unless
-  "straight to the agent" is on (`roomDirectStore`, per thread, in local storage);
-  steering and direct prompts always go to the agent. The guest page has one
-  composer and the same switch for the agent role. The phone app follows the same
-  model.
+  "straight to the agent" is on (`roomDirectStore`, per thread, in local storage).
+  Only a plain new message is for people (`scient/room/roomComposerRouting.ts`):
+  steering, direct prompts, preview annotations, edits of a queued message, answers
+  to the agent's question or approval, and commands (a prompt starting with `/`) go
+  to the agent. The guest page has one composer and the same switch for the agent
+  role. The phone app follows the same model.
+- **Forks** show the source's room messages read-only. Sending and deleting read
+  only an item the thread itself wrote (`getTurnItem` with `ownOnly`), because
+  writing a fork-shown item would move the source's row into the fork.
 - **Sending to the agent** is `message.dispatch` with `roomItemId`. The orchestrator
   builds the agent's words from the stored item (who wrote it, who sent it, what it
   replies to), records a delivery on the item in the same commit, and dispatches
@@ -54,7 +59,10 @@ the participant is in it and unexpired, their role allows the action, Connect st
 serves the host, and guest links are on in Labs. Removing the last participant (joined or not)
 closes the room, so there is no Stop sharing step. `renew` sets a participant's
 `expiresAt` from now, keeping the role; sessions are checked against it live, so no new
-link is needed. The thread shell carries `roomPeople` (who has joined) for the sidebar
+link is needed. A person whose access ended stays in the room for the owner to renew
+(only people with access count toward the limit; the longest-expired make way for a
+new invite), the session cookie outlasts the access for the same reason, and an open
+stream follows the live `expiresAt`, so shortening or extending access applies to it. The thread shell carries `roomPeople` (who has joined) for the sidebar
 card's faces; the header's faces open the People dialog and Share only makes links. Removing someone or
 changing their role applies on their next request; their open stream ends when the room changes.
 Presence is in memory: open guest streams per participant.

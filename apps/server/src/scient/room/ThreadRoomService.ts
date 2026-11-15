@@ -182,12 +182,10 @@ export class ThreadRoomService extends Context.Service<
     ) => Effect.Effect<RoomInviteResult, RoomInviteError>;
     readonly presence: (input: RoomPresenceInput) => Stream.Stream<RoomPresence>;
     /** Spends an invite and returns the session token for the guest's cookie. */
-    readonly join: (request: RoomJoinRequest) => Effect.Effect<
-      {
-        readonly token: string;
-        readonly participantId: RoomParticipantId;
-        readonly expiresAt: string;
-      },
+    readonly join: (
+      request: RoomJoinRequest,
+    ) => Effect.Effect<
+      { readonly token: string; readonly participantId: RoomParticipantId },
       RoomAccessError
     >;
     readonly check: (session: string) => Effect.Effect<RoomSession, RoomAccessError>;
@@ -448,7 +446,7 @@ const make = Effect.gen(function* () {
       roomId: room.id,
       participantId: participant.id,
     } satisfies SessionClaims);
-    return { token, participantId: participant.id, expiresAt: participant.expiresAt };
+    return { token, participantId: participant.id };
   });
 
   const check = Effect.fn("ThreadRoomService.check")(function* (session: string) {
@@ -717,9 +715,19 @@ const make = Effect.gen(function* () {
         return view === null ? Stream.empty : Stream.make(view);
       }),
     );
-    const untilExpiry = Effect.sleep(
-      Math.max(0, Date.parse(participant.expiresAt) - DateTime.toEpochMillis(yield* DateTime.now)),
-    );
+    // Renewing can move the end either way while the stream is open, so it follows the live room.
+    const untilExpiry = Effect.gen(function* () {
+      while (true) {
+        const expiresAt = current.room?.participants.find(
+          (candidate) => candidate.id === participant.id,
+        )?.expiresAt;
+        // Removal ends the stream through the room's own event.
+        if (expiresAt === undefined) return yield* Effect.never;
+        const left = Date.parse(expiresAt) - DateTime.toEpochMillis(yield* DateTime.now);
+        if (left <= 0) return;
+        yield* Effect.sleep(Math.min(left, Duration.toMillis(ACCESS_RECHECK_INTERVAL)));
+      }
+    });
     const openingSnapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: snapshot.snapshotSequence,
       projection: snapshot.projection,

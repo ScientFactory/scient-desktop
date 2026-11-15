@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
-import { activeParticipant } from "./threadRoomDecider.ts";
+import { activeParticipant, isExpired } from "./threadRoomDecider.ts";
 
 /** The room as one participant sees it: who is in it and what they may do. Null once they left. */
 export function roomGuestView(
@@ -23,7 +23,8 @@ export function roomGuestView(
     title: thread.title,
     me: { participantId: me.id, name: me.name, role: me.role },
     participants: room.participants.flatMap((participant) =>
-      participant.name === null
+      // Someone whose access ended is not in the room until the owner renews them.
+      participant.name === null || isExpired(participant, now)
         ? []
         : [
             {

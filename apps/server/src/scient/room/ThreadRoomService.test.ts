@@ -11,12 +11,15 @@ import {
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -311,4 +314,35 @@ it.effect("extracts the text of a document a guest attaches, for the agent to re
       "Available",
     );
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("ends an open stream at the access end the owner set while it was open", () =>
+  Effect.gen(function* () {
+    const { orchestrator, rooms, threadId, invite } = yield* openRoom;
+    const dana = yield* invite("discuss");
+    const { token } = yield* rooms.join({ credential: dana.credential, name: "Dana" });
+    const events = yield* rooms.stream(token);
+    // Invited for a week, then cut to a day while the page is open.
+    yield* orchestrator.dispatch({
+      type: "thread.room",
+      commandId: CommandId.make(`shorten:${threadId}`),
+      threadId,
+      action: { type: "renew", participantId: dana.participantId, duration: "day" },
+    });
+    const renewed = yield* Deferred.make<void>();
+    let views = 0;
+    const collecting = yield* events.pipe(
+      Stream.tap((event) =>
+        event.type === "view" && (views += 1) === 2
+          ? Deferred.succeed(renewed, undefined)
+          : Effect.void,
+      ),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* Deferred.await(renewed);
+    yield* TestClock.adjust("2 days");
+    const received = Array.from(yield* Fiber.join(collecting));
+    assert.deepEqual(received.at(-1), { type: "ended", reason: "expired" });
+  }).pipe(Effect.provide(layerTest)),
 );

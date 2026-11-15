@@ -33,8 +33,10 @@ export type RoomViewer =
 export interface RoomMessageActions {
   readonly viewer: RoomViewer;
   readonly canSendToAgent: boolean;
-  /** Deleting anyone's message; people can always delete their own. */
+  /** Deleting anyone's message. */
   readonly canDelete: boolean;
+  /** Deleting one's own message: anyone who can write. */
+  readonly canDeleteOwn: boolean;
   /** Draws a message's files where this viewer can open them. */
   readonly Attachments: ComponentType<{ readonly item: RoomMessageItem }>;
   readonly onSend: (item: RoomMessageItem) => Promise<void>;
@@ -85,12 +87,19 @@ function authorLabel(author: RoomAuthor, viewer: RoomViewer): string {
  * A message people can read and the agent cannot yet: drawn like a queued message, in its
  * writer's colour. Once sent, it leaves the thread and returns as the agent's next message.
  */
-export function RoomMessageRow({ item }: { readonly item: RoomMessageItem }) {
+export function RoomMessageRow({
+  item,
+  readOnly = false,
+}: {
+  readonly item: RoomMessageItem;
+  /** A message a fork shows from its source thread: it can be read, not sent or deleted. */
+  readonly readOnly?: boolean;
+}) {
   const guest = use(RoomGuestActionsContext);
   const { threadRef } = use(TimelineRowCtx);
-  if (guest !== null) return <RoomMessageCard item={item} actions={guest} />;
-  if (threadRef === null) return <RoomMessageCard item={item} actions={null} />;
-  return <OwnerRoomMessageRow item={item} threadRef={threadRef} />;
+  if (guest !== null) return <RoomMessageCard item={item} actions={guest} readOnly={readOnly} />;
+  if (threadRef === null) return <RoomMessageCard item={item} actions={null} readOnly />;
+  return <OwnerRoomMessageRow item={item} threadRef={threadRef} readOnly={readOnly} />;
 }
 
 const OWNER = { kind: "owner" } as const;
@@ -98,9 +107,11 @@ const OWNER = { kind: "owner" } as const;
 function OwnerRoomMessageRow({
   item,
   threadRef,
+  readOnly,
 }: {
   readonly item: RoomMessageItem;
   readonly threadRef: ScopedThreadRef;
+  readonly readOnly: boolean;
 }) {
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const sendRoomMessage = useOrchestrationCommand(threadEnvironment.sendRoomMessage, {
@@ -114,10 +125,12 @@ function OwnerRoomMessageRow({
     <OwnerThreadContext value={threadRef}>
       <RoomMessageCard
         item={item}
+        readOnly={readOnly}
         actions={{
           viewer: OWNER,
           canSendToAgent: canOperate,
           canDelete: canOperate,
+          canDeleteOwn: canOperate,
           Attachments: OwnerRoomAttachments,
           onSend: async (message) => {
             await sendRoomMessage({
@@ -176,16 +189,19 @@ function OwnerRoomAttachments({ item }: { readonly item: RoomMessageItem }) {
 function RoomMessageCard({
   item,
   actions,
+  readOnly,
 }: {
   readonly item: RoomMessageItem;
   readonly actions: RoomMessageActions | null;
+  readonly readOnly: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const viewer = actions?.viewer ?? OWNER;
   const mine = isViewer(viewer, item.author);
   const author = authorLabel(item.author, viewer);
-  const canSend = actions?.canSendToAgent === true;
-  const canDelete = actions !== null && (actions.canDelete || mine);
+  const canSend = !readOnly && actions?.canSendToAgent === true;
+  const canDelete =
+    !readOnly && actions !== null && (actions.canDelete || (mine && actions.canDeleteOwn));
   const run = (action: () => Promise<void>) => {
     setBusy(true);
     void action().finally(() => setBusy(false));

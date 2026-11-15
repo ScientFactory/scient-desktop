@@ -476,7 +476,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     composerOwnerKey,
     composerDraftKey,
   );
-  const toPeople = !props.isDraft && queuedEdit === null && roomPost.toPeople;
+  // A command is for the agent or the app, never a message for people.
+  const toPeople =
+    !props.isDraft &&
+    queuedEdit === null &&
+    roomPost.toPeople &&
+    !draftMessage.trimStart().startsWith("/");
   const hasContent =
     draftMessage.trim().length > 0 ||
     draftAttachments.length > 0 ||

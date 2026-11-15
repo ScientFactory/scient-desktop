@@ -43,12 +43,16 @@ To talk to the agent directly, turn on the robot button next to Send in the comp
 Your messages then go straight to the agent, as when nobody else is in the thread. It
 is remembered for that thread, and only people who can use the agent have it.
 
+Some things always go to the agent: commands that start with `/`, steering, your
+answer when the agent asks a question or for approval, and an edit of a queued
+message.
+
 The thread shows a dot in the sidebar while guests' messages wait for you.
 
 Messages for people, and the files attached to them, stay with the thread after
 sharing stops. They are not part of what the agent remembers unless someone sends
 them to it, and copies of the thread (sync, share links, continuing on another
-computer) leave them out.
+computer) leave them out. A fork shows them as they were, to read only.
 
 Guest links are a beta, on unless you turn them off: **Settings → Labs → Guest
 links** off stops every room on that computer. If Scient says other devices can't

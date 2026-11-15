@@ -5,6 +5,7 @@ import { View } from "react-native";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { prepareTurnAttachments } from "../../lib/attachmentUpload";
+import { useNowMinuteMs } from "../../lib/clock";
 import { uuidv4 } from "../../lib/uuid";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -49,8 +50,13 @@ export function useRoomPost(
   const [posting, setPosting] = useState(false);
   const inFlight = useRef(false);
   const attempt = useRef<{ signature: string; id: RoomMessageId } | null>(null);
+  const nowMs = useNowMinuteMs();
   // With people in the thread, a message is for them until someone sends it to the agent.
-  const hasPeople = room?.participants.some((participant) => participant.name !== null) ?? false;
+  // Someone whose access ended is not in it.
+  const hasPeople =
+    room?.participants.some(
+      (participant) => participant.name !== null && Date.parse(participant.expiresAt) > nowMs,
+    ) ?? false;
   const toPeople = hasPeople && !direct;
   const send = async (stillSendable: () => boolean) => {
     if (!toPeople || threadRef === null || inFlight.current) return;

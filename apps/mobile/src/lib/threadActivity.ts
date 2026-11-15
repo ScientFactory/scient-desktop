@@ -172,6 +172,8 @@ type RawThreadFeedEntry =
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly item: Extract<OrchestrationV2TurnItem, { type: "room_message" }>;
+      /** A fork shows it from its source thread: it can be read, not sent or deleted. */
+      readonly inherited: boolean;
     }
   | {
       readonly type: "message";
@@ -2511,6 +2513,7 @@ export function buildThreadFeed(
         createdAt,
         runId: null,
         item,
+        inherited: row.visibility === "inherited",
       };
       projectedEntriesCache.set(row, { attemptId, entries: [entry] });
       entries.push(entry);

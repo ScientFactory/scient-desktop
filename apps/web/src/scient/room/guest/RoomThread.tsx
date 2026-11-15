@@ -169,6 +169,7 @@ export function RoomThread({
     viewer,
     canSendToAgent: role === "agent",
     canDelete: false,
+    canDeleteOwn: role !== "watch",
     Attachments: RoomAttachments,
     onSend: (item: RoomMessageItem) => action("send", item),
     onDelete: (item: RoomMessageItem) => action("delete", item),

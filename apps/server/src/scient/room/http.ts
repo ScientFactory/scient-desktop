@@ -15,7 +15,6 @@ import {
 } from "@t3tools/contracts";
 import { htmlRenderFileName } from "@t3tools/shared/htmlRender";
 import * as ByteSize from "effect/ByteSize";
-import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -131,6 +130,10 @@ const readJson = Effect.gen(function* () {
   );
 });
 
+// Access is checked against the live room on every request, so the cookie outlasts it: a person
+// the owner renews, even after their access ended, still has their session.
+const SESSION_COOKIE_MAX_AGE = Duration.days(400);
+
 const joinRoute = HttpRouter.add(
   "POST",
   `${ROOM_ROUTE_PREFIX}/join`,
@@ -138,9 +141,8 @@ const joinRoute = HttpRouter.add(
     const body = yield* readJson.pipe(Effect.flatMap(decodeJoin), Effect.option);
     if (body._tag === "None") return yield* badRequest;
     const rooms = yield* ThreadRoomService;
-    const now = DateTime.toEpochMillis(yield* DateTime.now);
     return yield* rooms.join(body.value).pipe(
-      Effect.flatMap(({ token, participantId, expiresAt }) =>
+      Effect.flatMap(({ token, participantId }) =>
         HttpServerResponse.json({ participantId }, { headers: NO_STORE }).pipe(
           Effect.flatMap(
             HttpServerResponse.setCookie(roomSessionCookieName(participantId), token, {
@@ -148,7 +150,7 @@ const joinRoute = HttpRouter.add(
               secure: true,
               sameSite: "strict",
               path: ROOM_ROUTE_PREFIX,
-              maxAge: Duration.millis(Math.max(0, Date.parse(expiresAt) - now)),
+              maxAge: SESSION_COOKIE_MAX_AGE,
             }),
           ),
         ),

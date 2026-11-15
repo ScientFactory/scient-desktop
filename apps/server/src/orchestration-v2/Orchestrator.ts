@@ -4453,9 +4453,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // Commands the room service built for a guest, with who sends them; never from a client.
   const roomGuestCommands = new WeakMap<object, RoomAuthor>();
 
-  const readRoomItem = (command: OrchestrationV2ServerCommand, itemId: TurnItemId) =>
+  // `ownOnly` for an item the command changes: a fork shows its source's room messages, and
+  // writing one would move the source's row into the fork.
+  const readRoomItem = (
+    command: OrchestrationV2ServerCommand,
+    itemId: TurnItemId,
+    ownOnly = true,
+  ) =>
     projectionStore
-      .getTurnItem({ threadId: commandThreadId(command), itemId })
+      .getTurnItem({ threadId: commandThreadId(command), itemId, ownOnly })
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: commandThreadId(command), cause }),
@@ -4500,9 +4506,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* roomDispatchError(command, `Thread ${command.threadId} is deleted.`);
     }
     const action = command.action;
-    const targetId =
-      "itemId" in action ? action.itemId : "replyTo" in action ? action.replyTo : undefined;
-    const target = targetId === undefined ? null : yield* readRoomItem(command, targetId);
+    const target =
+      "itemId" in action
+        ? yield* readRoomItem(command, action.itemId)
+        : "replyTo" in action && action.replyTo !== undefined
+          ? // A reply only quotes its target, which may be one the fork shows.
+            yield* readRoomItem(command, action.replyTo, false)
+          : null;
     const messageExists =
       "roomMessageId" in action
         ? (yield* readRoomItem(command, roomMessageItemId(action.roomMessageId))) !== null

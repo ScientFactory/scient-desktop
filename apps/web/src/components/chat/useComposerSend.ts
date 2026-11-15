@@ -44,6 +44,7 @@ import { getComposerPromptInjectionState, getComposerProviderState } from "./com
 import { flushComposerDraftPersistence } from "../../composerDraftStore";
 // SCIENT-FORK: thread rooms.
 import { useRoomComposerPost } from "../../scient/room/roomComposer";
+import { composerSendIsForPeople } from "../../scient/room/roomComposerRouting";
 
 import { assertQueueEditSelectionProvenance } from "../../scient/threadQueue/composerSnapshot";
 
@@ -2015,9 +2016,27 @@ export function useComposerSend(input: ComposerSendInput) {
   // SCIENT-FORK:END
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
-    // SCIENT-FORK: steering and direct prompts always go to the agent.
-    if (args[4]?.steer !== true && args[4]?.directPrompt === undefined && postToRoom.applies())
+    // SCIENT-FORK:START — only a plain new message is for people.
+    const roomSendCtx = composerRef.current?.getSendContext();
+    if (
+      postToRoom.applies() &&
+      composerSendIsForPeople({
+        steer: args[4]?.steer === true,
+        directPrompt: args[4]?.directPrompt !== undefined,
+        annotation: args[3] !== undefined,
+        queueEdit:
+          useQueueEditSessions.getState().sessions[composerTargetKey(composerDraftTarget)] !==
+            undefined ||
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+            ?.extractedIntent !== undefined,
+        answering:
+          (Boolean(activePendingProgress) && roomSendCtx?.answeringPendingUserInput !== false) ||
+          (roomSendCtx?.shownPendingApprovalIds.length ?? 0) > 0,
+        prompt: promptRef.current,
+      })
+    )
       return postToRoom.post();
+    // SCIENT-FORK:END
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null

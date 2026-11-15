@@ -639,6 +639,8 @@ export interface ProjectionStoreV2Shape {
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
+    /** SCIENT-FORK: only an item the thread wrote, never one a fork shows from its source. */
+    readonly ownOnly?: boolean;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
   readonly getMessagesById: (
     threadId: ThreadId,
@@ -6637,7 +6639,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
     // SCIENT-FORK:END
-    const getTurnItem: ProjectionStoreV2Shape["getTurnItem"] = ({ threadId, itemId }) =>
+    const getTurnItem: ProjectionStoreV2Shape["getTurnItem"] = ({ threadId, itemId, ownOnly }) =>
       sql<{
         payload_json: string;
       }>`SELECT ${turnItemMetadataSql(sql, sql`payload_json`)} AS payload_json
@@ -6646,8 +6648,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.flatMap((rows) =>
           rows[0] !== undefined
             ? decodeTurnItemPayload(rows[0].payload_json)
-            : // SCIENT-FORK: an item a fork shows from its history, as it shows it.
-              sql<{ readonly position: number; readonly payload_json: string | null }>`
+            : ownOnly === true
+              ? Effect.succeed(null)
+              : // SCIENT-FORK: an item a fork shows from its history, as it shows it.
+                sql<{ readonly position: number; readonly payload_json: string | null }>`
                 SELECT history.position, ${turnItemMetadataSql(sql, sql`COALESCE(frozen.item_json, item.payload_json)`)} AS payload_json
                 FROM scient_fork_history AS history
                 LEFT JOIN scient_fork_frozen_items AS frozen
@@ -6658,14 +6662,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND history.source_thread_id <> ${threadId}
                 LIMIT 1
               `.pipe(
-                Effect.flatMap(([shown]) =>
-                  shown?.payload_json == null
-                    ? Effect.succeed(null)
-                    : decodeTurnItemPayload(shown.payload_json).pipe(
-                        Effect.map((item) => presentInheritedItem(item, shown.position, threadId)),
-                      ),
+                  Effect.flatMap(([shown]) =>
+                    shown?.payload_json == null
+                      ? Effect.succeed(null)
+                      : decodeTurnItemPayload(shown.payload_json).pipe(
+                          Effect.map((item) =>
+                            presentInheritedItem(item, shown.position, threadId),
+                          ),
+                        ),
+                  ),
                 ),
-              ),
         ),
         Effect.mapError(controlReadError(threadId)),
       );

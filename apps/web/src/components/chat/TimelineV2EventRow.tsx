@@ -38,7 +38,8 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     return <V2SubagentGroup key={row.id} row={row} />;
   }
   // SCIENT-FORK:START — thread rooms.
-  if (item.type === "room_message") return <RoomMessageRow item={item} />;
+  if (item.type === "room_message")
+    return <RoomMessageRow item={item} readOnly={visibility === "inherited"} />;
   // SCIENT-FORK:END
   if (item.type === "secret_request") {
     return (
