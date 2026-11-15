@@ -1,0 +1,7 @@
+/*
+ * A source's facts sit two to a row when the page is narrow: a last section left alone on its
+ * row takes the whole row. In one column (very narrow, or the wide rail) spanning changes nothing.
+ */
+.scient-source-facts > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}

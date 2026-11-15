@@ -2,10 +2,11 @@ import {
   scientSourceTagCounts,
   scientSourceTagKey,
   scientSourceTopicKey,
+  type ScientSourceCategorySummary,
   type ScientSourceStudyDesign,
 } from "@scientfactory/scient-sources";
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
-import { Plus, X } from "lucide-react";
+import { Folder, Plus, Tag as TagIcon, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { Badge } from "../../components/ui/badge";
@@ -19,6 +20,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../components/ui/menu";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { collectionIndent, orderedCollections } from "./collectionTree";
 import { SCIENT_SOURCE_STUDY_DESIGN_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
@@ -26,45 +28,49 @@ import type { SourcesOrganize } from "./useSourcesOrganize";
 
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
-function Section(props: { readonly title: string; readonly children: ReactNode }) {
-  return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {props.title}
-      </h3>
-      <div className="flex flex-wrap items-center gap-1.5">{props.children}</div>
-    </section>
-  );
-}
+export type SourceCategoryChoice = {
+  readonly studyDesign?: ScientSourceStudyDesign;
+  readonly topic?: string;
+};
 
+/** A tag or collection of the source; showing it lists its sources, × takes the source out. */
 function Chip(props: {
+  readonly icon: ReactNode;
   readonly label: string;
   readonly showLabel: string;
-  readonly removeLabel: string;
-  readonly disabled: boolean;
+  /** Absent where the Library cannot be changed: the chip only shows and navigates. */
+  readonly remove?: {
+    readonly label: string;
+    readonly disabled: boolean;
+    readonly run: () => void;
+  };
   readonly onShow: () => void;
-  readonly onRemove: () => void;
 }) {
   return (
-    <Badge variant="outline">
-      <button
-        type="button"
-        className="max-w-48 cursor-pointer truncate outline-none focus-visible:underline"
-        aria-label={props.showLabel}
-        onClick={props.onShow}
-      >
-        {props.label}
-      </button>
-      <Button
-        type="button"
-        size="icon-micro"
-        variant="ghost-muted"
-        aria-label={props.removeLabel}
-        disabled={props.disabled}
-        onClick={props.onRemove}
-      >
-        <X />
-      </Button>
+    <Badge variant="outline" className="max-w-full">
+      <ScientTooltip content={props.label}>
+        <button
+          type="button"
+          className="flex min-w-0 max-w-64 cursor-pointer items-center gap-1 outline-none focus-visible:underline"
+          aria-label={props.showLabel}
+          onClick={props.onShow}
+        >
+          {props.icon}
+          <span className="min-w-0 truncate">{props.label}</span>
+        </button>
+      </ScientTooltip>
+      {props.remove ? (
+        <Button
+          type="button"
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-label={props.remove.label}
+          disabled={props.remove.disabled}
+          onClick={props.remove.run}
+        >
+          <X />
+        </Button>
+      ) : null}
     </Badge>
   );
 }
@@ -92,12 +98,7 @@ function AddTagMenu(props: {
     <Menu onOpenChange={(open) => (!open ? setQuery("") : undefined)}>
       <MenuTrigger
         render={
-          <Button
-            type="button"
-            size="compact"
-            variant="ghost-muted"
-            disabled={props.organize.pending || !props.organize.canChange}
-          />
+          <Button type="button" size="xs" variant="ghost-muted" disabled={props.organize.pending} />
         }
       >
         <Plus />
@@ -134,41 +135,39 @@ function AddTagMenu(props: {
 /** A registry category; showing it lists the sources that share it. */
 function CategoryChip(props: { readonly label: string; readonly onShow: () => void }) {
   return (
-    <Badge variant="outline">
-      <button
-        type="button"
-        className="max-w-48 cursor-pointer truncate outline-none focus-visible:underline"
-        aria-label={`Show sources in ${props.label}`}
-        onClick={props.onShow}
-      >
-        {props.label}
-      </button>
+    <Badge variant="outline" className="max-w-full">
+      <ScientTooltip content={props.label}>
+        <button
+          type="button"
+          className="min-w-0 cursor-pointer truncate outline-none focus-visible:underline"
+          aria-label={`Show sources in ${props.label}`}
+          onClick={props.onShow}
+        >
+          {props.label}
+        </button>
+      </ScientTooltip>
     </Badge>
   );
 }
 
-/** Tags and collections of one source, editable in place, and its registry categories. */
-export function SourceOrganizeSection(props: {
+/**
+ * One source's tags and collections, laid inline beside its reading state: + Tag, + Collection,
+ * then a chip for each. A Library this connection cannot change shows the chips alone.
+ */
+export function SourceFiling(props: {
   readonly organize: SourcesOrganize;
   readonly sourceId: string;
   readonly tags: ReadonlyArray<string>;
   readonly records: ReadonlyArray<SourceSummary>;
   readonly onShowTag: (tag: string) => void;
   readonly onShowCollection: (collectionId: string) => void;
-  readonly onShowCategory?: (category: {
-    readonly studyDesign?: ScientSourceStudyDesign;
-    readonly topic?: string;
-  }) => void;
   readonly onRequestName: (request: SourcesNameRequest) => void;
 }) {
   const { organize, sourceId } = props;
+  const editable = organize.canChange;
   const tags = [...new Map(props.tags.map((tag) => [scientSourceTagKey(tag), tag])).values()];
-  const libraryTags = scientSourceTagCounts(props.records).map((entry) => entry.tag);
   const collections = orderedCollections(organize.organization.collections);
   const memberOf = collections.filter(({ collection }) => collection.sourceIds.includes(sourceId));
-  const categories = props.records.find((record) => record.sourceId === sourceId)?.categories;
-  const onShowCategory = props.onShowCategory;
-  const studyDesign = categories?.studyDesign;
   const setMembership = (collectionId: string, member: boolean) =>
     void organize.organize(
       member
@@ -179,98 +178,129 @@ export function SourceOrganizeSection(props: {
 
   return (
     <>
-      <Section title="Tags">
-        {tags.map((tag) => (
-          <Chip
-            key={scientSourceTagKey(tag)}
-            label={tag}
-            showLabel={`Show sources tagged ${tag}`}
-            removeLabel={`Remove tag ${tag}`}
-            disabled={organize.pending || !organize.canChange}
-            onShow={() => props.onShowTag(tag)}
-            onRemove={() =>
-              void organize.bulk(
-                { sourceIds: [sourceId], removeTags: [tag] },
-                "Tag was not removed",
-              )
-            }
+      {editable ? (
+        <>
+          <AddTagMenu
+            organize={organize}
+            sourceId={sourceId}
+            tags={tags}
+            libraryTags={scientSourceTagCounts(props.records).map((entry) => entry.tag)}
           />
-        ))}
-        <AddTagMenu organize={organize} sourceId={sourceId} tags={tags} libraryTags={libraryTags} />
-      </Section>
-      <Section title="Collections">
-        {memberOf.map(({ collection, label }) => (
-          <Chip
-            key={collection.collectionId}
-            label={label}
-            showLabel={`Show collection ${label}`}
-            removeLabel={`Remove from ${label}`}
-            disabled={organize.pending || !organize.canChange}
-            onShow={() => props.onShowCollection(collection.collectionId)}
-            onRemove={() => setMembership(collection.collectionId, false)}
-          />
-        ))}
-        <Menu>
-          <MenuTrigger
-            render={
-              <Button
-                type="button"
-                size="compact"
-                variant="ghost-muted"
-                disabled={organize.pending || !organize.canChange}
-              />
-            }
-          >
-            <Plus />
-            Collection
-          </MenuTrigger>
-          <MenuPopup align="start" side="bottom" className="min-w-48">
-            {collections.map(({ collection, aboveIds }) => (
-              <MenuCheckboxItem
-                key={collection.collectionId}
-                checked={collection.sourceIds.includes(sourceId)}
-                onCheckedChange={(checked) => setMembership(collection.collectionId, checked)}
-              >
-                <span className="block min-w-0 truncate" style={collectionIndent(aboveIds.length)}>
-                  {collection.name}
-                </span>
-              </MenuCheckboxItem>
-            ))}
-            {collections.length > 0 ? <MenuSeparator /> : null}
-            <MenuItem
-              onClick={() =>
-                props.onRequestName({
-                  title: "New collection",
-                  label: "Collection name",
-                  initialName: "",
-                  action: "Create",
-                  onSubmit: async (name) =>
-                    (await organize.createCollection(name, [sourceId])) !== null,
-                })
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button type="button" size="xs" variant="ghost-muted" disabled={organize.pending} />
               }
             >
-              New collection…
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
-      </Section>
-      {categories && onShowCategory ? (
-        <Section title="Categories">
-          {studyDesign ? (
-            <CategoryChip
-              label={SCIENT_SOURCE_STUDY_DESIGN_LABELS[studyDesign]}
-              onShow={() => onShowCategory({ studyDesign })}
-            />
-          ) : null}
-          {(categories.topics ?? []).map((topic) => (
-            <CategoryChip
-              key={scientSourceTopicKey(topic.name)}
-              label={topic.name}
-              onShow={() => onShowCategory({ topic: topic.name })}
-            />
-          ))}
-        </Section>
+              <Plus />
+              Collection
+            </MenuTrigger>
+            <MenuPopup align="start" side="bottom" className="min-w-48">
+              {collections.map(({ collection, aboveIds }) => (
+                <MenuCheckboxItem
+                  key={collection.collectionId}
+                  checked={collection.sourceIds.includes(sourceId)}
+                  onCheckedChange={(checked) => setMembership(collection.collectionId, checked)}
+                >
+                  <span
+                    className="block min-w-0 truncate"
+                    style={collectionIndent(aboveIds.length)}
+                  >
+                    {collection.name}
+                  </span>
+                </MenuCheckboxItem>
+              ))}
+              {collections.length > 0 ? <MenuSeparator /> : null}
+              <MenuItem
+                onClick={() =>
+                  props.onRequestName({
+                    title: "New collection",
+                    label: "Collection name",
+                    initialName: "",
+                    action: "Create",
+                    onSubmit: async (name) =>
+                      (await organize.createCollection(name, [sourceId])) !== null,
+                  })
+                }
+              >
+                New collection…
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </>
       ) : null}
+      {tags.map((tag) => (
+        <Chip
+          key={scientSourceTagKey(tag)}
+          icon={<TagIcon className="text-muted-foreground" aria-hidden />}
+          label={tag}
+          showLabel={`Show sources tagged ${tag}`}
+          {...(editable
+            ? {
+                remove: {
+                  label: `Remove tag ${tag}`,
+                  disabled: organize.pending,
+                  run: () =>
+                    void organize.bulk(
+                      { sourceIds: [sourceId], removeTags: [tag] },
+                      "Tag was not removed",
+                    ),
+                },
+              }
+            : {})}
+          onShow={() => props.onShowTag(tag)}
+        />
+      ))}
+      {memberOf.map(({ collection, label }) => (
+        <Chip
+          key={collection.collectionId}
+          icon={<Folder className="text-muted-foreground" aria-hidden />}
+          label={label}
+          showLabel={`Show collection ${label}`}
+          {...(editable
+            ? {
+                remove: {
+                  label: `Remove from ${label}`,
+                  disabled: organize.pending,
+                  run: () => setMembership(collection.collectionId, false),
+                },
+              }
+            : {})}
+          onShow={() => props.onShowCollection(collection.collectionId)}
+        />
+      ))}
     </>
+  );
+}
+
+/** A source's registry categories among its facts; nothing when it has none. */
+export function SourceCategories(props: {
+  readonly categories: ScientSourceCategorySummary | undefined;
+  readonly onShowCategory: (category: SourceCategoryChoice) => void;
+}) {
+  const studyDesign = props.categories?.studyDesign;
+  const topics = props.categories?.topics ?? [];
+  if (!studyDesign && topics.length === 0) return null;
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Categories
+      </h3>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {studyDesign ? (
+          <CategoryChip
+            label={SCIENT_SOURCE_STUDY_DESIGN_LABELS[studyDesign]}
+            onShow={() => props.onShowCategory({ studyDesign })}
+          />
+        ) : null}
+        {topics.map((topic) => (
+          <CategoryChip
+            key={scientSourceTopicKey(topic.name)}
+            label={topic.name}
+            onShow={() => props.onShowCategory({ topic: topic.name })}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
