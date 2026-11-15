@@ -289,6 +289,88 @@ Passes per case, main's runtime text (3 samples) → this branch's "Link every o
 
 After the change, the first reference to a file is an absolute link. The remaining failures come from two other kinds of span. Some repeat the file later as relative inline code (Sonnet's other-checkout failures). Others quote values rather than cite files, such as `main` set to `src/index.ts` or the import `./ws`. Chat still turns those spans into pills.
 
+<!-- SCIENT-FORK:START — Scient's Sources cases. -->
+
+## Sources cases
+
+`cases/scient-sources.ndjson` checks how agents use Scient's Sources tools, and grades what the Library holds when the sample ends, not only which tools were called. Each case comes from a tool input or result that went in without an eval (recorded in the Sources improvement program, `reviews/sources-improve-20261115`), and each has a control. All titles, names and identifiers are authored.
+
+| Case                                    | Kind    | What it checks                                                                                                                                      |
+| --------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| sources-undo-bulk-edit                  | guard   | A mistaken bulk tag is found in Recent changes and undone with its batch ID. The paper that had the tag before keeps it; the older bulk edit stays. |
+| sources-control-recent-changes-read     | control | Asked which bulk edits were made, the agent reads Recent changes and names both. Nothing in the Library changes.                                    |
+| sources-restore-removed-paper           | guard   | A paper in the Trash is restored. No new copy is added.                                                                                             |
+| sources-control-move-to-trash           | control | Asked to remove a paper, the agent moves that one to the Trash and does not delete it for good.                                                     |
+| sources-zotero-import-continues         | guard   | A Zotero library of 503 references arrives in full: the second call carries the run ID, and there is no third.                                      |
+| sources-zotero-import-stopped-by-person | guard   | The person presses Stop at the 40th reference of the agent's import. The agent reports the 40 and does not import again.                            |
+| sources-control-zotero-small-import     | control | Three references arrive in one call.                                                                                                                |
+| sources-zotero-not-brought              | guard   | The final answer says that two notes that belong to no reference were not brought.                                                                  |
+| sources-correct-edition-keeps-details   | guard   | A book's edition is corrected and its place of publication and page count are still there.                                                          |
+| sources-control-correct-title           | control | A title is corrected and nothing else changes.                                                                                                      |
+| sources-not-in-library-no-invention     | guard   | Asked for the citation key of a paper the Library does not hold, the agent says it is not there and adds nothing.                                   |
+| sources-control-add-given-details       | control | A book the person describes is added as described.                                                                                                  |
+
+A case with `setup.world.library` gets a real Library and project in a temporary folder, removed when the sample ends. `scientSources.ts` fills it through the stores' own functions (sources by name, some in the Trash, bulk edits made earlier), registers the product's Sources toolkit on an in-process MCP server as the server does, and answers every `scient_sources_*` call from it; such a case cannot mock those tools. Zotero is the server's test Zotero filled from `library.zotero`; with `stoppedAt` the panel's own Stop is sent while that reference is being brought. Identifier registries are reported unreachable. Only these cases list the Sources tools and get the Library paragraph of Scient's system text, so every other case sends the request it sent before.
+
+`expect.library` is the state check. The Library is read before the first model call and after the last, and every difference is recorded by source name and detail: `state` (`live`, `trash`, `merged`, `gone`), each editable field (`title`, `tags`, `type`, ...), further details as `more.<name>`, and the personal `note`. `changed` lists the details that must have changed, with their exact new values; any other change fails the sample. `added` is how many sources the run must add (default none), or a list of details each added source must have. `{}` means the Library must be exactly as it was.
+
+### Run them
+
+No model run is recorded yet. To run them:
+
+1. Put `ANTHROPIC_API_KEY` in the repo root `.env`, as for every eval. Codex models need the CLIProxyAPI server described under [Run](#run).
+2. Check the setup, at no cost. This builds every case's Library and request and prints one line per case:
+
+   ```sh
+   cd evals
+   pnpm mcp-tool-use --cases mcp-tool-use/cases/scient-sources.ndjson --dry-run > /dev/null && echo ok
+   ```
+
+3. Run one case once, and read its row:
+
+   ```sh
+   pnpm mcp-tool-use --case sources-undo-bulk-edit --samples 1 --out runs/sources-check
+   ```
+
+4. Run the set on each model. The large import brings 503 references into a real Library, about 15 seconds a sample on a Mac, so keep `--concurrency` at its default or lower:
+
+   ```sh
+   pnpm mcp-tool-use --cases mcp-tool-use/cases/scient-sources.ndjson --model claude-sonnet-5-5 --samples 3 --out runs/sources-sonnet
+   pnpm mcp-tool-use --cases mcp-tool-use/cases/scient-sources.ndjson --model claude-opus-5-5 --samples 3 --out runs/sources-opus
+   pnpm mcp-tool-use --cases mcp-tool-use/cases/scient-sources.ndjson --model gpt-6.1-sol --shell-model gpt-6.1-terra --samples 3 --out runs/sources-sol
+   ```
+
+Read the result in `runs/<name>/summary.md`: the pass rate of each case, and the cost. A case fails when half or more of its samples fail; a failing control means the tools or their text push agents too far. For a failed sample, open its row in `results.jsonl`:
+
+- `checks` names what failed. A state check says what differed, for example `library nothing else changed; okafor2021.tags became []`.
+- `library` is everything the sample changed in the Library: `changes` (source, detail, before, after) and `added`.
+- `calls` has each tool call with the result the agent saw, and `transcript` the whole exchange.
+
+`finalTextMust` in `sources-zotero-not-brought`, `sources-zotero-import-stopped-by-person` and `sources-not-in-library-no-invention` is a pattern on the answer's wording. Read a failing sample before counting it.
+
+Record the first run's passes per case and model in a Results table here, with its commit. To change a Sources tool's description, input or result after that: run the cases on main's text, make the change, and run again with `--baseline runs/<main>/results.jsonl`. The change stays only if no case that passed now fails.
+
+### Without a model
+
+`scientSources.test.ts` runs every case through the real sample loop with a scripted model in place of the API: once doing what was asked, where every check must pass, and once making the mistake the case guards, where the named checks must fail. It loads the Sources tools through ToolSearch beside the shipped Claude capture, calls the real handlers, and grades the real Library, so it proves everything except what a model would do. It runs in CI with the other grader tests. The 503-reference case would take minutes on a CI runner, so it runs every night in `.github/workflows/scient-library-deep-tests.yml`, and here when asked:
+
+```sh
+cd evals
+SOURCES_EVAL_LARGE_IMPORT=1 vp test run --config ../vite.config.ts mcp-tool-use/scientSources.test.ts
+```
+
+A new Sources case needs its two scripted runs in that file; a test fails until it has them.
+
+Fidelity limits:
+
+- **Tool list.** The agent sees T3's tools and the Sources tools. Scient's other tools (references, systematic reviews, Compute, skills, papers) are not listed, so a case cannot show an agent choosing one of them instead.
+- **Dates.** The stores stamp changes with the real clock and the captured prompt carries its own date, so no case depends on "yesterday": the undo case names the edit by what it did.
+- **Zotero.** References are generated ("Reference number 1" ...) with no PDFs, child notes or collections; the import of a collection is not covered. The person's Stop always lands on the same reference.
+- **What is compared.** Sources and their details. Project citation keys, collections, PDFs, reading status and reviews are not compared, so a case about them needs the state read extended first.
+- **Registries.** No identifier is looked up, so adding by DOI alone leaves an unverified source.
+
+<!-- SCIENT-FORK:END -->
+
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`

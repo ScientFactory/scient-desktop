@@ -1000,6 +1000,15 @@ paths use the same environment authority for people and agents.
   snapshot and nothing is created. A `write` call needs a library and creates
   it.
 
+The tool-use eval runs these tools on a real Library made for each case
+(`evals/mcp-tool-use/cases/scient-sources.ndjson`, `scientSources.ts`) and
+grades what the Library holds afterwards, not only which tools were called.
+`scientSources.test.ts` runs every case with a scripted model in CI, except the
+503-reference Zotero import, which runs every night in
+`.github/workflows/scient-library-deep-tests.yml`. A change to a tool's
+description, inputs or result is run on those cases with a model before and
+after; `evals/mcp-tool-use/README.md` says how, and what each case guards.
+
 ### Library routes and the scope filter
 
 The HTTP routes in `apps/server/src/scient/sources/http.ts` resolve their store
@@ -3997,6 +4006,17 @@ them, and a crash leaves at most one per interrupted write.
   after changing a store's write order (about two minutes on a Mac).
 - `libraryRules.cases.test.ts`: the short sequences those runs found, kept as
   regressions.
+
+The long forms (`LIBRARY_RULES_SEEDS=300 LIBRARY_RULES_STEPS=150` and
+`LIBRARY_CRASH_SWEEP=full`) run on main in
+`.github/workflows/scient-library-deep-tests.yml`: every night on Linux, every
+Monday on macOS and Windows, and on all three when started by hand. They run on
+no pull request and are no required check. On Windows only the random hunt
+runs: a process that kills itself there is not reported as killed by a signal,
+which is how the crash test knows its worker stopped where it should. GitHub
+reports a failed run to the person who added the workflow or last changed its
+schedule. Each failure names its seed or its part of the sweep, with the
+command that runs that one again on a developer's computer.
 
 This is bounded coverage of process death on one machine's file system, not a
 proof of every schedule and not a power-cut test.

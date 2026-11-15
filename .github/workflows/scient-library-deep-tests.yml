@@ -1,0 +1,100 @@
+name: Scient Library Deep Tests
+
+# The long forms of the Library's rule tests (packages/scient-sources/src/testing): 300 random
+# sequences of 150 steps, and a stop at every file change of every action. They take too long
+# for every push, so they run on main on a schedule and on demand. Never on pull requests, and
+# not a required check: GitHub tells the person who last changed the schedule when a run fails.
+on:
+  schedule:
+    # Every night on Linux, after the nightly CI run.
+    - cron: "23 3 * * *"
+    # Every Monday on macOS and Windows, whose file systems differ and whose minutes cost more.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deep:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    # Estimated, not yet measured on a runner: 40 to 60 minutes on Linux, longer on Windows.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # A run started by hand covers every computer.
+        runner: >-
+          ${{ fromJSON(github.event_name == 'workflow_dispatch'
+          && '["ubuntu-24.04", "macos-26", "windows-2025"]'
+          || github.event.schedule == '23 4 * * 1'
+          && '["macos-26", "windows-2025"]'
+          || '["ubuntu-24.04"]') }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: packages/scient-sources
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          # setup-vp's cache restores a Linux-shaped store on Windows, slower than none (#7975).
+          cache: ${{ runner.os != 'Windows' }}
+          run-install: |
+            args:
+              - --filter=@scientfactory/scient-sources...
+
+      # A seed takes about four seconds on a developer's Mac and several times that here, so the
+      # project's one-minute limit for a test is raised for this run only. A failure names its
+      # seed, its steps and the command that runs that seed again.
+      - name: Random use, 300 seeds of 150 steps
+        env:
+          LIBRARY_RULES_SEEDS: "300"
+          LIBRARY_RULES_STEPS: "150"
+        run: vp test run src/testing/libraryRules.random.test.ts --testTimeout=600000
+
+      # Windows does not report a process that ends itself as killed by a signal, which is how
+      # this test knows its worker stopped where it should. Until the test can tell on Windows,
+      # the sweep runs on Linux and macOS.
+      - name: A stop at every file change of every action
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        env:
+          LIBRARY_CRASH_SWEEP: full
+        run: vp test run src/testing/libraryRules.crash.test.ts --testTimeout=600000
+
+  # The Sources eval's import of 503 references, with a scripted model: two minutes or more on a
+  # runner, too long for every push. It does not depend on the file system, so Linux only.
+  sources-eval-large-import:
+    name: Sources eval, large Zotero import
+    if: ${{ github.event.schedule != '23 4 * * 1' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      # The eval runs the server's own Sources tools, so it needs the whole workspace.
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Import 503 references in two calls
+        working-directory: evals
+        env:
+          SOURCES_EVAL_LARGE_IMPORT: "1"
+        run: vp test run --config ../vite.config.ts mcp-tool-use/scientSources.test.ts -t "sources-zotero-import-continues" --testTimeout=600000
