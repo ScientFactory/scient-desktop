@@ -441,6 +441,7 @@ function versionSummary(
     title: review.title,
     updatedAt: review.updatedAt,
     updatedBy: review.updatedBy,
+    ...(review.deletedAt ? { deletedAt: review.deletedAt } : {}),
     searches: review.searches.length,
     records: new Set([
       ...review.searches.flatMap((search) => search.sourceIds),
@@ -489,6 +490,7 @@ const NAMED_PARTS: ReadonlyArray<
     (review: ScientSystematicReview) => string,
   ]
 > = [
+  ["deleted", (review) => (review.deletedAt === undefined ? "" : "deleted")],
   ["title", (review) => review.title],
   ["question", (review) => review.question ?? ""],
   ["exclusion-reasons", (review) => sortedText(review.exclusionReasons)],

@@ -37,6 +37,7 @@ export const plural = (value: number, one: string, many: string) =>
   `${value.toLocaleString()} ${value === 1 ? one : many}`;
 
 const ALSO_WORDS: Readonly<Record<ReviewVersionDifferences["alsoDiffering"][number], string>> = {
+  deleted: "whether the review is deleted",
   title: "the title",
   question: "the question",
   "exclusion-reasons": "the exclusion reasons",

@@ -45,6 +45,11 @@ function VersionSummary(props: { readonly heading: string; readonly version: Ver
             Changed {reviewDate(version.updatedAt)}{" "}
             {version.updatedBy === "agent" ? "by an agent" : "by you"}
           </p>
+          {version.deletedAt ? (
+            <p className="text-xs text-muted-foreground tabular-nums">
+              Deleted {reviewDate(version.deletedAt)}
+            </p>
+          ) : null}
           <p className="text-xs text-muted-foreground tabular-nums">
             {plural(version.searches, "search", "searches")} ·{" "}
             {plural(version.records, "record", "records")} ·{" "}
