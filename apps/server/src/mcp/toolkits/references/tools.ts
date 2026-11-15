@@ -18,7 +18,7 @@ const FindingIds = Schema.Array(Schema.String.check(Schema.isNonEmpty())).pipe(
 
 const ScientReferencesCheckTool = Tool.make("scient_references_check", {
   description:
-    "Check references at doi.org and PubMed: a project .md, .tex or .bib file (with the bibliographies it names), or the Library. Finds identifiers that do not resolve or name another work, retractions and corrections, preprints since published, details that differ from the registry, missing fields and cited/listed mismatches. Checks records, not whether a source supports the text. Apply fixes with scient_references_resolve. complete false: some were not checked.",
+    "Check references at doi.org and PubMed: a project .md, .tex, .bib or .docx file (with the bibliographies it names), or the Library. Finds identifiers that do not resolve or name another work, retractions and corrections, preprints since published, details that differ from the registry, missing fields and cited/listed mismatches. Checks records, not whether a source supports the text. Apply fixes with scient_references_resolve. complete false: some were not checked.",
   parameters: Schema.Struct({
     path: Schema.optionalKey(
       Schema.String.pipe(Schema.check(Schema.isNonEmpty(), Schema.isMaxLength(4_096))).annotate({

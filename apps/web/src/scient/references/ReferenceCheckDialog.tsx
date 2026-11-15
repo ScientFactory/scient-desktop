@@ -42,8 +42,8 @@ type RowState =
 const errorMessage = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
 
 /**
- * Library header ▸ Check references, and the Markdown and LaTeX document menus. Checks the
- * chosen document or the Library against its registries, then fixes or ignores findings.
+ * Library header ▸ Check references, and the Markdown, LaTeX and Word document menus. Checks
+ * the chosen document or the Library against its registries, then fixes or ignores findings.
  */
 export function ReferenceCheckDialog(props: {
   readonly environmentId: EnvironmentId;

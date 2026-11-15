@@ -10,7 +10,9 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { ListChecks } from "lucide-react";
 
+import { DropdownMenuItem, DropdownMenuSeparator } from "~/components/ui/menu";
 import { OfficePages, type PageSize, type PaintPage } from "~/components/files/office/OfficePages";
 import { attachShortcutHost } from "../keyboard/host";
 import { labelKeys } from "../keyboard/keys";
@@ -20,6 +22,7 @@ import {
   subscribeKeyboardPreferences,
 } from "../keyboard/preferences";
 import { normalizePdfZoom, stepPdfZoom } from "../pdf/pdfReaderModel";
+import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
 import { DocumentReaderControls } from "../writing/DocumentReaderControls";
 import { OfficeFindMarks } from "./OfficeFindMarks";
 import { OfficeThumbnails } from "./OfficeThumbnails";
@@ -115,6 +118,8 @@ export function ScientOfficeReader(props: {
   const [found, setFound] = useState<Found | null>(null);
   const [focusRequest, setFocusRequest] = useState(0);
   const [content, setContent] = useState<HTMLDivElement | null>(null);
+  const [checkingReferences, setCheckingReferences] = useState(false);
+  const checkable = file !== null && file.path.toLowerCase().endsWith(".docx") ? file : null;
   const quoted = reveal && reveal.page <= office.pages.length ? reveal : null;
   const revealed = useRef<typeof reveal>(null);
   const current = office.pages[Math.min(page, office.pages.length - 1)];
@@ -291,6 +296,16 @@ export function ScientOfficeReader(props: {
         onToggleSearch={() => setFocusRequest((request) => request + 1)}
         onShowSearch={() => setFocusRequest((request) => request + 1)}
         shortcutLabel={shortcutLabel}
+        moreActions={
+          checkable ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setCheckingReferences(true)}>
+                <ListChecks /> Check references
+              </DropdownMenuItem>
+            </>
+          ) : undefined
+        }
         search={{
           query,
           current: total > 0 && found ? found.current + 1 : 0,
@@ -352,6 +367,14 @@ export function ScientOfficeReader(props: {
           />
         </div>
       </div>
+      {checkingReferences && checkable ? (
+        <ReferenceCheckDialog
+          environmentId={checkable.citeThread.environmentId}
+          root={checkable.cwd}
+          initialTarget={{ kind: "file", path: checkable.path }}
+          onClose={() => setCheckingReferences(false)}
+        />
+      ) : null}
     </div>
   );
 }
