@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 
 export const BACKUP_LABELS = {
-  menuItem: "Back up the Library…",
+  menuItem: "Back up My Library…",
   failed: "The Library was not backed up",
   done: "Library backed up",
 } as const;

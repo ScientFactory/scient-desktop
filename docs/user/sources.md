@@ -78,7 +78,7 @@ switching between This project and My Library does not change it.
 - Output: **Citation style…** and **Export**, which writes references to a file and
   ends with **Save a project package…** for the whole project.
 - Records: **Recent changes**, and **Trash** with its count when it holds papers.
-- **Backup and recovery**: **Back up the Library…**, **Restore from a backup…**,
+- **Backup and recovery**: **Back up My Library…**, **Restore from a backup…**,
   **Add from another Library…**, then **Recover sources from before the move**
   and **Keep this project's sources in its folder** where they apply.
 
@@ -701,9 +701,9 @@ The last item under **Export**, **Save a project package…**, is different: it
 copies the whole project with its PDFs and highlights, whatever is selected; see
 [Project packages](#project-packages).
 
-## Back up the Library
+## Back up My Library
 
-Choose **⋯** > **Backup and recovery** > **Back up the Library…**
+Choose **⋯** > **Backup and recovery** > **Back up My Library…**
 and pick a folder. Scient writes a new folder there, named "Scient Library
 backup" with the date and time: a copy of everything in your Library as it is
 at that moment. It holds your sources with their versions, personal notes,
@@ -798,7 +798,7 @@ Use this to bring into your Library the sources another Library has: the one a
 restore replaced, or the Library on your other computer.
 
 Choose **Add from another Library…** (**⋯** > **Backup and recovery** at the top of the
-Library) and pick a backup folder made with **Back up the Library…**. For the
+Library) and pick a backup folder made with **Back up My Library…**. For the
 Library a restore replaced you do not need to find a folder: **Recent
 changes** shows the restore with **Add its sources**.
 
