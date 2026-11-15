@@ -22,6 +22,7 @@ import {
 import {
   importScientSource,
   listScientSourceRecords,
+  readScientSourceRecord,
   removeScientSource,
   updateScientSourceNote,
 } from "@scientfactory/scient-sources/store";
@@ -37,6 +38,7 @@ import * as Schema from "effect/Schema";
 import { ServerConfig } from "../../config.ts";
 import { beginBibliographyFileImport } from "./BibliographyFileAdapter.ts";
 import { libraryBackupStatus } from "./LibraryBackupRuns.ts";
+import { libraryJoinStatus } from "./LibraryJoinRuns.ts";
 import {
   cancelLibraryRestore,
   finishLibraryRestoreAtStart,
@@ -413,6 +415,79 @@ describe("Library routes on the library backend", () => {
         expect(await NodeFSP.readdir(NodePath.join(status.kept.path, "records"))).toHaveLength(1);
       });
     }),
+  );
+
+  it.effect(
+    "adds another Library's new sources in the background, lists the join, and undoes it",
+    () =>
+      Effect.gen(function* () {
+        // Another Library with one paper this one lacks, and its backup.
+        const theirs = yield* Effect.promise(setup);
+        const theirStore = yield* storeFor(theirs, "write");
+        const fixture = yield* Effect.promise(setup);
+        yield* Effect.promise(() => threeSources(fixture));
+        const store = yield* storeFor(fixture, "write");
+        const destination = NodePath.join(NodePath.dirname(theirs.root), "backups");
+        yield* Effect.promise(async () => {
+          const fresh = await libraryRecord(theirs, "only-theirs", {
+            title: "A paper only they have",
+          });
+          await NodeFSP.mkdir(destination);
+          await organizeLibrarySources(theirStore, {
+            change: { action: "back-up-library", inFolder: destination },
+          });
+          const backup = await vi.waitFor(() => {
+            const status = libraryBackupStatus(theirStore.library);
+            if (status.state !== "done") throw new Error(`The backup is ${status.state}.`);
+            return status.path;
+          });
+
+          // A folder that is no backup ends with the reason and adds nothing.
+          const add = (fromFolder: string) =>
+            organizeLibrarySources(store, { change: { action: "add-from-library", fromFolder } });
+          expect(await add(destination)).toEqual({ outcome: "join-started" });
+          await vi.waitFor(() =>
+            expect(libraryJoinStatus(store.library)).toMatchObject({
+              state: "failed",
+              reason: expect.stringContaining("Choose a Scient Library backup folder."),
+            }),
+          );
+
+          expect(await add(backup)).toEqual({ outcome: "join-started" });
+          const done = await vi.waitFor(() => {
+            const status = libraryJoinStatus(store.library);
+            if (status.state !== "done") throw new Error(`The join is ${status.state}.`);
+            return status;
+          });
+          expect(done).toMatchObject({ added: 1, skipped: 0 });
+          expect(await readScientSourceRecord(store.library, fresh.sourceId)).toMatchObject({
+            title: "A paper only they have",
+          });
+
+          const listed = async () =>
+            (await libraryRecentChanges(store, {})).changes.find(
+              (change) => change.kind === "join",
+            );
+          expect(await listed()).toMatchObject({
+            id: done.joinId,
+            from: "backup",
+            state: "done",
+            added: 1,
+          });
+          expect(
+            await organizeLibrarySources(store, {
+              change: { action: "undo-join", joinId: done.joinId },
+            }),
+          ).toEqual({ outcome: "join-undone", joinUndone: { trashed: 1, left: 0 } });
+          expect(await readScientSourceRecord(store.library, fresh.sourceId)).toBeNull();
+          expect(await listed()).toMatchObject({ state: "undone", left: 0 });
+          expect(
+            await organizeLibrarySources(store, {
+              change: { action: "undo-join", joinId: done.joinId },
+            }),
+          ).toEqual({ outcome: "already-undone" });
+        });
+      }),
   );
 
   it.effect(

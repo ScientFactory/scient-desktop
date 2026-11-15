@@ -703,6 +703,8 @@ export async function joinScientLibrary(input: {
   readonly folder: string;
   readonly actor: ScientSourceActor;
   readonly onProgress?: (progress: { readonly done: number; readonly total: number }) => void;
+  /** Called once the join has its record, before it adds anything. */
+  readonly onStarted?: (joinId: string) => void;
   /** Asked between parts; true stops the join where it is. */
   readonly shouldStop?: () => boolean;
   /** Tests only: stops after this many sources of a part, as a killed process would. */
@@ -734,6 +736,7 @@ export async function joinScientLibrary(input: {
     removedHere: compared.removedHere,
   };
   await writeHeader(header);
+  input.onStarted?.(joinId);
 
   const added: string[] = [];
   let skipped = 0;

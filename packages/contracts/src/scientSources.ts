@@ -482,6 +482,17 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     action: Schema.Literal("back-up-library"),
     inFolder: NonEmptyString.check(Schema.isMaxLength(4_096)),
   }),
+  /**
+   * Starts adding the sources that `fromFolder` holds and this Library lacks: a backup folder
+   * or a Library a restore moved aside (an absolute path on this environment). Nothing that
+   * exists here is changed. It runs on; `backupStatus` reports it.
+   */
+  Schema.Struct({
+    action: Schema.Literal("add-from-library"),
+    fromFolder: NonEmptyString.check(Schema.isMaxLength(4_096)),
+  }),
+  /** Moves the sources that join added to the Trash, each only if unchanged since. */
+  Schema.Struct({ action: Schema.Literal("undo-join"), joinId: NonEmptyString }),
   /** A package folder in the project, or an absolute path. */
   Schema.Struct({
     action: Schema.Literal("import-package"),
@@ -589,6 +600,10 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "not-moved",
     "backup-started",
     "backup-running",
+    "join-started",
+    "join-running",
+    "join-undone",
+    "join-not-found",
     "project-store-present",
     "dismissed",
     "nothing-to-dismiss",
@@ -642,6 +657,8 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   alsoPinnedIn: AlsoPinnedIn,
   restoredSources: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   restoredPdfs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** undo-join: sources moved to the Trash, and sources left because they changed since. */
+  joinUndone: Schema.optionalKey(Schema.Struct({ trashed: Schema.Int, left: Schema.Int })),
   /** export-package: the folder written. */
   packagePath: Schema.optionalKey(NonEmptyString),
   packages: Schema.optionalKey(
@@ -832,10 +849,44 @@ export const ScientSourcesRestoreStatus = Schema.Union([
 ]);
 export type ScientSourcesRestoreStatus = typeof ScientSourcesRestoreStatus.Type;
 
-/** The Library's backup and its restore, read together. */
+/**
+ * Adding another Library's new sources to this one on this environment: `running` counts the
+ * sources added so far; the others say how the last one ended, until Scient stops.
+ */
+export const ScientSourcesJoinStatus = Schema.Union([
+  Schema.Struct({ state: Schema.Literal("none") }),
+  Schema.Struct({
+    state: Schema.Literal("running"),
+    done: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("done"),
+    joinId: NonEmptyString,
+    finishedAt: NonEmptyString,
+    added: Schema.Int,
+    /** Planned but not added: it appeared or was removed here meanwhile, or could not be read. */
+    skipped: Schema.Int,
+    /** Both Libraries hold it and it differs, or it may be the same paper: left as it is here. */
+    different: Schema.Int,
+    /** In this Library's Trash or deleted for good here: not brought back. */
+    removedHere: Schema.Int,
+    /** Live here, removed in the other Library: left as it is here. */
+    removedThere: Schema.Int,
+  }),
+  Schema.Struct({
+    state: Schema.Literal("failed"),
+    failedAt: NonEmptyString,
+    reason: Schema.String,
+  }),
+]);
+export type ScientSourcesJoinStatus = typeof ScientSourcesJoinStatus.Type;
+
+/** The Library's backup, its restore, and adding from another Library, read together. */
 export const ScientSourcesLibraryCopies = Schema.Struct({
   backup: ScientSourcesBackupStatus,
   restore: ScientSourcesRestoreStatus,
+  join: ScientSourcesJoinStatus,
 });
 export type ScientSourcesLibraryCopies = typeof ScientSourcesLibraryCopies.Type;
 

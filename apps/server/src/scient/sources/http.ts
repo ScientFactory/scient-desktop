@@ -105,6 +105,7 @@ import {
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
 import { libraryBackupStatus } from "./LibraryBackupRuns.ts";
+import { libraryJoinStatus } from "./LibraryJoinRuns.ts";
 import {
   cancelLibraryRestore,
   libraryRestoreStatus,
@@ -506,7 +507,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
             if ((yield* ScientSourcesBackend) === "project") {
-              return { backup: { state: "none" }, restore: { state: "none" } } as const;
+              return {
+                backup: { state: "none" },
+                restore: { state: "none" },
+                join: { state: "none" },
+              } as const;
             }
             const config = yield* ServerConfig.ServerConfig;
             const libraryRoot = scientLibraryRootFor(config.stateDir);
@@ -514,6 +519,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             return {
               backup: libraryBackupStatus(scientLibraryLocation(libraryRoot)),
               restore: yield* Effect.promise(() => libraryRestoreStatus(libraryRoot)),
+              join: libraryJoinStatus(scientLibraryLocation(libraryRoot)),
             };
           }),
         )

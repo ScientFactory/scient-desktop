@@ -501,8 +501,8 @@ const RecentChangeBase = { at: NonEmptyString, by: ScientSourceActor };
 
 /**
  * One recorded change to the Library that can still be taken back or looked at: a bulk edit, a
- * merge, an import, a source in the Trash, or a restore from a backup. Source IDs are the
- * Library's.
+ * merge, an import, a source in the Trash, a restore from a backup, or sources added from
+ * another Library. Source IDs are the Library's.
  */
 export const ScientLibraryRecentChange = Schema.Union([
   Schema.Struct({
@@ -575,6 +575,25 @@ export const ScientLibraryRecentChange = Schema.Union([
     pdfs: Schema.Int,
     /** The replaced Library's folder and source count, while that folder is still there. */
     kept: Schema.NullOr(Schema.Struct({ path: NonEmptyString, sources: Schema.Int })),
+  }),
+  /** Sources added from another Library; Undo moves the unchanged ones to the Trash. */
+  Schema.Struct({
+    kind: Schema.Literal("join"),
+    /** The join ID. */
+    id: NonEmptyString,
+    ...RecentChangeBase,
+    /** A backup, or the Library a restore replaced. */
+    from: Schema.Literals(["backup", "replaced"]),
+    backupCreatedAt: Schema.NullOr(NonEmptyString),
+    /** `stopped`: it did not finish; what it added is in the Library. */
+    state: Schema.Literals(["done", "stopped", "undone"]),
+    added: Schema.Int,
+    /** Sources both Libraries hold that differ, or that may be the same paper: left as here. */
+    different: Schema.Int,
+    /** In this Library's Trash or deleted for good here: not brought back. */
+    removedHere: Schema.Int,
+    /** After Undo: sources that had changed since and stayed. */
+    left: Schema.Int,
   }),
 ]);
 export type ScientLibraryRecentChange = typeof ScientLibraryRecentChange.Type;
