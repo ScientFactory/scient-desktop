@@ -114,7 +114,8 @@
     "test": "vp test run",
     "measure:library-move": "node scripts/measureLibraryMove.ts",
     "measure:bulk-edits": "node scripts/measureBulkEdits.ts",
-    "generate:scale-library": "node scripts/scaleLibrary.ts"
+    "generate:scale-library": "node scripts/scaleLibrary.ts",
+    "check:zotero-schema": "node scripts/checkZoteroSchema.ts"
   },
   "dependencies": {
     "@scientfactory/project-init": "workspace:*",

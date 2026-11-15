@@ -149,7 +149,6 @@ describe("Zotero agent tools", () => {
       expect(imported).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
       // In the words the panel uses, so the agent can tell the person.
       expect(imported.notBrought).toEqual([
-        { what: "Place of publication", amount: "1 reference" },
         { what: "Notes that belong to no reference", amount: "1" },
       ]);
     }),

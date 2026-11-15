@@ -46,6 +46,9 @@ const SOURCE_TYPE_LABELS: Readonly<Record<Metadata["type"], string>> = {
   report: "Report",
   dataset: "Dataset",
   web: "Web source",
+  software: "Software",
+  presentation: "Presentation",
+  manuscript: "Manuscript",
   other: "Other source",
 };
 

@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { ScientSourceCategorySummary } from "./categories.ts";
+import { isValidScientSourceMore } from "./sourceMore.ts";
 
 // Agents reading tool schemas gain nothing from the trimmed-string regex; decoding still enforces it.
 const NonEmptyString = Schema.String.check(
@@ -20,9 +21,22 @@ export const ScientSourceType = Schema.Literals([
   "report",
   "dataset",
   "web",
+  "software",
+  "presentation",
+  "manuscript",
   "other",
 ]);
 export type ScientSourceType = typeof ScientSourceType.Type;
+
+/**
+ * Bibliographic details beyond a source's own fields, each under the CSL variable it is cited
+ * with (`sourceMore.ts` has the names). Text only; a date is kept as written and parsed when
+ * a citation is made.
+ */
+export const ScientSourceMore = Schema.Record(Schema.String, Schema.String).check(
+  Schema.makeFilter((more) => isValidScientSourceMore(more)),
+);
+export type ScientSourceMore = typeof ScientSourceMore.Type;
 
 export const ScientSourceCreator = Schema.Struct({
   creatorType: NonEmptyString,
@@ -203,6 +217,7 @@ export const ScientSourceRecord = Schema.Struct({
   pages: NullableText,
   language: NullableText,
   url: NullableText,
+  more: Schema.optionalKey(ScientSourceMore),
   tags: Schema.Array(Schema.String),
   externalReferences: Schema.Array(ScientSourceExternalReference),
   attachments: Schema.Array(ScientSourceAttachment),
@@ -377,6 +392,7 @@ export const ScientSourceCandidate = Schema.Struct({
   pages: NullableText,
   language: NullableText,
   url: NullableText,
+  more: Schema.optionalKey(ScientSourceMore),
   tags: Schema.Array(Schema.String),
   externalReferences: Schema.Array(ScientSourceExternalReference),
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),

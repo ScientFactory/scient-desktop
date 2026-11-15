@@ -195,8 +195,13 @@ describe("Zotero import", () => {
                 extra: "Citation Key: book2026\nOCLC: 12345\nbought second hand",
                 tags: [{ tag: "methods" }, { tag: "Humans", type: 1 }],
                 relations: { "dc:relation": ["http://zotero.org/users/1/items/EFGH2345"] },
-                // Fields the record has no place for yet.
-                ...({ place: "Leiden", edition: "2nd", numPages: "412" } as object),
+                // Fields beyond the record's own, and one Zotero itself has no CSL name for.
+                ...({
+                  place: "Leiden",
+                  edition: "2nd",
+                  numPages: "412",
+                  assignee: "A Lab",
+                } as object),
               }),
               children: [
                 { ...pdfAttachment("PDFA2345", "book.pdf"), meta: { numChildren: 7 } },
@@ -239,11 +244,6 @@ describe("Zotero import", () => {
 
     expect(operation.items[0]).toMatchObject({ state: "imported" });
     expect(operation.items[0]?.notBrought).toEqual([
-      { kind: "field", name: "place", count: 1 },
-      { kind: "field", name: "edition", count: 1 },
-      { kind: "field", name: "numPages", count: 1 },
-      { kind: "extra", name: "oclc", count: 1 },
-      { kind: "extra", name: "(text)", count: 1 },
       { kind: "related", count: 1 },
       { kind: "automatic-tags", count: 1 },
       { kind: "highlights", count: 7 },
@@ -259,6 +259,13 @@ describe("Zotero import", () => {
       publisher: "A Press",
       citationKey: "book2026",
       tags: ["methods", "Humans"],
+      // Every bibliographic field has a place: under its citation name, or as written.
+      more: {
+        edition: "2nd",
+        "publisher-place": "Leiden",
+        "number-of-pages": "412",
+        extra: "Assignee: A Lab\nOCLC: 12345\nbought second hand",
+      },
     });
     expect(record?.attachments.map((attachment) => attachment.fileName)).toEqual(["book.pdf"]);
   });

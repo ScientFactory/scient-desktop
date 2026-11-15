@@ -115,5 +115,8 @@ export const SCIENT_SOURCE_TYPE_LABELS = {
   report: "Report",
   dataset: "Dataset",
   web: "Web source",
+  software: "Software",
+  presentation: "Presentation",
+  manuscript: "Manuscript",
   other: "Other source",
 } as const satisfies Readonly<Record<ScientSourceType, string>>;

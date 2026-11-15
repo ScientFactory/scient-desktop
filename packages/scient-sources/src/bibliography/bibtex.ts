@@ -648,6 +648,9 @@ const BIBTEX_TYPE_BY_TYPE: Readonly<Record<ScientSourceType, string>> = {
   report: "techreport",
   dataset: "misc",
   web: "misc",
+  software: "software",
+  presentation: "unpublished",
+  manuscript: "unpublished",
   other: "misc",
 };
 

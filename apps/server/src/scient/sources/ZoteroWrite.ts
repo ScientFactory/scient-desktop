@@ -16,6 +16,9 @@ const ITEM_TYPE_FOR: Readonly<Record<ScientSourceType, string>> = {
   report: "report",
   dataset: "dataset",
   web: "webpage",
+  software: "computerProgram",
+  presentation: "presentation",
+  manuscript: "manuscript",
   other: "document",
 };
 
@@ -40,6 +43,9 @@ const CREATE_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
   report: [...COMMON_FIELDS, "institution", "pages"],
   dataset: [...COMMON_FIELDS, "repository", "DOI"],
   webpage: [...COMMON_FIELDS, "websiteTitle"],
+  computerProgram: [...COMMON_FIELDS, "company"],
+  presentation: [...COMMON_FIELDS],
+  manuscript: [...COMMON_FIELDS],
   document: [...COMMON_FIELDS, "publisher"],
 };
 

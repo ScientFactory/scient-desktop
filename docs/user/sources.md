@@ -296,7 +296,13 @@ had chosen before it.
 
 Scient copies each reference's metadata, tags, child notes (as **My note**)
 and every PDF attachment into your Library, and adds the references to this
-project unless **All** is shown. A citation key the item
+project unless **All** is shown. Every bibliographic field comes, also the
+ones beyond a source's main details: edition, place of publication, series,
+number of pages, report number, date accessed and the like are kept under
+the names citations use, so a book is cited with its edition. A field only
+Zotero has a name for, and the lines of Zotero's Extra, are kept as written.
+Software, presentations and manuscripts keep their type; a program is cited
+by its programmer, a film by its director, a legal case by its name. A citation key the item
 already has, from Zotero or Better BibTeX, is kept. Each source also joins a
 Library collection named after each Zotero collection it is in. The Library
 keeps one level of nesting, so **Chapter 2** inside **Thesis** stays inside it;
@@ -306,9 +312,8 @@ never changed by an import.
 
 When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
-many references it concerns: fields Scient has no place for yet (place of
-publication, edition, number of pages and others), lines of Zotero's Extra it
-does not read, highlights and comments on PDFs, files that are not PDFs, links
+many references it concerns: highlights and comments on PDFs, files that are
+not PDFs, links
 kept as attachments, PDFs Zotero could not hand over, notes whose links or
 tables became plain text, and notes and files that belong to no reference.
 **Show** on a line shows the references it concerns. All of it is still in

@@ -5,25 +5,10 @@ import type {
   ScientSourceRecord,
   ScientSourceType,
 } from "./model.ts";
-
-const ZOTERO_TYPE_MAP: Readonly<Record<string, ScientSourceType>> = {
-  journalArticle: "article",
-  magazineArticle: "article",
-  newspaperArticle: "article",
-  preprint: "preprint",
-  book: "book",
-  bookSection: "book-chapter",
-  conferencePaper: "conference-paper",
-  thesis: "thesis",
-  report: "report",
-  dataset: "dataset",
-  webpage: "web",
-  blogPost: "web",
-  forumPost: "web",
-};
+import { ZOTERO_TYPE_SOURCE } from "./zoteroSchema.ts";
 
 export function scientSourceTypeFromZotero(itemType: string): ScientSourceType {
-  return ZOTERO_TYPE_MAP[itemType] ?? "other";
+  return ZOTERO_TYPE_SOURCE[itemType] ?? "other";
 }
 
 function normalized(value: string | null): string {

@@ -271,6 +271,9 @@ const RIS_TYPE_BY_TYPE: Readonly<Record<ScientSourceType, string>> = {
   report: "RPRT",
   dataset: "DATA",
   web: "ELEC",
+  software: "COMP",
+  presentation: "SLIDE",
+  manuscript: "MANSCPT",
   other: "GEN",
 };
 

@@ -13,5 +13,7 @@ export * from "./identifierInput.ts";
 export * from "./referenceCheck.ts";
 export * from "./referenceDocuments.ts";
 export * from "./sourceIdentity.ts";
+export * from "./sourceMore.ts";
 export * from "./systematicReview.ts";
 export * from "./webPage.ts";
+export * from "./zoteroSchema.ts";
