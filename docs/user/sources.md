@@ -496,9 +496,9 @@ in it, and `backup.json` lists every file with its size and checksum.
 A few things are left out on purpose, and the README counts them: the text
 Scient extracted from your PDFs (it is made again from the PDFs), working
 files of an import that had not finished, and Scient's own lock and temporary
-files. If a project had not finished moving into your Library when the backup
-was made, some of its sources are still in the project's folder and not in the
-backup; the message at the end says so.
+files. If a project had not finished moving into or out of your Library when
+the backup was made, the message at the end says so: keep that project's
+folder too, because some of its sources may be only there.
 
 While the backup runs, changes to the Library wait, and the Library says so;
 a change that waits longer than half a minute is refused and can be made
@@ -529,19 +529,23 @@ the Library what a backup holds.
 Restoring replaces the whole Library; it does not add the backup to what is
 there. If the Library that was there held anything, for example sources you
 added after the backup, or sources Scient rebuilt from your projects on a new
-computer, it is not deleted: it is kept as a folder beside the Library, and
-the message after the restart says where. Scient never removes that folder.
+computer, it is not deleted: it is kept as a folder beside the Library. The
+message after the restart says where, and so does **Recent changes** for as
+long as the folder is there. Scient never removes that folder.
 
-Your project folders are not changed. A project's citation keys and project
-notes stay as they are, and its sources are found again in the restored
-Library. A source a project cites that the backup does not have (it was added
-later) stays in the project with the details the project saved, without its
-PDF.
+Your project folders are not changed by the restore. A project's citation
+keys and project notes stay as they are, and its sources are found again in
+the restored Library. A source a project cites that the backup does not have
+(it was added later) is not lost from the project: when the project is next
+changed, Scient adds it to the restored Library again from the details the
+project saved. That copy has no PDF, personal note or earlier versions; those
+are in the kept folder.
 
 Three things to know:
 
 - A backup that is damaged, incomplete, or made by a newer Scient is refused,
-  with the reason, and nothing is copied into place.
+  with the reason, and nothing is copied into place. If another backup was
+  already waiting, it still waits, and the message says so.
 - Extracted PDF text is not in a backup; searching inside PDFs works again as
   Scient reads them.
 - If you chose **Move back into this project** for a project after the backup
