@@ -18,9 +18,12 @@ type Imports = NonNullable<ScientSourcesOrganizeResult["packageImports"]>;
 const evidenceLabel = (item: string) =>
   item.replace(/^note on pin /u, "Note for ").replace(/^pin /u, "Project source ");
 
+/** Opened from Recent changes: each package imported into this project, with Undo. */
 export function PackageImportsDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
+  /** False for a session that may only read: the imports show, without Undo. */
+  readonly canChange: boolean;
   readonly onImported: () => Promise<unknown>;
   readonly onShowSources?: (sourceIds: ReadonlyArray<string>) => void;
   readonly onClose: () => void;
@@ -86,8 +89,8 @@ export function PackageImportsDialog(props: {
         <DialogHeader>
           <DialogTitle>Package imports</DialogTitle>
           <DialogDescription>
-            Imports into this project. Undo removes unchanged project additions; Library papers and
-            joined evidence stay.
+            Packages imported into this project. Undo takes out what an import added and nobody
+            changed since; its papers stay in My Library.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -126,7 +129,7 @@ export function PackageImportsDialog(props: {
                         {new Date(entry.importedAt).toLocaleString()}
                       </p>
                     </div>
-                    {entry.canUndo ? (
+                    {entry.canUndo && props.canChange ? (
                       <Button
                         size="xs"
                         variant="outline"
@@ -135,7 +138,7 @@ export function PackageImportsDialog(props: {
                       >
                         Undo
                       </Button>
-                    ) : (
+                    ) : entry.canUndo ? null : (
                       <span className="text-xs text-muted-foreground">
                         Undone {entry.undoneAt ? new Date(entry.undoneAt).toLocaleString() : ""}
                       </span>
@@ -149,8 +152,7 @@ export function PackageImportsDialog(props: {
                   {entry.retainedSourceIds.length > 0 ? (
                     <div className="flex items-center gap-2">
                       <p>
-                        {entry.retainedSourceIds.length} papers stay in your Library, with their
-                        PDFs.
+                        {entry.retainedSourceIds.length} papers stay in My Library, with their PDFs.
                       </p>
                       {props.onShowSources ? (
                         <Button

@@ -3,15 +3,17 @@ import {
   ClipboardList,
   CopyCheck,
   FileDown,
-  ListChecks,
-  LoaderCircle,
-  MessageCircleQuestionIcon,
-  MoreHorizontal,
-  PenLine,
+  FolderInput,
   HardDriveDownload,
   HardDriveUpload,
-  LibraryBig,
   History,
+  LibraryBig,
+  ListChecks,
+  LoaderCircle,
+  MoreHorizontal,
+  PenLine,
+  RefreshCw,
+  ShieldCheck,
   Trash2,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -23,19 +25,18 @@ import {
   MenuItemDetail,
   MenuPopup,
   MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "../../components/ui/menu";
-import { toastManager } from "../../components/ui/toast";
-import { useComposerHandleContext } from "../../composerHandleContext";
 import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
-import { askLibraryInsertion } from "./askLibrary";
 import { BACKUP_LABELS, JOIN_LABELS, RESTORE_LABELS } from "./libraryBackupLabels";
 import { RECENT_CHANGES_LABELS } from "./recentChangeLabels";
 import { CitationStylePicker } from "./CitationStylePicker";
 import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
 import { MoveBackDialog } from "./LibraryMoveNotice";
-import { PackageImportsDialog } from "./PackageImportsDialog";
-import { ProjectPackageSubmenu } from "./ProjectPackageMenu";
+import { RecoverPreMoveItem, SaveProjectPackageItem } from "./ProjectPackageMenu";
 import { SourceTrashPopover } from "./SourceTrash";
 import {
   SourcesExportSubmenu,
@@ -43,26 +44,31 @@ import {
   type SourcesExportScope,
 } from "./SourcesExportMenu";
 
-/** The Library header's secondary actions, kept in one menu so the title and Import always fit. */
+/**
+ * The Library header's tools, kept in one menu so the title and Import always fit. Its groups:
+ * research, output, records, then one submenu for backup and recovery.
+ */
 export function SourcesHeaderMenu(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly totalCount: number;
   readonly exportScope: SourcesExportScope | null;
   readonly trashedCount: number;
+  /** The Library changed (Trash, a recovery): the list reads it again. */
   readonly onTrashChanged: () => Promise<unknown>;
   readonly missingPdfCount: number;
   readonly onGetMissingPdfs: () => void;
   readonly onOpenReviews: () => void;
   /** Present only on a personal Library. */
   readonly onOpenDuplicates?: () => void;
+  /** Present only when sources came from Zotero and the session may change the Library. */
+  readonly onRefreshZotero?: () => void;
   readonly onOpenSource: (sourceId: string) => void;
   readonly onOpenFile?: (path: string, line: number) => void;
   /** Present only on a moved project and for a session that may change the Library. */
   readonly onMoveBack?: () => void;
-  /** Present only on a personal Library for a session that may change it. */
-  readonly onPackageImported?: () => Promise<unknown>;
-  readonly onShowPackageSources?: (sourceIds: ReadonlyArray<string>) => void;
+  /** On a personal Library for a session that may change it: Save a project package, Recover. */
+  readonly canChangeProject?: boolean;
   /** Present only on a personal Library. */
   readonly onOpenRecentChanges?: () => void;
   /** Present only where a folder on the Library's computer can be chosen. */
@@ -71,7 +77,6 @@ export function SourcesHeaderMenu(props: {
   readonly onAddFromLibrary?: () => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const [importsOpen, setImportsOpen] = useState(false);
   const [confirmingMoveBack, setConfirmingMoveBack] = useState(false);
   const [checkingReferences, setCheckingReferences] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -81,32 +86,8 @@ export function SourcesHeaderMenu(props: {
     root: props.root,
     scope: props.exportScope,
   });
-  const composer = useComposerHandleContext();
-  // Set when Ask put the caret in the composer, so closing the menu leaves it there.
-  const composerFocused = useRef(false);
-  const askLibrary = () => {
-    const handle = composer?.current;
-    const draft = handle?.getSendContext();
-    if (handle && draft && !draft.answeringPendingUserInput) {
-      const insertion = askLibraryInsertion(draft.prompt);
-      if (insertion === null) {
-        handle.focusAtEnd();
-        composerFocused.current = true;
-        return;
-      }
-      if (handle.insertTextAtStart?.(insertion)) {
-        composerFocused.current = true;
-        return;
-      }
-    }
-    toastManager.add({
-      type: "error",
-      title: "Couldn't add to the chat",
-      description: draft?.answeringPendingUserInput
-        ? "Answer the agent's question first, then try again."
-        : "The chat isn't ready for text right now.",
-    });
-  };
+  const backups = Boolean(props.onBackUp || props.onRestore || props.onAddFromLibrary);
+  const recovery = Boolean(props.canChangeProject || props.onMoveBack);
   return (
     <>
       <Menu>
@@ -122,34 +103,7 @@ export function SourcesHeaderMenu(props: {
         >
           {exporter.exporting ? <LoaderCircle className="animate-spin" /> : <MoreHorizontal />}
         </MenuTrigger>
-        <MenuPopup
-          align="end"
-          side="bottom"
-          className="min-w-48"
-          finalFocus={() => {
-            const keepComposerFocus = composerFocused.current;
-            composerFocused.current = false;
-            return !keepComposerFocus;
-          }}
-        >
-          {props.totalCount > 0 ? (
-            <MenuItem
-              disabled={composer === null}
-              {...(composer === null ? { title: "Open a chat to ask the Library." } : {})}
-              onClick={askLibrary}
-            >
-              <MessageCircleQuestionIcon />
-              Ask the Library
-            </MenuItem>
-          ) : null}
-          {props.missingPdfCount > 0 ? (
-            <MenuItem onClick={props.onGetMissingPdfs}>
-              <FileDown />
-              {props.missingPdfCount === 1
-                ? "Get the missing PDF"
-                : `Get ${props.missingPdfCount} missing PDFs`}
-            </MenuItem>
-          ) : null}
+        <MenuPopup align="end" side="bottom" className="min-w-48">
           <MenuItem onClick={() => setCheckingReferences(true)}>
             <ListChecks />
             Check references
@@ -164,82 +118,103 @@ export function SourcesHeaderMenu(props: {
               {DUPLICATE_LABELS.menuItem}
             </MenuItem>
           ) : null}
+          {props.missingPdfCount > 0 ? (
+            <MenuItem onClick={props.onGetMissingPdfs}>
+              <FileDown />
+              {props.missingPdfCount === 1
+                ? "Get the missing PDF"
+                : `Get ${props.missingPdfCount} missing PDFs`}
+            </MenuItem>
+          ) : null}
+          {props.onRefreshZotero ? (
+            <MenuItem onClick={props.onRefreshZotero}>
+              <RefreshCw />
+              Refresh from Zotero
+            </MenuItem>
+          ) : null}
+          <MenuSeparator />
           <MenuItem onClick={() => setPickingStyle(true)}>
             <PenLine />
             Citation style…
           </MenuItem>
-          {props.totalCount > 0 ? (
+          {props.totalCount > 0 || props.canChangeProject ? (
             <SourcesExportSubmenu
               exporter={exporter}
               totalCount={props.totalCount}
               scope={props.exportScope}
+              {...(props.canChangeProject
+                ? {
+                    projectPackage: (
+                      <SaveProjectPackageItem
+                        environmentId={props.environmentId}
+                        root={props.root}
+                      />
+                    ),
+                  }
+                : {})}
             />
           ) : null}
-          {props.onPackageImported || props.onMoveBack ? (
-            <ProjectPackageSubmenu
-              {...(props.onShowPackageSources ? { onShowSources: props.onShowPackageSources } : {})}
-              onOpenImports={() => setImportsOpen(true)}
-              mode="recover"
-              environmentId={props.environmentId}
-              root={props.root}
-              onImported={props.onPackageImported ?? props.onTrashChanged}
-              {...(props.onMoveBack ? { onMoveBack: () => setConfirmingMoveBack(true) } : {})}
-            />
-          ) : null}
-          {props.onPackageImported ? (
-            <ProjectPackageSubmenu
-              mode="import"
-              environmentId={props.environmentId}
-              root={props.root}
-              onImported={props.onPackageImported}
-              {...(props.onShowPackageSources ? { onShowSources: props.onShowPackageSources } : {})}
-            />
-          ) : null}
+          {props.onOpenRecentChanges || props.trashedCount > 0 ? <MenuSeparator /> : null}
           {props.onOpenRecentChanges ? (
             <MenuItem onClick={props.onOpenRecentChanges}>
               <History />
               {RECENT_CHANGES_LABELS.menuItem}
             </MenuItem>
           ) : null}
-          {props.onBackUp ? (
-            <MenuItem onClick={props.onBackUp}>
-              <HardDriveDownload />
-              {BACKUP_LABELS.menuItem}
-            </MenuItem>
-          ) : null}
-          {props.onRestore ? (
-            <MenuItem onClick={props.onRestore}>
-              <HardDriveUpload />
-              {RESTORE_LABELS.menuItem}
-            </MenuItem>
-          ) : null}
-          {props.onAddFromLibrary ? (
-            <MenuItem onClick={props.onAddFromLibrary}>
-              <LibraryBig />
-              {JOIN_LABELS.menuItem}
-            </MenuItem>
-          ) : null}
           {props.trashedCount > 0 ? (
+            <MenuItem onClick={() => setTrashOpen(true)}>
+              <Trash2 />
+              Trash
+              <MenuItemDetail>{props.trashedCount.toLocaleString()}</MenuItemDetail>
+            </MenuItem>
+          ) : null}
+          {backups || recovery ? (
             <>
               <MenuSeparator />
-              <MenuItem onClick={() => setTrashOpen(true)}>
-                <Trash2 />
-                Trash
-                <MenuItemDetail>{props.trashedCount.toLocaleString()}</MenuItemDetail>
-              </MenuItem>
+              <MenuSub>
+                <MenuSubTrigger>
+                  <ShieldCheck />
+                  Backup and recovery
+                </MenuSubTrigger>
+                <MenuSubPopup className="min-w-56">
+                  {props.onBackUp ? (
+                    <MenuItem onClick={props.onBackUp}>
+                      <HardDriveDownload />
+                      {BACKUP_LABELS.menuItem}
+                    </MenuItem>
+                  ) : null}
+                  {props.onRestore ? (
+                    <MenuItem onClick={props.onRestore}>
+                      <HardDriveUpload />
+                      {RESTORE_LABELS.menuItem}
+                    </MenuItem>
+                  ) : null}
+                  {props.onAddFromLibrary ? (
+                    <MenuItem onClick={props.onAddFromLibrary}>
+                      <LibraryBig />
+                      {JOIN_LABELS.menuItem}
+                    </MenuItem>
+                  ) : null}
+                  {backups && recovery ? <MenuSeparator /> : null}
+                  {recovery ? (
+                    <RecoverPreMoveItem
+                      environmentId={props.environmentId}
+                      root={props.root}
+                      onRecovered={props.onTrashChanged}
+                    />
+                  ) : null}
+                  {props.onMoveBack ? (
+                    <MenuItem onClick={() => setConfirmingMoveBack(true)}>
+                      <FolderInput />
+                      Keep this project's sources in its folder
+                    </MenuItem>
+                  ) : null}
+                </MenuSubPopup>
+              </MenuSub>
             </>
           ) : null}
         </MenuPopup>
       </Menu>
-      {importsOpen ? (
-        <PackageImportsDialog
-          environmentId={props.environmentId}
-          root={props.root}
-          onImported={props.onPackageImported ?? props.onTrashChanged}
-          onClose={() => setImportsOpen(false)}
-          {...(props.onShowPackageSources ? { onShowSources: props.onShowPackageSources } : {})}
-        />
-      ) : null}
       <SourceTrashPopover
         environmentId={props.environmentId}
         root={props.root}

@@ -13,6 +13,7 @@ import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { libraryLinkTemplate, signedIntoUniversity } from "./accountsView";
 import { accountsState } from "./accountsState";
@@ -247,14 +248,13 @@ export function UniversityRow({
   );
 }
 
-/** The university's crest beside the Sources title, with a dot when it needs a sign-in. */
 /** Long enough that opening the card again soon doesn't ask again. */
 const RECHECK_AFTER_MS = 2 * 60 * 1000;
 
 /**
- * The university beside the Sources title, answering one question: can Scient get papers through
- * it right now. Opening it asks again, so its status needs no button; Sign in shows only when it
- * is needed.
+ * The university slot beside the Sources title. Connected: the crest, answering whether Scient
+ * can get papers through it now (opening it asks again), with Sign in when one is needed. None
+ * connected: a quiet Connect your university that opens the picker where it stands.
  */
 export function UniversityCrest({
   environmentId,
@@ -285,8 +285,30 @@ export function UniversityCrest({
       );
     }
   });
+  const [connecting, setConnecting] = useState(false);
   const first = universities[0];
-  if (!first) return null;
+  if (!data) return null;
+  if (!first) {
+    if (!canWrite) return null;
+    return (
+      <Popover open={connecting} onOpenChange={setConnecting}>
+        <PopoverTrigger
+          render={<Button size="xs" variant="ghost-muted" aria-label="Connect your university" />}
+        >
+          <GraduationCapIcon />
+          <span className="@max-[30rem]:hidden">Connect your university</span>
+        </PopoverTrigger>
+        <PopoverPopup align="end" width="md">
+          <UniversityPicker
+            environmentId={environmentId}
+            threadId={threadId}
+            autoFocus
+            onChosen={() => setConnecting(false)}
+          />
+        </PopoverPopup>
+      </Popover>
+    );
+  }
   const domainOf = (account: AccountSummary) =>
     account.details.kind === "website"
       ? (account.details.institution?.domain ?? account.details.sites[0] ?? "")
@@ -303,15 +325,22 @@ export function UniversityCrest({
           <Button
             size="xs"
             variant="ghost"
-            aria-label={`University: ${first.name}`}
-            className="relative"
+            aria-label={
+              waiting ? `University: ${first.name}, sign in needed` : `University: ${first.name}`
+            }
           />
         }
       >
-        <UniversityIcon site={domainOf(first)} className="size-5" />
-        {waiting ? (
-          <span aria-hidden className="absolute top-1 right-5 size-1.5 rounded-full bg-amber-500" />
-        ) : null}
+        <span className="relative">
+          <UniversityIcon site={domainOf(first)} className="size-5" />
+          {waiting ? (
+            <span
+              aria-hidden
+              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-amber-500"
+            />
+          ) : null}
+        </span>
+        {waiting && canWrite ? <span className="@max-[22rem]:hidden">Sign in</span> : null}
         <ChevronDownIcon className="size-3 text-muted-foreground" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="max-w-72 min-w-56">

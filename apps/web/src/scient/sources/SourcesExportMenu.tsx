@@ -1,6 +1,6 @@
 import type { EnvironmentId, ScientSourcesExportRequest } from "@t3tools/contracts";
 import { Upload } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import {
   MenuCheckboxItem,
@@ -102,11 +102,15 @@ export function useSourcesExport(props: {
   return { includeNotes, setIncludeNotes, exporting, exportAs };
 }
 
-/** Exports the selected sources, else the shown ones, else the whole Library, to a reference file. */
+/**
+ * Exports the selected sources, else the shown ones, else the whole Library, to a reference file;
+ * then `projectPackage`, which always concerns the whole project.
+ */
 export function SourcesExportSubmenu(props: {
   readonly exporter: ReturnType<typeof useSourcesExport>;
   readonly totalCount: number;
   readonly scope: SourcesExportScope | null;
+  readonly projectPackage?: ReactNode;
 }) {
   const { exporter } = props;
   const count = props.scope?.sourceIds.length ?? props.totalCount;
@@ -117,26 +121,32 @@ export function SourcesExportSubmenu(props: {
         Export
       </MenuSubTrigger>
       <MenuSubPopup className="min-w-52">
-        <MenuGroup>
-          <MenuGroupLabel>
-            {props.scope
-              ? `Export ${count.toLocaleString()} ${props.scope.kind}`
-              : `Export ${count === 1 ? "1 source" : `all ${count.toLocaleString()} sources`}`}
-          </MenuGroupLabel>
-          {FORMATS.map((option) => (
-            <MenuItem key={option.format} onClick={() => void exporter.exportAs(option)}>
-              {option.label}
-              <MenuItemDetail>{option.extension}</MenuItemDetail>
-            </MenuItem>
-          ))}
-        </MenuGroup>
-        <MenuSeparator />
-        <MenuCheckboxItem
-          checked={exporter.includeNotes}
-          onCheckedChange={exporter.setIncludeNotes}
-        >
-          Include notes
-        </MenuCheckboxItem>
+        {props.totalCount > 0 ? (
+          <>
+            <MenuGroup>
+              <MenuGroupLabel>
+                {props.scope
+                  ? `Export ${count.toLocaleString()} ${props.scope.kind}`
+                  : `Export ${count === 1 ? "1 source" : `all ${count.toLocaleString()} sources`}`}
+              </MenuGroupLabel>
+              {FORMATS.map((option) => (
+                <MenuItem key={option.format} onClick={() => void exporter.exportAs(option)}>
+                  {option.label}
+                  <MenuItemDetail>{option.extension}</MenuItemDetail>
+                </MenuItem>
+              ))}
+            </MenuGroup>
+            <MenuSeparator />
+            <MenuCheckboxItem
+              checked={exporter.includeNotes}
+              onCheckedChange={exporter.setIncludeNotes}
+            >
+              Include notes
+            </MenuCheckboxItem>
+          </>
+        ) : null}
+        {props.totalCount > 0 && props.projectPackage ? <MenuSeparator /> : null}
+        {props.projectPackage}
       </MenuSubPopup>
     </MenuSub>
   );
