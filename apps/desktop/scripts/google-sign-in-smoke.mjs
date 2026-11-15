@@ -215,6 +215,15 @@ async function run() {
       "Google's refusal to be reported",
     );
   const signIn = followTabSignIn(tab, report);
+  // What the tab did, printed when a phase fails: platforms differ in navigation events.
+  const trace = [];
+  for (const name of ["did-start-navigation", "did-redirect-navigation", "did-navigate"]) {
+    tab.on(name, (first, url) => {
+      const details = typeof url === "string" ? { url, isMainFrame: true } : first;
+      if (!details.isMainFrame) return;
+      trace.push(`${name} ${details.url} (showing ${tab.getURL()})`);
+    });
+  }
 
   tab.setWindowOpenHandler(() => ({ action: "allow" }));
   let popupCreated = null;
@@ -356,6 +365,7 @@ async function run() {
     NodeAssert.equal(reports.length, before);
     console.log("[scient-google-sign-in-smoke] passed");
   } catch (error) {
+    console.error(`[scient-google-sign-in-smoke] tab events:\n${trace.join("\n")}`);
     throw new Error(`Failed during ${phase}`, { cause: error });
   } finally {
     signIn.dispose();

@@ -22,6 +22,12 @@ function siteInHistory(tab: Pick<WebContents, "navigationHistory">): string | nu
   return null;
 }
 
+/** Where a sign-in restarts when a load that began at `target` left `shown` on the same site. */
+function sameSiteLink(shown: string, target: string): string | null {
+  const site = signInRestartUrl(target);
+  return site !== null && site === signInRestartUrl(shown) ? site : null;
+}
+
 export interface TabSignIn {
   readonly dispose: () => void;
 }
@@ -33,17 +39,23 @@ export interface TabSignIn {
  */
 export function followTabSignIn(tab: WebContents, report: Report): TabSignIn {
   let startedAt: string | null = null;
+  /** The site a page load began at when the page showing then was on that site: its own link. */
+  let leftSite: string | null = null;
   const navigate = ({ url, isMainFrame }: Navigation) => {
     if (!isMainFrame) return;
     if (googleSignInPage(url) === null) startedAt = null;
     else if (startedAt === null && isGoogleOAuthPage(url)) startedAt = siteInHistory(tab);
   };
   const started = (details: Navigation & { readonly isSameDocument: boolean }) => {
-    if (!details.isSameDocument) navigate(details);
+    if (details.isSameDocument) return;
+    if (details.isMainFrame) leftSite = sameSiteLink(tab.getURL(), details.url);
+    navigate(details);
   };
   const refused = (url: string) =>
     report({ page: "rejected", context: "tab", restartUrl: startedAt, pageUrl: url });
   const navigated = (_event: unknown, url: string) => {
+    // A site's own sign-in link that its server sent on to Google, even if no redirect was seen.
+    if (startedAt === null && googleSignInPage(url) !== null) startedAt = leftSite;
     if (isRefusal(url)) refused(url);
   };
   // Google's refusal can arrive without a page load.

@@ -75,6 +75,20 @@ describe("followTabSignIn", () => {
     );
   });
 
+  it("restarts at the site whose own link reached Google, with no redirect seen", () => {
+    const t = tab("https://www.overleaf.com/login");
+    t.start("https://www.overleaf.com/auth/google");
+    t.commit(IDENTIFIER);
+    t.commit(REJECTED);
+    expect(t.report.mock.lastCall?.[0].restartUrl).toBe("https://www.overleaf.com/");
+    // A load begun from another site, such as an address typed elsewhere, isn't that site's link.
+    const typed = tab("https://example.com/");
+    typed.start("https://short.example/x");
+    typed.commit(IDENTIFIER);
+    typed.commit(REJECTED);
+    expect(typed.report.mock.lastCall?.[0].restartUrl).toBeNull();
+  });
+
   it("follows a site's own redirect to Continue with Google", () => {
     const t = tab(SITE);
     t.start("https://www.overleaf.com/auth/google");
