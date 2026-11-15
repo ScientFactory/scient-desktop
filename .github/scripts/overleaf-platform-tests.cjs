@@ -96,6 +96,12 @@ function platformFiles() {
 // Enough of each failure to carry a command's own error output, as hdiutil's reason.
 const FAILURE_LINES = 20;
 
+// The server config runs files one at a time, against load-sensitive flakes. Two at a time
+// roughly halves this step on the hosted runners. Each file runs in its own process with its own
+// temporary folders and disk images; the one machine-wide resource, the drive letter
+// WindowsRetainedFileMutation gives its virtual disk, belongs to a single file.
+const WORKERS = 2;
+
 /** Each failed test with the start of its failure message, from a Vitest JSON report. */
 function failures(report) {
   const lines = [];
@@ -123,7 +129,8 @@ function run() {
     const env = { ...process.env, ...buildHelpers(path.join(scratch, "helpers")) };
     const output = path.join(scratch, "results.json");
     try {
-      execFileSync("vp", ["test", "run", ...files, "--reporter=json", `--outputFile=${output}`], {
+      const args = ["test", "run", ...files, "--fileParallelism", `--maxWorkers=${WORKERS}`];
+      execFileSync("vp", [...args, "--reporter=json", `--outputFile=${output}`], {
         cwd,
         env,
         stdio: "inherit",

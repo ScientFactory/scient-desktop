@@ -5,7 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it, vi } from "@effect/vitest";
+import { afterAll, describe, expect, it, vi } from "@effect/vitest";
 import { filePublicationTestHelper, filePublicationProbeHelper } from "./fileExchange.testkit.ts";
 import {
   ensureNativePrivateRetentionDirectory,
@@ -34,6 +34,23 @@ import { windowsNativeFile, windowsPrivateDirectory } from "./WindowsNativeFile.
 const windows = HostProcess.Platform.defaultValue() === "win32";
 const probe = windows ? await filePublicationProbeHelper() : undefined;
 const helper = windows ? await filePublicationTestHelper() : undefined;
+// Every process-death case starts a child that loads the same modules; Node's compile cache,
+// keyed by their content, spares each child after the first most of that load.
+const compileCache = windows
+  ? await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-windows-crash-compile-"))
+  : undefined;
+afterAll(() =>
+  compileCache ? NodeFSP.rm(compileCache, { recursive: true, force: true }) : undefined,
+);
+/** Runs `job` in a child that ends itself at its mutation point, as TerminateProcess would. */
+async function crashChild(job: WindowsCrashJob, jobPath: string) {
+  await NodeFSP.writeFile(jobPath, JSON.stringify(job));
+  return NodeChildProcess.spawnSync(
+    process.execPath,
+    [NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"), jobPath],
+    { encoding: "utf8", env: { ...process.env, NODE_COMPILE_CACHE: compileCache } },
+  );
+}
 async function fixture(body: (input: RetainedMutationInput, target: string) => Promise<void>) {
   const root = await NodeFSP.realpath(
     await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-windows-files-")),
@@ -287,12 +304,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
       const policy = await security(target);
       const jobPath = NodePath.join(NodePath.dirname(input.cwd), "job.json");
       const job: WindowsCrashJob = { input, target, point, probe: probe! };
-      await NodeFSP.writeFile(jobPath, JSON.stringify(job));
-      const child = NodeChildProcess.spawnSync(
-        process.execPath,
-        [NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"), jobPath],
-        { encoding: "utf8" },
-      );
+      const child = await crashChild(job, jobPath);
       expect(child.status, child.stderr).toBe(73);
       const recovered = await mutateRetainedFile({ ...input, bytes: undefined }, target);
       const live = await NodeFSP.readFile(target, "utf8").catch(() => null);
@@ -330,15 +342,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
         };
         const jobPath = NodePath.join(NodePath.dirname(input.cwd), "fenced-create.json");
         const job: WindowsCrashJob = { input: guarded, target, point, probe: probe! };
-        await NodeFSP.writeFile(jobPath, JSON.stringify(job));
-        const killed = NodeChildProcess.spawnSync(
-          process.execPath,
-          [
-            NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"),
-            jobPath,
-          ],
-          { encoding: "utf8" },
-        );
+        const killed = await crashChild(job, jobPath);
         expect(killed.status, killed.stderr).toBe(73);
         await NodeFSP.writeFile(peer, "later");
         const recovered = await mutateRetainedFile({ ...guarded, bytes: undefined }, target);
@@ -358,12 +362,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
       };
       const jobPath = NodePath.join(NodePath.dirname(input.cwd), "parent-change.json");
       const job: WindowsCrashJob = { input: creation, target, point: "checked", probe: probe! };
-      await NodeFSP.writeFile(jobPath, JSON.stringify(job));
-      const killed = NodeChildProcess.spawnSync(
-        process.execPath,
-        [NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"), jobPath],
-        { encoding: "utf8" },
-      );
+      const killed = await crashChild(job, jobPath);
       expect(killed.status, killed.stderr).toBe(73);
       await NodeFSP.writeFile(NodePath.join(input.cwd, "other.tex"), "outside save");
       expect((await mutateRetainedFile({ ...creation, bytes: undefined }, target)).outcome).toBe(
@@ -445,15 +444,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
           point: "restricted",
           probe: probe!,
         };
-        await NodeFSP.writeFile(jobPath, JSON.stringify(job));
-        const killed = NodeChildProcess.spawnSync(
-          process.execPath,
-          [
-            NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"),
-            jobPath,
-          ],
-          { encoding: "utf8" },
-        );
+        const killed = await crashChild(job, jobPath);
         expect(killed.status, killed.stderr).toBe(73);
         const binding = await bindNativeFilePublicationParent(helper!, input.cwd, "");
         await withNativeFilePublicationLease(
