@@ -219,6 +219,7 @@ export function ScientSourcesPanel(props: {
     environmentId: props.environmentId,
     root: props.root,
     enabled: sources.overview?.libraryBackend === true,
+    onAdded: () => void sources.refreshOverview(),
   });
   // A folder is chosen with this computer's own dialog, so only for a Library that is here.
   const pickBackupFolder =
@@ -1482,6 +1483,10 @@ export function ScientSourcesPanel(props: {
                       void pickBackupFolder()
                         .catch(() => null)
                         .then((folder) => (folder ? backup.restoreFrom(folder) : undefined)),
+                    onAddFromLibrary: () =>
+                      void pickBackupFolder()
+                        .catch(() => null)
+                        .then((folder) => (folder ? backup.addFrom(folder) : undefined)),
                   }
                 : {})}
               onOpenSource={setSelectedSourceId}
@@ -1525,6 +1530,7 @@ export function ScientSourcesPanel(props: {
       />
       <LibraryBackupNotice
         line={backup.line}
+        joinLine={backup.joinLine}
         restoreLine={backup.restoreLine}
         onCancelRestore={backup.cancelRestore}
       />
@@ -1539,6 +1545,7 @@ export function ScientSourcesPanel(props: {
             showPackageSources(sourceIds, RECENT_CHANGES_LABELS.importedSources)
           }
           onChanged={sources.refreshOverview}
+          onAddFromLibrary={backup.addFrom}
           onClose={() => setShowingRecentChanges(false)}
         />
       ) : null}

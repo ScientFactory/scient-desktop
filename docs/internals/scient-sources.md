@@ -2647,6 +2647,70 @@ Where the Library that knew the decision is gone (another computer, a lost
 disk), the restored Library's older journal stands and the project moves in
 again at its next change.
 
+## Library join ("Add from another Library")
+
+`joinScientLibrary` (`libraryJoin.ts`) changes nothing that exists in the
+Library. It accepts only inputs nothing can be writing
+(`openScientLibraryJoinSource`): a backup folder, checked against its manifest
+first, or a folder beside the Library named `<library>.replaced-…` (a Library
+a restore moved aside). Any other folder, a running Scient's Library
+included, is refused.
+
+`compareScientLibraries` (reads only) sorts every live source of the other
+Library:
+
+- **fresh**, to be added: nothing here could be it. No live record, alias,
+  Trash entry or tombstone under its ID; none under the project ID a rebuilt
+  copy came from (`hydratedFromProjectSourceId`), in either direction; and the
+  intake rule (`readScientSourceIntakeAssessor`) says `new`.
+- **different**, recorded and left: `same-id` (both hold it; details, tags,
+  note, read and star, PDFs or highlights differ), `merged-here`,
+  `rebuilt-there` / `rebuilt-here` (one side's is a copy rebuilt from a
+  project), `same-paper` (one strong intake match), `possibly-same` (a
+  metadata match, or several). For the last five the parts listed are what the
+  other has that the source here lacks. Details are compared by bibliographic
+  fields only.
+- **removed here** (Trash or deleted for good): not added, counted.
+- identical, and live here but removed there: counted.
+
+The join writes `joins/<joinId>/join.json` (the other Library, counts, the
+differences) and then, in parts of 100, a part file naming the sources it will
+add with each one's fingerprint (a hash of the whole record), before adding
+them under the Library's lock: PDFs by hash (checked, flushed), a highlight
+file only where this Library has none for that PDF, earlier versions, and last
+the record, created exclusively from the other Library's own bytes. A source
+that appeared, was merged or was removed here since the comparison is skipped.
+Afterwards the added sources are placed in the other Library's collections
+(matched here by name under the same parent, made when missing; membership of
+existing sources is not touched), and "not duplicates" pairs that involve an
+added source are copied. No duplicate pass runs: a possible duplicate was not
+added in the first place.
+
+Why no ledger of earlier joins is needed: the only thing a join creates is a
+source under its own ID. Whatever is done to it afterwards (edit, merge,
+Trash, deletion) leaves evidence under that ID, so the next join does not see
+it as new. A join that stopped leaves its part file `pending`; before any
+later join adds anything, and before an Undo, it is settled: what of that part
+is here in any form is what it added. One join runs per Library (the server's
+runner, `LibraryJoinRuns.ts`).
+
+`undoScientLibraryJoin` moves each added source to the Trash only if its
+fingerprint is still the one recorded; any change (an edit, a note, read or
+star, a PDF, a merge) leaves it and counts it. A collection the join made is
+deleted once nothing here is in it. In the Trash the sources are "removed
+here", so a later join skips them.
+
+Server: organize actions `add-from-library` and `undo-join`; `backupStatus`
+also answers the join (running with a count, done with what it added and what
+it left, failed with the reason). "Recent changes" lists each join (kind
+`join`, with Undo) and offers **Add its sources** on a restore whose replaced
+Library is kept. Agents have neither action yet (recorded with the backup's
+gap). Not built: a view of the differences with one-click "use the other";
+joining an existing source's note, PDFs or details; carrying merges made in
+the other Library. The reasons (a repeatable join of existing sources needs
+what a sync engine needs) are in
+`reviews/sources-improve-20261115/DECISIONS.md`.
+
 ## Citing
 
 Documents cite by key. In Markdown, typing `[@` opens a list of Library

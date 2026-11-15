@@ -157,6 +157,9 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "list-packages": [],
   // Not for agents yet: it needs a new action on the organize tool, with its evals.
   "back-up-library": [],
+  // Not for agents yet, like the backup it reads: both come with the organize tool's next action.
+  "add-from-library": [],
+  "undo-join": [],
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */

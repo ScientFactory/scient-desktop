@@ -32,6 +32,7 @@ import {
   type ScientLibraryMerge,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
+import { undoScientLibraryJoin } from "@scientfactory/scient-sources/library-join";
 import {
   listScientLibraryImportSources,
   listScientLibraryRecentChanges,
@@ -136,6 +137,7 @@ import { scheduleSourceCategorization } from "./SourceCategories.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 import type { ScientSourcesLibraryStore } from "./SourcesBackend.ts";
 import { startLibraryBackup } from "./LibraryBackupRuns.ts";
+import { runningLibraryJoins, startLibraryJoin } from "./LibraryJoinRuns.ts";
 
 type Store = ScientSourcesLibraryStore;
 
@@ -994,7 +996,11 @@ export async function libraryRecentChanges(
       importSourceIds: await listScientLibraryImportSources(store.library, input.sourcesOfImport),
     };
   }
-  return listScientLibraryRecentChanges(store.library, input.limit ?? 50);
+  return listScientLibraryRecentChanges(
+    store.library,
+    input.limit ?? 50,
+    runningLibraryJoins(store.library),
+  );
 }
 
 export async function restoreLibrarySource(store: Store, input: { readonly sourceId: string }) {
@@ -1109,6 +1115,8 @@ export const isLibraryOrganizeAction = (
   change.action === "list-package-imports" ||
   change.action === "import-package" ||
   change.action === "back-up-library" ||
+  change.action === "add-from-library" ||
+  change.action === "undo-join" ||
   change.action === "undo-import" ||
   isPinRepairAction(change);
 
@@ -1251,6 +1259,29 @@ export async function organizeLibrarySources(
     case "back-up-library":
       // The backup itself refuses a folder that is not absolute, missing or inside the Library.
       return startLibraryBackup(store.library, change.inFolder);
+    case "add-from-library":
+      // The join itself accepts only a checked backup or a Library a restore moved aside.
+      return startLibraryJoin(store.library, change.fromFolder, ACTOR);
+    case "undo-join": {
+      const undone = await undoScientLibraryJoin({
+        library: store.library,
+        joinId: change.joinId,
+        actor: ACTOR,
+      });
+      if (undone.outcome !== "undone") {
+        return {
+          outcome:
+            undone.outcome === "not-found"
+              ? ("join-not-found" as const)
+              : ("already-undone" as const),
+        };
+      }
+      await afterChange(store, []);
+      return {
+        outcome: "join-undone" as const,
+        joinUndone: { trashed: undone.trashed, left: undone.left },
+      };
+    }
     case "undo-import":
       return undoLibraryProjectPackageImport(store, change, ACTOR);
   }

@@ -1,5 +1,6 @@
 import { listScientSourcesBulkEdits, readScientSourcesOrganization } from "./collections.ts";
 import { readScientLibraryAliases, resolveScientLibraryAlias } from "./libraryAliases.ts";
+import { listScientLibraryJoins } from "./libraryJoin.ts";
 import { listScientLibraryRecentMerges } from "./libraryMerge.ts";
 import { listScientLibraryRestores } from "./libraryRestore.ts";
 import type { ScientLibraryLocation } from "./libraryRoot.ts";
@@ -47,6 +48,8 @@ export async function listScientLibraryImportSources(
 export async function listScientLibraryRecentChanges(
   library: ScientLibraryLocation,
   limit: number,
+  /** Joins under way in this process; any other unfinished join is one that stopped. */
+  runningJoins: ReadonlySet<string> = new Set(),
 ): Promise<ScientLibraryRecentChanges> {
   const [present, aliases] = await Promise.all([
     listScientSourceIds(library),
@@ -58,13 +61,14 @@ export async function listScientLibraryRecentChanges(
       alias.undoneAt === undefined ? [alias.sourceId] : [],
     ),
   );
-  const [bulkEdits, merges, imports, trash, organization, restores] = await Promise.all([
+  const [bulkEdits, merges, imports, trash, organization, restores, joins] = await Promise.all([
     listScientSourcesBulkEdits(library, limit + 1),
     listScientLibraryRecentMerges(library, limit + 1),
     listScientSourceImports(library, limit + 1),
     readScientSourcesRemovedByPerson(library, mergedAway),
     readScientSourcesOrganization(library, present),
     listScientLibraryRestores(library),
+    listScientLibraryJoins(library, runningJoins),
   ]);
   const collectionNames = new Map(
     organization.collections.map((collection) => [collection.collectionId, collection.name]),
@@ -127,6 +131,19 @@ export async function listScientLibraryRecentChanges(
       sources: restore.sources,
       pdfs: restore.pdfs,
       kept: restore.kept,
+    })),
+    ...joins.map((join) => ({
+      kind: "join" as const,
+      id: join.joinId,
+      at: join.at,
+      by: join.by,
+      from: join.other.kind,
+      backupCreatedAt: join.other.backupCreatedAt ?? null,
+      state: join.state,
+      added: join.added,
+      different: join.different.length,
+      removedHere: join.removedHere,
+      left: join.left,
     })),
     // Newest first; changes of the same instant keep one fixed order.
   ].toSorted(

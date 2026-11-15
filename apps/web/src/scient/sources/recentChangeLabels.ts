@@ -20,10 +20,14 @@ export const RECENT_CHANGES_LABELS = {
   showOlder: "Show older changes",
   undone: "Undone",
   restored: "Nothing was kept from before",
+  nothingAdded: "Nothing was new",
+  addKept: "Add its sources",
   importedSources: "Sources from this import",
 } as const;
 
 const sources = (count: number) => (count === 1 ? "1 source" : `${count.toLocaleString()} sources`);
+const day = (iso: string) =>
+  new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(iso));
 const quoted = (title: string | null) => `“${title?.trim() || "Untitled source"}”`;
 
 const INTAKE_WORDS: Record<
@@ -84,11 +88,24 @@ export function recentChangeSentence(change: ScientSourcesRecentChange): string 
     }
     case "trash":
       return `Moved ${quoted(change.title)} to the Trash`;
-    case "restore": {
-      const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
-        new Date(change.backupCreatedAt),
-      );
-      return `Restored the Library from the backup of ${day}: ${sources(change.sources)}`;
+    case "restore":
+      return `Restored the Library from the backup of ${day(change.backupCreatedAt)}: ${sources(change.sources)}`;
+    case "join": {
+      const from =
+        change.from === "backup" && change.backupCreatedAt
+          ? `the backup of ${day(change.backupCreatedAt)}`
+          : change.from === "backup"
+            ? "a backup"
+            : "the Library a restore replaced";
+      return [
+        `${change.state === "stopped" ? "Stopped part way: added" : "Added"} ${sources(change.added)} from ${from}`,
+        ...(change.different > 0
+          ? [`${change.different.toLocaleString()} that both hold left as here`]
+          : []),
+        ...(change.removedHere > 0
+          ? [`${change.removedHere.toLocaleString()} removed here not brought back`]
+          : []),
+      ].join(" · ");
     }
   }
 }
@@ -107,10 +124,21 @@ export function recentChangeState(change: ScientSourcesRecentChange): string | n
     case "import":
     case "trash":
       return null;
-    // A restore has no Undo; it says where the Library it replaced is, while that is kept.
+    // A restore has no Undo. While the Library it replaced is kept, its sources can be added.
     case "restore":
-      return change.kept
-        ? `The Library that was here (${sources(change.kept.sources)}) is kept in ${change.kept.path}`
-        : RECENT_CHANGES_LABELS.restored;
+      return change.kept ? null : RECENT_CHANGES_LABELS.restored;
+    case "join":
+      if (change.state !== "undone")
+        return change.added > 0 ? null : RECENT_CHANGES_LABELS.nothingAdded;
+      return change.left > 0
+        ? `Undone; ${change.left.toLocaleString()} changed since and ${change.left === 1 ? "was" : "were"} left`
+        : RECENT_CHANGES_LABELS.undone;
   }
+}
+
+/** Under a restore's line while the Library it replaced is kept: where that is. */
+export function recentChangeDetail(change: ScientSourcesRecentChange): string | null {
+  return change.kind === "restore" && change.kept
+    ? `The Library that was here (${sources(change.kept.sources)}) is kept in ${change.kept.path}`
+    : null;
 }

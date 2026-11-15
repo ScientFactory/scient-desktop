@@ -23,6 +23,7 @@ import { undoProblem, unrevertedLabel } from "./libraryDuplicateLabels";
 import {
   RECENT_CHANGES_LABELS,
   recentChangeBy,
+  recentChangeDetail,
   recentChangeSentence,
   recentChangeState,
 } from "./recentChangeLabels";
@@ -47,6 +48,8 @@ export function RecentChangesDialog(props: {
   readonly onShowSources: (sourceIds: ReadonlyArray<string>) => void;
   /** The Library changed: the list behind the dialog reads it again. */
   readonly onChanged: () => Promise<unknown>;
+  /** Starts adding what a Library folder holds; the panel shows its progress. */
+  readonly onAddFromLibrary: (fromFolder: string) => Promise<unknown>;
   readonly onClose: () => void;
 }) {
   const { environmentId, root } = props;
@@ -143,9 +146,31 @@ export function RecentChangesDialog(props: {
             );
           },
         };
-      // Never offered: a restore's row always shows its state instead.
+      // Offered while the Library the restore replaced is kept: add what it holds to this one.
       case "restore":
-        return { label: "", run: () => undefined };
+        return {
+          label: RECENT_CHANGES_LABELS.addKept,
+          run: () => {
+            if (!change.kept) return;
+            void props.onAddFromLibrary(change.kept.path);
+            props.onClose();
+          },
+        };
+      case "join":
+        return {
+          label: RECENT_CHANGES_LABELS.undo,
+          run: () =>
+            act(async () => {
+              const result = await organizeScientSources(environmentId, {
+                root,
+                change: { action: "undo-join", joinId: change.id },
+              });
+              const left = result.joinUndone?.left ?? 0;
+              return left > 0
+                ? `${left.toLocaleString()} ${left === 1 ? "source" : "sources"} changed since and ${left === 1 ? "was" : "were"} left in the Library.`
+                : null;
+            }),
+        };
       case "trash":
         return {
           label: RECENT_CHANGES_LABELS.restore,
@@ -212,6 +237,11 @@ export function RecentChangesDialog(props: {
                       <p className="text-xs text-muted-foreground">
                         {recentChangeBy(change)} · {new Date(change.at).toLocaleString()}
                       </p>
+                      {recentChangeDetail(change) ? (
+                        <p className="text-xs break-words text-muted-foreground">
+                          {recentChangeDetail(change)}
+                        </p>
+                      ) : null}
                     </div>
                     {state ? (
                       <span className="max-w-56 shrink-0 text-right text-xs break-words text-muted-foreground">
