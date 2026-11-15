@@ -126,13 +126,13 @@ it("Keep mine saves the draft against the displayed conflict once, including nor
       context: { base: string | null; session: string },
     ) => {
       requests += 1;
-      if (requests > 4) throw new Error("Unbounded note saves");
+      if (requests > 5) throw new Error("Unbounded note saves");
       const outcome = context.base === stored ? ("updated" as const) : ("stale" as const);
       if (outcome === "updated") stored = note?.trim() ?? "";
       return { outcome, record: { ...record, note: stored, projectNote: stored } };
     },
   );
-  const screen = resources.use(
+  resources.use(
     await render(
       <SourceDetails
         record={record}
@@ -156,11 +156,23 @@ it("Keep mine saves the draft against the displayed conflict once, including nor
   await expect.element(page.getByText("Saved elsewhere")).toBeVisible();
   expect(stored).toBe("Changed in another window");
   await userEvent.click(page.getByRole("button", { name: "Keep mine" }));
-  await expect.element(screen.getByRole("status")).toHaveTextContent("Saved");
-  expect(stored).toBe("Why I cite this here, mine");
+  // Keep mine hides the conflict before it saves, so wait for the save itself to land.
+  await vi.waitFor(() => expect(stored).toBe("Why I cite this here, mine"));
+  await saveProjectNote.mock.results[1]?.value;
   expect(saveProjectNote.mock.calls[1]?.[2].base).toBe("Changed in another window");
   await advanceTestClock(signal, 5_000);
   expect(saveProjectNote).toHaveBeenCalledTimes(2);
+
+  // The accepted, trimmed note is what the next edit is saved against: no conflict, no retry.
+  await userEvent.click(page.getByRole("button", { name: "Edit note for this project" }));
+  await userEvent.keyboard(" again");
+  await userEvent.tab();
+  await vi.waitFor(() => expect(stored).toBe("Why I cite this here, mine again"));
+  expect(saveProjectNote.mock.calls[2]?.[2].base).toBe("Why I cite this here, mine");
+  await saveProjectNote.mock.results[2]?.value;
+  await advanceTestClock(signal, 5_000);
+  expect(saveProjectNote).toHaveBeenCalledTimes(3);
+  expect(page.getByText("Saved elsewhere").query()).toBeNull();
 });
 
 it("Keep mine shows a second refused write without retrying it", async ({ signal }) => {
@@ -193,6 +205,8 @@ it("Keep mine shows a second refused write without retrying it", async ({ signal
   await userEvent.tab();
   await expect.element(page.getByText("Saved elsewhere")).toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Keep mine" }));
+  await vi.waitFor(() => expect(saveProjectNote).toHaveBeenCalledTimes(2));
+  await saveProjectNote.mock.results[1]?.value;
   await expect.element(page.getByText("Saved elsewhere")).toBeVisible();
   await advanceTestClock(signal, 5_000);
   expect(saveProjectNote).toHaveBeenCalledTimes(2);

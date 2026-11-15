@@ -294,19 +294,13 @@ function NoteConflict(props: { readonly note: ReturnType<typeof useSourceNoteSta
   );
 }
 
-function NoteStatusLine(props: { readonly status: NoteStatus; readonly error: string | null }) {
-  if (props.error) {
-    return (
-      <p className="text-xs text-destructive" role="alert">
-        {props.error}
-      </p>
-    );
-  }
-  return (
-    <p className="min-h-4 text-xs text-muted-foreground" role="status" aria-live="polite">
-      {props.status === "saving" ? "Saving…" : props.status === "pending" ? "Saving…" : "Saved"}
+/** Notes save as you type, so only a failure earns a line. */
+function NoteError(props: { readonly error: string | null }) {
+  return props.error ? (
+    <p className="text-xs text-destructive" role="alert">
+      {props.error}
     </p>
-  );
+  ) : null;
 }
 
 interface SourceNoteEditorHandle {
@@ -797,8 +791,8 @@ export function useSourceNoteControls(props: {
               onFormatChange={handleFormatChange}
               onBlur={() => void note.flush()}
             />
-            <div className="pe-6">
-              <NoteStatusLine status={note.status} error={note.error} />
+            <div className="pe-6 empty:hidden">
+              <NoteError error={note.error} />
             </div>
             <QuickNoteResizeHandle />
           </div>
@@ -811,8 +805,8 @@ export function useSourceNoteControls(props: {
           <h3 id={headingId} className="text-sm font-medium text-foreground">
             {heading}
           </h3>
-          {help}
           <NotePreview value={note.draft} />
+          {help}
         </section>
       ) : null
     ) : (
@@ -825,9 +819,9 @@ export function useSourceNoteControls(props: {
             <ProjectNoteHistory versions={props.history} onRestore={note.restore} />
           ) : null}
         </div>
-        {help}
         <InlineNoteEditor note={note} {...(props.heading ? { label: props.heading } : {})} />
-        <NoteStatusLine status={note.status} error={note.error} />
+        {help}
+        <NoteError error={note.error} />
         <NoteConflict note={note} />
       </section>
     ),
