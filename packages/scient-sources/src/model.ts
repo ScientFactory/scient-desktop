@@ -363,7 +363,12 @@ export const ScientSourceZoteroSync = Schema.Struct({
   itemVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   syncedAt: NonEmptyString,
   metadata: ScientSourceEditableMetadata,
+  /** The text Scient last wrote into the source's note from Zotero's notes. */
   note: Schema.NullOr(Schema.String),
+  /** Zotero's notes as it wrote them (HTML); absent when last read before they were kept. */
+  notes: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ itemKey: NonEmptyString, html: Schema.String })),
+  ),
   attachmentKeys: Schema.Array(NonEmptyString),
 });
 export type ScientSourceZoteroSync = typeof ScientSourceZoteroSync.Type;
@@ -786,8 +791,10 @@ export const ScientSourceNotBrought = Schema.Struct({
     "pdf",
     /** The notes together were longer than a note may be and were cut. */
     "note-cut",
-    /** Notes whose links, headings, tables, images or code became plain text. */
+    /** Notes whose formatting became plain text: imports made before notes came as Markdown. */
     "note-formatting",
+    /** Images in notes, which are not carried. */
+    "note-images",
     /** Highlights and comments made on a PDF. */
     "highlights",
     /** Links to related items. */

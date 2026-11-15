@@ -19,10 +19,13 @@ import {
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 
+import { ZOTERO_NOTE_CHARACTERS, zoteroNotesMarkdown } from "./ZoteroNoteMarkdown.ts";
+
 export const ZOTERO_ITEM_KEY_PATTERN = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/u;
 /** How many PDFs of one item an import copies. */
 export const ZOTERO_PDFS_PER_ITEM = 10;
-const MAX_IMPORTED_NOTE_CHARACTERS = 100_000;
+/** How much of a reference's notes is kept as Zotero wrote them (HTML), by whole notes. */
+const ZOTERO_NOTE_ORIGINAL_CHARACTERS = 1_000_000;
 
 const ZoteroRawCreator = Schema.Struct({
   creatorType: Schema.optionalKey(Schema.String),
@@ -547,8 +550,8 @@ function decodeHtmlEntities(value: string): string {
   });
 }
 
-/** Zotero notes are HTML; Source notes are plain text with Markdown bold and italic. */
-export function zoteroNoteToText(html: string): string {
+/** How an import wrote a note before notes became Markdown; see `legacyZoteroNotesText`. */
+function legacyZoteroNoteText(html: string): string {
   const withMarks = html
     .replace(/<(script|style)\b[\s\S]*?<\/\1>/giu, "")
     .replace(/<br\s*\/?>/giu, "\n")
@@ -563,18 +566,44 @@ export function zoteroNoteToText(html: string): string {
     .trim();
 }
 
-/** Child notes in a stable order, joined into one Source note. */
-function zoteroNotesText(children: ReadonlyArray<ZoteroRawItem>): string | null {
+/**
+ * The plain text an import made of a reference's notes before they became Markdown, kept
+ * exactly as it was: a refresh compares it with what an earlier import stored, to tell a
+ * note nobody touched from one edited here or changed in Zotero.
+ */
+function legacyZoteroNotesText(children: ReadonlyArray<ZoteroRawItem>): string | null {
   const notes = children
     .filter((child) => child.data.itemType === "note")
     .toSorted((left, right) => left.key.localeCompare(right.key))
-    .map((child) => zoteroNoteToText(child.data.note ?? ""))
+    .map((child) => legacyZoteroNoteText(child.data.note ?? ""))
     .filter((note) => note.length > 0);
   if (notes.length === 0) return null;
-  const joined = notes.join("\n\n---\n\n");
-  return joined.length > MAX_IMPORTED_NOTE_CHARACTERS
-    ? joined.slice(0, MAX_IMPORTED_NOTE_CHARACTERS)
-    : joined;
+  return notes.join("\n\n---\n\n").slice(0, ZOTERO_NOTE_CHARACTERS);
+}
+
+/** A note as Zotero wrote it, to keep. */
+export interface ZoteroNoteOriginal {
+  readonly itemKey: string;
+  readonly html: string;
+}
+
+/**
+ * A reference's notes as Zotero wrote them, by key, without the bytes of embedded images
+ * (images are not carried and are counted). Whole notes, as many as the bound holds.
+ */
+function zoteroNoteOriginals(
+  children: ReadonlyArray<ZoteroRawItem>,
+): ReadonlyArray<ZoteroNoteOriginal> {
+  const originals: ZoteroNoteOriginal[] = [];
+  let characters = 0;
+  for (const child of children.toSorted((left, right) => left.key.localeCompare(right.key))) {
+    if (child.data.itemType !== "note" || !child.data.note?.trim()) continue;
+    const html = child.data.note.replace(/(\ssrc\s*=\s*["'])data:[^"']*/giu, "$1");
+    characters += html.length;
+    if (characters > ZOTERO_NOTE_ORIGINAL_CHARACTERS) break;
+    originals.push({ itemKey: child.key, html });
+  }
+  return originals;
 }
 
 /** Fields that are not bibliographic text, or are read elsewhere (identifiers, notes, files). */
@@ -624,8 +653,6 @@ export function zoteroFieldDispositions(
   );
 }
 
-const NOTE_FORMATTING = /<(a|h[1-6]|table|img|pre|code|blockquote)\b|data-citation/iu;
-
 function relatedCount(relations: unknown): number {
   const related = isRecord(relations) ? relations["dc:relation"] : undefined;
   return Array.isArray(related) ? related.length : typeof related === "string" && related ? 1 : 0;
@@ -638,6 +665,7 @@ function relatedCount(relations: unknown): number {
 function zoteroNotBrought(
   item: ZoteroRawItem,
   children: ReadonlyArray<ZoteroRawItem>,
+  notes: { readonly images: number; readonly cut: boolean },
 ): ReadonlyArray<ScientSourceNotBrought> {
   const listed: ScientSourceNotBrought[] = [];
   const add = (kind: ScientSourceNotBrought["kind"], count: number, name?: string) => {
@@ -664,20 +692,20 @@ function zoteroNotBrought(
     if (attachment.data.linkMode === "linked_url") add("link", 1);
     else add("file", 1, attachment.data.contentType?.toLowerCase() || "unknown");
   }
-  const notes = children.filter((child) => child.data.itemType === "note");
-  add("note-formatting", notes.filter((note) => NOTE_FORMATTING.test(note.data.note ?? "")).length);
-  const joined = notes
-    .map((note) => zoteroNoteToText(note.data.note ?? ""))
-    .filter((note) => note.length > 0)
-    .join("\n\n---\n\n");
-  add("note-cut", joined.length > MAX_IMPORTED_NOTE_CHARACTERS ? 1 : 0);
+  add("note-images", notes.images);
+  add("note-cut", notes.cut ? 1 : 0);
   return listed;
 }
 
 /** Everything one Zotero item brings: its metadata, notes, PDFs, citation key and collections. */
 export interface ZoteroItemMaterial {
   readonly candidate: ScientSourceCandidate;
+  /** The item's notes as one Markdown note. */
   readonly note: string | null;
+  /** The same notes as Zotero wrote them. */
+  readonly notes: ReadonlyArray<ZoteroNoteOriginal>;
+  /** The note as an import wrote it before notes became Markdown. */
+  readonly legacyNote: string | null;
   readonly citationKey: string | null;
   readonly collectionKeys: ReadonlyArray<string>;
   readonly pdfs: ReadonlyArray<ZoteroRawItem>;
@@ -692,6 +720,11 @@ export function zoteroItemMaterial(
 ): ZoteroItemMaterial {
   const pdfs = zoteroPdfAttachments(children);
   const primaryPdf = pdfs[0];
+  const notes = zoteroNotesMarkdown(
+    children.flatMap((child) =>
+      child.data.itemType === "note" ? [{ itemKey: child.key, html: child.data.note ?? "" }] : [],
+    ),
+  );
   return {
     candidate: {
       ...zoteroItemToCandidate(item),
@@ -700,11 +733,13 @@ export function zoteroItemMaterial(
       pdfFileName: primaryPdf ? text(primaryPdf.data.filename) : null,
       pdfAttachmentCount: pdfs.length,
     },
-    note: zoteroNotesText(children),
+    note: notes.markdown,
+    notes: zoteroNoteOriginals(children),
+    legacyNote: legacyZoteroNotesText(children),
     citationKey,
     collectionKeys: [...(item.data.collections ?? [])],
     pdfs,
-    notBrought: zoteroNotBrought(item, children),
+    notBrought: zoteroNotBrought(item, children, notes),
   };
 }
 

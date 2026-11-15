@@ -9,7 +9,6 @@ import {
   zoteroItemMaterial,
   zoteroItemToCandidate,
   zoteroItemWithChildrenToCandidate,
-  zoteroNoteToText,
 } from "./ZoteroItems.ts";
 
 describe("Zotero items", () => {
@@ -218,10 +217,11 @@ describe("Zotero items", () => {
     ).toBe("Nature");
   });
 
-  it("joins child notes as text and skips linked URLs as PDFs", () => {
+  it("joins child notes as one Markdown note, keeps them as written, and skips linked URLs as PDFs", () => {
+    const first = '<p>First &amp; <strong>key</strong> <img src="data:image/png;base64,AAAA"></p>';
     const material = zoteroItemMaterial(zoteroItem("ABCD2345"), [
       zoteroItem("NOTE3456", { itemType: "note", note: "<p>Second <em>note</em></p>" }),
-      zoteroItem("NOTE2345", { itemType: "note", note: "<p>First &amp; <strong>key</strong></p>" }),
+      zoteroItem("NOTE2345", { itemType: "note", note: first }),
       zoteroItem("LINK2345", {
         itemType: "attachment",
         contentType: "application/pdf",
@@ -229,14 +229,14 @@ describe("Zotero items", () => {
       }),
     ]);
 
-    expect(material.note).toBe("First & **key**\n\n---\n\nSecond *note*");
+    expect(material.note).toBe("## First & **key**\n\n## Second *note*");
+    // Zotero's own HTML is kept by key, without the bytes of an embedded image.
+    expect(material.notes).toEqual([
+      { itemKey: "NOTE2345", html: '<p>First &amp; <strong>key</strong> <img src=""></p>' },
+      { itemKey: "NOTE3456", html: "<p>Second <em>note</em></p>" },
+    ]);
+    expect(material.notBrought).toContainEqual({ kind: "note-images", count: 1 });
     expect(material.pdfs).toEqual([]);
-  });
-
-  it("turns note HTML lists and breaks into readable lines", () => {
-    expect(zoteroNoteToText("<h1>Aims</h1><ul><li>one</li><li>two</li></ul>a<br>b")).toBe(
-      "Aims\n\n- one\n\n- two\n\na\nb",
-    );
   });
 });
 

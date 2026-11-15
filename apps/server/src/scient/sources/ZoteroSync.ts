@@ -84,6 +84,7 @@ export async function recordZoteroSync(input: {
     syncedAt: new Date().toISOString(),
     metadata,
     note: input.material.note,
+    notes: [...input.material.notes],
     attachmentKeys: [...input.attachmentKeys],
   });
 }
@@ -188,7 +189,7 @@ async function refreshOne(input: {
   const plan = planZoteroRefresh({
     record: input.record,
     base,
-    zotero: { candidate: material.candidate, note: material.note },
+    zotero: material,
     choices: input.choices,
   });
   let record = input.record;
@@ -275,6 +276,7 @@ async function refreshOne(input: {
     syncedAt: new Date().toISOString(),
     metadata: plan.base.metadata,
     note: plan.base.note,
+    ...(plan.base.notes ? { notes: [...plan.base.notes] } : {}),
     attachmentKeys: attached.keys,
   });
   const updated = changedFields.length > 0 || attached.added > 0;

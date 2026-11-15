@@ -7,8 +7,10 @@ import { initializeScientProject } from "@scientfactory/project-init";
 import {
   listScientSourceRecords,
   readScientSourceRecord,
+  readScientSourceZoteroSync,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 import { editableMetadataFromRecord } from "@scientfactory/scient-sources";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -392,6 +394,80 @@ describe("Zotero refresh", () => {
     expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
     expect((await readScientSourceRecord(root, record.sourceId))?.note ?? null).toBeNull();
   });
+
+  // The same Zotero note, as an import wrote it before notes became Markdown and as it is now.
+  const noteHtml = '<h1>Aims</h1><p>See <a href="https://example.org">the errata</a>.</p>';
+  const earlierText = "Aims\n\nSee the errata.";
+  const markdown = "# Aims\n\nSee [the errata](https://example.org).";
+  const revisedHtml = "<h1>Aims</h1><p>Revised in Zotero.</p>";
+  const revisedMarkdown = "# Aims\n\nRevised in Zotero.";
+
+  it.each([
+    // [the import, edited here, changed in Zotero] → the note after, and whether it clashes
+    { imported: "earlier", edited: false, changed: false, note: markdown, clash: false },
+    { imported: "earlier", edited: true, changed: false, note: "My own words", clash: false },
+    { imported: "earlier", edited: false, changed: true, note: revisedMarkdown, clash: false },
+    { imported: "earlier", edited: true, changed: true, note: "My own words", clash: true },
+    { imported: "before-bases", edited: false, changed: false, note: markdown, clash: false },
+    { imported: "before-bases", edited: true, changed: false, note: "My own words", clash: true },
+    // Only a colour changed in Zotero, which Markdown does not show: nothing to choose between.
+    { imported: "now", edited: true, changed: "colour", note: "My own words", clash: false },
+  ] as const)(
+    "refreshes the note of a source imported $imported (edited here: $edited, changed in Zotero: $changed)",
+    async ({ imported, edited, changed, note, clash }) => {
+      const { root, library, zotero, record } = await importedFromZotero(original, [
+        zoteroItem("NOTE2345", { itemType: "note", note: noteHtml }),
+      ]);
+      const { sourceId } = record;
+      const setNote = async (text: string) => {
+        const current = await readScientSourceRecord(root, sourceId);
+        await updateScientSourceNote({
+          root,
+          sourceId,
+          expectedRevision: current?.revision ?? 0,
+          note: text,
+        });
+      };
+      if (imported !== "now") {
+        // As the earlier import left it: plain text in the note, and no HTML kept.
+        await setNote(earlierText);
+        const base = await readScientSourceZoteroSync(root, sourceId);
+        if (!base) throw new Error("The import wrote no base.");
+        const { notes: _notes, ...earlier } = base;
+        if (imported === "earlier") {
+          await writeScientSourceZoteroSync(root, { ...earlier, note: earlierText });
+        } else {
+          await NodeFSP.rm(
+            NodePath.join(root, ".scient", "sources", "sync", "zotero", `${sourceId}.json`),
+          );
+        }
+      }
+      if (edited) await setNote("My own words");
+      const zoteroHtml =
+        changed === "colour"
+          ? noteHtml.replace("<h1>", '<h1 style="color: red">')
+          : changed
+            ? revisedHtml
+            : noteHtml;
+      library.items.set("ABCD2345", {
+        item: original,
+        children: [zoteroItem("NOTE2345", { itemType: "note", note: zoteroHtml })],
+      });
+
+      // Twice: a clash stays a clash, and nothing changes the second time.
+      for (const _round of [1, 2]) {
+        const result = await refreshZoteroSources({ root, actor: "user", zotero });
+        expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(
+          clash ? ["note"] : [],
+        );
+        expect((await readScientSourceRecord(root, sourceId))?.note).toBe(note);
+      }
+      // Zotero's own HTML is kept from the first refresh on, unless a clash is still open.
+      expect((await readScientSourceZoteroSync(root, sourceId))?.notes).toEqual(
+        clash ? undefined : [{ itemKey: "NOTE2345", html: zoteroHtml }],
+      );
+    },
+  );
 
   it("leaves a source alone when its item is gone from Zotero", async () => {
     const { root, library, zotero, record } = await importedFromZotero(original);

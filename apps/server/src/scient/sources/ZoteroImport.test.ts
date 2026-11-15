@@ -254,12 +254,12 @@ describe("Zotero import", () => {
       { kind: "highlights", count: 7 },
       { kind: "file", name: "text/html", count: 1 },
       { kind: "link", count: 1 },
-      { kind: "note-formatting", count: 1 },
       { kind: "pdf", name: "unavailable", count: 1 },
     ]);
-    // What it did bring is as before.
+    // What it did bring is as before; the note keeps its link.
     const [record] = await listScientSourceRecords(root);
     expect(record).toMatchObject({
+      note: "See [the errata](https://example.org).",
       title: "A book with an edition",
       publisher: "A Press",
       citationKey: "book2026",

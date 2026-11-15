@@ -82,6 +82,8 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
       return "Notes cut at 100,000 characters";
     case "note-formatting":
       return "Notes whose links, headings, tables, images or code became plain text";
+    case "note-images":
+      return "Images in notes";
     case "highlights":
       return "Highlights and comments on PDFs";
     case "related":
@@ -95,7 +97,7 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
     case "alone-uncounted":
       return "Notes and files that belong to no reference: Zotero did not say how many";
     case "already-here":
-      return "References that were already in your Library: nothing was taken from Zotero's copy (its notes, files and details)";
+      return "References that were already in your Library: nothing was taken from Zotero's copy (its files and details), except its note where the one here had none";
   }
 }
 
