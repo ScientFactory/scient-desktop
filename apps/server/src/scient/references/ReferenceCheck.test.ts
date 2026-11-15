@@ -3,11 +3,13 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeStreamConsumers from "node:stream/consumers";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientReferenceCheckReport } from "@scientfactory/scient-sources";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { describe, expect, it } from "@effect/vitest";
+import * as yazl from "yazl";
 
 import { addAgentSource } from "../sources/ScientSourcesCoordinator.ts";
 import {
@@ -17,6 +19,7 @@ import {
 } from "../sources/SourceIdentifierResolver.ts";
 import {
   checkReferences,
+  listReferenceDocuments,
   ReferenceCheckError,
   type ResolveIdentifierBatch,
 } from "./ReferenceCheck.ts";
@@ -29,7 +32,7 @@ async function project() {
   await initializeScientProject({ root });
   return {
     root,
-    write: (path: string, contents: string) =>
+    write: (path: string, contents: string | Uint8Array) =>
       NodeFSP.mkdir(NodePath.dirname(NodePath.join(root, path)), { recursive: true }).then(() =>
         NodeFSP.writeFile(NodePath.join(root, path), contents),
       ),
@@ -87,7 +90,9 @@ function registry(
 const kinds = (report: ScientReferenceCheckReport) =>
   report.findings.map((finding) => `${finding.key ?? finding.sourceId}:${finding.kind}`).sort();
 
-async function addLibrarySource(root: string) {
+type LibraryCandidate = Parameters<typeof addAgentSource>[0]["candidate"];
+
+async function addLibrarySource(root: string, changes: Partial<LibraryCandidate> = {}) {
   await addAgentSource({
     root,
     resolveIdentifier: async (identifiers) => {
@@ -117,6 +122,7 @@ async function addLibrarySource(root: string) {
       pdfAvailable: false,
       pdfFileName: null,
       pdfAttachmentCount: 0,
+      ...changes,
     },
   });
 }
@@ -516,5 +522,258 @@ describe("checkReferences", () => {
         { resolveIdentifiers: registry(works), now },
       ),
     ).rejects.toBeInstanceOf(ReferenceCheckError);
+  });
+});
+
+// The Word files below are constructed here: the XML is what Word and each plug-in write
+// (Zotero's field, list and bookmark codes as in its public source and pandoc's public sample
+// file; EndNote's data field and Mendeley Cite's tag as publicly described), around made-up
+// works.
+const WORD_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+const escapeXml = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+const run = (text: string, properties = "") =>
+  `<w:r><w:rPr>${properties}</w:rPr><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
+const paragraph = (inner: string, style = "Normal") =>
+  `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr>${inner}</w:p>`;
+const fieldMark = (type: "begin" | "separate" | "end", data = "") =>
+  `<w:r><w:fldChar w:fldCharType="${type}">${data ? `<w:fldData xml:space="preserve">${data}</w:fldData>` : ""}</w:fldChar></w:r>`;
+/** A field whose code Word split across two runs, as it does where formatting changes. */
+const field = (instruction: string, result: string) => {
+  const half = Math.floor(instruction.length / 2);
+  const code = (part: string) =>
+    `<w:r><w:instrText xml:space="preserve">${escapeXml(part)}</w:instrText></w:r>`;
+  return `${fieldMark("begin")}${code(instruction.slice(0, half))}${code(instruction.slice(half))}${fieldMark("separate")}${result}`;
+};
+
+async function wordFile(parts: Readonly<Record<string, string>>): Promise<Uint8Array> {
+  const zip = new yazl.ZipFile();
+  const named = {
+    "_rels/.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`,
+    ...parts,
+  };
+  for (const [name, xml] of Object.entries(named)) {
+    zip.addBuffer(Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>${xml}`), name);
+  }
+  zip.end();
+  return NodeStreamConsumers.buffer(zip.outputStream);
+}
+
+const zoteroCitation = (items: ReadonlyArray<Readonly<Record<string, unknown>>>) =>
+  ` ADDIN ZOTERO_ITEM CSL_CITATION ${JSON.stringify({
+    citationID: "CCwugFas",
+    properties: { formattedCitation: "(Smith, 2020)", noteIndex: 0 },
+    citationItems: items.map((itemData) => ({
+      id: itemData.id,
+      uris: [`http://zotero.org/users/40613/items/${String(itemData.id)}`],
+      itemData,
+    })),
+    schema: "https://github.com/citation-style-language/schema/raw/master/csl-citation.json",
+  })} `;
+const article = (id: string, family: string, title: string, year: string, doi?: string) => ({
+  id,
+  type: "article-journal",
+  title,
+  author: [{ family, given: "A." }],
+  issued: { "date-parts": [[year]] },
+  ...(doi ? { DOI: doi } : {}),
+});
+
+describe("checkReferences on a Word document", () => {
+  it("reads the works a reference manager's citations carry, wherever Word keeps them", async () => {
+    await using fixture = await project();
+    await addLibrarySource(fixture.root);
+    await addLibrarySource(fixture.root, {
+      sourceKey: "doe",
+      title: "Sleep in shift workers",
+      creators: [author("Doe")],
+      identifiers: [],
+      externalReferences: [
+        {
+          system: "zotero",
+          libraryId: "users/40613",
+          itemKey: "EIZFK2E5",
+          itemVersion: 3,
+          rawItemType: "journalArticle",
+        },
+      ],
+    });
+    const smith = article(
+      "3GKMD43T",
+      "Smith",
+      "The effect of light on sleep",
+      "2020",
+      "10.1000/smith",
+    );
+    const ghost = zoteroCitation([
+      article("GHOST001", "Roe", "A study that was never published", "2020", "10.1000/missing"),
+    ]);
+    const bookmarkCode = `ZOTERO_ITEM CSL_CITATION ${JSON.stringify({ citationItems: [{ id: 6, uris: ["http://zotero.org/users/40613/items/EIZFK2E5"], itemData: article("6", "Doe", "Sleep in shift workers", "2019", "10.1000/wrong") }] })}`;
+    const endNote = Buffer.from(
+      `<EndNote><Cite><Author>Wakefield</Author><Year>1998</Year><RecNum>4</RecNum><record><rec-number>4</rec-number><contributors><authors><author>Wakefield, A.</author></authors></contributors><titles><title>Vaccines and autism</title><secondary-title>The Lancet</secondary-title></titles><dates><year>1998</year></dates><electronic-resource-num>10.1000/retracted</electronic-resource-num></record></Cite></EndNote>`,
+    ).toString("base64");
+    // Mendeley Cite keeps the citation as base64 in a content control's tag, without padding.
+    const mendeleyCite = `MENDELEY_CITATION_v3_${Buffer.from(
+      JSON.stringify({
+        citationID: "MENDELEY_CITATION_1de18c13",
+        citationItems: [
+          {
+            id: "f3a0c1d2",
+            itemData: { ...article("f3a0c1d2", "Ng", "Handbook of sleep", "2010"), type: "book" },
+          },
+        ],
+      }),
+    )
+      .toString("base64")
+      .replace(/=+$/u, "")}`;
+    const property = (name: string, value: string) =>
+      `<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="${name}"><vt:lpwstr>${escapeXml(value)}</vt:lpwstr></property>`;
+    await fixture.write(
+      "paper/draft.docx",
+      await wordFile({
+        "word/document.xml": `<w:document ${WORD_NS}><w:body>${[
+          paragraph(
+            run("Light matters ") +
+              field(zoteroCitation([smith]), run("(Smith, 2020)")) +
+              fieldMark("end") +
+              // A citation deleted or moved away with tracked changes is no longer here.
+              `<w:del w:id="1" w:author="B" w:date="2026-11-01T10:00:00Z">${fieldMark("begin")}<w:r><w:delInstrText xml:space="preserve">${escapeXml(ghost)}</w:delInstrText></w:r>${fieldMark("separate")}<w:r><w:delText>(Roe, 2020)</w:delText></w:r>${fieldMark("end")}</w:del>` +
+              `<w:moveFrom w:id="2" w:author="B" w:date="2026-11-01T10:00:00Z">${field(ghost, run("(Roe, 2020)"))}${fieldMark("end")}</w:moveFrom>` +
+              run(" and again ") +
+              field(zoteroCitation([smith]), run("(Smith, 2020)")) +
+              fieldMark("end"),
+          ),
+          paragraph(
+            `<w:bookmarkStart w:id="0" w:name="ZOTERO_BREF_Jx3kq8mZ1aPl"/>${run("(Doe, 2019)")}<w:bookmarkEnd w:id="0"/><w:sdt><w:sdtPr><w:tag w:val="${mendeleyCite}"/></w:sdtPr><w:sdtContent>${run(" (Ng, 2010)")}</w:sdtContent></w:sdt><w:r><w:footnoteReference w:id="2"/></w:r>`,
+          ),
+          // Zotero's list is one field across its paragraphs, with a link field inside it.
+          paragraph(
+            field(
+              ` ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[["http://zotero.org/users/40613/items/3GKMD43T"]],"custom":[]} CSL_BIBLIOGRAPHY `,
+              run("Doe, A. (2019). Sleep in shift workers. ") +
+                field(' HYPERLINK "https://doi.org/10.1000/wrong" ', run("doi")) +
+                fieldMark("end"),
+            ),
+            "Bibliography",
+          ),
+          paragraph(
+            run("Wakefield, A. (1998). Vaccines and autism.") + fieldMark("end"),
+            "Bibliography",
+          ),
+        ].join("")}</w:body></w:document>`,
+        "word/footnotes.xml": `<w:footnotes ${WORD_NS}><w:footnote w:id="2">${paragraph(
+          `${fieldMark("begin", endNote)}<w:r><w:instrText xml:space="preserve"> ADDIN EN.CITE </w:instrText></w:r>${fieldMark("begin", endNote)}<w:r><w:instrText xml:space="preserve"> ADDIN EN.CITE.DATA </w:instrText></w:r>${fieldMark("end")}${fieldMark("separate")}${run("(Wakefield, 1998)")}${fieldMark("end")}`,
+        )}</w:footnote></w:footnotes>`,
+        "word/comments.xml": `<w:comments ${WORD_NS}><w:comment w:id="0" w:author="B">${paragraph(run("Cite (Nobody, 1999) here?"))}</w:comment></w:comments>`,
+        "docProps/custom.xml": `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">${property("ZOTERO_BREF_Jx3kq8mZ1aPl_1", bookmarkCode.slice(0, 255))}${property("ZOTERO_BREF_Jx3kq8mZ1aPl_2", bookmarkCode.slice(255))}</Properties>`,
+      }),
+    );
+    const library = await listScientSourceRecords(fixture.root);
+    const lookup = registry(works);
+
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "paper/draft.docx" } },
+      { resolveIdentifiers: lookup, now },
+    );
+
+    expect(report).toMatchObject({
+      target: { kind: "file", path: "paper/draft.docx" },
+      files: ["paper/draft.docx"],
+      references: 4,
+      citations: 5,
+      checked: 3,
+      noIdentifier: 1,
+      complete: true,
+      notes: [
+        "Tracked changes were read as if accepted.",
+        "Comments were not read.",
+        "Citations inserted with a reference manager were read. Citations typed by hand were not.",
+        "2 of the 4 cited works are not in the Library.",
+      ],
+    });
+    expect(lookup.asked).not.toContain("doi:10.1000/missing");
+    expect(
+      report.findings.map(({ label, kind, location, fix }) => ({ label, kind, location, fix })),
+    ).toEqual(
+      [
+        ["The effect of light on sleep", "cited-not-listed"],
+        ["Vaccines and autism", "retracted"],
+        ["Sleep in shift workers", "identifier-mismatch"],
+        ["The effect of light on sleep", "details-differ"],
+      ].map(([label, kind]) => ({ label, kind, location: null, fix: null })),
+    );
+    const inLibrary = (title: string) =>
+      library.find((record) => record.title === title)?.sourceId ?? null;
+    expect(report.ledger.map(({ label, sourceId }) => [label, sourceId])).toEqual([
+      ["The effect of light on sleep", inLibrary("The effect of light on sleep")],
+      ["Handbook of sleep", null],
+      ["Vaccines and autism", null],
+      ["Sleep in shift workers", inLibrary("Sleep in shift workers")],
+    ]);
+    expect(library).toHaveLength(2);
+  });
+
+  it("reads typed citations against the reference list of a document without a reference manager", async () => {
+    await using fixture = await project();
+    const superscript = '<w:vertAlign w:val="superscript"/>';
+    const textBox = (inner: string) =>
+      `<w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="wps"><w:drawing><w:txbxContent>${inner}</w:txbxContent></w:drawing></mc:Choice><mc:Fallback><w:pict><w:txbxContent>${inner}</w:txbxContent></w:pict></mc:Fallback></mc:AlternateContent></w:r>`;
+    await fixture.write(
+      "draft.docx",
+      await wordFile({
+        // A French Word names its heading style "Titre1"; the built-in name stays "heading 1".
+        "word/styles.xml": `<w:styles ${WORD_NS}><w:style w:type="paragraph" w:styleId="Titre1"><w:name w:val="heading 1"/></w:style><w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>`,
+        "word/document.xml": `<w:document ${WORD_NS}><w:body>${[
+          paragraph(
+            run("Light changes sleep") +
+              run("1", superscript) +
+              run("–", superscript) +
+              run("3", superscript) +
+              run(" in 2020 (2020) and later [4].") +
+              textBox(paragraph(run("Box: see [1]."))),
+          ),
+          paragraph(run("References"), "Titre1"),
+          paragraph(
+            run(
+              "Smith A. The effect of light on sleep. J Sleep Res. 2020;12:100-110. doi:10.1000/smith",
+            ),
+          ),
+          paragraph(run("Doe A. Sleep in shift workers. Sleep. 2019.")),
+          paragraph(run("Ng C. Handbook of sleep. 2010.")),
+          paragraph(run("Figure legends"), "Titre1"),
+          paragraph(run("Figure 1. Sleep by light level [3].")),
+        ].join("")}</w:body></w:document>`,
+      }),
+    );
+    const lookup = registry(works);
+
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "draft.docx" } },
+      { resolveIdentifiers: lookup, now },
+    );
+
+    expect(report).toMatchObject({ references: 3, citations: 6, checked: 1, noIdentifier: 2 });
+    expect(lookup.asked).toEqual(["doi:10.1000/smith"]);
+    expect(kinds(report)).toEqual(["1:details-differ", "4:cited-not-listed"]);
+    expect(report.findings.every((finding) => finding.location === null)).toBe(true);
+  });
+
+  it("lists Word documents to check and says when a file is not one", async () => {
+    await using fixture = await project();
+    await fixture.write("paper.docx", "This is not a Word file.");
+    await fixture.write("~$paper.docx", "Word's lock file");
+
+    const listed = (await listReferenceDocuments(fixture.root)).paths;
+    expect(listed.filter((path) => path.endsWith(".docx"))).toEqual(["paper.docx"]);
+    await expect(
+      checkReferences(
+        { root: fixture.root, target: { kind: "file", path: "paper.docx" } },
+        { resolveIdentifiers: registry(works), now },
+      ),
+    ).rejects.toThrow("paper.docx could not be read as a Word document.");
   });
 });

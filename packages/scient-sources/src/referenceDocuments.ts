@@ -106,7 +106,7 @@ function cleanDoi(value: string): string | null {
 }
 
 /** DOI, PMID and arXiv identifiers named by a reference's fields or text. */
-function referenceIdentifiers(
+export function referenceIdentifiers(
   fields: Readonly<Record<string, string>>,
   raw: string | null,
 ): ReadonlyArray<ScientSourceIdentifier> {
@@ -226,7 +226,7 @@ function readLatex(text: string): Omit<ReferenceDocument, "kind"> {
 }
 
 const FRONT_MATTER = /^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)\r?\n/u;
-const REFERENCE_HEADING =
+export const REFERENCE_HEADING =
   /^\s{0,3}(?:#{1,6}\s*|\*\*)?(references|bibliography|works cited|literature cited|reference list)\s*(?:\*\*)?\s*:?\s*$/imu;
 const NUMBERED_ENTRY = /^\s*(?:\[(\d+)\]|(\d+)[.)])\s+(.+)$/u;
 const NUMERIC_CITATION =
@@ -259,7 +259,7 @@ function frontMatterBibliographies(frontMatter: string): ReadonlyArray<string> {
   return paths;
 }
 
-function numericKeys(list: string): ReadonlyArray<string> {
+export function numericKeys(list: string): ReadonlyArray<string> {
   return list.split(/\s*,\s*/u).flatMap((part) => {
     const range = part.split(/\s*[–—-]\s*/u);
     if (range.length === 2) {

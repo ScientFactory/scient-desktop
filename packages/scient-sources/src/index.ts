@@ -12,6 +12,7 @@ export * from "./organize.ts";
 export * from "./identifierInput.ts";
 export * from "./referenceCheck.ts";
 export * from "./referenceDocuments.ts";
+export * from "./wordReferences.ts";
 export * from "./sourceIdentity.ts";
 export * from "./sourceMore.ts";
 export * from "./systematicReview.ts";
