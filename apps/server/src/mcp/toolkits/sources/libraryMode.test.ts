@@ -1491,7 +1491,7 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
-  it.effect("a review's other version: listed, then kept, used or combined with a report", () =>
+  it.effect("a review's other version: listed with what differs, then kept, used or combined", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);
       const [first, second] = yield* Effect.promise(() =>
@@ -1568,6 +1568,26 @@ describe("Sources tools on the library backend", () => {
       expect((yield* read()).review?.conflicts).toEqual([
         expect.objectContaining({ conflictId: combined }),
       ]);
+      const differencesOf = (conflictId: string) =>
+        run(
+          readSystematicReviewsForInvocation({ reviewId, differencesOf: { conflictId } }),
+          fixture,
+        );
+      expect(yield* differencesOf(combined)).toMatchObject({
+        differences: {
+          decisions: { differing: 1, onlyHere: 0, onlyOther: 0 },
+          rows: [
+            {
+              kind: "decision",
+              sourceId: first.sourceId,
+              title: first.title,
+              here: { decision: "include", decidedBy: "agent" },
+              other: { decision: "exclude", decidedBy: "user" },
+            },
+          ],
+          nextOffset: null,
+        },
+      });
       const resolved = yield* run(
         updateLibrarySystematicReviewForInvocation({
           change: { action: "resolve-conflict", reviewId, conflictId: combined, pick: "combine" },
@@ -1578,6 +1598,7 @@ describe("Sources tools on the library backend", () => {
         outcome: "resolved",
         combineReport: { reopened: [{ sourceId: first.sourceId, stage: "title-abstract" }] },
       });
+      expect(yield* differencesOf(combined).pipe(Effect.flip)).toMatchObject({ code: "not-found" });
       const afterCombine = (yield* read()).review;
       expect(afterCombine?.conflicts).toBeUndefined();
       expect(afterCombine?.combineReport?.reopened).toHaveLength(1);

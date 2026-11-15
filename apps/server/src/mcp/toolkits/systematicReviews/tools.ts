@@ -3,6 +3,7 @@ import {
   ScientReviewCombineReport,
   ScientReviewDecision,
   ScientReviewStage,
+  ScientReviewVersionDifferences,
   ScientReviewVersionSummary,
   ScientSourceActor,
   ScientSystematicReviewAction,
@@ -80,32 +81,40 @@ export const ScientSystematicReviewsReadResult = Schema.Struct({
       combineReport: Schema.optionalKey(CombineReport),
     }),
   ),
+  /** Library mode, with differencesOf: what differs from that version, in place of the review. */
+  differences: Schema.optionalKey(ScientReviewVersionDifferences),
   issues: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
-const ScientSystematicReviewsTool = Tool.make("scient_sources_systematic_reviews", {
-  description:
-    "Read systematic reviews: without reviewId, list them with PRISMA counts; with it, its searches, exclusion reasons, PRISMA counts and Mermaid flow diagram, possible duplicate pairs and the next records awaiting a decision at stage (default title-abstract). includeDecisions lists decisions in force.",
-  parameters: Schema.Struct({
-    reviewId: Schema.optionalKey(Id),
-    stage: Schema.optionalKey(ScientReviewStage),
-    limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 }))),
-    includeDecisions: Schema.optionalKey(Schema.Boolean),
-  }),
-  success: ScientSystematicReviewsReadResult,
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Read systematic reviews")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, {
-    id: "sources.systematic_reviews",
-    scope: "workspace",
-    requiredCapabilities: ["sources:read"],
-  });
+const READ_DESCRIPTION =
+  "Read systematic reviews: without reviewId, list them with PRISMA counts; with it, its searches, exclusion reasons, PRISMA counts and Mermaid flow diagram, possible duplicate pairs and the next records awaiting a decision at stage (default title-abstract). includeDecisions lists decisions in force.";
+const readParameters = {
+  reviewId: Schema.optionalKey(Id),
+  stage: Schema.optionalKey(ScientReviewStage),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 }))),
+  includeDecisions: Schema.optionalKey(Schema.Boolean),
+};
+
+const reviewsReadTool = <P extends Schema.Struct.Fields>(description: string, parameters: P) =>
+  Tool.make("scient_sources_systematic_reviews", {
+    description,
+    parameters: Schema.Struct(parameters),
+    success: ScientSystematicReviewsReadResult,
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Read systematic reviews")
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, {
+      id: "sources.systematic_reviews",
+      scope: "workspace",
+      requiredCapabilities: ["sources:read"],
+    });
+
+const ScientSystematicReviewsTool = reviewsReadTool(READ_DESCRIPTION, readParameters);
 
 const UPDATE_DESCRIPTION =
   "Change a systematic review when the user asks. create-review with a title in use returns that review. Records are Library sources: add them first, then log-search with sourceIds or collectionId (database, exact query, searchedOn, resultCount); the same database, query and date replaces that search. add-sources adds records found otherwise. mark-duplicate removes a duplicate (keep duplicateOf); mark-distinct dismisses a pair. screen: include, exclude or maybe at title-abstract, then full-text for those included (exclusions there need a reason). record-retrieval: sought, retrieved or not-retrieved (not assessed); a full-text decision implies retrieved. Decisions are credited to the agent; the latest counts; clear-decision reopens. skippedSourceIds were not applied.";
@@ -168,9 +177,23 @@ export const ScientSystematicReviewsToolkit = Toolkit.make(
   ScientSystematicReviewUpdateTool,
 );
 
-/** The same tools, with the pick between a review's versions from copies of the project. */
+/**
+ * The same tools, with what differs between a review's versions from copies of the project, and
+ * the pick between them.
+ */
 export const ScientSystematicReviewsLibraryToolkit = Toolkit.make(
-  ScientSystematicReviewsTool,
+  reviewsReadTool(
+    `${READ_DESCRIPTION} differencesOf: instead, what differs from that conflicts version, from offset.`,
+    {
+      ...readParameters,
+      differencesOf: Schema.optionalKey(
+        Schema.Struct({
+          conflictId: Id,
+          offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+        }),
+      ),
+    },
+  ),
   reviewUpdateTool(
     `${UPDATE_DESCRIPTION} A review with conflicts has versions from a copy of this project: resolve-conflict with a conflictId and the user's pick (keep, use-other or combine); dismiss-combine-report clears combineReport.`,
     ScientSystematicReviewLibraryAction,
