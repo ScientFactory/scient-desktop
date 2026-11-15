@@ -293,7 +293,12 @@ export function planBibliographyImport(input: {
     }
     const copied = bySourceKey.get(sourceKey);
     if (copied) {
-      sameWork.push({ citationKey: label, line: entry.line, sameAs: copied.label, identifier: null });
+      sameWork.push({
+        citationKey: label,
+        line: entry.line,
+        sameAs: copied.label,
+        identifier: null,
+      });
       continue;
     }
     const workKeys = candidate.identifiers.flatMap((identifier) =>
@@ -355,7 +360,8 @@ export function planBibliographyImport(input: {
     };
     works.push(work);
     bySourceKey.set(sourceKey, work);
-    for (const key of workKeys) byIdentifier.set(key.key, [...(byIdentifier.get(key.key) ?? []), work]);
+    for (const key of workKeys)
+      byIdentifier.set(key.key, [...(byIdentifier.get(key.key) ?? []), work]);
     claimKey(work, entry.citationKey, entry.line);
   }
   const fresh = works.filter((work) => work.kind === "new");
@@ -386,7 +392,9 @@ export function planBibliographyImport(input: {
         : [],
     ),
     citationKeys: Object.fromEntries(
-      staged.flatMap((work) => (work.keys.length > 0 ? [[work.candidate.sourceKey, work.keys]] : [])),
+      staged.flatMap((work) =>
+        work.keys.length > 0 ? [[work.candidate.sourceKey, work.keys]] : [],
+      ),
     ),
     presentPastBatch: presentPastBatch.map((work) => ({
       sourceId: work.sourceId!,

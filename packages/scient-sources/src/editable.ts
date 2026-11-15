@@ -105,9 +105,7 @@ function normalizeIncompleteRoles(
   const named = new Map(
     creators.map((creator) => [creator.creatorType.toLowerCase(), creator.creatorType]),
   );
-  return [
-    ...new Set(roles.flatMap((role) => named.get(role.trim().toLowerCase()) ?? [])),
-  ];
+  return [...new Set(roles.flatMap((role) => named.get(role.trim().toLowerCase()) ?? []))];
 }
 
 export function normalizeScientSourceEditableMetadata(

@@ -461,8 +461,10 @@ const nameLetters = (value: string | null) =>
 /** The registry names the same person: the family name, and the given name or its initial. */
 function samePerson(given: ScientSourceCreator, registry: ScientSourceCreator): boolean {
   if (given.literalName || registry.literalName) {
-    return nameLetters(given.literalName ?? given.familyName) ===
-      nameLetters(registry.literalName ?? registry.familyName);
+    return (
+      nameLetters(given.literalName ?? given.familyName) ===
+      nameLetters(registry.literalName ?? registry.familyName)
+    );
   }
   if (nameLetters(given.familyName) !== nameLetters(registry.familyName)) return false;
   const [mine, theirs] = [nameLetters(given.givenName), nameLetters(registry.givenName)];

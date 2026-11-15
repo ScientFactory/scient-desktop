@@ -481,8 +481,8 @@ export async function pinScientLibrarySource(input: {
 
 export type ScientCitationKeyBinding = {
   readonly citationKey: string;
-  /** cited: the key cites the source here (added now or before); taken: it cites another source. */
-  readonly outcome: "cited" | "taken";
+  /** added: it cites the source here from now on; cited: it did already; taken: another source. */
+  readonly outcome: "added" | "cited" | "taken";
 };
 
 /**
@@ -550,11 +550,11 @@ export async function bindScientProjectCitationKeys(input: {
         bindings.push({ citationKey, outcome: citesRecord(existing) ? "cited" : "taken" });
       } else {
         pins.push(added(citationKey));
-        bindings.push({ citationKey, outcome: "cited" });
+        bindings.push({ citationKey, outcome: "added" });
       }
     }
     let projectKey: string | undefined;
-    if (!bindings.some((binding) => binding.outcome === "cited")) {
+    if (!bindings.some((binding) => binding.outcome !== "taken")) {
       const pinned = document.pins.find(citesRecord);
       if (pinned) projectKey = pinned.pin.citationKey;
       else {

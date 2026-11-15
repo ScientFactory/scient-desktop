@@ -680,8 +680,8 @@ describe("project pins", () => {
     expect(await bind(["lecun2015deep", "lecun2015deep_copy", "SMITH2020"])).toEqual({
       outcome: "bound",
       bindings: [
-        { citationKey: "lecun2015deep", outcome: "cited" },
-        { citationKey: "lecun2015deep_copy", outcome: "cited" },
+        { citationKey: "lecun2015deep", outcome: "added" },
+        { citationKey: "lecun2015deep_copy", outcome: "added" },
         { citationKey: "SMITH2020", outcome: "taken" },
       ],
     });

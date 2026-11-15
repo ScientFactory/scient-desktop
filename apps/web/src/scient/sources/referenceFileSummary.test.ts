@@ -78,6 +78,8 @@ describe("reference file import summary", () => {
     ["export.ris", true],
     ["zotero.json", true],
     ["endnote.xml", true],
+    // regression: a dropped RIS or BibTeX .txt went through PDF intake
+    ["pubmed-export.txt", true],
     ["paper.pdf", false],
   ])("recognises %s as a reference file: %s", (name, expected) => {
     expect(isReferenceFileName(name)).toBe(expected);

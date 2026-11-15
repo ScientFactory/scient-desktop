@@ -83,9 +83,9 @@ export async function bindLibraryImportKeys(input: {
       sourceId: input.sourceId,
       actor: input.actor,
     });
-    return pinned.outcome === "not-found"
-      ? null
-      : { citationKeys: [], projectKey: pinned.pin.citationKey };
+    if (pinned.outcome === "not-found") return null;
+    const outcome = pinned.outcome === "pinned" ? ("added" as const) : ("cited" as const);
+    return { citationKeys: [{ citationKey: pinned.pin.citationKey, outcome }] };
   }
   const bound = await bindScientProjectCitationKeys({
     projectRoot,

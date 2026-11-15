@@ -852,13 +852,13 @@ export const ScientSourceNotBrought = Schema.Struct({
 export type ScientSourceNotBrought = typeof ScientSourceNotBrought.Type;
 
 /**
- * What became of one key a reference file cites a work by. `cited`: this project cites the work
- * by it (newly or as before). `taken`: it already cites another source here, which keeps it.
- * `library`: a My Library import, which writes nothing in a project.
+ * What became of one key a reference file cites a work by. `added`: this project cites the work
+ * by it from now on; `cited`: it did already. `taken`: it already cites another source here, which
+ * keeps it. `library`: a My Library import, which writes nothing in a project.
  */
 export const ScientSourceItemCitationKey = Schema.Struct({
   citationKey: NonEmptyString,
-  outcome: Schema.Literals(["cited", "taken", "library"]),
+  outcome: Schema.Literals(["added", "cited", "taken", "library"]),
 });
 export type ScientSourceItemCitationKey = typeof ScientSourceItemCitationKey.Type;
 
