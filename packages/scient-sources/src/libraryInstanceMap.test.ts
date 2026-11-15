@@ -562,14 +562,17 @@ describe("records the Library holds apart from a source", () => {
       away: { title: "The merged-away paper", publisher: null, pages: "11-19" },
     });
 
-    // What each copy had and its own record lacks is kept in the project, once.
+    // The copy each key held while the merge stood is kept in the project, once per Undo.
     const displaced = async () =>
-      (await readScientDisplacedCopies(await NodeFSP.realpath(project), "project"))
-        .map(({ lost, work }) => ({ lost, work }))
-        .toSorted((left, right) => left.lost.join().localeCompare(right.lost.join()));
+      (await readScientDisplacedCopies(await NodeFSP.realpath(project), { kind: "project" }))
+        .map(({ differs, work }) => ({ differs, work }))
+        .toSorted((left, right) => left.differs.length - right.differs.length);
     expect(await displaced()).toMatchObject([
-      { lost: ["pages"], work: { title: "The kept paper", pages: "11-19" } },
-      { lost: ["publisher"], work: { title: "The kept paper", publisher: "Kept Press" } },
+      { differs: ["pages"], work: { title: "The kept paper", pages: "11-19" } },
+      {
+        differs: expect.arrayContaining(["title", "publisher"]),
+        work: { title: "The kept paper", publisher: "Kept Press" },
+      },
     ]);
     await copies();
     expect(await displaced()).toHaveLength(2);

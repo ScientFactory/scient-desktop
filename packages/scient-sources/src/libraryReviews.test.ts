@@ -449,13 +449,51 @@ describe("review record snapshots", () => {
 
     // The refresh replaces the entry with the record whole and keeps what the entry had aside.
     await refreshScientLibraryReviewSnapshot({ projectRoot, library, reviewId });
-    expect(
-      await readScientDisplacedCopies(await NodeFSP.realpath(projectRoot), "reviews"),
-    ).toMatchObject([
+    const displaced = () =>
+      readScientDisplacedCopies(NodePath.resolve(projectRoot), { kind: "review", reviewId });
+    expect(await displaced()).toMatchObject([
       {
         sourceId: merged.sourceId,
         heldBy: reviewId,
-        lost: expect.arrayContaining(["abstract"]),
+        differs: expect.arrayContaining(["abstract"]),
+        work: { abstract: "Abstract of the first trial." },
+      },
+    ]);
+    // Once per Undo: a later refresh keeps nothing more.
+    await refreshScientLibraryReviewSnapshot({ projectRoot, library, reviewId });
+    expect(await displaced()).toHaveLength(1);
+  });
+
+  // regression: review U1-c-1, a value replaced by a different one was not kept.
+  it("keeps the entry a review had when the record that replaces it says something else", async () => {
+    const base = await fixture();
+    const library = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const kept = await addRecord(library, 1, "Abstract of the first trial.");
+    const merged = await addRecord(library, 2, "Abstract of the second trial.");
+    const reviewId = await createReview(projectRoot, library);
+    await changeScientLibraryReview({
+      projectRoot,
+      library,
+      change: { action: "add-sources", reviewId, sourceIds: [merged.sourceId] },
+      actor: "user",
+    });
+    const result = await mergeScientLibrarySources({
+      library,
+      sourceIds: [kept.sourceId, merged.sourceId],
+      survivorId: kept.sourceId,
+    });
+    if (result.outcome !== "merged") throw new Error("Expected a merge.");
+    await refreshScientLibraryReviewSnapshot({ projectRoot, library, reviewId });
+    await undoScientLibraryMerge({ library, mergeId: result.merge.mergeId });
+    await refreshScientLibraryReviewSnapshot({ projectRoot, library, reviewId });
+
+    expect(
+      await readScientDisplacedCopies(NodePath.resolve(projectRoot), { kind: "review", reviewId }),
+    ).toMatchObject([
+      {
+        sourceId: merged.sourceId,
+        differs: expect.arrayContaining(["abstract", "title"]),
         work: { abstract: "Abstract of the first trial." },
       },
     ]);

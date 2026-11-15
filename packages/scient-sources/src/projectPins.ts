@@ -6,12 +6,13 @@ import * as NodePath from "node:path";
 import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
-import { keepScientDisplacedCopies, scientValuesLostBy } from "./projectDisplacedCopies.ts";
+import { keepScientDisplacedCopies, scientValuesChangedBy } from "./projectDisplacedCopies.ts";
 
 import { assignCitationKey, citationKeyComparisonValue } from "./citationKeys.ts";
 import {
   readScientLibraryAliases,
   resolveScientLibraryAlias,
+  scientUnmergedSince,
   scientUnmergedSourceIds,
 } from "./libraryAliases.ts";
 import {
@@ -900,19 +901,22 @@ export async function refreshScientProjectPinSnapshots(input: {
       (await listScientSourceRecords(input.library)).map((record) => [record.sourceId, record]),
     );
     const aliases = await readScientLibraryAliases(input.library);
-    const unmerged = scientUnmergedSourceIds(aliases);
+    const unmergedSince = scientUnmergedSince(aliases);
+    const unmerged = new Set(unmergedSince.keys());
     let removed: Promise<ReadonlyMap<string, ScientSourceRecord>> | undefined;
     const pins: StoredPin[] = [];
     // What an unmerged source's copy knew and its record does not is kept aside, not dropped.
     const displaced: Array<Parameters<typeof keepScientDisplacedCopies>[2][number]> = [];
     const whole = (stored: StoredPin, record: ScientSourceRecord): ScientPinWork => {
       const work = unmergedSourceWork(stored.pin.work, record);
-      const lost = scientValuesLostBy(stored.pin.work, work);
-      if (lost.length > 0) {
+      const differs = scientValuesChangedBy(stored.pin.work, work);
+      const undoneAt = unmergedSince.get(record.sourceId);
+      if (differs.length > 0 && undoneAt !== undefined) {
         displaced.push({
-          sourceId: stored.pin.sourceId,
+          sourceId: record.sourceId,
           heldBy: stored.pin.citationKey,
-          lost,
+          undoneAt,
+          differs,
           work: stored.pin.work,
         });
       }
@@ -944,7 +948,7 @@ export async function refreshScientProjectPinSnapshots(input: {
       pins.push(own ? { ...stored, pin: { ...stored.pin, work: whole(stored, own) } } : stored);
     }
     // Before the copies are replaced, so a stop in between loses neither.
-    await keepScientDisplacedCopies(root, "project", displaced);
+    await keepScientDisplacedCopies(root, { kind: "project" }, displaced);
     const changed = await writePinsDocument(root, document, pins);
     return { changed, pins: pins.map(({ pin }) => pin).toSorted(comparePins) };
   });
