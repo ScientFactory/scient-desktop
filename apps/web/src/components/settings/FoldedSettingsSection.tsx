@@ -95,7 +95,7 @@ export function FoldedSettingsSection({
             }
           />
           <CollapsiblePanel>
-            <div className="border-t border-border/50 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
+            <div className="border-t border-border/50 *:not-first:border-t *:not-first:border-border/50 [&>[data-slot=settings-row]]:rounded-none">
               {children}
             </div>
           </CollapsiblePanel>
@@ -130,7 +130,7 @@ export function FoldedSettingsSection({
           <div className="border-t border-border/50 empty:hidden">{collapsedContent}</div>
         ) : null}
         <CollapsiblePanel>
-          <div className="border-t border-border/50 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
+          <div className="border-t border-border/50 *:not-first:border-t *:not-first:border-border/50">
             {children}
           </div>
         </CollapsiblePanel>

@@ -214,7 +214,7 @@ function ExecutablePath({ path }: { readonly path: string }) {
   return (
     <span className="flex min-w-0 items-start gap-1.5" dir="ltr">
       <span className="min-w-0 break-all font-mono text-2xs leading-relaxed">{path}</span>
-      <DiffFilePathCopyButton filePath={path} />
+      <DiffFilePathCopyButton filePath={path} workspaceRoot={undefined} />
     </span>
   );
 }

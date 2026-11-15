@@ -13,6 +13,7 @@ import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -330,4 +331,52 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   // The thread keeps its latest structure, and the timeline may remember the one before it.
   const kept = shown.slice(0, -2).flatMap((structure, round) => (structure.deref() ? [round] : []));
   expect(kept).toEqual([]);
+});
+
+it("selecting a side-chat tab focuses that side chat's composer", async () => {
+  const parent = threadWithHistory("focus-parent", 1);
+  // The shell loaded by the file's first test stays; a family read serves side chats added later.
+  const sideChat = (name: string) => ({
+    ...threadWithHistory(name, 1),
+    sideChatOf: parent.id,
+    olderSettled: true as const,
+  });
+  const side = sideChat("focus-side");
+  const otherSide = sideChat("focus-other-side");
+  await page.viewport(1400, 900);
+  using _environment = installFakeEnvironment([parent, side, otherSide]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
+  useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _focus = { [Symbol.dispose]: startWorkspaceFocus(router) };
+  const mainEditor = screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true });
+  const sideEditor = screen.getByRole("textbox", { name: `Message ${side.title}`, exact: true });
+  await expect.element(sideEditor).toBeVisible();
+  await userEvent.click(mainEditor);
+  await userEvent.keyboard("main draft");
+
+  await userEvent.click(screen.getByRole("button", { name: otherSide.title, exact: true }));
+  const otherEditor = screen.getByRole("textbox", {
+    name: `Message ${otherSide.title}`,
+    exact: true,
+  });
+  await expect.element(otherEditor).toHaveFocus();
+  await userEvent.keyboard("other draft");
+  await expect.element(otherEditor).toHaveTextContent("other draft");
+
+  await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
+  await expect.element(sideEditor).toHaveFocus();
+  await expect.element(mainEditor).toHaveTextContent("main draft");
 });

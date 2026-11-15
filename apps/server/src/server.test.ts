@@ -1329,6 +1329,7 @@ const buildAppUnderTest = (options?: {
               resize: () => Effect.die("PreviewManager not stubbed in this test"),
               reportStatus: () => Effect.void,
               close: () => Effect.void,
+              registerBeforeClose: () => Effect.void,
               list: () => Effect.succeed({ sessions: [], serverEpoch: "test-server", revision: 0 }),
               events: Stream.empty,
               subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>

@@ -66,6 +66,7 @@ vi.mock("../state/entities", () => ({
   readEnvironmentThreadRefs: () => [],
   readProject: () => null,
   readThreadShells: () => [],
+  readDelegatedUnderParent: () => new Set(),
 }));
 vi.mock("../state/session", () => ({
   environmentSession: { sessionStateAtom: vi.fn() },

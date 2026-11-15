@@ -16,6 +16,7 @@ import {
   DesktopPreviewPdfExportArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetShownInputSchema,
+  DesktopPreviewSetCaptureDrawnInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewSetZoomFactorInputSchema,
   BrowserImportResult,
@@ -240,6 +241,15 @@ const setShown = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setShown")(function* ({ tabId, shown }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setShown(tabId, shown);
+  }),
+});
+const setCaptureDrawn = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_CAPTURE_DRAWN_CHANNEL,
+  payload: DesktopPreviewSetCaptureDrawnInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setCaptureDrawn")(function* ({ tabId, drawn }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setCaptureDrawn(tabId, drawn);
   }),
 });
 const openDevTools = tabMethod(
@@ -516,6 +526,7 @@ export const methods = [
   setZoomFactor,
   setAudioMuted,
   setShown,
+  setCaptureDrawn,
   openDevTools,
   clearCookies,
   clearCache,

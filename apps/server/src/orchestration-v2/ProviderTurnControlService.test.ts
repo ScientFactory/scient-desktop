@@ -253,6 +253,8 @@ it.effect(
           getPlan: () => Effect.die("unused"),
           hasUnpairedRunInterruptRequest: () => Effect.die("unused interrupt read"),
           getRollbackAttachmentOwners: () => Effect.die("unused prune query"),
+          hasRunInterruptRequest: () => Effect.die("unused stop read"),
+          getRunProviderRecords: () => Effect.die("unused run provider read"),
           getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
           searchThread: () => Effect.die("unused"),
           searchThreadStream: () => Stream.empty,
