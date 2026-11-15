@@ -3381,7 +3381,18 @@ date parsed like the record's own date), every creator under its role's
 variable with the type's primary role as author, and the CSL type of a
 Zotero type name kept in `customType`; a typed field always wins over a
 `more` entry of the same variable. `software`, `presentation` and
-`manuscript` are source types. Not yet: editing `more` in the panel, the
+`manuscript` are source types.
+
+`more` is part of the editable metadata. Omitted, an edit keeps it (so a
+caller that does not know it changes nothing); given, it replaces the whole
+map, and an empty map removes the part. Validation refuses a name outside
+the list and text too long, so an edit never drops an entry. Each entry has
+its own provenance line (`more.<name>`: who last set or cleared it), which
+is what a refresh will compare. A revision lists the change as `more`; a
+revert restores it. The editor's "More details" shows a row per entry by its
+label and adds one from the list; the details view lists them; an agent
+reads `more` in a source's detail and may pass it in `scient_sources_update`
+(the tool's wording is unchanged; its evals are owed with H6). Not yet: the
 per-variable refresh, Send, and reference files (the next commits).
 
 **What was not brought.** `decodeZoteroRawItem` lists every non-empty text

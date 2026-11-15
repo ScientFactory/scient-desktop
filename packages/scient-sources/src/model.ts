@@ -346,6 +346,8 @@ export const ScientSourceEditableMetadata = Schema.Struct({
   language: NullableText,
   url: NullableText,
   tags: BoundedTags,
+  /** Omitted means keep the further details as they are; given, it replaces them all. */
+  more: Schema.optionalKey(ScientSourceMore),
 });
 export type ScientSourceEditableMetadata = typeof ScientSourceEditableMetadata.Type;
 

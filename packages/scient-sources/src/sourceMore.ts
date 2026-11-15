@@ -49,7 +49,7 @@ const MORE = [
 export type ScientSourceMoreName = (typeof MORE)[number][0];
 
 /** Every name `more` may hold, with whether it is a date and what a person calls it. */
-const SCIENT_SOURCE_MORE_FIELDS: ReadonlyArray<{
+export const SCIENT_SOURCE_MORE_FIELDS: ReadonlyArray<{
   readonly name: ScientSourceMoreName;
   readonly kind: "text" | "date";
   readonly label: string;
@@ -60,6 +60,9 @@ const KNOWN: ReadonlyMap<string, (typeof SCIENT_SOURCE_MORE_FIELDS)[number]> = n
 );
 
 const SCIENT_SOURCE_MORE_LIMITS = { entries: 40, value: 2_000, extra: 10_000 } as const;
+
+/** What a person calls one of these details. */
+export const scientSourceMoreLabel = (name: string): string => KNOWN.get(name)?.label ?? name;
 
 export const isScientSourceMoreName = (name: string): name is ScientSourceMoreName =>
   KNOWN.has(name);

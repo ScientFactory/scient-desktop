@@ -3,6 +3,7 @@ import type {
   ScientSourceNoteUpdateResult,
   ScientSourcesOverviewResult,
 } from "@t3tools/contracts";
+import { SCIENT_SOURCE_MORE_FIELDS } from "@scientfactory/scient-sources";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   AlertCircle,
@@ -853,6 +854,8 @@ export function SourceDetails(props: {
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
   );
+  // Edition, place, series and the like: shown under the names a person knows them by.
+  const moreDetails = SCIENT_SOURCE_MORE_FIELDS.filter(({ name }) => record.more?.[name]);
   const externalUrl = safeSourceExternalUrl(record.url);
   const pdfSelection = selectScientSourceMaterial({ materials: record.attachments });
   const identifiers = [
@@ -1170,6 +1173,18 @@ export function SourceDetails(props: {
                 </div>
               </dl>
             </section>
+          ) : null}
+
+          {moreDetails.length > 0 ? (
+            <DetailsSection title="More details">
+              <div className="space-y-2">
+                {moreDetails.map(({ name, label }) => (
+                  <DetailRow key={name} label={label}>
+                    <span className="whitespace-pre-wrap">{record.more?.[name]}</span>
+                  </DetailRow>
+                ))}
+              </div>
+            </DetailsSection>
           ) : null}
 
           {identifiers.length > 0 || (externalUrl && !hasDoi) || otherKeys.length > 0 ? (
