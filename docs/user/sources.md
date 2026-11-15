@@ -84,6 +84,11 @@ the project, and **My note**, which follows the paper into every project and is
 not saved in any project folder. Agents read and write My note too. A paper
 that is not in this project has only My note.
 
+A note is Markdown. When you read it, headings, lists, links, quotes, tables
+and code are shown as such; when you edit it, you see and type the Markdown
+itself (`# Heading`, `- item`, `[text](address)`), with bold and italic shown
+as you type. An edit changes only what you typed.
+
 Notes save against the note you read. Changing metadata or attaching a PDF does
 not block a note save, including a save still finishing after you leave the editor.
 A note for this project is never overwritten by a change made elsewhere. If
@@ -299,9 +304,16 @@ had chosen before it.
    again. If you stop it, **Import the rest** goes on from where it was.
    Nothing is imported twice, and **Recent changes** lists it as one import.
 
-Scient copies each reference's metadata, tags, child notes (as **My note**)
-and every PDF attachment into your Library, and adds the references to this
-project unless **All** is shown. Every bibliographic field comes, also the
+Scient copies each reference's metadata, tags, notes and every PDF attachment
+into your Library, and adds the references to this project unless **All** is
+shown. A reference's notes become its **My note**, as Markdown you can go on
+editing: headings, links, lists, quotes, tables, code, bold and italic are
+kept, and a citation placed in a note becomes its text. Several notes on one
+reference stay one note, each under its first line as a heading, in the order
+Zotero lists them. Markdown has no text colour, underline or superscript, so
+those arrive as plain text, and images in notes are not carried. Scient also
+keeps each note exactly as Zotero wrote it, with the source in your Library,
+so nothing is lost by the conversion. Every bibliographic field comes, also the
 ones beyond a source's main details: edition, place of publication, series,
 number of pages, report number, date accessed and the like are kept under
 the names citations use, so a book is cited with its edition. A field only
@@ -321,11 +333,14 @@ When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
 many references it concerns: highlights and comments on PDFs, files that are
 not PDFs, links
-kept as attachments, PDFs Zotero could not hand over, notes whose links or
-tables became plain text, and notes and files that belong to no reference.
+kept as attachments, PDFs Zotero could not hand over, images in notes, notes
+too long to keep whole (a note holds 100,000 characters; what does not fit is
+left out from a paragraph on), and notes and files that belong to no reference.
 A reference that was already in your Library (the same DOI, or a possible
 match you did not import) is listed too: nothing was taken from Zotero's copy
-of it. **Show** on a line shows the references it concerns. All of it is
+of it, with one exception. When the reference is certainly the same one and
+the source here has no **My note**, Zotero's notes become its note, and the
+summary says so. **Show** on a line shows the references it concerns. All of it is
 still in Zotero. Zotero's Trash, saved searches and tag colours are not
 looked at. The list is made by comparing what was brought with everything Zotero
 sent, so what is not on it was brought. It stays with the import: in **Recent
@@ -365,7 +380,12 @@ Zotero on the computer is used first when both are available.
 Choose **Import sources → Refresh from Zotero** to bring changes you made in
 Zotero into sources imported from it. Fields you changed in Zotero are updated,
 new notes and PDFs come in, and tags you added or removed in Zotero are added or
-removed here. When you changed the same field both here and in Zotero, your
+removed here. A note you have not changed here follows Zotero's notes; a note
+you edited here is never replaced, and is listed only when the notes also
+changed in Zotero. A source imported before notes came as Markdown has a
+plain-text note: the first refresh gives it the Markdown of the same notes
+when you have not edited it (its History keeps the earlier text), and leaves
+it alone when you have. When you changed the same field both here and in Zotero, your
 version here is kept and the refresh lists it: choose **Use Zotero's** or **Keep
 mine**. An empty field in Zotero never clears one here, and an item you deleted
 in Zotero stays in your Library. The details under **More details** (edition,
