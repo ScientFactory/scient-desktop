@@ -155,6 +155,31 @@ describe("typing a LaTeX citation", () => {
     await expect.element(page.getByRole("note")).not.toBeInTheDocument();
   });
 
+  it("shows a .bib file's entries when its read finishes, without another key", async () => {
+    setup([lovelace]);
+    let finish: (result: unknown) => void = () => undefined;
+    mocks.readFile.mockImplementation(({ input }: { input: { relativePath: string } }) =>
+      input.relativePath === "paper/refs.bib"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : Promise.resolve({ _tag: "Failure" }),
+    );
+    await using _screen = await render(<Field initial={"\\bibliography{refs}\n"} />);
+    await userEvent.click(page.getByLabelText("LaTeX source"));
+    await userEvent.keyboard("{Control>}{End}{/Control}\\cite{{");
+    await expect
+      .element(page.getByRole("option"))
+      .toHaveTextContent("lovelace1843notes · Lovelace 1843 · Notes on the analytical engine");
+
+    finish({ _tag: "Success", value: { contents: REFS, truncated: false } });
+    await expect
+      .element(page.getByRole("option").first())
+      .toHaveTextContent(
+        "hopper1952education · Grace Hopper · 1952 · paper/refs.bib · The education of a computer",
+      );
+  });
+
   it("offers a source added to the Library while the document is open", async () => {
     setup([lovelace]);
     await using _screen = await render(<Field />);

@@ -245,7 +245,8 @@ const OPEN_ARGUMENT =
 /** The citation command the caret is in and the text of its open key list, if it is in one. */
 function openCitation(before: string): RegExpExecArray | null {
   const match = OPEN_ARGUMENT.exec(before);
-  if (!match) return null;
+  // A key list never spans a blank line: an unfinished citation ends with its paragraph.
+  if (!match || /\n\s*\n/u.test(match[3]!)) return null;
   const [, command, earlier] = match;
   if (MULTICITE_COMMANDS.has(command!)) return match;
   return CITATION_COMMANDS.has(command!) && /^(?:\[[^\]]*\]){0,2}$/u.test(earlier!) ? match : null;

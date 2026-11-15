@@ -14,6 +14,7 @@ import { useLibraryVersionStore } from "../sources/librarySourceRequest";
 import { useLibraryCitations } from "../sources/useLibraryCitations";
 import { bibliographyChoices } from "./latexAuthoringModel";
 import type { LatexCitationSuggestion } from "./latexCommandCompletion";
+import { refreshLatexCompletions } from "./latexTextCompletion";
 import { processVisualDocumentAsync } from "./visualProcessing";
 
 /** As the References panel: the first bibliography files a document links. */
@@ -100,12 +101,18 @@ export function useLatexCitationSuggestions(input: {
           // A file that is gone or unreadable offers nothing, like one that is empty.
           byPath.set(path, { readAt: Date.now(), pending: false, entries });
           answered.current = null;
+          // An open list shows the file's entries without waiting for the next key.
+          refreshLatexCompletions();
         });
     }
   });
   const linked = useStableCallback(() => {
     const { paths, wholeDocument } = input.bibliography();
-    return { paths: paths.slice(0, FILE_LIMIT), wholeDocument };
+    return {
+      paths: paths.slice(0, FILE_LIMIT),
+      // The managed references.bib at the project root is how a document reaches the Library.
+      reachesLibrary: !wholeDocument || paths.includes("references.bib"),
+    };
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the document's bibliography files from the environment when the editor opens, so the first typed citation already has them
@@ -117,9 +124,9 @@ export function useLatexCitationSuggestions(input: {
 
   return useStableCallback((typed: string) => {
     if (environmentId === null) return [];
-    const { paths, wholeDocument } = linked();
+    const { paths, reachesLibrary } = linked();
     read(paths);
-    const key = JSON.stringify([typed, paths, wholeDocument]);
+    const key = JSON.stringify([typed, paths, reachesLibrary]);
     if (answered.current?.key === key && answered.current.library === library) {
       return answered.current.result;
     }
@@ -130,8 +137,6 @@ export function useLatexCitationSuggestions(input: {
         if (!own.has(entry.citationKey)) own.set(entry.citationKey, entry);
       }
     }
-    // The managed references.bib at the project root is how a document reaches the Library.
-    const unreachable = wholeDocument && !paths.includes("references.bib");
     const result = filterLibraryCitations(
       [...own.values(), ...(library ?? []).filter((source) => !own.has(source.citationKey))],
       typed,
@@ -140,7 +145,7 @@ export function useLatexCitationSuggestions(input: {
       detail: [candidate.label === candidate.citationKey ? null : candidate.label, candidate.title]
         .filter((part) => part !== null)
         .join(" · "),
-      ...(candidate.sourceId && unreachable ? { note: LIBRARY_BIBLIOGRAPHY_HINT } : {}),
+      ...(candidate.sourceId && !reachesLibrary ? { note: LIBRARY_BIBLIOGRAPHY_HINT } : {}),
     }));
     answered.current = { key, library, result };
     return result;

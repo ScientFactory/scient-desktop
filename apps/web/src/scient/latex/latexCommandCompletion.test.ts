@@ -75,6 +75,13 @@ describe("latexSourceChoices", () => {
       expect(at("\\parencite{lovelace1843notes}{tur")).toEqual([]);
     });
 
+    it("ends an unfinished citation with its paragraph", () => {
+      expect(at("See \\cite{\n\nTuring").map((choice) => choice.label)).toEqual([]);
+      expect(at("See \\cite{lovelace1843notes,\n  tur").map((choice) => choice.label)).toEqual([
+        "turing1950computing",
+      ]);
+    });
+
     it("leaves a command written after a line break's backslashes alone", () => {
       expect(at("one\\\\cite{tur")).toEqual([]);
       expect(at("one\\\\\\cite{tur").map((choice) => choice.label)).toEqual([
