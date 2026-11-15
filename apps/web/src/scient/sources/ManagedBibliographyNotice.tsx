@@ -36,7 +36,7 @@ function keptSummary(file: ScientManagedBibliographyFileStatus, failed: boolean)
 }
 
 /** Each managed bibliography file that needs a decision, or whose earlier text is kept. */
-export function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
+function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
   const attention = props.files.filter(needsAttention);
   if (attention.length === 0) return null;
   const replaceButton = (file: ScientManagedBibliographyFileStatus) => (

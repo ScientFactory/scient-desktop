@@ -213,8 +213,8 @@ describe("Sources project scope", () => {
     // The result slot says where it went and offers to add it here.
     const added = screen.getByRole("status").filter({ hasText: "Added 1 source" });
     await expect
-      .element(added)
-      .toHaveTextContent(/^Added 1 source\. It is in your Library, not in this project\./u);
+      .element(added.getByText("Added 1 source. It is in your Library, not in this project."))
+      .toBeVisible();
     expect(mocks.toast).not.toHaveBeenCalledWith(
       expect.objectContaining({ title: "Added 1 source" }),
     );
@@ -467,11 +467,21 @@ describe("Sources project scope", () => {
 
   it("keeps the newest import's result when an earlier import ends after it", async () => {
     setup();
+    const report = {
+      format: "bibtex",
+      entryCount: 1,
+      importCount: 0,
+      alreadyInLibrary: 1,
+      remaining: 0,
+      unreadableCount: 0,
+      unreadable: [],
+      notKept: [],
+    };
     const first = Promise.withResolvers<unknown>();
     mocks.fileImport.mockReset();
     mocks.fileImport
       .mockImplementationOnce(() => first.promise)
-      .mockImplementationOnce(async () => ({ operation: null, report: { alreadyInLibrary: 2 } }));
+      .mockImplementationOnce(async () => ({ operation: null, report }));
     await using screen = await render(
       <ScientSourcesPanel
         environmentId={"environment-1" as EnvironmentId}
@@ -494,18 +504,18 @@ describe("Sources project scope", () => {
     drop("first.bib");
     await vi.waitFor(() => expect(mocks.fileImport).toHaveBeenCalledTimes(1));
     drop("second.bib");
-    const result = screen.getByRole("status").filter({ hasText: "already in the Library" });
-    await expect.element(result).toHaveTextContent(/^2 already in the Library\./u);
+    const result = screen.getByRole("status").filter({ hasText: "second.bib" });
+    await expect.element(result).toBeVisible();
 
     await act(async () => {
-      first.resolve({ operation: null, report: { alreadyInLibrary: 1 } });
+      first.resolve({ operation: null, report });
       // The earlier import's answer runs through its own continuations first.
       const settled = Promise.withResolvers<void>();
       setTimeout(settled.resolve, 0);
       await settled.promise;
     });
-    await expect.element(result).toHaveTextContent(/^2 already in the Library\./u);
-    await expect.element(screen.getByText("1 already in the Library.")).not.toBeInTheDocument();
+    await expect.element(result).toBeVisible();
+    await expect.element(screen.getByText(/first\.bib/u)).not.toBeInTheDocument();
   });
 
   it("shows full-text results under cards, also when the view cannot be saved", async () => {

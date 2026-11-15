@@ -10,7 +10,7 @@ const unreadableLine = (count: number) =>
     : `${count} source files could not be read and are not listed.`;
 
 /** The record files that could not be read, each with its reason; the rest still lists. */
-export function SourceStoreNotice(props: { readonly unreadable: ReadonlyArray<StoreIssue> }) {
+function SourceStoreNotice(props: { readonly unreadable: ReadonlyArray<StoreIssue> }) {
   if (props.unreadable.length === 0) return null;
   return (
     <div className="space-y-1 text-xs text-muted-foreground">

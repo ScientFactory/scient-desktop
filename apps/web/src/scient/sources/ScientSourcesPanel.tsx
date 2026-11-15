@@ -66,7 +66,7 @@ import { SourceAnnotations } from "../annotations/SourceAnnotations";
 import { AddByIdentifier, identifierAddResult } from "./AddByIdentifier";
 import { AskLibraryButton } from "./AskLibraryButton";
 import { ImportReview } from "./ImportReview";
-import { AlreadyPresentSummary, ImportSummary } from "./ImportSummary";
+import { importResultContent, RunningImportBody } from "./ImportSummary";
 import { CenteredState, PanelHeader, SOURCES_COLUMN } from "./PanelChrome";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
@@ -94,6 +94,7 @@ import {
 import {
   importedSourceIdToReveal,
   importedSourceIds,
+  type ImportTarget,
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
 import { SourceHistoryDialog } from "./SourceHistory";
@@ -115,7 +116,6 @@ import {
 import {
   selectSourcesActivity,
   type SourcesActivityItem,
-  type SourcesResult,
   type SourcesResultContent,
 } from "./sourcesFeedback";
 import { SourcesActiveFilters } from "./SourcesActiveFilters";
@@ -124,7 +124,6 @@ import { SourcesFilterMenu } from "./SourcesFilterMenu";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
 import { useSourcesOrganize } from "./useSourcesOrganize";
 import { SystematicReviewsView } from "./SystematicReviews";
-import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
 import { ImportPackageSubmenu } from "./ProjectPackageMenu";
@@ -165,38 +164,17 @@ interface ReferenceFileImport {
   readonly report: ScientSourcesFileImportResult["report"];
 }
 
+type ImportIntake = "zotero" | "local-pdf" | "file";
+
 interface ImportReceipt {
   /** The result-slot operation the import began. */
   readonly resultId: string;
   readonly outcome: ScientSourcesImportOutcome | null;
   readonly referenceFile: ReferenceFileImport | null;
+  readonly target: ImportTarget;
+  readonly intake: ImportIntake;
 }
 
-/** An import's line in the result slot; Details shows the whole receipt in Activity. */
-function importResultContent(
-  outcome: ScientSourcesImportOutcome | null,
-  referenceFile: ReferenceFileImport | null,
-): SourcesResultContent {
-  if (!outcome) {
-    const name = referenceFile?.file.name ?? "the file";
-    return {
-      tone: "info",
-      summary: `Nothing was imported from ${name}.`,
-    };
-  }
-  const { imported, alreadyPresent, reviewRequired, failed } = outcome.counts;
-  const parts = [
-    imported > 0 ? `Imported ${imported} ${imported === 1 ? "source" : "sources"}` : null,
-    alreadyPresent > 0 ? `${alreadyPresent} already in the Library` : null,
-    reviewRequired > 0 ? `${reviewRequired} to review` : null,
-    failed > 0 ? `${failed} failed` : null,
-  ].filter((part) => part !== null);
-  const line = parts.length > 0 ? parts.join(" · ") : "Nothing new was imported";
-  return {
-    tone: failed > 0 ? "error" : imported > 0 ? "success" : "info",
-    summary: outcome.operation?.state === "cancelled" ? `Import stopped: ${line}.` : `${line}.`,
-  };
-}
 const recentSourceAdds = new Map<string, Map<string, number>>();
 function createRecentSourcesStore(initial: ReadonlySet<string>) {
   let snapshot = initial;
@@ -432,121 +410,6 @@ export function ScientSourcesPanel(props: {
     };
   }, []);
 
-  const revealImportedSource = (
-    work: Promise<ScientSourcesImportOutcome | null>,
-    revealSingleSource = true,
-    referenceFile?: () => ReferenceFileImport | null,
-  ) => {
-    const requestedContext = panelContext;
-    const request = ++importRevealRequest.current;
-    const resultId = result.begin();
-    void work.then((outcome) => {
-      if (!panelMounted.current || panelContextRef.current !== requestedContext) return;
-      const file = referenceFile?.() ?? null;
-      // A later start owns the slot; this import's receipt is then not shown.
-      if ((outcome || file) && result.settle(resultId, importResultContent(outcome, file))) {
-        setImportReceipt({ resultId, outcome, referenceFile: file });
-      }
-      if (!outcome || importRevealRequest.current !== request) return;
-      setRecentlyAddedSourceIds(
-        rememberRecentSourceAdds(requestedContext, importedSourceIds(outcome)),
-      );
-      const sourceId = revealSingleSource ? importedSourceIdToReveal(outcome) : null;
-      if (sourceId) {
-        setEditingSource(false);
-        setSelectedSourceId(sourceId);
-      }
-    });
-  };
-  useLibraryFileImport(props.root, sources.overview !== null, (files) =>
-    revealImportedSource(sources.uploadLocalFiles(files), files.length === 1),
-  );
-
-  const importReferenceFile = (file: File) => {
-    setSelectedSourceId(null);
-    let report: ScientSourcesFileImportResult["report"] | null = null;
-    revealImportedSource(
-      sources.importReferenceFile(file).then((imported) => {
-        report = imported?.report ?? null;
-        return imported?.outcome ?? null;
-      }),
-      false,
-      () => (report ? { file, report } : null),
-    );
-  };
-
-  /** The result slot's import receipt, with the import's live state and actions. */
-  const importReceiptResult = (shown: SourcesResult | null): SourcesResult | null => {
-    if (!shown || !importReceipt || shown.operationId !== importReceipt.resultId) return shown;
-    const { outcome, referenceFile } = importReceipt;
-    const operation =
-      outcome?.operation && sources.operation?.operationId === outcome.operation.operationId
-        ? sources.operation
-        : (outcome?.operation ?? null);
-    const details = (
-      <>
-        {operation && outcome ? (
-          <ImportSummary
-            operation={operation}
-            outcome={outcome}
-            onDismiss={result.dismiss}
-            onCancel={() => void sources.cancelImport()}
-            cancelling={sources.cancelling}
-            {...(scopes ? { onShowSources: showPackageSources } : {})}
-            {...(canChange && sources.zoteroRunRemaining > 0
-              ? {
-                  rest: {
-                    count: sources.zoteroRunRemaining,
-                    onImport: () => revealImportedSource(sources.importZoteroRest(), false),
-                  },
-                }
-              : {})}
-            {...(scopes && !operation.pinInstanceId
-              ? {
-                  libraryOnly: canChangeProject
-                    ? {
-                        onAddToProject: (sourceIds: ReadonlyArray<string>) =>
-                          void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(
-                            result.dismiss,
-                          ),
-                      }
-                    : {},
-                }
-              : {})}
-            {...(canChange &&
-            operation.state !== "cancelled" &&
-            operation.items.some((item) => item.state === "failed")
-              ? { onRetryFailed: () => void sources.retryFailedImport() }
-              : {})}
-          />
-        ) : outcome?.kind === "already-present" ? (
-          <AlreadyPresentSummary
-            outcome={outcome}
-            onDismiss={result.dismiss}
-            {...(outcome.existingSourceId
-              ? {
-                  onViewExisting: () => {
-                    setEditingSource(false);
-                    setSelectedSourceId(outcome.existingSourceId);
-                  },
-                }
-              : {})}
-          />
-        ) : null}
-        {referenceFile ? (
-          <ReferenceFileReport
-            fileName={referenceFile.file.name}
-            report={referenceFile.report}
-            busy={sources.importing || !canChange}
-            onContinue={() => importReferenceFile(referenceFile.file)}
-            onDismiss={result.dismiss}
-          />
-        ) : null}
-      </>
-    );
-    return { ...shown, details };
-  };
-
   const [previousPanelContext, setPreviousPanelContext] = useState({ context: panelContext });
   if (previousPanelContext.context !== panelContext) {
     setPreviousPanelContext({ context: panelContext });
@@ -722,6 +585,118 @@ export function ScientSourcesPanel(props: {
     applyReadingState: sources.applyReadingState,
   });
   const { addToProject, removeFromProject, setReadingState } = libraryActions;
+  // Stable: the result's actions, built during render, hold it, and it reads the panel's refs.
+  const revealImportedSource = useStableCallback(
+    (
+      work: Promise<ScientSourcesImportOutcome | null>,
+      options: {
+        readonly intake: ImportIntake;
+        /** Opens the one source an import brought. */
+        readonly reveal?: boolean;
+        readonly referenceFile?: () => ReferenceFileImport | null;
+      },
+    ) => {
+      const requestedContext = panelContext;
+      const request = ++importRevealRequest.current;
+      const resultId = result.begin();
+      const target: ImportTarget = scopes
+        ? scopes.listed === "library"
+          ? "library"
+          : "project"
+        : "project-folder";
+      void work.then((outcome) => {
+        if (!panelMounted.current || panelContextRef.current !== requestedContext) return;
+        const referenceFile = options.referenceFile?.() ?? null;
+        const receipt = { resultId, outcome, referenceFile, target, intake: options.intake };
+        // A later start owns the slot; this import's receipt is then not shown. The panel
+        // reads the receipt again at render, with its actions.
+        const content = importResultContent({
+          operation: outcome?.operation ?? null,
+          outcome,
+          referenceFile: referenceFile
+            ? { name: referenceFile.file.name, report: referenceFile.report }
+            : null,
+          target,
+          intake: options.intake,
+        });
+        if ((outcome || referenceFile) && result.settle(resultId, content)) {
+          setImportReceipt(receipt);
+        }
+        if (!outcome || importRevealRequest.current !== request) return;
+        setRecentlyAddedSourceIds(
+          rememberRecentSourceAdds(requestedContext, importedSourceIds(outcome)),
+        );
+        const sourceId = options.reveal ? importedSourceIdToReveal(outcome) : null;
+        if (sourceId) {
+          setEditingSource(false);
+          setSelectedSourceId(sourceId);
+        }
+      });
+    },
+  );
+  useLibraryFileImport(props.root, sources.overview !== null, (files) =>
+    revealImportedSource(sources.uploadLocalFiles(files), {
+      intake: "local-pdf",
+      reveal: files.length === 1,
+    }),
+  );
+
+  const importReferenceFile = (file: File) => {
+    setSelectedSourceId(null);
+    let report: ScientSourcesFileImportResult["report"] | null = null;
+    revealImportedSource(
+      sources.importReferenceFile(file).then((imported) => {
+        report = imported?.report ?? null;
+        return imported?.outcome ?? null;
+      }),
+      { intake: "file", referenceFile: () => (report ? { file, report } : null) },
+    );
+  };
+
+  /** A finished import's result, read at render so its actions see the import as it is now. */
+  const importReceiptContent = (receipt: ImportReceipt): SourcesResultContent => {
+    const { outcome, referenceFile } = receipt;
+    const operation =
+      outcome?.operation && sources.operation?.operationId === outcome.operation.operationId
+        ? sources.operation
+        : (outcome?.operation ?? null);
+    const fileRest = referenceFile && canChange ? referenceFile.report.remaining : 0;
+    const zoteroRest = receipt.intake === "zotero" && canChange ? sources.zoteroRunRemaining : 0;
+    return importResultContent({
+      operation,
+      outcome,
+      referenceFile: referenceFile
+        ? { name: referenceFile.file.name, report: referenceFile.report }
+        : null,
+      target: receipt.target,
+      intake: receipt.intake,
+      sourceTitle: (sourceId) =>
+        sources.overview?.records.find((record) => record.sourceId === sourceId)?.title ?? null,
+      ...(referenceFile && fileRest > 0
+        ? { rest: { count: fileRest, onImport: () => importReferenceFile(referenceFile.file) } }
+        : zoteroRest > 0
+          ? {
+              rest: {
+                count: zoteroRest,
+                onImport: () =>
+                  revealImportedSource(sources.importZoteroRest(), { intake: "zotero" }),
+              },
+            }
+          : {}),
+      ...(canChange ? { onRetryFailed: () => void sources.retryFailedImport() } : {}),
+      ...(canChangeProject
+        ? {
+            onAddToProject: (sourceIds: ReadonlyArray<string>) =>
+              void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(result.dismiss),
+          }
+        : {}),
+      ...(scopes ? { onShowSources: showPackageSources } : {}),
+      onViewSource: (sourceId) => {
+        setEditingSource(false);
+        setSelectedSourceId(sourceId);
+      },
+    });
+  };
   // A source this project keeps from its own details: link it to a Library copy, or keep it apart.
   const linkToCopy = async (projectSourceId: string, librarySourceId: string) => {
     const result = await organize.organize(
@@ -886,12 +861,10 @@ export function ScientSourcesPanel(props: {
       ...(sources.operation
         ? {
             operationBody: (
-              <ImportSummary
+              <RunningImportBody
                 operation={sources.operation}
-                outcome={null}
-                onDismiss={result.dismiss}
-                onCancel={() => void sources.cancelImport()}
                 cancelling={sources.cancelling}
+                onCancel={() => void sources.cancelImport()}
               />
             ),
           }
@@ -926,7 +899,10 @@ export function ScientSourcesPanel(props: {
         onResolve: (name, action) => void bibliography.resolve(name, action),
       }),
   ]);
-  const shownResult = importReceiptResult(result.result);
+  const shownResult =
+    result.result && importReceipt?.resultId === result.result.operationId
+      ? { ...importReceiptContent(importReceipt), operationId: result.result.operationId }
+      : result.result;
   const activityButton = (
     <SourcesActivityButton
       activity={activity}
@@ -1043,7 +1019,10 @@ export function ScientSourcesPanel(props: {
         onDismissError={sources.clearError}
         onBack={sources.resetImport}
         onImport={(itemKeys, possibleMetadataMatchOverrides) =>
-          revealImportedSource(sources.runImport(itemKeys, possibleMetadataMatchOverrides))
+          revealImportedSource(sources.runImport(itemKeys, possibleMetadataMatchOverrides), {
+            intake: sources.preflightAdapter === "local-files" ? "local-pdf" : "zotero",
+            reveal: true,
+          })
         }
       />,
     );
@@ -1180,7 +1159,12 @@ export function ScientSourcesPanel(props: {
                   size="xs"
                   variant="ghost"
                   disabled={!canChange || sources.busy || sources.library.total === 0}
-                  onClick={() => revealImportedSource(sources.importZoteroScope())}
+                  onClick={() =>
+                    revealImportedSource(sources.importZoteroScope(), {
+                      intake: "zotero",
+                      reveal: true,
+                    })
+                  }
                 >
                   <Download />
                   {sources.zoteroScope.kind === "collection" ? "Import collection" : "Import all"}
@@ -1221,7 +1205,12 @@ export function ScientSourcesPanel(props: {
                 size="xs"
                 variant="ghost"
                 disabled={!canChange || sources.busy}
-                onClick={() => revealImportedSource(sources.previewImport([...selectedKeys]))}
+                onClick={() =>
+                  revealImportedSource(sources.previewImport([...selectedKeys]), {
+                    intake: "zotero",
+                    reveal: true,
+                  })
+                }
               >
                 <Download />
                 {selectedKeys.size === 1 ? "Import" : `Import ${selectedKeys.size}`}
@@ -1726,7 +1715,9 @@ export function ScientSourcesPanel(props: {
           return;
         }
         setSelectedSourceId(null);
-        revealImportedSource(sources.uploadLocalFiles([...event.dataTransfer.files]), false);
+        revealImportedSource(sources.uploadLocalFiles([...event.dataTransfer.files]), {
+          intake: "local-pdf",
+        });
       }}
     >
       {dragActive ? (
@@ -1745,7 +1736,10 @@ export function ScientSourcesPanel(props: {
         onChange={(event) => {
           const files = [...(event.currentTarget.files ?? [])];
           event.currentTarget.value = "";
-          revealImportedSource(sources.uploadLocalFiles(files), files.length === 1);
+          revealImportedSource(sources.uploadLocalFiles(files), {
+            intake: "local-pdf",
+            reveal: files.length === 1,
+          });
         }}
       />
       <input

@@ -359,7 +359,7 @@ export function useLibraryBackup(input: {
 }
 
 /** A backup's, an addition's or a restore's running line; a waiting restore offers Cancel. */
-export function LibraryBackupNotice(props: {
+function LibraryBackupNotice(props: {
   readonly line?: string | null;
   readonly joinLine?: string | null;
   readonly restoreLine?: string | null;

@@ -14,7 +14,7 @@ interface NoticeChangesProps {
 }
 
 /** The notices the weekly check found since the person last dismissed it, with Show. */
-export function LibraryNoticeChanges(props: NoticeChangesProps) {
+function LibraryNoticeChanges(props: NoticeChangesProps) {
   const line = noticeChangesLine(props.changes);
   if (!line) return null;
   return (
