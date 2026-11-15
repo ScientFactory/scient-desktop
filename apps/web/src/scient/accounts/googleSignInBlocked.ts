@@ -12,7 +12,7 @@ const KEPT = 32;
 
 interface GoogleSignInBlockedState {
   /**
-   * The latest stopped Google sign-in of each desktop tab, by runtime tab id. It applies only while
+   * The latest refused Google sign-in of each desktop tab, by runtime tab id. It applies only while
    * the tab still shows the event's `pageUrl`.
    */
   readonly byTabId: Readonly<Record<string, DesktopPreviewSignInBlockedEvent>>;
@@ -46,7 +46,7 @@ export function noteGoogleSignInBlocked(
 }
 
 /**
- * A stopped sign-in is about one page: once the tab shows another address it is dropped, so coming
+ * A refused sign-in is about one page: once the tab shows another address it is dropped, so coming
  * back to the same address later doesn't bring an old explanation back.
  */
 export function noteTabState(tabId: string, state: DesktopPreviewTabState) {

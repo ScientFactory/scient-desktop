@@ -109,10 +109,7 @@ import { ProfileSwitcher } from "~/scient/accounts/ProfileSwitcher";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
 import { googleSignInPage } from "@t3tools/shared/scientGoogleSignIn";
-import {
-  GoogleSignInBlockedNotice,
-  GoogleSignInBlockedPage,
-} from "~/scient/accounts/GoogleSignInRecovery";
+import { GoogleSignInBlockedNotice } from "~/scient/accounts/GoogleSignInRecovery";
 import { useGoogleSignInBlocked } from "~/scient/accounts/googleSignInBlocked";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient: Google, apps and shortcuts on an empty tab.
@@ -332,11 +329,6 @@ export function PreviewView({
     onOpenExternal: (target: string) =>
       void localApi?.shell.openExternal(target).catch(() => undefined),
   };
-  /** Google's sign-in page the tab stopped: a failed load explained by recovery, not as an error. */
-  const googleSignInStopped =
-    navStatus._tag === "LoadFailed" &&
-    navStatus.code === -20 &&
-    googleSignInPage(navStatus.url) !== null;
   // SCIENT-FORK:END
 
   // SCIENT-FORK:START — Scient: answers with the profile the page opened in, or null if it didn't.
@@ -1314,30 +1306,19 @@ export function PreviewView({
           />
         ) : null}
         {/* SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained. */}
-        {googleSignInStopped ? (
-          <div className="absolute inset-0 z-10 bg-background">
-            <GoogleSignInBlockedPage
-              {...signInRecovery}
-              restartUrl={
-                signInBlocked?.context === "tab" && signInBlocked.pageUrl === navStatus.url
-                  ? signInBlocked.restartUrl
-                  : null
-              }
-            />
-          </div>
-        ) : signInBlocked &&
-          runtimeTabId &&
-          signInBlocked.pageUrl === url &&
-          (signInBlocked.context !== "tab" || googleSignInPage(url) === "rejected") ? (
+        {signInBlocked &&
+        runtimeTabId &&
+        signInBlocked.pageUrl === url &&
+        (signInBlocked.context !== "tab" || googleSignInPage(url) === "rejected") ? (
           <GoogleSignInBlockedNotice
             {...signInRecovery}
             restartUrl={signInBlocked.restartUrl}
+            onSignedIn={(target) => void navigateToResolvedUrl(target)}
             onDismiss={() => dismissSignInBlocked(runtimeTabId)}
           />
         ) : null}
         {/* SCIENT-FORK:END */}
-        {/* SCIENT-FORK: a stopped Google sign-in is explained above, not shown as an error. */}
-        {googleSignInStopped ? null : navStatus._tag === "LoadFailed" && navStatus.download ? (
+        {navStatus._tag === "LoadFailed" && navStatus.download ? (
           <div className="absolute inset-0 z-10 bg-background">
             <ServerTabFileNotShown
               threadRef={threadRef}
