@@ -15,6 +15,11 @@ Below them is a search box that works like the address bar. Type a web address t
 anything else to search with the search engine chosen in Settings. It uses the profile shown in the
 toolbar.
 
+In both, characters a web address can't hold are left out of the site's name: invisible direction
+marks, and vowel points or other marks of another script that a Hebrew or Arabic keyboard can add
+after an English name such as `example.app`. Addresses written in Hebrew or Arabic, and the rest of
+an address after the site's name, stay exactly as typed.
+
 Shortcuts sit below the search box, above your local previews and recently used pages. Sites you add
 come first, then the sites you open most, then Scholar, PubMed, arXiv, Overleaf, Drive and Calendar.
 
