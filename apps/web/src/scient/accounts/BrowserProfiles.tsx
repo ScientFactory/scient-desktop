@@ -516,11 +516,13 @@ export function BrowserImportDialog({
     const sessionsFrom: Array<{ profileId: string; from: string; filled: boolean }> = [];
     /** Browsers this import connected to, which keep remote debugging on until turned off. */
     const connected = new Map<string, ConnectableSource>();
+    /** Browsers that didn't connect: their other profiles aren't asked about again. */
+    const refused = new Set<string>();
     try {
       for (const source of loaded)
         for (const profile of source.profiles) {
           const key = JSON.stringify([source.id, profile.directory]);
-          if (!selected.has(key) || !importable(source)) continue;
+          if (!selected.has(key) || !importable(source) || refused.has(source.id)) continue;
           let profileId: string | undefined = linkedProfile(source, profile);
           // A profile imported before keeps its sign-ins; only its passwords can still come in.
           if (!isImported(source, profile)) {
@@ -544,6 +546,8 @@ export function BrowserImportDialog({
                 type: "error",
                 title: BROWSER_IMPORT_FAILURE_COPY[outcome.reason],
               });
+              if (isConnectable(source) && outcome.reason.startsWith("connection"))
+                refused.add(source.id);
               // Turned off since the step: the step shows again next time.
               if (outcome.reason === "connectionOff")
                 setConnectReady(
@@ -1175,6 +1179,8 @@ export function BrowserProfiles({
     /** Browsers that hand sign-ins over themselves but didn't this time, with why. */
     const notConnected = new Map<string, { source: ConnectableSource; reason: string }>();
     const told = new Set<string>();
+    const turnOnToRefresh = (source: ConnectableSource) =>
+      `Turn on “${REMOTE_DEBUGGING_SETTING}” at ${source.connection.settingsUrl}, then Refresh.`;
     for (const { id, record } of targets) {
       let refreshed = false;
       const linked = record.source;
@@ -1191,16 +1197,20 @@ export function BrowserProfiles({
       // Sign-ins can only be read once the browser is closed; passwords and details can now.
       if (source.unavailable === "browserRunning") running.add(source.name);
       else if (source.unavailable && !isConnectable(source)) failed = true;
+      // Off, or it didn't connect for an earlier profile: its profiles keep their sign-ins, and
+      // their pictures, names and passwords still refresh below.
       else if (
         isConnectable(source) &&
-        !(await window.desktopBridge?.accounts?.browserConnection?.(source.id).catch(() => null))
-          ?.on
-      )
-        notConnected.set(source.id, {
-          source,
-          reason: `Turn on “${REMOTE_DEBUGGING_SETTING}” at ${source.connection.settingsUrl}, then Refresh.`,
-        });
-      else {
+        (notConnected.has(source.id) ||
+          !(await window.desktopBridge?.accounts?.browserConnection?.(source.id).catch(() => null))
+            ?.on)
+      ) {
+        if (!notConnected.has(source.id))
+          notConnected.set(source.id, {
+            source,
+            reason: turnOnToRefresh(source),
+          });
+      } else {
         // Once per browser: its one connection serves every profile of the refresh.
         if (isConnectable(source) && !told.has(source.id)) {
           told.add(source.id);
@@ -1235,7 +1245,7 @@ export function BrowserProfiles({
             source,
             reason:
               result.reason === "connectionOff"
-                ? `Turn on “${REMOTE_DEBUGGING_SETTING}” at ${source.connection.settingsUrl}, then Refresh.`
+                ? turnOnToRefresh(source)
                 : BROWSER_IMPORT_FAILURE_COPY[result.reason],
           });
         else if (result.kind === "blocked") failed = true;

@@ -237,7 +237,8 @@ function markerUrl(nonce: string) {
   const html =
     "<!doctype html><meta charset=utf-8><title>Scient</title>" +
     '<body style="font:15px system-ui;margin:3em;color:#444">' +
-    "<p>Scient is copying this profile’s sign-ins. This tab closes by itself.</p>" +
+    "<p>Scient opened this tab to copy this profile’s sign-ins and closes it when done. " +
+    "If you didn’t allow it, you can close this tab.</p>" +
     `<!--scient-import:${nonce}-->`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }

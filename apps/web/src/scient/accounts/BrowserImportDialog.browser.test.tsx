@@ -306,3 +306,48 @@ it("imports Windows Chrome profiles through Chrome itself, once remote debugging
     }),
   );
 });
+
+it("asks Chrome once per import: after a refusal its other profiles wait", async () => {
+  state.sources = [
+    {
+      id: "chrome",
+      name: "Chrome",
+      profiles: [
+        { directory: "Default", name: "Home" },
+        { directory: "Profile 2", name: "Lab" },
+      ],
+      unavailable: "appBoundEncryption",
+      connection: { settingsUrl: "chrome://inspect/#remote-debugging" },
+    },
+  ];
+  state.importCookies
+    .mockReset()
+    .mockResolvedValue({ kind: "blocked", reason: "connectionDeclined" });
+  state.toast.mockReset();
+  using _bridge = stubGlobal("desktopBridge", {
+    getLocalEnvironmentBootstraps: () => [],
+    accounts: { sourceProfiles: async () => [], browserConnection: async () => ({ on: true }) },
+  });
+  await using _screen = await render(
+    <BrowserImportDialog
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={snapshot}
+      canWrite
+      onClose={vi.fn()}
+    />,
+  );
+  await page.getByRole("checkbox", { name: "Home · Chrome" }).click();
+  await page.getByRole("checkbox", { name: "Lab · Chrome" }).click();
+  await page.getByRole("button", { name: "Import (2)", exact: true }).click();
+  await expect.element(page.getByText("It’s on.")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await vi.waitFor(() =>
+    expect(state.toast).toHaveBeenCalledWith({
+      type: "error",
+      title: "The browser didn't allow the connection. Try again and click Allow.",
+    }),
+  );
+  expect(state.importCookies).toHaveBeenCalledOnce();
+  // Both stay selected for another try.
+  await expect.element(page.getByRole("button", { name: "Import (2)", exact: true })).toBeEnabled();
+});

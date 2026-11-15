@@ -165,7 +165,9 @@ describe("createBrowserConnections", () => {
     await connections.readProfile(target, "Default");
     const url = browser.opened[0]?.url ?? "";
     expect(url.startsWith("data:text/html;charset=utf-8,")).toBe(true);
-    expect(decodeURIComponent(url)).toContain("Scient is copying this profile’s sign-ins");
+    expect(decodeURIComponent(url)).toContain(
+      "Scient opened this tab to copy this profile’s sign-ins",
+    );
   });
 
   it("says when the person declines or doesn't answer", async () => {
