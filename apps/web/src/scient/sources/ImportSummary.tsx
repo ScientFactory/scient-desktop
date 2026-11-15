@@ -11,6 +11,7 @@ import {
   notBroughtLines,
   notBroughtName,
 } from "./notBroughtLabels";
+import { countOf } from "./referenceFileSummary";
 import { importProgressLabel, type SourcesResultContent } from "./sourcesFeedback";
 
 /** How many kinds of things not brought are listed before "Show all". */
@@ -29,8 +30,9 @@ export interface ImportReceiptActions {
 }
 
 /**
- * A finished import's result: what came in first, then the exceptions in plain words; the
- * details hold the whole receipt. Call it at render, so its actions see the current state.
+ * A finished import's result: what came in first, then its exceptions. With details, the summary
+ * only counts them and the details list each once; a lone exception goes in the summary. Call it
+ * at render, so its actions see the current state.
  */
 export function importResultContent(
   input: ImportReceiptInput & ImportReceiptActions,
@@ -81,11 +83,16 @@ export function importResultContent(
     receipt.fileDetails.length > 0 ||
     receipt.failures.length > 0 ||
     notBrought.length > 0;
+  const exceptions = hasDetails
+    ? notes.length > 0
+      ? ` ${countOf(notes.length, "exception", "exceptions")}.`
+      : ""
+    : notes[0]
+      ? ` ${notes[0]}.`
+      : "";
   return {
     tone: receipt.tone,
-    summary: `${receipt.headline}.${notes[0] ? ` ${notes[0]}.` : ""}${
-      notes.length > 1 ? " See Details for more." : ""
-    }`,
+    summary: `${receipt.headline}.${exceptions}`,
     ...(hasDetails
       ? {
           details: (
