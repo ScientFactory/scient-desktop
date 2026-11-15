@@ -169,7 +169,7 @@ function keysOf(keys: ReadonlyArray<string>, entryCount: number): string {
   return `${keys.join(", ")}${more > 0 ? ` and ${more.toLocaleString()} more` : ""}`;
 }
 
-export function unreadableEntryLabel(entry: Report["unreadable"][number]): string {
+function unreadableEntryLabel(entry: Report["unreadable"][number]): string {
   const where = [entry.line ? `Line ${entry.line}` : null, entry.citationKey]
     .filter(Boolean)
     .join(" · ");

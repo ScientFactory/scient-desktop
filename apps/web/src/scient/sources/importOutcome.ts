@@ -113,15 +113,6 @@ export function importedSourceIds(outcome: ScientSourcesImportOutcome): Readonly
  */
 export type ImportTarget = "project-folder" | "project" | "library";
 
-export function importTarget(
-  operation: ScientSourceImportOperation | null,
-  fallback: ImportTarget,
-): ImportTarget {
-  if (!operation) return fallback;
-  if (operation.formatVersion === 1) return "project-folder";
-  return operation.pinInstanceId ? "project" : "library";
-}
-
 export interface ImportReceiptInput {
   /** The finished import; null when nothing was staged (a file with nothing new, all present). */
   readonly operation: ScientSourceImportOperation | null;
@@ -161,7 +152,13 @@ const were = (count: number) => (count === 1 ? "was" : "were");
 /** What a finished import did, counted from its items, with the reference file's exceptions. */
 export function describeImport(input: ImportReceiptInput): ImportReceipt {
   const { operation, outcome, referenceFile } = input;
-  const target = importTarget(operation, input.target);
+  const target: ImportTarget = !operation
+    ? input.target
+    : operation.formatVersion === 1
+      ? "project-folder"
+      : operation.pinInstanceId
+        ? "project"
+        : "library";
   const pdfs = (operation?.intake ?? input.intake) === "local-pdf";
   const noun = (count: number) =>
     countOf(count, pdfs ? "PDF" : "reference", pdfs ? "PDFs" : "references");
