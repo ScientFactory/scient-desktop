@@ -184,7 +184,7 @@ describe("backing up the Library from the panel", () => {
         type: "success",
         title: "Library backed up",
         description:
-          "1,204 sources and 980 PDFs (3,072 MB) in /Users/ada/Backups/Scient Library backup 2026-11-15 0700. One project has not finished moving into the Library, so not all of its sources are in this backup. 2 entries that are not files were not copied; the backup's README lists them.",
+          "1,204 sources and 980 PDFs (3,072 MB) in /Users/ada/Backups/Scient Library backup 2026-11-15 0700. One project has not finished moving into or out of the Library. Keep that project folder too: some of its sources may be only there. 2 entries that are not files were not copied; the backup's README lists them.",
       }),
     );
   });
@@ -308,6 +308,88 @@ describe("backing up the Library from the panel", () => {
         description: "This folder is not a finished Scient Library backup.",
       }),
     );
+  });
+
+  it("drops an answer that arrives for a project the panel has left", async ({ signal }) => {
+    using _timers = fakeTimers();
+    setup([{ state: "none" }]);
+    // The first project's read is held; the second project's read says a backup runs.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mocks.readLibraryBackupStatus.mockReset();
+    mocks.readLibraryBackupStatus
+      .mockImplementationOnce(async () => {
+        await held;
+        return { backup: { state: "none" }, restore: { state: "none" } };
+      })
+      .mockImplementation(async () => ({
+        backup: { state: "running", done: 2, total: 9 },
+        restore: { state: "none" },
+      }));
+    await using screen = await render(<Harness />, { router: false });
+    await userEvent.click(screen.getByRole("button", { name: "Other project" }));
+    await expect.element(screen.getByText(/2 of 9 files/u)).toBeVisible();
+
+    release();
+    await vi.waitFor(async () => {
+      await expect(mocks.readLibraryBackupStatus.mock.results[0]!.value).resolves.toBeDefined();
+    });
+    // The late answer changed nothing. Less than the asking interval passes, so nothing has
+    // asked again to repair it: the line is still there.
+    await advanceTestClock(signal, 100);
+    expect(screen.getByText(/2 of 9 files/u).query()).not.toBeNull();
+    const reads = mocks.readLibraryBackupStatus.mock.calls.length;
+    await advanceTestClock(signal, 1_000);
+    expect(mocks.readLibraryBackupStatus.mock.calls.length).toBeGreaterThan(reads);
+    expect(screen.getByText(/2 of 9 files/u).query()).not.toBeNull();
+  });
+
+  it("says that another backup was refused while the one that was ready still waits", async ({
+    signal,
+  }) => {
+    using _timers = fakeTimers();
+    const ready: ScientSourcesRestoreStatus = {
+      state: "ready",
+      backupCreatedAt: "2026-11-14T07:00:00.000Z",
+      sources: 1204,
+      pdfs: 980,
+    };
+    setup([{ state: "none" }], [ready]);
+    mocks.changeLibraryRestore.mockResolvedValueOnce({ state: "preparing", done: 0, total: 0 });
+    await using screen = await render(<Harness />, { router: false });
+    await expect.element(screen.getByText(/is ready/u)).toBeVisible();
+    expect(mocks.toast).not.toHaveBeenCalled();
+
+    setup(
+      [{ state: "none" }],
+      [
+        {
+          ...ready,
+          refused: {
+            // Its own moment: a window says each ending once, by when it happened.
+            failedAt: "2026-11-15T09:30:00.000Z",
+            reason: "This folder is not a finished Scient Library backup.",
+          },
+        },
+      ],
+    );
+    mocks.changeLibraryRestore.mockResolvedValueOnce({ state: "preparing", done: 0, total: 0 });
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await advanceTestClock(signal, 1_000);
+    const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
+      new Date(ready.backupCreatedAt),
+    );
+    await vi.waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith({
+        type: "error",
+        title: "The backup was not restored",
+        description: `This folder is not a finished Scient Library backup. The backup of ${day} that was ready is still waiting.`,
+      }),
+    );
+    await expect.element(screen.getByText(/is ready/u)).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
   });
 
   it("asks nothing where the Library is not kept", async () => {

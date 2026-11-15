@@ -22,7 +22,7 @@ export function backupDoneLabel(
   const megabytes = Math.max(1, Math.round(status.bytes / (1024 * 1024)));
   const notes = [
     status.unfinishedMoves > 0
-      ? ` ${status.unfinishedMoves === 1 ? "One project has" : `${count(status.unfinishedMoves)} projects have`} not finished moving into the Library, so not all of ${status.unfinishedMoves === 1 ? "its" : "their"} sources are in this backup.`
+      ? ` ${status.unfinishedMoves === 1 ? "One project has" : `${count(status.unfinishedMoves)} projects have`} not finished moving into or out of the Library. Keep ${status.unfinishedMoves === 1 ? "that project folder" : "those project folders"} too: some of ${status.unfinishedMoves === 1 ? "its" : "their"} sources may be only there.`
       : "",
     status.skipped > 0
       ? ` ${status.skipped === 1 ? "One entry that is not a file was" : `${count(status.skipped)} entries that are not files were`} not copied; the backup's README lists ${status.skipped === 1 ? "it" : "them"}.`
@@ -61,6 +61,15 @@ export function restoreLine(status: ScientSourcesRestoreStatus): string | null {
     ? ` Scient could not put it in place at its last start (${status.problem}); it tries again at the next.`
     : "";
   return `The backup of ${day(status.backupCreatedAt)} is ready: ${holding(status)}. It replaces this Library the next time Scient starts. If this Library holds anything, it is kept in a folder beside the restored one.${problem}`;
+}
+
+/** A later request failed while an earlier copy still waits: both facts in one message. */
+export function restoreRefusedLabel(
+  status: Extract<ScientSourcesRestoreStatus, { state: "ready" }>,
+): string | null {
+  return status.refused
+    ? `${status.refused.reason} The backup of ${day(status.backupCreatedAt)} that was ready is still waiting.`
+    : null;
 }
 
 export function restoredLabel(

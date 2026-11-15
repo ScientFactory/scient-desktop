@@ -17,6 +17,7 @@ import {
   backupDoneLabel,
   backupRunningLabel,
   restoreLine,
+  restoreRefusedLabel,
   restoredLabel,
 } from "./libraryBackupLabels";
 
@@ -49,18 +50,30 @@ function sayHowBackupEnded(environmentId: EnvironmentId, backup: ScientSourcesBa
 
 /** A restore ends at a start of Scient, so no window saw it running: each says it once. */
 function sayHowRestoreEnded(environmentId: EnvironmentId, restore: ScientSourcesRestoreStatus) {
-  if (restore.state !== "restored" && restore.state !== "failed") return;
-  const key = `${environmentId}\0${restore.state === "restored" ? restore.restoreId : restore.failedAt}`;
-  if (said.has(key)) return;
-  said.add(key);
+  const once = (id: string) => {
+    const key = `${environmentId}\0${id}`;
+    if (said.has(key)) return false;
+    said.add(key);
+    return true;
+  };
   if (restore.state === "restored") {
+    if (!once(restore.restoreId)) return;
     toastManager.add({
       type: "success",
       title: RESTORE_LABELS.restored,
       description: restoredLabel(restore),
     });
-  } else {
+  } else if (restore.state === "failed") {
+    if (!once(restore.failedAt)) return;
     toastManager.add({ type: "error", title: RESTORE_LABELS.failed, description: restore.reason });
+  } else if (restore.state === "ready" && restore.refused) {
+    // Another backup was asked for and refused; the one that was ready still waits.
+    if (!once(restore.refused.failedAt)) return;
+    toastManager.add({
+      type: "error",
+      title: RESTORE_LABELS.failed,
+      description: restoreRefusedLabel(restore) ?? restore.refused.reason,
+    });
   }
 }
 
@@ -88,14 +101,21 @@ export function useLibraryBackup(input: {
   } | null>(null);
   const copies = input.enabled && reading?.context === context ? reading.copies : null;
   const working = copies?.backup.state === "running" || copies?.restore.state === "preparing";
+  /** No answer yet for this Library: asked again until one comes. */
+  const unread = input.enabled && copies === null;
   /** The context a read is under way for: one read at a time, so a slow one is not restarted. */
   const asking = useRef<string | null>(null);
+  /** The context the panel shows now; an answer for another one (a project left) is dropped. */
+  const shown = useStableCallback(() => (input.enabled ? context : null));
 
-  const show = (next: Partial<ScientSourcesLibraryCopies>) =>
+  const show = (asked: string, next: Partial<ScientSourcesLibraryCopies>) => {
+    if (shown() !== asked) return false;
     setReading((previous) => ({
-      context,
-      copies: { ...(previous?.context === context ? previous.copies : NOTHING), ...next },
+      context: asked,
+      copies: { ...(previous?.context === asked ? previous.copies : NOTHING), ...next },
     }));
+    return true;
+  };
 
   const load = useStableCallback(async (asked: string) => {
     if (asking.current === asked) return;
@@ -103,8 +123,7 @@ export function useLibraryBackup(input: {
     const next = await readLibraryBackupStatus(input.environmentId, input.root).catch(() => null);
     if (asking.current === asked) asking.current = null;
     // A failed read changes nothing: the last answer stands and the timer asks again.
-    if (!next || asked !== context) return;
-    setReading({ context, copies: next });
+    if (!next || !show(asked, next)) return;
     sayHowBackupEnded(input.environmentId, next.backup);
     sayHowRestoreEnded(input.environmentId, next.restore);
   });
@@ -114,12 +133,12 @@ export function useLibraryBackup(input: {
     if (input.enabled) void load(context);
   }, [input.enabled, context, load]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment server again on a timer while a backup or a restore's copy runs, whether or not the last read succeeded; unmounting stops it
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment server again on a timer while a backup or a restore's copy runs, or while no answer has come yet, whether or not the last read succeeded; unmounting stops it
   useEffect(() => {
-    if (!working) return;
+    if (!working && !unread) return;
     const timer = window.setInterval(() => void load(context), ASK_AGAIN_MS);
     return () => window.clearInterval(timer);
-  }, [working, context, load]);
+  }, [working, unread, context, load]);
 
   const failed = (title: string) => (cause: unknown) => {
     toastManager.add({
@@ -129,24 +148,31 @@ export function useLibraryBackup(input: {
     });
   };
 
-  const start = (inFolder: string) =>
-    organizeScientSources(input.environmentId, {
+  const start = (inFolder: string) => {
+    const asked = context;
+    return organizeScientSources(input.environmentId, {
       root: input.root,
       change: { action: "back-up-library", inFolder },
     }).then(() => {
       // The server said it runs; shown at once, so the timer asks even if the next read fails.
       following.add(input.environmentId);
-      show({ backup: { state: "running", done: 0, total: 0 } });
-      return load(context);
+      show(asked, { backup: { state: "running", done: 0, total: 0 } });
+      return load(asked);
     }, failed(BACKUP_LABELS.failed));
+  };
 
   const changeRestore = (
     change: { action: "prepare"; fromFolder: string } | { action: "cancel" },
-  ) =>
-    changeLibraryRestore(input.environmentId, { root: input.root, change }).then((restore) => {
-      show({ restore });
-      sayHowRestoreEnded(input.environmentId, restore);
-    }, failed(RESTORE_LABELS.failed));
+  ) => {
+    const asked = context;
+    return changeLibraryRestore(input.environmentId, { root: input.root, change }).then(
+      (restore) => {
+        show(asked, { restore });
+        sayHowRestoreEnded(input.environmentId, restore);
+      },
+      failed(RESTORE_LABELS.failed),
+    );
+  };
 
   return {
     line: copies ? backupRunningLabel(copies.backup) : null,

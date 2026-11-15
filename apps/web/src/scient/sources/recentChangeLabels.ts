@@ -19,6 +19,7 @@ export const RECENT_CHANGES_LABELS = {
   showSources: "Show sources",
   showOlder: "Show older changes",
   undone: "Undone",
+  restored: "Nothing was kept from before",
   importedSources: "Sources from this import",
 } as const;
 
@@ -83,6 +84,12 @@ export function recentChangeSentence(change: ScientSourcesRecentChange): string 
     }
     case "trash":
       return `Moved ${quoted(change.title)} to the Trash`;
+    case "restore": {
+      const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
+        new Date(change.backupCreatedAt),
+      );
+      return `Restored the Library from the backup of ${day}: ${sources(change.sources)}`;
+    }
   }
 }
 
@@ -100,5 +107,10 @@ export function recentChangeState(change: ScientSourcesRecentChange): string | n
     case "import":
     case "trash":
       return null;
+    // A restore has no Undo; it says where the Library it replaced is, while that is kept.
+    case "restore":
+      return change.kept
+        ? `The Library that was here (${sources(change.kept.sources)}) is kept in ${change.kept.path}`
+        : RECENT_CHANGES_LABELS.restored;
   }
 }
