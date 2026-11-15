@@ -256,6 +256,12 @@ const REQUIRED_SOURCE_FIELDS: Readonly<Record<ScientSourceType, ReadonlyArray<Mi
   ],
   dataset: [{ name: "title", field: "title" }],
   web: [{ name: "title", field: "title" }],
+  software: [{ name: "title", field: "title" }],
+  presentation: [
+    { name: "title", field: "title" },
+    { name: "year", field: "year" },
+  ],
+  manuscript: [{ name: "title", field: "title" }],
   other: [{ name: "title", field: "title" }],
 };
 

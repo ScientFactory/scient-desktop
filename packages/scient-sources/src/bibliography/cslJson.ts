@@ -1,5 +1,7 @@
-import type { ScientSourceCreator, ScientSourceType } from "../model.ts";
+import type { ScientSourceCreator, ScientSourceRecord, ScientSourceType } from "../model.ts";
 import { normalizeImportedCitationKey } from "../citationKeys.ts";
+import { scientSourceMoreKind } from "../sourceMore.ts";
+import { ZOTERO_PRIMARY_ROLE, ZOTERO_ROLE_CSL, ZOTERO_TYPE_CSL } from "../zoteroSchema.ts";
 import {
   BibliographyEntryBuilder,
   type BibliographyEntry,
@@ -289,24 +291,57 @@ const CSL_TYPE_BY_TYPE: Readonly<Record<ScientSourceType, string>> = {
   report: "report",
   dataset: "dataset",
   web: "webpage",
+  software: "software",
+  presentation: "speech",
+  manuscript: "manuscript",
   other: "document",
 };
 
 type CslName = { readonly literal: string } | { readonly family?: string; readonly given?: string };
 
-function cslNames(creators: ReadonlyArray<ScientSourceCreator>, roles: ReadonlySet<string>) {
-  const names = creators.flatMap((creator): CslName[] => {
-    if (!roles.has(creator.creatorType.toLowerCase())) return [];
-    if (creator.literalName) return [{ literal: creator.literalName }];
-    if (!creator.familyName && !creator.givenName) return [];
-    return [
-      {
-        ...(creator.familyName ? { family: creator.familyName } : {}),
-        ...(creator.givenName ? { given: creator.givenName } : {}),
-      },
-    ];
-  });
-  return names.length > 0 ? names : undefined;
+/** The Zotero item type a record stands for, where it has one: it decides roles and CSL type. */
+function zoteroTypeOf(record: ScientSourceRecord): string | null {
+  if (record.type === "software") return "computerProgram";
+  if (record.type === "presentation") return "presentation";
+  return record.type === "other" && record.customType && record.customType in ZOTERO_TYPE_CSL
+    ? record.customType
+    : null;
+}
+
+/**
+ * Every creator under the CSL variable its role is cited with. A type's primary role (a
+ * program's programmer, a film's director) is its author, as Zotero cites it; a role CSL has
+ * no variable for stays in the record and out of the citation.
+ */
+function cslNamesByVariable(record: ScientSourceRecord): Readonly<Record<string, CslName[]>> {
+  const primary = ZOTERO_PRIMARY_ROLE[zoteroTypeOf(record) ?? ""]?.toLowerCase();
+  const names: Record<string, CslName[]> = {};
+  for (const creator of record.creators) {
+    const role = creator.creatorType.toLowerCase();
+    const variable = role === primary ? "author" : ZOTERO_ROLE_CSL[role];
+    const name: CslName | null = creator.literalName
+      ? { literal: creator.literalName }
+      : creator.familyName || creator.givenName
+        ? {
+            ...(creator.familyName ? { family: creator.familyName } : {}),
+            ...(creator.givenName ? { given: creator.givenName } : {}),
+          }
+        : null;
+    if (variable && name) (names[variable] ??= []).push(name);
+  }
+  return names;
+}
+
+/** The record's further details as CSL variables: text as it is, a date as a CSL date. */
+function cslMore(record: ScientSourceRecord): Readonly<Record<string, unknown>> {
+  return Object.fromEntries(
+    Object.entries(record.more ?? {}).flatMap(([name, value]): Array<[string, unknown]> => {
+      if (name === "extra") return [];
+      if (scientSourceMoreKind(name) !== "date") return [[name, value]];
+      const date = cslIssued(value, null);
+      return date ? [[name, date]] : [];
+    }),
+  );
 }
 
 function cslIssued(raw: string | null, year: number | null) {
@@ -345,16 +380,19 @@ export function cslJsonItem(
       .filter((entry) => entry.scheme.toLowerCase() === scheme)
       .map((entry) => entry.value);
   const arxiv = identifier("arxiv");
+  const zoteroType = zoteroTypeOf(record);
+  const more = cslMore(record);
   const fields: Record<string, unknown> = {
+    // First, so that none of them can stand in for a field the record has of its own.
+    ...more,
     id: options.id ?? citationKey,
     "citation-key": citationKey || undefined,
-    type: CSL_TYPE_BY_TYPE[record.type],
+    type:
+      record.type === "other" && zoteroType
+        ? ZOTERO_TYPE_CSL[zoteroType]
+        : CSL_TYPE_BY_TYPE[record.type],
     title: record.title ?? undefined,
-    author: cslNames(record.creators, new Set(["author"])),
-    editor: cslNames(record.creators, new Set(["editor"])),
-    translator: cslNames(record.creators, new Set(["translator"])),
-    "container-author": cslNames(record.creators, new Set(["bookauthor"])),
-    "collection-editor": cslNames(record.creators, new Set(["serieseditor"])),
+    ...cslNamesByVariable(record),
     issued: cslIssued(record.issuedRaw, record.issuedYear),
     "container-title": record.containerTitle ?? undefined,
     publisher: record.publisher ?? undefined,
@@ -368,13 +406,15 @@ export function cslJsonItem(
     PMCID: identifier("pmcid"),
     ISBN: all("isbn").join(", ") || undefined,
     ISSN: all("issn").join(", ") || undefined,
-    number: arxiv ? `arXiv:${arxiv}` : undefined,
+    number: more.number ?? (arxiv ? `arXiv:${arxiv}` : undefined),
+    // A type a person named themselves is its genre; a Zotero type name is not one.
     genre:
-      record.type === "preprint"
+      more.genre ??
+      (record.type === "preprint"
         ? "Preprint"
-        : record.type === "other" && record.customType
+        : record.type === "other" && record.customType && !zoteroType
           ? record.customType
-          : undefined,
+          : undefined),
     abstract: options.includeAbstracts !== false ? (record.abstract ?? undefined) : undefined,
     keyword: record.tags.length > 0 ? record.tags.join(", ") : undefined,
     note: options.includeNotes ? (record.note ?? undefined) : undefined,

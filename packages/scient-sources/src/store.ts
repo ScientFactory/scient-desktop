@@ -92,6 +92,7 @@ import {
   ScientSourceTrashEntry,
 } from "./model.ts";
 import { summarizeNotBrought } from "./notBrought.ts";
+import { normalizeScientSourceMore } from "./sourceMore.ts";
 
 export const SCIENT_SOURCES_DIRECTORY = ".scient/sources";
 export const SCIENT_SOURCE_RECORDS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/records`;
@@ -3206,6 +3207,8 @@ async function importScientSourceWithRecordLookup(
     const abstract =
       abstractDocumentFromSections(input.candidate.abstractSections) ??
       normalizeScientSourceAbstractDocument(input.candidate.abstract);
+    // An entry that does not fit is left out whole, never cut; the importer says so.
+    const { more } = normalizeScientSourceMore(input.candidate.more);
     const record: ScientSourceRecord = {
       formatVersion: storeFormatVersion(paths),
       sourceId,
@@ -3233,6 +3236,7 @@ async function importScientSourceWithRecordLookup(
       pages: input.candidate.pages,
       language: input.candidate.language,
       url: input.candidate.url,
+      ...(more ? { more } : {}),
       tags: input.candidate.tags,
       ...(input.candidate.note ? { note: normalizeScientSourceNote(input.candidate.note) } : {}),
       externalReferences: input.candidate.externalReferences,

@@ -1,6 +1,8 @@
 import {
   citationKeyFromZoteroExtra,
+  isScientSourceMoreName,
   normalizeImportedCitationKey,
+  normalizeScientSourceMore,
   normalizeScientSourceAbstractDocument,
   scientSourceTypeFromZotero,
   zoteroGroupLibraryId,
@@ -10,6 +12,9 @@ import {
   type ScientSourceIdentifier,
   type ScientSourceNotBrought,
   type ZoteroCollection,
+  type ZoteroTypedTarget,
+  ZOTERO_BASE_FIELD,
+  ZOTERO_FIELD_TARGET,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 
@@ -38,6 +43,7 @@ const ZoteroRawItemData = Schema.Struct({
   ISBN: OptionalText,
   ISSN: OptionalText,
   PMID: OptionalText,
+  PMCID: OptionalText,
   abstractNote: OptionalText,
   publicationTitle: OptionalText,
   bookTitle: OptionalText,
@@ -94,15 +100,24 @@ export type ZoteroRawItem = typeof ZoteroRawItem.Type;
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The item as Zotero sent it, with its non-empty text fields listed before any are dropped. */
-function withAllFields(value: unknown): unknown {
-  if (!isRecord(value) || !isRecord(value.data)) return value;
+/** The non-empty text fields of an item's data, by Zotero's name. */
+function textFields(data: Readonly<Record<string, unknown>>): Readonly<Record<string, string>> {
   const fields: Record<string, string> = {};
-  for (const [name, field] of Object.entries(value.data)) {
+  for (const [name, field] of Object.entries(data)) {
     if (typeof field === "string" && field.trim()) fields[name] = field;
   }
-  return { ...value, fields };
+  return fields;
 }
+
+/** The item as Zotero sent it, with its non-empty text fields listed before any are dropped. */
+function withAllFields(value: unknown): unknown {
+  return isRecord(value) && isRecord(value.data)
+    ? { ...value, fields: textFields(value.data) }
+    : value;
+}
+
+/** Every text field Zotero sent; for an item made in code, the ones its data has. */
+const fieldsOf = (item: ZoteroRawItem) => item.fields ?? textFields(item.data);
 
 const decodeRawItem = Schema.decodeUnknownSync(ZoteroRawItem);
 const decodeRawItems = Schema.decodeUnknownSync(Schema.Array(ZoteroRawItem));
@@ -161,6 +176,8 @@ const EXTRA_FIELDS: Readonly<Record<string, string>> = {
   pmcid: "pmcid",
   arxiv: "arxiv",
   doi: "doi",
+  isbn: "isbn",
+  issn: "issn",
 };
 
 /**
@@ -182,16 +199,131 @@ function zoteroCitationKey(data: ZoteroRawItem["data"]): string | null {
   return normalizeImportedCitationKey(data.citationKey) ?? citationKeyFromZoteroExtra(data.extra);
 }
 
+/** A Zotero field name as a person may write it in Extra: `Original Date`, `original-date`. */
+const squeezed = (name: string) => name.toLowerCase().replace(/[\s_-]+/gu, "");
+const FIELD_BY_SQUEEZED: ReadonlyMap<string, string> = new Map(
+  Object.keys(ZOTERO_FIELD_TARGET).map((name) => [squeezed(name), name]),
+);
+/** CSL names for the record's own fields, which Zotero lets a person give in Extra. */
+const TYPED_BY_CSL: Readonly<Record<string, ZoteroTypedTarget>> = {
+  title: "title",
+  issued: "issuedRaw",
+  "container-title": "containerTitle",
+  publisher: "publisher",
+  volume: "volume",
+  issue: "issue",
+  page: "pages",
+  language: "language",
+  url: "url",
+};
+
+/**
+ * Where a Zotero item's bibliographic text goes: each field, under its general name, into the
+ * record's own field or `more`; the first to want a place gets it. A line of Extra that names
+ * a field fills it when the item has none; what has no place is kept as a line under `extra`.
+ */
+function zoteroBibliographic(item: ZoteroRawItem): {
+  readonly typed: Readonly<Partial<Record<ZoteroTypedTarget, string>>>;
+  readonly more: Readonly<Record<string, string>> | null;
+  /** The Zotero field each filled place came from. */
+  readonly from: ReadonlyMap<string, string>;
+  readonly lost: ReadonlyArray<string>;
+  /** Lines of Extra that could not be kept (too long together), by name. */
+  readonly extraLost: ReadonlyArray<string>;
+} {
+  const fields = fieldsOf(item);
+  const typed: Partial<Record<ZoteroTypedTarget, string>> = {};
+  const more: Record<string, string> = {};
+  const from = new Map<string, string>();
+  const lost: string[] = [];
+  // General names first, so a type's own name never displaces the general field.
+  const names = Object.keys(fields).toSorted(
+    (left, right) =>
+      Number(left in ZOTERO_BASE_FIELD) - Number(right in ZOTERO_BASE_FIELD) ||
+      Object.keys(ZOTERO_FIELD_TARGET).indexOf(ZOTERO_BASE_FIELD[left] ?? left) -
+        Object.keys(ZOTERO_FIELD_TARGET).indexOf(ZOTERO_BASE_FIELD[right] ?? right),
+  );
+  /** Fields with no place of their own, or whose place another field took: kept as lines. */
+  const asLines: string[] = [];
+  for (const name of names) {
+    const value = text(fields[name]);
+    if (!value || FIELDS_NOT_CONTENT.has(name) || IDENTIFIER_FIELDS.has(name)) continue;
+    const target = ZOTERO_FIELD_TARGET[ZOTERO_BASE_FIELD[name] ?? name];
+    if (target && "typed" in target && typed[target.typed] === undefined) {
+      typed[target.typed] = value;
+      from.set(target.typed, name);
+    } else if (target && "more" in target && more[target.more] === undefined) {
+      more[target.more] = value;
+      from.set(`more.${target.more}`, name);
+    } else {
+      asLines.push(name);
+    }
+  }
+  // As Zotero itself keeps a field a type has no place for: a line `Name: value` in Extra.
+  const extraKept: string[] = asLines.map(
+    (name) =>
+      `${name.replace(/([a-z0-9])([A-Z])/gu, "$1 $2").replace(/^./u, (first) => first.toUpperCase())}: ${text(fields[name])}`,
+  );
+  for (const line of (fields.extra ?? "").split(/\r?\n/u)) {
+    const match = /^\s*([A-Za-z][A-Za-z0-9 _-]{0,60}?)\s*:\s*(\S.*?)\s*$/u.exec(line);
+    const name = match?.[1]?.toLowerCase().trim();
+    const value = match?.[2];
+    if (!line.trim()) continue;
+    if (name === undefined || value === undefined) {
+      extraKept.push(line.trim());
+      continue;
+    }
+    // Read elsewhere: identifiers and the citation key.
+    if (name in EXTRA_FIELDS || name === "citation key" || name === "issn" || name === "isbn") {
+      continue;
+    }
+    const csl = name.replace(/\s+/gu, "-");
+    const variable = [csl, csl.replace(/-/gu, "_")].find(isScientSourceMoreName);
+    const field = FIELD_BY_SQUEEZED.get(squeezed(name));
+    const target =
+      variable !== undefined && variable !== "extra"
+        ? { more: variable }
+        : (TYPED_BY_CSL[csl] && { typed: TYPED_BY_CSL[csl] }) ||
+          (field ? ZOTERO_FIELD_TARGET[field] : undefined);
+    if (target && "typed" in target && typed[target.typed] === undefined) {
+      typed[target.typed] = value;
+      from.set(target.typed, "extra");
+    } else if (target && "more" in target && more[target.more] === undefined) {
+      more[target.more] = value;
+      from.set(`more.${target.more}`, "extra");
+    } else {
+      // No place of its own, or the item's field already fills it: kept as written.
+      extraKept.push(line.trim());
+    }
+  }
+  if (extraKept.length > 0) more.extra = extraKept.join("\n");
+  const normalized = normalizeScientSourceMore(more);
+  const extraLost: string[] = [];
+  for (const name of normalized.left) {
+    if (name === "extra") {
+      extraLost.push("(text)");
+      lost.push(...asLines);
+    } else if (from.get(`more.${name}`) === "extra") extraLost.push(name);
+    else lost.push(from.get(`more.${name}`) ?? name);
+    from.delete(`more.${name}`);
+  }
+  // A field kept as a line is brought, under Extra.
+  if (!normalized.left.includes("extra")) {
+    for (const name of asLines) from.set(`more.extra:${name}`, name);
+  }
+  return { typed, more: normalized.more, from, lost, extraLost };
+}
+
 function identifierEntries(
   data: ZoteroRawItem["data"],
 ): ReadonlyArray<readonly [scheme: string, value: string | null, sourceField: string]> {
   const extra = zoteroExtraFields(data.extra);
   return [
     ["doi", text(data.DOI) ?? text(extra.doi), text(data.DOI) ? "DOI" : "extra"],
-    ["isbn", text(data.ISBN), "ISBN"],
-    ["issn", text(data.ISSN), "ISSN"],
+    ["isbn", text(data.ISBN) ?? text(extra.isbn), text(data.ISBN) ? "ISBN" : "extra"],
+    ["issn", text(data.ISSN) ?? text(extra.issn), text(data.ISSN) ? "ISSN" : "extra"],
     ["pmid", text(data.PMID) ?? text(extra.pmid), text(data.PMID) ? "PMID" : "extra"],
-    ["pmcid", text(extra.pmcid), "extra"],
+    ["pmcid", text(data.PMCID) ?? text(extra.pmcid), text(data.PMCID) ? "PMCID" : "extra"],
     ["arxiv", text(extra.arxiv), "extra"],
   ];
 }
@@ -200,65 +332,33 @@ function identifiers(data: ZoteroRawItem["data"]): ReadonlyArray<ScientSourceIde
   return identifierEntries(data).flatMap(([scheme, value]) => (value ? [{ scheme, value }] : []));
 }
 
-const CONTAINER_FIELDS = [
-  "publicationTitle",
-  "bookTitle",
-  "proceedingsTitle",
-  "websiteTitle",
-  "blogTitle",
-  "forumTitle",
-  "encyclopediaTitle",
-  "dictionaryTitle",
-] as const;
-const PUBLISHER_FIELDS = ["publisher", "university", "institution", "repository"] as const;
-
-function firstField<K extends keyof ZoteroRawItem["data"]>(
+/** Where each filled field came from in Zotero, by the record's field. */
+function provenance(
   data: ZoteroRawItem["data"],
-  fields: ReadonlyArray<K>,
-): { readonly field: K; readonly value: string } | null {
-  for (const field of fields) {
-    const value = data[field];
-    const normalized = typeof value === "string" ? text(value) : null;
-    if (normalized) return { field, value: normalized };
-  }
-  return null;
-}
-
-function provenance(data: ZoteroRawItem["data"]): ReadonlyArray<ScientSourceFieldProvenance> {
-  const container = firstField(data, CONTAINER_FIELDS);
-  const publisher = firstField(data, PUBLISHER_FIELDS);
-  const fields: ReadonlyArray<readonly [string, string, boolean]> = [
-    ["title", "title", text(data.title) !== null],
-    ["creators", "creators", (data.creators ?? []).length > 0],
-    ["issuedRaw", "date", text(data.date) !== null],
-    ["abstract", "abstractNote", text(data.abstractNote) !== null],
-    ["volume", "volume", text(data.volume) !== null],
-    ["issue", "issue", text(data.issue) !== null],
-    ["pages", "pages", text(data.pages) !== null],
-    ["language", "language", text(data.language) !== null],
-    ["url", "url", text(data.url) !== null],
-    ["tags", "tags", (data.tags ?? []).some((tag) => tag.tag.trim().length > 0)],
-  ];
+  from: ReadonlyMap<string, string>,
+): ReadonlyArray<ScientSourceFieldProvenance> {
+  const zotero = (field: string, sourceField: string) => ({
+    field,
+    origin: "zotero" as const,
+    sourceField,
+  });
   return [
-    ...fields
-      .filter(([, , present]) => present)
-      .map(([field, sourceField]) => ({ field, origin: "zotero" as const, sourceField })),
-    ...identifierEntries(data).flatMap(([scheme, value, sourceField]) =>
-      value ? [{ field: `identifiers.${scheme}`, origin: "zotero" as const, sourceField }] : [],
+    ...[...from].flatMap(([field, sourceField]) =>
+      field.startsWith("more.extra:") ? [] : [zotero(field, sourceField)],
     ),
-    ...(container
-      ? [{ field: "containerTitle", origin: "zotero" as const, sourceField: container.field }]
-      : []),
-    ...(publisher
-      ? [{ field: "publisher", origin: "zotero" as const, sourceField: publisher.field }]
-      : []),
+    ...((data.creators ?? []).length > 0 ? [zotero("creators", "creators")] : []),
+    ...((data.tags ?? []).some((tag) => tag.tag.trim().length > 0) ? [zotero("tags", "tags")] : []),
+    ...identifierEntries(data).flatMap(([scheme, value, sourceField]) =>
+      value ? [zotero(`identifiers.${scheme}`, sourceField)] : [],
+    ),
   ];
 }
 
 export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate {
   const data = raw.data;
   const type = scientSourceTypeFromZotero(data.itemType);
-  const abstract = normalizeScientSourceAbstractDocument(data.abstractNote);
+  const { typed, more, from } = zoteroBibliographic(raw);
+  const abstract = normalizeScientSourceAbstractDocument(typed.abstract);
   return {
     sourceKey: raw.key,
     type,
@@ -266,23 +366,24 @@ export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate
     // small canonical type set. Otherwise editing an imported record would
     // present an unexplained, invalid "Other source" with its type discarded.
     customType: type === "other" ? text(data.itemType) : null,
-    title: text(data.title),
+    title: typed.title ?? null,
     creators: (data.creators ?? []).flatMap((value) => {
       const normalized = creator(value);
       return normalized ? [normalized] : [];
     }),
-    issuedRaw: text(data.date),
-    issuedYear: publicationYear(data.date),
+    issuedRaw: typed.issuedRaw ?? null,
+    issuedYear: publicationYear(typed.issuedRaw),
     identifiers: identifiers(data),
     abstract: abstract?.text ?? null,
     ...(abstract ? { abstractSections: [...abstract.sections] } : {}),
-    containerTitle: firstField(data, CONTAINER_FIELDS)?.value ?? null,
-    publisher: firstField(data, PUBLISHER_FIELDS)?.value ?? null,
-    volume: text(data.volume),
-    issue: text(data.issue),
-    pages: text(data.pages),
-    language: text(data.language),
-    url: text(data.url),
+    containerTitle: typed.containerTitle ?? null,
+    publisher: typed.publisher ?? null,
+    volume: typed.volume ?? null,
+    issue: typed.issue ?? null,
+    pages: typed.pages ?? null,
+    language: typed.language ?? null,
+    url: typed.url ?? null,
+    ...(more ? { more } : {}),
     tags: (data.tags ?? []).map((tag) => tag.tag.trim()).filter(Boolean),
     externalReferences: [
       {
@@ -296,7 +397,7 @@ export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate
         rawItemType: data.itemType,
       },
     ],
-    fieldProvenance: provenance(data),
+    fieldProvenance: provenance(data, from),
     pdfAvailable: false,
     pdfFileName: null,
     pdfAttachmentCount: 0,
@@ -391,23 +492,7 @@ function zoteroNotesText(children: ReadonlyArray<ZoteroRawItem>): string | null 
     : joined;
 }
 
-/** The fields the record takes as they are, by Zotero's name. */
-const FIELDS_BROUGHT: ReadonlySet<string> = new Set([
-  "title",
-  "date",
-  "DOI",
-  "ISBN",
-  "ISSN",
-  "PMID",
-  "abstractNote",
-  "volume",
-  "issue",
-  "pages",
-  "language",
-  "url",
-  "citationKey",
-]);
-/** Zotero's own bookkeeping, and fields read elsewhere (Extra by line, notes and files as such). */
+/** Fields that are not bibliographic text, or are read elsewhere (identifiers, notes, files). */
 const FIELDS_NOT_CONTENT: ReadonlySet<string> = new Set([
   "key",
   "itemType",
@@ -424,43 +509,34 @@ const FIELDS_NOT_CONTENT: ReadonlySet<string> = new Set([
   "mtime",
   "path",
 ]);
-/** Lines of Extra that Sources reads. */
-const EXTRA_LINES_READ: ReadonlySet<string> = new Set([
-  ...Object.keys(EXTRA_FIELDS),
-  "citation key",
+const IDENTIFIER_FIELDS: ReadonlySet<string> = new Set([
+  "DOI",
+  "ISBN",
+  "ISSN",
+  "PMID",
+  "PMCID",
+  "citationKey",
 ]);
 
 /**
  * Where each non-empty text field of a Zotero item goes: into the record, nowhere, or it is not
- * content. Of several container or publisher fields, the record takes the first.
+ * content. A field is brought when it filled a place; one that lost its place to another field
+ * of the item, or has none, is not.
  */
 export function zoteroFieldDispositions(
   item: ZoteroRawItem,
 ): ReadonlyMap<string, "brought" | "not-brought" | "not-content"> {
-  const container = firstField(item.data, CONTAINER_FIELDS)?.field;
-  const publisher = firstField(item.data, PUBLISHER_FIELDS)?.field;
+  const filled = new Set(zoteroBibliographic(item).from.values());
   return new Map(
-    Object.keys(item.fields ?? {}).map((name) => [
+    Object.keys(fieldsOf(item)).map((name) => [
       name,
       FIELDS_NOT_CONTENT.has(name)
         ? "not-content"
-        : FIELDS_BROUGHT.has(name) || name === container || name === publisher
+        : filled.has(name) || IDENTIFIER_FIELDS.has(name)
           ? "brought"
           : "not-brought",
     ]),
   );
-}
-
-/** The lines of Extra that Sources does not read, by name; a line with no name is `(text)`. */
-function extraLinesNotRead(extra: string | undefined): ReadonlyArray<string> {
-  return (extra ?? "")
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      const name = /^([A-Za-z][A-Za-z0-9 _-]{0,60}?)\s*:\s*\S/u.exec(line)?.[1]?.toLowerCase();
-      return name === undefined ? ["(text)"] : EXTRA_LINES_READ.has(name) ? [] : [name];
-    });
 }
 
 const NOTE_FORMATTING = /<(a|h[1-6]|table|img|pre|code|blockquote)\b|data-citation/iu;
@@ -488,7 +564,8 @@ function zoteroNotBrought(
   for (const [name, disposition] of zoteroFieldDispositions(item)) {
     if (disposition === "not-brought") add("field", 1, name);
   }
-  for (const name of extraLinesNotRead(item.data.extra)) add("extra", 1, name);
+  // Lines of Extra are kept as written; only ones too long to keep are listed.
+  for (const name of zoteroBibliographic(item).extraLost) add("extra", 1, name);
   add("related", relatedCount(item.data.relations));
   add("automatic-tags", (item.data.tags ?? []).filter((tag) => tag.type === 1).length);
 

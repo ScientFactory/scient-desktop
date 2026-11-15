@@ -264,6 +264,9 @@ const ENDNOTE_TYPE_BY_TYPE: Readonly<Record<ScientSourceType, readonly [string, 
   report: ["Report", 27],
   dataset: ["Dataset", 59],
   web: ["Web Page", 12],
+  software: ["Computer Program", 9],
+  presentation: ["Unpublished Work", 34],
+  manuscript: ["Manuscript", 36],
   other: ["Generic", 13],
 };
 

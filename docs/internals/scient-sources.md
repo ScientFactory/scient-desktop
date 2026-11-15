@@ -3361,6 +3361,29 @@ subcollection; a deeper collection's items join its ancestor at that level,
 and the item's `note` in the operation (and the agent import result) names
 each one flattened. A collection problem never fails the import.
 
+**Every bibliographic field has a place.** A record's `more` is a small map
+from a CSL variable to text (`sourceMore.ts`: the closed list of names, each
+text or a date, with the word a person sees; at most 40 entries of 2,000
+characters, `extra` 10,000; an entry that does not fit is left out whole and
+listed, never cut). `zoteroSchema.ts` is Scient's own statement of the facts
+Zotero publishes for apps at `api.zotero.org/schema`: a type's own name for a
+general field (`caseName` is a title), where each general field goes (one of
+the record's own fields, or a `more` variable), the CSL variable of each
+creator role, each type's primary role, and each type's CSL type.
+`pnpm check:zotero-schema` in `packages/scient-sources` compares it with
+Zotero's current schema. `zoteroBibliographic` (`ZoteroItems.ts`) applies it:
+general names first, the first field to want a place gets it, a line of
+Extra that names a field fills it when the item has none, and whatever has no
+place of its own (a field Zotero has no CSL name for, a field whose place
+was taken, any other line of Extra) is kept as a line under `more.extra`.
+`cslJsonItem` writes every `more` entry but `extra` as its CSL variable (a
+date parsed like the record's own date), every creator under its role's
+variable with the type's primary role as author, and the CSL type of a
+Zotero type name kept in `customType`; a typed field always wins over a
+`more` entry of the same variable. `software`, `presentation` and
+`manuscript` are source types. Not yet: editing `more` in the panel, the
+per-variable refresh, Send, and reference files (the next commits).
+
 **What was not brought.** `decodeZoteroRawItem` lists every non-empty text
 field Zotero sent (`fields`) before the item's schema drops the ones Sources
 does not read. `zoteroFieldDispositions` gives each one of three places:

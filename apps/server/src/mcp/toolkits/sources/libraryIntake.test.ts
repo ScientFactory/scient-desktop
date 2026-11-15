@@ -331,12 +331,10 @@ describe("Sources intake on the library backend", () => {
       const change = (yield* Effect.promise(() =>
         listScientLibraryRecentChanges(fixture.library, 50),
       )).changes.find((entry) => entry.kind === "import");
-      expect(change).toMatchObject({ kind: "import", imported: 1, notBrought: 3 });
+      expect(change).toMatchObject({ kind: "import", imported: 1, notBrought: 1 });
       expect(
         yield* Effect.promise(() => listScientLibraryImportNotBrought(fixture.library, change!.id)),
       ).toEqual([
-        { what: "Edition", amount: "1 reference", sourceIds: [sourceId] },
-        { what: "Place of publication", amount: "1 reference", sourceIds: [sourceId] },
         { what: "Web page snapshots", amount: "1 on 1 reference", sourceIds: [sourceId] },
       ]);
       expect(

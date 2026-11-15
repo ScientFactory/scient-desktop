@@ -225,3 +225,102 @@ describe("readCslStyle", () => {
     expect(readCslStyle(xml)).toBeNull();
   });
 });
+
+describe("the details a source has beyond its own fields, in citations", () => {
+  const source = (fields: Partial<ScientSourceRecord>): ScientSourceRecord => ({
+    ...article,
+    identifiers: [],
+    containerTitle: null,
+    volume: null,
+    issue: null,
+    pages: null,
+    url: null,
+    abstract: null,
+    tags: [],
+    ...fields,
+  });
+  const apa = (record: ScientSourceRecord) => formatSourceReference(record, "apa");
+
+  it("cites a book with its edition, and a report with its number", () => {
+    const book = source({
+      type: "book",
+      title: "Statistical methods in medical research",
+      publisher: "Blackwell Science",
+      issuedRaw: "2002",
+      issuedYear: 2002,
+      more: { edition: "4", "publisher-place": "Oxford", "number-of-pages": "817" },
+    });
+    expect(scientSourceToCslJson(book)).toMatchObject({
+      type: "book",
+      edition: "4",
+      "publisher-place": "Oxford",
+      "number-of-pages": "817",
+    });
+    expect(apa(book)).toContain("(4th ed.)");
+    // Without the edition the same book reads as its first.
+    expect(apa(source({ ...book, more: {} }))).not.toContain("ed.)");
+
+    const report = source({
+      type: "report",
+      title: "Global tuberculosis report",
+      publisher: "World Health Organization",
+      more: { number: "WHO/UCN/TB/2024.3", genre: "Technical report" },
+    });
+    expect(apa(report)).toContain("WHO/UCN/TB/2024.3");
+  });
+
+  it("cites a program by its programmer and a case by its name, as Zotero does", () => {
+    const program = source({
+      type: "software",
+      title: "lme4: Linear mixed-effects models",
+      creators: [
+        { creatorType: "programmer", givenName: "Douglas", familyName: "Bates", literalName: null },
+        { creatorType: "contributor", givenName: "Ben", familyName: "Bolker", literalName: null },
+      ],
+      publisher: null,
+      more: { version: "1.1-35", genre: "R" },
+    });
+    expect(scientSourceToCslJson(program)).toMatchObject({
+      type: "software",
+      author: [{ family: "Bates", given: "Douglas" }],
+      contributor: [{ family: "Bolker", given: "Ben" }],
+      version: "1.1-35",
+    });
+    expect(apa(program)).toMatch(/^Bates, D\./u);
+    expect(apa(program)).toContain("Version 1.1-35");
+
+    const film = source({
+      type: "other",
+      customType: "film",
+      title: "Koyaanisqatsi",
+      creators: [
+        { creatorType: "director", givenName: "Godfrey", familyName: "Reggio", literalName: null },
+      ],
+      publisher: "Island Alive",
+    });
+    // A Zotero type name is the type, not a genre; its director is cited as the author.
+    expect(scientSourceToCslJson(film)).toMatchObject({
+      type: "motion_picture",
+      author: [{ family: "Reggio", given: "Godfrey" }],
+    });
+    expect(scientSourceToCslJson(film)).not.toHaveProperty("genre");
+    // A type a person named themselves is still its genre.
+    expect(
+      scientSourceToCslJson(source({ type: "other", customType: "Field notes" })),
+    ).toMatchObject({ type: "document", genre: "Field notes" });
+  });
+
+  it("writes a date kept as text as a CSL date, and leaves the free text out", () => {
+    const page = source({
+      type: "web",
+      title: "A page",
+      more: { accessed: "2026-03-10 14:02:11", "original-date": "ca. 1890", extra: "OCLC: 12345" },
+    });
+    const csl = scientSourceToCslJson(page);
+    expect(csl).toMatchObject({
+      accessed: { "date-parts": [[2026, 3, 10]] },
+      "original-date": { literal: "ca. 1890" },
+    });
+    expect(csl).not.toHaveProperty("extra");
+  });
+});
