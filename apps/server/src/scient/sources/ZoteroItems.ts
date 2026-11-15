@@ -104,7 +104,7 @@ const ZoteroRawLibrary = Schema.Struct({
  * A library as a source's link names it: `groups/<id>`, or the user ID for My Library. Zotero
  * on this computer reports the signed-in user's ID there, or `0` when it is not signed in.
  */
-export function zoteroLibraryId(library: typeof ZoteroRawLibrary.Type): string {
+function zoteroLibraryId(library: typeof ZoteroRawLibrary.Type): string {
   return library.type === "group" ? zoteroGroupLibraryId(String(library.id)) : String(library.id);
 }
 

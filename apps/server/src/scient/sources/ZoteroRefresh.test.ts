@@ -486,11 +486,7 @@ describe("Zotero refresh", () => {
       }
       // Zotero's own HTML is kept from the first refresh on; an open clash keeps the base it had.
       expect((await readScientSourceZoteroSync(root, sourceId))?.notes).toEqual(
-        clash
-          ? imported === "now"
-            ? [kept(noteHtml)]
-            : undefined
-          : [kept(zoteroHtml)],
+        clash ? (imported === "now" ? [kept(noteHtml)] : undefined) : [kept(zoteroHtml)],
       );
     },
   );

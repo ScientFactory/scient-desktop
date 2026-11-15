@@ -542,10 +542,9 @@ export type ScientSourcePlacedCollection =
 
 /**
  * Finds or makes the wanted collections of an outside tree with the ones above them: by ID or
- * one remembered (`outsideIds`), else by name under the same parent if no other outside one
- * took it, else new. One deleted here is left out, or with `remake` made anew under a new ID
- * so the deleted one stays restorable. One found by name or made anew remembers the outside
- * ID, so a rename or move here does not lose it.
+ * `outsideIds`, else by name under the same parent if no other outside one took it (then it
+ * remembers that ID), else new. One deleted here is left out, or with `remake` made anew
+ * under a new ID that remembers the outside one, so the deleted one stays restorable.
  */
 export function placeScientSourceCollections(input: {
   readonly root: ScientSourceStoreLocation;
@@ -619,7 +618,10 @@ export function placeScientSourceCollections(input: {
           const found = here.get(node.collectionId);
           if (found) {
             const outsideIds = remembered.get(found.collectionId) ?? found.outsideIds ?? [];
-            if (found.collectionId === node.collectionId || outsideIds.includes(node.collectionId)) {
+            if (
+              found.collectionId === node.collectionId ||
+              outsideIds.includes(node.collectionId)
+            ) {
               return { collection: found, created: false };
             }
             remembered.set(found.collectionId, [...outsideIds, node.collectionId]);

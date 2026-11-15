@@ -887,9 +887,9 @@ describe("Send to Zotero", () => {
       sendWithPdfs(source, overlapping),
     ]);
 
-    expect(sends.flatMap((sent) => sent.items[0]?.pdfs?.map((pdf) => pdf.outcome)).toSorted()).toEqual(
-      ["in-zotero", "sent"],
-    );
+    expect(
+      sends.flatMap((sent) => sent.items[0]?.pdfs?.map((pdf) => pdf.outcome)).toSorted(),
+    ).toEqual(["in-zotero", "sent"]);
     expect(attachmentsIn(org)).toHaveLength(1);
   });
 });
