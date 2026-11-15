@@ -1056,6 +1056,9 @@ const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
       Schema.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
     ),
     library: Schema.optionalKey(ZoteroLibraryInput),
+    pdfs: Schema.optionalKey(
+      Schema.Boolean.annotate({ description: "Also upload each PDF Zotero lacks." }),
+    ),
   }),
   success: ScientSourceZoteroSendResult,
   failure: ScientSourcesToolError,

@@ -3577,7 +3577,33 @@ linked source is patched with only the fields that differ, using the item's
 own field set and `If-Unmodified-Since-Version`; if the item changed in Zotero
 since Scient last read it, nothing is sent and the user is asked to refresh.
 Empty values here are never sent. Extra keeps its unmanaged lines and carries
-the citation key and identifiers without a Zotero field. PDFs are not uploaded.
+the citation key and identifiers without a Zotero field.
+
+With `pdfs` (the panel's **Include PDF**, off when the panel opens and held in
+`useZoteroSync`; the agent's `pdfs` input) each PDF of a source whose item was
+created, updated or found unchanged is sent by `sendPdfs` after the item's
+attachments are read once. A stored attachment with the PDF's MD5 means Zotero
+has it (`in-zotero`). A `linked_file` attachment with the same file name (its
+`filename`, or the last part of its `path`) is not uploaded over: Zotero keeps
+only a path for it, so the name is all there is to compare. A personal library
+whose key lacks the `files` permission is not asked. Otherwise the documented
+upload runs (`ZoteroWebLibrary.uploadFile`): an `imported_file` attachment is
+created under the item (a fresh write token each time, since Zotero refuses a
+token used within 12 hours and a refused attachment is made again on retry);
+`POST /items/<key>/file` with MD5, name, size and modification time and
+`If-None-Match: *` authorises it (`exists` ends it: Zotero holds the bytes);
+the bytes are streamed from disk between Zotero's `prefix` and `suffix` to the
+storage address it names, which never receives the API key
+(`ZoteroWebHttp.upload`); `upload=<uploadKey>` registers it. On 403 or 413 the
+attachment this send made is deleted again (`If-Unmodified-Since-Version`), so
+Zotero shows no empty attachment; any other stop leaves an attachment without a
+file, which the next send finds (`imported_file`, same name, no MD5) and fills
+instead of making another. No local record of phases is kept. Each PDF's result
+(`sent`, `in-zotero`, or `not-sent` with the reason) is in the item's `pdfs`;
+the details are sent either way. Highlights are not sent. Whether a person
+stores files with WebDAV is not visible to the API; uploads always go to
+Zotero's own storage.
+
 Without a `groupId` sends go to My Library. With one, the key is checked again
 and the group must be writable: the key's group `write` and the group's
 `libraryEditing` (`members`, or `admins` with the user as owner or admin);

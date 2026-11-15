@@ -331,7 +331,7 @@ export async function countZoteroScopeStandalone(
   }
 }
 
-async function readAllChildren(
+export async function readZoteroItemChildren(
   transport: ZoteroTransport,
   itemKey: string,
 ): Promise<ReadonlyArray<ZoteroRawItem>> {
@@ -362,7 +362,7 @@ async function readZoteroItemWithChildren(
   if (!ZOTERO_ITEM_KEY_PATTERN.test(itemKey)) throw new Error("The Zotero item key is invalid.");
   const [{ value }, children] = await Promise.all([
     getJson(transport, `/items/${itemKey}?format=json`),
-    readAllChildren(transport, itemKey),
+    readZoteroItemChildren(transport, itemKey),
   ]);
   return { item: decodeZoteroRawItem(value), children };
 }

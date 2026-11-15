@@ -996,6 +996,16 @@ export const ScientSourceZoteroSendItem = Schema.Struct({
   outcome: Schema.Literals(["created", "updated", "unchanged", "changed-in-zotero", "failed"]),
   itemKey: NullableText,
   message: NullableText,
+  /** With PDFs asked for: each of the source's PDFs, and why one was not sent. */
+  pdfs: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        fileName: NonEmptyString,
+        outcome: Schema.Literals(["sent", "in-zotero", "not-sent"]),
+        message: NullableText,
+      }),
+    ),
+  ),
 });
 export type ScientSourceZoteroSendItem = typeof ScientSourceZoteroSendItem.Type;
 

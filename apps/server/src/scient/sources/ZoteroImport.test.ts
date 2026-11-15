@@ -653,6 +653,7 @@ describe("Zotero import", () => {
         return { status: 200, headers: {}, body: JSON.stringify(body) };
       },
       download: async () => ({ status: 404 }),
+      upload: async () => 500,
     };
     const zotero = {
       webKey: async () => "synthetic-key",

@@ -364,7 +364,11 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
 );
 
 export const sendToZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroSend")(
-  function* (input: { readonly sourceIds: ReadonlyArray<string>; readonly library?: string }) {
+  function* (input: {
+    readonly sourceIds: ReadonlyArray<string>;
+    readonly library?: string;
+    readonly pdfs?: boolean;
+  }) {
     const { store, root, zotero } = yield* agentZotero();
     const sourceIds = (yield* librarySourceIds(store, input.sourceIds)) ?? input.sourceIds;
     return yield* zoteroAttempt(() =>
@@ -372,6 +376,7 @@ export const sendToZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroS
         root,
         sourceIds,
         ...(input.library ? { groupId: input.library } : {}),
+        ...(input.pdfs ? { pdfs: true } : {}),
         actor: "agent",
         zotero,
       }),
