@@ -836,7 +836,6 @@ describe("Zotero import", () => {
       annotationText: "A passage",
       annotationColor: "#5FB236",
       annotationPosition: JSON.stringify({ pageIndex: 2, rects: [] }),
-      annotationSortIndex: "00002|000412|00100",
     });
     // zotero.org counts a file's highlights; Zotero here counts none.
     const library = (numChildren: number) => ({
@@ -868,7 +867,6 @@ describe("Zotero import", () => {
       text: "A passage",
       comment: "",
       color: "#5fb236",
-      offset: 412,
       addedAt: null,
     };
     expect([fromWeb.annotations, fromLocal.annotations]).toEqual([[read], [read]]);

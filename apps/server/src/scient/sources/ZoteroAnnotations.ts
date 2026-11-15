@@ -19,29 +19,9 @@ import type { ZoteroPdfAnnotation } from "./ZoteroItems.ts";
 const NOTE_CHARACTERS = 8_000;
 
 /**
- * Of a phrase found several times on its page, the one Zotero's own count of the characters
- * before it singles out: the only one near that count, with every other far off. Null when
- * the count does not decide; the two readers read a page's text differently, hence the margin.
- */
-function zoteroRepeatAt(
-  repeats: ReadonlyArray<{ readonly pageText: string; readonly start: number }>,
-  offset: number,
-): number | null {
-  const near = 20 + 0.02 * offset;
-  const distances = repeats.map(({ pageText, start }) =>
-    Math.abs(pageText.slice(0, start).replace(/\s/gu, "").length - offset),
-  );
-  const close = distances.flatMap((distance, at) => (distance <= near ? [at] : []));
-  if (close.length !== 1) return null;
-  return distances.every((distance, at) => at === close[0] || distance > 2 * near)
-    ? close[0]!
-    : null;
-}
-
-/**
- * Places each highlight and underline by its quoted text on its page of these bytes. One
- * found once there is placed; one found several times only when Zotero's position singles
- * one out. Everything else is kept, with its page, quote and comment, as not placed.
+ * Places each highlight and underline by its quoted text on its page of these bytes, when it
+ * is found there once; a phrase that repeats on its page is never guessed between. Everything
+ * else is kept, with its page, quote and comment, as not placed.
  */
 export function placeZoteroAnnotations(
   annotations: ReadonlyArray<ZoteroPdfAnnotation>,
@@ -56,20 +36,13 @@ export function placeZoteroAnnotations(
   for (const annotation of annotations) {
     const annotationId = `ann_zotero_${annotation.key}`;
     const at = annotation.addedAt ?? now;
-    const { offset } = annotation;
     const anchoring =
       text &&
       annotation.page !== null &&
       (annotation.kind === "highlight" || annotation.kind === "underline") &&
       annotation.text.trim() &&
       annotation.comment.length <= NOTE_CHARACTERS
-        ? anchorPdfQuote(
-            text.pages,
-            annotation.text,
-            text.extractorVersion,
-            annotation.page,
-            offset === null ? undefined : (repeats) => zoteroRepeatAt(repeats, offset),
-          )
+        ? anchorPdfQuote(text.pages, annotation.text, text.extractorVersion, annotation.page)
         : null;
     if (anchoring?._tag === "Found") {
       placed.push({

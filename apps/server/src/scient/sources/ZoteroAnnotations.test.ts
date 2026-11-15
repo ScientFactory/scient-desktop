@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import type { PdfPageText } from "../annotations/pdfQuoteAnchor.ts";
+import { zoteroItem } from "./Zotero.testkit.ts";
 import { placeZoteroAnnotations } from "./ZoteroAnnotations.ts";
-import type { ZoteroPdfAnnotation } from "./ZoteroItems.ts";
+import { zoteroItemMaterial, type ZoteroPdfAnnotation } from "./ZoteroItems.ts";
 
 const page = (number: number, lines: ReadonlyArray<string>): PdfPageText => ({
   page: number,
@@ -20,7 +21,6 @@ const lines = [
   "Later work found the same: the effect held in every group we tested.",
 ];
 const text = { extractorVersion: "test", pages: [page(1, lines), page(2, ["Methods."])] };
-const nonSpace = (value: string) => value.replace(/\s/gu, "").length;
 
 const annotation = (
   key: string,
@@ -32,22 +32,32 @@ const annotation = (
   page: 1,
   comment: "",
   color: "#ffd400",
-  offset: null,
   addedAt: "2024-01-24T04:36:20Z",
   ...fields,
 });
 
 describe("placing Zotero's highlights", () => {
-  it("places a quote found once on its page, or singled out by Zotero's position, and keeps the rest", () => {
+  it("places a quote found once on its page and keeps the rest, a repeated one too", () => {
     const repeated = "the effect held in every group we tested";
-    const second = nonSpace(lines.slice(0, 3).join("") + "Later work found the same:");
+    // As Zotero sends it, with its count of the characters before the second one: that
+    // count comes from another reading of the page, so it decides nothing here.
+    const before = (lines.slice(0, 3).join("") + "Later work found the same:").replace(/\s/gu, "");
+    const sortIndex = { annotationSortIndex: `00000|${before.length + 3}|00100` };
+    const [underline] = zoteroItemMaterial(zoteroItem("ABCD2345"), [
+      zoteroItem("REPT2345", {
+        itemType: "annotation",
+        parentItem: "PDFA2345",
+        annotationType: "underline",
+        annotationText: repeated,
+        annotationColor: "#ffd400",
+        annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+        ...sortIndex,
+      }),
+    ]).annotations;
     const { placed, unplaced } = placeZoteroAnnotations(
       [
         annotation("ONCE2345", { text: "strong in the first", comment: "Key", color: "#ff6666" }),
-        annotation("NEAR2345", { kind: "underline", text: repeated, offset: second + 3 }),
-        // Halfway between the two: Zotero's position decides nothing, so it is not guessed.
-        annotation("HALF2345", { text: repeated, offset: Math.round(second / 2) }),
-        annotation("NONE2345", { text: repeated }),
+        underline!,
         annotation("GONE2345", { text: "Not in the text", page: 2 }),
         annotation("IMAG2345", { kind: "image", text: "", comment: "Figure 2" }),
       ],
@@ -73,14 +83,6 @@ describe("placing Zotero's highlights", () => {
         underline: undefined,
         dated: "2024-01-24T04:36:20Z",
       },
-      {
-        id: "ann_zotero_NEAR2345",
-        at: text.pages[0]!.text.lastIndexOf(repeated),
-        note: "",
-        color: "#ffd400",
-        underline: true,
-        dated: "2024-01-24T04:36:20Z",
-      },
     ]);
     expect(
       unplaced.map(({ annotationId, kind, page: on, quote, comment }) => [
@@ -91,8 +93,7 @@ describe("placing Zotero's highlights", () => {
         comment,
       ]),
     ).toEqual([
-      ["ann_zotero_HALF2345", "highlight", 1, repeated, ""],
-      ["ann_zotero_NONE2345", "highlight", 1, repeated, ""],
+      ["ann_zotero_REPT2345", "underline", 1, repeated, ""],
       ["ann_zotero_GONE2345", "highlight", 2, "Not in the text", ""],
       ["ann_zotero_IMAG2345", "image", 1, "", "Figure 2"],
     ]);

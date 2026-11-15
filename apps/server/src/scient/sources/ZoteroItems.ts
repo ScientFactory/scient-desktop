@@ -89,8 +89,6 @@ const ZoteroRawItemData = Schema.Struct({
   annotationColor: OptionalText,
   /** `pageIndex` (from 0) and the marked rectangles, as JSON text. */
   annotationPosition: OptionalText,
-  /** `page|characters before it on the page|top`, zero-padded. */
-  annotationSortIndex: OptionalText,
   dateModified: OptionalText,
 });
 
@@ -545,8 +543,6 @@ export interface ZoteroPdfAnnotation {
   readonly text: string;
   readonly comment: string;
   readonly color: string | null;
-  /** How many of the page's characters come before it in Zotero's reading, spaces not counted. */
-  readonly offset: number | null;
   readonly addedAt: string | null;
 }
 
@@ -573,7 +569,6 @@ function zoteroPdfAnnotations(
     if (data.itemType !== "annotation" || typeof data.parentItem !== "string") return [];
     const type = data.annotationType ?? "";
     const color = data.annotationColor?.trim().toLowerCase() ?? "";
-    const offset = Number.parseInt(data.annotationSortIndex?.split("|")[1] ?? "", 10);
     return [
       {
         key: child.key,
@@ -584,7 +579,6 @@ function zoteroPdfAnnotations(
         text: data.annotationText ?? "",
         comment: data.annotationComment ?? "",
         color: /^#[0-9a-f]{6}$/u.test(color) ? color : null,
-        offset: Number.isFinite(offset) ? offset : null,
         addedAt: data.dateAdded ?? data.dateModified ?? null,
       },
     ];

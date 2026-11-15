@@ -3567,16 +3567,15 @@ search by the reference's key (`/items?itemKey=<key>&itemType=annotation`)
 reaches its files' annotations, one request for each reference that has a
 file. `readZoteroItemWithChildren` adds them to the children, and
 `zoteroItemMaterial` reads them (`annotations`: kind, page from
-`annotationPosition`, text, comment, colour, and Zotero's count of the page's
-characters before it from `annotationSortIndex`). For each PDF copied, the
+`annotationPosition`, text, comment, colour). For each PDF copied, the
 import places them on the record's PDF (`bringZoteroAnnotations` and the pure
 `placeZoteroAnnotations`, `ZoteroAnnotations.ts`): a highlight or underline
 whose text `anchorPdfQuote` finds once on its page becomes a highlight
 (`ann_zotero_<key>`, by the user, at Zotero's date, the comment as its note,
-colour and underline kept); found several times, it is placed only when
-exactly one match lies within 20 characters plus 2% of Zotero's count (spaces
-not counted) and every other is more than twice that away. Everything else is
-kept in the PDF's `unplaced` list. The source's Zotero file keeps which PDF
+colour and underline kept). One found more than once there is not placed:
+Zotero's sort index counts characters in its own reading of the page, which
+nothing ties to Scient's. Everything else is kept in the PDF's `unplaced`
+list. The source's Zotero file keeps which PDF
 here each Zotero file with highlights is (`pdfs`, attachment key to sha256,
 hashed before the import lets the copy go), so a refresh brings new ones onto
 the same PDF; a PDF not in it (imported before, or without highlights then)

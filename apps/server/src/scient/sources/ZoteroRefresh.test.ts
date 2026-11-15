@@ -541,7 +541,6 @@ describe("Zotero refresh", () => {
       annotationComment: `On ${key}`,
       annotationColor: "#FF6666",
       annotationPosition: JSON.stringify({ pageIndex: 0, rects: [[72, 700, 300, 712]] }),
-      annotationSortIndex: "00000|000010|00080",
       dateAdded: "2024-01-24T04:36:20Z",
     });
 

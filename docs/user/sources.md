@@ -357,13 +357,11 @@ already in your Library are not filed again.
 Highlights, underlines and comments you made on a PDF in Zotero come with
 the PDF. Each is placed by its quoted text on its page of the same PDF, in
 its Zotero colour, with its comment as its note and Zotero's date, as made by
-you. When that text is found more than once on the page, Zotero's own record
-of where on the page you marked it decides, only when it clearly points to one
-of them. What cannot be placed this way (text the two readers read
-differently, a phrase that repeats, a marked image area, a drawing, a note on
-the page) is not guessed: it is kept with its page, quote and comment in the
-source's details, under the PDF's highlights, as **From Zotero, not placed on
-the page**.
+you. What cannot be placed this way (text the two readers read differently,
+a phrase found more than once on its page, a marked image area, a drawing, a
+note on the page) is not guessed: it is kept with its page, quote and comment
+in the source's details, under the PDF's highlights, as **From Zotero, not
+placed on the page**.
 
 When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
