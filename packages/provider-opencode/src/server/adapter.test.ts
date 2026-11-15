@@ -2333,8 +2333,10 @@ describe("OpenCodeAdapterV2", () => {
     { state: "settled", end: "foreground-eof" },
     { state: "settled", end: "invalid-continuation" },
     { state: "settled", end: "policy-failure" },
-    // SCIENT-FORK: a narrowed policy the server acknowledges but does not apply.
+    // SCIENT-FORK: a narrowed policy the server acknowledges but does not apply, written
+    // by the continuation itself or first by a resume.
     { state: "settled", end: "policy-unconfirmed" },
+    { state: "settled", end: "resume-unconfirmed" },
     { state: "settled", end: "closed" },
     { state: "settled", end: "owned-exit" },
     { state: "settled", end: "failed-stream" },
@@ -2430,7 +2432,10 @@ describe("OpenCodeAdapterV2", () => {
                 // SCIENT-FORK: Scient writes the rules at every turn start; fail the changed policy.
                 if (end === "policy-failure" && rootPermission !== undefined)
                   throw new Error("permission update failed");
-                if (end === "policy-unconfirmed" && rootPermission !== undefined)
+                if (
+                  (end === "policy-unconfirmed" || end === "resume-unconfirmed") &&
+                  rootPermission !== undefined
+                )
                   return { data: { id: root } };
                 rootPermission = input.permission;
                 return { data: { id: root } };
@@ -2950,13 +2955,22 @@ describe("OpenCodeAdapterV2", () => {
         if (
           end === "invalid-continuation" ||
           end === "policy-failure" ||
-          end === "policy-unconfirmed"
+          end === "policy-unconfirmed" ||
+          end === "resume-unconfirmed"
         ) {
+          if (end === "resume-unconfirmed") {
+            yield* harness.runtime.resumeThread({
+              providerThread: harness.providerThread,
+              runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+            });
+          }
           const failed = yield* harness
             .startTurn(
               "",
               undefined,
-              end === "policy-failure" || end === "policy-unconfirmed"
+              end === "policy-failure" ||
+                end === "policy-unconfirmed" ||
+                end === "resume-unconfirmed"
                 ? runtimePolicy("approval-required", { cwd: "/workspace" })
                 : undefined,
               false,

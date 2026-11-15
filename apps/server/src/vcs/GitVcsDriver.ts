@@ -1721,38 +1721,50 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           .exists(path.join(topLevel, ".gitmodules"))
           .pipe(Effect.orElseSucceed(() => true)));
       if (!hasSubmodules) return;
+      const submodules = yield* listSubmodules(input.cwd).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+      if (submodules === null) return;
       // SCIENT-FORK:START — the whole capture, submodules included, keeps one deadline.
+      // An earlier ref of this checkpoint goes first, so a submodule the deadline cuts
+      // off keeps none and restore leaves it alone instead of restoring an older snapshot.
+      yield* Effect.forEach(
+        submodules,
+        (cwd) =>
+          checkpoints
+            .deleteCheckpointRefs({ cwd, checkpointRefs: [input.checkpointRef] })
+            .pipe(Effect.ignore),
+        { discard: true },
+      );
       const submoduleBudgetMs = remainingCheckpointCaptureMs(
         captureStartedAt,
         yield* Clock.currentTimeMillis,
       );
       // SCIENT-FORK:END
       // A submodule that cannot be captured drops its ref, so restore leaves it alone.
-      yield* listSubmodules(input.cwd).pipe(
-        Effect.flatMap((submodules) =>
-          Effect.forEach(
-            submodules,
-            (cwd) =>
-              checkpoints
-                .captureCheckpoint({ cwd, checkpointRef: input.checkpointRef })
-                .pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("submodule checkpoint capture failed", { cwd, cause }).pipe(
-                      Effect.andThen(
-                        checkpoints
-                          .deleteCheckpointRefs({ cwd, checkpointRefs: [input.checkpointRef] })
-                          .pipe(Effect.ignore),
-                      ),
-                    ),
+      yield* Effect.forEach(
+        submodules,
+        (cwd) =>
+          checkpoints
+            .captureCheckpoint({ cwd, checkpointRef: input.checkpointRef })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("submodule checkpoint capture failed", { cwd, cause }).pipe(
+                  Effect.andThen(
+                    checkpoints
+                      .deleteCheckpointRefs({ cwd, checkpointRefs: [input.checkpointRef] })
+                      .pipe(Effect.ignore),
                   ),
                 ),
-            { discard: true },
-          ),
-        ),
-        Effect.catch((cause) =>
-          Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }),
-        ),
-        // SCIENT-FORK:START — submodules past the deadline keep no ref, so restore skips them.
+              ),
+            ),
+        { discard: true },
+      ).pipe(
+        // SCIENT-FORK:START
         Effect.timeoutOrElse({
           duration: submoduleBudgetMs,
           orElse: () =>

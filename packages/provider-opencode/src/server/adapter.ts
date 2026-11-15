@@ -436,6 +436,9 @@ interface OpenCodeThreadState {
   permission: PermissionRuleset;
   /** Parent rules last written into this child's `permission`; empty for root sessions. */
   inheritedPermission: PermissionRuleset;
+  // SCIENT-FORK: the rules OpenCode last read back for this session, unlike `permission`,
+  // which also holds rules written without a readback.
+  confirmedPermission?: PermissionRuleset;
 }
 
 interface OpenCodeRequestOwner {
@@ -3852,12 +3855,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               // A continuation sends no prompt: its wake already runs on this process, so it
               // rewrites, and confirms, only rules that differ from those confirmed there.
               const permission = openCodePermissionRules(turnInput.runtimePolicy);
+              const readBack = state.confirmedPermission;
               const confirmedHere =
                 continuation &&
-                permission.length === state.permission.length &&
-                permission.every((rule, index) =>
-                  permissionRuleEquals(rule, state.permission[index]!),
-                );
+                readBack !== undefined &&
+                permission.length === readBack.length &&
+                permission.every((rule, index) => permissionRuleEquals(rule, readBack[index]!));
               if (!confirmedHere) {
                 yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
                   client.session.update({ sessionID: sessionId, permission }, { signal }),
@@ -3883,6 +3886,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   );
                 }
                 state.permission = permission;
+                state.confirmedPermission = permission;
               }
               // SCIENT-FORK:END
               yield* applyPermissionRules(state, turnInput.runtimePolicy);

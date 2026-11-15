@@ -2230,6 +2230,42 @@ it.effect("sparse restore rewrites manual skip-worktree files and keeps exclusio
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+// A root repository with a populated submodule that has its own populated submodule.
+const makeSubmoduleTree = Effect.fn("makeSubmoduleTree")(function* (
+  git: (cwd: string, args: ReadonlyArray<string>) => Effect.Effect<unknown, unknown>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const makeRepository = Effect.fn("makeRepository")(function* (prefix: string) {
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix });
+    yield* git(cwd, ["init"]);
+    yield* git(cwd, ["config", "user.email", "test@test.com"]);
+    yield* git(cwd, ["config", "user.name", "Test"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "original\n");
+    yield* git(cwd, ["add", "."]);
+    yield* git(cwd, ["commit", "-m", "initial"]);
+    return cwd;
+  });
+  const nested = yield* makeRepository("t3-submodule-nested-");
+  const library = yield* makeRepository("t3-submodule-library-");
+  const addSubmodule = (cwd: string, url: string, name: string) =>
+    git(cwd, ["-c", "protocol.file.allow=always", "submodule", "add", url, name]).pipe(
+      Effect.andThen(git(cwd, ["commit", "-m", `add ${name}`])),
+    );
+  yield* addSubmodule(library, nested, "nested");
+  const root = yield* makeRepository("t3-submodule-root-");
+  yield* addSubmodule(root, library, "library");
+  yield* git(root, [
+    "-c",
+    "protocol.file.allow=always",
+    "submodule",
+    "update",
+    "--init",
+    "--recursive",
+  ]);
+  return root;
+});
+
 it.effect("restores and deletes checkpoints inside populated submodules", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -2237,33 +2273,7 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     const git = (cwd: string, args: ReadonlyArray<string>) =>
       driver.execute({ operation: "test", cwd, args });
-    const makeRepository = Effect.fn("makeRepository")(function* (prefix: string) {
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix });
-      yield* git(cwd, ["init"]);
-      yield* git(cwd, ["config", "user.email", "test@test.com"]);
-      yield* git(cwd, ["config", "user.name", "Test"]);
-      yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "original\n");
-      yield* git(cwd, ["add", "."]);
-      yield* git(cwd, ["commit", "-m", "initial"]);
-      return cwd;
-    });
-    const nested = yield* makeRepository("t3-submodule-nested-");
-    const library = yield* makeRepository("t3-submodule-library-");
-    const addSubmodule = (cwd: string, url: string, name: string) =>
-      git(cwd, ["-c", "protocol.file.allow=always", "submodule", "add", url, name]).pipe(
-        Effect.andThen(git(cwd, ["commit", "-m", `add ${name}`])),
-      );
-    yield* addSubmodule(library, nested, "nested");
-    const root = yield* makeRepository("t3-submodule-root-");
-    yield* addSubmodule(root, library, "library");
-    yield* git(root, [
-      "-c",
-      "protocol.file.allow=always",
-      "submodule",
-      "update",
-      "--init",
-      "--recursive",
-    ]);
+    const root = yield* makeSubmoduleTree(git);
     const files = ["file.txt", "library/file.txt", "library/nested/file.txt"].map((file) =>
       path.join(root, file),
     );
@@ -2294,6 +2304,51 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
       const ref = yield* git(cwd, ["for-each-ref", "refs/t3"]);
       assert.strictEqual(ref.stdout, "");
     }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("a submodule capture cut off keeps no earlier ref of that checkpoint", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    let blockCwd: string | undefined;
+    const blocked = yield* Deferred.make<void>();
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(
+        VcsProcess.VcsProcess,
+        VcsProcess.VcsProcess.of({
+          run: (input) =>
+            blockCwd !== undefined &&
+            input.cwd === blockCwd &&
+            input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION
+              ? Deferred.succeed(blocked, undefined).pipe(Effect.andThen(Effect.never))
+              : vcsProcess.run(input),
+        }),
+      ),
+    );
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "test", cwd, args });
+    const root = yield* makeSubmoduleTree(git);
+    const library = path.join(root, "library");
+    const nested = path.join(library, "nested");
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/recaptured");
+    yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+    for (const cwd of [root, library, nested])
+      assert.notStrictEqual((yield* git(cwd, ["for-each-ref", "refs/t3"])).stdout, "");
+
+    yield* fileSystem.writeFileString(path.join(library, "file.txt"), "newer\n");
+    blockCwd = library;
+    const recapture = yield* driver.checkpoints
+      .captureCheckpoint({ cwd: root, checkpointRef })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(blocked);
+    yield* Fiber.interrupt(recapture);
+    blockCwd = undefined;
+
+    assert.notStrictEqual((yield* git(root, ["for-each-ref", "refs/t3"])).stdout, "");
+    for (const cwd of [library, nested])
+      assert.strictEqual((yield* git(cwd, ["for-each-ref", "refs/t3"])).stdout, "");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
