@@ -322,6 +322,34 @@ async function run() {
       "the refused popup to close",
     );
 
+    phase = "a popup whose frame Google refused, which stays open";
+    NodeAssert.equal((await load(tab, siteRestart)).code, 0);
+    const framed = new Promise((resolve) => {
+      popupCreated = resolve;
+    });
+    const popupFrame = `${siteOrigin}/?frame=${encodeURIComponent(REJECTED)}`;
+    await tab.executeJavaScript(
+      `window.open(${JSON.stringify(popupFrame)}, "_blank", "popup"); 0`,
+      true,
+    );
+    const framedPopup = await withTimeout(framed, "a popup to open");
+    NodeAssert.deepEqual(await withTimeout(framedPopup.reported, "the popup frame's refusal"), {
+      page: "rejected",
+      context: "frame",
+      restartUrl: siteRestart,
+      pageUrl: siteRestart,
+    });
+    NodeAssert.equal(framedPopup.popup.isDestroyed(), false, "the popup closed for its frame");
+    framedPopup.popup.destroy();
+
+    phase = "a tab already showing Google's refusal when it is first followed";
+    await loadsAndRuns(REJECTED);
+    const late = [];
+    followTabSignIn(tab, (event) => late.push(event)).dispose();
+    NodeAssert.deepEqual(late, [
+      { page: "rejected", context: "tab", restartUrl: null, pageUrl: REJECTED },
+    ]);
+
     phase = "Google's session upkeep, never reported";
     const before = reports.length;
     NodeAssert.equal((await load(tab, "https://accounts.google.com/ListAccounts?gpsia=1")).code, 0);

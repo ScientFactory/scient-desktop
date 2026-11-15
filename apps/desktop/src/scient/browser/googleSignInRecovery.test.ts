@@ -116,6 +116,29 @@ describe("followTabSignIn", () => {
     });
   });
 
+  it("explains a refusal the tab already showed when it was first followed", () => {
+    const contents = Object.assign(new NodeEvents.EventEmitter(), {
+      getURL: () => REJECTED,
+      navigationHistory: {
+        getAllEntries: () => [SITE, OAUTH, IDENTIFIER, REJECTED].map((url) => ({ url })),
+        getActiveIndex: (): number => 3,
+      },
+    });
+    const report = vi.fn();
+    followTabSignIn(contents as never, report);
+    expect(report).toHaveBeenCalledExactlyOnceWith({
+      page: "rejected",
+      context: "tab",
+      restartUrl: "https://www.overleaf.com/",
+      pageUrl: REJECTED,
+    });
+    // Google's own sign-in, refused before the tab was followed, starts again at Google.
+    contents.navigationHistory.getAllEntries = () => [IDENTIFIER, REJECTED].map((url) => ({ url }));
+    contents.navigationHistory.getActiveIndex = () => 1;
+    followTabSignIn(contents as never, report);
+    expect(report.mock.lastCall?.[0].restartUrl).toBeNull();
+  });
+
   it("stops following once disposed", () => {
     const t = tab(SITE);
     t.signIn.dispose();
@@ -174,6 +197,24 @@ describe("watchSignInPopup", () => {
     contents.emit("did-navigate-in-page", {}, REJECTED, true);
     expect(report).toHaveBeenCalledWith(expect.objectContaining({ page: "rejected" }));
     expect(window.close).toHaveBeenCalledOnce();
+  });
+
+  it("explains a refused frame inside the popup without closing it", () => {
+    const { contents, window, report } = popupWindow();
+    contents.emit("did-frame-navigate", {}, IDENTIFIER, 200, "OK", false, 1, 2);
+    contents.emit("did-frame-navigate", {}, REJECTED, 200, "OK", false, 1, 2);
+    contents.emit("did-frame-navigate", {}, REJECTED, 200, "OK", false, 1, 3);
+    expect(report).toHaveBeenCalledExactlyOnceWith({
+      page: "rejected",
+      context: "frame",
+      restartUrl: "https://www.overleaf.com/",
+      pageUrl: "https://www.overleaf.com/login?x=1",
+    });
+    expect(window.close).not.toHaveBeenCalled();
+    // The window itself is then refused: it closes, and says so.
+    contents.emit("did-navigate", {}, REJECTED, 200, "OK");
+    expect(window.close).toHaveBeenCalledOnce();
+    expect(report).toHaveBeenLastCalledWith(expect.objectContaining({ context: "popup" }));
   });
 
   it("leaves Google's other pages and other sites alone", () => {

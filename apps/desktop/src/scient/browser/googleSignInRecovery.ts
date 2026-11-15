@@ -71,6 +71,13 @@ export function followTabSignIn(tab: WebContents, report: Report): TabSignIn {
   tab.on("did-navigate", navigated);
   tab.on("did-navigate-in-page", navigatedInPage);
   tab.on("did-frame-navigate", frameNavigated);
+  // A refusal the tab committed before it was followed, such as a restored tab's.
+  const shown = tab.getURL();
+  if (isRefusal(shown)) {
+    const entries = tab.navigationHistory.getAllEntries();
+    if (entries.some(({ url }) => isGoogleOAuthPage(url))) startedAt = siteInHistory(tab);
+    refused(shown);
+  }
   return {
     dispose: () => {
       tab.off("did-start-navigation", started);
@@ -93,6 +100,7 @@ export function watchSignInPopup(window: BrowserWindow, opener: WebContents, rep
   const pageUrl = opener.getURL();
   const restartUrl = signInRestartUrl(pageUrl);
   let reported = false;
+  let reportedFrame = false;
   const refused = () => {
     if (!reported) {
       reported = true;
@@ -105,5 +113,11 @@ export function watchSignInPopup(window: BrowserWindow, opener: WebContents, rep
   });
   popup.on("did-navigate-in-page", (_event, url, isMainFrame) => {
     if (isMainFrame && isRefusal(url)) refused();
+  });
+  // A refused frame inside the window: the window may still be of use, so it stays open.
+  popup.on("did-frame-navigate", (_event, url, _code, _status, isMainFrame) => {
+    if (isMainFrame || reported || reportedFrame || !isRefusal(url)) return;
+    reportedFrame = true;
+    report({ page: "rejected", context: "frame", restartUrl, pageUrl });
   });
 }
