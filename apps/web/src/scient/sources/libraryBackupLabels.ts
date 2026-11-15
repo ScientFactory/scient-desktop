@@ -40,6 +40,7 @@ export const RESTORE_LABELS = {
   menuItem: "Restore from a backup…",
   failed: "The backup was not restored",
   restored: "Library restored from the backup",
+  putBack: "The earlier Library is back",
   cancel: "Cancel",
 } as const;
 
@@ -62,11 +63,14 @@ export function restoreLine(status: ScientSourcesRestoreStatus): string | null {
   }
   if (status.state !== "ready") return null;
   if (status.begun) {
-    return `Scient is part way through restoring the backup of ${day(status.backupCreatedAt)}. Quit Scient and open it again to finish. Until then no project can move its sources into the Library.`;
+    return `Scient is part way through ${status.putBack ? `putting back the Library that was replaced on ${day(status.backupCreatedAt)}` : `restoring the backup of ${day(status.backupCreatedAt)}`}. Quit Scient and open it again to finish. Until then no project can move its sources into the Library.`;
   }
   const problem = status.problem
     ? ` Scient could not put it in place at its last start (${status.problem}); it tries again at the next.`
     : "";
+  if (status.putBack) {
+    return `The Library that was replaced on ${day(status.backupCreatedAt)} is ready to come back: ${holding(status)}. It takes this Library's place the next time Scient starts, and this Library is then kept in a folder beside it.${problem}`;
+  }
   return `The backup of ${day(status.backupCreatedAt)} is ready: ${holding(status)}. It replaces this Library the next time Scient starts. If this Library holds anything, it is kept in a folder beside the restored one.${problem}`;
 }
 
@@ -74,9 +78,10 @@ export function restoreLine(status: ScientSourcesRestoreStatus): string | null {
 export function restoreRefusedLabel(
   status: Extract<ScientSourcesRestoreStatus, { state: "ready" }>,
 ): string | null {
-  return status.refused
-    ? `${status.refused.reason} The backup of ${day(status.backupCreatedAt)} that was ready is still waiting.`
-    : null;
+  if (!status.refused) return null;
+  return status.putBack
+    ? `${status.refused.reason} The Library that was to be put back is still waiting.`
+    : `${status.refused.reason} The backup of ${day(status.backupCreatedAt)} that was ready is still waiting.`;
 }
 
 export function restoredLabel(
@@ -85,7 +90,9 @@ export function restoredLabel(
   const kept = status.kept
     ? ` The Library that was here (${count(status.kept.sources)} ${status.kept.sources === 1 ? "source" : "sources"}) is kept in ${status.kept.path}`
     : "";
-  return `${holding(status)} from the backup of ${day(status.backupCreatedAt)}. Project folders were not changed.${kept}`;
+  return status.putBack
+    ? `This is the Library that was replaced on ${day(status.backupCreatedAt)} again: ${holding(status)}. Project folders were not changed.${kept}`
+    : `${holding(status)} from the backup of ${day(status.backupCreatedAt)}. Project folders were not changed.${kept}`;
 }
 
 export const JOIN_LABELS = {

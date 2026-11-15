@@ -793,6 +793,8 @@ describe("OpenCodeAdapterV2", () => {
       const updates: Array<{ sessionID: string; permission: unknown }> = [];
       const fullAccess = runtimePolicy("full-access", { cwd: "/workspace" });
       const supervised = runtimePolicy("approval-required", { cwd: "/workspace" });
+      // SCIENT-FORK: OpenCode reports the rules last written; Scient reads them back.
+      let nativePermission: unknown = openCodePermissionRules(fullAccess);
       const harness = yield* makeOpenCodeRuntimeHarness("policy-change", "root", {
         event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
         session: {
@@ -806,12 +808,13 @@ describe("OpenCodeAdapterV2", () => {
           get: async () => ({
             data: {
               id: "root",
-              permission: openCodePermissionRules(fullAccess),
+              permission: nativePermission,
               time: { created: 1, updated: 1 },
             },
           }),
           update: async (input: { sessionID: string; permission: unknown }) => {
             updates.push(input);
+            nativePermission = input.permission;
             return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
           },
           promptAsync: async () => ({ data: true }),
@@ -859,6 +862,12 @@ describe("OpenCodeAdapterV2", () => {
         [child, [taskDeny]],
       ]);
       let failNextChildUpdate = false;
+      let ignoreChildUpdates = false;
+      let ignoreRootUpdates = false;
+      let stallRootAbort = false;
+      const rootAbortStalled = promiseGate<void>();
+      let childAborted = promiseGate<void>();
+      const aborted: Array<string> = [];
       const harness = yield* makeOpenCodeRuntimeHarness("child-policy-change", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
@@ -877,12 +886,26 @@ describe("OpenCodeAdapterV2", () => {
               throw new Error("child update failed");
             }
             updates.push(input);
-            nativePermissions.set(input.sessionID, input.permission);
+            if (
+              !(input.sessionID === child && ignoreChildUpdates) &&
+              !(input.sessionID === root && ignoreRootUpdates)
+            )
+              nativePermissions.set(input.sessionID, input.permission);
             return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
           },
           promptAsync: async () => ({ data: true }),
-          abort: async () => ({ data: true }),
-          children: async () => ({ data: [] }),
+          abort: async (input: { sessionID: string }) => {
+            aborted.push(input.sessionID);
+            if (input.sessionID === child) childAborted.resolve();
+            if (input.sessionID === root && stallRootAbort) {
+              rootAbortStalled.resolve();
+              await new Promise<never>(() => {});
+            }
+            return { data: true };
+          },
+          children: async (input: { sessionID: string }) => ({
+            data: input.sessionID === root ? [{ id: child }] : [],
+          }),
         },
       });
 
@@ -921,6 +944,14 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(permissionAction(childRules, "task"), "deny");
       assert.deepStrictEqual(childRules, openCodeChildPermissionRules(supervised, [taskDeny]));
 
+      // SCIENT-FORK:START — rules OpenCode read back are not written again.
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: supervised,
+      });
+      assert.equal(childUpdates().length, 2);
+      // SCIENT-FORK:END
+
       yield* harness.runtime.resumeThread({
         providerThread: harness.providerThread,
         runtimePolicy: fullAccess,
@@ -941,8 +972,131 @@ describe("OpenCodeAdapterV2", () => {
       });
       assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "ask");
       assert.equal(permissionAction(nativePermissions.get(child)!, "task"), "deny");
+
+      // SCIENT-FORK:START — a child that ignores its rules fails the resume and is stopped.
+      ignoreChildUpdates = true;
+      const ignored = yield* Effect.exit(
+        harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          runtimePolicy: fullAccess,
+        }),
+      );
+      assert.isTrue(Exit.isFailure(ignored));
+      // The whole session tree stops, so no sibling keeps the broader rules.
+      assert.includeMembers(aborted, [root, child]);
+      assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "ask");
+      ignoreChildUpdates = false;
+      // Unconfirmed rules are written again even though they match the last write.
+      yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+        runtimePolicy: fullAccess,
+      });
+      assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "allow");
+
+      // Root rules OpenCode does not confirm stop the running child too; a turn start
+      // writes its root rules through the same guard.
+      // A root abort that never returns does not hold back the child's.
+      ignoreRootUpdates = true;
+      stallRootAbort = true;
+      aborted.length = 0;
+      childAborted = promiseGate<void>();
+      const narrowing = yield* harness.runtime
+        .resumeThread({ providerThread: harness.providerThread, runtimePolicy: supervised })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.promise(() => rootAbortStalled.promise);
+      // The child is stopped while the root abort still hangs, before any deadline passes.
+      yield* Effect.promise(() => childAborted.promise);
+      stallRootAbort = false;
+      yield* TestClock.adjust("11 seconds");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(narrowing)));
+      assert.includeMembers(aborted, [root, child]);
+      // SCIENT-FORK:END
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
+
+  // SCIENT-FORK:START — a subagent runs only under rules OpenCode reads back.
+  it.effect.each(["ignored", "unreadable"] as const)(
+    "stops a new subagent whose rules OpenCode reports %s",
+    (report) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+        const fullAccess = runtimePolicy("full-access", { cwd: "/workspace" });
+        const root = "ses_root";
+        const child = "ses_child";
+        const nativePermissions = new Map<string, unknown>([
+          [root, openCodePermissionRules(fullAccess)],
+          [child, [{ permission: "*", pattern: "*", action: "allow" }]],
+        ]);
+        const aborted: Array<string> = [];
+        let childReads = 0;
+        const harness = yield* makeOpenCodeRuntimeHarness(`child-policy-${report}`, root, {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+            get: async ({ sessionID }: { sessionID: string }) =>
+              sessionID === child && report === "unreadable" && childReads++ > 0
+                ? {}
+                : {
+                    data: {
+                      id: sessionID,
+                      ...(sessionID === child ? { parentID: root } : {}),
+                      permission: nativePermissions.get(sessionID),
+                      time: { created: 1, updated: 1 },
+                    },
+                  },
+            update: async (input: { sessionID: string; permission: unknown }) => {
+              // The child acknowledges its rules but keeps allowing everything.
+              if (input.sessionID !== child)
+                nativePermissions.set(input.sessionID, input.permission);
+              return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
+            },
+            promptAsync: async () => ({ data: true }),
+            abort: async (input: { sessionID: string }) => {
+              aborted.push(input.sessionID);
+              return { data: true };
+            },
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn("hello", harness.providerThread, fullAccess);
+        const terminal = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        // The failed event ends the stream, so its push is never acknowledged.
+        yield* push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: root,
+            part: {
+              id: "prt_task",
+              sessionID: root,
+              messageID: "msg_root_assistant",
+              type: "tool",
+              tool: "task",
+              callID: "call_task",
+              state: {
+                status: "running",
+                input: { description: "Explore", prompt: "look around", subagent_type: "general" },
+                title: "Explore",
+                metadata: { parentSessionId: root, sessionId: child },
+                time: { start: 3 },
+              },
+            },
+          },
+        }).pipe(Effect.forkScoped);
+        yield* TestClock.adjust("10 seconds");
+        const events = Array.from(yield* Fiber.join(terminal));
+        assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "failed");
+        assert.include(aborted, child);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      ),
+  );
+  // SCIENT-FORK:END
 
   it.effect.each(
     [true, false].map((explicitOptions) => ({
@@ -2357,7 +2511,8 @@ describe("OpenCodeAdapterV2", () => {
         const nativeEvents = asyncEventStream();
         const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
         const root = "ses_root";
-        let rootPermission: unknown;
+        // SCIENT-FORK: Scient reads back every session's permission rules it writes.
+        const permissions = new Map<string, unknown>();
         const promptIds: Array<string> = [];
         const aborted: Array<string> = [];
         const nativeExit = yield* Deferred.make<number>();
@@ -2407,9 +2562,8 @@ describe("OpenCodeAdapterV2", () => {
                   data: {
                     id: input.sessionID,
                     ...(input.sessionID === "ses_held_child" ? { parentID: root } : {}),
-                    // SCIENT-FORK: Scient reads back the permission rules it wrote.
-                    ...(input.sessionID === root && rootPermission !== undefined
-                      ? { permission: rootPermission }
+                    ...(permissions.has(input.sessionID)
+                      ? { permission: permissions.get(input.sessionID) }
                       : {}),
                     time: { created: 1, updated: 1 },
                   },
@@ -2428,17 +2582,18 @@ describe("OpenCodeAdapterV2", () => {
               children: async (input: { sessionID: string }) => ({
                 data: input.sessionID === root ? [{ id: "ses_descendant" }] : [],
               }),
-              update: async (input: { readonly permission?: unknown }) => {
+              update: async (input: {
+                readonly sessionID: string;
+                readonly permission?: unknown;
+              }) => {
                 // SCIENT-FORK: Scient writes the rules at every turn start; fail the changed policy.
-                if (end === "policy-failure" && rootPermission !== undefined)
+                const changingRoot = input.sessionID === root && permissions.has(root);
+                if (end === "policy-failure" && changingRoot)
                   throw new Error("permission update failed");
-                if (
-                  (end === "policy-unconfirmed" || end === "resume-unconfirmed") &&
-                  rootPermission !== undefined
-                )
+                if ((end === "policy-unconfirmed" || end === "resume-unconfirmed") && changingRoot)
                   return { data: { id: root } };
-                rootPermission = input.permission;
-                return { data: { id: root } };
+                permissions.set(input.sessionID, input.permission);
+                return { data: { id: input.sessionID } };
               },
               abort: async (input: { sessionID: string }) => {
                 aborted.push(input.sessionID);
@@ -2964,10 +3119,14 @@ describe("OpenCodeAdapterV2", () => {
           end === "resume-unconfirmed"
         ) {
           if (end === "resume-unconfirmed") {
-            yield* harness.runtime.resumeThread({
-              providerThread: harness.providerThread,
-              runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
-            });
+            // SCIENT-FORK: the resume reads its write back, so it already fails.
+            const resumed = yield* harness.runtime
+              .resumeThread({
+                providerThread: harness.providerThread,
+                runtimePolicy: runtimePolicy("approval-required", { cwd: "/workspace" }),
+              })
+              .pipe(Effect.exit);
+            assert.isTrue(Exit.isFailure(resumed));
           }
           const failed = yield* harness
             .startTurn(
@@ -2985,7 +3144,11 @@ describe("OpenCodeAdapterV2", () => {
             .pipe(Effect.exit);
           assert.isTrue(Exit.isFailure(failed));
           assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
-          assert.deepEqual(aborted, [root, "ses_descendant"]);
+          if (end !== "invalid-continuation") {
+            // SCIENT-FORK: the unconfirmed resume or start already stopped the session tree.
+            assert.sameMembers([...new Set(aborted)], [root, "ses_descendant"]);
+            assert.deepEqual(aborted.slice(0, 2), [root, "ses_descendant"]);
+          } else assert.deepEqual(aborted, [root, "ses_descendant"]);
           assert.isTrue(
             Option.isNone(yield* offers[0]!.dispatchIfCurrent!(Effect.succeed("stale"))),
           );
@@ -3567,6 +3730,7 @@ describe("OpenCodeAdapterV2", () => {
       const nativePermissions = nativePermissionPeer();
       let promptId = "";
       const aborted: Array<string> = [];
+      let childPermission: ReturnType<typeof openCodePermissionRules> = [];
       const harness = yield* makeOpenCodeRuntimeHarness("background-child", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
@@ -3579,10 +3743,15 @@ describe("OpenCodeAdapterV2", () => {
                   data: {
                     id: child,
                     parentID: root,
-                    permission: [],
+                    // SCIENT-FORK: the child reports the rules last written to it.
+                    permission: childPermission,
                     time: { created: 2, updated: 2 },
                   },
                 },
+          update: async (input: Parameters<typeof nativePermissions.update>[0]) => {
+            if (input.sessionID === child) childPermission = input.permission;
+            return nativePermissions.update(input);
+          },
           promptAsync: async (input: { messageID: string }) => {
             promptId = input.messageID;
             return { data: true };

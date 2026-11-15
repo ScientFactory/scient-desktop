@@ -2579,6 +2579,21 @@ the status carries `begun` so the panel says to restart and offers no Cancel.
 Only the next start ends it, so a Library is never left swapped in without
 the "moved back" decisions being carried over.
 
+**Putting a kept Library back** (`prepareScientLibraryPutBack`; the
+`libraryRestore` endpoint's `put-back`; "Put it back" on a restore's line in
+Recent changes) is the same swap without a copy. It accepts only a folder
+that this Library's `restores.json` names as a Library a restore replaced,
+beside the Library, and writes only the intent, with `putBack` naming that
+folder. The start then moves the Library aside and renames the kept folder
+into its place; just before the rename it adds its line to the kept folder's
+own `restores.json` (`putBack: true`; `backupCreatedAt` holds when that
+Library was set aside, `backupId` is empty). Cancel removes the intent and
+never touches the folder: a kept Library is never Scient's to delete, and
+every place that removes a waiting copy checks for `putBack` first. The
+Library that steps aside is kept like any other, so a put-back can be put
+back. Records of kept folders are carried over only while their folder
+exists.
+
 `finishScientLibraryRestore` puts the copy in place and is called once, at the
 server's start, right after the server owns its data folder
 (`finishLibraryRestoreAtStart` in `server.ts`, before any layer is built): no

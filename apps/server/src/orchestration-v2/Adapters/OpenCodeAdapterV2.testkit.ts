@@ -1,4 +1,4 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient, PermissionRuleset } from "@opencode-ai/sdk/v2";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderReplayEntry, type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import {
   makeOpenCodeAdapterV2Driver,
+  openCodeChildPermissionRules,
   openCodePermissionRules,
 } from "@t3tools/provider-opencode/server";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
@@ -119,9 +120,9 @@ function frameRecord(frame: unknown): Record<string, unknown> | null {
   return typeof frame === "object" && frame !== null ? (frame as Record<string, unknown>) : null;
 }
 
-/** The recorded peer predates per-turn permission confirmation. Add explicit synthetic
- * frames from the scenario's declared policy, before each prompt and after each wake
- * (an owned session busy again after idle); never infer authority from the request.
+/** The recorded peer predates permission readback. Add explicit synthetic frames from the
+ * scenario's declared policy before each prompt and after each wake (an owned session busy
+ * again after idle), and read each recorded subagent write back as the peer reported it.
  */
 export function materializeOpenCodeReplayPermissions(
   transcript: ProviderReplayTranscript,
@@ -187,6 +188,38 @@ export function materializeOpenCodeReplayPermissions(
       );
     }
     entries.push(entry);
+    // A recorded subagent rule write is read back with the rules the declared policy gives
+    // that child, from the child rules recorded before the write.
+    if (
+      entry.type === "emit_inbound" &&
+      frame?.type === "sdk.response" &&
+      frame.operation === "session.update" &&
+      data !== null &&
+      typeof data.id === "string"
+    ) {
+      const recorded = sessions.get(data.id);
+      const childPermission = openCodeChildPermissionRules(
+        runtimePolicy,
+        Array.isArray(recorded?.permission) ? (recorded.permission as PermissionRuleset) : [],
+      );
+      const label = `${entry.label ?? "session.update"}.synthetic-readback`;
+      entries.push(
+        {
+          type: "expect_outbound",
+          label,
+          frame: { type: "session.get", input: { sessionID: data.id } },
+        },
+        {
+          type: "emit_inbound",
+          label: `${label}.response`,
+          frame: {
+            type: "sdk.response",
+            operation: "session.get",
+            data: { ...recorded, id: data.id, permission: childPermission },
+          },
+        },
+      );
+    }
     const event = frame?.type === "sdk.event" ? frameRecord(frame.event) : null;
     const properties = frameRecord(event?.properties);
     const statusSession = properties?.sessionID;

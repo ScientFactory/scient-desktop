@@ -571,6 +571,8 @@ export const ScientLibraryRecentChange = Schema.Union([
     id: NonEmptyString,
     ...RecentChangeBase,
     backupCreatedAt: NonEmptyString,
+    /** A Library an earlier restore had kept was put back; `backupCreatedAt` is when it was set aside. */
+    putBack: Schema.optionalKey(Schema.Boolean),
     sources: Schema.Int,
     pdfs: Schema.Int,
     /** The replaced Library's folder and source count, while that folder is still there. */

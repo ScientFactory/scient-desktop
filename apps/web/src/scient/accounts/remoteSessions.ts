@@ -26,6 +26,7 @@ import { environmentSession, readEnvironmentScope, readPreparedConnection } from
 
 import { accountsState } from "./accountsState";
 import { activeProfiles } from "./activeProfiles";
+import { parseUrl } from "@t3tools/shared/url";
 
 export type RouteRefusal = "relay" | "unencrypted";
 
@@ -37,7 +38,7 @@ export function allowedRoute(
   connection: Pick<PreparedConnection, "environmentId" | "socketUrl" | "target">,
   localBackends: ReadonlyArray<Pick<DesktopEnvironmentBootstrap, "id" | "httpBaseUrl">>,
 ): RouteRefusal | undefined {
-  const url = URL.parse(connection.socketUrl);
+  const url = parseUrl(connection.socketUrl);
   if (!url) return "unencrypted";
   const host = url.hostname.replace(/^\[|\]$/g, "");
   switch (connection.target._tag) {
@@ -50,7 +51,7 @@ export function allowedRoute(
     case "BearerConnectionTarget": {
       const local = localBackends.find((backend) => backend.id === connection.environmentId);
       if (local) {
-        const backend = local.httpBaseUrl ? URL.parse(local.httpBaseUrl) : null;
+        const backend = local.httpBaseUrl ? parseUrl(local.httpBaseUrl) : null;
         return backend && backend.hostname === url.hostname && backend.port === url.port
           ? undefined
           : "unencrypted";

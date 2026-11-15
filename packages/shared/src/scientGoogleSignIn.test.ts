@@ -69,3 +69,19 @@ describe("signInRestartUrl", () => {
     expect(signInRestartUrl(null)).toBeNull();
   });
 });
+
+describe("without URL.parse", () => {
+  it("still recognizes Google sign-in pages and restart addresses", () => {
+    const { parse } = URL;
+    Reflect.deleteProperty(URL, "parse");
+    try {
+      expect(googleSignInPage("https://accounts.google.com/")).toBe("transit");
+      expect(googleSignInPage("not a url")).toBeNull();
+      expect(signInRestartUrl("https://www.overleaf.com/login?state=abc#x")).toBe(
+        "https://www.overleaf.com/",
+      );
+    } finally {
+      URL.parse = parse;
+    }
+  });
+});

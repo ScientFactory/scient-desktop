@@ -1,3 +1,5 @@
+import { parseUrl } from "./url.ts";
+
 /**
  * Google refuses sign-in inside an embedded browser ("This browser or app may not be secure"), on
  * every platform. Scient's browser can still use a Google session made elsewhere, so only Google's
@@ -21,7 +23,7 @@ const TRANSIT = /^\/(?:ServiceLogin|AccountChooser)(?:\/|$)/i;
 const CREDENTIALS = /^\/(?:AddSession|InteractiveLogin|(?:v\d+\/)?signin)(?:\/|$)/i;
 
 const googleAccountsPath = (raw: string) => {
-  const url = URL.parse(raw);
+  const url = parseUrl(raw);
   if (!url || url.protocol !== "https:" || url.username || url.password) return null;
   if (url.port !== "" || url.hostname.replace(/\.$/, "").toLowerCase() !== GOOGLE_ACCOUNTS_HOST)
     return null;
@@ -59,7 +61,7 @@ export const GOOGLE_SESSION_COOKIE_NAMES: ReadonlySet<string> = new Set([
 
 /** Where the person can sign in again: a safe https origin, never a URL carrying OAuth state. */
 export function signInRestartUrl(raw: string | null | undefined): string | null {
-  const url = raw ? URL.parse(raw) : null;
+  const url = raw ? parseUrl(raw) : null;
   if (!url || url.protocol !== "https:" || url.username || url.password) return null;
   return googleAccountsPath(url.href) === null ? `${url.origin}/` : null;
 }

@@ -128,6 +128,7 @@ export async function listScientLibraryRecentChanges(
       at: restore.finishedAt,
       by: restore.by,
       backupCreatedAt: restore.backupCreatedAt,
+      ...(restore.putBack ? { putBack: true } : {}),
       sources: restore.sources,
       pdfs: restore.pdfs,
       kept: restore.kept,

@@ -71,7 +71,7 @@ export const LIBRARY_COMMAND_PARITY: Record<ScientSourcesHttpCommandTag, Library
   "scientSources.libraryRestore": {
     kind: "gap",
     reason:
-      "An agent cannot restore a Library backup yet; it comes with the backup action on the organize tool, with its evals.",
+      "An agent cannot restore a Library backup, or put back a Library a restore replaced, yet; it comes with the backup action on the organize tool, with its evals.",
   },
   "scientSources.deletePermanently": tool("scient_sources_remove", "permanent"),
   "scientSources.revert": tool("scient_sources_revert"),

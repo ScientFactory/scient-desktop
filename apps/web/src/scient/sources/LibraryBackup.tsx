@@ -89,7 +89,7 @@ function sayHowRestoreEnded(environmentId: EnvironmentId, restore: ScientSources
     if (!once(restore.restoreId)) return;
     toastManager.add({
       type: "success",
-      title: RESTORE_LABELS.restored,
+      title: restore.putBack ? RESTORE_LABELS.putBack : RESTORE_LABELS.restored,
       description: restoredLabel(restore),
     });
   } else if (restore.state === "failed") {
@@ -201,7 +201,10 @@ export function useLibraryBackup(input: {
   };
 
   const changeRestore = (
-    change: { action: "prepare"; fromFolder: string } | { action: "cancel" },
+    change:
+      | { action: "prepare"; fromFolder: string }
+      | { action: "put-back"; folder: string }
+      | { action: "cancel" },
   ) => {
     const asked = context;
     return changeLibraryRestore(input.environmentId, { root: input.root, change }).then(
@@ -238,6 +241,8 @@ export function useLibraryBackup(input: {
         ? () => changeRestore({ action: "cancel" })
         : undefined,
     restoreFrom: (fromFolder: string) => changeRestore({ action: "prepare", fromFolder }),
+    /** Puts a Library a restore kept back in the Library's place at the next start. */
+    putBack: (folder: string) => changeRestore({ action: "put-back", folder }),
   };
 }
 

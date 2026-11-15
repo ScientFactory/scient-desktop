@@ -51,6 +51,8 @@ export function RecentChangesDialog(props: {
   readonly onChanged: () => Promise<unknown>;
   /** Starts adding what a Library folder holds; the panel shows its progress. */
   readonly onAddFromLibrary: (fromFolder: string) => Promise<unknown>;
+  /** Arranges for a Library a restore kept to be the Library again; the panel says it waits. */
+  readonly onPutBackLibrary: (folder: string) => Promise<unknown>;
   /** Opens the papers a join left as they are here because both Libraries have them. */
   readonly onShowDifferences: (joinId: string) => void;
   readonly onClose: () => void;
@@ -247,6 +249,24 @@ export function RecentChangesDialog(props: {
                         <p className="text-xs break-words text-muted-foreground">
                           {recentChangeDetail(change)}
                         </p>
+                      ) : null}
+                      {change.kind === "restore" && change.kept && props.canChange ? (
+                        // For a restore made by mistake: that Library whole, not only its
+                        // sources. Nothing happens until Scient restarts, and it can be cancelled.
+                        <Button
+                          className="mt-1"
+                          size="xs"
+                          variant="outline"
+                          disabled={working}
+                          aria-label={`${RECENT_CHANGES_LABELS.putBack}: ${sentence}`}
+                          onClick={() => {
+                            if (!change.kept) return;
+                            void props.onPutBackLibrary(change.kept.path);
+                            props.onClose();
+                          }}
+                        >
+                          {RECENT_CHANGES_LABELS.putBack}
+                        </Button>
                       ) : null}
                       {change.kind === "join" && change.different > 0 ? (
                         // Looking is not a change: offered to every session, undone or not.

@@ -31,6 +31,7 @@ import {
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
 import { normalizeSearchText } from "../../lib/utils";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
+import { parseUrl } from "@t3tools/shared/url";
 
 /** Shown after a row's name; healthy entries show nothing. */
 const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
@@ -151,7 +152,7 @@ export function entrySourceLabel(entry: DiscoverEntry): string {
 
 /** `example.com` from `https://www.example.com/path`; null for anything unparsable. */
 export function urlHost(url: string): string | null {
-  return URL.canParse(url) ? new URL(url).hostname.replace(/^www\./u, "") : null;
+  return parseUrl(url)?.hostname.replace(/^www\./u, "") ?? null;
 }
 
 const BUILT_IN_PLUGIN_GLYPHS: Readonly<Record<string, LucideIcon>> = {
@@ -645,8 +646,9 @@ export function entryFacts(
 function connectorHost(
   connector: Pick<ConnectorSummary, "url"> & { readonly local?: unknown },
 ): string | undefined {
-  if (connector.local !== undefined || !URL.canParse(connector.url)) return undefined;
-  const url = new URL(connector.url);
+  if (connector.local !== undefined) return undefined;
+  const url = parseUrl(connector.url);
+  if (url === null) return undefined;
   return url.protocol === "https:" || url.protocol === "http:" ? url.host : undefined;
 }
 

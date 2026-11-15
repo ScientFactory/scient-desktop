@@ -19,6 +19,7 @@ import { accountsState } from "./accountsState";
 import { SiteFavicon } from "./AccountLogo";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useSignIn } from "./useSignIn";
+import { parseUrl } from "@t3tools/shared/url";
 
 const SEARCH_DELAY_MS = 300;
 const HIDDEN_KEY = "scient:university-row-hidden";
@@ -112,8 +113,9 @@ export function UniversityPicker({
     const proxyUrl = pasted.includes("{url}")
       ? pasted
       : `${pasted}${pasted.includes("?") ? "&" : "?"}url={url}`;
-    if (!URL.canParse(pasted)) return;
-    const { hostname } = new URL(pasted);
+    const pastedUrl = parseUrl(pasted);
+    if (pastedUrl === null) return;
+    const { hostname } = pastedUrl;
     const saved = await save({
       name: hostname,
       details: { kind: "website", sites: [hostname], profileId, proxyUrl },

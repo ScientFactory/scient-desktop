@@ -24,6 +24,7 @@ import {
   cancelScientLibraryRestore,
   finishScientLibraryRestore,
   listScientLibraryRestores,
+  prepareScientLibraryPutBack,
   prepareScientLibraryRestore,
   readScientLibraryRestorePending,
   scientLibraryUnused,
@@ -582,6 +583,111 @@ describe("restoring a backup of the Library", () => {
         outcome: "ready",
         other: { kind: "replaced" },
       });
+    }
+  });
+
+  /** A Library a person works in, with another Library's backup restored over it by mistake. */
+  async function restoredByMistake() {
+    const { scenario, model } = await build();
+    const elsewhere = await createScenario(await temporaryRoot());
+    await runStep(elsewhere, EMPTY_MODEL, { op: "add", label: "theirs", pdf: true });
+    const wrongBackup = await backUp(elsewhere);
+    const mine = await inventory(scenario.libraryRoot);
+    const prepared = await prepareScientLibraryRestore({
+      libraryRoot: scenario.libraryRoot,
+      backup: wrongBackup,
+    });
+    if (prepared.outcome !== "ready") throw new Error(`Not ready: ${prepared.outcome}`);
+    expect(await finishScientLibraryRestore(scenario.libraryRoot)).toMatchObject({
+      outcome: "restored",
+      putBack: false,
+    });
+    const kept = `${scenario.libraryRoot}.replaced-${prepared.restoreId}`;
+    expect(await inventory(kept)).toEqual(mine);
+    return { scenario, model, mine, kept, wrong: await inventory(scenario.libraryRoot) };
+  }
+
+  /** A Library's files apart from its own record of restores, which a put-back adds to. */
+  const apartFromRestores = (files: ReadonlyMap<string, string>) =>
+    new Map([...files].filter(([path]) => path !== "restores.json"));
+
+  it("puts the Library back after a restore made by mistake, whole, and that can be taken back too", async () => {
+    const { scenario, model, mine, kept, wrong } = await restoredByMistake();
+    const root = scenario.libraryRoot;
+
+    // Only a folder this Library's record of a restore names.
+    expect(await prepareScientLibraryPutBack({ libraryRoot: root, folder: scenario.root })).toEqual(
+      { outcome: "not-kept" },
+    );
+
+    // Choosing it changes nothing yet, and Cancel leaves both Libraries exactly as they are.
+    const first = await prepareScientLibraryPutBack({ libraryRoot: root, folder: kept });
+    expect(first).toMatchObject({ outcome: "ready", counts: { sources: 4 } });
+    expect(await readScientLibraryRestorePending(root)).toMatchObject({
+      putBack: NodePath.basename(kept),
+      begun: false,
+    });
+    expect(await cancelScientLibraryRestore(root)).toEqual({ outcome: "cancelled" });
+    expect(await inventory(kept)).toEqual(mine);
+    expect(await inventory(root)).toEqual(wrong);
+
+    const again = await prepareScientLibraryPutBack({ libraryRoot: root, folder: kept });
+    if (again.outcome !== "ready") throw new Error(`Not ready: ${again.outcome}`);
+    const displaced = `${root}.replaced-${again.restoreId}`;
+    expect(await finishScientLibraryRestore(root)).toMatchObject({
+      outcome: "restored",
+      putBack: true,
+      keptReplaced: { path: displaced, sources: 1 },
+    });
+    // The Library is the one that was replaced, file for file; the one restored by mistake
+    // is kept in its turn; the folder that was kept is the Library now.
+    expect(apartFromRestores(await inventory(root))).toEqual(apartFromRestores(mine));
+    expect(apartFromRestores(await inventory(displaced))).toEqual(apartFromRestores(wrong));
+    expect(await besideOf(root)).toEqual([
+      "library",
+      NodePath.basename(displaced),
+      "library.restore.lock",
+    ]);
+    await recoverScenario(scenario);
+    expect((await checkLibraryRules(scenario, [model])).violations).toEqual([]);
+    expect(
+      (await listScientLibraryRecentChanges(libraryOf(scenario), 50)).changes.filter(
+        (change) => change.kind === "restore",
+      ),
+    ).toMatchObject([{ id: again.restoreId, putBack: true, kept: { path: displaced } }]);
+
+    // And back again: the restored Library can be made the Library once more.
+    const back = await prepareScientLibraryPutBack({ libraryRoot: root, folder: displaced });
+    if (back.outcome !== "ready") throw new Error(`Not ready: ${back.outcome}`);
+    expect(await finishScientLibraryRestore(root)).toMatchObject({
+      outcome: "restored",
+      putBack: true,
+    });
+    expect(apartFromRestores(await inventory(root))).toEqual(apartFromRestores(wrong));
+    expect(apartFromRestores(await inventory(`${root}.replaced-${back.restoreId}`))).toEqual(
+      apartFromRestores(mine),
+    );
+  });
+
+  it("finishes putting a Library back at the next start, wherever a start was killed", async () => {
+    for (const fault of ["after-aside", "after-swap", "before-intent-removed"] as const) {
+      const { scenario, model, mine, kept } = await restoredByMistake();
+      const root = scenario.libraryRoot;
+      const prepared = await prepareScientLibraryPutBack({ libraryRoot: root, folder: kept });
+      if (prepared.outcome !== "ready") throw new Error(`Not ready: ${prepared.outcome}`);
+      await expect(finishScientLibraryRestore(root, { fault })).rejects.toThrow("test fault");
+      // It has begun: it cannot be cancelled, and no other restore can take its place.
+      expect(await cancelScientLibraryRestore(root)).toEqual({ outcome: "begun" });
+      expect(await prepareScientLibraryPutBack({ libraryRoot: root, folder: kept })).toMatchObject({
+        outcome: expect.stringMatching(/^(unfinished|not-kept)$/u),
+      });
+      expect(await finishScientLibraryRestore(root)).toMatchObject({
+        outcome: "restored",
+        putBack: true,
+      });
+      expect(apartFromRestores(await inventory(root))).toEqual(apartFromRestores(mine));
+      await recoverScenario(scenario);
+      expect((await checkLibraryRules(scenario, [model])).violations).toEqual([]);
     }
   });
 

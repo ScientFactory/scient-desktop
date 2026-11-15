@@ -73,6 +73,7 @@ function setup(listed: ReadonlyArray<ScientSourcesRecentChange> = changes, more 
     onShowSources: vi.fn(),
     onChanged: vi.fn(async () => undefined),
     onAddFromLibrary: vi.fn(async () => undefined),
+    onPutBackLibrary: vi.fn(async () => undefined),
     onShowDifferences: vi.fn(),
     onClose: vi.fn(),
   };
@@ -206,6 +207,40 @@ describe("Recent changes", () => {
     );
     expect(handlers.onAddFromLibrary).toHaveBeenCalledWith(kept);
     expect(handlers.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers to put back the Library a restore replaced, and names a Library that was put back", async () => {
+    const at = "2026-11-15T09:00:00.000Z";
+    const kept = "/state/scient/library.replaced-restore_2";
+    const restore: ScientSourcesRecentChange = {
+      kind: "restore",
+      id: "restore_2",
+      at,
+      by: "user",
+      backupCreatedAt: "2026-11-10T08:00:00.000Z",
+      sources: 1204,
+      pdfs: 980,
+      kept: { path: kept, sources: 16 },
+    };
+    const handlers = setup([restore]);
+    await using screen = await render(dialog(handlers), { router: false });
+    await userEvent.click(
+      page.getByRole("button", { name: /^Put it back: Restored the Library/u }),
+    );
+    expect(handlers.onPutBackLibrary).toHaveBeenCalledWith(kept);
+    expect(handlers.onAddFromLibrary).not.toHaveBeenCalled();
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+
+    // A session that may only read is not offered it; a Library that was put back says so.
+    const reader = setup([{ ...restore, putBack: true }]);
+    await using _again = await render(dialog(reader, false), { router: false });
+    await expect
+      .element(page.getByText(/^Put back the Library that was replaced on .*: 1,204 sources$/u))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: /^Put it back/u }))
+      .not.toBeInTheDocument();
   });
 
   it("says why a merge Undo did not happen, and what a finished Undo left", async () => {

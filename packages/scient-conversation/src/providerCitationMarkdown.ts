@@ -5,6 +5,7 @@ import type {
   RuntimeCitationSource,
   RuntimeTextCitation,
 } from "@t3tools/contracts";
+import { parseUrl } from "@t3tools/shared/url";
 
 export const CODEX_CITATION_MARKER_PREFIX = "\uE200cite\uE202";
 
@@ -42,8 +43,8 @@ export function extractCodexTextCitations(text: string): ReadonlyArray<RuntimeTe
 }
 
 function safeWebUrl(value: string): string | null {
-  if (!URL.canParse(value)) return null;
-  const parsed = new URL(value);
+  const parsed = parseUrl(value);
+  if (parsed === null) return null;
   return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
 }
 
