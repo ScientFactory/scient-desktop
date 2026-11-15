@@ -3113,10 +3113,12 @@ change returns the current record. Removal is a tombstone that restore undoes,
 and the last ten revisions of each annotation are kept so `revert` can bring
 an earlier note back as a new revision. Each record credits `createdBy` and
 `updatedBy` (`user` or `agent`). A file that does not decode is never written
-over and is reported, not hidden, in listings. Writes are serialized per PDF
-inside the server process, like the Sources store. On the library backend,
-highlights on library PDFs live in the library (see "Highlights, the two notes
-and reading status").
+over and is reported, not hidden, in listings; every write decodes the file it
+is about to publish with the reader's own schema and size limit first, so no
+writer can leave a file that hides the PDF's other annotations. Writes are
+serialized per PDF inside the server process, like the Sources store. On the
+library backend, highlights on library PDFs live in the library (see
+"Highlights, the two notes and reading status").
 
 A highlight may carry `color` (`#rrggbb`) and `underline`, kept from the
 reader it was made in (a Zotero import); the reader paints one Custom
@@ -3576,7 +3578,10 @@ unique only in its library; by the user, at Zotero's date, the comment as its
 note, colour and underline kept). One found more than once there is not placed:
 Zotero's sort index counts characters in its own reading of the page, which
 nothing ties to Scient's. Everything else is kept in the PDF's `unplaced`
-list. The source's Zotero file keeps which PDF
+list, whole: a comment longer than a highlight's note (8,000 characters)
+goes there too, and one whose quote or comment is longer than that list
+holds (100,000 characters) is not brought and is counted as `highlights`
+named `too-long`. The source's Zotero file keeps which PDF
 here each Zotero file with highlights is (`pdfs`, attachment key to sha256,
 hashed before the import lets the copy go), so a refresh brings new ones onto
 the same PDF; a PDF not in it (imported before, or without highlights then)

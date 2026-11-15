@@ -799,7 +799,7 @@ export const ScientSourceNotBrought = Schema.Struct({
     "note-formatting",
     /** Images in notes, which are not carried. */
     "note-images",
-    /** Highlights and comments: `unplaced` (kept, not on the page), `no-file`, `later` (not saved); unnamed before. */
+    /** Highlights and comments: `unplaced` (kept, not on the page), `no-file`, `later` (not saved), `too-long`; unnamed before. */
     "highlights",
     /** Links to related items. */
     "related",

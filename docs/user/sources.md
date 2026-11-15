@@ -366,7 +366,8 @@ placed on the page**.
 When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
 many references it concerns: highlights and comments not placed on the page,
-highlights and comments on files that did not come, files that are not PDFs,
+highlights and comments on files that did not come, highlights and comments
+too long to keep (over 100,000 characters), files that are not PDFs,
 links kept as attachments, PDFs Zotero could not hand over, images in notes,
 notes too long to keep whole (a note holds 100,000 characters; what does not
 fit is left out from a paragraph on), notes and files that belong to no

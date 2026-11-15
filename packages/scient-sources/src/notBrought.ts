@@ -91,7 +91,9 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
           ? "Highlights and comments on files that did not come"
           : name === "later"
             ? "Highlights and comments not saved this time: Refresh from Zotero brings them"
-            : "Highlights and comments on PDFs";
+            : name === "too-long"
+              ? "Highlights and comments too long to keep (over 100,000 characters)"
+              : "Highlights and comments on PDFs";
     case "related":
       return "Links to related items";
     case "automatic-tags":

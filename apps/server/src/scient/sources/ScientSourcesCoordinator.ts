@@ -1669,6 +1669,7 @@ async function importZoteroOperationItem(input: {
       addNotBrought(notBrought, "collection", unfiled, "unfiled");
       addNotBrought(notBrought, "highlights", highlights?.unplaced ?? 0, "unplaced");
       addNotBrought(notBrought, "highlights", highlights?.elsewhere ?? 0, "no-file");
+      addNotBrought(notBrought, "highlights", highlights?.tooLong ?? 0, "too-long");
       addNotBrought(notBrought, "highlights", highlights ? 0 : onCopied.length, "later");
       return { ...result, record, notBrought };
     }

@@ -405,6 +405,8 @@ async function writeFileAt(home: ScientAnnotationHome, file: ScientAnnotationFil
   if (Buffer.byteLength(serialized, "utf8") > MAX_FILE_BYTES) {
     throw new Error("The PDF has too many annotations to save.");
   }
+  // Every writer comes here: a file the reader would refuse hides all of the PDF's annotations.
+  decodeFile(JSON.parse(serialized));
   await assertScientProjectDirectory(homeRoot(home), NodePath.dirname(filePath), { create: true });
   const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;

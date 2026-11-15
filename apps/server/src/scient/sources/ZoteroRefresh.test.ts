@@ -20,7 +20,7 @@ import {
   mutateScientAnnotations,
   readScientAnnotationFile,
 } from "../annotations/annotationStore.ts";
-import { textPdf } from "../annotations/annotationTestUtils.ts";
+import { readerAnchor, textPdf } from "../annotations/annotationTestUtils.ts";
 import {
   fakeZoteroAccess,
   fakeZoteroAccessWithGroup,
@@ -532,13 +532,13 @@ describe("Zotero refresh", () => {
   });
 
   // Constructed in Zotero's documented item format: public libraries do not hand out the PDFs.
-  const mark = (key: string, text: string, parentItem = "PDFA2345") =>
+  const mark = (key: string, text: string, parentItem = "PDFA2345", comment = `On ${key}`) =>
     zoteroItem(key, {
       itemType: "annotation",
       parentItem,
       annotationType: "highlight",
       annotationText: text,
-      annotationComment: `On ${key}`,
+      annotationComment: comment,
       annotationColor: "#FF6666",
       annotationPosition: JSON.stringify({ pageIndex: 0, rects: [[72, 700, 300, 712]] }),
       dateAdded: "2024-01-24T04:36:20Z",
@@ -653,6 +653,39 @@ describe("Zotero refresh", () => {
 
     expect((await marks()).placed?.map((entry) => entry.id)).toEqual([
       "ann_zotero_user_0_HIGH2345",
+    ]);
+  });
+
+  it("keeps a long Zotero comment whole beside the person's own highlights, and says what it could not keep", async () => {
+    const { root, zotero, home, material, addInZotero } = await withHighlightedPdf([]);
+    const mine = await mutateScientAnnotations({
+      canonicalRoot: home,
+      material,
+      relativePath: null,
+      command: {
+        action: "create",
+        annotationId: "ann_00000001",
+        anchor: readerAnchor({
+          text: "Results were strong in the first trial.",
+          quote: "first trial",
+        }),
+        highlighted: true,
+        note: "Mine",
+      },
+      actor: "user",
+      now: "2026-11-15T10:00:00.000Z",
+    });
+    // Past what a highlight's note holds, and past what the list of the others holds.
+    const long = "x".repeat(8_001);
+    addInZotero(mark("LONG2345", "strong in the first", "PDFA2345", long));
+    addInZotero(mark("HUGE2345", "strong in the first", "PDFA2345", "x".repeat(100_001)));
+
+    await refreshZoteroSources({ root, actor: "user", zotero });
+
+    const file = await readScientAnnotationFile(home, material.sha256);
+    expect(file?.annotations).toEqual([mine.annotation]);
+    expect(file?.unplaced?.map((entry) => [entry.annotationId, entry.comment])).toEqual([
+      ["ann_zotero_user_0_LONG2345", long],
     ]);
   });
 });

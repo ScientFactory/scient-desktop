@@ -331,12 +331,13 @@ describe("Zotero import", () => {
 
   it("says what Zotero holds for each reference that it did not bring", async () => {
     const root = await project();
-    const mark = (key: string, parentItem: string) =>
+    const mark = (key: string, parentItem: string, annotationComment = "") =>
       zoteroItem(key, {
         itemType: "annotation",
         parentItem,
         annotationType: "highlight",
         annotationText: "A passage",
+        annotationComment,
         annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
       });
     const zotero = fakeZoteroAccess(
@@ -388,8 +389,12 @@ describe("Zotero import", () => {
         ]),
         files: new Map([["PDFA2345", await pdf(root, "book.pdf")]]),
         // This PDF has no text to place one on; the second PDF and the snapshot do not come.
+        // One comment is longer than anything here holds.
         annotations: new Map([
-          ["PDFA2345", [mark("MARKA234", "PDFA2345")]],
+          [
+            "PDFA2345",
+            [mark("MARKA234", "PDFA2345"), mark("MARKA345", "PDFA2345", "x".repeat(100_001))],
+          ],
           ["PDFB2345", [mark("MARKB234", "PDFB2345"), mark("MARKB345", "PDFB2345")]],
           ["SNAP2345", [mark("MARKS234", "SNAP2345")]],
         ]),
@@ -415,6 +420,7 @@ describe("Zotero import", () => {
       { kind: "highlights", name: "no-file", count: 3 },
       { kind: "pdf", name: "unavailable", count: 1 },
       { kind: "highlights", name: "unplaced", count: 1 },
+      { kind: "highlights", name: "too-long", count: 1 },
     ]);
     // What it did bring is as before; the note keeps its link.
     const [record] = await listScientSourceRecords(root);
