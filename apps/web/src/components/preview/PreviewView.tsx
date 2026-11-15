@@ -121,6 +121,7 @@ import { BrowserHistoryDialog } from "~/scient/browser/BrowserHistoryDialog";
 import { MenuItem } from "~/components/ui/menu";
 import { recordSiteVisit } from "~/scient/browser/browserShortcuts";
 import { useShowPreviewStartPage } from "~/scient/multiWindow/previewTabShown";
+import { parseUrl } from "@t3tools/shared/url";
 // SCIENT-FORK:END
 
 interface Props {
@@ -1393,6 +1394,8 @@ export function PreviewView({
 
 // SCIENT-FORK:START — the failed page is the one the typed guess opened.
 function sameHost(a: string, b: string): boolean {
-  return URL.canParse(a) && URL.canParse(b) && new URL(a).host === new URL(b).host;
+  const first = parseUrl(a);
+  const second = parseUrl(b);
+  return first !== null && second !== null && first.host === second.host;
 }
 // SCIENT-FORK:END
