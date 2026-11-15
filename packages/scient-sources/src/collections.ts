@@ -541,12 +541,9 @@ export type ScientSourcePlacedCollection =
   | { readonly collection: null; readonly why: string };
 
 /**
- * Finds or makes here the wanted collections of a tree kept elsewhere, each with the ones
- * above it: the live one with its ID, else a live one with its name under the same parent
- * that no other collection of the tree has, else a new one with its ID. One the person
- * deleted here is left out of the answer, or with `remake` made again beside it under a new
- * ID, so the deleted one keeps its sources and can still be restored. A collection under a
- * deleted one that is not made again goes under it, as one the person had there would.
+ * Finds or makes the wanted collections of an outside tree with the ones above them: by ID, else
+ * by name under the same parent if no other outside one took it, else new. One deleted here is
+ * left out, or with `remake` made anew under a new ID so the deleted one stays restorable.
  */
 export function placeScientSourceCollections(input: {
   readonly root: ScientSourceStoreLocation;
@@ -615,6 +612,7 @@ export function placeScientSourceCollections(input: {
           if (above && !above.collection) {
             return { collection: null, why: "The collection above it could not be made here." };
           }
+          // Under a deleted parent that is not made again, as the person's own ones are there.
           const parentHere =
             above === null && parent ? byId.get(parent.collectionId) : above?.collection;
           const name = node.name.trim();
