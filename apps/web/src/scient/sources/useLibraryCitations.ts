@@ -1,8 +1,15 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
+
 import { readScientSources } from "./client";
-import { libraryCitationCandidates, type LibraryCitationCandidate } from "./libraryCitations";
+import {
+  libraryCitationCandidates,
+  libraryLatexCitationSuggestions,
+  type LibraryCitationCandidate,
+} from "./libraryCitations";
+import { useLibraryVersionStore } from "./librarySourceRequest";
 
 /**
  * The Library sources a document in this project can cite, or null while the
@@ -45,4 +52,25 @@ export function useLibraryCitations(input: {
   }, [context, request, input.environmentId, input.root]);
 
   return loaded?.context === context ? loaded.candidates : null;
+}
+
+/**
+ * What a typed LaTeX citation in this project offers from the Library. The function keeps its
+ * identity and reads the newest sources, so an editor can hold it for as long as it lives.
+ */
+export function useLibraryLatexCitationSuggestions(input: {
+  /** Null offers nothing, for a document outside a project or one that is not LaTeX. */
+  readonly environmentId: EnvironmentId | null;
+  readonly root: string | null;
+}): (typed: string) => ReadonlyArray<{ readonly key: string; readonly detail: string }> {
+  const root = input.root ?? "";
+  const version = useLibraryVersionStore((state) => state.byRoot[root] ?? "");
+  const candidates = useLibraryCitations({
+    environmentId: root ? input.environmentId : null,
+    root,
+    refresh: version,
+  });
+  return useStableCallback((typed: string) =>
+    libraryLatexCitationSuggestions(candidates ?? [], typed),
+  );
 }

@@ -95,6 +95,19 @@ export function citationGroupKeys(source: string): ReadonlyArray<string> {
     .filter(Boolean);
 }
 
+/** Library sources for a typed LaTeX citation, best match first for what follows `\\cite{`. */
+export function libraryLatexCitationSuggestions(
+  candidates: ReadonlyArray<LibraryCitationCandidate>,
+  typed: string,
+): ReadonlyArray<{ readonly key: string; readonly detail: string }> {
+  return filterLibraryCitations(candidates, typed).map((candidate) => ({
+    key: candidate.citationKey,
+    detail: [candidate.label === candidate.citationKey ? null : candidate.label, candidate.title]
+      .filter((part) => part !== null)
+      .join(" · "),
+  }));
+}
+
 /** Library sources for the LaTeX citation dialog, after the document's own .bib entries. */
 export function libraryLatexCitationChoices(
   candidates: ReadonlyArray<LibraryCitationCandidate>,

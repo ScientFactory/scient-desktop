@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   citationGroupKeys,
   filterLibraryCitations,
+  libraryLatexCitationSuggestions,
   type LibraryCitationCandidate,
 } from "./libraryCitations";
 
@@ -31,6 +32,22 @@ describe("Library citations", () => {
     ]);
     expect(filterLibraryCitations(candidates, "")).toHaveLength(3);
     expect(filterLibraryCitations(candidates, "zzz")).toEqual([]);
+  });
+
+  it("suggests sources for a typed LaTeX citation with author, year and title beside the key", () => {
+    expect(libraryLatexCitationSuggestions(candidates, "machinery")).toEqual([
+      {
+        key: "turing1950computing",
+        detail: "Turing 1950 · Computing machinery and intelligence",
+      },
+    ]);
+    // A source without an author or a year is labelled by its key, which is not said twice.
+    expect(
+      libraryLatexCitationSuggestions(
+        [{ sourceId: "d", citationKey: "anon", label: "anon", title: null }],
+        "",
+      ),
+    ).toEqual([{ key: "anon", detail: "" }]);
   });
 
   it("reads every key in a Pandoc citation group", () => {

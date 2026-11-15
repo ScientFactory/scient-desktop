@@ -2447,7 +2447,12 @@ Documents cite by key. In Markdown, typing `[@` opens a list of Library
 sources (`prosemirror/libraryCitation.ts`, ranked by
 `sources/libraryCitations.ts`) and inserts the existing Pandoc `citation`
 node; the LaTeX citation dialog appends Library sources after the document's
-own `.bib` entries. A citation opens its source through
+own `.bib` entries. Typing inside a LaTeX citation command offers the same
+sources in every LaTeX field: `useLibraryLatexCitationSuggestions` gives the
+completion context (`latexCommandCompletion.ts`) a `citations` function, the
+document's own `\bibitem` keys come first, and the menu inserts the key. The
+typed list does not read the document's own `.bib` files; the dialog does. A
+citation opens its source through
 `librarySourceRequest.ts`, which the Library panel acts on once loaded.
 
 A deliberate key rename goes through `updateScientSource`. It finds every

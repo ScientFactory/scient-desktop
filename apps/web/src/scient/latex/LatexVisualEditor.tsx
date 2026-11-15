@@ -185,6 +185,7 @@ import {
 } from "~/components/ui/menu";
 import "../markdownEditor/scient-markdown-editor.css";
 import { LatexReferenceDialog } from "./LatexReferenceDialog";
+import { useLibraryLatexCitationSuggestions } from "../sources/useLibraryCitations";
 import { bibliographyChangePublished, mergeBibliographySourceEdit } from "./latexBibliographyModel";
 import {
   LatexReferencesPanel,
@@ -6055,11 +6056,16 @@ function LatexVisualEditorReady(
   const currentSetupSource = useRef(props.sourceSnapshot.setupSource);
   // Plugins and fields live as long as the editor and read the newest setup through this.
   const readSetupSource = useStableCallback(() => currentSetupSource.current);
+  const libraryCitations = useLibraryLatexCitationSuggestions({
+    environmentId: props.environmentId ?? null,
+    root: props.cwd ?? null,
+  });
   const commandContext = {
     source: mathSetupSource,
     referenceSource: readSetupSource,
     macros: documentMathSetup.macros,
     colors: latexDocumentColors(mathSetupSource),
+    citations: libraryCitations,
   };
   const completionContext = useRef(commandContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the command context for editor plugins to read

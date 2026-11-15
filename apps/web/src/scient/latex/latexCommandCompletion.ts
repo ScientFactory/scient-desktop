@@ -4,11 +4,20 @@ import { latexDocumentColors } from "./latexColorBoxes";
 import type { DocumentMathMacro } from "./latexDocumentMacros";
 import { LATEX_INLINE_MARKS } from "./latexTextFormatting";
 
+/** A source the document can cite that its own text does not define, such as a Library paper. */
+export interface LatexCitationSuggestion {
+  readonly key: string;
+  /** Shown beside the key, e.g. "Lovelace 1843 · Notes". */
+  readonly detail: string;
+}
+
 export interface LatexCompletionContext {
   readonly source?: string;
   readonly referenceSource?: () => string;
   readonly macros?: Readonly<Record<string, DocumentMathMacro>>;
   readonly colors?: Readonly<Record<string, string>>;
+  /** Sources to offer inside a citation, best match first for the text typed so far. */
+  readonly citations?: (typed: string) => ReadonlyArray<LatexCitationSuggestion>;
 }
 
 export interface LatexCommandChoice {
@@ -209,6 +218,10 @@ function latexChoiceInsertion(choice: LatexCommandChoice) {
   };
 }
 
+/** The key being typed in a natbib or biblatex citation, after any optional notes. */
+const CITATION_ARGUMENT =
+  /\\((?:[Cc]ite(?:[pt]|al[pt]|author|year|yearpar)?|[Pp]arencite|[Tt]extcite|[Aa]utocite|[Ff]ootcite|[Ss]martcite|supercite|fullcite|nocite))\*?(?:\[[^\]]*\]){0,2}\{([^{}]*)$/u;
+
 /** Complete literal argument values while preserving the rest of an existing command. */
 export function latexArgumentChoices(
   source: string,
@@ -219,8 +232,9 @@ export function latexArgumentChoices(
   const color =
     /\\(color|textcolor|colorbox|fcolorbox)\{([^{}]*)$/u.exec(before) ??
     /\\(fcolorbox|colorlet)\{[^{}]*\}\{([^{}]*)$/u.exec(before);
-  const reference = /\\(ref|eqref|autoref|cref|Cref|cite|citep|citet)\{([^{}]*)$/u.exec(before);
-  const match = color ?? reference;
+  const reference = /\\(ref|eqref|autoref|cref|Cref)\{([^{}]*)$/u.exec(before);
+  const citation = color || reference ? null : CITATION_ARGUMENT.exec(before);
+  const match = color ?? reference ?? citation;
   if (!match) return [];
   if (Object.hasOwn(context.macros ?? {}, match[1]!)) return [];
   const typed = match[2]!;
@@ -234,22 +248,29 @@ export function latexArgumentChoices(
       : Object.keys(colors)
     : [
         ...(context.referenceSource?.() ?? context.source ?? "").matchAll(
-          match[1]!.startsWith("cite")
-            ? /\\bibitem(?:\[[^\]]*\])?\{([^{}]+)\}/gu
-            : /\\label\{([^{}]+)\}/gu,
+          citation ? /\\bibitem(?:\[[^\]]*\])?\{([^{}]+)\}/gu : /\\label\{([^{}]+)\}/gu,
         ),
       ].map((entry) => entry[1]!);
-  return [...new Set(values)]
-    .filter((name) => name.startsWith(fragment))
-    .map((name) => ({
-      label: name,
-      latex: name,
-      preview: name,
-      from,
-      to: caret + following.length,
-      replacement: name,
-      caret: name.length,
-    }));
+  const own = [...new Set(values)].filter((name) => name.startsWith(fragment));
+  const choice = (name: string, preview: string) => ({
+    label: name,
+    latex: name,
+    preview,
+    from,
+    to: caret + following.length,
+    replacement: name,
+    caret: name.length,
+  });
+  // The document's own entries come first; a suggestion never repeats one of them.
+  const suggested = citation
+    ? (context.citations?.(fragment) ?? []).filter((entry) => !own.includes(entry.key))
+    : [];
+  return [
+    ...own.map((name) => choice(name, name)),
+    ...suggested.map((entry) =>
+      choice(entry.key, entry.detail ? `${entry.key} · ${entry.detail}` : entry.key),
+    ),
+  ];
 }
 
 export function latexSourceChoices(

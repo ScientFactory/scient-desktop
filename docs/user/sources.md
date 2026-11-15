@@ -859,8 +859,10 @@ update it yourself.
 
 - **Markdown:** type `[@` and pick a source from the list (by key, author, year
   or title). Press Enter or Tab to insert it; Escape closes the list.
-- **LaTeX:** **Insert citation** lists Library sources after the document's own
-  `.bib` entries.
+- **LaTeX:** type `\cite{` (or `\citep{`, `\citet{`, `\parencite{`,
+  `\textcite{` and the other natbib and biblatex forms) and pick a source from
+  the list, by key, author, year or title, in Visual and in Source. **Insert
+  citation** lists Library sources after the document's own `.bib` entries.
 - **Open a source from a citation:** click it while reading, or Control-click
   (Command-click on a Mac) while writing.
 

@@ -1,4 +1,5 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { EditorSelection } from "@pierre/diffs/edit";
 import type { GetHoveredLineResult, SelectedLineRange } from "@pierre/diffs";
 import type { Editor } from "@pierre/diffs/edit";
@@ -21,6 +22,7 @@ import {
   sourcePosition,
 } from "~/scient/math/input/sourceAdapter";
 import { installLatexFileCompletion } from "~/scient/latex/latexFileCompletion";
+import { useLibraryLatexCitationSuggestions } from "~/scient/sources/useLibraryCitations";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
 import {
@@ -36,6 +38,8 @@ import {
  */
 export function useScientFileEditorBindings<Annotation>({
   editor,
+  environmentId,
+  cwd,
   relativePath,
   editingBlocked,
   surfaceRef,
@@ -49,6 +53,8 @@ export function useScientFileEditorBindings<Annotation>({
   outsideSource,
 }: {
   editor: Editor<"file", Annotation, undefined> | null;
+  environmentId: EnvironmentId;
+  cwd: string;
   relativePath: string;
   editingBlocked: boolean;
   surfaceRef: RefObject<HTMLDivElement | null>;
@@ -134,12 +140,17 @@ export function useScientFileEditorBindings<Annotation>({
     if (!host || !mathInput) return;
     return mathInput.attach(host, sourceMathOwnsEvent);
   }, [mathInput, surfaceRef]);
+  const isLatex = /\.tex$/iu.test(relativePath);
+  const libraryCitations = useLibraryLatexCitationSuggestions({
+    environmentId: isLatex ? environmentId : null,
+    root: cwd,
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs LaTeX completion on the editor and surface DOM node until unmount
   useEffect(() => {
     const host = surfaceRef.current;
-    if (!host || !editor || !/\.tex$/iu.test(relativePath)) return;
-    return installLatexFileCompletion(editor, host, () => mathEditable.current);
-  }, [editor, relativePath, surfaceRef]);
+    if (!host || !editor || !isLatex) return;
+    return installLatexFileCompletion(editor, host, () => mathEditable.current, libraryCitations);
+  }, [editor, isLatex, libraryCitations, surfaceRef]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the selection reporter for the document listener to call
   useLayoutEffect(() => {
     reportEditorSelectionRef.current = reportEditorSelection;
