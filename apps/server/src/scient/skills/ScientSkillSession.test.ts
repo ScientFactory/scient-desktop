@@ -257,6 +257,7 @@ describe("Scient skill session planning", () => {
         BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
       );
       expect(initial.skills.map((skill) => [skill.name, skill.invocationPolicy])).toEqual([
+        ["compare-sources", "automatic"],
         ["connector-authoring", "automatic"],
         ["html-pdf-authoring", "automatic"],
         ["improve-workspace-readiness", "explicit"],
@@ -289,6 +290,7 @@ describe("Scient skill session planning", () => {
         BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID,
       );
       expect(disabled.skills.map((skill) => skill.name)).toEqual([
+        "compare-sources",
         "connector-authoring",
         "html-pdf-authoring",
         "improve-workspace-readiness",

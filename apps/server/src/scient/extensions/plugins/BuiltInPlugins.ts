@@ -75,6 +75,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
       { type: "skill", name: "references" },
       { type: "panel", name: "Library" },
       { type: "skill", name: "systematic-review" },
+      { type: "skill", name: "compare-sources" },
     ],
   }),
   builtIn({
