@@ -62,8 +62,11 @@ import {
   workspaceLocatorAskPath,
 } from "~/scient/fileOpening/chatFileLinkResolution";
 import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
-import { openLibrarySource, useLibraryVersionStore } from "~/scient/sources/librarySourceRequest";
+import { useLibraryVersionStore } from "~/scient/sources/librarySourceRequest";
+import { openCitation as openLibraryCitation } from "~/scient/sources/citationNavigation";
 import { useLibraryCitations } from "~/scient/sources/useLibraryCitations";
+import { pandocCitationItems } from "@scientfactory/scient-sources";
+import type { ScientMarkdownCitationOpenRequest } from "./prosemirror/citationOpenRequest";
 
 // Longer than the environment's own search bound, so a slow search still answers.
 const FILE_LINK_RESOLVE_WAIT_MS = 3_000;
@@ -157,14 +160,19 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     root: props.cwd,
     refresh: libraryVersion,
   });
-  const openCitation = useStableCallback((keys: ReadonlyArray<string>) => {
-    const source = keys
-      .map((key) => libraryCitations?.find((candidate) => candidate.citationKey === key))
-      .find((candidate) => candidate !== undefined);
-    if (!source) return false;
-    openLibrarySource({ threadRef: props.threadRef, root: props.cwd, sourceId: source.sourceId });
-    return true;
-  });
+  const openCitation = useStableCallback(
+    (request: ScientMarkdownCitationOpenRequest) =>
+      libraryCitations !== null &&
+      openLibraryCitation({
+        environmentId: props.environmentId,
+        threadRef: props.threadRef,
+        root: props.cwd,
+        candidates: libraryCitations,
+        items: pandocCitationItems(request.source),
+        quote: request.quote,
+        at: request.at,
+      }),
+  );
   const markdownPathSetRef = useRef<ReadonlySet<string>>(markdownPathSet);
   const entriesTruncatedRef = useRef(entriesQuery.data?.truncated ?? true);
   const mountedRef = useRef(true);

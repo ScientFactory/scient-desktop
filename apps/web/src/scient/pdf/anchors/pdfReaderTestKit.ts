@@ -5,8 +5,8 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers } from "../../../../test/render";
 import { waitForTestReceipt } from "../../../../test/receipt";
 
-/** A minimal text PDF: one Helvetica line per entry, one page per array. */
-export function pdfBytes(pages: ReadonlyArray<ReadonlyArray<string>>): Uint8Array {
+/** A minimal text PDF: one Helvetica line per entry, one page per array; `catalog` adds entries. */
+export function pdfBytes(pages: ReadonlyArray<ReadonlyArray<string>>, catalog = ""): Uint8Array {
   const objects: string[] = [];
   const add = (body: string) => objects.push(body);
   add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
@@ -26,7 +26,7 @@ export function pdfBytes(pages: ReadonlyArray<ReadonlyArray<string>>): Uint8Arra
   }
   objects[pagesIndex - 1] =
     `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`;
-  add(`<< /Type /Catalog /Pages ${pagesIndex} 0 R >>`);
+  add(`<< /Type /Catalog /Pages ${pagesIndex} 0 R ${catalog}>>`);
   let out = "%PDF-1.4\n";
   const offsets: number[] = [];
   objects.forEach((body, index) => {

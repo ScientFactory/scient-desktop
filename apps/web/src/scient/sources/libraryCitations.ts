@@ -13,6 +13,8 @@ export interface LibraryCitationCandidate {
   /** Lead creator and year, e.g. "Lovelace 1843". */
   readonly label: string;
   readonly title: string | null;
+  /** The source's first PDF; absent when it has none, or for an entry that is no Library source. */
+  readonly pdf?: { readonly attachmentId: string; readonly fileName: string };
 }
 
 const MENU_LIMIT = 8;
@@ -25,12 +27,14 @@ export function libraryCitationCandidates(
     const creator = record.creators[0];
     const name = creator?.familyName ?? creator?.literalName ?? creator?.givenName ?? null;
     const label = [name, record.issuedYear].filter((part) => part !== null).join(" ");
+    const pdf = record.attachments.find((attachment) => attachment.kind === "pdf");
     return [
       {
         sourceId: record.sourceId,
         citationKey: record.citationKey,
         label: label || record.citationKey,
         title: record.title,
+        ...(pdf ? { pdf: { attachmentId: pdf.attachmentId, fileName: pdf.fileName } } : {}),
       },
     ];
   });
@@ -86,13 +90,6 @@ export function filterLibraryCitations(
     );
   }
   return ranked.map(({ item }) => item);
-}
-
-/** The keys named by a Pandoc citation group such as `@a, p. 4; -@b`. */
-export function citationGroupKeys(source: string): ReadonlyArray<string> {
-  return [...source.matchAll(/(?:^|[\s;[-])@([\p{L}\p{N}_](?:[\p{L}\p{N}_:.#-]*[\p{L}\p{N}_])?)/gu)]
-    .map((match) => match[1] ?? "")
-    .filter(Boolean);
 }
 
 /** Said where a Library source is offered to a document that does not load the managed file. */

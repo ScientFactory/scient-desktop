@@ -33,6 +33,7 @@ import {
 import { takePdfReveal, useOwnedPdfReveal } from "./pdfRevealRequests";
 import { PDF_SELECTION_REFUSAL_COPY, readPdfTextSelection } from "./pdfTextLayer";
 import { pdfDocumentIdentity, pdfDocumentMaterial, pdfTextTarget } from "./pdfTextTarget";
+import { pdfPageForLabel, type PdfPageLabelMatch } from "./pdfPageLabel";
 
 type Captured =
   | {
@@ -100,6 +101,23 @@ function outcomeNotice(outcome: PdfRevealOutcome): { title: string; description:
   }
 }
 
+function pageNotice(
+  label: string,
+  match: PdfPageLabelMatch,
+): { title: string; description?: string } | null {
+  switch (match._tag) {
+    case "Found":
+      return null;
+    case "Repeated":
+      return {
+        title: `More than one page is numbered ${label}`,
+        description: `Showing the first, page ${match.page} of the PDF.`,
+      };
+    case "Missing":
+      return { title: `This PDF has no page ${label}` };
+  }
+}
+
 function PdfQuoteReveal(props: {
   readonly container: HTMLElement | null;
   readonly runtimeRef: RefObject<ScientPdfRuntime | null>;
@@ -119,6 +137,23 @@ function PdfQuoteReveal(props: {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     const controller = new AbortController();
+    if ("pageLabel" in request) {
+      const { pageLabel } = request;
+      void runtime.document.getPageLabels().then(
+        (labels) => {
+          if (controller.signal.aborted || !takePdfReveal(revealKey, request.id)) return;
+          const match = pdfPageForLabel(pageLabel, labels, runtime.document.numPages);
+          if (match._tag !== "Missing") showPdfPage(runtime, match.page);
+          const notice = pageNotice(pageLabel, match);
+          if (notice) toastManager.add({ type: "info", ...notice });
+        },
+        () => {
+          if (controller.signal.aborted || !takePdfReveal(revealKey, request.id)) return;
+          toastManager.add({ type: "error", title: `Couldn't go to page ${pageLabel}` });
+        },
+      );
+      return () => controller.abort();
+    }
     void locatePdfQuote(runtime, request.target, controller.signal).then(
       ({ outcome, highlight }) => {
         if (controller.signal.aborted || !takePdfReveal(revealKey, request.id)) return;

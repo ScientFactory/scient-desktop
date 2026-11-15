@@ -25,6 +25,7 @@ import {
 } from "./rawBlockNodeView";
 import {
   createScientReferenceNodeView,
+  type ScientMarkdownCitationOpener,
   type ScientMarkdownFootnoteNodeViewRegistrar,
 } from "./referenceNodeView";
 import { createScientTaskListItemNodeView } from "./taskListItemNodeView";
@@ -41,8 +42,7 @@ export type {
 
 export interface ScientMarkdownNodeViewOptions {
   readonly onOpenWikiLink?: ScientMarkdownLinkOpenHandler;
-  /** Opens the Library source a citation's source text names; false when none is known. */
-  readonly openCitation?: (source: string) => boolean;
+  readonly openCitation?: ScientMarkdownCitationOpener;
   readonly registerCodeEditor?: ScientMarkdownCodeEditorRegistrar;
   readonly registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar;
   readonly registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar;

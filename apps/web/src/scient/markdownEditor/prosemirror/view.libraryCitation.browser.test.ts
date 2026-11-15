@@ -1,9 +1,11 @@
 import { TextSelection } from "prosemirror-state";
+import type { EditorView } from "prosemirror-view";
 import { describe, expect, it, vi } from "vite-plus/test";
 import "../../../index.css";
 
 import { act } from "../../../../test/render";
 import type { LibraryCitationCandidate } from "~/scient/sources/libraryCitations";
+import type { ScientMarkdownCitationOpenRequest } from "./citationOpenRequest";
 import { ScientMarkdownEditorView } from "./view";
 
 const library: ReadonlyArray<LibraryCitationCandidate> = [
@@ -13,7 +15,7 @@ const library: ReadonlyArray<LibraryCitationCandidate> = [
 
 function mount(
   source: string,
-  onOpenCitation?: (keys: ReadonlyArray<string>) => boolean,
+  onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean,
   mode: "write" | "read" = "write",
 ) {
   const host = document.createElement("div");
@@ -40,6 +42,28 @@ function mount(
 function keyDown(view: ReturnType<typeof mount>["view"], key: string): boolean {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
   return view.someProp("handleKeyDown", (handler) => handler(view, event)) ?? false;
+}
+
+/**
+ * Clicks the first citation through ProseMirror's click handler, called directly: a click
+ * placed by coordinates depends on what else a CI shard has left on the page.
+ */
+async function clickCitation(view: EditorView): Promise<boolean> {
+  let citationPosition = -1;
+  view.state.doc.descendants((node, position) => {
+    if (citationPosition < 0 && node.type.name === "citation") citationPosition = position;
+  });
+  const citation = view.state.doc.nodeAt(citationPosition);
+  if (!citation) throw new Error("Expected a citation node.");
+  const click = new MouseEvent("click", { bubbles: true, button: 0, clientX: 12, clientY: 34 });
+  let handled = false;
+  await act(() => {
+    handled =
+      view.someProp("handleClickOn", (handler) =>
+        handler(view, citationPosition, citation, citationPosition, click, true),
+      ) ?? false;
+  });
+  return handled;
 }
 
 describe("Library citations in the Markdown editor", () => {
@@ -77,24 +101,37 @@ describe("Library citations in the Markdown editor", () => {
   it("opens the source of a clicked citation while reading", async () => {
     const onOpenCitation = vi.fn(() => true);
     await using editor = mount("See [@lovelace1843notes; @other].\n", onOpenCitation, "read");
-    const { view } = editor;
-    let citationPosition = -1;
-    view.state.doc.descendants((node, position) => {
-      if (node.type.name === "citation") citationPosition = position;
+    expect(await clickCitation(editor.view)).toBe(true);
+    expect(onOpenCitation).toHaveBeenCalledWith({
+      source: "@lovelace1843notes; @other",
+      quote: null,
+      at: { x: 12, y: 34 },
     });
-    const citation = view.state.doc.nodeAt(citationPosition);
-    if (!citation) throw new Error("Expected a citation node.");
-    // ProseMirror's click handler, called directly: a click placed by coordinates depends on
-    // what else a CI shard has left on the page.
-    const click = new MouseEvent("click", { bubbles: true, button: 0 });
-    await act(() =>
-      expect(
-        view.someProp("handleClickOn", (handler) =>
-          handler(view, citationPosition, citation, citationPosition, click, true),
-        ),
-      ).toBe(true),
+  });
+
+  it("gives the quoted passage only for a citation that closes a block quote", async () => {
+    const closing = vi.fn(() => true);
+    await using quoted = mount(
+      "> The engine might act upon other things besides number. [@lovelace1843notes, p. 4]\n",
+      closing,
+      "read",
     );
-    expect(onOpenCitation).toHaveBeenCalledWith(["lovelace1843notes", "other"]);
+    await clickCitation(quoted.view);
+    expect(closing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "@lovelace1843notes, p. 4",
+        quote: "The engine might act upon other things besides number.",
+      }),
+    );
+
+    const inside = vi.fn(() => true);
+    await using midway = mount(
+      "> As [@lovelace1843notes] wrote, the engine weaves patterns.\n",
+      inside,
+      "read",
+    );
+    await clickCitation(midway.view);
+    expect(inside).toHaveBeenCalledWith(expect.objectContaining({ quote: null }));
   });
 
   it("follows a citation on Control-click while writing", async () => {
@@ -107,6 +144,8 @@ describe("Library citations in the Markdown editor", () => {
     await act(() => {
       field.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, ctrlKey: true }));
     });
-    expect(onOpenCitation).toHaveBeenCalledWith(["lovelace1843notes"]);
+    expect(onOpenCitation).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "@lovelace1843notes", quote: null }),
+    );
   });
 });
