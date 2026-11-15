@@ -778,6 +778,10 @@ export const ScientSourcesBackupStatus = Schema.Union([
     sources: Schema.Int,
     pdfs: Schema.Int,
     bytes: Schema.Int,
+    /** Projects whose move had stopped part way: not all their sources are in the backup. */
+    unfinishedMoves: Schema.Int,
+    /** Links and other entries that are not files, which a backup never copies. */
+    skipped: Schema.Int,
   }),
   Schema.Struct({
     state: Schema.Literal("failed"),
@@ -786,6 +790,69 @@ export const ScientSourcesBackupStatus = Schema.Union([
   }),
 ]);
 export type ScientSourcesBackupStatus = typeof ScientSourcesBackupStatus.Type;
+
+/**
+ * Putting a backup in the Library's place on this environment. `preparing` checks the backup
+ * and copies it beside the Library, which is not changed; `ready` waits for the next start of
+ * Scient, when the copy takes the Library's place; `restored` and `failed` say how the last one
+ * ended, until Scient stops.
+ */
+export const ScientSourcesRestoreStatus = Schema.Union([
+  Schema.Struct({ state: Schema.Literal("none") }),
+  Schema.Struct({
+    state: Schema.Literal("preparing"),
+    done: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("ready"),
+    /** When the backup was made. */
+    backupCreatedAt: NonEmptyString,
+    sources: Schema.Int,
+    pdfs: Schema.Int,
+    /** Why the last start could not put it in place; the next start tries again. */
+    problem: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("restored"),
+    restoreId: NonEmptyString,
+    backupCreatedAt: NonEmptyString,
+    sources: Schema.Int,
+    pdfs: Schema.Int,
+    /** The Library that was replaced, kept in this folder because it held something. */
+    kept: Schema.optionalKey(Schema.Struct({ path: NonEmptyString, sources: Schema.Int })),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("failed"),
+    failedAt: NonEmptyString,
+    reason: Schema.String,
+  }),
+]);
+export type ScientSourcesRestoreStatus = typeof ScientSourcesRestoreStatus.Type;
+
+/** The Library's backup and its restore, read together. */
+export const ScientSourcesLibraryCopies = Schema.Struct({
+  backup: ScientSourcesBackupStatus,
+  restore: ScientSourcesRestoreStatus,
+});
+export type ScientSourcesLibraryCopies = typeof ScientSourcesLibraryCopies.Type;
+
+/**
+ * `prepare` starts checking and copying the backup folder `fromFolder` (an absolute path on
+ * this environment); `cancel` drops a copy that is waiting. Neither touches the Library or
+ * moves a project into it.
+ */
+export const ScientSourcesLibraryRestoreRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: Schema.Union([
+    Schema.Struct({
+      action: Schema.Literal("prepare"),
+      fromFolder: NonEmptyString.check(Schema.isMaxLength(4_096)),
+    }),
+    Schema.Struct({ action: Schema.Literal("cancel") }),
+  ]),
+});
+export type ScientSourcesLibraryRestoreRequest = typeof ScientSourcesLibraryRestoreRequest.Type;
 
 /** Where a move or a move back is; `done` of `total` counts the phase's own items. */
 export const ScientSourcesMoveProgress = Schema.Struct({

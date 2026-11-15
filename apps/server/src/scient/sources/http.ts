@@ -105,6 +105,11 @@ import {
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
 import { libraryBackupStatus } from "./LibraryBackupRuns.ts";
+import {
+  cancelLibraryRestore,
+  libraryRestoreStatus,
+  startLibraryRestore,
+} from "./LibraryRestoreRuns.ts";
 import { readLibraryMoveStatus } from "./LibraryMove.ts";
 import { setLibraryReadingState } from "./LibraryProjectSources.ts";
 import {
@@ -500,11 +505,35 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           Effect.gen(function* () {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            if ((yield* ScientSourcesBackend) === "project") {
+              return { backup: { state: "none" }, restore: { state: "none" } } as const;
+            }
+            const config = yield* ServerConfig.ServerConfig;
+            const libraryRoot = scientLibraryRootFor(config.stateDir);
+            // Reads only: this server's own record of its backups and of a waiting restore.
+            return {
+              backup: libraryBackupStatus(scientLibraryLocation(libraryRoot)),
+              restore: yield* Effect.promise(() => libraryRestoreStatus(libraryRoot)),
+            };
+          }),
+        )
+        .handle("libraryRestore", (args) =>
+          Effect.gen(function* () {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
             if ((yield* ScientSourcesBackend) === "project") return { state: "none" } as const;
             const config = yield* ServerConfig.ServerConfig;
-            // Reads only: this server's own record of its backups.
-            return libraryBackupStatus(
-              scientLibraryLocation(scientLibraryRootFor(config.stateDir)),
+            // The Library's folder only: this never creates the Library or moves a project in.
+            const libraryRoot = scientLibraryRootFor(config.stateDir);
+            const { change } = args.payload;
+            return yield* sourcesOperation(async () => {
+              if (change.action === "prepare") startLibraryRestore(libraryRoot, change.fromFolder);
+              else await cancelLibraryRestore(libraryRoot);
+              return libraryRestoreStatus(libraryRoot);
+            }).pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("scient_sources_operation_failed", cause),
+              ),
             );
           }),
         )

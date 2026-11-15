@@ -21,6 +21,7 @@ export const SCIENT_SOURCES_HTTP_COMMANDS = {
   bulkUpdate: "scientSources.bulkUpdate",
   addByIdentifier: "scientSources.addByIdentifier",
   restore: "scientSources.restore",
+  libraryRestore: "scientSources.libraryRestore",
   deletePermanently: "scientSources.deletePermanently",
   revert: "scientSources.revert",
   localPdfUpload: "scientSources.localPdfUpload",

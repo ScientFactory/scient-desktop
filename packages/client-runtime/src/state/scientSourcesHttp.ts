@@ -12,6 +12,7 @@ import type {
   ScientSourceSavePageRequest,
   ScientSourcesAddByIdentifierRequest,
   ScientSourcesBackupStatusRequest,
+  ScientSourcesLibraryRestoreRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
   ScientSourcesReadingStateRequest,
@@ -702,6 +703,26 @@ export const getEnvironmentScientSourcesBackupStatus = Effect.fn(
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) => client.backupStatus({ headers, payload }),
+  });
+});
+
+export const changeEnvironmentScientLibraryRestore = Effect.fn(
+  "clientRuntime.state.changeEnvironmentScientLibraryRestore",
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientSourcesLibraryRestoreRequest,
+) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.libraryRestore(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.libraryRestore({ headers, payload }),
   });
 });
 

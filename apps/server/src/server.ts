@@ -258,6 +258,7 @@ import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistr
 import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
 import { libraryIndexWarmLayer } from "./scient/sources/LibraryIndexWarm.ts";
 import { libraryMovePassLayer } from "./scient/sources/LibraryMovePass.ts";
+import { finishLibraryRestoreAtStart } from "./scient/sources/LibraryRestoreRuns.ts";
 // SCIENT-FORK:START — generated-image temp files a crash left behind.
 import { generatedImageTempSweepLayer } from "./generatedImageAttachments.ts";
 // SCIENT-FORK:END
@@ -1025,6 +1026,9 @@ const layerMakeServer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     // Before anything opens the database: one server per T3 home.
     const ownership = yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath);
+    // SCIENT-FORK:START — a Library backup that waits to be restored takes the Library's place now, while nothing else can touch it.
+    yield* finishLibraryRestoreAtStart(config.stateDir);
+    // SCIENT-FORK:END
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
     const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);

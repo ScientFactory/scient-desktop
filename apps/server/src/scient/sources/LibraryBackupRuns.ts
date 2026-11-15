@@ -44,6 +44,8 @@ export function startLibraryBackup(
             sources: result.counts.sources,
             pdfs: result.counts.pdfs,
             bytes: result.counts.bytes,
+            unfinishedMoves: result.unfinishedMoves,
+            skipped: result.skipped,
           });
           return;
         case "busy":
