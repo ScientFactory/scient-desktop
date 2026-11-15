@@ -18,9 +18,12 @@ import {
   type BibliographyImportReport,
 } from "@scientfactory/scient-sources/bibliography";
 import {
+  normalizePersistentIdentifier,
+  scientCreatorRoleIncomplete,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceActor,
   type ScientSourceCandidate,
+  type ScientSourceCreator,
   type ScientSourceImportOperation,
   type ScientSourceRecord,
   type ScientSourceVerification,
@@ -43,12 +46,12 @@ import {
   readScientLibraryManifest,
   type ScientSourceStoreLocation,
 } from "@scientfactory/scient-sources/library-root";
-
 import {
+  bindLibraryImportKeys,
   libraryImportPinInstance,
-  pinLibraryImport,
   syncLibraryImportBibliography,
 } from "./LibraryImportPins.ts";
+import { titlesAgree, type ResolveSourceIdentifier } from "./SourceIdentifierResolver.ts";
 import { canonicalScientSourceLocation, scientSourceStoreKey } from "./SourcesBackend.ts";
 
 export interface BibliographyFileImportResult {
@@ -317,14 +320,15 @@ async function plan(
     candidates: planned.candidates,
     report: withLinkedFileReport(planned.report, linked),
     pdfs: linked.pdfs,
-    presentSourceIds: planned.presentSourceIds,
+    citationKeys: planned.citationKeys,
+    presentPastBatch: planned.presentPastBatch,
   };
 }
 
 /**
- * Reads a reference file into candidates, stages the next batch of new ones
- * and starts the ordinary durable import operation for them. Replaying the
- * same operation ID returns that operation.
+ * Reads a reference file into candidates, stages the next batch (new works and works the Library
+ * has, so the import adds those to the project under the file's keys) and starts the ordinary
+ * durable import operation for them. Replaying the same operation ID returns that operation.
  */
 export async function beginBibliographyFileImport(input: {
   readonly root: ScientSourceStoreLocation;
@@ -354,15 +358,21 @@ export async function beginBibliographyFileImport(input: {
       report: staged?.report ?? (await plan(root, projectRoot, input)).report,
     };
   }
-  const { candidates, report, pdfs, presentSourceIds } = await plan(root, projectRoot, input);
+  const { candidates, report, pdfs, citationKeys, presentPastBatch } = await plan(
+    root,
+    projectRoot,
+    input,
+  );
   const pin =
     input.pinInto && isScientLibraryLocation(root)
       ? { library: root, instanceId: await libraryImportPinInstance(root, input.pinInto) }
       : null;
-  // Entries already in the library never become operation items, so they are pinned here.
-  if (pin) {
-    await pinLibraryImport({ ...pin, sourceIds: presentSourceIds, actor: input.actor });
-    if (candidates.length === 0 && presentSourceIds.length > 0) {
+  // Works past the batch never become operation items, so their keys are bound here.
+  if (pin && presentPastBatch.length > 0) {
+    for (const present of presentPastBatch) {
+      await bindLibraryImportKeys({ ...pin, ...present, actor: input.actor });
+    }
+    if (candidates.length === 0) {
       await syncLibraryImportBibliography({ ...pin, actor: input.actor }).catch(() => undefined);
     }
   }
@@ -374,6 +384,13 @@ export async function beginBibliographyFileImport(input: {
     report,
     candidates: [...candidates],
     ...(Object.keys(pdfs).length > 0 ? { pdfs } : {}),
+    ...(Object.keys(citationKeys).length > 0
+      ? {
+          citationKeys: Object.fromEntries(
+            Object.entries(citationKeys).map(([sourceKey, keys]) => [sourceKey, [...keys]]),
+          ),
+        }
+      : {}),
   });
   try {
     const operation = await createSourceImportOperation({
@@ -396,9 +413,13 @@ let cachedStage: {
   readonly key: string;
   readonly candidates: ReadonlyMap<string, ScientSourceCandidate>;
   readonly pdfs: Readonly<Record<string, ReadonlyArray<LinkedPdf>>>;
+  readonly citationKeys: Readonly<Record<string, ReadonlyArray<string>>>;
 } | null = null;
 
-/** The staged candidate and its linked PDFs for one operation item; the parsed stage is reused across items. */
+/**
+ * The staged candidate for one operation item, with its linked PDFs and every key the file cites
+ * its work by; the parsed stage is reused across items.
+ */
 export async function getBibliographyFileImportMaterial(
   root: ScientSourceStoreLocation,
   operationId: string,
@@ -406,6 +427,7 @@ export async function getBibliographyFileImportMaterial(
 ): Promise<{
   readonly candidate: ScientSourceCandidate;
   readonly pdfs: ReadonlyArray<LinkedPdf>;
+  readonly citationKeys: ReadonlyArray<string>;
 }> {
   const key = `${scientSourceStoreKey(root)}\0${operationId}`;
   if (cachedStage?.key !== key) {
@@ -415,6 +437,7 @@ export async function getBibliographyFileImportMaterial(
       key,
       candidates: new Map(staged.candidates.map((candidate) => [candidate.sourceKey, candidate])),
       pdfs: staged.pdfs ?? {},
+      citationKeys: staged.citationKeys ?? {},
     };
   }
   const candidate = cachedStage.candidates.get(itemKey);
@@ -424,7 +447,89 @@ export async function getBibliographyFileImportMaterial(
   for (const pdf of cachedStage.pdfs[itemKey] ?? []) {
     if ((await NodeFSP.realpath(pdf.path).catch(() => null)) === pdf.path) pdfs.push(pdf);
   }
-  return { candidate, pdfs };
+  return { candidate, pdfs, citationKeys: cachedStage.citationKeys[itemKey] ?? [] };
+}
+
+/** A name's letters alone, without case or accents, for comparing a file's name with a registry's. */
+const nameLetters = (value: string | null) =>
+  (value ?? "")
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}]+/gu, "");
+
+/** The registry names the same person: the family name, and the given name or its initial. */
+function samePerson(given: ScientSourceCreator, registry: ScientSourceCreator): boolean {
+  if (given.literalName || registry.literalName) {
+    return nameLetters(given.literalName ?? given.familyName) ===
+      nameLetters(registry.literalName ?? registry.familyName);
+  }
+  if (nameLetters(given.familyName) !== nameLetters(registry.familyName)) return false;
+  const [mine, theirs] = [nameLetters(given.givenName), nameLetters(registry.givenName)];
+  return !mine || !theirs || mine[0] === theirs[0];
+}
+
+/**
+ * Fills in an author list the file ended with "and others" from the DOI's registry record, when
+ * that record is the same work (same DOI, a title that agrees) and begins with the authors the
+ * file names. Only the authors change; anything else in the entry stays as the file gave it.
+ * Null when the entry's list is not marked short.
+ */
+export async function completeFileAuthorList(
+  candidate: ScientSourceCandidate,
+  resolve: ResolveSourceIdentifier | undefined,
+): Promise<{
+  readonly candidate: ScientSourceCandidate;
+  readonly authorList: "completed" | "incomplete";
+} | null> {
+  if (!scientCreatorRoleIncomplete(candidate.incompleteCreatorRoles, "author")) return null;
+  const kept = { candidate, authorList: "incomplete" as const };
+  const doi = candidate.identifiers.find((identifier) => identifier.scheme === "doi");
+  if (!doi || !resolve) return kept;
+  const resolution = await resolve([doi]).catch(() => null);
+  if (
+    resolution?.status !== "found" ||
+    resolution.identifier.scheme !== "doi" ||
+    normalizePersistentIdentifier("doi", resolution.identifier.value) !==
+      normalizePersistentIdentifier("doi", doi.value) ||
+    (candidate.title !== null &&
+      resolution.metadata.title !== null &&
+      !titlesAgree(candidate.title, resolution.metadata.title))
+  ) {
+    return kept;
+  }
+  const named = candidate.creators.filter((creator) => creator.creatorType === "author");
+  const registry = resolution.metadata.creators.filter(
+    (creator) => creator.creatorType === "author",
+  );
+  if (
+    registry.length <= named.length ||
+    !named.every((creator, index) => samePerson(creator, registry[index]!))
+  ) {
+    return kept;
+  }
+  const firstAuthor = candidate.creators.findIndex((creator) => creator.creatorType === "author");
+  const others = candidate.creators.filter((creator) => creator.creatorType !== "author");
+  return {
+    authorList: "completed",
+    candidate: {
+      ...candidate,
+      creators: [...others.slice(0, firstAuthor), ...registry, ...others.slice(firstAuthor)],
+      incompleteCreatorRoles: (candidate.incompleteCreatorRoles ?? []).filter(
+        (role) => role.toLowerCase() !== "author",
+      ),
+      fieldProvenance: [
+        ...candidate.fieldProvenance.filter((entry) => entry.field !== "creators"),
+        {
+          field: "creators",
+          origin: "doi",
+          sourceField: "author",
+          sourceIdentifier: resolution.identifier,
+          retrievedAt: resolution.retrievedAt,
+        },
+      ],
+    },
+  };
 }
 
 export async function discardBibliographyFileImport(

@@ -1297,6 +1297,14 @@ export const ScientSourcesImportFileResult = Schema.Struct({
   unreadable: Schema.Array(FileReportEntry),
   notKept: Schema.Array(FieldLoss),
   withoutCitationKey: Schema.Int,
+  /** Later entries for a work an earlier entry gave: one source, cited by both keys. */
+  sameWork: Schema.Array(Schema.Struct({ citationKey: Schema.String, sameAs: Schema.String })),
+  /** File keys that already cite another source in this project, which keeps them. */
+  citationKeysTaken: Schema.Array(Schema.String),
+  /** Author lists the file ended with "and others"; completedFromDoi when the DOI gave the rest. */
+  incompleteAuthorLists: Schema.Array(
+    Schema.Struct({ citationKey: Schema.String, completedFromDoi: Schema.Boolean }),
+  ),
   /** PDFs from the file's file, L1/L4 or pdf-urls fields attached to imported sources. */
   pdfsAttached: Schema.Int,
 });
@@ -1311,7 +1319,7 @@ const importFileParameters = {
 const importFileTool = (mode: SourcesBackendMode) =>
   Tool.make("scient_sources_import_file", {
     description:
-      "Import a project reference file into the Library after the user asks: .bib (BibTeX, BibLaTeX), .ris, CSL-JSON .json or EndNote .xml. Keeps citation keys, identifiers, tags and notes; skips entries already present; identifiers stay unchecked. Up to 500 new entries per call: while remaining is above 0, call again. Tell the user about unreadable entries and notKept fields.",
+      "Import a project reference file into the Library after the user asks: .bib (BibTeX, BibLaTeX), .ris, CSL-JSON .json or EndNote .xml. Keeps citation keys (several entries for one work: one source cited by each key), identifiers, tags and notes; entries already present are not imported again; identifiers stay unchecked. Up to 500 new entries per call: while remaining is above 0, call again. Tell the user about unreadable entries, notKept fields and citationKeysTaken.",
     parameters:
       mode === "project"
         ? Schema.Struct(importFileParameters)

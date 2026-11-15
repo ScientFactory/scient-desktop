@@ -60,6 +60,23 @@ const BoundedIdentifiers = Schema.Array(ScientSourceIdentifier).pipe(
 );
 const BoundedTags = Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(1_000)));
 
+/**
+ * Creator roles whose list stops short of the work's real list (BibTeX's `and others`): the
+ * names given are the first ones, and a citation ends that role's names with "et al.".
+ */
+export const ScientSourceIncompleteCreatorRoles = Schema.Array(NonEmptyString).pipe(
+  Schema.check(Schema.isMaxLength(16)),
+);
+
+/** Whether `role` is listed incomplete; roles compare as creator types do, without case. */
+export function scientCreatorRoleIncomplete(
+  roles: ReadonlyArray<string> | undefined,
+  role: string,
+): boolean {
+  const wanted = role.toLowerCase();
+  return roles?.some((entry) => entry.toLowerCase() === wanted) ?? false;
+}
+
 export const ScientSourceAbstractSection = Schema.Struct({
   title: NullableText,
   paragraphs: Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(256))),
@@ -204,6 +221,7 @@ export const ScientSourceRecord = Schema.Struct({
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
   creators: Schema.Array(ScientSourceCreator),
+  incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
   issuedRaw: NullableText,
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: Schema.Array(ScientSourceIdentifier),
@@ -334,6 +352,8 @@ export const ScientSourceEditableMetadata = Schema.Struct({
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
   creators: BoundedCreators,
+  /** Omitted means keep the current marks; given, it replaces them (empty clears them). */
+  incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
   issuedRaw: NullableText,
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: BoundedIdentifiers,
@@ -398,6 +418,7 @@ export const ScientSourceCandidate = Schema.Struct({
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
   creators: Schema.Array(ScientSourceCreator),
+  incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
   issuedRaw: NullableText,
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: Schema.Array(ScientSourceIdentifier),
@@ -830,6 +851,17 @@ export const ScientSourceNotBrought = Schema.Struct({
 });
 export type ScientSourceNotBrought = typeof ScientSourceNotBrought.Type;
 
+/**
+ * What became of one key a reference file cites a work by. `cited`: this project cites the work
+ * by it (newly or as before). `taken`: it already cites another source here, which keeps it.
+ * `library`: a My Library import, which writes nothing in a project.
+ */
+export const ScientSourceItemCitationKey = Schema.Struct({
+  citationKey: NonEmptyString,
+  outcome: Schema.Literals(["cited", "taken", "library"]),
+});
+export type ScientSourceItemCitationKey = typeof ScientSourceItemCitationKey.Type;
+
 export const ScientSourceOperationItem = Schema.Struct({
   itemKey: NonEmptyString,
   allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
@@ -843,6 +875,14 @@ export const ScientSourceOperationItem = Schema.Struct({
   notBrought: Schema.optionalKey(
     Schema.Array(ScientSourceNotBrought).check(Schema.isMaxLength(80)),
   ),
+  /** A reference-file entry's keys, its own first, then those of later entries for the same work. */
+  citationKeys: Schema.optionalKey(
+    Schema.Array(ScientSourceItemCitationKey).check(Schema.isMaxLength(50)),
+  ),
+  /** The key this project cites the work by when none of the file's keys could be used. */
+  projectKey: Schema.optionalKey(NonEmptyString),
+  /** An author list the file ended with "and others": filled in from its DOI, or kept short. */
+  authorList: Schema.optionalKey(Schema.Literals(["completed", "incomplete"])),
 });
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 

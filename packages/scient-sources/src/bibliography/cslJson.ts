@@ -1,4 +1,9 @@
-import type { ScientSourceCreator, ScientSourceRecord, ScientSourceType } from "../model.ts";
+import {
+  scientCreatorRoleIncomplete,
+  type ScientSourceCreator,
+  type ScientSourceRecord,
+  type ScientSourceType,
+} from "../model.ts";
 import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import { SCIENT_SOURCE_MORE_FIELDS, scientSourceMoreKind } from "../sourceMore.ts";
 import {
@@ -16,6 +21,9 @@ import {
   type BibliographyUnreadableEntry,
 } from "./entry.ts";
 import { collapseWhitespace } from "./latex.ts";
+
+/** The name variables (`author`, `editor`) whose list stops short, under the item's `custom`. */
+export const CSL_INCOMPLETE_NAMES = "scient-incomplete-names";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -208,6 +216,11 @@ function entryFromItem(item: JsonObject, index: number): BibliographyEntry {
       field,
     );
   }
+  const custom = item["custom"];
+  const incomplete = isObject(custom) ? custom[CSL_INCOMPLETE_NAMES] : undefined;
+  for (const [field, role] of NAME_ROLES) {
+    if (Array.isArray(incomplete) && incomplete.includes(field)) builder.markIncomplete(role);
+  }
   builder.set("title", text("title"), "title");
   builder.set("containerTitle", text("container-title"), "container-title");
   // With no full title, the abbreviation is the container's title, and no detail besides.
@@ -379,9 +392,13 @@ function zoteroTypeOf(record: ScientSourceRecord): string | null {
  * director stays its director. Only a type's primary role that CSL has no variable for (a
  * program's programmer) is its author; any other such role stays out of the citation.
  */
-function cslNamesByVariable(record: ScientSourceRecord): Readonly<Record<string, CslName[]>> {
+function cslNamesByVariable(record: ScientSourceRecord): {
+  readonly names: Readonly<Record<string, CslName[]>>;
+  readonly incomplete: ReadonlyArray<string>;
+} {
   const primary = ZOTERO_PRIMARY_ROLE[zoteroTypeOf(record) ?? ""]?.toLowerCase();
   const names: Record<string, CslName[]> = {};
+  const incomplete = new Set<string>();
   for (const creator of record.creators) {
     const role = creator.creatorType.toLowerCase();
     const variable = ZOTERO_ROLE_CSL[role] ?? (role === primary ? "author" : undefined);
@@ -393,9 +410,11 @@ function cslNamesByVariable(record: ScientSourceRecord): Readonly<Record<string,
             ...(creator.givenName ? { given: creator.givenName } : {}),
           }
         : null;
-    if (variable && name) (names[variable] ??= []).push(name);
+    if (!variable || !name) continue;
+    (names[variable] ??= []).push(name);
+    if (scientCreatorRoleIncomplete(record.incompleteCreatorRoles, role)) incomplete.add(variable);
   }
-  return names;
+  return { names, incomplete: [...incomplete] };
 }
 
 /** The record's further details as CSL variables: text as it is, a date as a CSL date. */
@@ -478,6 +497,7 @@ export function cslJsonItem(
   const arxiv = identifier("arxiv");
   const zoteroType = zoteroTypeOf(record);
   const more = cslMore(record);
+  const { names, incomplete } = cslNamesByVariable(record);
   const fields: Record<string, unknown> = {
     // First, so that none of them can stand in for a field the record has of its own.
     ...more,
@@ -488,7 +508,7 @@ export function cslJsonItem(
         ? ZOTERO_TYPE_CSL[zoteroType]
         : CSL_TYPE_BY_TYPE[record.type],
     title: record.title ?? undefined,
-    ...cslNamesByVariable(record),
+    ...names,
     issued: cslIssued(record.issuedRaw, record.issuedYear),
     "container-title": record.containerTitle ?? undefined,
     publisher: record.publisher ?? undefined,
@@ -514,6 +534,8 @@ export function cslJsonItem(
     abstract: options.includeAbstracts !== false ? (record.abstract ?? undefined) : undefined,
     keyword: record.tags.length > 0 ? record.tags.join(", ") : undefined,
     note: options.includeNotes ? (record.note ?? undefined) : undefined,
+    // CSL has no field for a list that stops short; other programs ignore this one.
+    custom: incomplete.length > 0 ? { [CSL_INCOMPLETE_NAMES]: incomplete } : undefined,
   };
   return Object.fromEntries(
     Object.entries(fields).filter(([, value]) => value !== undefined),

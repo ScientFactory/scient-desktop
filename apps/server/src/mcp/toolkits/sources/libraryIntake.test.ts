@@ -30,7 +30,11 @@ import {
   workspaceScopeForTest,
 } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { beginBibliographyFileImport } from "../../../scient/sources/BibliographyFileAdapter.ts";
-import { advanceSourceImport } from "../../../scient/sources/ScientSourcesCoordinator.ts";
+import {
+  advanceSourceImport,
+  importBibliographyFile,
+} from "../../../scient/sources/ScientSourcesCoordinator.ts";
+import type { ResolveSourceIdentifier } from "../../../scient/sources/SourceIdentifierResolver.ts";
 import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import { fakeZoteroTransport, zoteroItem } from "../../../scient/sources/Zotero.testkit.ts";
 import { ZoteroTransports } from "../../../scient/sources/ZoteroConnections.ts";
@@ -443,3 +447,132 @@ describe("Sources intake on the library backend", () => {
       }),
   );
 });
+
+  describe("a reference file with two entries for one work and an author list cut short", () => {
+    // The manual-review kit's references.bib: seven entries, six works.
+    const KIT = String.raw`
+@article{vaswani2017attention, title = {Attention Is All You Need}, author = {Vaswani, Ashish and Shazeer, Noam}, journal = {Advances in Neural Information Processing Systems}, year = {2017}, doi = {10.48550/arXiv.1706.03762}}
+@inproceedings{devlin2019bert, title = {{BERT}: Pre-training of Deep Bidirectional Transformers for Language Understanding}, author = {Devlin, Jacob and Chang, Ming-Wei}, booktitle = {Proceedings of NAACL-HLT 2019}, year = {2019}, doi = {10.18653/v1/N19-1423}}
+@article{lecun2015deep, title = {Deep learning}, author = {LeCun, Yann and Bengio, Yoshua and Hinton, Geoffrey}, journal = {Nature}, volume = {521}, pages = {436--444}, year = {2015}, doi = {10.1038/nature14539}}
+@article{he2016resnet, title = {Deep Residual Learning for Image Recognition}, author = {He, Kaiming and Zhang, Xiangyu}, journal = {CVPR}, year = {2016}, doi = {10.1109/CVPR.2016.90}}
+@article{jumper2021alphafold, title = {Highly accurate protein structure prediction with {AlphaFold}}, author = {Jumper, John and Evans, Richard and Pritzel, Alexander and others}, journal = {Nature}, volume = {596}, pages = {583--589}, year = {2021}, doi = {10.1038/s41586-021-03819-2}}
+@book{goodfellow2016deep, title = {Deep Learning}, author = {Goodfellow, Ian and Bengio, Yoshua and Courville, Aaron}, publisher = {MIT Press}, year = {2016}, isbn = {9780262035613}}
+@article{lecun2015deep_copy, title = {Deep Learning}, author = {LeCun, Y. and Bengio, Y. and Hinton, G.}, journal = {Nature}, year = {2015}, doi = {10.1038/nature14539}}
+`;
+    const person = (familyName: string, givenName: string) => ({
+      creatorType: "author",
+      givenName,
+      familyName,
+      literalName: null,
+    });
+    const ALPHAFOLD_AUTHORS = [
+      person("Jumper", "John"),
+      person("Evans", "Richard"),
+      person("Pritzel", "Alexander"),
+      person("Green", "Tim"),
+      person("Figurnov", "Michael"),
+    ];
+    const alphaFoldRegistry: ResolveSourceIdentifier = async ([identifier]) =>
+      identifier?.value === "10.1038/s41586-021-03819-2"
+        ? {
+            status: "found",
+            identifier,
+            retrievedAt: "2026-11-15T00:00:00.000Z",
+            metadata: {
+              type: "article",
+              title: "Highly accurate protein structure prediction with AlphaFold",
+              creators: ALPHAFOLD_AUTHORS,
+              issuedRaw: "2021-07-15",
+              issuedYear: 2021,
+              identifiers: [identifier],
+              abstract: null,
+              abstractSections: [],
+              containerTitle: "Nature",
+              publisher: null,
+              volume: "596",
+              issue: null,
+              pages: "583-589",
+              language: null,
+              url: null,
+            },
+          }
+        : identifier
+          ? { status: "unavailable", identifier }
+          : null;
+    const importKit = (fixture: Fixture, operationId: string, resolve?: ResolveSourceIdentifier) =>
+      importBibliographyFile({
+        root: fixture.library,
+        projectRoot: fixture.root,
+        pinInto: fixture.root,
+        operationId,
+        fileName: "references.bib",
+        text: KIT,
+        actor: "user",
+        ...(resolve ? { resolveIdentifier: resolve } : {}),
+      });
+
+    it("keeps both keys of the one work in the project, and takes the full author list from the DOI", async () => {
+      const fixture = await setup();
+      await ensureScientLibrary(fixture.libraryRoot);
+      const { operation, report } = await importKit(fixture, "kit_1", alphaFoldRegistry);
+
+      expect(operation?.items.filter((item) => item.state === "imported")).toHaveLength(6);
+      expect(report).toMatchObject({
+        entryCount: 7,
+        importCount: 6,
+        sameWork: [
+          { citationKey: "lecun2015deep_copy", sameAs: "lecun2015deep", identifier: "DOI" },
+        ],
+      });
+      expect(report.unreadable).toEqual([]);
+      const records = await listScientSourceRecords(fixture.library);
+      expect(records).toHaveLength(6);
+      const pins = await readScientProjectPins(fixture.root);
+      const deep = pins.filter((pin) => pin.citationKey.startsWith("lecun2015deep"));
+      expect(deep.map((pin) => pin.citationKey)).toEqual(["lecun2015deep", "lecun2015deep_copy"]);
+      expect(new Set(deep.map((pin) => pin.sourceId)).size).toBe(1);
+      expect(await managedKeys(fixture)).toEqual(pins.map((pin) => pin.citationKey).toSorted());
+      const deepItem = operation?.items.find((item) =>
+        item.citationKeys?.some((key) => key.citationKey === "lecun2015deep"),
+      );
+      expect(deepItem?.citationKeys).toEqual([
+        { citationKey: "lecun2015deep", outcome: "cited" },
+        { citationKey: "lecun2015deep_copy", outcome: "cited" },
+      ]);
+
+      const alphaFold = records.find((record) => record.citationKey === "jumper2021alphafold");
+      expect(alphaFold?.creators).toEqual(ALPHAFOLD_AUTHORS);
+      expect(alphaFold?.incompleteCreatorRoles).toBeUndefined();
+      // Only the authors come from the registry; the file's date stays.
+      expect(alphaFold?.issuedRaw).toBe("2021");
+      expect(operation?.items.find((item) => item.sourceId === alphaFold?.sourceId)).toMatchObject(
+        { authorList: "completed" },
+      );
+
+      // The same file again adds no work and no key, and still says what it found.
+      const again = await importKit(fixture, "kit_2", alphaFoldRegistry);
+      expect(again.operation?.items.map((item) => item.state)).toEqual(
+        Array.from({ length: 6 }, () => "skipped"),
+      );
+      expect(await listScientSourceRecords(fixture.library)).toHaveLength(6);
+      expect(await readScientProjectPins(fixture.root)).toEqual(pins);
+    });
+
+    it("keeps an author list cut short as such when its DOI cannot fill it in", async () => {
+      const fixture = await setup();
+      await ensureScientLibrary(fixture.libraryRoot);
+      const { operation } = await importKit(fixture, "kit_offline");
+
+      const alphaFold = (await listScientSourceRecords(fixture.library)).find(
+        (record) => record.citationKey === "jumper2021alphafold",
+      );
+      expect(alphaFold?.incompleteCreatorRoles).toEqual(["author"]);
+      expect(operation?.items.find((item) => item.sourceId === alphaFold?.sourceId)).toMatchObject(
+        { authorList: "incomplete" },
+      );
+      const managed = await NodeFSP.readFile(NodePath.join(fixture.root, "references.bib"), "utf8");
+      expect(managed).toContain(
+        "author = {Jumper, John and Evans, Richard and Pritzel, Alexander and others}",
+      );
+    });
+  });
