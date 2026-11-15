@@ -19,6 +19,7 @@ import {
   restoreScientSource,
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { JOIN_DIFFERENCES_LABELS } from "./joinDifferenceLabels";
 import { undoProblem, unrevertedLabel } from "./libraryDuplicateLabels";
 import {
   RECENT_CHANGES_LABELS,
@@ -50,6 +51,8 @@ export function RecentChangesDialog(props: {
   readonly onChanged: () => Promise<unknown>;
   /** Starts adding what a Library folder holds; the panel shows its progress. */
   readonly onAddFromLibrary: (fromFolder: string) => Promise<unknown>;
+  /** Opens the papers a join left as they are here because both Libraries have them. */
+  readonly onShowDifferences: (joinId: string) => void;
   readonly onClose: () => void;
 }) {
   const { environmentId, root } = props;
@@ -244,6 +247,18 @@ export function RecentChangesDialog(props: {
                         <p className="text-xs break-words text-muted-foreground">
                           {recentChangeDetail(change)}
                         </p>
+                      ) : null}
+                      {change.kind === "join" && change.different > 0 ? (
+                        // Looking is not a change: offered to every session, undone or not.
+                        <Button
+                          className="mt-1"
+                          size="xs"
+                          variant="outline"
+                          aria-label={`${JOIN_DIFFERENCES_LABELS.open}: ${sentence}`}
+                          onClick={() => props.onShowDifferences(change.id)}
+                        >
+                          {JOIN_DIFFERENCES_LABELS.open}
+                        </Button>
                       ) : null}
                     </div>
                     {state ? (
