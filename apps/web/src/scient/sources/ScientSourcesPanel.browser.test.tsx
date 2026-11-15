@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   personalNote: vi.fn(),
   organize: vi.fn(),
   addByIdentifier: vi.fn(),
+  fileImport: vi.fn(),
   recentChanges: vi.fn(),
   menu: vi.fn(),
   canChange: true,
@@ -31,6 +32,7 @@ vi.mock("./client", async (original) => ({
   updateScientSourcePersonalNote: mocks.personalNote,
   organizeScientSources: mocks.organize,
   addScientSourcesByIdentifier: mocks.addByIdentifier,
+  importScientSourcesFile: mocks.fileImport,
   readScientSourceRecentChanges: mocks.recentChanges,
 }));
 vi.mock("../../localApi", async (original) => ({
@@ -53,10 +55,7 @@ vi.mock("../accounts/useAccounts", () => ({
   useAccounts: () => ({ data: null }),
   useAccountCommand: () => mocks.accountCommand,
 }));
-vi.mock("../accounts/University", () => ({
-  UniversityRow: () => null,
-  UniversityCrest: () => null,
-}));
+vi.mock("../accounts/University", () => ({ UniversityCrest: () => null }));
 vi.mock("../accounts/PaperRequests", () => ({ PaperQueueBand: () => null }));
 vi.mock("./useManagedBibliography", () => ({ useManagedBibliography: () => ({ status: null }) }));
 vi.mock("./useLibraryMoveStatus", () => ({ useLibraryMoveStatus: () => ({ line: null }) }));
@@ -66,7 +65,10 @@ vi.mock("../../components/ui/toast", () => ({
 }));
 vi.mock("./ZoteroSync", () => ({ useZoteroSync: () => ({}), ZoteroRefreshDialog: () => null }));
 vi.mock("./SourceReference", () => ({ SourceReference: () => null }));
-vi.mock("./SourceFullTextResults", () => ({ SourceFullTextResults: () => null }));
+vi.mock("./SourceFullTextResults", () => ({
+  SourceFullTextResults: (props: { readonly query: string }) =>
+    props.query ? <p>In the PDFs: {props.query}</p> : null,
+}));
 vi.mock("../../hooks/useLiveRefresh", () => ({ useLiveRefresh: () => undefined }));
 
 function setup(canChange = true, extra = false) {
@@ -175,7 +177,7 @@ describe("Sources project scope", () => {
     await expect.element(screen.getByRole("button", { name: "Choose from Library" })).toBeVisible();
   });
 
-  it("offers Add to project on the confirmation of a source added to the Library only", async () => {
+  it("offers Add to project on the result of a source added to the Library only", async () => {
     setup();
     mocks.addByIdentifier.mockReset();
     mocks.addByIdentifier.mockResolvedValue({
@@ -208,21 +210,19 @@ describe("Sources project scope", () => {
     await page.getByRole("textbox", { name: "Identifiers to add" }).fill("10.1000/abc.123");
     await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
 
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Added 1 source",
-          description: "It is in your Library, not in this project.",
-          actionProps: expect.objectContaining({ children: "Add to project" }),
-        }),
-      ),
+    // The result slot says where it went and offers to add it here.
+    const added = screen.getByRole("status").filter({ hasText: "Added 1 source" });
+    await expect
+      .element(added)
+      .toHaveTextContent(/^Added 1 source\. It is in your Library, not in this project\./u);
+    expect(mocks.toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Added 1 source" }),
     );
     expect(mocks.addByIdentifier).toHaveBeenCalledWith(
       "environment-1",
       expect.objectContaining({ pin: false }),
     );
-    const added = mocks.toast.mock.calls.find(([toast]) => toast.title === "Added 1 source")![0];
-    await act(async () => added.actionProps.onClick());
+    await userEvent.click(added.getByRole("button", { name: "Add to project" }));
     await vi.waitFor(() =>
       expect(mocks.organize).toHaveBeenCalledWith(
         "environment-1",
@@ -338,7 +338,7 @@ describe("Sources project scope", () => {
       />,
       { router: false },
     );
-    await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
+    await userEvent.click(screen.getByRole("button", { name: "Import sources" }));
     await userEvent.click(page.getByRole("menuitem", { name: "Import a package", exact: true }));
     await userEvent.click(page.getByRole("menuitem", { name: /handoff/u }));
     await vi.waitFor(() =>
@@ -394,16 +394,20 @@ describe("Sources project scope", () => {
       />,
       { router: false },
     );
-    const line = screen.getByText("The weekly check found: 1 paper was retracted.");
+    // The weekly check's line waits in Activity; Show narrows the list and closes the dialog.
+    await userEvent.click(screen.getByRole("button", { name: /^Activity/u }));
+    const line = page.getByText("The weekly check found: 1 paper was retracted.");
     await expect.element(line).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Show", exact: true }));
+    await userEvent.click(page.getByRole("button", { name: "Show", exact: true }));
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
 
     // The whole Library, narrowed to the paper with the notice.
     await expect.element(screen.getByRole("button", { name: /Other study/u })).toBeVisible();
     await expect
       .element(screen.getByRole("button", { name: /Existing study/u }))
       .not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Dismiss", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: /^Activity/u }));
+    await userEvent.click(page.getByRole("button", { name: "Dismiss", exact: true }));
     await expect.element(line).not.toBeInTheDocument();
     expect(mocks.organize).toHaveBeenCalledWith("environment-1", {
       root: "/project",
@@ -426,9 +430,109 @@ describe("Sources project scope", () => {
     await expect
       .element(screen.getByRole("button", { name: "This project", exact: true }))
       .toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "All Library", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "My Library", exact: true }));
     await expect.element(screen.getByRole("button", { name: /Existing study/u })).toBeVisible();
     expect(mocks.organize).not.toHaveBeenCalled();
+  });
+
+  it("does not show Import as busy while the list is read again", async () => {
+    setup();
+    const read = mocks.read.getMockImplementation()!;
+    const gate = Promise.withResolvers<void>();
+    mocks.read.mockImplementation(async (environment, root, scope) => {
+      if (scope === "library") await gate.promise;
+      return read(environment, root, scope);
+    });
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    await expect
+      .element(screen.getByRole("heading", { name: "No sources in this project" }))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "My Library", exact: true }));
+    await vi.waitFor(() =>
+      expect(mocks.read).toHaveBeenCalledWith("environment-1", "/project", "library"),
+    );
+    await expect.element(screen.getByRole("button", { name: "Import sources" })).toBeEnabled();
+    gate.resolve();
+    await expect.element(screen.getByRole("button", { name: /Existing study/u })).toBeVisible();
+  });
+
+  it("keeps the newest import's result when an earlier import ends after it", async () => {
+    setup();
+    const first = Promise.withResolvers<unknown>();
+    mocks.fileImport.mockReset();
+    mocks.fileImport
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(async () => ({ operation: null, report: { alreadyInLibrary: 2 } }));
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    const empty = screen.getByRole("heading", { name: "No sources in this project" });
+    await expect.element(empty).toBeVisible();
+    const drop = (name: string) => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File(["@article{a, title={A}}"], name));
+      empty
+        .element()
+        .dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+    };
+    drop("first.bib");
+    await vi.waitFor(() => expect(mocks.fileImport).toHaveBeenCalledTimes(1));
+    drop("second.bib");
+    const result = screen.getByRole("status").filter({ hasText: "already in the Library" });
+    await expect.element(result).toHaveTextContent(/^2 already in the Library\./u);
+
+    await act(async () => {
+      first.resolve({ operation: null, report: { alreadyInLibrary: 1 } });
+      // The earlier import's answer runs through its own continuations first.
+      const settled = Promise.withResolvers<void>();
+      setTimeout(settled.resolve, 0);
+      await settled.promise;
+    });
+    await expect.element(result).toHaveTextContent(/^2 already in the Library\./u);
+    await expect.element(screen.getByText("1 already in the Library.")).not.toBeInTheDocument();
+  });
+
+  it("shows full-text results under cards, also when the view cannot be saved", async () => {
+    setup(true, true);
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    await expect.element(screen.getByRole("button", { name: /Other study/u })).toBeVisible();
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("Storage is blocked");
+    });
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "Show as cards" }));
+      await expect.element(screen.getByRole("button", { name: "Show as a list" })).toBeVisible();
+    } finally {
+      setItem.mockRestore();
+    }
+    await screen.getByRole("searchbox", { name: "Search Library" }).fill("zebra");
+    await expect.element(screen.getByText("In the PDFs: zebra")).toBeVisible();
   });
 });
 
@@ -503,9 +607,21 @@ it.each([false, true])(
       personalNote: "My draft",
     });
     if (!leave) {
-      await expect.element(page.getByRole("status")).toHaveTextContent("Saved");
+      // The editor took the saved note as its own: the next edit is saved against it.
+      await userEvent.click(page.getByRole("button", { name: "Edit my note" }));
+      await userEvent.keyboard(", again");
+      await userEvent.tab();
+      await vi.waitFor(() => expect(mocks.personalNote).toHaveBeenCalledTimes(2));
+      expect(mocks.personalNote.mock.calls[1]?.[1]).toMatchObject({
+        expectedRevision: 3,
+        expectedNote: "My draft",
+        note: "My draft, again",
+      });
+      await mocks.personalNote.mock.results[1]?.value;
+      expect(stored.personalNote).toBe("My draft, again");
       await expect.element(page.getByText("Saved elsewhere")).not.toBeInTheDocument();
+    } else {
+      expect(mocks.personalNote).toHaveBeenCalledTimes(1);
     }
-    expect(mocks.personalNote).toHaveBeenCalledTimes(1);
   },
 );

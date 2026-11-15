@@ -1,3 +1,4 @@
+import type { ScientSourceIdentifierAddItem } from "@scientfactory/scient-sources";
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
@@ -16,14 +17,18 @@ import {
   FileText,
   Folder,
   Hash,
+  LayoutGrid,
   Library,
+  List as ListIcon,
   LoaderCircle,
   RefreshCw,
   Search,
   Users,
   X,
 } from "lucide-react";
+import * as Schema from "effect/Schema";
 import {
+  type ReactNode,
   useDeferredValue,
   useEffect,
   useLayoutEffect,
@@ -34,7 +39,7 @@ import {
 
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { Button } from "../../components/ui/button";
-import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
+import { managedBibliographyActivity } from "./ManagedBibliographyNotice";
 import { useManagedBibliography } from "./useManagedBibliography";
 import { useLibrarySourceRequest } from "./librarySourceRequest";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -58,20 +63,23 @@ import { initializeScientProjectForOpening } from "../../lib/scientProjectInitia
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { SourceAnnotations } from "../annotations/SourceAnnotations";
-import { AddByIdentifier } from "./AddByIdentifier";
+import { AddByIdentifier, identifierAddResult } from "./AddByIdentifier";
+import { AskLibraryButton } from "./AskLibraryButton";
 import { ImportReview } from "./ImportReview";
 import { AlreadyPresentSummary, ImportSummary } from "./ImportSummary";
-import { CenteredState, PanelHeader, SourceErrorBanner } from "./PanelChrome";
+import { CenteredState, PanelHeader, SOURCES_COLUMN } from "./PanelChrome";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceFullTextResults } from "./SourceFullTextResults";
 import type { SourceRowContext } from "./SourceRow";
 import { showSourceRowMenu } from "./sourceRowMenu";
-import { LibraryBackupNotice, useLibraryBackup } from "./LibraryBackup";
+import { libraryBackupActivity, libraryCopyEndingResult, useLibraryBackup } from "./LibraryBackup";
 import { JoinDifferencesDialog } from "./JoinDifferences";
 import { RecentChangesDialog } from "./RecentChanges";
 import { RECENT_CHANGES_LABELS } from "./recentChangeLabels";
+import { SourceCards } from "./SourceCards";
 import { SourcesList } from "./SourcesList";
+import { scientSourceSections } from "./sourceSections";
 import { requestSourceTextReveal } from "./sourceTextReveal";
 import { useLibraryFileImport } from "./libraryFileHandoff";
 import { newlyObservedSourceIds } from "./sourceLabels";
@@ -89,15 +97,27 @@ import {
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
 import { SourceHistoryDialog } from "./SourceHistory";
-import { SourceStoreNotice } from "./SourceStoreNotice";
+import { sourceStoreActivity } from "./SourceStoreNotice";
 import { LibraryDuplicatesView, type DuplicatesSection } from "./LibraryDuplicates";
-import { LibraryMoveNotice } from "./LibraryMoveNotice";
-import { LibraryNoticeChanges } from "./LibraryNoticeChanges";
+import { libraryMoveActivity } from "./LibraryMoveNotice";
+import { libraryNoticeChangesActivity } from "./LibraryNoticeChanges";
 import { useLibraryMoveStatus } from "./useLibraryMoveStatus";
 import { announceSourceMovedToTrash } from "./SourceTrash";
 import { shownSourceRecord } from "./sourcesWorkflow";
 import { useScientSources } from "./useScientSources";
-import { SourceOrganizeSection } from "./SourceOrganizeSection";
+import { SourceFiling } from "./SourceOrganizeSection";
+import {
+  SourcesActivityButton,
+  SourcesResultSlot,
+  sourcesStateActivity,
+  useSourcesResult,
+} from "./SourcesActivity";
+import {
+  selectSourcesActivity,
+  type SourcesActivityItem,
+  type SourcesResult,
+  type SourcesResultContent,
+} from "./sourcesFeedback";
 import { SourcesActiveFilters } from "./SourcesActiveFilters";
 import { announceSourcesMovedToTrash, SourcesBulkBar } from "./SourcesBulkBar";
 import { SourcesFilterMenu } from "./SourcesFilterMenu";
@@ -107,6 +127,7 @@ import { SystematicReviewsView } from "./SystematicReviews";
 import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
+import { ImportPackageSubmenu } from "./ProjectPackageMenu";
 import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from "./sourcesCommands";
 import {
   organizeScientSources,
@@ -115,6 +136,7 @@ import {
   updateScientSourcePersonalNote,
 } from "./client";
 import {
+  emptySourcesLabel,
   inLibraryNotProjectLabel,
   LIBRARY_LABELS,
   matchesReadingFilter,
@@ -124,13 +146,57 @@ import {
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { SnapshotRemovalDialog, useLibraryProjectActions } from "./useLibraryProjectActions";
 import { accountsState } from "../accounts/accountsState";
-import { UniversityCrest, UniversityRow } from "../accounts/University";
+import { UniversityCrest } from "../accounts/University";
 import { PaperQueueBand } from "../accounts/PaperRequests";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { readLocalStorageValue, writeLocalStorageValue } from "~/hooks/useLocalStorage";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { useAccountCommand, useAccounts } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 const RECENT_SOURCE_ADD_TTL_MS = 10 * 60 * 1000;
+/** Rows or cards: how this computer last showed the list. */
+const SOURCE_VIEW_KEY = "scient:sources-view";
+const SourceViewSchema = Schema.Literals(["list", "cards"]);
+type SourceView = typeof SourceViewSchema.Type;
+
+interface ReferenceFileImport {
+  readonly file: File;
+  readonly report: ScientSourcesFileImportResult["report"];
+}
+
+interface ImportReceipt {
+  /** The result-slot operation the import began. */
+  readonly resultId: string;
+  readonly outcome: ScientSourcesImportOutcome | null;
+  readonly referenceFile: ReferenceFileImport | null;
+}
+
+/** An import's line in the result slot; Details shows the whole receipt in Activity. */
+function importResultContent(
+  outcome: ScientSourcesImportOutcome | null,
+  referenceFile: ReferenceFileImport | null,
+): SourcesResultContent {
+  if (!outcome) {
+    const name = referenceFile?.file.name ?? "the file";
+    return {
+      tone: "info",
+      summary: `Nothing was imported from ${name}.`,
+    };
+  }
+  const { imported, alreadyPresent, reviewRequired, failed } = outcome.counts;
+  const parts = [
+    imported > 0 ? `Imported ${imported} ${imported === 1 ? "source" : "sources"}` : null,
+    alreadyPresent > 0 ? `${alreadyPresent} already in the Library` : null,
+    reviewRequired > 0 ? `${reviewRequired} to review` : null,
+    failed > 0 ? `${failed} failed` : null,
+  ].filter((part) => part !== null);
+  const line = parts.length > 0 ? parts.join(" · ") : "Nothing new was imported";
+  return {
+    tone: failed > 0 ? "error" : imported > 0 ? "success" : "info",
+    summary: outcome.operation?.state === "cancelled" ? `Import stopped: ${line}.` : `${line}.`,
+  };
+}
 const recentSourceAdds = new Map<string, Map<string, number>>();
 function createRecentSourcesStore(initial: ReadonlySet<string>) {
   let snapshot = initial;
@@ -223,11 +289,17 @@ export function ScientSourcesPanel(props: {
   // Each computer has its own Library: one that is not this computer's is named.
   const environment = useEnvironment(props.environmentId);
   const thisComputer = usePrimaryEnvironmentId();
+  const panelContext = `${props.environmentId}\0${props.root}`;
+  const result = useSourcesResult(panelContext);
+  const [activityOpen, setActivityOpen] = useState(false);
   const backup = useLibraryBackup({
     environmentId: props.environmentId,
     root: props.root,
     enabled: sources.overview?.libraryBackend === true,
     onAdded: () => void sources.refreshOverview(),
+    onEnded: (ending) =>
+      ending.operationId !== null &&
+      result.settle(ending.operationId, libraryCopyEndingResult(ending)),
   });
   // A folder is chosen with this computer's own dialog, so only for a Library that is here.
   const pickBackupFolder =
@@ -268,7 +340,8 @@ export function ScientSourcesPanel(props: {
     useAccountCommand(accountsState.listPapers, props.environmentId),
   );
   const { data: accounts } = useAccounts(props.environmentId);
-  const papersSaved = accounts?.paperQueues?.find((item) => item.root === props.root)?.saved;
+  const paperQueue = accounts?.paperQueues?.find((item) => item.root === props.root);
+  const papersSaved = paperQueue?.saved;
   const refreshOverview = sources.refreshOverview;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opening a project's Sources picks up the paper list on the server that a restart interrupted
   useEffect(() => {
@@ -296,6 +369,12 @@ export function ScientSourcesPanel(props: {
   const [packageSources, setPackageSources] = useState<ReadonlySet<string> | null>(null);
   const [shownSourcesLabel, setShownSourcesLabel] = useState("Papers kept after Undo");
   const [sourceSort, setSourceSort] = useState<ScientSourceSort>("last-added");
+  const [sourceView, setSourceView] = useState<SourceView>(() =>
+    readLocalStorageValue(SOURCE_VIEW_KEY, "list", SourceViewSchema),
+  );
+  // The source at the top of the list, so switching views or coming Back keeps the place.
+  const topSourceId = useRef<string | null>(null);
+  const [viewAnchor, setViewAnchor] = useState<string | null>(null);
   const organize = useSourcesOrganize({
     environmentId: props.environmentId,
     root: props.root,
@@ -316,13 +395,11 @@ export function ScientSourcesPanel(props: {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   useLibrarySourceRequest(props.root, sources.overview !== null, setSelectedSourceId);
   const [editingSource, setEditingSource] = useState(false);
-  const [importOutcome, setImportOutcome] = useState<ScientSourcesImportOutcome | null>(null);
-  const [addingByIdentifier, setAddingByIdentifier] = useState(false);
-  const [referenceFileImport, setReferenceFileImport] = useState<{
-    readonly file: File;
-    readonly report: ScientSourcesFileImportResult["report"];
-  } | null>(null);
-  const panelContext = `${props.environmentId}\0${props.root}`;
+  /** The import started here last: the result-slot operation it began, and what it did. */
+  const [importReceipt, setImportReceipt] = useState<ImportReceipt | null>(null);
+  /** The open Add by identifier dialog, with the result-slot operation it began. */
+  const [addingByIdentifier, setAddingByIdentifier] = useState<string | null>(null);
+  const panelContextRef = useRef(panelContext);
   const [recentSourcesStore] = useState(() =>
     createRecentSourcesStore(readRecentSourceAdds(panelContext)),
   );
@@ -342,7 +419,6 @@ export function ScientSourcesPanel(props: {
     readonly contextKey: string;
     readonly sourceIds: ReadonlySet<string>;
   } | null>(null);
-  const panelContextRef = useRef(panelContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps panelContextRef holding the current panel context
   useLayoutEffect(() => {
     panelContextRef.current = panelContext;
@@ -357,28 +433,28 @@ export function ScientSourcesPanel(props: {
   }, []);
 
   const revealImportedSource = (
-    work: ReturnType<typeof sources.uploadLocalFiles>,
+    work: Promise<ScientSourcesImportOutcome | null>,
     revealSingleSource = true,
+    referenceFile?: () => ReferenceFileImport | null,
   ) => {
     const requestedContext = panelContext;
     const request = ++importRevealRequest.current;
-    setImportOutcome(null);
+    const resultId = result.begin();
     void work.then((outcome) => {
-      if (
-        outcome &&
-        panelMounted.current &&
-        panelContextRef.current === requestedContext &&
-        importRevealRequest.current === request
-      ) {
-        setImportOutcome(outcome);
-        setRecentlyAddedSourceIds(
-          rememberRecentSourceAdds(requestedContext, importedSourceIds(outcome)),
-        );
-        const sourceId = revealSingleSource ? importedSourceIdToReveal(outcome) : null;
-        if (sourceId) {
-          setEditingSource(false);
-          setSelectedSourceId(sourceId);
-        }
+      if (!panelMounted.current || panelContextRef.current !== requestedContext) return;
+      const file = referenceFile?.() ?? null;
+      // A later start owns the slot; this import's receipt is then not shown.
+      if ((outcome || file) && result.settle(resultId, importResultContent(outcome, file))) {
+        setImportReceipt({ resultId, outcome, referenceFile: file });
+      }
+      if (!outcome || importRevealRequest.current !== request) return;
+      setRecentlyAddedSourceIds(
+        rememberRecentSourceAdds(requestedContext, importedSourceIds(outcome)),
+      );
+      const sourceId = revealSingleSource ? importedSourceIdToReveal(outcome) : null;
+      if (sourceId) {
+        setEditingSource(false);
+        setSelectedSourceId(sourceId);
       }
     });
   };
@@ -388,17 +464,87 @@ export function ScientSourcesPanel(props: {
 
   const importReferenceFile = (file: File) => {
     setSelectedSourceId(null);
-    setReferenceFileImport(null);
-    const requestedContext = panelContext;
+    let report: ScientSourcesFileImportResult["report"] | null = null;
     revealImportedSource(
-      sources.importReferenceFile(file).then((result) => {
-        if (result && panelContextRef.current === requestedContext) {
-          setReferenceFileImport({ file, report: result.report });
-        }
-        return result?.outcome ?? null;
+      sources.importReferenceFile(file).then((imported) => {
+        report = imported?.report ?? null;
+        return imported?.outcome ?? null;
       }),
       false,
+      () => (report ? { file, report } : null),
     );
+  };
+
+  /** The result slot's import receipt, with the import's live state and actions. */
+  const importReceiptResult = (shown: SourcesResult | null): SourcesResult | null => {
+    if (!shown || !importReceipt || shown.operationId !== importReceipt.resultId) return shown;
+    const { outcome, referenceFile } = importReceipt;
+    const operation =
+      outcome?.operation && sources.operation?.operationId === outcome.operation.operationId
+        ? sources.operation
+        : (outcome?.operation ?? null);
+    const details = (
+      <>
+        {operation && outcome ? (
+          <ImportSummary
+            operation={operation}
+            outcome={outcome}
+            onDismiss={result.dismiss}
+            onCancel={() => void sources.cancelImport()}
+            cancelling={sources.cancelling}
+            {...(scopes ? { onShowSources: showPackageSources } : {})}
+            {...(canChange && sources.zoteroRunRemaining > 0
+              ? {
+                  rest: {
+                    count: sources.zoteroRunRemaining,
+                    onImport: () => revealImportedSource(sources.importZoteroRest(), false),
+                  },
+                }
+              : {})}
+            {...(scopes && !operation.pinInstanceId
+              ? {
+                  libraryOnly: canChangeProject
+                    ? {
+                        onAddToProject: (sourceIds: ReadonlyArray<string>) =>
+                          void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(
+                            result.dismiss,
+                          ),
+                      }
+                    : {},
+                }
+              : {})}
+            {...(canChange &&
+            operation.state !== "cancelled" &&
+            operation.items.some((item) => item.state === "failed")
+              ? { onRetryFailed: () => void sources.retryFailedImport() }
+              : {})}
+          />
+        ) : outcome?.kind === "already-present" ? (
+          <AlreadyPresentSummary
+            outcome={outcome}
+            onDismiss={result.dismiss}
+            {...(outcome.existingSourceId
+              ? {
+                  onViewExisting: () => {
+                    setEditingSource(false);
+                    setSelectedSourceId(outcome.existingSourceId);
+                  },
+                }
+              : {})}
+          />
+        ) : null}
+        {referenceFile ? (
+          <ReferenceFileReport
+            fileName={referenceFile.file.name}
+            report={referenceFile.report}
+            busy={sources.importing || !canChange}
+            onContinue={() => importReferenceFile(referenceFile.file)}
+            onDismiss={result.dismiss}
+          />
+        ) : null}
+      </>
+    );
+    return { ...shown, details };
   };
 
   const [previousPanelContext, setPreviousPanelContext] = useState({ context: panelContext });
@@ -408,11 +554,13 @@ export function ScientSourcesPanel(props: {
     setShowingDuplicates(null);
     setSelectedSourceId(null);
     setEditingSource(false);
-    setImportOutcome(null);
-    setReferenceFileImport(null);
+    setImportReceipt(null);
     setHistorySourceId(null);
     setSourceQuery("");
     setPackageSources(null);
+    setAddingByIdentifier(null);
+    setActivityOpen(false);
+    setViewAnchor(null);
   }
 
   const expirySchedule = { context: panelContext, sourceIds: recentlyAddedSourceIds };
@@ -505,6 +653,8 @@ export function ScientSourcesPanel(props: {
     ),
     sourceSort,
   );
+  // oxlint-disable-next-line react/purity -- Last added's headings read the clock whenever the list is derived; one that lags past midnight until the next render is harmless
+  const sourceSections = scientSourceSections(filteredSourceRecords, sourceSort, Date.now());
   const listFilterActive =
     packageSources !== null ||
     organize.filterActive ||
@@ -515,20 +665,21 @@ export function ScientSourcesPanel(props: {
     organize.clearSelection();
     void sources.selectScope(scope);
   };
-  const showPackageSources = (
-    sourceIds: ReadonlyArray<string>,
-    label = "Papers kept after Undo",
-  ) => {
-    if (!panelMounted.current || panelContextRef.current !== panelContext) return;
-    setShownSourcesLabel(label);
-    setSelectedSourceId(null);
-    setShowingReviews(false);
-    setShowingDuplicates(null);
-    organize.clearFilter();
-    organize.clearSelection();
-    setPackageSources(new Set(sourceIds));
-    void sources.selectScope("library");
-  };
+  // Stable: Activity items built during render hold it, and it reads the panel's refs.
+  const showPackageSources = useStableCallback(
+    (sourceIds: ReadonlyArray<string>, label?: string) => {
+      if (!panelMounted.current || panelContextRef.current !== panelContext) return;
+      setShownSourcesLabel(label ?? "Papers kept after Undo");
+      setSelectedSourceId(null);
+      setShowingReviews(false);
+      setShowingDuplicates(null);
+      setActivityOpen(false);
+      organize.clearFilter();
+      organize.clearSelection();
+      setPackageSources(new Set(sourceIds));
+      void sources.selectScope("library");
+    },
+  );
   const dismissNoticeChanges = () =>
     void organizeScientSources(props.environmentId, {
       root: props.root,
@@ -688,7 +839,10 @@ export function ScientSourcesPanel(props: {
     recentlyAddedSourceIds,
     diagnosticsBySourceId,
     onToggleSelected: organize.toggleSelected,
-    onOpenDetails: openSourceDetails,
+    onOpenDetails: (sourceId: string) => {
+      setViewAnchor(sourceId);
+      openSourceDetails(sourceId);
+    },
     onOpenPdf: props.onOpenPdf,
     onShowMenu: showSourceContextMenuAt,
     ...(canSetReading
@@ -699,17 +853,123 @@ export function ScientSourcesPanel(props: {
       : {}),
   };
 
+  const paperQueueActivity: SourcesActivityItem | null =
+    paperQueue &&
+    (paperQueue.waiting > 0 || paperQueue.requests.length > 0 || paperQueue.failed > 0)
+      ? {
+          key: "paper-queue",
+          tone:
+            paperQueue.requests.length > 0
+              ? "decision"
+              : paperQueue.waiting > 0
+                ? "running"
+                : "advisory",
+          label:
+            paperQueue.requests.length > 0
+              ? "Getting papers needs you"
+              : paperQueue.waiting > 0
+                ? `Getting ${paperQueue.waiting} ${paperQueue.waiting === 1 ? "paper" : "papers"}`
+                : "Some papers could not be reached",
+          body: (
+            <PaperQueueBand
+              environmentId={props.environmentId}
+              root={props.root}
+              threadId={props.threadId}
+            />
+          ),
+        }
+      : null;
+  const activity = selectSourcesActivity([
+    ...sourcesStateActivity({
+      importPreparation: sources.importPreparation,
+      operation: sources.operation,
+      ...(sources.operation
+        ? {
+            operationBody: (
+              <ImportSummary
+                operation={sources.operation}
+                outcome={null}
+                onDismiss={result.dismiss}
+                onCancel={() => void sources.cancelImport()}
+                cancelling={sources.cancelling}
+              />
+            ),
+          }
+        : {}),
+      error: sources.error,
+      onDismissError: sources.clearError,
+      overviewError: sources.overview ? sources.overviewError : null,
+      onRetryOverview: () => void sources.reloadOverview(),
+    }),
+    paperQueueActivity,
+    ...libraryBackupActivity(backup),
+    libraryMoveActivity(
+      move,
+      scopes
+        ? () => {
+            setActivityOpen(false);
+            setShowingDuplicates("merged");
+          }
+        : undefined,
+    ),
+    sources.overview &&
+      libraryNoticeChangesActivity({
+        changes: sources.overview.noticeChanges ?? [],
+        onShow: (sourceIds) => showPackageSources(sourceIds, NOTICE_CHANGES_SHOWN),
+        onDismiss: canChange ? dismissNoticeChanges : undefined,
+      }),
+    sources.overview && sourceStoreActivity(sources.overview.unreadableRecords ?? []),
+    bibliography.status &&
+      managedBibliographyActivity({
+        files: bibliography.status.files,
+        replacing: bibliography.replacing || !bibliography.canChange,
+        onResolve: (name, action) => void bibliography.resolve(name, action),
+      }),
+  ]);
+  const shownResult = importReceiptResult(result.result);
+  const activityButton = (
+    <SourcesActivityButton
+      activity={activity}
+      result={shownResult}
+      open={activityOpen}
+      onOpenChange={setActivityOpen}
+      onDismissResult={result.dismiss}
+    />
+  );
+  const resultSlot = (
+    <SourcesResultSlot
+      result={shownResult}
+      onDetails={() => setActivityOpen(true)}
+      onDismiss={result.dismiss}
+    />
+  );
+  // Pages other than the list keep their own header: Activity and the result sit above it. The
+  // wrapper always renders, so the page keeps its state when Activity comes and goes.
+  const withActivity = (view: ReactNode) => (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {activity.count > 0 || shownResult || activityOpen ? (
+        <div className="shrink-0 border-b border-border">
+          <div className={`${SOURCES_COLUMN} flex items-start gap-2 px-3 py-1.5`}>
+            <div className="min-w-0 flex-1">{resultSlot}</div>
+            {activityButton}
+          </div>
+        </div>
+      ) : null}
+      {view}
+    </div>
+  );
+
   if (sources.overview === null) {
-    if (sources.error) {
+    if (sources.overviewError) {
       return (
         <CenteredState
           icon={<AlertCircle />}
           title="The Library could not be loaded"
-          description={sources.error}
+          description={sources.overviewError}
           action={
             <Button
               variant="outline"
-              disabled={sources.busy}
+              disabled={sources.overviewLoading}
               onClick={() => void sources.reloadOverview()}
             >
               <RefreshCw />
@@ -772,7 +1032,7 @@ export function ScientSourcesPanel(props: {
   }
 
   if (sources.preflight) {
-    return (
+    return withActivity(
       <ImportReview
         key={sources.preflight.items.map((item) => item.candidate.sourceKey).join("\0")}
         preflight={sources.preflight}
@@ -785,12 +1045,12 @@ export function ScientSourcesPanel(props: {
         onImport={(itemKeys, possibleMetadataMatchOverrides) =>
           revealImportedSource(sources.runImport(itemKeys, possibleMetadataMatchOverrides))
         }
-      />
+      />,
     );
   }
 
   if (sources.library) {
-    return (
+    return withActivity(
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border p-3">
           <Button
@@ -877,7 +1137,7 @@ export function ScientSourcesPanel(props: {
             </MenuPopup>
           </Menu>
           <form
-            className="min-w-[12rem] flex-[1_1_14rem]"
+            className="min-w-[12rem] max-w-[24rem] flex-[1_1_14rem]"
             onSubmit={(event) => {
               event.preventDefault();
               void sources.searchZotero(query);
@@ -935,36 +1195,42 @@ export function ScientSourcesPanel(props: {
           </Tooltip>
         </div>
         {sources.error ? (
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            <span className="min-w-0 truncate">{sources.error}</span>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={sources.busy}
-              onClick={() => void sources.searchZotero(query, 0)}
+          <div className="shrink-0 border-b border-destructive/20 bg-destructive/5">
+            <div
+              className={`${SOURCES_COLUMN} flex items-center justify-between gap-3 px-3 py-2 text-xs text-destructive`}
             >
-              Try again
-            </Button>
+              <span className="min-w-0 truncate">{sources.error}</span>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={sources.busy}
+                onClick={() => void sources.searchZotero(query, 0)}
+              >
+                Try again
+              </Button>
+            </div>
           </div>
         ) : null}
         {selectedKeys.size > 0 ? (
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/30 px-3 py-2">
-            <span className="text-xs text-muted-foreground">
-              {selectedKeys.size} reference{selectedKeys.size === 1 ? "" : "s"} selected
-            </span>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={!canChange || sources.busy}
-              onClick={() => revealImportedSource(sources.previewImport([...selectedKeys]))}
-            >
-              <Download />
-              {selectedKeys.size === 1 ? "Import" : `Import ${selectedKeys.size}`}
-            </Button>
+          <div className="shrink-0 border-b border-border bg-muted/30">
+            <div className={`${SOURCES_COLUMN} flex items-center justify-between gap-3 px-3 py-2`}>
+              <span className="text-xs text-muted-foreground">
+                {selectedKeys.size} reference{selectedKeys.size === 1 ? "" : "s"} selected
+              </span>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={!canChange || sources.busy}
+                onClick={() => revealImportedSource(sources.previewImport([...selectedKeys]))}
+              >
+                <Download />
+                {selectedKeys.size === 1 ? "Import" : `Import ${selectedKeys.size}`}
+              </Button>
+            </div>
           </div>
         ) : null}
         <ScrollArea className="min-h-0 flex-1">
-          <div className="divide-y divide-border">
+          <div className={`${SOURCES_COLUMN} divide-y divide-border`}>
             {sources.library.items.map((item) => {
               const key = item.sourceKey;
               const checked = selectedKeys.has(key);
@@ -1020,7 +1286,7 @@ export function ScientSourcesPanel(props: {
             ) : null}
           </div>
         </ScrollArea>
-      </div>
+      </div>,
     );
   }
 
@@ -1036,7 +1302,7 @@ export function ScientSourcesPanel(props: {
             : status.state === "incompatible"
               ? "This Zotero version is not supported."
               : "Scient could not verify Zotero.";
-    return (
+    return withActivity(
       <div className="flex min-h-0 flex-1 flex-col">
         <PanelHeader
           title={
@@ -1121,13 +1387,13 @@ export function ScientSourcesPanel(props: {
             </div>
           </div>
         </div>
-      </div>
+      </div>,
     );
   }
 
   if (selectedRecord) {
     if (editingSource) {
-      return (
+      return withActivity(
         <SourceEditor
           key={selectedRecord.sourceId}
           environmentId={props.environmentId}
@@ -1140,10 +1406,10 @@ export function ScientSourcesPanel(props: {
             setEditingSource(false);
             void sources.reloadOverview();
           }}
-        />
+        />,
       );
     }
-    return (
+    return withActivity(
       <>
         <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
         {/* Each view that can remove a source this Library lacks mounts its question. */}
@@ -1207,8 +1473,8 @@ export function ScientSourcesPanel(props: {
             : {})}
           citationProject={{ environmentId: props.environmentId, root: props.root }}
           diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
-          organize={
-            <SourceOrganizeSection
+          filing={
+            <SourceFiling
               organize={organize}
               sourceId={selectedRecord.sourceId}
               tags={selectedRecord.tags}
@@ -1224,13 +1490,14 @@ export function ScientSourcesPanel(props: {
                 setSelectedSourceId(null);
                 organize.showCollection(collectionId);
               }}
-              onShowCategory={(category) => {
-                setEditingSource(false);
-                setSelectedSourceId(null);
-                organize.showOnly(category);
-              }}
             />
           }
+          categories={selectedSummary?.categories}
+          onShowCategory={(category) => {
+            setEditingSource(false);
+            setSelectedSourceId(null);
+            organize.showOnly(category);
+          }}
           onBack={() => {
             setEditingSource(false);
             setSelectedSourceId(null);
@@ -1295,7 +1562,7 @@ export function ScientSourcesPanel(props: {
               });
               return;
             }
-            // Anything waiting for the user is on the band above Sources, with its action.
+            // Anything waiting for the user is in Activity, with its action.
             toastManager.add({
               type: result.value.status === "needs-you" ? "info" : "error",
               title: result.value.message,
@@ -1325,12 +1592,12 @@ export function ScientSourcesPanel(props: {
             }}
           />
         ) : null}
-      </>
+      </>,
     );
   }
 
   if (showingDuplicates && scopes) {
-    return (
+    return withActivity(
       <LibraryDuplicatesView
         environmentId={props.environmentId}
         root={props.root}
@@ -1339,12 +1606,12 @@ export function ScientSourcesPanel(props: {
         initialSection={showingDuplicates}
         onBack={() => setShowingDuplicates(null)}
         onMerged={leaveSelection}
-      />
+      />,
     );
   }
 
   if (showingReviews) {
-    return (
+    return withActivity(
       <SystematicReviewsView
         environmentId={props.environmentId}
         root={props.root}
@@ -1355,13 +1622,91 @@ export function ScientSourcesPanel(props: {
         loadSource={sources.loadSource}
         onOpenSource={openSourceDetails}
         onBack={() => setShowingReviews(false)}
-      />
+      />,
     );
   }
 
+  /** What Add by identifier added, in the result slot of the operation its dialog began. */
+  const identifiersAdded = (
+    operationId: string,
+    results: ReadonlyArray<ScientSourceIdentifierAddItem>,
+  ) => {
+    const added = results.flatMap((item) =>
+      item.outcome === "imported" && item.sourceId ? [item.sourceId] : [],
+    );
+    if (added.length > 0) {
+      setRecentlyAddedSourceIds(rememberRecentSourceAdds(panelContext, added));
+    }
+    const addAction = canChangeProject ? (
+      <Button
+        size="xs"
+        variant="ghost"
+        onClick={() =>
+          void addToProject(added.map((sourceId) => ({ sourceId }))).then(result.dismiss)
+        }
+      >
+        {LIBRARY_LABELS.addToProject}
+      </Button>
+    ) : null;
+    result.settle(
+      operationId,
+      identifierAddResult(
+        results,
+        scopes?.listed === "library"
+          ? {
+              detail: inLibraryNotProjectLabel(added.length),
+              ...(addAction ? { actions: addAction } : {}),
+            }
+          : {},
+      ),
+    );
+    void sources.refreshOverview();
+  };
+  const empty = emptySourcesLabel(scopes?.listed);
+  const fullTextFooter = (
+    <SourceFullTextResults
+      environmentId={props.environmentId}
+      root={props.root}
+      query={sourceQuery}
+      metadataMatchCount={filteredSourceRecords.length}
+      sourceIds={
+        listFilterActive
+          ? filterScientSourceSearchIndex(
+              sourceSearchIndex,
+              "",
+              organize.filter,
+              organize.organization,
+            )
+              .filter(
+                (record) =>
+                  matchesReadingFilter(record, readingFilter) &&
+                  (!packageSources || packageSources.has(record.sourceId)),
+              )
+              .map((record) => record.sourceId)
+          : undefined
+      }
+      onOpenHit={(hit) => {
+        requestSourceTextReveal(props.root, hit);
+        props.onOpenPdf(hit);
+      }}
+    />
+  );
+  const viewProps = {
+    records: filteredSourceRecords,
+    sections: sourceSections,
+    row: sourceRow,
+    footer: fullTextFooter,
+    anchorSourceId: viewAnchor,
+    onTopSourceChange: (sourceId: string) => {
+      topSourceId.current = sourceId;
+    },
+  };
+  const nextView: SourceView = sourceView === "list" ? "cards" : "list";
+  const viewLabel = nextView === "cards" ? "Show as cards" : "Show as a list";
+
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col"
+      className="relative flex min-h-0 flex-1 flex-col"
       onDragOver={(event) => {
         if (!canChange || !event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
@@ -1381,10 +1726,14 @@ export function ScientSourcesPanel(props: {
           return;
         }
         setSelectedSourceId(null);
-        setImportOutcome(null);
         revealImportedSource(sources.uploadLocalFiles([...event.dataTransfer.files]), false);
       }}
     >
+      {dragActive ? (
+        <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed border-foreground/30 bg-background/85 px-3 text-center text-xs text-muted-foreground">
+          Drop PDFs or a reference file to add them to the Library
+        </div>
+      ) : null}
       <input
         ref={localFileInput}
         className="sr-only"
@@ -1412,11 +1761,6 @@ export function ScientSourcesPanel(props: {
           if (file) importReferenceFile(file);
         }}
       />
-      <PaperQueueBand
-        environmentId={props.environmentId}
-        root={props.root}
-        threadId={props.threadId}
-      />
       <PanelHeader
         title="Library"
         {...(elsewhere ? { description: libraryElsewhereLabel(elsewhere) } : {})}
@@ -1429,10 +1773,10 @@ export function ScientSourcesPanel(props: {
                   <Button
                     size="xs"
                     variant="ghost"
-                    disabled={!canChange || sources.busy || sources.checkingZotero}
+                    disabled={!canChange || sources.importing || sources.checkingZotero}
                     aria-label="Import sources"
                   >
-                    {sources.busy || sources.checkingZotero ? (
+                    {sources.importing || sources.checkingZotero ? (
                       <LoaderCircle className="animate-spin" />
                     ) : (
                       <Download />
@@ -1446,10 +1790,13 @@ export function ScientSourcesPanel(props: {
                   <FileUp />
                   Import PDF files
                 </MenuItem>
+                <MenuItem onClick={() => referenceFileInput.current?.click()}>
+                  <FileText />
+                  Import a reference file
+                </MenuItem>
                 <MenuItem
                   onClick={() => {
                     setSelectedSourceId(null);
-                    setImportOutcome(null);
                     sources.clearOperationSummary();
                     void sources.openZoteroLibrary();
                   }}
@@ -1457,22 +1804,21 @@ export function ScientSourcesPanel(props: {
                   <ZoteroMark />
                   Import from Zotero
                 </MenuItem>
-                {hasZoteroSources ? (
-                  <MenuItem onClick={() => void zoteroSync.startRefresh()}>
-                    <RefreshCw />
-                    Refresh from Zotero
-                  </MenuItem>
-                ) : null}
-                <MenuItem onClick={() => setAddingByIdentifier(true)}>
+                <MenuItem onClick={() => setAddingByIdentifier(result.begin())}>
                   <Hash />
                   Add by identifier
                 </MenuItem>
-                <MenuItem onClick={() => referenceFileInput.current?.click()}>
-                  <FileText />
-                  Import a reference file
-                </MenuItem>
+                {scopes && canChange ? (
+                  <ImportPackageSubmenu
+                    environmentId={props.environmentId}
+                    root={props.root}
+                    onImported={sources.refreshOverview}
+                    onShowSources={showPackageSources}
+                  />
+                ) : null}
               </MenuPopup>
             </Menu>
+            {activityButton}
             <SourcesHeaderMenu
               environmentId={props.environmentId}
               root={props.root}
@@ -1503,68 +1849,34 @@ export function ScientSourcesPanel(props: {
                     onBackUp: () =>
                       void pickBackupFolder()
                         .catch(() => null)
-                        .then((folder) => (folder ? backup.start(folder) : undefined)),
+                        .then((folder) =>
+                          folder ? backup.start(folder, result.begin()) : undefined,
+                        ),
                     onRestore: () =>
                       void pickBackupFolder()
                         .catch(() => null)
-                        .then((folder) => (folder ? backup.restoreFrom(folder) : undefined)),
+                        .then((folder) =>
+                          folder ? backup.restoreFrom(folder, result.begin()) : undefined,
+                        ),
                     onAddFromLibrary: () =>
                       void pickBackupFolder()
                         .catch(() => null)
-                        .then((folder) => (folder ? backup.addFrom(folder) : undefined)),
+                        .then((folder) =>
+                          folder ? backup.addFrom(folder, result.begin()) : undefined,
+                        ),
                   }
                 : {})}
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
               {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
-              {...(scopes && canChange
-                ? {
-                    onPackageImported: sources.refreshOverview,
-                    onShowPackageSources: showPackageSources,
-                  }
+              canChangeProject={Boolean(scopes && canChange)}
+              {...(hasZoteroSources && canChange
+                ? { onRefreshZotero: () => void zoteroSync.startRefresh() }
                 : {})}
             />
           </div>
         }
       />
-      {dragActive ? (
-        <div className="mx-3 mt-2 rounded-md border border-dashed border-foreground/30 bg-muted/35 px-3 py-2 text-center text-xs text-muted-foreground">
-          Drop PDFs or a reference file to add them to the Library
-        </div>
-      ) : null}
-      {sources.importPreparation ? (
-        <div className="mx-3 mt-3 flex items-center gap-2 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          <LoaderCircle className="size-4 shrink-0 animate-spin" />
-          <span className="truncate">
-            {sources.importPreparation.kind === "file"
-              ? `Reading references… ${sources.importPreparation.name}`
-              : "Reading article metadata…"}
-            {sources.importPreparation.kind === "local-files" &&
-            sources.importPreparation.names.length === 1
-              ? ` ${sources.importPreparation.names[0]}`
-              : ""}
-          </span>
-        </div>
-      ) : null}
-      {sources.error ? (
-        <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
-      ) : null}
-      <LibraryMoveNotice
-        move={move}
-        {...(scopes ? { onReview: () => setShowingDuplicates("merged") } : {})}
-      />
-      <LibraryBackupNotice
-        line={backup.line}
-        joinLine={backup.joinLine}
-        restoreLine={backup.restoreLine}
-        onCancelRestore={backup.cancelRestore}
-      />
-      <LibraryNoticeChanges
-        changes={sources.overview.noticeChanges ?? []}
-        onShow={(sourceIds) => showPackageSources(sourceIds, NOTICE_CHANGES_SHOWN)}
-        onDismiss={canChange ? dismissNoticeChanges : undefined}
-      />
-      <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
       {showingRecentChanges ? (
         <RecentChangesDialog
           environmentId={props.environmentId}
@@ -1574,10 +1886,11 @@ export function ScientSourcesPanel(props: {
           onShowSources={(sourceIds) =>
             showPackageSources(sourceIds, RECENT_CHANGES_LABELS.importedSources)
           }
+          onShowPackageSources={(sourceIds) => showPackageSources(sourceIds)}
           onChanged={sources.refreshOverview}
           onImportRest={sources.importZoteroRun}
-          onAddFromLibrary={backup.addFrom}
-          onPutBackLibrary={backup.putBack}
+          onAddFromLibrary={(folder) => backup.addFrom(folder, result.begin())}
+          onPutBackLibrary={(folder) => backup.putBack(folder, result.begin())}
           onShowDifferences={setShowingJoinDifferences}
           onClose={() => setShowingRecentChanges(false)}
         />
@@ -1601,331 +1914,210 @@ export function ScientSourcesPanel(props: {
           void zoteroSync.resolveConflict(sourceId, field, side)
         }
       />
-      {bibliography.status ? (
-        <ManagedBibliographyNotice
-          files={bibliography.status.files}
-          replacing={bibliography.replacing || !bibliography.canChange}
-          onResolve={(name, action) => void bibliography.resolve(name, action)}
-        />
-      ) : null}
-      {addingByIdentifier ? (
+      {addingByIdentifier !== null ? (
         <AddByIdentifier
           environmentId={props.environmentId}
           root={props.root}
-          {...(sources.overview?.scopes?.listed === "library" ? { pin: false as const } : {})}
-          onClose={() => setAddingByIdentifier(false)}
-          onAdded={(results) => {
-            const added = results.flatMap((item) =>
-              item.outcome === "imported" && item.sourceId ? [item.sourceId] : [],
-            );
-            if (added.length > 0) {
-              setRecentlyAddedSourceIds(rememberRecentSourceAdds(panelContext, added));
-              toastManager.add({
-                type: "success",
-                title: added.length === 1 ? "Added 1 source" : `Added ${added.length} sources`,
-                ...(sources.overview?.scopes?.listed === "library"
-                  ? {
-                      description: inLibraryNotProjectLabel(added.length),
-                      ...(canChangeProject
-                        ? {
-                            actionProps: {
-                              children: LIBRARY_LABELS.addToProject,
-                              onClick: () =>
-                                void addToProject(added.map((sourceId) => ({ sourceId }))),
-                            },
-                          }
-                        : {}),
-                    }
-                  : {}),
-              });
-            }
-            void sources.refreshOverview();
-          }}
+          {...(scopes?.listed === "library" ? { pin: false as const } : {})}
+          onClose={() => setAddingByIdentifier(null)}
+          onAdded={(results) => identifiersAdded(addingByIdentifier, results)}
           onOpenSource={(sourceId) => {
             setEditingSource(false);
             setSelectedSourceId(sourceId);
           }}
         />
       ) : null}
-      {sources.operation ? (
-        <ImportSummary
-          operation={sources.operation}
-          outcome={
-            importOutcome?.operation?.operationId === sources.operation.operationId
-              ? importOutcome
-              : null
-          }
-          onDismiss={() => {
-            setImportOutcome(null);
-            sources.clearOperationSummary();
-          }}
-          onCancel={() => void sources.cancelImport()}
-          cancelling={sources.cancelling}
-          {...(scopes ? { onShowSources: showPackageSources } : {})}
-          {...(canChange && sources.zoteroRunRemaining > 0
-            ? {
-                rest: {
-                  count: sources.zoteroRunRemaining,
-                  onImport: () => void sources.importZoteroRest(),
-                },
-              }
-            : {})}
-          {...(scopes && !sources.operation.pinInstanceId
-            ? {
-                libraryOnly: canChangeProject
-                  ? {
-                      onAddToProject: (sourceIds: ReadonlyArray<string>) =>
-                        void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(() => {
-                          setImportOutcome(null);
-                          sources.clearOperationSummary();
-                        }),
-                    }
-                  : {},
-              }
-            : {})}
-          {...(canChange &&
-          sources.operation.state !== "cancelled" &&
-          sources.operation.items.some((item) => item.state === "failed")
-            ? {
-                onRetryFailed: () => {
-                  setImportOutcome(null);
-                  void sources.retryFailedImport();
-                },
-              }
-            : {})}
-        />
-      ) : importOutcome?.kind === "already-present" ? (
-        <AlreadyPresentSummary
-          outcome={importOutcome}
-          onDismiss={() => setImportOutcome(null)}
-          {...(importOutcome.existingSourceId
-            ? {
-                onViewExisting: () => {
-                  setEditingSource(false);
-                  setSelectedSourceId(importOutcome.existingSourceId);
-                },
-              }
-            : {})}
-        />
-      ) : null}
-      {referenceFileImport ? (
-        <ReferenceFileReport
-          fileName={referenceFileImport.file.name}
-          report={referenceFileImport.report}
-          busy={sources.busy || !canChange}
-          onContinue={() => importReferenceFile(referenceFileImport.file)}
-          onDismiss={() => setReferenceFileImport(null)}
-        />
-      ) : null}
-      {scopes ? (
-        <div className="mx-3 mt-2 flex shrink-0 flex-wrap items-center gap-2">
-          <ToggleGroup
-            aria-label="Source scope"
-            value={[scopes.listed]}
-            onValueChange={(values) => {
-              const scope = values[0];
-              if (scope === "project" || scope === "library") selectScope(scope);
-            }}
-          >
-            <Toggle value="project">{LIBRARY_LABELS.scopes.project}</Toggle>
-            <Toggle value="library">{LIBRARY_LABELS.scopes.library}</Toggle>
-          </ToggleGroup>
-          {packageSources ? (
-            <>
-              <span className="text-xs text-muted-foreground">{shownSourcesLabel}</span>
-              <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
-                Show all
-              </Button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
-      {sources.overview.records.length > 0 && (organize.selection.size > 0 || organize.progress) ? (
-        <SourcesBulkBar
-          organize={organize}
-          records={sources.overview.records}
-          visibleSourceIds={filteredSourceRecords.map((record) => record.sourceId)}
-          onRequestName={setNameRequest}
-          onRemove={async (records) => {
-            const removed: string[] = [];
-            let alsoElsewhere = 0;
-            // Each removal is its own request; the list is read again once, after the last.
-            for (const record of records) {
-              const result = await sources
-                .removeSource(record.sourceId, record.revision, { refresh: false })
-                .catch(() => null);
-              if (result?.outcome === "removed") removed.push(record.sourceId);
-              if (result?.outcome === "removed" && result.alsoPinnedIn) alsoElsewhere += 1;
-            }
-            await sources.reloadOverview();
-            announceSourcesMovedToTrash({
-              environmentId: props.environmentId,
-              root: props.root,
-              sourceIds: removed,
-              notRemoved: records.length - removed.length,
-              ...(alsoElsewhere > 0 ? { alsoElsewhere } : {}),
-              onRestored: sources.refreshOverview,
-            });
-          }}
-          {...(scopes
-            ? {
-                library: {
-                  listed: scopes.listed,
-                  ...(canSetReading
-                    ? {
-                        onSetReadingState: (
-                          sourceIds: ReadonlyArray<string>,
-                          change: ReadingStateChange,
-                        ) => setReadingState(sourceIds, change, true),
-                      }
-                    : {}),
-                  onAddToProject: addToProject,
-                  onRemoveFromProject: removeFromProject,
-                },
-              }
-            : {})}
-        />
-      ) : sources.overview.records.length > 0 ? (
-        <div className="mt-2 mb-1 ml-3 mr-4 flex min-h-8 shrink-0 items-center gap-1 rounded-md text-sm text-muted-foreground">
-          <div className="flex min-w-0 flex-1 cursor-text items-center gap-2 rounded-md px-2 transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground">
-            <Search className="size-4 shrink-0 text-muted-foreground/80" aria-hidden="true" />
-            <Input
-              nativeInput
-              unstyled
-              type="search"
-              aria-label={
-                scopes?.listed === "library" ? "Search Library" : "Search project sources"
-              }
-              placeholder="Search sources"
-              value={sourceQuery}
-              onChange={(event) => setSourceQuery(event.currentTarget.value)}
-              size="inline"
-              className="min-w-0 flex-1"
-            />
-            {sourceQuery ? (
-              <Button
-                type="button"
-                size="icon-micro"
-                variant="ghost-muted"
-                className="shrink-0"
-                aria-label="Clear source search"
-                onClick={() => setSourceQuery("")}
-              >
-                <X />
-              </Button>
+      <div className={`${SOURCES_COLUMN} flex shrink-0 flex-col`}>
+        {scopes ? (
+          <div className="@container mx-3 mt-2 flex flex-wrap items-center gap-2">
+            <ToggleGroup
+              aria-label="Source scope"
+              value={[scopes.listed]}
+              onValueChange={(values) => {
+                const scope = values[0];
+                if (scope === "project" || scope === "library") selectScope(scope);
+              }}
+            >
+              <Toggle value="project">{LIBRARY_LABELS.scopes.project}</Toggle>
+              <Toggle value="library">{LIBRARY_LABELS.scopes.library}</Toggle>
+            </ToggleGroup>
+            {packageSources ? (
+              <>
+                <span className="text-xs text-muted-foreground">{shownSourcesLabel}</span>
+                <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
+                  Show all
+                </Button>
+              </>
+            ) : null}
+            {sources.overview.records.length > 0 ? (
+              <div className="ml-auto">
+                <AskLibraryButton />
+              </div>
             ) : null}
           </div>
-          <SourcesFilterMenu
+        ) : null}
+        {shownResult ? <div className="mx-3 mt-2">{resultSlot}</div> : null}
+        {sources.overview.records.length > 0 &&
+        (organize.selection.size > 0 || organize.progress) ? (
+          <SourcesBulkBar
             organize={organize}
             records={sources.overview.records}
-            query={sourceQuery}
+            visibleSourceIds={filteredSourceRecords.map((record) => record.sourceId)}
             onRequestName={setNameRequest}
-            {...(sources.overview.scopes
+            onRemove={async (records) => {
+              const removed: string[] = [];
+              let alsoElsewhere = 0;
+              // Each removal is its own request; the list is read again once, after the last.
+              for (const record of records) {
+                const result = await sources
+                  .removeSource(record.sourceId, record.revision, { refresh: false })
+                  .catch(() => null);
+                if (result?.outcome === "removed") removed.push(record.sourceId);
+                if (result?.outcome === "removed" && result.alsoPinnedIn) alsoElsewhere += 1;
+              }
+              await sources.reloadOverview();
+              announceSourcesMovedToTrash({
+                environmentId: props.environmentId,
+                root: props.root,
+                sourceIds: removed,
+                notRemoved: records.length - removed.length,
+                ...(alsoElsewhere > 0 ? { alsoElsewhere } : {}),
+                onRestored: sources.refreshOverview,
+              });
+            }}
+            {...(scopes
               ? {
-                  scopes: sources.overview.scopes,
+                  library: {
+                    listed: scopes.listed,
+                    ...(canSetReading
+                      ? {
+                          onSetReadingState: (
+                            sourceIds: ReadonlyArray<string>,
+                            change: ReadingStateChange,
+                          ) => setReadingState(sourceIds, change, true),
+                        }
+                      : {}),
+                    onAddToProject: addToProject,
+                    onRemoveFromProject: removeFromProject,
+                  },
                 }
               : {})}
           />
-          <Select
-            value={sourceSort}
-            items={SCIENT_SOURCE_SORT_OPTIONS}
-            onValueChange={(value) => {
-              if (SCIENT_SOURCE_SORT_OPTIONS.some((option) => option.value === value)) {
-                setSourceSort(value as ScientSourceSort);
-              }
-            }}
-          >
-            <SelectTrigger
-              size="compact"
-              variant="ghost"
-              className="w-auto shrink-0 cursor-pointer"
-              aria-label="Sort sources"
+        ) : sources.overview.records.length > 0 ? (
+          <div className="mx-3 mt-2 mb-1 flex min-h-8 items-center gap-1 rounded-md text-sm text-muted-foreground">
+            <div className="flex min-w-0 flex-1 cursor-text items-center gap-2 rounded-md px-2 transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground">
+              <Search className="size-4 shrink-0 text-muted-foreground/80" aria-hidden="true" />
+              <Input
+                nativeInput
+                unstyled
+                type="search"
+                aria-label={
+                  scopes?.listed === "library" ? "Search Library" : "Search project sources"
+                }
+                placeholder="Search sources"
+                value={sourceQuery}
+                onChange={(event) => setSourceQuery(event.currentTarget.value)}
+                size="inline"
+                className="min-w-0 flex-1"
+              />
+              {sourceQuery ? (
+                <Button
+                  type="button"
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  className="shrink-0"
+                  aria-label="Clear source search"
+                  onClick={() => setSourceQuery("")}
+                >
+                  <X />
+                </Button>
+              ) : null}
+            </div>
+            <SourcesFilterMenu
+              organize={organize}
+              records={sources.overview.records}
+              query={sourceQuery}
+              onRequestName={setNameRequest}
+              {...(sources.overview.scopes
+                ? {
+                    scopes: sources.overview.scopes,
+                  }
+                : {})}
+            />
+            <Select
+              value={sourceSort}
+              items={SCIENT_SOURCE_SORT_OPTIONS}
+              onValueChange={(value) => {
+                if (SCIENT_SOURCE_SORT_OPTIONS.some((option) => option.value === value)) {
+                  setSourceSort(value as ScientSourceSort);
+                }
+              }}
             >
-              <ArrowDownUp className="size-3.5" aria-hidden="true" />
-              <SelectValue className="max-w-20" />
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {SCIENT_SOURCE_SORT_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </div>
-      ) : null}
-      {sources.overview.records.length > 0 &&
-      organize.selection.size === 0 &&
-      !organize.progress ? (
-        <SourcesActiveFilters
-          organize={organize}
-          matchCount={filteredSourceRecords.length}
-          onRequestName={setNameRequest}
-        />
-      ) : null}
+              <SelectTrigger
+                size="compact"
+                variant="ghost"
+                className="w-auto shrink-0 cursor-pointer"
+                aria-label="Sort sources"
+              >
+                <ArrowDownUp className="size-3.5" aria-hidden="true" />
+                <SelectValue className="max-w-20" />
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SCIENT_SOURCE_SORT_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <ScientTooltip content={viewLabel}>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="shrink-0"
+                aria-label={viewLabel}
+                onClick={() => {
+                  setViewAnchor(topSourceId.current);
+                  setSourceView(nextView);
+                  writeLocalStorageValue(SOURCE_VIEW_KEY, nextView, "list", SourceViewSchema);
+                }}
+              >
+                {nextView === "cards" ? <LayoutGrid /> : <ListIcon />}
+              </Button>
+            </ScientTooltip>
+          </div>
+        ) : null}
+        {sources.overview.records.length > 0 &&
+        organize.selection.size === 0 &&
+        !organize.progress ? (
+          <SourcesActiveFilters
+            organize={organize}
+            matchCount={filteredSourceRecords.length}
+            onRequestName={setNameRequest}
+          />
+        ) : null}
+      </div>
       <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
       <SnapshotRemovalDialog actions={libraryActions} />
       {sources.overview.records.length === 0 ? (
-        <>
-          <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
-          <CenteredState
-            icon={<BookOpen />}
-            title={scopes?.listed === "project" ? "No sources in this project" : "No sources yet"}
-            {...(scopes?.listed === "project" && scopes.library > 0
-              ? {
-                  action: (
-                    <Button size="sm" variant="outline" onClick={() => selectScope("library")}>
-                      Choose from Library
-                    </Button>
-                  ),
-                }
-              : {})}
-            description={
-              scopes?.listed === "project"
-                ? "Use a project package to carry PDFs and highlights: Recover → Save a current package."
-                : "Import PDFs, references or Zotero; use a project package to carry PDFs and highlights."
-            }
-          />
-        </>
-      ) : (
-        <SourcesList
-          records={filteredSourceRecords}
-          row={sourceRow}
-          virtualized={scopes !== undefined}
-          header={
-            sourceQuery ? null : (
-              <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
-            )
-          }
-          footer={
-            <SourceFullTextResults
-              environmentId={props.environmentId}
-              root={props.root}
-              query={sourceQuery}
-              metadataMatchCount={filteredSourceRecords.length}
-              sourceIds={
-                listFilterActive
-                  ? filterScientSourceSearchIndex(
-                      sourceSearchIndex,
-                      "",
-                      organize.filter,
-                      organize.organization,
-                    )
-                      .filter(
-                        (record) =>
-                          matchesReadingFilter(record, readingFilter) &&
-                          (!packageSources || packageSources.has(record.sourceId)),
-                      )
-                      .map((record) => record.sourceId)
-                  : undefined
+        <CenteredState
+          icon={<BookOpen />}
+          title={empty.title}
+          description={empty.description}
+          {...(scopes?.listed === "project" && scopes.library > 0
+            ? {
+                action: (
+                  <Button size="sm" variant="outline" onClick={() => selectScope("library")}>
+                    Choose from Library
+                  </Button>
+                ),
               }
-              onOpenHit={(hit) => {
-                requestSourceTextReveal(props.root, hit);
-                props.onOpenPdf(hit);
-              }}
-            />
-          }
+            : {})}
         />
+      ) : sourceView === "cards" ? (
+        <SourceCards {...viewProps} />
+      ) : (
+        <SourcesList {...viewProps} virtualized={scopes !== undefined} />
       )}
     </div>
   );

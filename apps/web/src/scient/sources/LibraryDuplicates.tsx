@@ -36,7 +36,7 @@ import {
   unrevertedLabel,
   type DuplicateField,
 } from "./libraryDuplicateLabels";
-import { PanelHeader } from "./PanelChrome";
+import { SOURCES_COLUMN, PanelHeader } from "./PanelChrome";
 import { settleAfter } from "./settleAfter";
 import type { SourcesOrganize } from "./useSourcesOrganize";
 
@@ -256,7 +256,7 @@ export function LibraryDuplicatesView(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PanelHeader title={DUPLICATE_LABELS.title} onBack={props.onBack} />
-      <div className="shrink-0 px-3 pt-3">
+      <div className={`${SOURCES_COLUMN} shrink-0 px-3 pt-3`}>
         <ToggleGroup
           aria-label={DUPLICATE_LABELS.title}
           className="w-full *:flex-1"
@@ -275,12 +275,14 @@ export function LibraryDuplicatesView(props: {
         </ToggleGroup>
       </div>
       {result?.damagedReceipts ? (
-        <p className="mx-3 mt-3 text-xs text-muted-foreground">
+        <p className={`${SOURCES_COLUMN} mt-3 px-3 text-xs text-muted-foreground`}>
           {damagedReceiptsLabel(result.damagedReceipts.length)}
         </p>
       ) : null}
       {current?.error ? (
-        <div className="mx-3 mt-3 flex items-center gap-2 text-xs text-destructive">
+        <div
+          className={`${SOURCES_COLUMN} mt-3 flex items-center gap-2 px-3 text-xs text-destructive`}
+        >
           <span className="min-w-0 flex-1">
             {DUPLICATE_LABELS.loadFailed}: {current.error}
           </span>
@@ -309,7 +311,7 @@ export function LibraryDuplicatesView(props: {
             renderItem={({ item, index }) => {
               const keep = chosen.get(pairKey(item)) ?? item.keptByDefault;
               return (
-                <div className={index > 0 ? "border-t border-border" : undefined}>
+                <div className={`${SOURCES_COLUMN} ${index > 0 ? "border-t border-border" : ""}`}>
                   <DuplicatePair
                     pair={item}
                     keep={keep}
@@ -340,7 +342,7 @@ export function LibraryDuplicatesView(props: {
         )
       ) : (
         <>
-          <div className="shrink-0 px-3 pt-2">
+          <div className={`${SOURCES_COLUMN} shrink-0 px-3 pt-2`}>
             <ToggleGroup
               aria-label={DUPLICATE_LABELS.mergedSection}
               className="w-full *:flex-1"
@@ -360,7 +362,7 @@ export function LibraryDuplicatesView(props: {
             </p>
           ) : (
             <ScrollArea className="mt-2 min-h-0 flex-1">
-              <ul className="divide-y divide-border">
+              <ul className={`${SOURCES_COLUMN} divide-y divide-border`}>
                 {result.merges.map((entry) => (
                   <MergedRow
                     key={entry.mergeId}
@@ -394,7 +396,9 @@ function ShowMore(props: {
   const label = shownOfTotalLabel(props.shown, props.total);
   if (!label) return null;
   return (
-    <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
+    <div
+      className={`${SOURCES_COLUMN} flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground`}
+    >
       <span className="min-w-0 flex-1">{label}</span>
       <Button size="xs" variant="ghost" disabled={props.loading} onClick={props.onShowMore}>
         {DUPLICATE_LABELS.showMore}

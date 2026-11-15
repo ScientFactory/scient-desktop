@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { universitiesOf } from "@t3tools/shared/scientPaperLinks";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronDownIcon, GraduationCapIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, GraduationCapIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -23,7 +23,6 @@ import { useSignIn } from "./useSignIn";
 import { parseUrl } from "@t3tools/shared/url";
 
 const SEARCH_DELAY_MS = 300;
-const HIDDEN_KEY = "scient:university-row-hidden";
 
 /** The domain of a university address among saved sign-ins. Only a domain is ever searched. */
 function universityDomain(accounts: ReadonlyArray<AccountSummary>) {
@@ -187,63 +186,6 @@ export function UniversityPicker({
           My university isn't listed
         </Button>
       )}
-    </div>
-  );
-}
-
-/** The first row of Sources until a university is connected; it opens where it stands. */
-export function UniversityRow({
-  environmentId,
-  threadId,
-}: {
-  environmentId: EnvironmentId;
-  threadId: ThreadId;
-}) {
-  const { data } = useAccounts(environmentId);
-  const [open, setOpen] = useState(false);
-  const [hidden, setHidden] = useState(() => localStorage.getItem(HIDDEN_KEY) === "true");
-  if (!data || hidden || universitiesOf(data.accounts).length > 0) return null;
-  return (
-    <div className="px-2 py-1.5">
-      <div className="flex items-start gap-2">
-        <button
-          type="button"
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          onClick={() => setOpen((current) => !current)}
-        >
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
-            <GraduationCapIcon className="size-4 text-muted-foreground" />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-sm font-medium">Connect your university</span>
-            <span className="block text-xs text-muted-foreground">
-              Sign in once to your library account
-            </span>
-          </span>
-        </button>
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          aria-label="Hide"
-          onClick={() => {
-            localStorage.setItem(HIDDEN_KEY, "true");
-            setHidden(true);
-          }}
-        >
-          <XIcon />
-        </Button>
-      </div>
-      {open ? (
-        <div className="mt-1 px-1 pb-1">
-          <UniversityPicker
-            environmentId={environmentId}
-            threadId={threadId}
-            autoFocus
-            onChosen={() => setOpen(false)}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }
