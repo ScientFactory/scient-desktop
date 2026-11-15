@@ -7,6 +7,7 @@ import { accountSessionScope } from "./scope.ts";
 import {
   AccountsError,
   type BrowserProfileId,
+  PreviewAutomationOperation,
   DEFAULT_BROWSER_PROFILE_ID,
   defaultBrowserProfileRecord,
   type PreviewTabId,
@@ -15,6 +16,7 @@ import {
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { pickBrowserProfile, profileRows } from "@t3tools/shared/scientBrowserProfileChoice";
 import { onUniversitySignIn } from "../signInTabs.ts";
 import { authorizationDecision } from "../AccountDecisions.ts";
@@ -44,6 +46,19 @@ const visibleProfiles = Effect.fn("AccountsAgent.visibleProfiles")(function* (
   const accounts = yield* AccountsService;
   return profileVisible(yield* accounts.forSession(scope, ids));
 });
+
+/** The account check before a browser action used the action's whole budget; nothing was sent. */
+export class PreviewAccountCheckTimeoutError extends Schema.TaggedError<PreviewAccountCheckTimeoutError>()(
+  "PreviewAccountCheckTimeoutError",
+  {
+    operation: PreviewAutomationOperation,
+    timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+  },
+) {
+  override get message(): string {
+    return `Checking browser profile access used the whole ${this.timeoutMs}ms for ${this.operation}, so nothing was sent to the browser. Try again, or pass a larger timeoutMs.`;
+  }
+}
 
 /** The refusal for a hidden profile or its tabs. */
 export const profileUnavailable = () =>

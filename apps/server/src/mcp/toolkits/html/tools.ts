@@ -17,13 +17,15 @@ import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
+// SCIENT-FORK:START — the source rules the handler enforces, stated before a call is refused.
 const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_000)).annotate({
-  description: "Inline HTML.",
+  description: "Inline HTML. Pass this or path, not both.",
 });
 
 const HtmlPath = Schema.String.annotate({
-  description: "Absolute .html file path.",
+  description: "Absolute .html file path. Full-access threads only; others pass html.",
 });
+// SCIENT-FORK:END
 
 const PAGE_RULES =
   "Self-contained: inline <style> and <script>. Local images as absolute paths are inlined. Remote URLs load as-is.";

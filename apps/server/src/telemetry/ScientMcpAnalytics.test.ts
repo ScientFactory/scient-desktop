@@ -1,22 +1,29 @@
 import { describe, expect, it } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
+  EnvironmentId,
   ExtensionsError,
+  PreviewAutomationExecutionError,
+  PreviewAutomationTimeoutError,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import { McpSchema } from "effect/ai";
+import * as Effect from "effect/Effect";
+import type { CDPSession } from "playwright-core";
+
+import * as ServerBrowserPage from "../preview/ServerBrowserPage.ts";
 
 import { toAccountsError } from "../scient/accounts/agent/connectorAuthoring.ts";
 
 import {
   BrowserToolCallLedger,
   closedErrorCode,
+  noteToolFailure,
   refusedDelegateTarget,
   scientMcpAnalyticsInput,
-  noteToolFailure,
   scientToolOutcome,
   type ToolFailureFacts,
   ToolFailureNote,
@@ -130,6 +137,86 @@ describe("Scient MCP analytics input", () => {
       ),
     ).toEqual({ outcome: "ok" });
   });
+
+  effectIt.effect(
+    "tells a page that never got ready from a host that never answered, and leaves evaluate failures unowned",
+    () =>
+      Effect.gen(function* () {
+        const request = {
+          environmentId: EnvironmentId.make("analytics-environment"),
+          threadId: ThreadId.make("analytics-thread"),
+          clientId: "server-browser",
+          connectionId: "analytics-connection",
+          requestId: "preview-1",
+          timeoutMs: 15_000,
+        };
+        const answered = {
+          remoteTag: "PreviewAutomationTimeoutError",
+          remoteMessageLength: 0,
+          cause: null,
+        };
+        const messageOnly = new McpSchema.CallToolResult({
+          isError: true,
+          content: [{ type: "text", text: "A browser failure written for the agent." }],
+        });
+        const recorded = Effect.fn(function* (error: unknown) {
+          const facts: ToolFailureFacts = {};
+          yield* noteToolFailure(error).pipe(Effect.provideService(ToolFailureNote, facts));
+          return scientToolOutcome(messageOnly, facts);
+        });
+        expect(
+          yield* recorded(
+            new PreviewAutomationTimeoutError({ ...request, ...answered, operation: "click" }),
+          ),
+        ).toEqual({
+          outcome: "error",
+          errorCode: "timeout",
+          failureClass: "page_not_ready",
+          failureOwner: "external",
+        });
+        expect(
+          yield* recorded(new PreviewAutomationTimeoutError({ ...request, operation: "click" })),
+        ).toEqual({
+          outcome: "error",
+          errorCode: "timeout",
+          failureClass: "host_overrun",
+          failureOwner: "scient",
+        });
+        // A script that threw and a browser call that failed reach analytics with the same tag.
+        const evaluated = (send: () => Promise<unknown>) =>
+          Effect.promise(() =>
+            ServerBrowserPage.evaluate(
+              { send } as unknown as CDPSession,
+              { expression: "1 + 1" },
+              1_000,
+            ).then(
+              () => undefined,
+              (cause: unknown) => ServerBrowserPage.toOperationError(cause),
+            ),
+          );
+        for (const failure of [
+          yield* evaluated(async () => ({
+            result: { type: "object" },
+            exceptionDetails: { text: "Uncaught", exception: { description: "Error: thrown" } },
+          })),
+          yield* evaluated(async () => {
+            throw new Error("Protocol error (Runtime.evaluate): Session closed.");
+          }),
+        ]) {
+          expect(
+            yield* recorded(
+              new PreviewAutomationExecutionError({
+                ...request,
+                remoteTag: failure!.tag,
+                remoteMessageLength: failure!.message.length,
+                cause: failure,
+                operation: "evaluate",
+              }),
+            ),
+          ).toEqual({ outcome: "error", errorCode: "execution", failureOwner: "unknown" });
+        }
+      }),
+  );
 
   effectIt.effect(
     "keeps a connector tool's own reason through the Accounts failure it travels in",

@@ -28,6 +28,9 @@ import { AgentInvocationContext } from "../../operations/AgentInvocationContext.
 
 const decodeDetection = Schema.decodeUnknownEffect(ProfileDetection);
 
+/** The check after an open or navigation only suggests a profile, so a slow page goes unchecked. */
+const PROFILE_CHECK_LOAD_WAIT_MS = 3_000;
+
 /** The profile's other Google accounts that Google still accepts, oldest first, at most three. */
 const otherGoogleAccounts = Effect.fn("AccountsAgent.otherGoogleAccounts")(function* (
   scope: AccountSessionScope,
@@ -97,11 +100,23 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
   const url = options.requestedUrl ?? status.url;
   const tabId = status.tabId;
   if (!tabId || !url || !URL.canParse(url) || new URL(url).protocol !== "https:") return status;
+  const skipped = (reason: string) =>
+    Effect.logInfo("Accounts profile check skipped; the tab is returned as opened.", {
+      operation: options.operation,
+      reason,
+    }).pipe(Effect.as(status));
   return yield* Effect.gen(function* () {
     const invocation = scientInvocationForMcp(yield* requireThreadMcpCapability("preview"));
     const broker = yield* PreviewAutomationBroker;
     const invoke = previewInvoker(broker, invocation, { updateCurrentTab: false });
-    yield* invoke("accountWaitForLoad", {}, tabId);
+    yield* broker.invoke({
+      scope: invocation,
+      operation: "accountWaitForLoad",
+      input: {},
+      tabId,
+      timeoutMs: PROFILE_CHECK_LOAD_WAIT_MS,
+      updateCurrentTab: false,
+    });
     const raw = yield* invoke<unknown>("evaluate", { expression: profileDetectionScript }, tabId);
     const page = yield* decodeDetection(raw);
     const result = classifyProfilePage(url, page);
@@ -226,7 +241,7 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
       accountsNote: `Opened in ${best.name}${best.email ? ` (${best.email})` : ""}: ${profileName} showed ${decision.problem}.`,
     };
   }).pipe(
-    Effect.orElseSucceed(() => status),
-    Effect.catchDefect(() => Effect.succeed(status)),
+    Effect.catch((error) => skipped(error._tag)),
+    Effect.catchDefect(() => skipped("defect")),
   );
 });
