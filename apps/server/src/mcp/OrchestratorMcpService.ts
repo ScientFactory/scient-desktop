@@ -84,6 +84,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+// SCIENT-FORK:START — ID recovery and delegate target hints.
+import * as Cause from "effect/Cause";
+import * as SqlClient from "effect/sql/SqlClient";
+// SCIENT-FORK:END
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -139,6 +143,19 @@ import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import { requireInvocationPolicy } from "./InvocationPolicy.ts";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
+// SCIENT-FORK:START — delegate target recovery: bare model names and refusals that name the way on.
+import {
+  ambiguousModelMessage,
+  DELEGATE_HINT_LIMIT,
+  matchDelegateModel,
+  modelUnavailableMessage,
+  usableInstancesHint,
+} from "../scient/orchestration/DelegateTargetRecovery.ts";
+import {
+  delegatedTaskOwnerHint,
+  findDelegatedTaskOwner,
+} from "../scient/orchestration/DelegatedTaskOwner.ts";
+// SCIENT-FORK:END
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 // Nothing is written while a task wait blocks, and Node fetch drops a silent call at 300 s.
@@ -387,6 +404,25 @@ export const requireAdvertisedModel = (provider: ServerProvider, model: string) 
         ),
       )
     : Effect.void;
+
+// SCIENT-FORK:START — delegate target recovery: the same model without its account prefix.
+/** The slug a child runs: the request as given when advertised, else its unique match. */
+const resolveRequestedModel = (provider: ServerProvider, model: string) => {
+  if (provider.models.length === 0 || advertisedModel(provider, model) !== undefined)
+    return Effect.succeed(model);
+  const match = matchDelegateModel(provider.models, model);
+  return match.kind === "found"
+    ? Effect.succeed(match.model.slug)
+    : Effect.fail(
+        failure(
+          "model_unavailable",
+          match.kind === "ambiguous"
+            ? ambiguousModelMessage(provider, model, match.candidates)
+            : modelUnavailableMessage(provider, model),
+        ),
+      );
+};
+// SCIENT-FORK:END
 
 function providerConstraints(
   provider: ServerProvider | undefined,
@@ -1246,6 +1282,9 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(project.defaultModelSelection);
   const secretRequests = yield* SecretRequests.SecretRequests;
+  // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
+  const projectionSql = Option.getOrUndefined(yield* Effect.serviceOption(SqlClient.SqlClient));
+  // SCIENT-FORK:END
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1521,6 +1560,48 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
+  // SCIENT-FORK:START — delegate target recovery: a provider refusal names usable instances.
+  const usableInstanceIds = Effect.fn("OrchestratorMcpService.usableInstanceIds")(function* (
+    projectId: ProjectId,
+    providers: ReadonlyArray<ServerProvider>,
+  ) {
+    const capable = yield* loadOrchestrationCapableInstanceIds();
+    const usable: Array<ServerProvider["instanceId"]> = [];
+    for (const provider of providers) {
+      if (usable.length >= DELEGATE_HINT_LIMIT) break;
+      if (!capable.has(provider.instanceId) || providerConstraints(provider, true).length > 0)
+        continue;
+      if (
+        yield* threadManagement.isProviderInstanceEnabledForProject({
+          projectId,
+          instanceId: provider.instanceId,
+        })
+      )
+        usable.push(provider.instanceId);
+    }
+    return usable;
+  });
+  // The hint is best effort: a lookup that fails leaves the refusal as it was.
+  const withUsableInstances = <A>(
+    input: Parameters<typeof resolveTarget>[0],
+    resolved: Effect.Effect<A, OrchestratorMcpFailure>,
+  ) =>
+    resolved.pipe(
+      Effect.catchIf(
+        (error) => error.code === "provider_unavailable",
+        (error) =>
+          usableInstanceIds(input.parent.thread.projectId, input.providers).pipe(
+            Effect.map((ids) => error.message + usableInstancesHint(ids)),
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              () => Effect.succeed(error.message),
+            ),
+            Effect.flatMap((message) => Effect.fail(failure("provider_unavailable", message))),
+          ),
+      ),
+    );
+  // SCIENT-FORK:END
+
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
     const instanceId =
       input.target?.providerInstanceId ??
@@ -1528,16 +1609,21 @@ const make = Effect.gen(function* () {
         ? input.parent.thread.modelSelection.instanceId
         : undefined);
     const resolved = resolveTarget(input);
-    if (instanceId === undefined) return resolved;
-    return resolved.pipe(
-      Effect.catchIf(
-        (error) => error.code === "provider_unavailable" || error.code === "model_unavailable",
-        () =>
-          providerRegistry
-            .refreshInstance(instanceId)
-            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+    // SCIENT-FORK:START — delegate target recovery: a provider refusal names usable instances.
+    if (instanceId === undefined) return withUsableInstances(input, resolved);
+    return withUsableInstances(
+      input,
+      resolved.pipe(
+        Effect.catchIf(
+          (error) => error.code === "provider_unavailable" || error.code === "model_unavailable",
+          () =>
+            providerRegistry
+              .refreshInstance(instanceId)
+              .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+        ),
       ),
     );
+    // SCIENT-FORK:END
   };
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
@@ -1622,7 +1708,12 @@ const make = Effect.gen(function* () {
     }
 
     const inheritedSelection = input.parent.thread.modelSelection;
-    const requestedModel = input.target?.model;
+    // SCIENT-FORK:START — delegate target recovery: the same model without its account prefix.
+    const requestedModel =
+      input.target?.model === undefined
+        ? undefined
+        : yield* resolveRequestedModel(provider, input.target.model);
+    // SCIENT-FORK:END
     const model =
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
@@ -1676,6 +1767,48 @@ const make = Effect.gen(function* () {
     };
   });
 
+  // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
+  /** Ownership never moves: the hint only says where a readable task lives. */
+  const taskNotFound = Effect.fn("OrchestratorMcpService.taskNotFound")(function* (
+    scope: McpThreadInvocationScope,
+    taskId: NodeId,
+  ) {
+    const message = `Delegated task ${taskId} does not belong to thread ${scope.thread.threadId}.`;
+    const owner =
+      projectionSql === undefined
+        ? undefined
+        : yield* findDelegatedTaskOwner(projectionSql, taskId);
+    if (owner === undefined || owner.threadId === scope.thread.threadId)
+      return yield* failure("task_not_found", message);
+    const shellOrNull = (threadId: ThreadId) =>
+      threadManagement.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    const caller = yield* shellOrNull(scope.thread.threadId);
+    // Owner and child move between projects independently, so each is checked on its own.
+    const readable = Effect.fn("OrchestratorMcpService.taskNotFound.readable")(function* (
+      threadId: ThreadId | null,
+    ) {
+      if (caller === null || threadId === null) return undefined;
+      const shell = yield* shellOrNull(threadId);
+      return shell !== null && shell.deletedAt === null && shell.projectId === caller.projectId
+        ? shell
+        : undefined;
+    });
+    const ownerShell = yield* readable(owner.threadId);
+    if (ownerShell === undefined) return yield* failure("task_not_found", message);
+    const childShell = yield* readable(owner.childThreadId);
+    return yield* failure(
+      "task_not_found",
+      message +
+        delegatedTaskOwnerHint(
+          threadLinkFor(scope, ownerShell.id, ownerShell.title),
+          childShell === undefined
+            ? undefined
+            : threadLinkFor(scope, childShell.id, childShell.title),
+        ),
+    );
+  });
+  // SCIENT-FORK:END
+
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
 
@@ -1694,10 +1827,9 @@ const make = Effect.gen(function* () {
         candidate.threadId === scope.thread.threadId,
     );
     if (task === undefined || (task.childThreadId === null && task.remoteChild === undefined)) {
-      return yield* failure(
-        "task_not_found",
-        `Delegated task ${taskId} does not belong to thread ${scope.thread.threadId}.`,
-      );
+      // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
+      return yield* taskNotFound(scope, taskId);
+      // SCIENT-FORK:END
     }
     if (task.childThreadId === null) {
       return yield* readRemoteTask(scope, task, waitTimedOut, acknowledgeTerminal);

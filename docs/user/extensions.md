@@ -9,15 +9,18 @@ Open **Settings → Extensions**. The picker at the top, **Tools on**, chooses
 which Scient environment you are looking at. Each environment keeps its own
 extensions.
 
-- **Discover** lists services you can add. Curated sections such as Featured
-  and Research come first, followed by the features built into Scient and
-  the shared plugin shelf, the Codex store, and **Browse all MCP servers**, which lists the public MCP Registry. Select a
+- **Discover** lists services you can add. Curated sections come first: **Most used**
+  (Gmail, Google Drive, Google Calendar, GitHub, Slack, Notion, Telegram,
+  PubMed, Semantic Scholar, Exa, Playwright, Context7, Vercel and Cloudflare), then one section per kind of work, such as Papers &
+  literature, Biology & medicine and Code & developer tools, followed by the features built into Scient and
+  each agent's store in its own section (**From Claude's store**, **From Codex's store**), and **Browse all MCP servers**, which lists the public MCP Registry. Select a
   section title to see the whole category. Search covers the catalog, the
   registry, and what you have already installed.
 - **Installed** lists what this environment already has, grouped by who manages
   it.
 
-Select any row to open its page.
+Select any row to open its page. Its back link returns to the list you opened it
+from.
 
 ## Add a connected service
 
@@ -25,7 +28,10 @@ A connected service is a remote MCP server: a service that offers tools to AI
 agents over the internet.
 
 1. In **Discover**, choose **+** on a service's row, or **Add** on its page.
-2. If the service asks you to sign in, Scient opens its sign-in page in your
+2. When more than one of your agents can use it, a small card asks which agents
+   get it. Every agent is ticked; untick the ones that should not have it and
+   choose **Add**.
+3. If the service asks you to sign in, Scient opens its sign-in page in your
    browser. Complete it there, then return to Scient.
 
 To add a service that is not listed, open **Installed** and choose **Add by
@@ -134,7 +140,10 @@ its key. **Sign in** or **Reconnect** appears when signing in is possible; use
 **⋯** menu offers **Test**, which checks that the service answers.
 
 - **Use with agents** turns the service on or off for every agent.
-- **Available in** chooses **All projects** or **Selected projects**. With
+- **Agents** chooses **All agents** or **Selected agents**. With selected
+  agents, turn each agent on or off in the list below. An agent you add later
+  gets the service only while **All agents** is set.
+- **Projects** chooses **All projects** or **Selected projects**. With
   selected projects, turn each project on or off in the list below.
 
 Turning a service off, or narrowing where it is available, applies to an
@@ -151,10 +160,14 @@ the service and its stored sign-in or key. A key from Accounts stays in Accounts
 
 ## Works with
 
-The line on each row says who can use it: **Works with all your agents**,
-**Works with Claude and Scient Agent**, **Codex only**, or **Claude only**.
-Hover over it or select it to see the agents and any limits. Account apps use
-their owning agent's account. A standalone server configured in Claude stays
+An item's page says who can use it beside **Works with**: **All your agents**,
+the agents you chose by name, **Claude and Scient Agent**, **Codex only**, or
+**Claude only**. Hover over it or select it to see the agents and any limits.
+On **Installed**, the **Works with** column shows the agents' logos and
+**Type** says what each row is: a **Connector** Scient manages, an **App** an
+agent reaches through its own ChatGPT or Claude account, a **Plugin**, an
+agent's own **MCP server**, or **Built in**. Apps use their owning agent's
+account. A standalone server configured in Claude stays
 with Claude.
 
 On **Installed**, the **Works with** filter shows only what a chosen agent can
@@ -254,26 +267,24 @@ connection status updates after Codex confirms it. Some apps **connect the
 first time Codex uses them**. Plan and administrator restrictions appear beside
 a disabled action.
 
-**Gmail, Google Calendar and Google Drive** each appear once, in Discover and,
-when any agent has them, in Installed → Connected services. Your agents reach
-them through the ChatGPT or Claude account they use, so Scient never holds your
-Google sign-in. **Connect** opens ChatGPT's page for the app in your browser;
-one connection there serves both Codex and Scient Agent. If Claude still needs
-it, Connect then opens claude.ai's connector settings. "Works with" shows which
-agents have it and what the others still need.
+**Apps your agents reach through their own accounts** (Gmail, Google Calendar,
+Google Drive and any other app your ChatGPT or Claude account has) each appear
+once: in Discover for the three Google ones, and in Installed as an **App** when
+any agent has them. Scient never holds those sign-ins.
 
-**From Scient Agent** lists the ChatGPT apps you connected in ChatGPT, such as
-Gmail, Google Drive or Google Calendar, when Scient Agent is signed in to
-ChatGPT. Every Scient Agent conversation can use them through that sign-in.
-**Add more on ChatGPT** opens ChatGPT's apps page; **Open in ChatGPT** on an
-app opens its page there, to connect it again or remove it. Return to Scient
-afterwards and the list updates.
+An app's page lists **Your agents**, each with its own state and action:
 
-**From Claude** can list claude.ai connectors without starting a conversation.
-Choose **Connect on claude.ai**, then return after signing in. **Add more on
-claude.ai** opens the account's connector settings. These connectors are
-**Claude only**. Google's account apps remain available through Codex, Scient
-Agent or Claude; Scient does not add Google's official MCP servers itself.
+- **Connect in ChatGPT** for Codex and Scient Agent. One connection there
+  serves both when they use the same ChatGPT account. Scient Agent needs its
+  ChatGPT sign-in; the row offers it when it is missing.
+- **Connect on claude.ai** for Claude, when claude.ai has a connector for that
+  app. It opens that connector's own page. Where claude.ai names it differently
+  (Outlook is part of Microsoft 365), the row says the name to look for. An app
+  claude.ai does not have shows no Claude row.
+
+Return to Scient afterwards and the rows update. Under the Installed table,
+**Add apps on ChatGPT** and **Add connectors on claude.ai** open each account's
+own page. Scient does not add Google's official MCP servers itself.
 
 ## See what a conversation received
 

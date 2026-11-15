@@ -11,6 +11,7 @@ import {
   ConnectorId,
   ConnectorServerName,
   ConnectorSource,
+  ConnectorAgents,
   ConnectorStatus,
   CredentialStrategy,
   ExtensionsError,
@@ -107,6 +108,8 @@ export const ConnectorRecord = Schema.Struct({
   authRevision: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** Projects whose sessions receive this connector; an empty list means none. */
   availability: GrantScope,
+  /** Agents whose sessions receive it; absent means every agent. */
+  agents: Schema.optional(ConnectorAgents),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyString),
@@ -118,7 +121,7 @@ export type ConnectorRecord = typeof ConnectorRecord.Type;
 const STATE_FORMAT_VERSION = 2;
 
 const PersistedFile = Schema.Struct({
-  formatVersion: Schema.Literal(STATE_FORMAT_VERSION),
+  formatVersion: Schema.Literals([STATE_FORMAT_VERSION, 3]),
   connectors: Schema.Array(Schema.Unknown),
   /** The user removed GitHub, so Source Control's account is not connected again on its own. */
   githubFromSourceControlDeclined: Schema.optionalKey(Schema.Boolean),
@@ -273,8 +276,7 @@ const loadState = async (statePath: string): Promise<LoadedState> => {
   return withDiagnostics({
     connectors,
     githubFromSourceControlDeclined:
-      decoded.value.formatVersion === STATE_FORMAT_VERSION &&
-      decoded.value.githubFromSourceControlDeclined === true,
+      decoded.value.formatVersion !== 1 && decoded.value.githubFromSourceControlDeclined === true,
     unreadableConnectors,
     migrated,
     diagnostics: [],
@@ -302,7 +304,15 @@ const preservedConnectorId = (entry: unknown): unknown =>
 const encodeState = (state: LoadedState): string =>
   `${JSON.stringify(
     {
-      formatVersion: STATE_FORMAT_VERSION,
+      formatVersion: [...state.connectors, ...state.unreadableConnectors].some(
+        (record) =>
+          typeof record === "object" &&
+          record !== null &&
+          "agents" in record &&
+          record.agents !== undefined,
+      )
+        ? 3
+        : STATE_FORMAT_VERSION,
       connectors: [
         ...state.connectors.map((record) => encodeRecord(record)),
         ...state.unreadableConnectors,

@@ -25,6 +25,7 @@ import {
   SECTION_TITLE_LINK_CLASS,
   SectionTitleChevron,
   useExtensionsEnvironment,
+  useRememberListPage,
 } from "./ExtensionsPage";
 import { ExtensionGrid, ExtensionRow } from "./ExtensionRow";
 import {
@@ -32,31 +33,26 @@ import {
   extensionsProviderStoreEntry,
   extensionsProviderStorePage,
 } from "./extensionsState";
+import { providerAvailable, providerStoreAudience } from "./extensionsView";
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
-
-export function storeAvailable(provider: ServerProvider) {
-  return (
-    provider.enabled &&
-    provider.installed &&
-    (provider.status === "ready" || provider.status === "warning") &&
-    provider.availability !== "unavailable"
-  );
-}
 
 export function StoreInstall({
   provider,
   entry,
   refresh,
+  compact = false,
 }: {
   readonly provider: ServerProvider;
   readonly entry: ProviderStoreEntry;
   readonly refresh: () => void;
+  /** In a list under the store's own heading: "Add" and "Remove", the agent goes without saying. */
+  readonly compact?: boolean;
 }) {
   const { environmentId, providers } = useExtensionsEnvironment();
   const target =
     entry.kind === "shared" && provider.driver === "scient"
-      ? (providers.find((item) => storeAvailable(item) && item.driver === "claudeAgent") ??
+      ? (providers.find((item) => providerAvailable(item) && item.driver === "claudeAgent") ??
         provider)
       : provider;
   const plugin = target.plugins?.find(
@@ -67,7 +63,8 @@ export function StoreInstall({
   const act = useAtomCommand(actOnProviderPlugin);
   const lock = useActionLock(JSON.stringify(["store", provider.instanceId, entry.id]));
   if (installed && plugin?.canUninstall)
-    return <StoreRemove provider={target} plugin={plugin} refresh={refresh} />;
+    return <StoreRemove provider={target} plugin={plugin} refresh={refresh} compact={compact} />;
+  if (compact && installed) return <span className="text-sm text-muted-foreground">Added</span>;
   return (
     <>
       <PrimaryAction
@@ -95,13 +92,15 @@ export function StoreInstall({
       >
         {lock.busy
           ? "Adding…"
-          : installed
-            ? "Added"
-            : target.driver === "codex"
-              ? "Add to Codex"
-              : target.driver === "claudeAgent"
-                ? "Add to Claude Code"
-                : "Add to Scient Agent"}
+          : compact
+            ? "Add"
+            : installed
+              ? "Added"
+              : target.driver === "codex"
+                ? "Add to Codex"
+                : target.driver === "claudeAgent"
+                  ? "Add to Claude Code"
+                  : "Add to Scient Agent"}
       </PrimaryAction>
       {installed ? (
         <MutedLine>
@@ -117,10 +116,12 @@ function StoreRemove({
   provider,
   plugin,
   refresh,
+  compact,
 }: {
   readonly provider: ServerProvider;
   readonly plugin: ServerProviderPlugin;
   readonly refresh: () => void;
+  readonly compact: boolean;
 }) {
   const actions = useProviderPluginActions(
     provider,
@@ -130,13 +131,17 @@ function StoreRemove({
   );
   return (
     <>
-      <span className="text-sm text-muted-foreground">Added</span>
       <Button
         variant="destructive-outline"
+        {...(compact ? { size: "sm" as const } : {})}
         disabled={actions.locked}
         onClick={() => void actions.uninstall().then(refresh)}
       >
-        {actions.busy ? "Removing…" : "Remove"}
+        {actions.busy
+          ? "Removing…"
+          : compact
+            ? "Remove"
+            : `Remove from ${provider.displayName ?? "this agent"}`}
       </Button>
       <ActionFeedback feedback={actions.feedback} />
     </>
@@ -168,7 +173,7 @@ function StoreResults({
   });
   const page = useEnvironmentQuery(atom);
   // Scient Agent's official entries repeat Claude's only when Claude's own home serves them.
-  const claude = providers.find((item) => storeAvailable(item) && item.driver === "claudeAgent");
+  const claude = providers.find((item) => providerAvailable(item) && item.driver === "claudeAgent");
   const claudePage = useEnvironmentQuery(
     extensionsProviderStorePage({
       environmentId,
@@ -257,17 +262,7 @@ function StoreResults({
                   instanceId: provider.instanceId,
                   entryId: entry.id,
                 }}
-                audience={
-                  entry.kind === "shared"
-                    ? { layer: "shared", ownerInstanceId: provider.instanceId }
-                    : {
-                        layer: "agent",
-                        driver: provider.driver,
-                        instanceId: provider.instanceId,
-                        label: "Codex",
-                        reason: "Uses Codex's own ChatGPT account",
-                      }
-                }
+                audience={providerStoreAudience(provider, entry.kind)}
                 name={entry.displayName}
                 iconUrl={entry.iconUrl}
                 tagline={entry.description}
@@ -299,15 +294,15 @@ function StoreResults({
 export function ProviderStoreShelves({ query = "" }: { readonly query?: string }) {
   const { providers } = useExtensionsEnvironment();
   const claude = providers.filter(
-    (provider) => storeAvailable(provider) && provider.driver === "claudeAgent",
+    (provider) => providerAvailable(provider) && provider.driver === "claudeAgent",
   );
   const scient = providers.filter(
-    (provider) => storeAvailable(provider) && provider.driver === "scient",
+    (provider) => providerAvailable(provider) && provider.driver === "scient",
   );
   const targets = [...claude, ...scient];
   const primary = targets[0];
   const codex = providers.filter(
-    (provider) => storeAvailable(provider) && provider.driver === "codex",
+    (provider) => providerAvailable(provider) && provider.driver === "codex",
   );
   return (
     <>
@@ -370,16 +365,13 @@ function Store({ instanceId }: { readonly instanceId: string }) {
   const act = useAtomCommand(actOnProviderPlugin);
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
   const lock = useActionLock(JSON.stringify(["refresh-store", instanceId]));
+  const title =
+    provider?.driver === "codex" ? "From the Codex store" : "Plugins for Claude and Scient Agent";
+  useRememberListPage(title);
   return (
     <>
       <BackLink to="/settings/extensions">Discover</BackLink>
-      <ExtensionsSection
-        title={
-          provider?.driver === "codex"
-            ? "From the Codex store"
-            : "Plugins for Claude and Scient Agent"
-        }
-      >
+      <ExtensionsSection title={title}>
         <Input
           aria-label="Search plugins"
           placeholder="Search plugins"
@@ -417,7 +409,7 @@ function Store({ instanceId }: { readonly instanceId: string }) {
               ? [provider]
               : providers.filter(
                   (item) =>
-                    storeAvailable(item) &&
+                    providerAvailable(item) &&
                     (item.driver === "claudeAgent" || item.driver === "scient"),
                 )
             ).map((target) => (
@@ -499,17 +491,7 @@ function StoreDetail({
             "Works with",
             <WorksWithValue
               key="works-with"
-              audience={
-                entry.kind === "shared"
-                  ? { layer: "shared", ownerInstanceId: provider.instanceId }
-                  : {
-                      layer: "agent",
-                      driver: provider.driver,
-                      instanceId: provider.instanceId,
-                      label: "Codex",
-                      reason: "Uses Codex's own ChatGPT account",
-                    }
-              }
+              audience={providerStoreAudience(provider, entry.kind)}
             />,
           ],
           connector

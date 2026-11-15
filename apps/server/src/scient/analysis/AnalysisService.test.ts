@@ -644,6 +644,125 @@ describe("analysis artifact analytics", () => {
   );
 
   it.effect.each(
+    (
+      [
+        {
+          title: "a run whose outputs could not all be watched as unobserved",
+          coverage: { coverage: "partial", coverageReason: "watch-unavailable", rejectedCount: 0 },
+          candidates: false,
+          outcome: "skipped",
+          capture: {
+            captureOutcome: "unobserved",
+            captureCoverage: "partial",
+            captureReason: "watch-unavailable",
+            rejectedOutputCount: 0,
+          },
+        },
+        {
+          title: "a rejected figure beside a retained one as partial",
+          coverage: { coverage: "complete", rejectedCount: 1, rejectionReason: "invalid-image" },
+          candidates: true,
+          outcome: "failed",
+          capture: {
+            captureOutcome: "partial",
+            captureCoverage: "complete",
+            captureReason: "invalid-image",
+            rejectedOutputCount: 1,
+          },
+        },
+      ] as const
+    ).map((scenario) => ({ caseTitle: `reports ${scenario.title}`, scenario })),
+  )("$caseTitle", ({ scenario }) =>
+    Effect.gen(function* () {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const captured = artifactTestAdapter("captured");
+      const harness = yield* makeServiceTestLayer({
+        ...captured,
+        releaseRun: async () => release(),
+        collectArtifacts: async (context) => {
+          const collection = await captured.collectArtifacts!(context);
+          return {
+            ...collection,
+            candidates: scenario.candidates ? collection.candidates : [],
+            coverage: scenario.coverage,
+          };
+        },
+      });
+      const analytics = yield* analyticsFixture;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "private-study.m",
+            sourceRevision,
+            runtimeId,
+          });
+          const runId = yield* Queue.take(harness.startedRuns);
+          yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
+          expect(yield* Queue.take(analytics.terminalEvents)).toBe(
+            `scient.operation.${scenario.outcome}`,
+          );
+          yield* Queue.take(analytics.terminalEvents);
+          const persisted = yield* service.getRun({ cwd: harness.projectRoot, runId });
+          expect(persisted.artifactReceipt).toMatchObject({
+            status: "succeeded",
+            coverage: scenario.coverage,
+          });
+          const capture = analytics.events.filter(
+            (event) => event.properties?.operationKind === "compute-artifact",
+          )[1];
+          expect(capture?.properties).toMatchObject(scenario.capture);
+          yield* Effect.promise(() => released);
+        }).pipe(
+          Effect.provide(
+            harness.analysisLayer.pipe(
+              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
+  it.effect("releases what a run held when collecting its figures fails", () =>
+    Effect.gen(function* () {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const harness = yield* makeServiceTestLayer({
+        ...artifactTestAdapter("collection-error"),
+        releaseRun: async () => release(),
+      });
+      const analytics = yield* analyticsFixture;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "later-error.m",
+            sourceRevision,
+            runtimeId,
+          });
+          const runId = yield* Queue.take(harness.startedRuns);
+          yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
+          yield* Effect.promise(() => released);
+        }).pipe(
+          Effect.provide(
+            harness.analysisLayer.pipe(
+              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
+
+  it.effect.each(
     (["off", "epoch-change", "broken"] as const).map((mode) => ({
       caseTitle: `keeps capture functional with ${mode} analytics without replay`,
       mode,

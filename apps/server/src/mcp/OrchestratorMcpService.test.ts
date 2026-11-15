@@ -3621,7 +3621,8 @@ describe("OrchestratorMcpService provider resolution", () => {
                     ? "No V2 provider adapter is registered. "
                     : "") +
                   "Provider instance is disabled.";
-                assert.equal(error.message, expectedMessage);
+                // SCIENT-FORK:START — delegate target recovery: refusals end with usable instances.
+                assert.isTrue(error.message.startsWith(expectedMessage), error.message);
                 const threadError = yield* service
                   .createThreads(scope, {
                     threads: [{ prompt: "Summarize the diff.", target }],
@@ -3629,7 +3630,8 @@ describe("OrchestratorMcpService provider resolution", () => {
                   })
                   .pipe(Effect.flip);
                 assert.equal(threadError.code, "provider_unavailable");
-                assert.equal(threadError.message, expectedMessage);
+                assert.equal(threadError.message, error.message);
+                // SCIENT-FORK:END
               }
               if (testCase.name === "cross-driver-no-available-candidate") {
                 assert.isTrue(error.message.includes("driver claudeAgent"), testCase.name);

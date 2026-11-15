@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- gated integration test uses an explicitly selected Python.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodeProcess from "node:process";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -335,6 +337,51 @@ describe.runIf(Boolean(TEST_PYTHON))("Python kernel integration", () => {
               { relativePath: "source-B.py", line: 102 },
               { relativePath: "source-A.py", line: 12 },
             ]);
+            yield* harness.channel.shutdown({
+              expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            });
+          }),
+        ).pipe(Effect.provide(Live), Effect.timeout("30 seconds")),
+    );
+
+    it.effect(
+      "reports the files each cell wrote, including after a failure or a nested blank cell",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const harness = yield* integration();
+            const folder = yield* Effect.promise(() =>
+              NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-kernel-writes-")),
+            );
+            const deep = NodePath.join(folder, ...Array.from({ length: 10 }, () => "deep"));
+            const completion = (events: ReadonlyArray<ComputeTransportEvent>) => {
+              const completed = events.at(-1);
+              if (completed?._tag !== "completed") throw new Error("Expected a completion.");
+              return completed;
+            };
+            const saved = completion(
+              yield* execute(
+                harness,
+                "save-deep",
+                [
+                  "import os",
+                  `os.makedirs(${JSON.stringify(deep)}, exist_ok=True)`,
+                  `open(os.path.join(${JSON.stringify(deep)}, "plot.png"), "wb").close()`,
+                  `raise ValueError("after saving")`,
+                ].join("\n"),
+              ),
+            );
+            expect(saved.outcome).toBe("failed");
+            expect(saved.writes).toEqual({ paths: [NodePath.join(deep, "plot.png")] });
+            const nested = completion(
+              yield* execute(
+                harness,
+                "nested-blank",
+                `get_ipython().run_cell(""); open(${JSON.stringify(NodePath.join(folder, "after.svg"))}, "w").close()`,
+              ),
+            );
+            expect(nested.writes).toEqual({ paths: [NodePath.join(folder, "after.svg")] });
+            yield* Effect.promise(() => NodeFSP.rm(folder, { recursive: true, force: true }));
             yield* harness.channel.shutdown({
               expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
             });

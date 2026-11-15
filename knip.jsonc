@@ -50,6 +50,8 @@
         "scient-divergence-inventory.node-test.mjs",
         // Documented manual TeX-to-SVG math-symbol atlas generator.
         "generate-math-symbol-glyphs.mjs",
+        // Documented manual refresh of the claude.ai connectors Scient links to.
+        "generate-claude-connectors.mjs",
       ],
       "ignoreDependencies": ["esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.

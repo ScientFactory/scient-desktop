@@ -1,5 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ConnectorId, ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  ConnectorId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProjectId,
+  type ServerProvider,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -106,6 +113,7 @@ describe("ConnectorSessionDelivery.make", () => {
       return yield* delivery.plan({
         driver: ProviderDriverKind.make(driver),
         mcpInjection,
+        providerInstanceId: ProviderInstanceId.make("chosen-agent"),
         projectId: Effect.undefined,
         provider: Effect.die("provider snapshot must not be read"),
       });
@@ -134,7 +142,10 @@ describe("ConnectorSessionDelivery.make", () => {
       ),
       Effect.provide(
         Layer.mock(ConnectorRuntime)({
-          resolveDelivery: () => Effect.succeed({ eligible: [linear], skipped: [] }),
+          resolveDelivery: (input) => {
+            assert.equal(input.providerInstanceId, ProviderInstanceId.make("chosen-agent"));
+            return Effect.succeed({ eligible: [linear], skipped: [] });
+          },
         }),
       ),
     ),
@@ -150,10 +161,66 @@ describe("ConnectorSessionDelivery.make", () => {
       ),
       Effect.provide(
         Layer.mock(ConnectorRuntime)({
-          resolveDelivery: () => Effect.succeed({ eligible: [linear], skipped: [] }),
+          resolveDelivery: (input) => {
+            assert.equal(input.providerInstanceId, ProviderInstanceId.make("chosen-agent"));
+            return Effect.succeed({ eligible: [linear], skipped: [] });
+          },
         }),
       ),
     ),
+  );
+
+  it.effect(
+    "delivers Scient connectors beside unknown native names, but respects connected names and other drivers",
+    () =>
+      Effect.gen(function* () {
+        const agent = ProviderInstanceId.make("scient-work");
+        const projectId = ProjectId.make("collision-project");
+        const playwright = connector("playwright");
+        for (const [driver, status, delivered] of [
+          ["scient", "unknown", true],
+          ["scient", "connected", false],
+          ["codex", "unknown", false],
+        ] as const) {
+          const provider: ServerProvider = {
+            instanceId: agent,
+            driver: ProviderDriverKind.make(driver),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-11-14T00:00:00.000Z",
+            version: null,
+            models: [],
+            slashCommands: [],
+            skills: [],
+            mcpServers: [{ name: "playwright", status }],
+          };
+          const delivery = yield* ConnectorSessionDelivery.make.pipe(
+            Effect.provide(
+              Layer.mock(ConnectorRuntime)({
+                resolveDelivery: (input) => {
+                  assert.deepEqual(input, { projectId, providerInstanceId: agent });
+                  return Effect.succeed({ eligible: [playwright], skipped: [] });
+                },
+              }),
+            ),
+          );
+          const result = yield* delivery.plan({
+            driver: provider.driver,
+            mcpInjection: true,
+            projectId: Effect.succeed(projectId),
+            provider: Effect.succeed(provider),
+            providerInstanceId: agent,
+          });
+          assert.deepEqual(
+            result,
+            delivered
+              ? { delivered: [playwright], skipped: [] }
+              : { delivered: [], skipped: [{ ...playwright, reason: "name-collision" }] },
+          );
+        }
+      }),
   );
 
   it.effect("records a receipt in the contract shape", () =>

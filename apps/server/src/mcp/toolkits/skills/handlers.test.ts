@@ -14,8 +14,12 @@ import {
   listScientSkillsForInvocation,
   loadedSkillFacts,
   loadScientSkillForInvocation,
+  readPersonalSkillForInvocation,
   readScientSkillResourceForInvocation,
+  savePersonalSkillForInvocation,
 } from "./handlers.ts";
+import { type PersonalSkillFailure, ScientSkillManagementError } from "@t3tools/contracts";
+import type * as PersonalSkills from "../../../scient/skills/PersonalSkills.ts";
 
 const fixtures: string[] = [];
 
@@ -335,6 +339,57 @@ describe("Scient skills MCP handlers", () => {
         },
       ).pipe(Effect.flip);
       expect(hidden.code).toBe("not-found");
+    }),
+  );
+});
+
+describe("the user's own skills", () => {
+  const failing = (reason: PersonalSkillFailure, operation: string) =>
+    ({
+      save: () =>
+        Effect.fail(new ScientSkillManagementError({ operation, message: "No.", reason })),
+      read: () =>
+        Effect.fail(
+          new ScientSkillManagementError({
+            operation,
+            message: "You have no skill named 'evidence-review'.",
+            reason,
+          }),
+        ),
+    }) as unknown as PersonalSkills.PersonalSkillsShape;
+
+  it.effect.each([
+    ["write-failed", "storage-failed"],
+    ["name-taken", "name-taken"],
+    ["unsafe", "invalid-skill"],
+  ] as const)("a save that fails with %s reports %s", ([reason, code]) =>
+    Effect.gen(function* () {
+      const error = yield* savePersonalSkillForInvocation(failing(reason, "save"), {
+        name: "evidence-review",
+        files: [{ path: "SKILL.md", content: "---\nname: evidence-review\n---\n" }],
+      }).pipe(Effect.flip);
+      expect(error.code).toBe(code);
+    }),
+  );
+
+  it.effect.each([
+    ["project:project-1", ".scient/skills/evidence-review/ in the project"],
+    ["scient", "can't be edited"],
+  ] as const)("a read miss on a %s skill says how it can change", ([origin, guidance]) =>
+    Effect.gen(function* () {
+      const catalog = yield* Effect.promise(makeCatalogFixture);
+      const release = { ...catalog.releases[0]!, origin } as SkillRelease;
+      const error = yield* readPersonalSkillForInvocation(failing("not-found", "read"), {
+        name: release.name,
+      }).pipe(
+        Effect.provideService(
+          AgentInvocationContext.AgentInvocationContext,
+          makeInvocation([release]),
+        ),
+        Effect.flip,
+      );
+      expect(error.code).toBe("not-found");
+      expect(error.message).toContain(guidance);
     }),
   );
 });

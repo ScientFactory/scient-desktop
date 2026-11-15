@@ -6,6 +6,7 @@ import {
   type CredentialStrategy,
   type DiscoverEntry,
   type EnvironmentId,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 import { useState } from "react";
@@ -131,7 +132,11 @@ function validateAddConnectorDraft(
   return errors;
 }
 
-function toAddInput(draft: Draft, entry: DiscoverEntry | null): ConnectorAddInput {
+function toAddInput(
+  draft: Draft,
+  entry: DiscoverEntry | null,
+  agents?: ReadonlyArray<ProviderInstanceId>,
+): ConnectorAddInput {
   const displayName = draft.displayName.trim();
   const clientId = draft.clientId.trim();
   const clientSecret = draft.clientSecret.trim();
@@ -142,6 +147,7 @@ function toAddInput(draft: Draft, entry: DiscoverEntry | null): ConnectorAddInpu
       : { type: "url", url: draft.url.trim() },
     ...(displayName ? { displayName } : {}),
     ...(description ? { description } : {}),
+    ...(agents === undefined ? {} : { agents }),
     ...(draft.authMode === "automatic" && clientId
       ? { oauthClient: { clientId, ...(clientSecret ? { clientSecret } : {}) } }
       : {}),
@@ -202,6 +208,8 @@ interface AddConnectorDialogProps {
   readonly initialUrl?: string;
   /** Shows Back instead of Cancel, returning to Add your own. */
   readonly onBack?: () => void;
+  /** The agents chosen when it was added from Discover; absent gives it to every agent. */
+  readonly agents?: ReadonlyArray<ProviderInstanceId> | undefined;
 }
 
 /** A registry entry that only runs locally gets the local form. */
@@ -214,6 +222,7 @@ export function AddConnectorDialog(props: AddConnectorDialogProps) {
       onOpenChange={props.onOpenChange}
       environmentId={props.environmentId}
       entry={props.entry}
+      agents={props.agents}
     />
   );
 }
@@ -226,6 +235,7 @@ function RemoteConnectorDialog({
   callbackOrigin,
   initialUrl,
   onBack,
+  agents,
 }: AddConnectorDialogProps) {
   const github = entryNeedsToken(entry) === true;
   const [githubToken, setGithubToken] = useState(false);
@@ -269,7 +279,7 @@ function RemoteConnectorDialog({
     const result = await add({
       environmentId,
       input: {
-        ...toAddInput({ ...draft, authMode: "automatic", clientId: "" }, entry),
+        ...toAddInput({ ...draft, authMode: "automatic", clientId: "" }, entry, agents),
         credential: { type: "source-control", account },
       },
     });
@@ -293,7 +303,7 @@ function RemoteConnectorDialog({
       document.getElementById(invalid[1])?.focus();
       return;
     }
-    const input = toAddInput(draft, entry);
+    const input = toAddInput(draft, entry, agents);
     const sentSecret = draft.value.length > 0 || draft.clientSecret.length > 0;
     // Secrets leave the form as soon as they are sent, whatever the outcome.
     patch({ value: "", clientSecret: "" });

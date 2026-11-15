@@ -59,6 +59,7 @@ import {
   BrowserToolCalls,
   isBrowserTool,
   noteToolFailure,
+  refusedDelegateTarget,
   scientMcpAnalyticsInput,
   scientToolOutcome,
   ToolFailureNote,
@@ -1351,7 +1352,14 @@ const withToolAnalytics =
             targets: targets.filter((thread) => thread !== null),
             outcome,
             ...(handoff
-              ? { settings: handoffSettings(tool, args, result?.structuredContent) }
+              ? {
+                  settings: {
+                    ...handoffSettings(tool, args, result?.structuredContent),
+                    // SCIENT-FORK:START — a refused delegation reports the target it asked for.
+                    ...refusedDelegateTarget(tool, args, outcome, providers),
+                    // SCIENT-FORK:END
+                  },
+                }
               : {}),
             durationMs,
           })) {

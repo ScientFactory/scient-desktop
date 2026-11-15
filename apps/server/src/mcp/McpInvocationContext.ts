@@ -60,6 +60,10 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
+  /** The session's provider implements background waits. */
+  readonly backgroundWait?: boolean;
+  // SCIENT-FORK:END
 }
 
 export interface McpClientCaller {
@@ -224,6 +228,15 @@ export const hiddenFromSubagents = (): boolean => {
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.thread?.subagent !== true;
 };
+
+// SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
+/** `McpSchema.EnabledWhen` for the background wait: only thread sessions whose provider has one. */
+export const shownWithBackgroundWait = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread?.backgroundWait === true;
+};
+// SCIENT-FORK:END
 
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
 export const hiddenWhileLinksOff = (): boolean => {

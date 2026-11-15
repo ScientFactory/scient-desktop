@@ -6,9 +6,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { FailureOwner } from "@scientfactory/analytics";
+import type { ServerProvider } from "@t3tools/contracts";
 
 import { toolFailureAttribution } from "./FailureAttribution.ts";
-import { toolOutcome } from "./ProviderDimensions.ts";
+import { catalogModelLabel, toolOutcome } from "./ProviderDimensions.ts";
 
 const decodeResult = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
 
@@ -222,3 +223,35 @@ export class BrowserToolCalls extends Context.Reference<BrowserToolCallLedger>(
 ) {}
 
 export const isBrowserTool = (tool: string) => tool.startsWith("preview_");
+
+const fieldsOf = (value: unknown): Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+/**
+ * What a refused `delegate_task` asked to run on, in the fields a started task reports. An
+ * instance id becomes its driver; a model outside the reviewed catalogs is `other`, never its text.
+ */
+export function refusedDelegateTarget(
+  tool: string,
+  args: unknown,
+  outcome: { readonly outcome: string },
+  providers: ReadonlyArray<ServerProvider>,
+): { readonly targetProvider?: string; readonly targetModel?: string } {
+  if (tool !== "delegate_task" || outcome.outcome !== "error") return {};
+  const target = fieldsOf(fieldsOf(args).target);
+  const instanceId = target.providerInstanceId;
+  const driver =
+    typeof instanceId === "string"
+      ? (providers.find((provider) => provider.instanceId === instanceId)?.driver ?? "unknown")
+      : typeof target.driverKind === "string"
+        ? (providers.find((provider) => provider.driver === target.driverKind)?.driver ?? "unknown")
+        : undefined;
+  const model =
+    typeof target.model === "string"
+      ? (catalogModelLabel(providers, target.model) ?? "other")
+      : undefined;
+  return {
+    ...(driver === undefined ? {} : { targetProvider: driver }),
+    ...(model === undefined ? {} : { targetModel: model }),
+  };
+}
