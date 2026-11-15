@@ -19,12 +19,11 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 // SCIENT-FORK:START — the source rules the handler enforces, stated before a call is refused.
 const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_000)).annotate({
-  description: "Inline HTML. Pass exactly one of html or path.",
+  description: "Inline HTML. Pass this or path, not both.",
 });
 
 const HtmlPath = Schema.String.annotate({
-  description:
-    "Absolute path to a .html file starting with <!doctype html> or <html>. Only full-access threads may pass a path; otherwise pass html.",
+  description: "Absolute .html file path. Full-access threads only; others pass html.",
 });
 // SCIENT-FORK:END
 
