@@ -645,6 +645,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`7f6e403a88815e5644efbdb6bc8625246f661095` is recorded in
+[the 2026-11-15 7f6e403a88 receipt](docs/internals/t3-upstream-sync-20261115-7f6e403a88.md).
+Literal merge `4f0837dd3bd1d732ded3fcf408eaa9bd62340d0a` has owned base
+`220f377211ff71cc8ee76c8a04710bc208699ba0` and the frozen official target as parents, retaining
+the 143 official commits after `2bee33eb19`; PR #PR_NUMBER carries it. Pi starts attached to its owned session file, failed
+turn starts settle, delegated tasks stop reading the parent's history, checkpoints cover
+submodules within Scient's capture deadline, and T3's migrations 92-94 land as Scient's 96-98.
+OpenCode wake continuations confirm their permission rules like every turn. Release remains
+separate.
+
+The previous committed alignment through
 `2bee33eb193a0430c9a0d8e24f8f684163f045a4` is recorded in
 [the 2026-11-14 2bee33eb19 receipt](docs/internals/t3-upstream-sync-20261114-2bee33eb19.md).
 Literal merge `1235ed4b9a21f02197748810dd2f1a3678a450df` has owned base
