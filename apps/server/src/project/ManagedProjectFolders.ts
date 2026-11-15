@@ -3,7 +3,7 @@
  * @module ManagedProjectFolders
  */
 import { CommandId, GitCommandError, ProjectId, type ThreadId } from "@t3tools/contracts";
-import { newProjectFolderName } from "@t3tools/shared/path";
+import { foldLatinDiacritics, newProjectFolderName } from "@t3tools/shared/path";
 // SCIENT-FORK:START — product admission policy.
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 // SCIENT-FORK:END
@@ -154,7 +154,7 @@ export class ManagedProjectFolders extends Context.Service<
 >()("t3/project/ManagedProjectFolders") {}
 
 const folderWords = (text: string) =>
-  text
+  foldLatinDiacritics(text)
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean)

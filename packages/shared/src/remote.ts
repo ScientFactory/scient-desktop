@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { SCIENT_DESKTOP_IDENTITY } from "./scientDesktopIdentity.ts";
+import { parseUrl } from "./url.ts";
 
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
@@ -202,8 +203,8 @@ export const buildPairingAppLink = (pairingUrl: string): string =>
 
 /** Reads the pairing URL from a `scient://pair` link on any app channel scheme. */
 export const readPairingAppLink = (value: string): string | null => {
-  if (!URL.canParse(value)) return null;
-  const url = new URL(value);
+  const url = parseUrl(value);
+  if (!url) return null;
   // SCIENT-FORK:START
   if (!APP_LINK_PROTOCOLS.has(url.protocol) || url.host !== "pair") return null;
   // SCIENT-FORK:END

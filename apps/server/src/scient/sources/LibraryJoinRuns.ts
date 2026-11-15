@@ -66,6 +66,7 @@ export function startLibraryJoin(
               removedHere: result.removedHere,
               removedThere: result.removedThere,
               missingPdfs: result.missingPdfs,
+              unplacedIn: [...result.unplacedIn],
             });
             return;
           case "stopped":

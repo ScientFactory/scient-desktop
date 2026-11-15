@@ -9,7 +9,9 @@ import { readScientLibraryMoveState } from "@scientfactory/scient-sources/librar
 import {
   ensureScientLibrary,
   isScientLibraryLocation,
+  ScientLibraryRestoreUnfinishedError,
   scientLibraryLocation,
+  scientLibraryRestoreUnfinished,
   scientLibraryRootFor,
   type ScientLibraryLocation,
   type ScientSourceStoreLocation,
@@ -112,6 +114,21 @@ export const resolveScientSourcesStoreFor = Effect.fn("ScientSourcesBackend.reso
   }
   const root = scientLibraryRootFor(config.value.stateDir);
   const library = scientLibraryLocation(root);
+  // A restore swapped the Library in but has not finished (the projects' "moved back" decisions
+  // may not be carried over yet). Until the next start finishes it, a project that has its own
+  // store uses that, and nothing is written to the Library.
+  if (yield* Effect.promise(() => scientLibraryRestoreUnfinished(root).catch(() => false))) {
+    const ownStore = yield* Effect.promise(() =>
+      readScientLibraryMoveState({ library: null, projectRoot: project.root }).then(
+        (state) => state.v1Present,
+        () => false,
+      ),
+    );
+    if (ownStore) return projectStore(project);
+    if (access === "write") {
+      return yield* Effect.die(new ScientLibraryRestoreUnfinishedError());
+    }
+  }
   let exists: boolean;
   if (access === "write") {
     yield* Effect.promise(() => ensureScientLibrary(root));

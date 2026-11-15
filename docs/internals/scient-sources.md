@@ -2647,6 +2647,9 @@ If carrying fails, or a start is killed after the swap, the Library records
 the restore without an end time while the intent still waits; until the next
 start finishes it, `runScientLibraryMove` refuses to move any project in
 (`scientLibraryRestoreUnfinished`), so a project still keeps its own store.
+The server's store selection does the same: in that state a project that has
+its own store reads and writes it, and a write to the Library is refused with
+"Restart Scient to finish it".
 Where the Library that knew the decision is gone (another computer, a lost
 disk), the restored Library's older journal stands and the project moves in
 again at its next change.
@@ -2681,21 +2684,34 @@ Library with `standingOf`:
 A join holds `<library>.join.lock` for its whole life (so does an Undo), so
 one runs per Library. It writes `joins/<joinId>/join.json` (the other
 Library, counts, the differences), finds or makes the collections of the other
-Library that hold a fresh source (by name under the same parent) and records
-that map, then works in parts of 100. A part file naming the sources and each
-one's fingerprint (a hash of the whole record) is written before the part is
-applied under the Library's lock. Under that lock each source is checked
-again against the Library as it is now, then added: its PDFs by hash
-(checked, flushed), each with its highlights file if the PDF was not here
-(a PDF already here keeps this Library's highlights, and the source is
-recorded as differing); its earlier versions, and the PDFs only they name
-while the other Library still has them; last the record. Every file is
-created exclusively from the other Library's own bytes, through a flushed
-temporary file. Still under the lock, the source is put in its collections
-and kept apart from what the other Library kept it apart from ("not
-duplicates" pairs, and merges it undid), so no automatic merge can see it
-before those decisions are here. No duplicate pass runs: a possible duplicate
-was not added in the first place.
+Library that hold a fresh source (by name under the same parent; one that
+cannot be made is recorded with the reason) and records that map, then works
+in parts of 100. A part file naming the sources and each one's fingerprint (a
+hash of the whole record) is written before the part is applied under the
+Library's lock.
+
+Under that lock the join first compares a mark of the Library (the names in
+`records/`, `trash/` and `deleted/` apart from its own additions, and the
+alias file) with the mark from before the comparison. If another writer added,
+removed or merged a source since, the Library is read again and each source of
+the part is judged against it, ignoring what this join itself added (the other
+Library keeps those apart, so they must not make each other "not new"). An
+edit of an existing record during a join is not seen. Then each source is
+added, in an order that survives a kill at any point: for each PDF that is not
+here, its highlights file and then the PDF (checked by hash, flushed); a PDF
+already here keeps this Library's highlights, and the source is recorded as
+differing if the other's differ; its earlier versions, and the PDFs only they
+name while the other Library still has them; the "keep apart" decisions; last
+the record. Files are created from the other Library's own bytes by renaming a
+flushed temporary file into place, only where no file has the name; the lock,
+which every writer of those files holds, makes that exclusive. The "keep
+apart" decisions are the other Library's as its own rule reads them ("not
+duplicates" pairs and merges it undid, each followed through its later merges
+to the two sources live there), written before the record exists, so no
+automatic merge ever sees the source without them. After the record the source
+is put in its collections; one it cannot be put in is recorded by name with
+the reason and said in the result. No duplicate pass runs: a possible
+duplicate was not added in the first place.
 
 Why no ledger of earlier joins is needed: the only thing a join creates is a
 source under its own ID. Whatever is done to it afterwards (edit, merge,
@@ -2703,16 +2719,28 @@ Trash, deletion) leaves evidence under that ID, so the next join does not see
 it as new. A join that stopped leaves its part file `pending`; before any
 later join adds anything, and before an Undo, it is settled: what of that
 part is here in any form is what it added, and where the other Library's
-folder can still be read those sources are put in their collections.
+folder can still be read those sources are kept apart and put in their
+collections.
 
-`undoScientLibraryJoin` moves an added source to the Trash only if, under the
-Library's lock: its fingerprint is still the one recorded; no project's map in
-`projects/` names it; it is in no collection the join did not put it in; and
-the highlights file of each PDF that came with it is as the join wrote it.
-Anything else leaves it and counts it. A collection the join made is deleted
-once nothing here is in it and nothing is under it. In the Trash the sources
-are "removed here", so a later join skips them. Not seen by Undo: a
-systematic review that screened the source (the review keeps its own copy).
+`undoScientLibraryJoin` moves an added source to the Trash only if, under one
+hold of the Library's lock: its fingerprint is still the one recorded; no
+project uses it (no map in `projects/` names it, and no `pins.json` of a
+project folder the Library knows names it; a project is registered with the
+Library by its first pin, before the pin is written); it is in no collection
+the join did not put it in; and the highlights file of each of its PDFs is as
+it was when the source arrived (for a part settled after a stop that state is
+not known, and any highlights file keeps the source). Anything else leaves it
+and counts it. A collection the join made is deleted once nothing here is in
+it and nothing is under it. In the Trash the sources are "removed here", so a
+later join skips them. Not seen by Undo: a systematic review that screened
+the source (the review keeps its own copy), and a pin written in the same
+instant as the Undo (the source then goes to the Trash; the project still
+cites it from its saved details, and Restore brings it back).
+
+Measured (`reviews/sources-improve-20261115/scale/README.md`): 20,000 sources
+here, 2,000 new and 500 shared in the other: 17 s to compare (the intake rule
+looks at every live record for each candidate), 30 s in all, 0.7 s to run
+again, 20 s to undo.
 
 Server: organize actions `add-from-library` and `undo-join` (the organize
 route resolves the store with write access, so starting a join can first move

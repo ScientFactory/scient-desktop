@@ -91,7 +91,6 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import React, {
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
-  type MouseEvent as ReactMouseEvent,
   use,
   memo,
   useEffect,
@@ -208,6 +207,7 @@ import {
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
+import { textDirection } from "~/textDirection";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
@@ -379,6 +379,7 @@ function CodexArtifactTemplateCard(props: {
     <div
       role="group"
       aria-label={`${props.template.displayName} template`}
+      dir={textDirection(props.template.displayName)}
       data-chat-markdown-artifact-template
       className="my-[0.65rem] flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/70 bg-card/60 px-3 py-2.5 text-foreground shadow-xs"
       data-artifact-kind={props.template.artifactKind}
@@ -1259,11 +1260,6 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   };
 }
 
-// Native word selection stops at hyphens and dots, so a double-click takes the whole span.
-function selectInlineCode(event: ReactMouseEvent<HTMLElement>) {
-  window.getSelection()?.selectAllChildren(event.currentTarget);
-}
-
 const CHAT_MARKDOWN_COMPONENTS = {
   h1: markdownHeadingRenderer(1),
   h2: markdownHeadingRenderer(2),
@@ -1706,7 +1702,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       if (inlineCssColor) {
         return (
           <ScientInlineColorCode
-            codeProps={{ ...props, className, dir: "ltr", onDoubleClick: selectInlineCode }}
+            codeProps={{ ...props, className, dir: "ltr" }}
             color={inlineCssColor}
           >
             {children}
@@ -1716,7 +1712,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       // SCIENT-FORK:END
       return (
         // SCIENT-FORK: code stays left-to-right inside right-to-left prose.
-        <code {...props} className={className} dir="ltr" onDoubleClick={selectInlineCode}>
+        <code {...props} className={className} dir="ltr">
           {children}
         </code>
       );

@@ -1,4 +1,5 @@
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
+import { parseUrl } from "./url.ts";
 
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
 
@@ -197,8 +198,8 @@ export function promptLinkAppPath(
   hostedAppUrl: string = DEFAULT_HOSTED_APP_URL,
   appProtocols?: ReadonlyArray<string>,
 ): string | null {
-  if (!URL.canParse(value)) return null;
-  const url = new URL(value);
+  const url = parseUrl(value);
+  if (!url) return null;
   if (
     appProtocols === undefined ? APP_SCHEME.test(url.protocol) : appProtocols.includes(url.protocol)
   ) {
@@ -208,7 +209,7 @@ export function promptLinkAppPath(
     const thread = url.host === "threads" ? THREAD_PATH.exec(url.pathname) : null;
     return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
   }
-  if (!URL.canParse(hostedAppUrl) || url.origin !== new URL(hostedAppUrl).origin) return null;
+  if (url.origin !== parseUrl(hostedAppUrl)?.origin) return null;
   if (url.pathname === "/new") return `/new${url.search}`;
   // The web app's own thread route is a link only with a prompt, so reloading a tab never asks.
   const thread = url.pathname.startsWith("/threads/")

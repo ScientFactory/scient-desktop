@@ -21,7 +21,10 @@ import {
   ScientLibraryBackupManifest,
   checkScientLibraryBackup,
 } from "./libraryBackup.ts";
-import { readScientLibraryDistinctPairs } from "./libraryExclusions.ts";
+import {
+  readScientLibraryDistinctPairs,
+  readScientLibraryMergeReceipts,
+} from "./libraryExclusions.ts";
 import {
   ScientLibraryBusyError,
   withScientFileLock,
@@ -30,6 +33,7 @@ import {
 import { markScientLibrarySourcesDistinct } from "./libraryMerge.ts";
 import { listScientLibraryRestores } from "./libraryRestore.ts";
 import {
+  listScientLibraryInstances,
   readScientLibraryManifest,
   scientLibraryLocation,
   type ScientLibraryLocation,
@@ -40,6 +44,7 @@ import {
   type ScientSourceCandidate,
   type ScientSourceRecord,
 } from "./model.ts";
+import { readScientProjectPins } from "./projectPins.ts";
 import {
   decodePersistedScientSourceRecord,
   listScientSourceRecords,
@@ -127,9 +132,12 @@ const JoinHeader = Schema.Struct({
   collections: Schema.Array(
     Schema.Struct({
       otherId: Schema.String,
-      collectionId: Schema.String,
+      name: Schema.String,
+      /** Null when it could not be found or made here; `why` then says so. */
+      collectionId: Schema.NullOr(Schema.String),
       /** Made by this join; Undo deletes it once nothing here is in it. */
       created: Schema.Boolean,
+      why: Schema.optionalKey(Schema.String),
     }),
   ),
   undone: Schema.optionalKey(
@@ -148,10 +156,16 @@ const Arrived = Schema.Struct({
   sourceId: Schema.String,
   /** The collections here the join put it in. */
   collections: Schema.Array(Schema.String),
-  /** Each PDF the join copied for it, with the hash of its highlights file as written, or null. */
-  highlights: Schema.Array(
-    Schema.Struct({ sha256: Schema.String, hash: Schema.NullOr(Schema.String) }),
+  /**
+   * Each of its PDFs with the hash of this Library's highlights file for it when the source
+   * arrived, or null for none. The whole list is null where that is not known (a join that
+   * stopped): then any highlights file on its PDFs counts as later work.
+   */
+  highlights: Schema.NullOr(
+    Schema.Array(Schema.Struct({ sha256: Schema.String, hash: Schema.NullOr(Schema.String) })),
   ),
+  /** Collections of the other Library it could not be put in here, with the reason. */
+  unplaced: Schema.Array(Schema.Struct({ name: Schema.String, why: Schema.String })),
   /** PDFs it names that the other Library's folder did not hold. */
   missingPdfs: Schema.Int,
   /** A PDF of it was already here with other highlights: this Library's stayed. */
@@ -383,7 +397,12 @@ type Standing =
  * be it, by its ID, by the project source a rebuilt copy stands for (on either side), or by the
  * import's duplicate rule, which must name no candidate at all.
  */
-function standingOf(record: ScientSourceRecord, state: LocalState): Standing {
+function standingOf(
+  record: ScientSourceRecord,
+  state: LocalState,
+  /** Sources this join itself added: the other Library keeps them apart from this one. */
+  own: ReadonlySet<string> = new Set(),
+): Standing {
   const id = record.sourceId;
   const here = (
     relation: ScientLibraryJoinDifference["relation"],
@@ -414,17 +433,15 @@ function standingOf(record: ScientSourceRecord, state: LocalState): Standing {
   const goneCopy = state.removedRebuilt.get(id);
   if (goneCopy) return { kind: "removed", state: goneCopy };
   const assessed = state.assess(candidateOf(record), record.attachments[0]?.sha256);
+  const candidates = assessed.matchingSourceIds.filter((sourceId) => !own.has(sourceId));
   // `new` with candidates means several sources here could be it: not certainly new.
-  if (assessed.kind === "new" && assessed.matchingSourceIds.length === 0) return { kind: "fresh" };
+  if (candidates.length === 0) return { kind: "fresh" };
   const sure =
     assessed.kind !== "possible-metadata-match" &&
     assessed.kind !== "new" &&
-    assessed.matchingSourceIds.length === 1;
+    candidates.length === 1;
   // One candidate is named even when it is not certain; several are not, since none is "it".
-  const match =
-    assessed.matchingSourceIds.length === 1
-      ? (state.live.get(assessed.matchingSourceIds[0]!) ?? null)
-      : null;
+  const match = candidates.length === 1 ? (state.live.get(candidates[0]!) ?? null) : null;
   return here(sure && match ? "same-paper" : "possibly-same", match);
 }
 
@@ -576,10 +593,11 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /**
- * Creates a file with these bytes only if no file has its name: written beside it, flushed,
- * then linked into place, so a kill never leaves half a file under the final name.
+ * Creates a file with these bytes only if no file has its name. The caller holds the Library's
+ * lock, as every writer of these files does, so that stays true until the flushed temporary
+ * file is renamed into place: a kill never leaves half a file under the final name.
  */
-async function createExclusively(path: string, bytes: Uint8Array): Promise<boolean> {
+async function createUnderLock(path: string, bytes: Uint8Array): Promise<boolean> {
   if (await exists(path)) return false;
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${NodeCrypto.randomUUID()}`;
@@ -590,21 +608,8 @@ async function createExclusively(path: string, bytes: Uint8Array): Promise<boole
     await handle.sync();
     await handle.close();
     handle = null;
-    try {
-      await NodeFSP.link(temporary, path);
-      return true;
-    } catch (error) {
-      if (isNodeError(error, "EEXIST")) return false;
-      if (!isNodeError(error, "EPERM") && !isNodeError(error, "ENOTSUP")) throw error;
-      // No hard links on this volume: an exclusive copy is the nearest thing.
-      return await NodeFSP.copyFile(temporary, path, NodeFSP.constants.COPYFILE_EXCL).then(
-        () => true,
-        (failure: unknown) => {
-          if (isNodeError(failure, "EEXIST")) return false;
-          throw failure;
-        },
-      );
-    }
+    await NodeFSP.rename(temporary, path);
+    return true;
   } finally {
     await handle?.close();
     await NodeFSP.rm(temporary, { force: true });
@@ -648,17 +653,25 @@ const hashOfBytes = (bytes: Uint8Array) =>
 interface OtherDecisions {
   /** The other Library's collections each source is in. */
   readonly collectionsOf: ReadonlyMap<string, ReadonlyArray<string>>;
-  /** Sources each source must stay apart from: "not duplicates", and merges it undid. */
+  /** Live sources each live source must stay apart from. */
   readonly apartFrom: ReadonlyMap<string, ReadonlyArray<string>>;
 }
 
+/**
+ * The other Library's organisation and its "keep apart" decisions as its own rule reads them
+ * (`scientLibraryExclusionsFrom`): "not duplicates" pairs and merges it undid, each followed
+ * through its later merges to the two sources that are live there now.
+ */
 async function otherDecisions(otherRoot: string): Promise<OtherDecisions> {
   const other = scientLibraryLocation(otherRoot);
-  const [organization, pairs, aliases] = await Promise.all([
+  const [records, organization, pairs, merges, allAliases] = await Promise.all([
+    listScientSourceRecords(other),
     readScientSourcesOrganization(other),
-    readScientLibraryDistinctPairs(otherRoot).catch(() => []),
-    readScientLibraryAliases(other).catch(() => new Map()),
+    readScientLibraryDistinctPairs(otherRoot),
+    readScientLibraryMergeReceipts(otherRoot),
+    readScientLibraryAliases(other),
   ]);
+  const live = new Set(records.map((record) => record.sourceId));
   const collectionsOf = new Map<string, string[]>();
   for (const collection of organization.collections) {
     for (const sourceId of collection.sourceIds) {
@@ -668,23 +681,36 @@ async function otherDecisions(otherRoot: string): Promise<OtherDecisions> {
       ]);
     }
   }
+  // As the exclusions follow them: only aliases of sources not live again, and not undone.
+  const aliases = new Map(
+    [...allAliases].filter(([sourceId, alias]) => !live.has(sourceId) && !alias.undoneAt),
+  );
   const apartFrom = new Map<string, string[]>();
   const apart = (first: string, second: string) => {
-    apartFrom.set(first, [...(apartFrom.get(first) ?? []), second]);
-    apartFrom.set(second, [...(apartFrom.get(second) ?? []), first]);
+    const [left, right] = [
+      resolveScientLibraryAlias(aliases, first),
+      resolveScientLibraryAlias(aliases, second),
+    ];
+    if (left === right || !live.has(left) || !live.has(right)) return;
+    apartFrom.set(left, [...(apartFrom.get(left) ?? []), right]);
+    apartFrom.set(right, [...(apartFrom.get(right) ?? []), left]);
   };
   for (const pair of pairs) apart(pair.sourceIds[0], pair.sourceIds[1]);
-  // A merge the other Library undid keeps its two sources apart there; so it must here.
-  for (const alias of aliases.values()) {
-    if (alias.undoneAt !== undefined) apart(alias.sourceId, alias.survivorId);
+  for (const receipt of merges.receipts) {
+    if (receipt.state === "undone" || (receipt.state === "done" && live.has(receipt.loserId))) {
+      apart(receipt.survivorId, receipt.loserId);
+    }
   }
   return { collectionsOf, apartFrom };
 }
 
+const reasonOf = (error: unknown, fallback: string) =>
+  error instanceof Error && error.message ? error.message : fallback;
+
 /**
  * Finds or makes here the collections of the other Library that hold a new source, matched by
- * name under the same parent. Members are added later, one source at a time. A collection that
- * cannot be made (a limit) is left out, and its sources arrive without it.
+ * name under the same parent. Members are added later, one source at a time. One that cannot
+ * be made (a limit) is recorded with the reason, and its sources arrive without it.
  */
 async function ensureCollections(input: {
   readonly library: ScientLibraryLocation;
@@ -695,50 +721,63 @@ async function ensureCollections(input: {
   if (input.fresh.size === 0) return [];
   const theirs = await readScientSourcesOrganization(scientLibraryLocation(input.otherRoot));
   const byId = new Map(theirs.collections.map((entry) => [entry.collectionId, entry]));
-  const mapped = new Map<string, { collectionId: string; created: boolean }>();
+  const mapped = new Map<string, JoinHeader["collections"][number]>();
   const ensure = async (otherId: string): Promise<string | null> => {
     const known = mapped.get(otherId);
     if (known) return known.collectionId;
     const collection = byId.get(otherId);
     if (!collection) return null;
+    const none = (why: string) => {
+      mapped.set(otherId, {
+        otherId,
+        name: collection.name,
+        collectionId: null,
+        created: false,
+        why,
+      });
+      return null;
+    };
     const parentId = collection.parentCollectionId
       ? await ensure(collection.parentCollectionId)
       : null;
-    if (collection.parentCollectionId && !parentId) return null;
-    const change = await createScientSourceCollection({
-      root: input.library,
-      name: collection.name,
-      ...(parentId ? { parentCollectionId: parentId } : {}),
-      actor: input.actor,
-    }).catch(() => null);
-    if (!change?.collection) return null;
-    mapped.set(otherId, {
-      collectionId: change.collection.collectionId,
-      created: change.outcome === "created",
-    });
-    return change.collection.collectionId;
+    if (collection.parentCollectionId && !parentId) {
+      return none("The collection above it could not be made here.");
+    }
+    try {
+      const change = await createScientSourceCollection({
+        root: input.library,
+        name: collection.name,
+        ...(parentId ? { parentCollectionId: parentId } : {}),
+        actor: input.actor,
+      });
+      if (!change.collection) return none("It could not be made here.");
+      mapped.set(otherId, {
+        otherId,
+        name: collection.name,
+        collectionId: change.collection.collectionId,
+        created: change.outcome === "created",
+      });
+      return change.collection.collectionId;
+    } catch (error) {
+      return none(reasonOf(error, "It could not be made here."));
+    }
   };
   for (const collection of theirs.collections) {
     if (collection.sourceIds.some((sourceId) => input.fresh.has(sourceId))) {
       await ensure(collection.collectionId);
     }
   }
-  return [...mapped].map(([otherId, entry]) => ({ otherId, ...entry }));
+  return [...mapped.values()];
 }
 
-/**
- * Puts a source the join added where the other Library had it and keeps it apart from what the
- * other Library kept it apart from. Safe to repeat. Caller holds the Library's lock, so no
- * automatic merge can see the source before its "not duplicates" decisions are here.
- */
-async function organise(input: {
+/** Keeps a source apart, here, from every source the other Library keeps it apart from. */
+async function keepApart(input: {
   readonly library: ScientLibraryLocation;
   readonly sourceId: string;
   readonly decisions: OtherDecisions;
-  readonly collections: JoinHeader["collections"];
   readonly present: (sourceId: string) => Promise<boolean>;
   readonly actor: ScientSourceActor;
-}): Promise<ReadonlyArray<string>> {
+}): Promise<void> {
   for (const other of input.decisions.apartFrom.get(input.sourceId) ?? []) {
     if (!(await input.present(other))) continue;
     await markScientLibrarySourcesDistinct({
@@ -748,32 +787,57 @@ async function organise(input: {
       actor: input.actor,
     });
   }
+}
+
+/** Puts a source the join added in the collections the other Library had it in. Repeatable. */
+async function place(input: {
+  readonly library: ScientLibraryLocation;
+  readonly sourceId: string;
+  readonly decisions: OtherDecisions;
+  readonly collections: JoinHeader["collections"];
+  readonly actor: ScientSourceActor;
+}): Promise<Pick<Arrived, "collections" | "unplaced">> {
   const placed: string[] = [];
+  const unplaced: Array<Arrived["unplaced"][number]> = [];
   for (const otherId of input.decisions.collectionsOf.get(input.sourceId) ?? []) {
-    const collectionId = input.collections.find((entry) => entry.otherId === otherId)?.collectionId;
-    if (!collectionId) continue;
-    // A full collection or one deleted meanwhile: the source arrives without it.
-    const change = await changeScientSourceCollectionMembers({
+    const collection = input.collections.find((entry) => entry.otherId === otherId);
+    if (!collection) continue;
+    if (!collection.collectionId) {
+      unplaced.push({ name: collection.name, why: collection.why ?? "It could not be made here." });
+      continue;
+    }
+    // A full collection, or one deleted meanwhile: the source arrives without it, and says so.
+    const failure = await changeScientSourceCollectionMembers({
       root: input.library,
-      collectionId,
+      collectionId: collection.collectionId,
       add: [input.sourceId],
       actor: input.actor,
-    }).catch(() => null);
-    if (change?.collection?.sourceIds.includes(input.sourceId)) placed.push(collectionId);
+    }).then(
+      (change) =>
+        change.collection?.sourceIds.includes(input.sourceId)
+          ? null
+          : "The collection is no longer here.",
+      (error: unknown) => reasonOf(error, "It could not be put in the collection."),
+    );
+    if (failure === null) placed.push(collection.collectionId);
+    else unplaced.push({ name: collection.name, why: failure });
   }
-  return placed;
+  return { collections: placed, unplaced };
 }
 
 /**
- * Adds one source as the other Library has it: PDFs and highlights first, then its earlier
- * versions with the PDFs they name, the record last, each created only if no file has its
- * name. Highlights come only with a PDF this Library did not have. Caller holds the lock.
+ * Adds one source as the other Library has it. Order matters for a kill at any point:
+ * highlights before their PDF (a PDF here without them means this Library's own), earlier
+ * versions with the PDFs they name, `beforeRecord` (the "keep apart" decisions), the record
+ * last. Caller holds the Library's lock; each file is created only if none has its name.
  */
 async function addSource(input: {
   readonly libraryRoot: string;
   readonly otherRoot: string;
   readonly record: ScientSourceRecord;
-}): Promise<Omit<Arrived, "collections"> | string> {
+  readonly beforeRecord: () => Promise<void>;
+  readonly afterFiles?: (() => void) | undefined;
+}): Promise<Pick<Arrived, "sourceId" | "highlights" | "missingPdfs" | "highlightsKept"> | string> {
   const { libraryRoot, otherRoot, record } = input;
   const id = record.sourceId;
   assertSafeIdentifier(id, "Source ID");
@@ -787,31 +851,30 @@ async function addSource(input: {
   }
   const library = scientLibraryLocation(libraryRoot);
   const other = scientLibraryLocation(otherRoot);
-  const highlights: Array<Arrived["highlights"][number]> = [];
+  const highlights: Array<{ sha256: string; hash: string | null }> = [];
   let missingPdfs = 0;
   let highlightsKept = false;
   for (const attachment of record.attachments) {
-    const copied = await copyPdf(
-      sourceAttachmentAbsolutePath(other, attachment),
-      sourceAttachmentAbsolutePath(library, attachment),
-      attachment.sha256,
-    );
-    if (copied === "missing") {
-      missingPdfs += 1;
-      continue;
-    }
+    const ourPdf = sourceAttachmentAbsolutePath(library, attachment);
     const theirs = await fileBytes(annotationPath(otherRoot, attachment.sha256));
     const ours = annotationPath(libraryRoot, attachment.sha256);
-    if (copied === "here") {
-      // The PDF belongs to a source of this Library too: its highlights stay as they are.
+    if (await exists(ourPdf)) {
+      // The PDF is here already: its highlights stay as this Library has them.
       const mine = await fileBytes(ours);
       if (theirs && (!mine || !mine.equals(theirs))) highlightsKept = true;
-      continue;
+    } else {
+      if (theirs) await createUnderLock(ours, theirs);
+      const copied = await copyPdf(
+        sourceAttachmentAbsolutePath(other, attachment),
+        ourPdf,
+        attachment.sha256,
+      );
+      if (copied === "missing") missingPdfs += 1;
     }
-    if (theirs) await createExclusively(ours, theirs);
-    const written = await fileBytes(ours);
-    highlights.push({ sha256: attachment.sha256, hash: written ? hashOfBytes(written) : null });
+    const now = await fileBytes(ours);
+    highlights.push({ sha256: attachment.sha256, hash: now ? hashOfBytes(now) : null });
   }
+  input.afterFiles?.();
   const history = NodePath.join(otherRoot, "history", id);
   for (const name of await NodeFSP.readdir(history).catch(() => [] as string[])) {
     if (!/^\d+\.json$/u.test(name)) continue;
@@ -828,12 +891,14 @@ async function addSource(input: {
         attachment.sha256,
       ).catch(() => "missing" as const);
     }
-    await createExclusively(NodePath.join(libraryRoot, "history", id, name), bytes);
+    await createUnderLock(NodePath.join(libraryRoot, "history", id, name), bytes);
   }
   const bytes = await NodeFSP.readFile(NodePath.join(otherRoot, "records", `${id}.json`));
   // Written as the other Library keeps it, once it is known to be a record this Scient reads.
   decodePersistedScientSourceRecord(JSON.parse(bytes.toString("utf8")));
-  if (!(await createExclusively(recordPath, bytes))) return "it is here now";
+  // Before the record exists, so no automatic merge ever sees it without these decisions.
+  await input.beforeRecord();
+  if (!(await createUnderLock(recordPath, bytes))) return "it is here now";
   return { sourceId: id, highlights, missingPdfs, highlightsKept };
 }
 
@@ -857,6 +922,8 @@ async function settleStopped(
     source?.outcome === "ready" && source.other.libraryId === header.other.libraryId
       ? await otherDecisions(source.root).catch(() => null)
       : null;
+  const present = (sourceId: string) =>
+    exists(NodePath.join(libraryRoot, "records", `${sourceId}.json`));
   await withScientLibraryLock(libraryRoot, async () => {
     for (const part of await readParts(directory)) {
       if (part.state === "done") continue;
@@ -871,22 +938,25 @@ async function settleStopped(
         if (!anywhere.some(Boolean)) continue;
         const record = await readScientSourceRecord(library, planned.sourceId);
         // Only a source still exactly as planned is organised: a changed one is the person's.
-        const collections =
-          decisions && record && fingerprintOf(record) === planned.fingerprint
-            ? await organise({
+        const asPlanned = record !== null && fingerprintOf(record) === planned.fingerprint;
+        if (decisions && asPlanned) {
+          await keepApart({ library, sourceId: planned.sourceId, decisions, present, actor });
+        }
+        const filed =
+          decisions && asPlanned
+            ? await place({
                 library,
                 sourceId: planned.sourceId,
                 decisions,
                 collections: header.collections,
-                present: (sourceId) =>
-                  exists(NodePath.join(libraryRoot, "records", `${sourceId}.json`)),
                 actor,
               })
-            : [];
+            : { collections: [], unplaced: [] };
         added.push({
           sourceId: planned.sourceId,
-          collections: [...collections],
-          highlights: [],
+          ...filed,
+          // Not known for a part that stopped: Undo then keeps a source with any highlights.
+          highlights: null,
           missingPdfs: 0,
           highlightsKept: false,
         });
@@ -948,6 +1018,25 @@ async function oneAtATime<A>(libraryRoot: string, run: () => Promise<A>): Promis
   }
 }
 
+/**
+ * A mark of what deciding "new" reads, apart from what this join itself added: the names in
+ * `records/`, `trash/` and `deleted/`, and the merge aliases. Equal marks mean no other writer
+ * added, removed or merged a source since. (An edit of an existing record is not seen.)
+ */
+async function libraryMark(libraryRoot: string, own: ReadonlySet<string>): Promise<string> {
+  const names = async (folder: string) =>
+    (await NodeFSP.readdir(NodePath.join(libraryRoot, folder)).catch(() => [] as string[]))
+      .filter((name) => name.endsWith(".json") && !own.has(name.slice(0, -".json".length)))
+      .toSorted();
+  const aliases = await NodeFSP.stat(NodePath.join(libraryRoot, "aliases.json")).then(
+    (stats) => `${stats.mtimeMs}:${stats.size}`,
+    () => "none",
+  );
+  return sha256Of(
+    stableJson([await names("records"), await names("trash"), await names("deleted"), aliases]),
+  );
+}
+
 export type ScientLibraryJoinResult =
   | {
       readonly outcome: "joined";
@@ -955,12 +1044,15 @@ export type ScientLibraryJoinResult =
       readonly added: number;
       /** Planned but not added: it appeared or was removed here meanwhile, or could not be read. */
       readonly skipped: number;
+      /** Recorded and left as here, with added sources that kept this Library's highlights. */
       readonly different: number;
       readonly removedHere: number;
       readonly removedThere: number;
       readonly identical: number;
       /** PDFs the added sources name that the other Library's folder did not hold. */
       readonly missingPdfs: number;
+      /** Collections some added source could not be put in, by name. */
+      readonly unplacedIn: ReadonlyArray<string>;
     }
   | { readonly outcome: "stopped"; readonly joinId: string; readonly added: number }
   /** Another join, or an Undo of one, is running in this Library. */
@@ -987,18 +1079,28 @@ export async function joinScientLibrary(input: {
   readonly onStarted?: (joinId: string) => void;
   /** Asked between parts; true stops the join where it is. */
   readonly shouldStop?: () => boolean;
-  /** Tests only: stops after this many sources of a part, as a killed process would. */
-  readonly faults?: { readonly stopAfter?: number; readonly beforeOrganise?: () => void };
+  /** Tests only: a smaller part, and stops at named points as a killed process would. */
+  readonly faults?: {
+    readonly partSize?: number;
+    readonly stopAfter?: number;
+    readonly afterFiles?: () => void;
+    readonly beforeOrganise?: () => void;
+  };
 }): Promise<ScientLibraryJoinResult> {
   const source = await openScientLibraryJoinSource(input.library, input.folder);
   if (source.outcome !== "ready") return source;
   const libraryRoot = await NodeFSP.realpath(input.library.root);
   const library = scientLibraryLocation(libraryRoot);
+  const present = (sourceId: string) =>
+    exists(NodePath.join(libraryRoot, "records", `${sourceId}.json`));
   const joined = await oneAtATime(libraryRoot, async (): Promise<ScientLibraryJoinResult> => {
     // Holding the lifetime lock: any join still marked running stopped part way.
     for (const joinId of await unfinishedJoins(libraryRoot)) {
       await settleStopped(libraryRoot, joinId, input.actor);
     }
+    const own = new Set<string>();
+    // Taken before the comparison, so a change during it is seen as one since.
+    let mark = await libraryMark(libraryRoot, own);
     const compared = await compareScientLibraries(library, source.root);
     const decisions = await otherDecisions(source.root);
     const joinId = `join_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
@@ -1033,17 +1135,17 @@ export async function joinScientLibrary(input: {
     };
     await writeHeader(header);
 
-    let added = 0;
     let skipped = 0;
     let missingPdfs = 0;
+    let highlightsKept = 0;
     let done = 0;
-    for (
-      let start = 0, number = 1;
-      start < compared.fresh.length;
-      start += PART_SIZE, number += 1
-    ) {
-      if (input.shouldStop?.()) return { outcome: "stopped", joinId, added };
-      const records = compared.fresh.slice(start, start + PART_SIZE);
+    const unplacedIn = new Set<string>();
+    const size = input.faults?.partSize ?? PART_SIZE;
+    /** This Library as last read in full; null while the first comparison still stands. */
+    let state: LocalState | null = null;
+    for (let start = 0, number = 1; start < compared.fresh.length; start += size, number += 1) {
+      if (input.shouldStop?.()) return { outcome: "stopped", joinId, added: own.size };
+      const records = compared.fresh.slice(start, start + size);
       const part: JoinPart = {
         formatVersion: 1,
         number,
@@ -1058,41 +1160,63 @@ export async function joinScientLibrary(input: {
       // Written first: whatever happens next, the join's record names what it may have added.
       await atomicWriteJson(partPath(directory, number), part, MAX_PART_BYTES);
       const settled = await withScientLibraryLock(libraryRoot, async () => {
-        // Under the lock, against the Library as it is now: an import, a merge or a removal
-        // since the join first looked means the source is no longer certainly new.
-        const state = await localState(library);
+        // Under the lock: if anything but this join added, removed or merged a source since
+        // the Library was last read, it is read again and each source is judged against it.
+        const now = await libraryMark(libraryRoot, own);
+        if (now !== mark) {
+          state = await localState(library);
+          mark = now;
+        }
         const partAdded: Arrived[] = [];
         const partSkipped: Array<{ sourceId: string; why: string }> = [];
+        // A test's stop inside `addSource` ends the join, as a kill would; it is not a skip.
+        let killed: unknown = null;
+        const afterFiles = input.faults?.afterFiles
+          ? () => {
+              try {
+                input.faults?.afterFiles?.();
+              } catch (error) {
+                killed = error;
+                throw error;
+              }
+            }
+          : undefined;
         for (const [index, record] of records.entries()) {
           if (input.faults?.stopAfter === index) throw new Error("Stopped (test fault).");
           const id = record.sourceId;
           const arrived =
-            standingOf(record, state).kind !== "fresh"
+            state !== null && standingOf(record, state, own).kind !== "fresh"
               ? "it is no longer new here"
-              : await addSource({ libraryRoot, otherRoot: source.root, record }).catch(
-                  (error: unknown) =>
-                    error instanceof Error && error.message
-                      ? error.message
-                      : "it could not be read",
-                );
-          if (typeof arrived === "string") partSkipped.push({ sourceId: id, why: arrived });
-          else {
-            input.faults?.beforeOrganise?.();
-            const collections = await organise({
-              library,
-              sourceId: id,
-              decisions,
-              collections: header.collections,
-              present: (sourceId) =>
-                exists(NodePath.join(libraryRoot, "records", `${sourceId}.json`)),
-              actor: input.actor,
-            });
-            partAdded.push({ ...arrived, collections: [...collections] });
-            added += 1;
-            missingPdfs += arrived.missingPdfs;
-          }
+              : await addSource({
+                  libraryRoot,
+                  otherRoot: source.root,
+                  record,
+                  beforeRecord: () =>
+                    keepApart({ library, sourceId: id, decisions, present, actor: input.actor }),
+                  afterFiles,
+                }).catch((error: unknown) => reasonOf(error, "it could not be read"));
+          if (killed !== null) throw killed;
           done += 1;
-          input.onProgress?.({ done, total: compared.fresh.length, added });
+          if (typeof arrived === "string") {
+            partSkipped.push({ sourceId: id, why: arrived });
+            input.onProgress?.({ done, total: compared.fresh.length, added: own.size });
+            continue;
+          }
+          // The record is in: counted at once, so a failure below cannot say nothing arrived.
+          own.add(id);
+          missingPdfs += arrived.missingPdfs;
+          if (arrived.highlightsKept) highlightsKept += 1;
+          input.onProgress?.({ done, total: compared.fresh.length, added: own.size });
+          input.faults?.beforeOrganise?.();
+          const filed = await place({
+            library,
+            sourceId: id,
+            decisions,
+            collections: header.collections,
+            actor: input.actor,
+          });
+          for (const entry of filed.unplaced) unplacedIn.add(entry.name);
+          partAdded.push({ ...arrived, ...filed });
         }
         return { partAdded, partSkipped };
       });
@@ -1107,19 +1231,24 @@ export async function joinScientLibrary(input: {
     return {
       outcome: "joined",
       joinId,
-      added,
+      added: own.size,
       skipped,
-      different: compared.different.length,
+      different: compared.different.length + highlightsKept,
       removedHere: compared.removedHere.length,
       removedThere: compared.removedThere,
       identical: compared.identical,
       missingPdfs,
+      unplacedIn: [...unplacedIn].toSorted(),
     };
   });
   return joined === "busy" ? { outcome: "busy" } : joined;
 }
 
-/** Source IDs a project on this computer has pinned, linked or resolved to, as the Library records. */
+/**
+ * Source IDs a project on this computer uses: those its map in the Library names (a pin, a
+ * link, a rebuilt copy), and those the pins file of each project folder the Library knows
+ * names, which is written before the map is.
+ */
 async function usedByProjects(libraryRoot: string): Promise<ReadonlySet<string>> {
   const folder = NodePath.join(libraryRoot, "projects");
   const used = new Set<string>();
@@ -1139,6 +1268,14 @@ async function usedByProjects(libraryRoot: string): Promise<ReadonlySet<string>>
       }
     }
   }
+  const instances = await listScientLibraryInstances(scientLibraryLocation(libraryRoot)).catch(
+    () => [],
+  );
+  for (const instance of instances) {
+    for (const pin of await readScientProjectPins(instance.path).catch(() => [])) {
+      used.add(pin.sourceId);
+    }
+  }
   return used;
 }
 
@@ -1156,8 +1293,8 @@ export type ScientLibraryJoinUndo =
 /**
  * Takes a join back as far as nothing has happened since: a source it added goes to the Trash
  * only if its record is as the join left it, no project uses it, it is in no other collection,
- * and the highlights that came with it are untouched. A collection the join made goes once
- * nothing is in or under it. In the Trash the sources are removed here, so no join adds them again.
+ * and the highlights on its PDFs are as they were. A collection the join made goes once nothing
+ * is in or under it. In the Trash the sources are removed here, so no join adds them again.
  */
 export async function undoScientLibraryJoin(input: {
   readonly library: ScientLibraryLocation;
@@ -1166,6 +1303,10 @@ export async function undoScientLibraryJoin(input: {
 }): Promise<ScientLibraryJoinUndo> {
   const libraryRoot = await NodeFSP.realpath(input.library.root);
   const library = scientLibraryLocation(libraryRoot);
+  const highlightsNow = async (sha256: string) => {
+    const now = await fileBytes(annotationPath(libraryRoot, sha256));
+    return now ? hashOfBytes(now) : null;
+  };
   const undone = await oneAtATime(libraryRoot, async (): Promise<ScientLibraryJoinUndo> => {
     await settleStopped(libraryRoot, input.joinId, input.actor);
     const header = await readHeader(libraryRoot, input.joinId);
@@ -1194,10 +1335,11 @@ export async function undoScientLibraryJoin(input: {
             ) &&
             (
               await Promise.all(
-                arrived.highlights.map(async ({ sha256, hash }) => {
-                  const now = await fileBytes(annotationPath(libraryRoot, sha256));
-                  return (now ? hashOfBytes(now) : null) === hash;
-                }),
+                // Where the state on arrival is not known, any highlights count as later work.
+                (
+                  arrived.highlights ??
+                  record.attachments.map(({ sha256 }) => ({ sha256, hash: null }))
+                ).map(async ({ sha256, hash }) => (await highlightsNow(sha256)) === hash),
               )
             ).every(Boolean);
           const removed = untouched
@@ -1216,6 +1358,7 @@ export async function undoScientLibraryJoin(input: {
     // Children first; a collection goes only when nothing here is in it and nothing is under it.
     const created = header.collections.filter((entry) => entry.created).toReversed();
     for (const { collectionId } of created) {
+      if (!collectionId) continue;
       const present = new Set((await listScientSourceRecords(library)).map((r) => r.sourceId));
       const organization = await readScientSourcesOrganization(library, present);
       const collection = organization.collections.find(
@@ -1263,6 +1406,8 @@ export interface ScientLibraryJoinRecord {
   readonly removedThere: number;
   /** PDFs the added sources name that the other Library's folder did not hold. */
   readonly missingPdfs: number;
+  /** Collections of the other Library some added source could not be put in, by name. */
+  readonly unplacedIn: ReadonlyArray<string>;
   /** After Undo: what stayed because it was changed or used since. */
   readonly left: number;
 }
@@ -1322,6 +1467,9 @@ export async function listScientLibraryJoins(
       removedHere: header.removedHere.length,
       removedThere: header.removedThere,
       missingPdfs: arrived.reduce((sum, entry) => sum + entry.missingPdfs, 0),
+      unplacedIn: [
+        ...new Set(arrived.flatMap((entry) => entry.unplaced.map(({ name }) => name))),
+      ].toSorted(),
       left: header.undone?.left ?? 0,
     });
   }

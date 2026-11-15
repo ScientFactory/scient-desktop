@@ -35,6 +35,31 @@ function recordedState(entry: ProviderReplayEntry): RecordedSession | undefined 
 }
 
 /** Rebind recorded native file identities only; argv, ids, frames and ordinal ownership stay strict. */
+// Pi launches put the owned session pair right after `--mode rpc` (buildPiRpcLaunch);
+// recordings made before that may declare it last. Declarations accept either; launches don't.
+const SESSION_FLAG_INDEX = 2;
+const sessionFlagPositions = (args: ReadonlyArray<string>) =>
+  args.flatMap((arg, index) => (arg === "--session" ? [index] : []));
+/** The declared pair's index, null when none is declared, undefined when it is malformed. */
+const declaredSessionPair = (args: ReadonlyArray<string>): number | null | undefined => {
+  const flags = sessionFlagPositions(args);
+  if (flags.length === 0) return null;
+  const [index] = flags;
+  return flags.length === 1 &&
+    (index === SESSION_FLAG_INDEX || index === args.length - 2) &&
+    index + 1 < args.length
+    ? index
+    : undefined;
+};
+const withoutSessionPair = (args: ReadonlyArray<string>, index: number | null) =>
+  index === null ? [...args] : [...args.slice(0, index), ...args.slice(index + 2)];
+const withSessionPair = (base: ReadonlyArray<string>, file: string) => [
+  ...base.slice(0, SESSION_FLAG_INDEX),
+  "--session",
+  file,
+  ...base.slice(SESSION_FLAG_INDEX),
+];
+
 export class PiReplaySessionBinding {
   private readonly identities = new Map<string, RecordedSession>();
   private readonly files = new Map<string, string>();
@@ -96,10 +121,16 @@ export class PiReplaySessionBinding {
     const initial = firstState === undefined ? undefined : recordedState(firstState);
     if (initial === undefined)
       throw new Error("Pi replay process has no recorded initial session identity.");
-    const sessionFlags = input.args.flatMap((arg, index) => (arg === "--session" ? [index] : []));
-    if (sessionFlags.length !== 1 || sessionFlags[0] !== input.args.length - 2)
-      throw new Error("Pi replay launch requires exactly one final owned --session pair.");
-    const actualFile = input.args.at(-1)!;
+    const sessionFlags = sessionFlagPositions(input.args);
+    if (
+      sessionFlags.length !== 1 ||
+      sessionFlags[0] !== SESSION_FLAG_INDEX ||
+      input.args.length < SESSION_FLAG_INDEX + 2
+    )
+      throw new Error(
+        "Pi replay launch requires exactly one owned --session pair after --mode rpc.",
+      );
+    const actualFile = input.args[SESSION_FLAG_INDEX + 1]!;
     if (
       NodePath.dirname(actualFile) !== this.stateRoot ||
       NodePath.resolve(actualFile) !== actualFile ||
@@ -115,17 +146,14 @@ export class PiReplaySessionBinding {
     if (previousFile === undefined && [...this.files.values()].includes(actualFile))
       throw new Error("Pi replay launch reused another recorded session file.");
     const originalArgs = start.frame.args;
-    const declaredFlags = originalArgs.flatMap((arg, index) =>
-      arg === "--session" ? [index] : [],
-    );
+    const declaredPair = declaredSessionPair(originalArgs);
     if (
-      declaredFlags.length > 1 ||
-      (declaredFlags.length === 1 &&
-        (declaredFlags[0] !== originalArgs.length - 2 || originalArgs.at(-1) !== initial.file))
+      declaredPair === undefined ||
+      (declaredPair !== null && originalArgs[declaredPair + 1] !== initial.file)
     )
       throw new Error("Pi replay recorded launch has a wrong or duplicate session identity.");
-    const baseArgs = declaredFlags.length === 0 ? originalArgs : originalArgs.slice(0, -2);
-    const actualBase = input.args.slice(0, -2);
+    const baseArgs = withoutSessionPair(originalArgs, declaredPair);
+    const actualBase = withoutSessionPair(input.args, SESSION_FLAG_INDEX);
     if (
       baseArgs.length !== actualBase.length ||
       baseArgs.some((arg, index) => arg !== "<any>" && arg !== actualBase[index])
@@ -134,7 +162,7 @@ export class PiReplaySessionBinding {
     this.cwd = input.cwd;
     this.started.add(input.ordinal);
     this.files.set(initial.file, actualFile);
-    this.launches.set(input.ordinal, [...baseArgs, "--session", actualFile]);
+    this.launches.set(input.ordinal, withSessionPair(baseArgs, actualFile));
     for (const identity of this.identities.values()) {
       if (!this.files.has(identity.file))
         this.files.set(
@@ -753,17 +781,21 @@ export function declarePiReplaySessionFiles(
       !frame.args.every((arg) => typeof arg === "string")
     )
       throw new Error("Pi replay declaration has an invalid process start.");
-    const flags = frame.args.flatMap((arg, position) => (arg === "--session" ? [position] : []));
+    const declaredPair = declaredSessionPair(frame.args);
     if (
-      flags.length > 1 ||
-      (flags.length === 1 &&
-        (flags[0] !== frame.args.length - 2 || frame.args.at(-1) !== identity.file))
+      declaredPair === undefined ||
+      (declaredPair !== null && frame.args[declaredPair + 1] !== identity.file)
     )
       throw new Error("Pi replay declaration has an invalid launch identity.");
-    const args = flags.length === 0 ? frame.args : frame.args.slice(0, -2);
     return {
       ...entry,
-      frame: { ...frame, args: [...args, "--session", expectedFile(identity.file)] },
+      frame: {
+        ...frame,
+        args: withSessionPair(
+          withoutSessionPair(frame.args, declaredPair),
+          expectedFile(identity.file),
+        ),
+      },
     };
   });
   return { sessions, entries: bound, expectedFile };
@@ -816,8 +848,8 @@ export function assertPiReplayConfirmedLaunches(
       processOrdinal(start) !== ordinal ||
       !Array.isArray(start.frame.args) ||
       start.frame.args.filter((arg) => arg === "--session").length !== 1 ||
-      start.frame.args.at(-2) !== "--session" ||
-      start.frame.args.at(-1) !== declared.canonicalFile
+      start.frame.args[SESSION_FLAG_INDEX] !== "--session" ||
+      start.frame.args[SESSION_FLAG_INDEX + 1] !== declared.canonicalFile
     )
       throw new Error("Pi replay observed a different launch file or ordinal.");
     const startIndex = evidence.observed.indexOf(start);
@@ -891,8 +923,12 @@ export function reconcilePiBoundLaunchProtocol(input: {
       : input.scenario === "thread_rollback_after_stop"
         ? 160
         : undefined;
-  const historicalRPCFrames: Array<ProviderReplayEntry> = [];
-  if (start === undefined) return { entries: prepared, historicalRPCFrames };
+  const historicalRPCFrames: Array<ProviderReplayEntry> = attachedSwitches(prepared);
+  if (start === undefined)
+    return {
+      entries: prepared.filter((entry) => !historicalRPCFrames.includes(entry)),
+      historicalRPCFrames,
+    };
   // reconcilePiRecordedSchedules pins the complete current recording first.
   const request = input.entries[start + 1]!;
   const reply = input.entries[start + 5]!;
@@ -919,11 +955,51 @@ export function reconcilePiBoundLaunchProtocol(input: {
     reopened.id !== initialIdentity.id
   )
     throw new Error("Pi reopened launch adaptation changed its pinned identity or confirmation.");
-  historicalRPCFrames.push(request, reply);
+  historicalRPCFrames.unshift(request, reply);
   return {
-    entries: prepared.filter((entry) => entry !== request && entry !== reply),
+    entries: prepared.filter((entry) => !historicalRPCFrames.includes(entry)),
     historicalRPCFrames,
   };
+}
+
+/**
+ * A recorded switch_session to the file Pi already reported for that process,
+ * such as after a rollback `fork`, is no longer sent: Pi is attached there.
+ * Returns each such request with its correlated successful reply.
+ */
+function attachedSwitches(entries: ReadonlyArray<ProviderReplayEntry>) {
+  const frames: Array<ProviderReplayEntry> = [];
+  const current = new Map<number, string>();
+  for (const [index, entry] of entries.entries()) {
+    const state = recordedState(entry);
+    if (state !== undefined) current.set(processOrdinal(entry), state.file);
+    if (
+      entry.type !== "expect_outbound" ||
+      !Predicate.isObject(entry.frame) ||
+      entry.frame.type !== "switch_session" ||
+      entry.frame.sessionPath !== current.get(processOrdinal(entry))
+    )
+      continue;
+    const request = entry.frame;
+    const reply = entries
+      .slice(index + 1)
+      .find(
+        (candidate) =>
+          candidate.type === "emit_inbound" &&
+          Predicate.isObject(candidate.frame) &&
+          candidate.frame.command === "switch_session" &&
+          candidate.frame.id === request.id,
+      );
+    if (
+      reply?.type !== "emit_inbound" ||
+      !Predicate.isObject(reply.frame) ||
+      reply.frame.success !== true ||
+      processOrdinal(reply) !== processOrdinal(entry)
+    )
+      throw new Error("Pi recorded attached switch_session has no successful correlated reply.");
+    frames.push(entry, reply);
+  }
+  return frames;
 }
 
 export function piReplayObservedEntries(transcript: ProviderReplayTranscript) {

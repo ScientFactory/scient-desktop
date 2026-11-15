@@ -574,6 +574,10 @@ Highlights come with a PDF that is new here. If this Library already has that
 PDF, its own highlights stay, and the message counts the source among those
 that differ.
 
+If a source cannot be put in one of its collections here (a collection is
+full, or cannot be made), it still arrives, and the message names the
+collection so you can file it by hand.
+
 It never changes a source that is already in your Library. Sources that both
 Libraries hold and that differ, for example a note you wrote on the other
 computer, are counted in the message at the end and left as they are here. So

@@ -876,6 +876,8 @@ export const ScientSourcesJoinStatus = Schema.Union([
     removedThere: Schema.Int,
     /** PDFs the added sources name that the other Library's folder did not hold. */
     missingPdfs: Schema.Int,
+    /** Collections some added source could not be put in, by name. */
+    unplacedIn: Schema.Array(Schema.String),
   }),
   Schema.Struct({
     state: Schema.Literal("failed"),

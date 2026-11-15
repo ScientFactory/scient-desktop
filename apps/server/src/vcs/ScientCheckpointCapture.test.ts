@@ -3,7 +3,10 @@ import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { ChildProcessSpawner } from "effect/process";
 
-import { makeCheckpointSizeCheck } from "./ScientCheckpointCapture.ts";
+import {
+  makeCheckpointSizeCheck,
+  remainingCheckpointCaptureMs,
+} from "./ScientCheckpointCapture.ts";
 
 it.effect("treats a size scan that runs out of time as too large and skips it on later turns", () =>
   Effect.gen(function* () {
@@ -43,3 +46,9 @@ it.effect("treats a size scan that runs out of time as too large and skips it on
     }
   }),
 );
+
+it("gives submodules only what remains of the capture's deadline", () => {
+  assert.equal(remainingCheckpointCaptureMs(1_000, 1_000), 90_000);
+  assert.equal(remainingCheckpointCaptureMs(1_000, 61_000), 30_000);
+  assert.equal(remainingCheckpointCaptureMs(1_000, 200_000), 0);
+});

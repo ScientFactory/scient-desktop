@@ -41,7 +41,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
     },
     cwd: "/workspace/project",
     managedMcpConfig: false,
-    spawnThroughEnv: false,
+    spawnVia: undefined,
   });
 
   assert.deepEqual(options.mcpServers, {});
