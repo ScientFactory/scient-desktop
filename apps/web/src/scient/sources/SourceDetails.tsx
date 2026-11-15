@@ -3,7 +3,10 @@ import type {
   ScientSourceNoteUpdateResult,
   ScientSourcesOverviewResult,
 } from "@t3tools/contracts";
-import { SCIENT_SOURCE_MORE_FIELDS } from "@scientfactory/scient-sources";
+import {
+  SCIENT_SOURCE_MORE_FIELDS,
+  type ScientSourceCategorySummary,
+} from "@scientfactory/scient-sources";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   AlertCircle,
@@ -23,6 +26,7 @@ import {
   Pencil,
   RefreshCw,
   Star,
+  Tag as TagIcon,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -75,6 +79,9 @@ import { SourceReference } from "./SourceReference";
 import type { CitationStyleProject } from "./useProjectCitationStyle";
 import { useSourceNoteControls, type SourceNoteSaveContext } from "./SourceNote";
 import type { SourceAnchorPoint } from "./sourceAnchor";
+import { SourceCategories, type SourceCategoryChoice } from "./SourceOrganizeSection";
+import { SOURCES_COLUMN } from "./PanelChrome";
+import "./sourceDetails.css";
 
 type SourceRecord = ScientSourceDetailResult;
 type SourceDiagnostic =
@@ -485,61 +492,6 @@ function AbstractPreview(props: {
   );
 }
 
-function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
-  const rowRef = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  const identity = props.tags.join("\u241e");
-
-  const [previousTagIdentity, setPreviousTagIdentity] = useState({ identity: identity });
-  if (previousTagIdentity.identity !== identity) {
-    setPreviousTagIdentity({ identity: identity });
-    setExpanded(false);
-  }
-
-  const tagMeasurement = { expanded, identity };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the tag row DOM node via ResizeObserver to detect overflow
-  useEffect(() => {
-    if (tagMeasurement.expanded) return;
-    const row = rowRef.current;
-    if (!row) return;
-    const measure = () => setOverflows(row.scrollHeight > row.clientHeight + 1);
-    measure();
-    return observeResize(row, measure);
-  }, [tagMeasurement]);
-
-  return (
-    <div className="min-w-0">
-      <div
-        ref={rowRef}
-        className={
-          expanded
-            ? "flex min-w-0 w-full flex-wrap gap-1.5"
-            : "flex h-6 min-w-0 w-full flex-wrap gap-1.5 overflow-hidden"
-        }
-      >
-        {props.tags.map((tag) => (
-          <Badge key={tag} variant="outline" className="shrink-0 whitespace-nowrap">
-            {tag}
-          </Badge>
-        ))}
-      </div>
-      {expanded || overflows ? (
-        <Button
-          type="button"
-          size="compact"
-          variant="ghost-muted"
-          className="mt-1"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "Show less" : "Show more"}
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
 function MetadataRefreshConfirmation(props: {
   readonly anchorPoint: SourceAnchorPoint;
   readonly onOpenChange: (open: boolean) => void;
@@ -790,8 +742,11 @@ export function SourceDetails(props: {
   /** The connection can read this Library but not change it. */
   readonly readOnly?: boolean;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
-  /** Editable tags and collections; without it the tags are shown read-only. */
-  readonly organize?: ReactNode;
+  /** The tags and collections row beside the reading state; without it, the tags alone. */
+  readonly filing?: ReactNode;
+  /** Registry categories, shown among the facts when there are any. */
+  readonly categories?: ScientSourceCategorySummary | undefined;
+  readonly onShowCategory?: (category: SourceCategoryChoice) => void;
   /** The project whose citation style the reference uses. */
   readonly citationProject?: CitationStyleProject;
   readonly onBack: () => void;
@@ -860,6 +815,7 @@ export function SourceDetails(props: {
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
   );
+  const hasLead = props.diagnostics.length > 0 || Boolean(record.abstract);
   // Edition, place, series and the like: shown under the names a person knows them by.
   const moreDetails = SCIENT_SOURCE_MORE_FIELDS.filter(({ name }) => record.more?.[name]);
   const externalUrl = safeSourceExternalUrl(record.url);
@@ -1124,7 +1080,7 @@ export function SourceDetails(props: {
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <article className="space-y-6 p-4">
+        <article className={`${SOURCES_COLUMN} space-y-6 p-4`}>
           <header className="space-y-2">
             <Badge variant="secondary">{sourceTypeLabel(record)}</Badge>
             <h2 className="text-lg font-semibold leading-snug">
@@ -1135,137 +1091,164 @@ export function SourceDetails(props: {
               <p className="text-xs text-muted-foreground">{fileNameTitle}</p>
             ) : null}
             <SourceEditorialStatus status={record.editorialStatus} />
-            {library ? (
-              <ReadingControls record={record} onSetReadingState={library.onSetReadingState} />
-            ) : null}
+            <div className="flex flex-wrap items-center gap-1 empty:hidden">
+              {library ? (
+                <ReadingControls record={record} onSetReadingState={library.onSetReadingState} />
+              ) : null}
+              {props.filing ??
+                tags.map((tag) => (
+                  <Badge key={tag} variant="outline">
+                    <TagIcon className="text-muted-foreground" aria-hidden />
+                    {tag}
+                  </Badge>
+                ))}
+            </div>
           </header>
 
-          {props.diagnostics.length > 0 ? (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-              <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-              <div>
-                <div className="font-medium">Metadata needs review</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {record.abstract ? (
-            <DetailsSection title="Abstract">
-              <AbstractPreview text={record.abstract} sections={record.abstractSections} />
-            </DetailsSection>
-          ) : null}
-
-          {hasPublicationDetails ? (
-            <section className="space-y-2">
-              <h3 className="text-sm font-medium text-foreground">Publication details</h3>
-              <dl className="space-y-2">
-                {publication ? (
-                  <div className="space-y-0.5 text-sm">
-                    <dt className="text-muted-foreground">
-                      {publicationContainerLabel(record.type)}:
-                    </dt>
-                    <dd className="min-w-0 break-words">{publication}</dd>
-                  </div>
-                ) : null}
-                {record.publisher ? (
-                  <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
-                    <dt className="text-muted-foreground">Publisher</dt>
-                    <dd className="min-w-0 break-words">{record.publisher}</dd>
-                  </div>
-                ) : null}
-                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
-                  {record.issuedRaw || record.issuedYear ? (
-                    <div className="flex items-baseline gap-2">
-                      <dt className="text-muted-foreground">Date:</dt>
-                      <dd>{record.issuedRaw ?? record.issuedYear}</dd>
+          {/* Wide: the facts run down a rail beside what you read and write. Narrower: they
+              follow the abstract, two to a row, then one. */}
+          <div className="@container/source-body">
+            <div className="grid gap-x-10 gap-y-6 @[48rem]/source-body:grid-cols-[minmax(0,1fr)_17rem] @[48rem]/source-body:grid-rows-[auto_1fr]">
+              {hasLead ? (
+                <div className="min-w-0 space-y-6 @[48rem]/source-body:col-start-1 @[48rem]/source-body:row-start-1">
+                  {props.diagnostics.length > 0 ? (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+                      <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                      <div>
+                        <div className="font-medium">Metadata needs review</div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
+                        </div>
+                      </div>
                     </div>
                   ) : null}
-                  {record.language ? (
-                    <div className="flex items-baseline gap-2">
-                      <dt className="text-muted-foreground">Language:</dt>
-                      <dd>{languageDisplayName(record.language)}</dd>
-                    </div>
+
+                  {record.abstract ? (
+                    <DetailsSection title="Abstract">
+                      <AbstractPreview text={record.abstract} sections={record.abstractSections} />
+                    </DetailsSection>
                   ) : null}
                 </div>
-              </dl>
-            </section>
-          ) : null}
+              ) : null}
 
-          {moreDetails.length > 0 ? (
-            <DetailsSection title="More details">
-              <div className="space-y-2">
-                {moreDetails.map(({ name, label }) => (
-                  <DetailRow key={name} label={label}>
-                    <span className="whitespace-pre-wrap">{record.more?.[name]}</span>
-                  </DetailRow>
-                ))}
-              </div>
-            </DetailsSection>
-          ) : null}
-
-          {identifiers.length > 0 || (externalUrl && !hasDoi) || otherKeys.length > 0 ? (
-            <DetailsSection title="Identifiers and links">
-              <div className="space-y-2">
-                {otherKeys.length > 0 && record.citationKey ? (
-                  <>
-                    <DetailRow label={LIBRARY_LABELS.citedAs}>{record.citationKey}</DetailRow>
-                    <DetailRow label={LIBRARY_LABELS.alsoCitedAs}>{otherKeys.join(", ")}</DetailRow>
-                  </>
+              <aside className="scient-source-facts grid min-w-0 content-start gap-x-10 gap-y-6 empty:hidden @[30rem]/source-body:grid-cols-2 @[48rem]/source-body:col-start-2 @[48rem]/source-body:row-span-2 @[48rem]/source-body:row-start-1 @[48rem]/source-body:grid-cols-1">
+                {hasPublicationDetails ? (
+                  <section className="space-y-2">
+                    <h3 className="text-sm font-medium text-foreground">Publication details</h3>
+                    <dl className="space-y-2">
+                      {publication ? (
+                        <div className="space-y-0.5 text-sm">
+                          <dt className="text-muted-foreground">
+                            {publicationContainerLabel(record.type)}:
+                          </dt>
+                          <dd className="min-w-0 break-words">{publication}</dd>
+                        </div>
+                      ) : null}
+                      {record.publisher ? (
+                        <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                          <dt className="text-muted-foreground">Publisher</dt>
+                          <dd className="min-w-0 break-words">{record.publisher}</dd>
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
+                        {record.issuedRaw || record.issuedYear ? (
+                          <div className="flex items-baseline gap-2">
+                            <dt className="text-muted-foreground">Date:</dt>
+                            <dd>{record.issuedRaw ?? record.issuedYear}</dd>
+                          </div>
+                        ) : null}
+                        {record.language ? (
+                          <div className="flex items-baseline gap-2">
+                            <dt className="text-muted-foreground">Language:</dt>
+                            <dd>{languageDisplayName(record.language)}</dd>
+                          </div>
+                        ) : null}
+                      </div>
+                    </dl>
+                  </section>
                 ) : null}
-                {identifiers.map((identifier) => {
-                  return identifier.scheme.toLowerCase() === "doi" ? (
-                    <DoiRow
-                      key={`${identifier.scheme}:${identifier.value}`}
-                      value={identifier.value}
-                    />
-                  ) : (
-                    <DetailRow
-                      key={`${identifier.scheme}:${identifier.value}`}
-                      label={identifier.scheme.toUpperCase()}
-                    >
-                      {identifier.value}
-                    </DetailRow>
-                  );
-                })}
-                {externalUrl && !hasDoi ? <SourceUrlRow url={externalUrl} /> : null}
-              </div>
-            </DetailsSection>
-          ) : null}
 
-          {props.organize ??
-            (tags.length > 0 ? (
-              <DetailsSection title="Tags">
-                <SourceTags tags={tags} />
-              </DetailsSection>
-            ) : null)}
+                {moreDetails.length > 0 ? (
+                  <DetailsSection title="More details">
+                    <div className="space-y-2">
+                      {moreDetails.map(({ name, label }) => (
+                        <DetailRow key={name} label={label}>
+                          <span className="whitespace-pre-wrap">{record.more?.[name]}</span>
+                        </DetailRow>
+                      ))}
+                    </div>
+                  </DetailsSection>
+                ) : null}
 
-          {record.libraryMatch ? (
-            <LibraryCopySection
-              match={record.libraryMatch}
-              library={readOnly ? undefined : library}
-            />
-          ) : null}
+                {identifiers.length > 0 || (externalUrl && !hasDoi) || otherKeys.length > 0 ? (
+                  <DetailsSection title="Identifiers and links">
+                    <div className="space-y-2">
+                      {otherKeys.length > 0 && record.citationKey ? (
+                        <>
+                          <DetailRow label={LIBRARY_LABELS.citedAs}>{record.citationKey}</DetailRow>
+                          <DetailRow label={LIBRARY_LABELS.alsoCitedAs}>
+                            {otherKeys.join(", ")}
+                          </DetailRow>
+                        </>
+                      ) : null}
+                      {identifiers.map((identifier) => {
+                        return identifier.scheme.toLowerCase() === "doi" ? (
+                          <DoiRow
+                            key={`${identifier.scheme}:${identifier.value}`}
+                            value={identifier.value}
+                          />
+                        ) : (
+                          <DetailRow
+                            key={`${identifier.scheme}:${identifier.value}`}
+                            label={identifier.scheme.toUpperCase()}
+                          >
+                            {identifier.value}
+                          </DetailRow>
+                        );
+                      })}
+                      {externalUrl && !hasDoi ? <SourceUrlRow url={externalUrl} /> : null}
+                    </div>
+                  </DetailsSection>
+                ) : null}
 
-          <SourceReference
-            record={record}
-            {...(props.citationProject ? { project: props.citationProject } : {})}
-          />
+                {props.onShowCategory ? (
+                  <SourceCategories
+                    categories={props.categories}
+                    onShowCategory={props.onShowCategory}
+                  />
+                ) : null}
+              </aside>
 
-          {props.annotations}
+              <div
+                className={`min-w-0 space-y-6 @[48rem]/source-body:col-start-1 ${hasLead ? "@[48rem]/source-body:row-start-2" : "@[48rem]/source-body:row-start-1"}`}
+              >
+                {record.libraryMatch ? (
+                  <LibraryCopySection
+                    match={record.libraryMatch}
+                    library={readOnly ? undefined : library}
+                  />
+                ) : null}
 
-          {showsPersonalNote ? (
-            <div className="@container/source-notes">
-              <div className="grid gap-6 @[32rem]/source-notes:grid-cols-2">
-                {inProject ? projectNoteSection : null}
-                {personalNote.section}
+                <SourceReference
+                  record={record}
+                  {...(props.citationProject ? { project: props.citationProject } : {})}
+                />
+
+                {props.annotations}
+
+                {showsPersonalNote ? (
+                  <div className="@container/source-notes">
+                    <div className="grid gap-6 @[32rem]/source-notes:grid-cols-2">
+                      {inProject ? projectNoteSection : null}
+                      {personalNote.section}
+                    </div>
+                  </div>
+                ) : library && !inProject ? null : (
+                  projectNoteSection
+                )}
               </div>
             </div>
-          ) : library && !inProject ? null : (
-            projectNoteSection
-          )}
+          </div>
 
           <p className="border-t border-border pt-3 text-xs text-muted-foreground">
             {importedLabel(record)}
