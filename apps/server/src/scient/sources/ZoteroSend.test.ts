@@ -31,8 +31,75 @@ afterEach(async () => {
 });
 
 /** An in-memory zotero.org personal library that checks versions like the real API. */
+/** What zotero.org says each item type accepts, for the types these tests send. */
+const TEMPLATES: Readonly<
+  Record<string, { readonly fields: ReadonlyArray<string>; readonly roles: ReadonlyArray<string> }>
+> = {
+  book: {
+    fields: [
+      "title",
+      "abstractNote",
+      "series",
+      "seriesNumber",
+      "volume",
+      "numberOfVolumes",
+      "edition",
+      "place",
+      "publisher",
+      "date",
+      "numPages",
+      "language",
+      "ISBN",
+      "shortTitle",
+      "url",
+      "accessDate",
+      "extra",
+    ],
+    roles: ["author", "contributor", "editor", "seriesEditor", "translator"],
+  },
+  case: {
+    fields: [
+      "caseName",
+      "abstractNote",
+      "court",
+      "dateDecided",
+      "docketNumber",
+      "reporter",
+      "reporterVolume",
+      "firstPage",
+      "history",
+      "language",
+      "url",
+      "extra",
+    ],
+    roles: ["author", "counsel", "contributor"],
+  },
+  computerProgram: {
+    fields: [
+      "title",
+      "abstractNote",
+      "versionNumber",
+      "date",
+      "system",
+      "place",
+      "company",
+      "programmingLanguage",
+      "ISBN",
+      "url",
+      "rights",
+      "extra",
+    ],
+    roles: ["programmer", "contributor"],
+  },
+};
+
 function zoteroOrg(
-  options: { readonly write?: boolean; readonly groups?: Record<string, object> } = {},
+  options: {
+    readonly write?: boolean;
+    readonly groups?: Record<string, object>;
+    /** False: zotero.org does not say what a type accepts, as before these were asked for. */
+    readonly templates?: boolean;
+  } = {},
 ) {
   const items = new Map<string, ZoteroRawItem>();
   const writes: ZoteroWebRequest[] = [];
@@ -56,6 +123,20 @@ function zoteroOrg(
             ...(options.groups ? { groups: options.groups } : {}),
           },
         });
+      }
+      const asked = TEMPLATES[request.url.searchParams.get("itemType") ?? ""];
+      if (options.templates !== false && asked && path === "/items/new") {
+        return json(
+          Object.fromEntries([
+            ["itemType", request.url.searchParams.get("itemType")],
+            ...asked.fields.map((field) => [field, ""]),
+            ["creators", []],
+            ["tags", []],
+          ]),
+        );
+      }
+      if (options.templates !== false && asked && path === "/itemTypeCreatorTypes") {
+        return json(asked.roles.map((creatorType) => ({ creatorType, localized: creatorType })));
       }
       if (path === `/users/${USER}/groups`) {
         return json([{ id: 77, data: { name: "Lab", libraryEditing: "members" } }], {
@@ -153,14 +234,14 @@ const candidate: ScientSourceCandidate = {
   note: "Read **twice**",
 };
 
-async function sourceInScient() {
+async function sourceInScient(fields: Partial<ScientSourceCandidate> = {}) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-zotero-send-"));
   roots.push(root);
   await initializeScientProject({ root });
   const imported = await importScientSource({
     root,
     operationId: "agent_fixture",
-    candidate,
+    candidate: { ...candidate, ...fields },
     actor: "agent",
     intake: "identifier",
   });
@@ -202,6 +283,140 @@ describe("Send to Zotero", () => {
     expect(record?.externalReferences).toEqual([
       expect.objectContaining({ system: "zotero", libraryId: String(USER), itemKey: "NEWA2345" }),
     ]);
+  });
+
+  it("sends every further detail to the field the item's type has for it, the rest to Extra", async () => {
+    const { root, sourceId } = await sourceInScient({
+      type: "book",
+      title: "Statistical methods in medical research",
+      containerTitle: null,
+      publisher: "Blackwell Science",
+      volume: null,
+      pages: null,
+      identifiers: [{ scheme: "isbn", value: "9780632052578" }],
+      more: {
+        edition: "4",
+        "publisher-place": "Oxford",
+        "number-of-pages": "817",
+        accessed: "2026-03-10",
+        // A book has no field for these: they go to Extra, where Zotero reads them.
+        "original-date": "1971",
+        extra: "OCLC: 12345\nbought second hand",
+      },
+      note: undefined as never,
+    });
+    const org = zoteroOrg();
+    await sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
+
+    const created = org.items.get("NEWA2345")?.data as Record<string, unknown>;
+    expect(created).toMatchObject({
+      itemType: "book",
+      publisher: "Blackwell Science",
+      edition: "4",
+      place: "Oxford",
+      numPages: "817",
+      accessDate: "2026-03-10",
+      ISBN: "9780632052578",
+    });
+    // After the citation key Scient always writes there.
+    expect(
+      String(created.extra)
+        .split("\n")
+        .filter((line) => !line.startsWith("Citation Key:")),
+    ).toEqual(["original-date: 1971", "OCLC: 12345", "bought second hand"]);
+    // Read back, the source is what it was: nothing was lost on the way to Zotero.
+    const before = await readScientSourceRecord(root, sourceId);
+    expect(before?.more).toMatchObject({ edition: "4", "original-date": "1971" });
+  });
+
+  it("writes a legal case and a program under the names their types have", async () => {
+    const legal = await sourceInScient({
+      type: "other",
+      customType: "case",
+      title: "Brown v. Board of Education",
+      containerTitle: "U.S.",
+      volume: "347",
+      pages: "483",
+      issuedRaw: "1954",
+      issuedYear: 1954,
+      identifiers: [],
+      creators: [],
+      more: { authority: "Supreme Court of the United States", number: "No. 1" },
+      note: undefined as never,
+    });
+    const org = zoteroOrg();
+    await sendSourcesToZotero({
+      root: legal.root,
+      sourceIds: [legal.sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+    expect(org.items.get("NEWA2345")?.data).toMatchObject({
+      itemType: "case",
+      caseName: "Brown v. Board of Education",
+      reporter: "U.S.",
+      reporterVolume: "347",
+      firstPage: "483",
+      dateDecided: "1954",
+      court: "Supreme Court of the United States",
+      docketNumber: "No. 1",
+    });
+
+    const program = await sourceInScient({
+      type: "software",
+      title: "lme4",
+      containerTitle: null,
+      volume: null,
+      pages: null,
+      identifiers: [],
+      creators: [
+        { creatorType: "programmer", givenName: "Douglas", familyName: "Bates", literalName: null },
+        // Not a role a program has in Zotero: sent as its primary one, not refused.
+        { creatorType: "editor", givenName: "Ben", familyName: "Bolker", literalName: null },
+      ],
+      more: { version: "1.1-35", genre: "R" },
+      note: undefined as never,
+    });
+    const second = zoteroOrg();
+    await sendSourcesToZotero({
+      root: program.root,
+      sourceIds: [program.sourceId],
+      actor: "user",
+      zotero: second.zotero,
+    });
+    expect(second.items.get("NEWA2345")?.data).toMatchObject({
+      itemType: "computerProgram",
+      versionNumber: "1.1-35",
+      programmingLanguage: "R",
+      creators: [
+        { creatorType: "programmer", lastName: "Bates" },
+        { creatorType: "programmer", lastName: "Bolker" },
+      ],
+    });
+  });
+
+  it("still sends the main details when zotero.org does not say what a type accepts", async () => {
+    const { root, sourceId } = await sourceInScient({
+      type: "book",
+      containerTitle: null,
+      volume: null,
+      pages: null,
+      publisher: "A Press",
+      more: { edition: "2" },
+    });
+    const org = zoteroOrg({ templates: false });
+    const result = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+    expect(result.items[0]).toMatchObject({ outcome: "created" });
+    const created = org.items.get("NEWA2345")?.data as Record<string, unknown>;
+    expect(created).toMatchObject({ itemType: "book", publisher: "A Press" });
+    // The edition is not lost: without a field known for it, it travels in Extra.
+    expect(created).not.toHaveProperty("edition");
+    expect(String(created.extra)).toContain("edition: 2");
   });
 
   it("sends only what changed here, and nothing when nothing did", async () => {

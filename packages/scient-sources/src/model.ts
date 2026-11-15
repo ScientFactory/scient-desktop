@@ -936,6 +936,8 @@ export const ScientSourceZoteroRefreshField = Schema.Literals([
   "language",
   "url",
   "tags",
+  /** The further details (edition, place of publication, …), compared one by one. */
+  "more",
   "note",
 ]);
 export type ScientSourceZoteroRefreshField = typeof ScientSourceZoteroRefreshField.Type;

@@ -33,6 +33,7 @@ const FIELD_LABELS: Readonly<Record<ScientSourceZoteroRefreshField, string>> = {
   identifiers: "Identifiers",
   abstract: "Abstract",
   containerTitle: "Journal or publication",
+  more: "More details",
   publisher: "Publisher",
   volume: "Volume",
   issue: "Issue",

@@ -1,5 +1,9 @@
 import type { ScientSourceRecord } from "./model.ts";
-import { normalizePersistentIdentifier, sourceMetadataKey } from "./normalize.ts";
+import {
+  normalizePersistentIdentifier,
+  sourceEditionsDiffer,
+  sourceMetadataKey,
+} from "./normalize.ts";
 import {
   scientLibraryFactsProblem,
   scientLibraryIdentityFacts,
@@ -356,7 +360,7 @@ export function assessScientLibraryDuplicates(input: {
     const key = sourceMetadataKey(record);
     return key ? [key] : [];
   })) {
-    addPossible(bucket, "possible-metadata-match");
+    addPossible(bucket, "possible-metadata-match", sourceEditionsDiffer);
   }
   for (const bucket of buckets(records, (record) => {
     const title = scientSourceTitleKey(record);

@@ -48,6 +48,7 @@ import {
   type ScientSourceRecord,
 } from "./model.ts";
 import { readScientProjectPins } from "./projectPins.ts";
+import { SCIENT_SOURCE_MORE_FIELDS } from "./sourceMore.ts";
 import {
   attachScientSourcePdf,
   decodePersistedScientSourceRecord,
@@ -231,6 +232,7 @@ function detailsOf(record: ScientSourceRecord): string {
     pages: record.pages,
     language: record.language,
     url: record.url,
+    more: record.more ?? {},
   });
 }
 
@@ -1665,6 +1667,11 @@ const DETAIL_FIELDS: ReadonlyArray<readonly [string, (record: ScientSourceRecord
   ["Pages", (record) => record.pages ?? ""],
   ["Language", (record) => record.language ?? ""],
   ["Link", (record) => record.url ?? ""],
+  // Edition, place of publication and the like, each on its own row.
+  ...SCIENT_SOURCE_MORE_FIELDS.map(
+    ({ name, label }) =>
+      [label, (record: ScientSourceRecord) => record.more?.[name] ?? ""] as const,
+  ),
 ];
 
 const detailsBetween = (ours: ScientSourceRecord, theirs: ScientSourceRecord) =>

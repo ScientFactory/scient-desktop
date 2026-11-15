@@ -358,7 +358,11 @@ new notes and PDFs come in, and tags you added or removed in Zotero are added or
 removed here. When you changed the same field both here and in Zotero, your
 version here is kept and the refresh lists it: choose **Use Zotero's** or **Keep
 mine**. An empty field in Zotero never clears one here, and an item you deleted
-in Zotero stays in your Library. If Zotero cannot be read (for example it is
+in Zotero stays in your Library. The details under **More details** (edition,
+place of publication and the like) are compared one by one: a new one comes
+in while one you corrected here stays, and one you removed here stays removed
+as long as Zotero's did not change. A source imported before Scient kept
+these details gets them on its next refresh. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
 leaving it.
 
@@ -367,7 +371,10 @@ leaving it.
 Choose **Send to Zotero** from a source's actions to add it to your zotero.org
 library, or to update the Zotero item it came from with your changes here.
 Only fields that differ are sent, and an empty field here never clears one in
-Zotero. If the item was changed in Zotero after Scient last read it, nothing is
+Zotero. Every detail goes to the field Zotero has for it in that kind of item
+(a legal case's name, court and reporter; a book's edition and place; a
+program's version); a detail that kind of item has no field for goes to
+Zotero's **Extra**, where Zotero reads it. If the item was changed in Zotero after Scient last read it, nothing is
 overwritten: refresh from Zotero first, then send again. This needs the Zotero
 key in Accounts with write access. Changes are not sent automatically; there is
 no two-way sync.

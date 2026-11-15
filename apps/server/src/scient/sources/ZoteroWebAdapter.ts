@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 import { METADATA_USER_AGENT } from "./metadataHttp.ts";
 import type { ZoteroResponse, ZoteroTransport } from "./ZoteroLibraryReader.ts";
+import type { ZoteroItemTemplate } from "./ZoteroWrite.ts";
 
 const ZOTERO_API_ORIGIN = "https://api.zotero.org";
 const ZOTERO_API_HOST = "api.zotero.org";
@@ -419,10 +420,45 @@ export function makeZoteroWebLibrary(input: {
     return response;
   };
 
+  const templates = new Map<string, Promise<ZoteroItemTemplate | null>>();
+  const askTemplate = async (itemType: string): Promise<ZoteroItemTemplate | null> => {
+    const ask = async (path: string) => {
+      const response = await http.request({
+        method: "GET",
+        url: new URL(`${ZOTERO_API_ORIGIN}${path}?itemType=${encodeURIComponent(itemType)}`),
+        headers,
+      });
+      return response.status === 200 ? (JSON.parse(response.body) as unknown) : null;
+    };
+    const [template, roles] = await Promise.all([ask("/items/new"), ask("/itemTypeCreatorTypes")]);
+    if (typeof template !== "object" || template === null || !Array.isArray(roles)) return null;
+    return {
+      fields: new Set(Object.keys(template)),
+      roles: roles.flatMap((role: unknown) =>
+        typeof role === "object" &&
+        role !== null &&
+        typeof (role as { creatorType?: unknown }).creatorType === "string"
+          ? [(role as { creatorType: string }).creatorType]
+          : [],
+      ),
+    };
+  };
+
   return {
     account: input.account,
     groupId: groupId ?? null,
     transport,
+    /**
+     * The fields and creator roles Zotero accepts for an item type, asked once per type; null
+     * when Zotero does not say, and the caller then sends only what every type has.
+     */
+    itemTemplate: (itemType: string): Promise<ZoteroItemTemplate | null> => {
+      const known = templates.get(itemType);
+      if (known) return known;
+      const asked = askTemplate(itemType).catch(() => null);
+      templates.set(itemType, asked);
+      return asked;
+    },
     /** Creates items in one request; the write token makes a retried request create nothing new. */
     createItems: async (
       items: ReadonlyArray<Readonly<Record<string, unknown>>>,

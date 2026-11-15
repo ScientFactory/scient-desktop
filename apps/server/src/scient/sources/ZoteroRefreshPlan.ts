@@ -10,6 +10,7 @@ import {
   type ScientSourceRecord,
   type ScientSourceZoteroConflict,
   type ScientSourceZoteroSync,
+  scientSourceMoreLabel,
 } from "@scientfactory/scient-sources";
 
 const ZOTERO_REFRESH_FIELDS = ScientSourceZoteroRefreshField.literals;
@@ -28,6 +29,8 @@ export interface ZoteroRefreshChoices {
 export interface ZoteroRefreshPlan {
   readonly metadata: ScientSourceEditableMetadata;
   readonly takenFields: ReadonlySet<MetadataField>;
+  /** The further details taken from Zotero, by name; `takenFields` then has `more`. */
+  readonly takenMore: ReadonlySet<string>;
   readonly note: { readonly value: string | null } | null;
   readonly conflicts: ReadonlyArray<ZoteroFieldConflict>;
   /** The merge base to store: Zotero's values, except for conflicts still open. */
@@ -66,7 +69,7 @@ function displayZoteroFieldValue(field: ZoteroRefreshField, value: unknown): str
   return shorten(String(value));
 }
 
-function editedHere(record: ScientSourceRecord, field: MetadataField): boolean {
+function editedHere(record: ScientSourceRecord, field: string): boolean {
   return record.fieldProvenance.some(
     (entry) =>
       (entry.field === field ||
@@ -74,6 +77,60 @@ function editedHere(record: ScientSourceRecord, field: MetadataField): boolean {
       (entry.origin === "user" || entry.origin === "agent"),
   );
 }
+
+type More = Readonly<Record<string, string>>;
+
+/**
+ * The same three-way rule for the further details, each on its own: an edit of the edition
+ * here does not hold back a place of publication Zotero added. A detail Zotero lacks never
+ * clears one here, and one cleared here stays cleared while Zotero's is unchanged.
+ */
+function mergeMore(input: {
+  readonly record: ScientSourceRecord;
+  readonly local: More;
+  readonly zotero: More;
+  /** Undefined for a source last read before these details were kept. */
+  readonly base: More | undefined;
+  readonly useZotero: boolean;
+  readonly keepLocal: boolean;
+}): {
+  readonly merged: More;
+  readonly taken: ReadonlyArray<string>;
+  readonly conflicting: ReadonlyArray<string>;
+  readonly base: More;
+} {
+  const merged: Record<string, string> = { ...input.local };
+  const base: Record<string, string> = { ...input.zotero };
+  const taken: string[] = [];
+  const conflicting: string[] = [];
+  for (const [name, zoteroValue] of Object.entries(input.zotero)) {
+    const localValue = input.local[name];
+    if (localValue === zoteroValue) continue;
+    const baseValue = input.base?.[name];
+    const zoteroChanged = input.base === undefined || baseValue !== zoteroValue;
+    // What Zotero did not change is never taken, also on "Use Zotero's": that choice
+    // settles the details that clash, it does not undo a removal made here.
+    if (!zoteroChanged) continue;
+    if (!input.useZotero && editedHere(input.record, `more.${name}`)) {
+      if (!input.keepLocal) {
+        conflicting.push(name);
+        // Left as it was, so the difference is reported again until it is settled.
+        if (baseValue !== undefined) base[name] = baseValue;
+        else if (localValue !== undefined) base[name] = localValue;
+        else delete base[name];
+      }
+      continue;
+    }
+    merged[name] = zoteroValue;
+    taken.push(name);
+  }
+  return { merged, taken, conflicting, base };
+}
+
+const shownMore = (more: More, names: ReadonlyArray<string>) =>
+  shorten(
+    names.map((name) => `${scientSourceMoreLabel(name)}: ${more[name] ?? "(none)"}`).join("; "),
+  );
 
 function mergeTags(input: {
   readonly local: ReadonlyArray<string>;
@@ -113,9 +170,29 @@ export function planZoteroRefresh(input: {
   const baseMetadata: Record<string, unknown> = { ...zotero };
   const takenFields = new Set<MetadataField>();
   const conflicts: ZoteroFieldConflict[] = [];
+  const more = mergeMore({
+    record: input.record,
+    local: local.more ?? {},
+    zotero: zotero.more ?? {},
+    base: base?.more,
+    useZotero: useZotero.has("more"),
+    keepLocal: keepLocal.has("more"),
+  });
+  if (more.taken.length > 0) {
+    metadata.more = more.merged;
+    takenFields.add("more");
+  }
+  if (more.conflicting.length > 0) {
+    conflicts.push({
+      field: "more",
+      local: shownMore(local.more ?? {}, more.conflicting),
+      zotero: shownMore(zotero.more ?? {}, more.conflicting),
+    });
+  }
+  baseMetadata.more = more.base;
 
   for (const field of ZOTERO_REFRESH_FIELDS) {
-    if (field === "note") continue;
+    if (field === "note" || field === "more") continue;
     const localValue = local[field];
     const zoteroValue = zotero[field];
     const baseValue = base?.[field];
@@ -176,6 +253,7 @@ export function planZoteroRefresh(input: {
   return {
     metadata: metadata as ScientSourceEditableMetadata,
     takenFields,
+    takenMore: new Set(more.taken),
     note,
     conflicts,
     base: {
@@ -191,6 +269,7 @@ export function refreshedFieldProvenance(input: {
   readonly zotero: ReadonlyArray<ScientSourceFieldProvenance>;
   readonly takenFields: ReadonlySet<string>;
 }): ReadonlyArray<ScientSourceFieldProvenance> {
+  // A further detail has a line of its own (`more.edition`); `more` as a whole has none.
   const editable = (field: string) => (field.startsWith("identifiers.") ? "identifiers" : field);
   const taken = (entry: ScientSourceFieldProvenance) =>
     input.takenFields.has(editable(entry.field));

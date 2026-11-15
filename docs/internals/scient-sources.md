@@ -3392,8 +3392,34 @@ is what a refresh will compare. A revision lists the change as `more`; a
 revert restores it. The editor's "More details" shows a row per entry by its
 label and adds one from the list; the details view lists them; an agent
 reads `more` in a source's detail and may pass it in `scient_sources_update`
-(the tool's wording is unchanged; its evals are owed with H6). Not yet: the
-per-variable refresh, Send, and reference files (the next commits).
+(the tool's wording is unchanged; its evals are owed with H6).
+
+Refresh merges `more` entry by entry (`mergeMore` in `ZoteroRefreshPlan.ts`)
+with the same three-way rule as a field: Zotero's change is taken unless that
+entry was set or cleared here (its `more.<name>` provenance), in which case
+it is kept and reported as one conflict on `more` naming the entries; what
+Zotero did not change is never taken, also under "Use Zotero's"; an entry
+Zotero lacks never clears one here. A base written before `more` existed has
+none, so every entry of Zotero's counts as changed and comes in. Only the
+entries taken become Zotero's in the provenance.
+
+Send asks zotero.org what the item type accepts (`itemTemplate`:
+`/items/new` and `/itemTypeCreatorTypes`, once per type and library object)
+and `zoteroDataFromRecord` writes each general field under the type's own
+name for it (`fieldFor`: a case's title is `caseName`), each `more` entry to
+the type's field for its variable, and one the type has no field for as a
+line `variable: value` in Extra, which Zotero reads as that field. Lines kept
+under `more.extra` go back as they are, except one that names a field the
+type has. A creator role the type lacks becomes its primary role. When
+zotero.org does not answer, the earlier short list of fields per type is
+used and every `more` entry travels in Extra. For an existing item the fields
+are the ones Zotero sent for it (`fieldNames`).
+
+Two sources with the same title, lead creator and year whose `edition`
+numbers or `version` texts differ are not a possible match
+(`sourceEditionsDiffer`), at intake and in the Library's duplicate finder;
+only where both name one. The join's "details differ" includes `more`, one
+row per entry. Not yet: reference files (the next commit).
 
 **What was not brought.** `decodeZoteroRawItem` lists every non-empty text
 field Zotero sent (`fields`) before the item's schema drops the ones Sources

@@ -995,6 +995,45 @@ describe("what differs between the two Libraries, and taking one thing at a time
     expect((await row("s1"))?.otherTitle).toBe("s1 as the other Library retitled it");
   });
 
+  it("counts a paper's further details among its details, each under its own name", async () => {
+    const ours = await built([{ op: "add", label: "s1", pdf: false }]);
+    const sourceId = workOf(ours.model, "s1").sourceId;
+    const theirs = await newScenario();
+    await NodeFSP.rm(theirs.libraryRoot, { recursive: true });
+    await NodeFSP.cp(ours.scenario.libraryRoot, theirs.libraryRoot, { recursive: true });
+    // On the other computer the edition and the place of publication were filled in.
+    const record = (await readScientSourceRecord(libraryOf(theirs), sourceId))!;
+    await updateScientSourceMetadata({
+      root: libraryOf(theirs),
+      sourceId,
+      expectedRevision: record.revision,
+      metadata: {
+        ...editableMetadataFromRecord(record),
+        more: { edition: "3", "publisher-place": "Leiden" },
+      },
+      actor: "user",
+    });
+    const joined = await joinScientLibrary({
+      library: ours.library,
+      folder: await backUp(theirs),
+      actor: "user",
+    });
+    if (joined.outcome !== "joined") throw new Error(`Not joined: ${joined.outcome}`);
+    expect(joined).toMatchObject({ added: 0, different: 1 });
+    const [row] = (await readScientLibraryJoinDifferences({
+      library: ours.library,
+      joinId: joined.joinId,
+    }))!.rows;
+    expect(row).toMatchObject({
+      relation: "same-id",
+      parts: ["details"],
+      details: [
+        { field: "Edition", here: "", other: "3" },
+        { field: "Place of publication", here: "", other: "Leiden" },
+      ],
+    });
+  });
+
   it("adds the other note under this paper's own, once, and attaches one PDF", async () => {
     const { ours, id, joinId, row, pdf } = await diverged();
     const shown = (await row("s2"))!;

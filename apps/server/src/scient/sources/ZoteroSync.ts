@@ -200,7 +200,11 @@ async function refreshOne(input: {
       fieldProvenance: refreshedFieldProvenance({
         current: record.fieldProvenance,
         zotero: material.candidate.fieldProvenance,
-        takenFields: plan.takenFields,
+        // Each further detail by its own name, so only the ones taken become Zotero's.
+        takenFields: new Set([
+          ...[...plan.takenFields].filter((field) => field !== "more"),
+          ...[...plan.takenMore].map((name) => `more.${name}`),
+        ]),
       }),
       allowPossibleMetadataMatch: true,
       allowExistingValidationIssues: true,
@@ -432,12 +436,15 @@ async function sendOne(input: {
     return { ...summary, outcome: "updated", itemKey: current.key, message: null };
   }
   const itemType = zoteroItemTypeFor(record);
+  // Zotero says which fields and roles the type has, so every detail goes where it belongs.
+  const template = await library.itemTemplate(itemType);
   const data = {
     itemType,
     ...zoteroDataFromRecord({
       record,
       itemType,
-      fields: zoteroCreateFields(itemType),
+      fields: template?.fields ?? zoteroCreateFields(itemType),
+      ...(template ? { roles: template.roles } : {}),
       creating: true,
     }),
   };

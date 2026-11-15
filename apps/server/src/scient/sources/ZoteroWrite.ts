@@ -1,10 +1,13 @@
 import {
   scientSourceTypeFromZotero,
+  ZOTERO_BASE_FIELD,
+  ZOTERO_FIELD_TARGET,
+  ZOTERO_TYPE_CSL,
   type ScientSourceRecord,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
 
-import type { ZoteroRawItem } from "./ZoteroItems.ts";
+import { zoteroExtraLineTarget, type ZoteroRawItem } from "./ZoteroItems.ts";
 
 const ITEM_TYPE_FOR: Readonly<Record<ScientSourceType, string>> = {
   article: "journalArticle",
@@ -24,7 +27,10 @@ const ITEM_TYPE_FOR: Readonly<Record<ScientSourceType, string>> = {
 
 const COMMON_FIELDS = ["title", "abstractNote", "date", "language", "url", "extra"];
 
-/** Fields Scient fills when it creates an item of each type; Zotero rejects any other. */
+/**
+ * Fields Scient fills when it creates an item of each type and Zotero could not be asked
+ * which fields the type has; Zotero rejects any other.
+ */
 const CREATE_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
   journalArticle: [...COMMON_FIELDS, "publicationTitle", "volume", "issue", "pages", "DOI", "ISSN"],
   preprint: [...COMMON_FIELDS, "repository", "DOI"],
@@ -49,19 +55,14 @@ const CREATE_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
   document: [...COMMON_FIELDS, "publisher"],
 };
 
-const CONTAINER_FIELDS = [
-  "publicationTitle",
-  "bookTitle",
-  "proceedingsTitle",
-  "websiteTitle",
-  "blogTitle",
-  "forumTitle",
-  "encyclopediaTitle",
-  "dictionaryTitle",
-];
-const PUBLISHER_FIELDS = ["publisher", "university", "institution", "repository"];
 const CREATE_CREATOR_TYPES = new Set(["author", "editor", "contributor", "translator"]);
 const MANAGED_EXTRA = /^\s*(pmid|pmcid|arxiv|doi|citation key)\s*:/iu;
+
+/** What Zotero says an item type accepts: its fields, and its creator roles, primary first. */
+export interface ZoteroItemTemplate {
+  readonly fields: ReadonlySet<string>;
+  readonly roles: ReadonlyArray<string>;
+}
 
 /** The item type to write: Zotero's own when it still means the same Scient type. */
 export function zoteroItemTypeFor(record: ScientSourceRecord, existing?: string): string {
@@ -70,7 +71,8 @@ export function zoteroItemTypeFor(record: ScientSourceRecord, existing?: string)
       return existing;
     }
   }
-  if (record.type === "other" && record.customType && CREATE_FIELDS[record.customType]) {
+  // A Zotero type name kept from an import is written back as that type.
+  if (record.type === "other" && record.customType && record.customType in ZOTERO_TYPE_CSL) {
     return record.customType;
   }
   return ITEM_TYPE_FOR[record.type];
@@ -110,45 +112,37 @@ function identifier(record: ScientSourceRecord, scheme: string): string | null {
   );
 }
 
-function extraLines(
-  record: ScientSourceRecord,
-  fields: ReadonlySet<string>,
-  existing: string | undefined,
-): string {
-  const values: ReadonlyArray<readonly [key: string, label: string, value: string | null]> = [
-    ["citation key", "Citation Key", record.citationKey ?? null],
-    ["doi", "DOI", identifier(record, "doi")],
-    ["pmid", "PMID", identifier(record, "pmid")],
-    ["pmcid", "PMCID", identifier(record, "pmcid")],
-    ["arxiv", "arXiv", identifier(record, "arxiv")],
-  ];
-  const supplied = new Set(values.filter(([, , value]) => value).map(([key]) => key));
-  // A managed line Scient has no value for stays, so sending never deletes Zotero's identifier.
-  const kept = (existing ?? "")
-    .split(/\r?\n/u)
-    .filter(
-      (line) => line.trim() && !supplied.has(MANAGED_EXTRA.exec(line)?.[1]?.toLowerCase() ?? ""),
-    );
-  const managed = values
-    .filter(([key, , value]) => value && !(key === "doi" && fields.has("DOI")))
-    .map(([, label, value]) => `${label}: ${value}`);
-  return [...managed, ...kept].join("\n");
+const lineName = (line: string) =>
+  /^\s*([A-Za-z][A-Za-z0-9 _-]{0,60}?)\s*:\s*\S/u.exec(line)?.[1]?.toLowerCase().trim();
+
+/** The item's own field for a general Zotero field: itself, or the type's name for it. */
+function fieldFor(fields: ReadonlySet<string>, general: string): string | undefined {
+  if (fields.has(general)) return general;
+  return [...fields].find((field) => ZOTERO_BASE_FIELD[field] === general);
 }
+
 /**
  * The record as Zotero item fields, limited to `fields`. Empty values are left out, so
- * sending never clears something Zotero has.
+ * sending never clears something Zotero has. A further detail goes to the field the item's
+ * type has for it; one the type has no field for goes to Extra as `variable: value`, which
+ * Zotero reads as that field. Nothing the record holds is left behind.
  */
 export function zoteroDataFromRecord(input: {
   readonly record: ScientSourceRecord;
   readonly itemType: string;
   readonly fields: ReadonlySet<string>;
+  /** The creator roles the type accepts, primary first; absent when Zotero was not asked. */
+  readonly roles?: ReadonlyArray<string>;
   readonly existingExtra?: string;
   readonly creating: boolean;
 }): Record<string, unknown> {
   const { record, fields } = input;
   const data: Record<string, unknown> = {};
-  const set = (field: string, value: string | null) => {
-    if (fields.has(field) && value?.trim()) data[field] = value.trim();
+  const set = (general: string, value: string | null | undefined): boolean => {
+    const field = fieldFor(fields, general);
+    if (!field || !value?.trim() || data[field] !== undefined) return false;
+    data[field] = value.trim();
+    return true;
   };
   set("title", record.title);
   set("abstractNote", record.abstract);
@@ -158,23 +152,85 @@ export function zoteroDataFromRecord(input: {
   set("volume", record.volume);
   set("issue", record.issue);
   set("pages", record.pages);
-  const container = CONTAINER_FIELDS.find((field) => fields.has(field));
-  if (container) set(container, record.containerTitle);
-  const publisher = PUBLISHER_FIELDS.find((field) => fields.has(field));
-  if (publisher) set(publisher, record.publisher);
+  // A journal, a book, a court reporter or a legal code: whichever the type has.
+  for (const container of ["publicationTitle", "reporter", "code"]) {
+    if (set(container, record.containerTitle)) break;
+  }
+  set("publisher", record.publisher);
   set("DOI", identifier(record, "doi"));
   set("ISBN", identifier(record, "isbn"));
   set("ISSN", identifier(record, "issn"));
+  set("PMID", identifier(record, "pmid"));
+  set("PMCID", identifier(record, "pmcid"));
+
+  // The further details: to the type's field for each, else a line of Extra.
+  const extraFromMore: string[] = [];
+  const written = new Set<string>();
+  for (const [name, value] of Object.entries(record.more ?? {})) {
+    if (name === "extra") continue;
+    written.add(name);
+    const placed = Object.entries(ZOTERO_FIELD_TARGET).some(
+      ([general, target]) => "more" in target && target.more === name && set(general, value),
+    );
+    if (!placed) extraFromMore.push(`${name}: ${value}`);
+  }
+  // Lines kept as written: one that names a field this type has goes back to that field.
+  for (const line of (record.more?.extra ?? "").split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    const name = lineName(line);
+    const field =
+      name === undefined
+        ? undefined
+        : [...fields].find((entry) => entry.toLowerCase() === name.replace(/[\s_-]+/gu, ""));
+    const value = line.slice(line.indexOf(":") + 1).trim();
+    if (field && field !== "extra" && data[field] === undefined && value) data[field] = value;
+    else extraFromMore.push(line.trim());
+  }
+
   if (fields.has("extra")) {
-    const extra = extraLines(record, fields, input.existingExtra);
+    const values: ReadonlyArray<readonly [key: string, label: string, value: string | null]> = [
+      ["citation key", "Citation Key", record.citationKey ?? null],
+      ["doi", "DOI", identifier(record, "doi")],
+      ["pmid", "PMID", identifier(record, "pmid")],
+      ["pmcid", "PMCID", identifier(record, "pmcid")],
+      ["arxiv", "arXiv", identifier(record, "arxiv")],
+    ];
+    const supplied = new Set(values.filter(([, , value]) => value).map(([key]) => key));
+    const managed = values
+      .filter(
+        ([key, , value]) =>
+          value &&
+          !(key === "doi" && data.DOI !== undefined) &&
+          !(key === "pmid" && data.PMID !== undefined) &&
+          !(key === "pmcid" && data.PMCID !== undefined),
+      )
+      .map(([, label, value]) => `${label}: ${value}`);
+    const ours = [...managed, ...extraFromMore];
+    const said = new Set(ours);
+    // A line of Zotero's that Scient has no value for stays, so sending never deletes it; one
+    // that names a detail written above (to its field or as a line) is replaced by it.
+    const kept = (input.existingExtra ?? "").split(/\r?\n/u).filter((line) => {
+      if (!line.trim() || said.has(line.trim())) return false;
+      if (supplied.has(MANAGED_EXTRA.exec(line)?.[1]?.toLowerCase() ?? "")) return false;
+      const target = zoteroExtraLineTarget(lineName(line) ?? "");
+      return !(target && "more" in target && written.has(target.more));
+    });
+    const extra = [...ours, ...kept].join("\n");
     if (extra) data.extra = extra;
   }
   if (record.creators.length > 0) {
+    const { roles } = input;
     data.creators = record.creators.map((creator) => {
-      const creatorType =
-        !input.creating || CREATE_CREATOR_TYPES.has(creator.creatorType)
-          ? creator.creatorType
-          : "author";
+      // A role the type does not have becomes its primary one; Zotero refuses any other.
+      const creatorType = !input.creating
+        ? creator.creatorType
+        : roles
+          ? roles.includes(creator.creatorType)
+            ? creator.creatorType
+            : (roles[0] ?? "author")
+          : CREATE_CREATOR_TYPES.has(creator.creatorType)
+            ? creator.creatorType
+            : "author";
       return creator.literalName && !creator.familyName
         ? { creatorType, name: creator.literalName }
         : {
@@ -208,7 +264,9 @@ export function zoteroPatchFor(input: {
   readonly current: ZoteroRawItem;
 }): Record<string, unknown> {
   const raw = input.current.data as Readonly<Record<string, unknown>>;
-  const fields = new Set(Object.keys(raw));
+  // Every field the item's type has, as Zotero sent the item: also the ones Scient's own
+  // reading of the item leaves out.
+  const fields = new Set(input.current.fieldNames ?? Object.keys(raw));
   const itemType = zoteroItemTypeFor(input.record, input.current.data.itemType);
   const data = zoteroDataFromRecord({
     record: input.record,
