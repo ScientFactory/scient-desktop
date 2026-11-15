@@ -101,3 +101,47 @@ describe("the editor's further details", () => {
     expect(mocks.update.mock.calls[0]?.[1].metadata.more).toEqual({});
   });
 });
+
+describe("the editor's type and creators", () => {
+  it("shows names a person knows, saves the roles the record uses, and can say a list is complete", async () => {
+    mocks.update.mockReset().mockResolvedValue({ outcome: "updated", record });
+    await using _screen = await render(
+      <SourceEditor
+        environmentId={EnvironmentId.make("environment_test")}
+        root="/project"
+        record={{
+          ...record,
+          type: "book-chapter",
+          creators: [
+            ...record.creators,
+            { creatorType: "compiler", givenName: "Ann", familyName: "Lee", literalName: null },
+          ],
+          incompleteCreatorRoles: ["author"],
+        }}
+        onCancel={() => undefined}
+        onRefreshed={() => undefined}
+        onSaved={() => undefined}
+      />,
+      { router: false },
+    );
+
+    await expect.element(page.getByText("Book chapter")).toBeVisible();
+    const [author, compiler] = page.getByRole("combobox", { name: "Role" }).all();
+    await expect.element(author!).toHaveValue("Author");
+    // A role the list does not know stays as it was written.
+    await expect.element(compiler!).toHaveValue("compiler");
+    await userEvent.click(page.getByRole("button", { name: "The author list is complete" }));
+    await expect
+      .element(page.getByRole("button", { name: "The author list is complete" }))
+      .not.toBeInTheDocument();
+    await userEvent.fill(author!, "Editor");
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(page.getByRole("button", { name: "Save", exact: true }));
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1));
+    expect(mocks.update.mock.calls[0]?.[1].metadata).toMatchObject({
+      type: "book-chapter",
+      creators: [{ creatorType: "editor" }, { creatorType: "compiler" }],
+      incompleteCreatorRoles: [],
+    });
+  });
+});
