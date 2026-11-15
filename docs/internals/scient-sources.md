@@ -3015,9 +3015,7 @@ key list is completed; the text searched and replaced is the whole item after
 the last comma, and a key list never reaches across a blank line. A Library source offered to a whole document that does not link
 the managed `references.bib` carries a note the menu shows once under the
 list. The Source editor reads the paths from the open file only, so a file
-included by another gets Library sources without that note. A
-citation opens its source through
-`librarySourceRequest.ts`, which the Library panel acts on once loaded.
+included by another gets Library sources without that note.
 
 A deliberate key rename goes through `updateScientSource`. It finds every
 Markdown and LaTeX document first (any depth; hidden, tool and build folders
@@ -3045,6 +3043,96 @@ Settings, else Pandoc's default. A project style that cannot be read becomes a
 `resource-unresolved` warning naming it and the style used instead. Library
 sources are the lowest-precedence references (`fallbackCitations`), after the
 document's front matter and named bibliographies. Export only reads records.
+
+### From a citation to its source, page or passage
+
+`citationLocators.ts` (`@scientfactory/scient-sources`) reads a citation's
+items: `pandocCitationItems` for the text inside a Markdown group, split on
+`;`, each key with what follows it as its locator; `latexCitationItems` for a
+`\cite`-family key list and its notes, where the postnote belongs to the whole
+list and is given to a key only when there is one. `citationLocatorPage` reads
+a locator's first page as a printed page label (`"4"`, `"xii"`), never as a PDF
+page index.
+
+`openCitation` (`apps/web/src/scient/sources/citationNavigation.ts`, decisions
+in `citationNavigationModel.ts`) resolves items to the project's Library
+candidates (exact key, then case-insensitive; unknown keys ignored, and none
+known returns false so the editor keeps its default). Several known sources go
+through `contextMenu.show` and nothing opens without a choice. One source opens
+as far as the citation says: a `quote` (the text a Markdown block quote holds
+before the citation that ends it) is matched against the source's live
+highlights after `quoteProse`-style cleanup and revealed from the highlight's
+anchor when exactly one matches, narrowed by page when several do; otherwise a
+page label goes to `requestPdfPageReveal`, which the reader claims like a
+passage reveal and resolves through `getPageLabels()` (exact, then
+case-insensitive; a PDF without labels uses the page number; a repeated label
+shows the first and says so); otherwise the details open through
+`librarySourceRequest.ts`. Page jumps use the source's first PDF attachment
+(`LibraryCitationCandidate.pdf`). A newer click cancels a pending one.
+
+Markdown builds the request in `prosemirror/citationOpenRequest.ts` (the raw
+group, the click point, and the quote when the citation ends a block-quote
+paragraph). LaTeX builds it in `latex/latexCitationOpen.ts`, wired by
+`useLatexCitationOpener.ts` into the Source editor (Command/Control-click
+inside a `\cite`-family command; the key under the click alone when it lands
+on one, every key otherwise; biblatex multicites give each key its own note)
+and into the Visual editor's citation objects (the key's own button when
+citations are numbered; a plain click when the editor is read-only). The text
+between typographic quotes just before the command is the `quote`. A citation
+split across lines in Source is not recognised.
+
+Quote in my document resolves the key with `resolveQuoteCitation`
+(`apps/web/src/scient/annotations/quoteCitation.ts`): the source the PDF was
+opened from wins, and gives no key when it has none; without an origin, one
+keyed source sharing the PDF is used and several are offered as a choice. The
+quoted pages are written as the PDF's page labels when every quoted page has
+one (`quotePageLabels`), else as PDF page numbers. The highlight list reads the
+labels by opening the PDF once per content hash, giving up after 1.5 s
+(`pdfQuotePageLabels.ts`).
+
+### Where a source is used
+
+`listSourceUses` (`apps/server/src/scient/sources/SourceUses.ts`) answers
+"Used in this project" (`sourceUses`, read scope) and `scient_sources_get`'s
+`uses` input. The source's keys are every project pin resolving to it, so a
+merged source counts all its keys, compared without regard to case. Documents
+come from `scanCitationKeyRenameDocuments` (Markdown and LaTeX, any depth,
+same skips and caps as a key rename); a file that contains none of the keys is
+not parsed. `citationOccurrences.ts` reads in-text citations with offsets and
+locators: Markdown prose only (`markdownProseTextSpans`), bracketed groups via
+`pandocCitationItems` and in-text `@key [p. 4]`; LaTeX `\cite`-family commands
+found by unified-latex (`latexCiteOffsets`, shared with the rename), with up to
+two notes and biblatex multicites. `\nocite` is bibliography membership, so it
+is reported in `listed`, never as an occurrence.
+
+One resolver decides which work a key names in a document, for both this list
+and citation opening (`sourceCitationKeys`, `POST
+/api/scient/sources/citation-keys`, read scope): `library`, `unconfirmed`,
+`other-work` or `not-library`. A document that names no bibliography cites the
+project's keys. Every bibliography it does name is read, the managed
+`references.bib` / `references.json` included, since they can be edited,
+missing or unreadable; with its `\bibitem`s, an entry defining the key is
+compared with the source by DOI, PMID or arXiv ID: the same work is confirmed
+(`through: bibliography`), nothing to compare is unconfirmed, and another work
+goes to `elsewhere` and is not counted. Identifiers decide; when neither side
+has one, normalized titles (and years, when both give one) do, so a hand-edited
+managed entry for another work is caught. A key the named bibliographies do not
+define is unconfirmed. In `documentCitationContext.ts`, a LaTeX root is a `.tex`
+file with `\documentclass` (not `subfiles`); its parts come through `\input`,
+`\include`, `\subfile`, `\import`, `\subimport` and their `*from` forms, paths
+resolved as LaTeX does (from the root's folder, an `\import` folder, or the
+including file for `\subfile`). Every part uses the whole document's
+bibliographies, its own first; a part included by several roots that disagree
+about a key makes it unconfirmed, and a part no root includes is read alone.
+The endpoint reads documents as saved on disk. Any skipped document or
+unreadable bibliography makes `complete` false, and the UI then never says "not
+cited". A CSL-JSON file named in `\bibliography{}` is not read (the parser adds
+`.bib`).
+LaTeX citation arguments are read with `%` comments masked to spaces, so a
+comment between a command and its arguments hides nothing; the key rename uses
+the same masking. The panel reads the result when a source opens, when the
+Library version changes and when the window regains focus; only the newest
+read is applied.
 
 ### Citation styles
 
@@ -4089,6 +4177,25 @@ at the start of the open thread's draft through the composer handle's
 `insertTextAtStart`. It never sends, keeps the draft that was there, and does
 nothing to a draft that already starts with the sentence. Agents need no
 equivalent: for them the rules are standing.
+
+### Comparing sources
+
+The built-in `compare-sources` skill (`built-ins/compare-sources/SKILL.md`,
+embedded in `BuiltInSkillSources.ts` and listed in the Library plugin) is
+experimental. It adds no tool: it compares named sources with the read, search,
+quote-check and cite tools and writes a new project Markdown document. Each
+cell is reported, derived (with its working) or interpretation; an empty cell
+is `Not reported`, `Could not assess` or `Not checked`. A citation's page is a
+printed page seen on that page, with the PDF page beside it, matching the page
+rule of the `references` skill and `citationLocatorPage`. It edits a user's
+document only when asked, and only the passage asked for.
+
+The bulk bar's **Compare** (2+ selected) puts the request built by
+`compareSourcesRequest` (`apps/web/src/scient/sources/compareSources.ts`) at
+the start of the draft, like Ask the Library: it names each source by title and
+citation key or source ID, at most 12, and never sends. A draft that already
+starts with a compare request is left alone. There is no evaluation of the
+skill's output yet; it is labelled experimental in the document it writes.
 
 The attachment-preview endpoint returns the attachment's content-addressed
 hash and size; the Sources PDF reader carries them as the descriptor's

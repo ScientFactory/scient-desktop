@@ -980,6 +980,29 @@ right, beside the abstract, reference, highlights and notes; when it is narrow,
 they follow the abstract two to a row, and one left alone takes the whole row.
 However wide the panel, the page keeps a comfortable reading width.
 
+**Used in this project**, on a source that is in this project, lists every
+place the project's Markdown and LaTeX documents cite it: "Cited 6 times in 3
+documents.", then each document with its count. Open a document's row to see
+each citation's line, page and the sentence around it; choose one to open the
+document at that line. Only citations in the text count: code, math, links and
+LaTeX comments are not read, and a source only listed with `\nocite` is named on
+a line of its own, not counted. A citation counts when its key is one of this
+project's keys for the source (after a merge a source can have several). When a
+document names a bibliography file that defines the key, including the
+`references.bib` Scient keeps (you may have edited it), the entry must name the
+same work: compared by DOI, PMID or arXiv ID, or by title and year when neither
+has one. One that names another work is not counted and is named on a line of
+its own ("main.tex: smith2020 names another work in refs.bib"); one with nothing
+to compare is shown as "not confirmed to be this source", and so is a key the
+document's bibliographies do not define. A LaTeX file brought in with `\input`,
+`\include` or `\subfile` uses the bibliography of the document that includes
+it; when two such documents disagree about the key, its citation is not
+confirmed. If some documents could not be read (too large, a link, an unreadable
+folder or bibliography), the section says how many and **Details** lists them;
+it then never says the source is not cited. The list is read again
+when you open the source, when the Library changes and when you come back to
+the window.
+
 When the publisher or Retraction Watch has reported that a work was retracted,
 withdrawn, flagged with an expression of concern or corrected, the source says
 so in one line under its authors, with a link to the notice, and the Library
@@ -1070,10 +1093,15 @@ package brought with a different note shows **Another computer's version**;
 
 **Quote in my document** puts the passage into the Markdown or LaTeX document
 in this project that you used last, as a quotation followed by its citation:
-`[@key, p. 4]` in Markdown, `\cite[p.~4]{key}` in LaTeX. The key is the
-source's citation key, so the quote is cited from your Library. A PDF that is
-not a source is named by file and page instead. If no document is open, the
-quote is copied as Markdown so you can paste it.
+`[@key, p. 4]` in Markdown, `\cite[p.~4]{key}` in LaTeX. The page is the one
+printed on the page when the PDF labels its pages (a journal article printed
+1121–1130 gives `p. 1123`), and the PDF's own page number when it does not.
+The key is the citation key of the source the PDF belongs to, so the quote is
+cited from your Library. When several sources share one PDF (the chapters of a
+book carry the book's PDF) and you did not open it from one of them, Scient asks
+which source to cite. A PDF that is not a source is named by file and page
+instead. If no document is open, the quote is copied as Markdown so you can
+paste it.
 
 A source's details list the highlights and notes on its PDFs in reading order.
 Choose a passage to open the PDF at it. Passages an agent added say so.
@@ -1127,6 +1155,42 @@ the web, it says that too.
 You do not need the button for this. Whenever a question is about the
 literature and the project has a Library, the agent follows the same rules by
 default. The button makes them explicit for one question.
+
+## Compare sources
+
+Compare is experimental. Select two or more sources (Command-click, or
+**Select** from a source's actions) and choose **Compare** in the bar at the top
+of the list. It puts a request naming each source at the start of the chat's
+message box, ending with `Question:`; type what you want to compare, for example
+"which outcomes did they measure, and in whom?", and send it. Without an open
+chat the button is greyed out. One request names at most 12 sources; with more
+selected, it names the first 12 and says so. You can also ask for a comparison
+in your own words.
+
+The agent reads each paper with the Library's tools and writes the comparison
+to a new Markdown document in the project, such as
+`comparisons/outcomes.md`, which you can edit like any other. It begins by
+saying it is an agent's draft to check against the papers. The question sets
+the columns. In each cell:
+
+- what the paper reports, a value worked out from reported values (with the
+  working and units), or an interpretation, which starts with
+  "Interpretation:";
+- a citation to the paper. The page in the citation is the one printed on the
+  page, when the agent could see it; the PDF page it read is always written
+  beside it, as "(PDF page 4)";
+- **Not reported** when the paper says nothing about it, **Could not assess**
+  when its text was not available, and **Not checked** when the agent did not
+  look. A cell is never left blank.
+
+The document also says when two papers may report the same study or use the
+same data, and ends with what was read for each paper (full text, abstract or
+details only) and the date. When you give no question, the agent proposes a
+few and asks.
+
+To use a finding in your writing, ask the agent to put it into a document you
+name, for example "add a methods paragraph from this comparison to
+`methods.md`". It changes only that passage, with the comparison's citations.
 
 ## Save from the Browser
 
@@ -1348,8 +1412,9 @@ update it yourself.
   another file includes is offered Library sources only, because its `.bib`
   files are named in the main file. **Insert citation** lists Library sources
   after the document's own `.bib` entries.
-- **Open a source from a citation:** click it while reading, or Control-click
-  (Command-click on a Mac) while writing.
+- **Open what a citation names:** click it while reading, or Control-click
+  (Command-click on a Mac) while writing, in Markdown and in LaTeX (Visual and
+  Source). See [From a citation to the passage](#from-a-citation-to-the-passage).
 
 Scient keeps `references.bib` and `references.json` (CSL-JSON) at the project
 root up to date with the Library, so LaTeX, Pandoc and Overleaf can use them.
@@ -1365,6 +1430,43 @@ Library says where until you delete that copy. These files hold the same entries
 BibTeX or CSL-JSON, without abstracts: abstracts make the files several times
 larger and no document needs them. The Library keeps every abstract, and
 **Export** (or an agent's export) still writes them.
+
+### From a citation to the passage
+
+Opening a citation goes as far as the citation says:
+
+- **A page** (`[@key, p. 4]`, `\cite[p.~4]{key}`): the source's PDF opens at the
+  page printed "4". A PDF without printed page numbers opens at its fourth
+  page. When two pages carry the same number, the first is shown and Scient
+  says so; a page the PDF does not have is said too. Page jumps use the
+  source's first PDF.
+- **A quote made with Quote in my document**: the PDF opens with that
+  highlight shown. If the highlight was removed or the quote edited, it opens
+  at the cited page instead, and says why. When the same words are highlighted
+  more than once, the cited page picks the one; if it cannot, the page opens
+  and Scient says the passage is highlighted more than once.
+- **No page, or a chapter or section** (`chap. 3`): the source's details open in
+  the Library.
+- **A source without a PDF here**: its details open, with a note that it has
+  no PDF.
+- **A source's other key** (one kept after a merge): opens that source, like
+  its first key. Typing a new citation offers only the first key.
+- **Several sources** (`[@a; @b]`, `\cite{a,b}`): a menu asks which to open,
+  showing each one's author, year, page and title. In LaTeX, clicking one key
+  of the list opens that one directly: in Source, and in Visual where
+  citations are numbered. When the Visual editor cannot be edited (while it
+  loads, for example), a plain click opens the citation.
+
+Before opening, Scient checks which work the key names in that document. If
+the document's bibliography (its own `.bib` or CSL-JSON file, the
+`references.bib` Scient keeps, or that of the LaTeX file that includes it)
+defines the key as another work, the Library source is not opened, and Scient
+says so. If the entry cannot be compared (no DOI, PMID or arXiv ID), the source
+opens with a note that it is not confirmed. A citation whose key is not a
+Library source of this project, for example an entry only in the document's own
+`.bib` file, is left to the editor. In LaTeX Source, a citation broken across two
+lines cannot be opened by clicking, and citations inside verbatim text are not
+citations.
 
 ### Export to Word with a citation style
 
@@ -1478,7 +1580,9 @@ retraction, or a published version of a preprint, without refusing the
 citation. `scient_sources_bibliography` writes or checks the managed
 bibliography files and can import or replace hand edits, as you can; it also
 sets the project's citation style, which `scient_sources_list` finds by
-journal or style name.
+journal or style name. An agent can also read where this project's documents
+cite a source, the same list as **Used in this project**, with `uses` on
+`scient_sources_get`.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org, its PMID in
 PubMed, its arXiv ID at arXiv or its ISBN in Open Library and Google Books. An
@@ -1502,6 +1606,11 @@ for a check, it leaves your draft, your bibliography and your Library as they
 are: it reads the papers already in your Library, fetches none, and lists the
 ones it could not read. A page it names is the PDF page, counted from the first
 page of the file, unless it says "printed page".
+
+The built-in **compare-sources** skill guides an agent through a comparison of
+the sources you name, as described in [Compare sources](#compare-sources). It
+writes only the new comparison document, and the one passage you ask it to put
+into your writing.
 
 Results from the PubMed, Semantic Scholar and OpenAlex connectors become
 sources the same way: the agent passes the paper's PMID, Semantic Scholar ID or
