@@ -2633,9 +2633,19 @@ window how a restore ended, asks again until the first answer comes, and
 drops an answer that arrives for a project it has left. Scient does not restart itself. Agents have no
 action for it yet (a recorded parity gap).
 
-Known limit: a move back made after the backup was taken is not known to the
-restored Library, so that project moves in again
-(`reviews/sources-improve-20261115/DECISIONS.md`).
+A "Move back into this project" chosen after the backup was made is recorded
+only in the Library the restore replaces. Commit carries it over first
+(`carryScientLibraryMoveBacks` in `libraryMove.ts`): for each checkout the
+replaced Library records as `moved-back`, whose project is still at its folder
+with the same project ID and still has its own store, the restored Library
+gets that journal (under its own instance ID for the checkout, registering one
+if needed) and the saved result its status line reads; a journal it replaces
+is kept as `journal.before-<restoreId>.json`. This runs before the first move
+pass, so the project is not moved in again. Only `moved-back` is carried: it
+is the one state no code path leaves, so nothing executable is transplanted.
+Where the Library that knew the decision is gone (another computer, a lost
+disk), the restored Library's older journal stands and the project moves in
+again at its next change.
 
 ## Citing
 

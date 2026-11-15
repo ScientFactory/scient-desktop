@@ -549,9 +549,11 @@ Three things to know:
 - Extracted PDF text is not in a backup; searching inside PDFs works again as
   Scient reads them.
 - If you chose **Move back into this project** for a project after the backup
-  was made, the restored Library does not know that, and that project's
-  sources move into the Library again when it is next changed. You can move
-  them back again.
+  was made, that choice is kept: the restore takes it over from the Library it
+  replaces, and the project goes on keeping its own sources. Only when that
+  Library is gone altogether (a lost disk, another computer) is the choice
+  not known, and the project's sources move into the Library again when it is
+  next changed; you can move them back again.
 
 ## Project packages
 

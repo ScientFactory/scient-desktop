@@ -16,6 +16,7 @@ import {
   scientLibraryBackupLeavesOut,
 } from "./libraryBackup.ts";
 import { ScientLibraryBusyError, withScientFileLock } from "./libraryLock.ts";
+import { carryScientLibraryMoveBacks } from "./libraryMove.ts";
 import { SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX, type ScientLibraryLocation } from "./libraryRoot.ts";
 import { ScientSourceActor } from "./model.ts";
 import { atomicWriteJson, isNodeError, readBoundedJson, snapshot } from "./storeFiles.ts";
@@ -465,6 +466,11 @@ export async function finishScientLibraryRestore(
     const reasonOf = (error: unknown) =>
       error instanceof Error && error.message ? error.message : "A folder could not be renamed.";
     const committed = async (): Promise<ScientLibraryRestoreFinished> => {
+      // A "Move back into this project" chosen after the backup was made is known only to the
+      // Library that was replaced. It is carried over now, before any move pass can run.
+      if (await asideThere()) {
+        await carryScientLibraryMoveBacks({ from: aside, into: libraryRoot, mark: restoreId });
+      }
       // A replaced Library that held anything stays; the restored Library records where it is
       // before the intent goes, so a start killed right here still leaves the record.
       const kept =

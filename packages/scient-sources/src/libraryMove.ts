@@ -43,6 +43,7 @@ import {
   listScientLibraryInstances,
   readScientLibraryManifest,
   registerScientLibraryInstance,
+  scientLibraryLocation,
   type ScientLibraryLocation,
 } from "./libraryRoot.ts";
 import {
@@ -80,6 +81,7 @@ import {
   ensureDirectory,
   isNodeError,
   replaceFileAtomically,
+  snapshot,
 } from "./storeFiles.ts";
 import { ScientSystematicReview } from "./systematicReview.ts";
 
@@ -484,6 +486,69 @@ async function readJournalAt(directory: string): Promise<ScientLibraryMoveJourna
   if (!bytes) return null;
   if (bytes.length > MAX_JOURNAL_BYTES) throw new Error("The move journal is too large.");
   return decodeJournal(JSON.parse(bytes.toString("utf8")));
+}
+
+/**
+ * Copies "moved back" decisions from a Library a restore replaced (`from`) into the live one,
+ * for projects still at their folder that still keep their own sources, so the move pass
+ * leaves them alone. A journal it replaces is kept beside it. Repeatable.
+ */
+export async function carryScientLibraryMoveBacks(input: {
+  readonly from: string;
+  readonly into: string;
+  /** Names the copy of a replaced journal, such as the restore's ID. */
+  readonly mark: string;
+}): Promise<number> {
+  assertSafeIdentifier(input.mark, "Mark");
+  const fromMigrations = NodePath.join(input.from, MIGRATIONS_DIRECTORY);
+  const folders = await NodeFSP.readdir(fromMigrations, { withFileTypes: true }).catch(
+    (error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return [];
+      throw error;
+    },
+  );
+  const fromInstances = await listScientLibraryInstances(scientLibraryLocation(input.from));
+  const into = scientLibraryLocation(input.into);
+  let carried = 0;
+  for (const folder of folders) {
+    if (!folder.isDirectory()) continue;
+    const journal = await readJournalAt(NodePath.join(fromMigrations, folder.name)).catch(
+      () => null,
+    );
+    const checkout = fromInstances.find((instance) => instance.instanceId === folder.name);
+    if (journal?.state !== "moved-back" || !checkout) continue;
+    // Only where the project is still what the decision was about.
+    const identity = await readScientProjectIdentity(checkout.path).catch(() => null);
+    if (identity?.projectId !== checkout.projectId || !(await v1StorePresent(checkout.path))) {
+      continue;
+    }
+    const { instanceId } = await registerScientLibraryInstance({
+      library: into,
+      projectId: checkout.projectId,
+      projectRoot: checkout.path,
+    });
+    const directory = NodePath.join(input.into, MIGRATIONS_DIRECTORY, instanceId);
+    const current = await readJournalAt(directory).catch(() => null);
+    if (current?.state === "moved-back") continue;
+    await NodeFSP.mkdir(directory, { recursive: true });
+    const journalPath = NodePath.join(directory, JOURNAL_FILE);
+    if ((await snapshot(journalPath)) === "file") {
+      await NodeFSP.rename(
+        journalPath,
+        NodePath.join(directory, `journal.before-${input.mark}.json`),
+      );
+    }
+    // What the status line reads for a project that was moved back.
+    const result = NodePath.join("v1", String(journal.run), "moved-back", "result.json");
+    const saved = await readRegularFile(NodePath.join(fromMigrations, folder.name, result));
+    if (saved) {
+      await NodeFSP.mkdir(NodePath.dirname(NodePath.join(directory, result)), { recursive: true });
+      await replaceFileAtomically(NodePath.join(directory, result), saved);
+    }
+    await atomicWriteJson(journalPath, { ...journal, instanceId }, MAX_JOURNAL_BYTES);
+    carried += 1;
+  }
+  return carried;
 }
 
 /**

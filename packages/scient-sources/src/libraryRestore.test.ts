@@ -15,6 +15,11 @@ import { backUpScientLibrary, scientLibraryBackupLeavesOut } from "./libraryBack
 import { listScientLibraryRecentChanges } from "./libraryChanges.ts";
 import { markScientLibrarySourcesDistinct } from "./libraryMerge.ts";
 import {
+  moveScientProjectBackIntoProject,
+  readScientLibraryMoveState,
+  runScientLibraryMove,
+} from "./libraryMove.ts";
+import {
   cancelScientLibraryRestore,
   finishScientLibraryRestore,
   prepareScientLibraryRestore,
@@ -24,6 +29,7 @@ import {
 } from "./libraryRestore.ts";
 import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import { resolveScientProjectPins } from "./projectPins.ts";
+import { importScientSource, readScientSourceRecord } from "./store.ts";
 import { applyStep, EMPTY_MODEL, workOf, type Model, type Step } from "./testing/libraryModel.ts";
 import { checkLibraryRules } from "./testing/libraryRules.ts";
 import {
@@ -274,6 +280,64 @@ describe("restoring a backup of the Library", () => {
         (change) => change.kind === "restore",
       ),
     ).toMatchObject([{ kept: { path: kept, sources: 1 } }]);
+  });
+
+  it("keeps a project that was moved back after the backup out of the restored Library", async () => {
+    const scenario = await createScenario(await temporaryRoot());
+    const library = libraryOf(scenario);
+    const project = scenario.projects[0]!;
+    // A project with its own source moves into the Library; then the backup is made.
+    const own = await importScientSource({
+      root: project,
+      operationId: `op_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+      candidate: {
+        sourceKey: "own",
+        type: "article",
+        customType: null,
+        title: "A study the project keeps",
+        creators: [],
+        issuedRaw: "2020",
+        issuedYear: 2020,
+        identifiers: [],
+        abstract: null,
+        containerTitle: null,
+        publisher: null,
+        volume: null,
+        issue: null,
+        pages: null,
+        language: null,
+        url: null,
+        tags: [],
+        externalReferences: [],
+        fieldProvenance: [],
+        pdfAvailable: false,
+        pdfFileName: null,
+        pdfAttachmentCount: 0,
+      },
+      actor: "user",
+      intake: "file",
+    });
+    const move = () => runScientLibraryMove({ library, projectRoot: project, actor: "user" });
+    expect((await move()).outcome).toBe("moved");
+    const backup = await backUp(scenario);
+
+    // After the backup the person moves the project back, then restores the backup.
+    expect(
+      await moveScientProjectBackIntoProject({ library, projectRoot: project, actor: "user" }),
+    ).toMatchObject({ outcome: "moved-back" });
+    await prepareScientLibraryRestore({ libraryRoot: scenario.libraryRoot, backup });
+    expect(await finishScientLibraryRestore(scenario.libraryRoot)).toMatchObject({
+      outcome: "restored",
+    });
+
+    // The backup was made while the project was in the Library. The decision made since is
+    // carried over: the project keeps its own sources and nothing moves it in again.
+    expect((await move()).outcome).toBe("moved-back");
+    expect(await readScientSourceRecord(project, own.record!.sourceId)).not.toBeNull();
+    expect((await readScientLibraryMoveState({ library, projectRoot: project })).moved).toBe(false);
+    // A second start changes nothing.
+    expect(await finishScientLibraryRestore(scenario.libraryRoot)).toEqual({ outcome: "none" });
+    expect((await move()).outcome).toBe("moved-back");
   });
 
   it("makes no new Library while the old one is aside and the copy is not in place", async () => {
