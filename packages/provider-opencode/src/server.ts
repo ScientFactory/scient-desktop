@@ -13,6 +13,7 @@ export {
 export { OpenCodeAdapterV2Driver } from "./server/adapter.ts";
 export {
   makeOpenCodeAdapterV2Driver,
+  openCodeChildPermissionRules,
   openCodePermissionRules,
   type OpenCodeAdapterV2DriverEnv,
   type OpenCodeAdapterV2DriverOptions,

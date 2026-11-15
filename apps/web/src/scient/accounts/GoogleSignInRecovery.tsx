@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
 
 import { CHROME_WINDOW_ACTION, useChromeSignIn } from "./ChromeSignIn";
+import { parseUrl } from "@t3tools/shared/url";
 
 interface Props {
   readonly environmentId: EnvironmentId;
@@ -18,7 +19,7 @@ const GOOGLE_SIGN_IN_URL = "https://accounts.google.com/";
 function useRecovery({ environmentId, profile, restartUrl, onOpenExternal }: Props) {
   const chromeSignIn = useChromeSignIn(environmentId);
   const url = restartUrl ?? GOOGLE_SIGN_IN_URL;
-  const site = restartUrl ? (URL.parse(restartUrl)?.hostname ?? restartUrl) : null;
+  const site = restartUrl ? (parseUrl(restartUrl)?.hostname ?? restartUrl) : null;
   const withWindow = chromeSignIn.available && !profile.incognito;
   // Only the window brings a sign-in into the profile; the person's browser keeps its own.
   const explanation = withWindow

@@ -17,6 +17,7 @@ import { act, render } from "../../../test/render";
 import { isMacPlatform } from "~/lib/utils";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
+import { refreshProjectFiles } from "./projectFilesQueryState";
 // SCIENT-FORK:START
 import { resetOverleafStoreForTests } from "~/scient/overleaf/overleafStore";
 // SCIENT-FORK:END
@@ -398,6 +399,114 @@ describe("Files panel search", () => {
       await screen.search("");
       await expect.poll(screen.visiblePaths).toEqual(["big/", "src/", "package.json"]);
     });
+  });
+
+  it.each(["a folder listing", "coming back to the window"] as const)(
+    "keeps naming a new file while %s refreshes the tree",
+    async (refresh) => {
+      setup();
+      files.localApi = { contextMenu: { show: showContextMenuFallback } };
+      const cwd = `/naming-${refresh.replaceAll(" ", "-")}`;
+      await using screen = await renderPanel({ cwd });
+      using _menu = {
+        [Symbol.dispose]: () => {
+          dismissContextMenu();
+          files.localApi = undefined;
+        },
+      };
+      await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+      const tree = () => screen.container.querySelector("file-tree-container")!.shadowRoot!;
+      tree()
+        .querySelector<HTMLElement>('[data-item-path="src/"]')!
+        .dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            button: 2,
+          }),
+        );
+      const newFile = page.getByRole("menuitem", { name: "New File", exact: true });
+      await expect.element(newFile).toBeVisible();
+      await userEvent.click(newFile);
+      const field = () => tree().querySelector("input");
+      await expect.poll(() => field() !== null && tree().activeElement === field()).toBe(true);
+      await userEvent.keyboard("draft");
+      expect(field()!.value).toBe("draft");
+      const listings = files.listDirectory.mock.calls.length;
+      // Another app adds a file meanwhile, so the listing changes the tree.
+      files.directories["src"]!.push(entry("src/from-elsewhere.tex"));
+      if (refresh === "a folder listing") {
+        await act(() => refreshProjectFiles(props.environmentId, cwd));
+      } else {
+        window.dispatchEvent(new Event("blur"));
+        window.dispatchEvent(new Event("focus"));
+      }
+      await expect.poll(() => files.listDirectory.mock.calls.length).toBeGreaterThan(listings);
+      await expect.poll(screen.visiblePaths).toContain("src/from-elsewhere.tex");
+      const changes = () =>
+        files.listDirectory.mock.calls.flatMap(([request]) =>
+          "change" in request.input ? [request.input.change] : [],
+        );
+      expect(changes()).toEqual([]);
+      expect(field()?.value).toBe("draft");
+      expect(tree().activeElement).toBe(field());
+      await userEvent.keyboard("{Enter}");
+      await expect
+        .poll(changes)
+        .toEqual([expect.objectContaining({ _tag: "create-file", relativePath: "src/draft" })]);
+    },
+  );
+
+  it("keeps renaming a file while a listing moves its row", async () => {
+    setup();
+    files.directories.src = [entry("src/app.ts"), entry("src/zeta.ts")];
+    files.localApi = { contextMenu: { show: showContextMenuFallback } };
+    await using screen = await renderPanel({ cwd: "/renaming-moved-row" });
+    using _menu = {
+      [Symbol.dispose]: () => {
+        dismissContextMenu();
+        files.localApi = undefined;
+      },
+    };
+    await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+    const tree = () => screen.container.querySelector("file-tree-container")!.shadowRoot!;
+    await act(() => tree().querySelector<HTMLElement>('[data-item-path="src/"]')!.click());
+    await expect.poll(screen.visiblePaths).toContain("src/zeta.ts");
+    tree()
+      .querySelector<HTMLElement>('[data-item-path="src/zeta.ts"]')!
+      .dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+    const rename = page.getByRole("menuitem", { name: "Rename…", exact: true });
+    await expect.element(rename).toBeVisible();
+    await userEvent.click(rename);
+    const field = () => tree().querySelector("input");
+    await expect.poll(() => field() !== null && tree().activeElement === field()).toBe(true);
+    await userEvent.keyboard("omega.ts");
+    // A file another app adds above the row moves it while it is being renamed.
+    files.directories.src.push(entry("src/beta.ts"));
+    await act(() => refreshProjectFiles(props.environmentId, "/renaming-moved-row"));
+    await expect.poll(screen.visiblePaths).toContain("src/beta.ts");
+    const moves = () =>
+      files.listDirectory.mock.calls.flatMap(([request]) =>
+        "change" in request.input ? [request.input.change] : [],
+      );
+    expect(moves()).toEqual([]);
+    expect(field()?.value).toBe("omega.ts");
+    expect(tree().activeElement).toBe(field());
+    await userEvent.keyboard("{Enter}");
+    await expect.poll(moves).toEqual([
+      expect.objectContaining({
+        _tag: "move",
+        items: [{ from: "src/zeta.ts", to: "src/omega.ts" }],
+      }),
+    ]);
   });
 
   it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
