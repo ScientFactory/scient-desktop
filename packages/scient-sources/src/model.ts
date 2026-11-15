@@ -988,6 +988,8 @@ export const ScientSourceZoteroRefreshItem = Schema.Struct({
   addedPdfCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   conflicts: Schema.Array(ScientSourceZoteroConflict),
   message: NullableText,
+  /** Highlights it could not bring: `highlights` named `unplaced`, `no-file` or `too-long`. */
+  notBrought: Schema.optionalKey(Schema.Array(ScientSourceNotBrought)),
 });
 export type ScientSourceZoteroRefreshItem = typeof ScientSourceZoteroRefreshItem.Type;
 

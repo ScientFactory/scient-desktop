@@ -366,7 +366,7 @@ placed on the page**.
 When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
 many references it concerns: highlights and comments not placed on the page,
-highlights and comments on files that did not come, highlights and comments
+highlights and comments on files that are not here, highlights and comments
 too long to keep (over 100,000 characters), files that are not PDFs,
 links kept as attachments, PDFs Zotero could not hand over, images in notes,
 notes too long to keep whole (a note holds 100,000 characters; what does not
@@ -433,9 +433,13 @@ in while one you corrected here stays, and one you removed here stays removed
 as long as Zotero's did not change. A source imported before Scient kept
 these details gets them on its next refresh, and its highlights from Zotero
 too. A highlight comes from Zotero once: one you removed here does not come
-back. In a project the refresh reads the project's Zotero sources; in **All
-Library**, every Zotero source in the Library. A large Library is read again
-200 sources at a time, and the dialog says how far it is; closing it stops
+back, and a PDF you removed here is not brought back for its highlights. The
+refresh lists, under **Not brought from Zotero**, the highlights and comments
+it could not place on the page, those on files that are not here, and those
+too long to keep. In a project the refresh reads the project's Zotero
+sources; in **All Library**, every Zotero source in the Library. A large
+Library is read again 200 sources at a time, and the dialog says how far it
+is; closing it stops
 there and keeps what was read. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
 leaving it. A refresh does not file sources again: a reference you moved

@@ -7,6 +7,7 @@ import {
   normalizeScientSourceEditableMetadata,
   type ScientSourceActor,
   type ScientSourceExternalReference,
+  type ScientSourceNotBrought,
   type ScientSourceRecord,
   type ScientSourceZoteroRefreshItem,
   type ScientSourceZoteroRefreshResult,
@@ -36,7 +37,12 @@ import {
   type ZoteroAccess,
 } from "./ZoteroConnections.ts";
 import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
-import { decodeZoteroRawItem, type ZoteroItemMaterial, type ZoteroRawItem } from "./ZoteroItems.ts";
+import {
+  addNotBrought,
+  decodeZoteroRawItem,
+  type ZoteroItemMaterial,
+  type ZoteroRawItem,
+} from "./ZoteroItems.ts";
 import {
   readZoteroAttachmentFiles,
   readZoteroItemChildren,
@@ -324,7 +330,8 @@ async function refreshOne(input: {
     attachmentKeys: attached.keys,
     pdfs: Object.fromEntries(pdfs),
   });
-  // Last, so a failure here leaves the rest saved; each one comes once, so a retry is safe.
+  // Last, so a failure here leaves the rest saved; each one comes once, so a retry is safe. A
+  // Zotero file whose PDF was removed here is not brought back for its highlights: they are said.
   const highlights = await bringZoteroAnnotations({
     root: input.root,
     record,
@@ -333,6 +340,10 @@ async function refreshOne(input: {
     now: new Date().toISOString(),
   });
   if (highlights.added > 0) changedFields.push("highlights");
+  const notBrought: ScientSourceNotBrought[] = [];
+  addNotBrought(notBrought, "highlights", highlights.unplaced, "unplaced");
+  addNotBrought(notBrought, "highlights", highlights.elsewhere, "no-file");
+  addNotBrought(notBrought, "highlights", highlights.tooLong, "too-long");
   const updated = changedFields.length > 0 || attached.added > 0;
   return {
     ...summary,
@@ -341,6 +352,7 @@ async function refreshOne(input: {
     addedPdfCount: attached.added,
     conflicts: plan.conflicts,
     message: null,
+    ...(notBrought.length > 0 ? { notBrought } : {}),
   };
 }
 

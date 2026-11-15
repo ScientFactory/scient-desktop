@@ -3590,7 +3590,13 @@ Zotero once more and hashing it.
 Highlights are written last, after the Zotero file, so a failure leaves the
 rest saved: "not brought" counts them as `highlights` named `later`, and a
 refresh retries.
-A refresh that adds some lists `highlights` among its `changedFields`.
+A refresh that adds some lists `highlights` among its `changedFields`, and
+its item's `notBrought` says, as an import's does, how many it added without
+placing (`unplaced`), how many are on a Zotero file with no PDF here
+(`no-file`: a PDF removed here is not attached again for them) and how many
+were too long to keep (`too-long`); the refresh dialog lists them under "Not
+brought from Zotero" (`notBroughtBySource`, shared with the import summary),
+and the agent's refresh result lists such a source even when nothing changed.
 
 Zotero collections are intake scopes when browsing, and arrive as a tree. A
 Zotero collection's ID here is a hash of its Zotero library and key

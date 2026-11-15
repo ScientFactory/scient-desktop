@@ -21,6 +21,12 @@ import {
 import { toastManager } from "../../components/ui/toast";
 import { readZoteroStatus, refreshZoteroSources, sendSourcesToZotero } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import {
+  NOT_BROUGHT_LABELS,
+  notBroughtAmount,
+  notBroughtBySource,
+  notBroughtName,
+} from "./notBroughtLabels";
 import { settleAfter } from "./settleAfter";
 
 const FIELD_LABELS: Readonly<Record<ScientSourceZoteroRefreshField, string>> = {
@@ -253,7 +259,11 @@ export function useZoteroSync(input: {
 function refreshSummary(result: ScientSourceZoteroRefreshResult): string {
   const updated = result.items.filter((item) => item.outcome === "updated").length;
   if (result.items.length === 0) return "No sources here came from Zotero.";
-  if (updated === 0) return "Everything matches Zotero.";
+  if (updated === 0) {
+    return result.items.some((item) => item.notBrought)
+      ? "Nothing new came from Zotero."
+      : "Everything matches Zotero.";
+  }
   return updated === 1
     ? "Updated 1 source from Zotero."
     : `Updated ${updated} sources from Zotero.`;
@@ -279,6 +289,7 @@ export function ZoteroRefreshDialog(props: {
   const problems = (done?.items ?? []).filter(
     (item) => item.outcome === "missing" || item.outcome === "failed" || item.outcome === "stale",
   );
+  const notBrought = notBroughtBySource(done?.items ?? []);
   return (
     <Dialog open={state !== null} onOpenChange={(open) => (open ? undefined : props.onClose())}>
       <DialogPopup className="w-[min(520px,calc(100vw-32px))]">
@@ -296,7 +307,7 @@ export function ZoteroRefreshDialog(props: {
                   : null}
           </DialogDescription>
         </DialogHeader>
-        {conflicts.length > 0 || problems.length > 0 ? (
+        {conflicts.length > 0 || problems.length > 0 || notBrought.length > 0 ? (
           <DialogPanel>
             <div className="grid gap-4 text-sm">
               {conflicts.length > 0 ? (
@@ -351,6 +362,19 @@ export function ZoteroRefreshDialog(props: {
                       <span className="shrink-0 text-muted-foreground">{item.message}</span>
                     </div>
                   ))}
+                </div>
+              ) : null}
+              {notBrought.length > 0 ? (
+                <div className="grid gap-1 text-xs">
+                  <div className="font-medium">{NOT_BROUGHT_LABELS.heading}</div>
+                  <ul className="space-y-0.5">
+                    {notBrought.map((line) => (
+                      <li key={`${line.kind}:${line.name ?? ""}`} className="break-words">
+                        {notBroughtName(line)}:{" "}
+                        <span className="text-muted-foreground">{notBroughtAmount(line)}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
             </div>

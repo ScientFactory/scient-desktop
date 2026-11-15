@@ -358,7 +358,8 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
       );
     }
     const listed = result.items.filter(
-      (item) => item.outcome !== "unchanged" || item.conflicts.length > 0,
+      (item) =>
+        item.outcome !== "unchanged" || item.conflicts.length > 0 || item.notBrought !== undefined,
     );
     return {
       connection: result.connection,

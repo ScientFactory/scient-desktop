@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
+  detachScientSourcePdf,
   listScientSourceRecords,
   readScientSourceRecord,
   readScientSourceZoteroSync,
@@ -680,12 +681,42 @@ describe("Zotero refresh", () => {
     addInZotero(mark("LONG2345", "strong in the first", "PDFA2345", long));
     addInZotero(mark("HUGE2345", "strong in the first", "PDFA2345", "x".repeat(100_001)));
 
-    await refreshZoteroSources({ root, actor: "user", zotero });
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
 
     const file = await readScientAnnotationFile(home, material.sha256);
     expect(file?.annotations).toEqual([mine.annotation]);
     expect(file?.unplaced?.map((entry) => [entry.annotationId, entry.comment])).toEqual([
       ["ann_zotero_user_0_LONG2345", long],
     ]);
+    // Said in the refresh's result, as an import says it; the book's highlight is on no PDF.
+    expect(result.items[0]?.notBrought).toEqual([
+      { kind: "highlights", name: "unplaced", count: 1 },
+      { kind: "highlights", name: "no-file", count: 1 },
+      { kind: "highlights", name: "too-long", count: 1 },
+    ]);
+  });
+
+  it("says which highlights it could not bring when their PDF was removed here, and leaves it removed", async () => {
+    const { root, zotero, record, addInZotero } = await withHighlightedPdf([
+      mark("HIGH2345", "strong in the first"),
+    ]);
+    const [pdf] = record.attachments;
+    await detachScientSourcePdf({
+      root,
+      sourceId: record.sourceId,
+      attachmentId: pdf!.attachmentId,
+      expectedRevision: record.revision,
+      actor: "user",
+    });
+    addInZotero(mark("NEWW2345", "Results were"));
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect(result.items[0]).toMatchObject({
+      outcome: "unchanged",
+      addedPdfCount: 0,
+      notBrought: [{ kind: "highlights", name: "no-file", count: 3 }],
+    });
+    expect((await readScientSourceRecord(root, record.sourceId))?.attachments).toEqual([]);
   });
 });

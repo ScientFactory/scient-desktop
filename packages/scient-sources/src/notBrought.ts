@@ -88,7 +88,7 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
       return name === "unplaced"
         ? "Highlights and comments not placed on the page (listed with the PDF's highlights)"
         : name === "no-file"
-          ? "Highlights and comments on files that did not come"
+          ? "Highlights and comments on files that are not here"
           : name === "later"
             ? "Highlights and comments not saved this time: Refresh from Zotero brings them"
             : name === "too-long"
@@ -134,6 +134,38 @@ export function notBroughtAmount(line: NotBroughtLine): string {
 }
 
 /**
+ * What several sources did not bring, one line per thing summed over them, most sources
+ * first: an import's references, or the sources a refresh read again.
+ */
+export function notBroughtBySource(
+  sources: ReadonlyArray<{
+    readonly sourceId: string;
+    readonly notBrought?: ReadonlyArray<ScientSourceNotBrought>;
+  }>,
+): ReadonlyArray<NotBroughtLine> {
+  const lines = new Map<string, { line: NotBroughtLine; sourceIds: Set<string> }>();
+  for (const source of sources) {
+    for (const entry of source.notBrought ?? []) {
+      const key = `${entry.kind}\0${entry.name ?? ""}`;
+      const found = lines.get(key) ?? {
+        line: { kind: entry.kind, name: entry.name ?? null, count: 0, sourceIds: [] },
+        sourceIds: new Set<string>(),
+      };
+      found.line = { ...found.line, count: found.line.count + entry.count };
+      found.sourceIds.add(source.sourceId);
+      lines.set(key, found);
+    }
+  }
+  return [...lines.values()]
+    .map(({ line, sourceIds }) => ({ ...line, sourceIds: [...sourceIds] }))
+    .toSorted(
+      (left, right) =>
+        right.sourceIds.length - left.sourceIds.length ||
+        notBroughtName(left).localeCompare(notBroughtName(right)),
+    );
+}
+
+/**
  * Everything an import did not bring, one line per thing, most references first; what
  * belongs to no reference comes last.
  */
@@ -141,7 +173,6 @@ export function summarizeNotBrought(
   operation: Pick<ScientSourceImportOperation, "items" | "notBrought"> &
     Partial<Pick<ScientSourceImportOperation, "adapter">>,
 ): ReadonlyArray<NotBroughtLine> {
-  const lines = new Map<string, { line: NotBroughtLine; sourceIds: Set<string> }>();
   // The same work for certain (its identifier or its PDF). A possible match is not said to
   // be here: the summary asks the person to look at those.
   const alreadyHere = operation.items.filter(
@@ -149,27 +180,14 @@ export function summarizeNotBrought(
       item.state === "skipped" &&
       (item.duplicateKind === "same-identifier" || item.duplicateKind === "same-pdf"),
   );
-  for (const item of operation.items) {
-    if (item.state !== "imported" || !item.sourceId) continue;
-    for (const entry of item.notBrought ?? []) {
-      const key = `${entry.kind}\0${entry.name ?? ""}`;
-      const found = lines.get(key) ?? {
-        line: { kind: entry.kind, name: entry.name ?? null, count: 0, sourceIds: [] },
-        sourceIds: new Set<string>(),
-      };
-      found.line = { ...found.line, count: found.line.count + entry.count };
-      found.sourceIds.add(item.sourceId);
-      lines.set(key, found);
-    }
-  }
   return [
-    ...[...lines.values()]
-      .map(({ line, sourceIds }) => ({ ...line, sourceIds: [...sourceIds] }))
-      .toSorted(
-        (left, right) =>
-          right.sourceIds.length - left.sourceIds.length ||
-          notBroughtName(left).localeCompare(notBroughtName(right)),
+    ...notBroughtBySource(
+      operation.items.flatMap((item) =>
+        item.state === "imported" && item.sourceId
+          ? [{ sourceId: item.sourceId, notBrought: item.notBrought ?? [] }]
+          : [],
       ),
+    ),
     // A Zotero item that was already here under another origin (the same DOI, a possible
     // match) was skipped whole: what Zotero holds for it was not looked at.
     ...(operation.adapter?.startsWith("zotero") && alreadyHere.length > 0
