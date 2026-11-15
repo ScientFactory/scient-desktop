@@ -2452,6 +2452,43 @@ Overleaf Windows job. The copies folder is reached only through real folders
 key is then in the Library, with nothing changed or removed, is the file
 written again; otherwise it stays edited for the person to decide.
 
+## Recent changes
+
+`listScientLibraryRecentChanges` (`libraryChanges.ts`, route `recentChanges`,
+read scope) lists what the Library still records and can act on: bulk edits,
+merges, finished imports and the Trash, newest first, each with the fields the
+panel needs for one sentence and one action. It writes nothing and keeps no
+log of its own, so it is not a history: a restored source leaves the Trash and
+the list. The panel (`RecentChanges.tsx`, words in `recentChangeLabels.ts`)
+runs the existing commands: bulk Undo request by request through
+`useSourcesOrganize.undoBulkEdit`, `undo-merge`, restore, and the list view
+narrowed to an import's sources.
+
+- **Bulk edits** come from `listScientSourcesBulkEdits`. A selection larger
+  than one request is sent in parts of 100, one receipt each; the panel gives
+  every request of one edit the same `partOf`, stored in the receipt, and the
+  list groups by it. Receipts written before `partOf` list one per request.
+  `left` on a receipt counts what an Undo left as it was, so a finished Undo
+  with conflicts is not listed as plainly undone.
+- **Merges** are found through `aliases.json` (one file) and only the listed
+  merges' receipts are read; a pair merged, undone and merged again is listed
+  once, by its latest merge.
+- **Imports** are the receipts in `receipts/` that added a source, with the
+  operation's actor and intake. A row carries counts only; the sources of one
+  import are asked for when they are shown (`sourcesOfImport`), resolved
+  through the aliases and limited to records that exist.
+- **The Trash** is `readScientSourcesRemovedByPerson`; sources an alias
+  forwards are merges' copies and their entries are not read.
+
+Measured on a quiet Mac with 20,000 records, 5,000 merges, 250 bulk receipts
+of 100 sources and 200 imports of 500: about 90 ms for the first page and a
+9 KB answer. Reading every merge receipt and Trash entry instead took 0.4 to
+1.0 s, and sending each import's IDs made the answer almost 1 MB.
+
+Agents have no tool for this list yet (`libraryParity.ts` records the gap):
+they list merges and the Trash, and get a bulk edit's batch ID when they make
+it, but cannot list past bulk edits or imports.
+
 ## Citing
 
 Documents cite by key. In Markdown, typing `[@` opens a list of Library

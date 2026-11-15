@@ -767,6 +767,29 @@ Collections, saved searches, study designs and topics are kept in your
 Library, so they show in every project; choose **All** to see every source in
 a collection.
 
+### Recent changes
+
+Choose **Recent changes** (in the **⋯** menu at the top of the Library) to see
+the changes to your whole Library that are still on record, newest first, with
+who made each one (you or an agent) and what can be done about it now:
+
+- **A bulk change:** what it did and to how many sources, with **Undo**. A
+  change that was sent in several parts is one line and is undone as one. Undo
+  leaves a source that changed since as it is and says how many it left; the
+  line then reads "Undone; _N_ changed since and were left".
+- **A merge:** the two papers, with **Undo**, or why it can no longer be
+  undone.
+- **An import** from Zotero, a reference file or PDF files: how many sources it
+  brought, and how many of them are in the Library now if some were merged or
+  removed since. **Show sources** lists them.
+- **A source in the Trash**, with **Restore**.
+
+This is not a full history. Edits to one paper are in that paper's **History**.
+Changes to reading status and stars, and removals from a project, are not
+recorded. A restored source leaves the Trash and this list. Package imports,
+the move of a project into your Library and "not duplicates" decisions stay
+where they are (the **Recover** submenu and **Possible duplicates**).
+
 ## Run a systematic review
 
 Choose **Systematic reviews** (in the **⋯** menu at the top of the Library)
