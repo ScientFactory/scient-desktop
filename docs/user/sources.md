@@ -1069,7 +1069,8 @@ flow still apply to writes. Library tools stay scoped to the current project:
 they do not grant arbitrary host file paths or turn uncertain metadata into
 verified evidence. Agents can browse and import from Zotero, refresh from it
 and send to it with the same rules as you; they change Zotero only when you ask
-them to send.
+them to send. An agent can also read the same **Recent changes** list as you,
+so you can ask it to undo yesterday's tagging or to restore a paper it removed.
 
 ## Current limits
 

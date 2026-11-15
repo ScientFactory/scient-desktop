@@ -31,6 +31,7 @@ import {
   ScientSourceTopic,
   ScientReferenceFindingKind,
   ScientReferenceStatus,
+  ScientLibraryRecentChange,
 } from "@scientfactory/scient-sources";
 import {
   isTrimmedUnadvertised,
@@ -156,6 +157,8 @@ export const ScientSourcesListResult = Schema.Struct({
   citationStyle: Schema.optionalKey(ScientAgentCitationStyle),
   citationStyles: Schema.optionalKey(Schema.Array(ScientCitationStyleSummary)),
   catalogueMessage: Schema.optionalKey(Schema.String),
+  /** Library mode, with recentChanges: the Library's recorded changes, newest first. */
+  recentChanges: Schema.optionalKey(Schema.Array(ScientLibraryRecentChange)),
   /** Library mode, with duplicates: the first pairs and the newest undoable merges. */
   duplicates: Schema.optionalKey(
     Schema.Struct({
@@ -295,7 +298,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
     description:
       mode === "project"
         ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${listFilters(mode)}`
-        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${listFilters(mode)} duplicates: possible duplicate pairs (offset) and undoable merges (mergeOffset; allMerges: every receipt) instead; pass revision back. mergeId: one merge's receipt.`,
+        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${listFilters(mode)} duplicates: possible duplicate pairs (offset) and undoable merges (mergeOffset; allMerges: every receipt) instead; pass revision back. mergeId: one merge's receipt. recentChanges: the recorded bulk edits (undo each part's batchId, newest first), merges, imports and Trash instead, newest first.`,
     parameters:
       mode === "project"
         ? Schema.Struct(listParameters)
@@ -309,6 +312,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
             allMerges: Schema.optionalKey(Schema.Boolean),
             revision: Schema.optionalKey(NonEmptyString),
             mergeId: Schema.optionalKey(NonEmptyString),
+            recentChanges: Schema.optionalKey(Schema.Boolean),
           }),
     success: ScientSourcesListResult,
     failure: ScientSourcesToolError,

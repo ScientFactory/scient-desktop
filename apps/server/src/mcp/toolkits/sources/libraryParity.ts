@@ -166,11 +166,8 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
   },
   "scientSources.fullTextSearch": tool("scient_sources_search"),
   "scientSources.journalIcon": { kind: "display", reason: "Serves a journal's icon for display." },
-  "scientSources.recentChanges": {
-    kind: "gap",
-    reason:
-      "Agents list merges and the Trash with scient_sources_list; past bulk edits and imports need a new list input, which waits for the tool-text evals.",
-  },
+  // The Library's list tool takes `recentChanges`, as it takes `duplicates`.
+  "scientSources.recentChanges": tool("scient_sources_list"),
   "scientSources.trash": tool("scient_sources_list", "inTrash"),
   "scientSources.systematicReviews": tool("scient_sources_systematic_reviews"),
   "scientSources.systematicReview": tool("scient_sources_systematic_reviews", "reviewId"),

@@ -2502,9 +2502,13 @@ of 100 sources and 200 imports of 500: about 90 ms for the first page and a
 9 KB answer. Reading every merge receipt and Trash entry instead took 0.4 to
 1.0 s, and sending each import's IDs made the answer almost 1 MB.
 
-Agents have no tool for this list yet (`libraryParity.ts` records the gap):
-they list merges and the Trash, and get a bulk edit's batch ID when they make
-it, but cannot list past bulk edits or imports.
+Agents read the same list with `scient_sources_list` and `recentChanges: true`
+(Library mode), and act on a row with the tools they already have: a bulk
+edit's parts are undone newest first with `scient_sources_bulk_update` and
+each `batchId`, a merge with `undo-merge`, a Trash entry with
+`scient_sources_restore`. The input added 165 bytes to the tool list
+(121,112 measured); no model eval covers it yet, because the tool-use eval
+does not load the Sources tools.
 
 ## Citing
 
@@ -3271,9 +3275,7 @@ single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
 an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a named test. One gap stands: the
-Recent changes list (`scientSources.recentChanges`), whose agent side waits for
-a new input on the list tool.
+`libraryParity.test.ts` lists each gap as a named test. No gaps are left.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is
