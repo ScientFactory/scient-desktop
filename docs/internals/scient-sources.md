@@ -2390,8 +2390,9 @@ identity without trusting a stale path.
 
 A paper retracted after it was added is found without anyone asking. At the
 end of each periodic pass (`LibraryMovePass.ts`), `runLibraryNoticeWatch`
-(`LibraryNoticeWatch.ts`) runs when the Library exists, holds a source with a
-DOI or PMID, and the last successful check is a week old or there was none.
+(`LibraryNoticeWatch.ts`) runs when the Library exists, no restore is waiting
+to be finished, it holds a source with a DOI or PMID, and the last successful
+check is a week old or there was none.
 
 **One public file, matched here.** It fetches Crossref's copy of the
 Retraction Watch database

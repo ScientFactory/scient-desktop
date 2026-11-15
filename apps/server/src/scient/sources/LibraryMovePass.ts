@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import {
   ensureScientLibrary,
   scientLibraryLocation,
+  scientLibraryRestoreUnfinished,
   scientLibraryRootFor,
 } from "@scientfactory/scient-sources/library-root";
 import * as Effect from "effect/Effect";
@@ -66,11 +67,18 @@ export const runLibraryMovePass = Effect.fn("ScientLibraryMove.pass")(function* 
   return outcomes;
 });
 
-/** The weekly notice check rides the same pass; it never creates a Library to check. */
+/**
+ * The weekly notice check rides the same pass. It never creates a Library to check, and like
+ * every Library write it waits while a restore has not finished.
+ */
 const checkLibraryNotices = Effect.fn("ScientLibraryNoticeWatch.pass")(function* () {
   const config = yield* ServerConfig;
   const library = scientLibraryLocation(scientLibraryRootFor(config.stateDir));
-  if (!(yield* Effect.promise(() => libraryExists(library.root)))) return;
+  const ready = yield* Effect.promise(
+    async () =>
+      (await libraryExists(library.root)) && !(await scientLibraryRestoreUnfinished(library.root)),
+  );
+  if (!ready) return;
   yield* Effect.promise((signal) => runLibraryNoticeWatch({ library, signal }));
 });
 
