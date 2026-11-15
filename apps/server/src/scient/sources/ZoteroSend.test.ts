@@ -121,6 +121,8 @@ function zoteroOrg(
     readonly quota?: number;
     /** How many uploads to the storage fail before one goes through. */
     readonly storageFailures?: number;
+    /** How many reads of an item fail before one goes through. */
+    readonly readFailures?: number;
   } = {},
 ) {
   const items = new Map<string, ZoteroRawItem>();
@@ -133,6 +135,8 @@ function zoteroOrg(
   const stored = new Map<string, Buffer>();
   const authorised = new Map<string, { readonly md5: string; readonly filename: string }>();
   let storageFailures = options.storageFailures ?? 0;
+  let readFailures = options.readFailures ?? 0;
+  const usedTokens = new Set<string>();
   const json = (body: unknown, headers: Record<string, string> = {}) => ({
     status: 200,
     headers,
@@ -182,6 +186,11 @@ function zoteroOrg(
       }
       if (request.method === "POST" && path === `/users/${USER}/items`) {
         writes.push(request);
+        const token = request.headers["Zotero-Write-Token"];
+        if (token && usedTokens.has(token)) {
+          return { status: 412, headers: {}, body: "Write token already used" };
+        }
+        if (token) usedTokens.add(token);
         const successful: Record<string, { key: string; version: number }> = {};
         for (const [index, entry] of (JSON.parse(request.body ?? "[]") as object[]).entries()) {
           version += 1;
@@ -261,6 +270,7 @@ function zoteroOrg(
         const children = [...items.values()].filter((child) => child.data.parentItem === match[1]);
         return json(children, { "total-results": String(children.length) });
       }
+      if (item && readFailures-- > 0) return empty(500);
       return item ? json(item) : { status: 404, headers: {}, body: "" };
     },
   };
@@ -695,6 +705,23 @@ describe("Send to Zotero", () => {
 
     await refreshZoteroSources({ root, actor: "user", zotero: org.zotero });
     expect((await readScientSourceRecord(root, sourceId))?.title).toBe("Edited in Zotero");
+  });
+
+  it("says so, and makes no second item, when an earlier Send made the item but did not finish", async () => {
+    const { root, sourceId } = await sourceInScient();
+    // The item is made, then reading it back to link the source fails.
+    const org = zoteroOrg({ readFailures: 1 });
+    const send = () =>
+      sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
+
+    expect((await send()).items).toEqual([expect.objectContaining({ outcome: "failed" })]);
+    expect((await send()).items).toEqual([
+      expect.objectContaining({
+        outcome: "failed",
+        message: expect.stringContaining("Look for the item in Zotero"),
+      }),
+    ]);
+    expect([...org.items.values()].filter((item) => item.data.itemType !== "note")).toHaveLength(1);
   });
 
   it("explains a key that can only read", async () => {

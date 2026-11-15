@@ -21,7 +21,7 @@ const MAX_PDF_BYTES = 512 * 1024 * 1024;
 const MAX_REDIRECTS = 4;
 
 export interface ZoteroWebRequest {
-  readonly method: "GET" | "POST" | "PATCH";
+  readonly method: "GET" | "POST" | "PATCH" | "DELETE";
   readonly url: URL;
   readonly headers: Readonly<Record<string, string>>;
   readonly body?: string;
@@ -36,6 +36,14 @@ export interface ZoteroWebHttp {
     headers: Readonly<Record<string, string>>,
     destination: string,
   ) => Promise<{ readonly status: number }>;
+  /** Posts a file between Zotero's `prefix` and `suffix` to the storage Zotero named; never the key. */
+  readonly upload: (url: URL, contentType: string, body: ZoteroUploadBody) => Promise<number>;
+}
+
+interface ZoteroUploadBody {
+  readonly prefix: string;
+  readonly path: string;
+  readonly suffix: string;
 }
 
 function headersOf(response: { readonly headers: NodeJS.Dict<string | string[]> }) {
@@ -144,7 +152,45 @@ function nodeDownload(
   });
 }
 
-export const nodeZoteroWebHttp: ZoteroWebHttp = { request: nodeRequest, download: nodeDownload };
+async function nodeUpload(url: URL, contentType: string, body: ZoteroUploadBody): Promise<number> {
+  if (url.protocol !== "https:") throw new Error("Zotero files must use HTTPS.");
+  const { size } = await NodeFSP.stat(body.path);
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  const outgoing = NodeHttps.request(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": contentType,
+        "Content-Length": String(
+          Buffer.byteLength(body.prefix) + size + Buffer.byteLength(body.suffix),
+        ),
+        "User-Agent": METADATA_USER_AGENT,
+      },
+    },
+    (response) => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode ?? 0));
+    },
+  );
+  outgoing.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    outgoing.destroy(new Error("Timed out while sending a PDF to Zotero."));
+  });
+  outgoing.on("error", reject);
+  // Streamed, so a large PDF is never held whole in memory.
+  const file = NodeFS.createReadStream(body.path);
+  file.on("error", (error) => outgoing.destroy(error));
+  file.on("end", () => outgoing.end(body.suffix));
+  outgoing.write(body.prefix);
+  file.pipe(outgoing, { end: false });
+  return promise;
+}
+
+export const nodeZoteroWebHttp: ZoteroWebHttp = {
+  request: nodeRequest,
+  download: nodeDownload,
+  upload: nodeUpload,
+};
 
 const GroupKeyAccess = Schema.Struct({
   library: Schema.optionalKey(Schema.Boolean),
@@ -342,6 +388,30 @@ export function zoteroWebStatus(result: ZoteroWebAccountResult): ZoteroConnectio
   };
 }
 
+const ZoteroUploadAuthorization = Schema.Union([
+  Schema.Struct({ exists: Schema.Number }),
+  Schema.Struct({
+    url: Schema.String,
+    contentType: Schema.String,
+    prefix: Schema.String,
+    suffix: Schema.String,
+    uploadKey: Schema.String,
+  }),
+]);
+const decodeUploadAuthorization = Schema.decodeUnknownSync(ZoteroUploadAuthorization);
+
+interface ZoteroUploadFile {
+  readonly path: string;
+  readonly fileName: string;
+  readonly md5: string;
+  readonly size: number;
+  /** Milliseconds, as Zotero asks. */
+  readonly mtime: number;
+}
+
+/** How an upload ended: sent, or why Zotero did not take the file. */
+export type ZoteroUpload = "sent" | "forbidden" | "full" | "busy" | "failed";
+
 /** Reads and writes the key owner's personal library on zotero.org, or one of their groups. */
 export function makeZoteroWebLibrary(input: {
   readonly apiKey: string;
@@ -444,10 +514,24 @@ export function makeZoteroWebLibrary(input: {
     };
   };
 
+  const fileForm = (attachmentKey: string, fields: Readonly<Record<string, string>>) =>
+    http.request({
+      method: "POST",
+      url: libraryUrl(`/items/${attachmentKey}/file`),
+      headers: {
+        ...headers,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "If-None-Match": "*",
+      },
+      body: new URLSearchParams(fields).toString(),
+    });
+
   return {
     account: input.account,
     groupId: groupId ?? null,
     transport,
+    /** False for a personal library whose key has no file access; a group answers per upload. */
+    canAddFiles: groupId ? true : input.account.canReadFiles,
     /**
      * The fields and creator roles Zotero accepts for an item type, asked once per type; null
      * when Zotero does not say, and the caller then sends only what every type has.
@@ -465,6 +549,12 @@ export function makeZoteroWebLibrary(input: {
       writeToken: string,
     ): Promise<ReadonlyArray<{ readonly key: string; readonly version: number } | null>> => {
       const response = await write("POST", "/items", items, { "Zotero-Write-Token": writeToken });
+      // A reused token: an earlier request made these items, and Zotero does not say which.
+      if (response.status === 412) {
+        throw new Error(
+          "Zotero already has what an earlier Send of this source made, but Scient did not record it. Look for the item in Zotero before you send this source again.",
+        );
+      }
       const parsed = JSON.parse(response.body) as {
         readonly successful?: Record<
           string,
@@ -493,6 +583,46 @@ export function makeZoteroWebLibrary(input: {
       if (response.status === 412) return { outcome: "changed" };
       const next = Number.parseInt(response.headers["last-modified-version"] ?? "", 10);
       return { outcome: "updated", version: Number.isFinite(next) ? next : version };
+    },
+    /**
+     * Zotero's upload for an attachment that has no file yet: authorise, send the bytes to the
+     * storage Zotero names, register. Zotero answers `exists` when it already holds the bytes.
+     */
+    uploadFile: async (attachmentKey: string, file: ZoteroUploadFile): Promise<ZoteroUpload> => {
+      const refused = (status: number): ZoteroUpload =>
+        status === 403
+          ? "forbidden"
+          : status === 413
+            ? "full"
+            : status === 409 || status === 429 || status === 503
+              ? "busy"
+              : "failed";
+      const authorised = await fileForm(attachmentKey, {
+        md5: file.md5,
+        filename: file.fileName,
+        filesize: String(file.size),
+        mtime: String(file.mtime),
+      });
+      if (authorised.status !== 200) return refused(authorised.status);
+      const answer = decodeUploadAuthorization(JSON.parse(authorised.body));
+      if ("exists" in answer) return "sent";
+      const stored = await http.upload(new URL(answer.url), answer.contentType, {
+        prefix: answer.prefix,
+        path: file.path,
+        suffix: answer.suffix,
+      });
+      if (stored < 200 || stored >= 300) return "failed";
+      const registered = await fileForm(attachmentKey, { upload: answer.uploadKey });
+      return registered.status === 204 ? "sent" : refused(registered.status);
+    },
+    /** Deletes an item only if it is still at `version`; true when it is gone. */
+    deleteItem: async (itemKey: string, version: number): Promise<boolean> => {
+      const response = await http.request({
+        method: "DELETE",
+        url: libraryUrl(`/items/${itemKey}`),
+        headers: { ...headers, "If-Unmodified-Since-Version": String(version) },
+      });
+      return response.status === 204;
     },
   };
 }
