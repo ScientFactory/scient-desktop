@@ -712,7 +712,8 @@ export async function recordScientSourceCheck(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
-  readonly verification: ScientSourceVerification;
+  /** Absent for a source whose identifier was never checked, when only its notices change. */
+  readonly verification?: ScientSourceVerification;
   readonly editorialStatus: ScientSourceEditorialStatus | null;
   readonly actor?: ScientSourceActor;
 }): Promise<{
@@ -726,7 +727,7 @@ export async function recordScientSourceCheck(input: {
     if (current.revision !== input.expectedRevision) return { outcome: "stale", record: current };
     const { verification: _verification, editorialStatus: _editorial, ...rest } = current;
     const checked = {
-      verification: input.verification,
+      ...(input.verification ? { verification: input.verification } : {}),
       ...(input.editorialStatus ? { editorialStatus: input.editorialStatus } : {}),
     };
     if (withoutCheckTime(current) === withoutCheckTime(checked)) {
