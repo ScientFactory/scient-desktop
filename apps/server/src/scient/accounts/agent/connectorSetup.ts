@@ -1,6 +1,7 @@
 /**
  * A local connector's missing setup, asked in the conversation: plain answers the agent got from
- * the user in chat, and keys through Accounts' private card, linked to the connector.
+ * the user in chat, and keys through Accounts' private card, linked to the connector. A hosted
+ * one has nothing to set up here, so the agent hears what it needs and who gives it.
  */
 import { AccountsError, type LocalKeyInput } from "@t3tools/contracts";
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
@@ -8,11 +9,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
+import { nextStep } from "../../extensions/ConnectorAgentControl.ts";
 import { ConnectorRuntime } from "../../extensions/ExtensionsServices.ts";
+import { agentStatusOf } from "../../extensions/connectors/agentStatus.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey } from "./accountAdd.ts";
+import { askForAccountKey, cardEndedNote, withCardAllowance } from "./accountAdd.ts";
 import { authorize } from "./accountUse.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
@@ -25,22 +28,19 @@ const unavailable = (message: string) => new AccountsError({ reason: "unavailabl
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function* (input: Input) {
-  const scope = yield* accountSessionScope();
   // Looked up here, so the Accounts tools do not need Extensions wherever they are built.
   const found = yield* Effect.serviceOption(ConnectorRuntime);
   if (Option.isNone(found)) return yield* unavailable("Connectors are unavailable here.");
   const runtime = found.value;
   const inventory = yield* runtime.list();
-  const connector = inventory.connectors.find(
-    (item) =>
-      item.local !== undefined &&
-      (item.serverName === input.connector || same(item.displayName, input.connector)),
+  const named = inventory.connectors.filter(
+    (item) => item.serverName === input.connector || same(item.displayName, input.connector),
   );
-  const local = connector?.local;
-  if (connector === undefined || local === undefined) {
+  const connector = named.find((item) => item.local !== undefined) ?? named[0];
+  if (connector === undefined) {
     return yield* new AccountsError({
       reason: "invalid-input",
-      message: `No local connector is named ${input.connector}.`,
+      message: `No connector is named ${input.connector}. scient_connector_list shows them.`,
     });
   }
   // Before any card, account or change: the person may have given it to other agents only.
@@ -52,6 +52,19 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
       message: `${input.connector} is not available to this agent. The person can choose this agent on its page in Settings → Extensions.`,
     });
   }
+  const local = connector.local;
+  if (local === undefined) {
+    // A hosted service has nothing set up here: say what it needs, and who gives it.
+    const status = agentStatusOf(connector);
+    return status === "ready"
+      ? {
+          status: "ready" as const,
+          missing: [],
+          message: `${connector.displayName} needs no setup; it's ready. scient_connector_check {"connector":"${connector.serverName}"} lists its tools.`,
+        }
+      : { status: "needs" as const, missing: [], message: nextStep(connector, status) };
+  }
+  const scope = yield* accountSessionScope();
   const fieldFor = (name: string) =>
     local.setup.find(({ field }) => field.key === name || same(field.title, name))?.field;
 
@@ -103,7 +116,11 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
             ? `${field.title}: its key lives in the user's password manager; they update it there`
             : asked.status === "unavailable"
               ? `${field.title}: ${asked.message}`
-              : `${field.title}: the user did not enter it`,
+              : asked.status === "declined" ||
+                  asked.status === "cancelled" ||
+                  asked.status === "timed_out"
+                ? `${field.title}: ${cardEndedNote(asked.status)}`
+                : `${field.title}: the user did not enter it`,
       );
     }
   }
@@ -154,11 +171,12 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
     ? {
         status: "needs" as const,
         missing,
-        message: `${connector.displayName} still needs: ${missing.join("; ")}.`,
+        // Each item may end its own sentence; the message ends with one period.
+        message: `${connector.displayName} still needs: ${missing.join("; ").replace(/\.$/u, "")}.`,
       }
     : {
         status: "ready" as const,
         missing,
         message: `${connector.displayName} is set up and restarted. Call its tool again.`,
       };
-});
+}, withCardAllowance);

@@ -607,6 +607,7 @@ jobs:
             apps/server/src/statFingerprint.ts \
             apps/server/src/auth/ServerSecretStore.ts \
             apps/server/src/provider/omp \
+            apps/server/src/provider/scient/ScientAgentToolLoading.ts \
             apps/server/src/scient/providerLifecycle/ManagedProviderRuntimeActions.ts \
             apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts \
             apps/server/src/scient/providerLifecycle/ProviderConnectionActions.ts \

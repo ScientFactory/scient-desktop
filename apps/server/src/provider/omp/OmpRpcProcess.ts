@@ -27,6 +27,10 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import type { OmpModelRefreshError } from "./OmpModel.ts";
 import {
+  SCIENT_CONNECTOR_LOAD_MODE_ENV,
+  scientConnectorLoadMode,
+} from "../scient/ScientAgentToolLoading.ts";
+import {
   canonicalOmpExecutablePath,
   OmpExecutableGate,
   type OmpExecutableActivation,
@@ -515,6 +519,10 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
             }),
       ),
     );
+  env[SCIENT_CONNECTOR_LOAD_MODE_ENV] = scientConnectorLoadMode(target, {
+    version,
+    runtimeVersion,
+  });
   if (target.driverKind === "scient") {
     delete env.SCIENT_AGENT_ENABLE_SOURCES;
     // Scient shows pages in its own browser, so the agent opens no system browser beside it.

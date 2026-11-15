@@ -142,15 +142,16 @@ describe("MCP Registry discover", () => {
         });
 
         const byName = Object.fromEntries(page.entries.map((entry) => [entry.name, entry]));
+        // A name or title hit ranks first; the rest keep the registry's order.
         expect(Object.keys(byName)).toEqual([
+          "com.mcparmory/github",
+          "io.github.0Xflacko/justclip",
           "ac.inference.sh/mcp",
           "academy.apexai/apex-ai-academy",
           "ae.easyvoice/tts",
           "agency.kesey/pretrip",
           "ai.autorfp/mcp",
           "ai.agentrapay/agentra",
-          "com.mcparmory/github",
-          "io.github.0Xflacko/justclip",
         ]);
         expect(page.nextCursor).toBe("io.github.0Xflacko/justclip:0.3.0");
 
@@ -330,6 +331,64 @@ describe("MCP Registry discover", () => {
           unsupportedReason: expect.stringContaining(reason),
         });
     }
+  });
+
+  it.effect("finds every word of a query, not only the phrase, and ranks name hits first", () => {
+    const server = (name: string, title: string, description: string) => ({
+      server: {
+        name,
+        title,
+        description,
+        version: "1.0.0",
+        remotes: [{ type: "streamable-http", url: `https://${name.replaceAll("/", ".")}/mcp` }],
+      },
+      _meta: { "io.modelcontextprotocol.registry/official": { status: "active", isLatest: true } },
+    });
+    const pages: Record<string, unknown[]> = {
+      // The registry matches the text as one phrase: "google drive" finds nothing.
+      "google drive": [],
+      "google-drive": [server("io.example/gdrive", "Google Drive", "Files in Drive.")],
+      google: [
+        server("io.example/rent", "Rent a car", "Drive away today, found on Google Maps."),
+        server("io.example/gdrive", "Google Drive", "Files in Drive."),
+        server("io.example/gmail", "Gmail", "Google mail."),
+      ],
+    };
+    const http = harness((url) =>
+      Response.json({
+        servers: pages[url.searchParams.get("search") ?? ""] ?? [],
+        metadata: { count: 0 },
+      }),
+    );
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const page = yield* discover.search({ scope: "registry", query: "Google Drive" });
+      expect(http.requests.map((url) => url.searchParams.get("search")).toSorted()).toEqual([
+        "Google Drive",
+        "google",
+        "google-drive",
+      ]);
+      expect(page.entries.map((entry) => entry.name)).toEqual([
+        "io.example/gdrive",
+        "io.example/rent",
+      ]);
+      expect(page.nextCursor).toBeUndefined();
+      expect(page.message).toBeUndefined();
+    }).pipe(Effect.provide(http.layer()));
+  });
+
+  it.effect("says a merged search was cut when a registry page has more", () => {
+    const http = harness((url) =>
+      Response.json({
+        servers: [],
+        metadata: url.searchParams.get("search") === "google" ? { nextCursor: "more:1" } : {},
+      }),
+    );
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const page = yield* discover.search({ scope: "registry", query: "Google Drive" });
+      expect(page.message).toContain("Narrow the search");
+    }).pipe(Effect.provide(http.layer()));
   });
 
   it.effect("serves a query from cache for ten minutes and keeps installed state live", () => {

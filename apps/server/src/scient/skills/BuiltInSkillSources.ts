@@ -426,8 +426,8 @@ This skill grants no tools or permissions.
    Add one connector for the need: not alternatives, or aggregators that bundle many services,
    unless the user asks. For mail, files, calendars or other private data, prefer the service's
    own connector or one that runs on this computer with the user's own sign-in. A hosted
-   connector's \`host\` sees everything it handles: if that isn't the service itself, name it and
-   ask before adding, using or signing in to it.
+   connector's \`host\` sees everything it handles (its tools name it too): if that isn't the
+   service itself, name it and ask before adding, using or signing in to it.
    Then follow its message (\`scient_connector_setup\` for \`needs-setup\`,
    \`scient_connector_control {action: "sign-in"}\` for \`needs-sign-in\`). New chats get its
    tools; in this chat, call them through \`scient_connector_check {connector, calls}\`.
@@ -449,8 +449,9 @@ This skill grants no tools or permissions.
    - files, a database or a command-line tool on this computer: \`local-tools.md\`.
 4. **Plan a few tools** shaped like the user's tasks, not one per endpoint. Read
    \`tool-design.md\`. Tell the user the plan in a few lines and go on.
-5. **Build from the template.** \`scient_connector_copy {name}\` writes a working connector to
-   \`connectors/<slug>/\` (an OpenAlex example with no dependencies). Read its \`README.md\`,
+5. **Build from the template.** \`scient_connector_copy {name}\`, with a name no connector has,
+   writes a working connector to \`connectors/<slug>/\` (an OpenAlex example with no
+   dependencies). To read an installed connector's code, copy it with \`{connector}\` instead. Read its \`README.md\`,
    replace the example tools in \`server.mjs\`, and update \`manifest.json\`. Keep \`mcp.mjs\`,
    \`http.mjs\` and \`session.mjs\` unless you have a reason. Scient runs Node connectors on its own
    Node, and npm may be missing: add libraries only when truly needed, installed inside the
@@ -463,9 +464,14 @@ This skill grants no tools or permissions.
    and don't save a connector you couldn't check.
 7. **Save and set up.** \`scient_connector_save {folder}\`. When it says \`needs-setup\`, call
    \`scient_connector_setup {connector}\`: keys open a private card, a sign-in links the user's
-   Accounts sign-in. Then check once more with \`connector\` set, so it uses them. (\`signIn\` is
+   Accounts sign-in. Wait for the card's result: if it was declined, timed out or closed, the
+   card is gone; don't open it again this turn unless the user asks. Then check once more with \`connector\` set, so it uses them. (\`signIn\` is
    only for a folder that isn't saved yet.) New chats get its tools; in this chat, call them
    through \`scient_connector_check {connector, calls}\`.
+   Do steps 4 to 7 in the same turn, without stopping to ask: a copied template is not a
+   connector, and the work is done only when the connector is saved and a real call works (or you
+   know what blocks it).
+
 8. **Report** in a few lines: what it does, its tools, what you tested with one real result,
    what you didn't test, and how to take it back: a new connector has nothing earlier to go
    back to, so the user removes it on its page (Remove can be undone); after a fix, its page
@@ -494,12 +500,14 @@ This skill grants no tools or permissions.
       failed.
    4. Make the smallest fix. Keep tool names, inputs and result fields.
    5. Check again: the failing call and the calls that worked before.
-   6. \`scient_connector_save {folder, connector}\`. Scient keeps the old version (Undo on the
+   6. \`scient_connector_save {folder, connector}\`, always with \`connector\`: without it Scient
+      refuses, since it would install a second copy. Scient keeps the old version (Undo on the
       connector's page). A vendor's connector or a package becomes the user's own copy; say
       so.
 
-Turning connectors on, off or restarting them needs no question first. Removing one is the
-user's: tell them where (its page in Settings → Extensions). When the user asks you not to
+Turning on, restarting, or turning off the connector you are fixing needs no question first;
+don't turn other connectors off to work around a problem. Removing one is the user's: tell
+them where (its page in Settings → Extensions). When the user asks you not to
 change anything, that includes connectors: don't add, save, set up or switch any.
 
 Go from the diagnosis to the saved fix in one go; don't stop to ask whether to go ahead.
@@ -816,8 +824,9 @@ is a guess: if it doesn't fail now, say so, and look in the log for when and how
 ## 6. Check, then save
 
 - Check again with the call that failed and the calls that worked before.
-- \`scient_connector_save {folder, connector}\`. Scient checks it, swaps it in, restarts it and
-  keeps the old version; the connector's page has **Undo last change**.
+- \`scient_connector_save {folder, connector}\`, always with \`connector\` (without it Scient
+  refuses, since it would install a second copy). Scient checks it, swaps it in, restarts it
+  and keeps the old version; the connector's page has **Undo last change**.
 - A connector someone else published (a vendor's bundle) is never changed in place: your fix
   becomes the user's own copy, shown as "Your copy of …". Tell the user that updates from the
   publisher won't reach this copy, and suggest reporting the problem to them if it is public.

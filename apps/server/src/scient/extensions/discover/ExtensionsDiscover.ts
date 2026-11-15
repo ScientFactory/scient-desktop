@@ -413,10 +413,55 @@ const curatedKeys = (server: CuratedServer) => ({
   url: server.url === undefined ? undefined : canonicalConnectorUrl(server.url),
 });
 
+/** Words of a query or a text: hyphens, underscores, dots and slashes separate words too. */
+const searchWords = (text: string) => text.toLowerCase().replace(/[-_./:]+/gu, " ");
+const searchTerms = (query: string): ReadonlyArray<string> =>
+  searchWords(query)
+    .split(/\s+/u)
+    .filter((term) => term !== "");
+
 const matchesQuery = (server: CuratedServer, terms: ReadonlyArray<string>): boolean => {
-  const haystack = `${server.displayName}\n${server.tagline}\n${server.description}`.toLowerCase();
+  const haystack = searchWords(`${server.displayName}\n${server.tagline}\n${server.description}`);
   return terms.every((term) => haystack.includes(term));
 };
+
+/** Every term appears in the entry's name, title or description. */
+const entryMatches = (entry: DiscoverEntry, terms: ReadonlyArray<string>) => {
+  const haystack = searchWords(`${entry.title ?? ""} ${entry.name} ${entry.description ?? ""}`);
+  return terms.every((term) => haystack.includes(term));
+};
+
+/** Terms found in the name or title count twice those found only in the description. */
+const relevance = (entry: DiscoverEntry, terms: ReadonlyArray<string>) => {
+  const named = searchWords(`${entry.title ?? ""} ${entry.name}`);
+  const described = searchWords(entry.description ?? "");
+  return terms.reduce(
+    (score, term) => score + (named.includes(term) ? 2 : described.includes(term) ? 1 : 0),
+    0,
+  );
+};
+
+/** Most relevant first; equal entries keep the source's order. */
+const byRelevance = (entries: ReadonlyArray<DiscoverEntry>, terms: ReadonlyArray<string>) =>
+  entries
+    .map((entry, index) => ({ entry, index, score: relevance(entry, terms) }))
+    .toSorted((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ entry }) => entry);
+
+/**
+ * The registry matches its search text as one phrase, so a query of several words is also tried
+ * hyphen-joined and as its longest word; results that lack any word are dropped afterwards.
+ */
+const registryQueries = (query: string, terms: ReadonlyArray<string>) =>
+  terms.length < 2
+    ? [query]
+    : [
+        ...new Set([
+          query,
+          terms.join("-"),
+          terms.reduce((longest, term) => (term.length > longest.length ? term : longest), ""),
+        ]),
+      ];
 
 /** Entries whose primary category is `category` first (most used leading), then the rest. */
 const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCategory) => {
@@ -682,10 +727,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   const search: ExtensionsDiscoverShape["search"] = Effect.fn("ExtensionsDiscover.search")(
     function* (input) {
       const query = (input.query ?? "").trim().slice(0, MAX_QUERY_LENGTH);
-      const terms = query
-        .toLowerCase()
-        .split(/\s+/u)
-        .filter((term) => term !== "");
+      const terms = searchTerms(query);
       if (input.scope === "curated") {
         // Small and complete: filtered in memory, never paged.
         const curatedMatches = (
@@ -748,14 +790,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
             if (keys.some((key) => seen.has(key))) continue;
             for (const key of keys) seen.add(key);
             if (curatedFor(raw)) continue;
-            if (
-              !terms.every((term) =>
-                `${entry.title ?? ""} ${entry.description ?? ""} ${entry.name}`
-                  .toLowerCase()
-                  .includes(term),
-              )
-            )
-              continue;
+            if (!entryMatches(entry, terms)) continue;
             entries.push(entry);
           }
         }
@@ -774,6 +809,54 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
           ? Math.trunc(input.limit)
           : DEFAULT_LIMIT;
       const limit = Math.min(MAX_LIMIT, Math.max(1, requestedLimit));
+      const queries = registryQueries(query, terms);
+      if ((cursor === undefined || cursor === "") && queries.length > 1) {
+        // Several searches merged: ranked and deduplicated, with no single cursor to continue.
+        const pages = yield* Effect.forEach(
+          queries,
+          (search) => {
+            const url = new URL(MCP_REGISTRY_SERVERS_URL);
+            url.searchParams.set("search", search);
+            url.searchParams.set("limit", String(limit));
+            url.searchParams.set("version", "latest");
+            return readRegistry(url.href, parseRegistryPage, false).pipe(
+              Effect.timeoutOrElse({
+                duration: "6 seconds",
+                orElse: () =>
+                  Effect.fail(
+                    new ExtensionsError({
+                      reason: "unreachable",
+                      message: "The MCP Registry did not answer in time.",
+                    }),
+                  ),
+              }),
+              Effect.result,
+            );
+          },
+          { concurrency: 3 },
+        );
+        const read = pages.flatMap((page) => (page._tag === "Success" ? [page.success] : []));
+        const failure = pages.find((page) => page._tag === "Failure");
+        if (read.length === 0 && failure?._tag === "Failure") return yield* failure.failure;
+        const installed = yield* installedConnectors;
+        const matched = byRelevance(
+          registryEntries(
+            read.flatMap((page) => page.entries),
+            installed,
+          ).filter((entry) => entryMatches(entry, terms)),
+          terms,
+        );
+        const more = read.some((page) => page.nextCursor !== undefined);
+        return {
+          entries: matched.slice(0, limit),
+          ...(matched.length > limit || more
+            ? {
+                message: `Showing ${Math.min(limit, matched.length)} of ${matched.length}${more ? " or more" : ""}. Narrow the search for the rest.`,
+              }
+            : {}),
+          fetchedAt: read[0]!.fetchedAt,
+        } satisfies DiscoverPage;
+      }
       const url = new URL(MCP_REGISTRY_SERVERS_URL);
       if (query !== "") url.searchParams.set("search", query);
       url.searchParams.set("limit", String(limit));
@@ -783,7 +866,7 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       // Installation state is live, never cached with the registry page.
       const installed = yield* installedConnectors;
       return {
-        entries: registryEntries(page.entries, installed),
+        entries: byRelevance(registryEntries(page.entries, installed), terms),
         ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         fetchedAt: page.fetchedAt,
       } satisfies DiscoverPage;

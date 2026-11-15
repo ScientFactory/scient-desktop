@@ -85,6 +85,17 @@ import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
+// SCIENT-FORK:START — tools Codex calls directly: thread wait, and every tool that waits on a card.
+const DIRECT_ONLY_TOOLS = [
+  "scient_thread_wait",
+  "request_secret",
+  "scient_account_add",
+  "scient_account_sign_in",
+  "scient_connector_setup",
+  "scient_connector_add",
+];
+// SCIENT-FORK:END
+
 const decodeCodexReplayTranscript = Schema.decodeUnknownSync(
   CodexReplay.CodexAppServerReplayTranscript,
 );
@@ -399,7 +410,7 @@ describe("CodexAdapterV2 process spawning", () => {
             http_headers: {
               Authorization: "Bearer secret-codex-token",
             },
-            disabled_tools: ["scient_thread_wait"],
+            disabled_tools: DIRECT_ONLY_TOOLS,
           },
           "mcp_servers.scient-direct": {
             url: "http://127.0.0.1:43123/mcp",
@@ -407,7 +418,7 @@ describe("CodexAdapterV2 process spawning", () => {
             http_headers: {
               Authorization: "Bearer secret-codex-token",
             },
-            enabled_tools: ["scient_thread_wait"],
+            enabled_tools: DIRECT_ONLY_TOOLS,
             omit_tools_from: ["code_mode", "deferred"],
           },
         },
@@ -455,13 +466,13 @@ describe("CodexAdapterV2 process spawning", () => {
           url: "http://127.0.0.1:43123/mcp",
           tool_timeout_sec: 3_900,
           http_headers: { Authorization: "Bearer secret-codex-token" },
-          disabled_tools: ["scient_thread_wait"],
+          disabled_tools: DIRECT_ONLY_TOOLS,
         },
         "mcp_servers.scient-direct": {
           url: "http://127.0.0.1:43123/mcp",
           tool_timeout_sec: 3_900,
           http_headers: { Authorization: "Bearer secret-codex-token" },
-          enabled_tools: ["scient_thread_wait"],
+          enabled_tools: DIRECT_ONLY_TOOLS,
           omit_tools_from: ["code_mode", "deferred"],
         },
         "mcp_servers.linear": {
@@ -2318,13 +2329,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
               http_headers: { Authorization: "Bearer secret-codex-token" },
-              disabled_tools: ["scient_thread_wait"],
+              disabled_tools: DIRECT_ONLY_TOOLS,
             },
             "mcp_servers.scient-direct": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
               http_headers: { Authorization: "Bearer secret-codex-token" },
-              enabled_tools: ["scient_thread_wait"],
+              enabled_tools: DIRECT_ONLY_TOOLS,
               omit_tools_from: ["code_mode", "deferred"],
             },
           },

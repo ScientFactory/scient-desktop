@@ -1,6 +1,7 @@
 import { pipe } from "effect/Function";
-// SCIENT-FORK:START — plugin-scoped server policy preserves native plugin skills.
+// SCIENT-FORK:START — plugin-scoped server policy preserves native plugin skills; card waits.
 import { codexPluginKeyConfig } from "../../provider/Drivers/PluginKeyProviderConfig.ts";
+import { SCIENT_PERSON_WAIT_TOOLS } from "../../provider/ScientPersonWaitTools.ts";
 // SCIENT-FORK:END
 import type { RuntimeCitationSource } from "@t3tools/contracts";
 import { extractCodexCitationSources } from "../../provider/codexCitations.ts";
@@ -1525,6 +1526,9 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 // `scient-direct.<tool>`; t3McpToolPresentation.ts must keep resolving that form.
 const CODEX_T3_DIRECT_MCP_SERVER = "scient-direct";
 const CODEX_DIRECT_ONLY_T3_TOOL = "scient_thread_wait";
+// SCIENT-FORK:START — tools that wait on the person's card are direct-only as well.
+const CODEX_DIRECT_ONLY_T3_TOOLS = [CODEX_DIRECT_ONLY_T3_TOOL, ...SCIENT_PERSON_WAIT_TOOLS];
+// SCIENT-FORK:END
 
 export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
@@ -1561,13 +1565,15 @@ export function codexThreadRuntimeParams(input: {
         ? {}
         : {
             // SCIENT-FORK:START — override only the owned servers, retaining user MCP configuration.
-            "mcp_servers.scient": { ...t3Server, disabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL] },
+            "mcp_servers.scient": { ...t3Server, disabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS },
             // SCIENT-FORK:END
             // Code Mode runs a blocking wait as a nested call, and the model keeps working
             // around it. A second, direct-only registration makes it a plain tool call.
             [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
               ...t3Server,
-              enabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL],
+              // SCIENT-FORK:START — Scient's person-waiting tools join the direct-only list.
+              enabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS,
+              // SCIENT-FORK:END
               omit_tools_from: ["code_mode", "deferred"],
             },
             // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL).

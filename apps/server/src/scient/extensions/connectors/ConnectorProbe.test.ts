@@ -103,6 +103,59 @@ describe("probeConnector over JSON", () => {
   });
 });
 
+describe("probeConnector's time budget", () => {
+  const url = "https://mcp.example.com/mcp";
+  const late = {
+    type: "unreachable",
+    message:
+      "The service did not answer within 0 seconds. Hosted servers sometimes take a while to wake up: try once more in a minute.",
+  };
+  /** A fetch that never answers, as a real one would: only its signal ends it. */
+  const stalledFetch: ConnectorFetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    });
+
+  it("tells a server that misses its budget to try again", async () => {
+    // regression: a literal five-second deadline ignored the budget it was given.
+    expect(await probeConnector({ url, fetch: stalledFetch, timeoutMs: 100 })).toEqual(late);
+  });
+
+  it("bounds the reply body too, not only its headers", async () => {
+    // Headers arrive at once; the event stream then says nothing.
+    const stalled: ConnectorFetch = async () =>
+      new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    expect(await probeConnector({ url, fetch: stalled, timeoutMs: 100 })).toEqual(late);
+  });
+
+  it("stops when the caller stops waiting", async () => {
+    const stopped = new AbortController();
+    let aborted = false;
+    const fetch: ConnectorFetch = (input, init) => {
+      init?.signal?.addEventListener("abort", () => {
+        aborted = true;
+      });
+      return stalledFetch(input, init);
+    };
+    const probing = probeConnector({ url, fetch, signal: stopped.signal, timeoutMs: 60_000 });
+    stopped.abort();
+    expect((await probing).type).toBe("unreachable");
+    expect(aborted).toBe(true);
+  });
+
+  it("answers without waiting for the server to end the session it opened", async () => {
+    const fetch: ConnectorFetch = async (_input, init) =>
+      init?.method === "DELETE"
+        ? new Promise<Response>(() => undefined)
+        : new Response(REPLY, {
+            headers: { "content-type": "application/json", "mcp-session-id": "probe-session" },
+          });
+    expect(await probeConnector({ url, fetch, timeoutMs: 60_000 })).toEqual(OPEN);
+  });
+});
+
 it("retries only temporary handshake failures within the retry budget", () => {
   expect(connectorRetryDelay(429, null, 0, 0, 5000)).toBe(500);
   expect(connectorRetryDelay(429, null, 1, 0, 5000)).toBe(1000);
