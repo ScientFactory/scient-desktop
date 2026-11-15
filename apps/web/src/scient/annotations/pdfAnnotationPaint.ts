@@ -33,33 +33,50 @@ export function paintPdfAnnotations(
   const registry = typeof CSS === "undefined" ? undefined : CSS.highlights;
   const supported = registry !== undefined && typeof Highlight !== "undefined";
   const id = ++nextPainter;
-  const highlightName = `scient-pdf-annotation-${id}`;
   const noteName = `scient-pdf-annotation-note-${id}`;
+  const noteRule = `.textLayer ::highlight(${noteName}) { text-decoration: underline dotted var(--warning); text-decoration-thickness: 2px; text-underline-offset: 2px; color: inherit; }`;
   const style = container.ownerDocument.createElement("style");
-  style.textContent = [
-    `.textLayer ::highlight(${highlightName}) { background: color-mix(in oklab, var(--warning) 32%, transparent); color: inherit; }`,
-    `.textLayer ::highlight(${noteName}) { text-decoration: underline dotted var(--warning); text-decoration-thickness: 2px; text-underline-offset: 2px; color: inherit; }`,
-  ].join("\n");
+  style.textContent = noteRule;
   container.append(style);
+  // One registered highlight for each look in use: Scient's own, or a colour and kind kept
+  // from the reader a highlight was made in.
+  let looks = new Map<string, string>();
 
   let annotations: ReadonlyArray<ScientPdfAnnotation> = [];
   const painted = new Map<number, Map<string, Range[]>>();
 
+  const lookOf = (annotation: ScientPdfAnnotation) => {
+    const color = annotation.color ?? "var(--warning)";
+    const name = `scient-pdf-annotation-${id}-${annotation.underline ? "line" : "fill"}-${annotation.color?.slice(1) ?? "own"}`;
+    const rule = annotation.underline
+      ? `text-decoration: underline solid ${color}; text-decoration-thickness: 2px; text-underline-offset: 2px;`
+      : `background: color-mix(in oklab, ${color} ${annotation.color ? 40 : 32}%, transparent);`;
+    return { name, css: `.textLayer ::highlight(${name}) { ${rule} color: inherit; }` };
+  };
+
   const publish = () => {
     if (!supported) return;
-    const highlighted: Range[] = [];
+    const highlighted = new Map<string, { readonly css: string; readonly ranges: Range[] }>();
     const noted: Range[] = [];
     const byId = new Map(annotations.map((annotation) => [annotation.annotationId, annotation]));
     for (const page of painted.values()) {
       for (const [annotationId, ranges] of page) {
         const annotation = byId.get(annotationId);
         if (!annotation) continue;
-        if (annotation.highlighted) highlighted.push(...ranges);
+        if (annotation.highlighted) {
+          const look = lookOf(annotation);
+          const group = highlighted.get(look.name) ?? { css: look.css, ranges: [] };
+          group.ranges.push(...ranges);
+          highlighted.set(look.name, group);
+        }
         if (annotation.note) noted.push(...ranges);
       }
     }
-    registry.set(highlightName, new Highlight(...highlighted));
+    for (const name of looks.keys()) if (!highlighted.has(name)) registry.delete(name);
+    for (const [name, group] of highlighted) registry.set(name, new Highlight(...group.ranges));
     registry.set(noteName, new Highlight(...noted));
+    looks = new Map([...highlighted].map(([name, group]) => [name, group.css]));
+    style.textContent = [...looks.values(), noteRule].join("\n");
   };
 
   const paintPage = (page: number) => {
@@ -127,7 +144,7 @@ export function paintPdfAnnotations(
     },
     dispose: () => {
       runtime.eventBus.off("textlayerrendered", onRendered);
-      registry?.delete(highlightName);
+      for (const name of looks.keys()) registry?.delete(name);
       registry?.delete(noteName);
       style.remove();
     },
