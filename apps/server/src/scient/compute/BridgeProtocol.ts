@@ -8,6 +8,7 @@ import {
   ComputeCapability,
   ComputeDisplayId,
   ComputeExecutionOutcome,
+  ComputeRuntimeWriteReport,
   ComputeLanguageId,
   ComputeMediaType,
   ComputeOutputStream,
@@ -336,6 +337,7 @@ export type WarningPayload = typeof WarningPayload.Type;
 
 export const ExecutionCompletePayload = Schema.Struct({
   outcome: ComputeExecutionOutcome,
+  writes: Schema.optional(ComputeRuntimeWriteReport),
 });
 export type ExecutionCompletePayload = typeof ExecutionCompletePayload.Type;
 
