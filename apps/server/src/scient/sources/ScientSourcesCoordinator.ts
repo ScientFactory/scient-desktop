@@ -108,6 +108,7 @@ import {
   type ZoteroAccess,
 } from "./ZoteroConnections.ts";
 import {
+  countZoteroScopeStandalone,
   getZoteroItemWith,
   listZoteroCollectionsWith,
   listZoteroLibraryWith,
@@ -116,6 +117,7 @@ import {
   readZoteroItemMaterial,
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
+import { ZOTERO_PDFS_PER_ITEM } from "./ZoteroItems.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import {
@@ -1181,11 +1183,16 @@ export async function beginZoteroScopedImport(input: {
     input.groupId,
   );
   const itemKeys = await listZoteroScopeItemKeysWith(transport, input.scope);
+  const alone = await countZoteroScopeStandalone(transport, input.scope);
   return createSourceImportOperation({
     root: input.root,
     operationId: input.operationId,
     adapter,
     itemKeys,
+    notBrought: [
+      ...(alone.notes > 0 ? [{ kind: "notes-alone" as const, count: alone.notes }] : []),
+      ...(alone.files > 0 ? [{ kind: "files-alone" as const, count: alone.files }] : []),
+    ],
     ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
     ...(await importPinInstance(input.root, input.pinInto)),
@@ -1424,7 +1431,16 @@ async function importZoteroOperationItem(input: {
         sourceId: record.sourceId,
         collectionKeys: material.collectionKeys,
       });
-      return { ...result, record, ...(note ? { note } : {}) };
+      // A PDF Zotero has and could not hand over (a linked file read over the web, a file
+      // that is gone) is said with the rest of what did not come.
+      const unavailable = Math.min(material.pdfs.length, ZOTERO_PDFS_PER_ITEM) - files.length;
+      const notBrought = [
+        ...material.notBrought,
+        ...(unavailable > 0
+          ? [{ kind: "pdf" as const, name: "unavailable", count: unavailable }]
+          : []),
+      ];
+      return { ...result, record, ...(note ? { note } : {}), notBrought };
     }
     return { ...result, record };
   } finally {
@@ -1533,6 +1549,9 @@ export async function advanceSourceImport(
         ...(result.record ? { sourceId: result.record.sourceId } : {}),
         message: result.duplicate.reason,
         ...("note" in result && typeof result.note === "string" ? { note: result.note } : {}),
+        ...("notBrought" in result && Array.isArray(result.notBrought)
+          ? { notBrought: result.notBrought }
+          : {}),
       });
       if (operation.adapter === "local-files") {
         await discardLocalPdfImportMaterial(root, pending.itemKey);

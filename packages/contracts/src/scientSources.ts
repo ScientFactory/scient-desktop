@@ -861,6 +861,8 @@ export const ScientSourcesRestoreStatus = Schema.Union([
   }),
   Schema.Struct({
     state: Schema.Literal("ready"),
+    /** Which waiting restore this is; Cancel names it, so it never drops another one. */
+    restoreId: Schema.optionalKey(NonEmptyString),
     /** When the backup was made. */
     backupCreatedAt: NonEmptyString,
     sources: Schema.Int,
@@ -957,7 +959,11 @@ export const ScientSourcesLibraryRestoreRequest = Schema.Struct({
       action: Schema.Literal("put-back"),
       folder: NonEmptyString.check(Schema.isMaxLength(4_096)),
     }),
-    Schema.Struct({ action: Schema.Literal("cancel") }),
+    Schema.Struct({
+      action: Schema.Literal("cancel"),
+      /** The waiting restore the person saw; without it, whichever waits is dropped. */
+      restoreId: Schema.optionalKey(NonEmptyString),
+    }),
   ]),
 });
 export type ScientSourcesLibraryRestoreRequest = typeof ScientSourcesLibraryRestoreRequest.Type;
@@ -1047,6 +1053,8 @@ export const ScientSourcesRecentChangesRequest = Schema.Struct({
   root: NonEmptyString,
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 400 }))),
   sourcesOfImport: Schema.optionalKey(NonEmptyString),
+  /** Instead of the list: what that import read and did not bring, as `importNotBrought`. */
+  notBroughtOfImport: Schema.optionalKey(NonEmptyString),
   /** Instead of the list: the papers that join left as they are here, a page at a time. */
   differencesOfJoin: Schema.optionalKey(
     Schema.Struct({
@@ -1061,6 +1069,9 @@ export type ScientSourcesJoinDifferences = NonNullable<
   ScientLibraryRecentChanges["joinDifferences"]
 >;
 export type ScientSourcesJoinDifferenceRow = ScientSourcesJoinDifferences["rows"][number];
+export type ScientSourcesImportNotBrought = NonNullable<
+  ScientLibraryRecentChanges["importNotBrought"]
+>;
 
 export const ScientSourceRestoreRequest = Schema.Struct({
   root: NonEmptyString,

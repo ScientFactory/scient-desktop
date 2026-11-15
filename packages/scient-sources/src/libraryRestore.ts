@@ -19,6 +19,7 @@ import { ScientLibraryBusyError, withScientFileLock } from "./libraryLock.ts";
 import { carryScientLibraryMoveBacks } from "./libraryMove.ts";
 import {
   SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX,
+  readScientLibraryManifest,
   scientLibraryLocation,
   type ScientLibraryLocation,
 } from "./libraryRoot.ts";
@@ -95,7 +96,14 @@ const RestoreEntry = Schema.Struct({
   /** When it took the Library's place; absent in a copy that still waits. */
   finishedAt: Schema.optionalKey(Schema.String),
   /** The Library it replaced, where that held anything: its folder and its source count. */
-  kept: Schema.optionalKey(Schema.Struct({ path: Schema.String, sources: Schema.Int })),
+  kept: Schema.optionalKey(
+    Schema.Struct({
+      path: Schema.String,
+      sources: Schema.Int,
+      /** That Library's own ID, so a folder of the same name elsewhere is not taken for it. */
+      libraryId: Schema.optionalKey(Schema.String),
+    }),
+  ),
 });
 
 /** Kept in the restored Library: which restores of which backups made it what it is. */
@@ -112,6 +120,28 @@ const incoming = (libraryRoot: string, intent: ScientLibraryRestoreIntent) =>
   intent.putBack === undefined
     ? beside(libraryRoot).staged(intent.restoreId)
     : NodePath.join(NodePath.dirname(libraryRoot), NodePath.basename(intent.putBack));
+
+/**
+ * Whether a recorded kept Library is really there for this Library: a folder beside it under
+ * the name a restore gives, holding a Library, the same one where its ID was recorded. A
+ * record alone proves nothing: a backup carries its records to other computers.
+ */
+async function keptIsThere(
+  libraryRoot: string,
+  kept: { readonly path: string; readonly libraryId?: string },
+): Promise<boolean> {
+  if (
+    NodePath.dirname(kept.path) !== NodePath.dirname(libraryRoot) ||
+    !NodePath.basename(kept.path).startsWith(beside(libraryRoot).replacedPrefix) ||
+    (await snapshot(kept.path).catch(() => "missing")) !== "directory"
+  ) {
+    return false;
+  }
+  const manifest = await readScientLibraryManifest(kept.path).catch(() => null);
+  return (
+    manifest !== null && (kept.libraryId === undefined || kept.libraryId === manifest.libraryId)
+  );
+}
 
 const newRestoreId = () => `restore_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
 
@@ -422,14 +452,8 @@ export async function prepareScientLibraryPutBack(input: {
         const record = (
           await listScientLibraryRestores(scientLibraryLocation(libraryRoot))
         ).findLast((entry) => entry.kept !== null && entry.kept.path === folder);
-        if (
-          folder === null ||
-          !record ||
-          NodePath.dirname(folder) !== NodePath.dirname(libraryRoot) ||
-          !NodePath.basename(folder).startsWith(paths.replacedPrefix)
-        ) {
-          return { outcome: "not-kept" };
-        }
+        // The listing has checked its place, its name and that it is the Library recorded.
+        if (folder === null || !record) return { outcome: "not-kept" };
         const earlier = await readIntent(libraryRoot);
         if (earlier && (await begun(libraryRoot, earlier))) return { outcome: "unfinished" };
         const { files } = await scientLibraryBackupEntries(folder);
@@ -499,13 +523,18 @@ export async function readScientLibraryRestorePending(
 /** Drops the copy that was waiting; the Library was never touched. */
 export async function cancelScientLibraryRestore(
   libraryRoot: string,
-): Promise<{ readonly outcome: "cancelled" | "nothing-waiting" | "begun" }> {
+  /** The restore the person saw waiting; another one that waits now is left alone. */
+  restoreId?: string,
+): Promise<{ readonly outcome: "cancelled" | "nothing-waiting" | "begun" | "another" }> {
   const root = await canonicalRoot(libraryRoot);
   if (root === null || !(await readIntent(root))) return { outcome: "nothing-waiting" };
   const paths = beside(root);
   return withScientFileLock(paths.lock, async () => {
     const intent = await readIntent(root);
     if (!intent) return { outcome: "nothing-waiting" as const };
+    if (restoreId !== undefined && intent.restoreId !== restoreId) {
+      return { outcome: "another" as const };
+    }
     if (await begun(root, intent)) return { outcome: "begun" as const };
     await NodeFSP.rm(paths.intent, { force: true });
     // A kept Library that was to be put back is left exactly where it is.
@@ -612,6 +641,9 @@ export async function finishScientLibraryRestore(
       }
       // A replaced Library that held anything stays; the restored Library records where it is
       // before the intent goes, so a start killed right here still leaves the record.
+      const asideId = (await asideThere())
+        ? (await readScientLibraryManifest(aside).catch(() => null))?.libraryId
+        : undefined;
       const kept =
         (await asideThere()) && !(await scientLibraryUnused(aside))
           ? {
@@ -619,6 +651,7 @@ export async function finishScientLibraryRestore(
               sources: (await scientLibraryBackupEntries(aside)).files.filter((path) =>
                 path.startsWith("records/"),
               ).length,
+              ...(asideId === undefined ? {} : { libraryId: asideId }),
             }
           : null;
       const restores = await restoresOf(libraryRoot);
@@ -634,7 +667,7 @@ export async function finishScientLibraryRestore(
             entry.finishedAt &&
             entry.kept &&
             !known.has(entry.restoreId) &&
-            (await snapshot(entry.kept.path).catch(() => "missing")) === "directory"
+            (await keptIsThere(libraryRoot, entry.kept))
           ) {
             earlierKept.push(entry);
           }
@@ -707,45 +740,62 @@ export async function finishScientLibraryRestore(
       }
       stop("after-aside");
     }
-    if (intent.putBack !== undefined) {
-      // A kept Library says which restore puts it back just before it moves, once the Library
-      // has stepped aside, so that until then nothing in it was changed. (A copy of a backup
-      // was given that line when it was made.)
+    /** The kept Library's own line for this put-back, written just before it moves. */
+    const markPutBack = async () => {
+      if (intent.putBack === undefined) return;
       const restores = await restoresOf(staged);
-      if (!restores.some((entry) => entry.restoreId === restoreId)) {
-        await atomicWriteJson(
-          NodePath.join(staged, RESTORES_FILE),
-          {
-            formatVersion: 1,
-            restores: [
-              ...restores,
-              {
-                restoreId,
-                backupId: intent.backupId,
-                backupCreatedAt: intent.backupCreatedAt,
-                at: intent.preparedAt,
-                by: intent.by ?? "user",
-                sources: intent.counts.sources,
-                pdfs: intent.counts.pdfs,
-                putBack: true,
-              },
-            ],
-          },
-          MAX_SMALL_BYTES,
-        );
-      }
-    }
+      if (restores.some((entry) => entry.restoreId === restoreId)) return;
+      await atomicWriteJson(
+        NodePath.join(staged, RESTORES_FILE),
+        {
+          formatVersion: 1,
+          restores: [
+            ...restores,
+            {
+              restoreId,
+              backupId: intent.backupId,
+              backupCreatedAt: intent.backupCreatedAt,
+              at: intent.preparedAt,
+              by: intent.by ?? "user",
+              sources: intent.counts.sources,
+              pdfs: intent.counts.pdfs,
+              putBack: true,
+            },
+          ],
+        },
+        MAX_SMALL_BYTES,
+      );
+    };
     try {
+      // Once the Library has stepped aside, so that until then nothing in a kept one changed.
+      // (A copy of a backup was given its line when it was made.)
+      await markPutBack();
       await NodeFSP.rename(staged, libraryRoot);
     } catch (error) {
-      // Put the Library back. If that fails too it stays aside, named in the intent: no new
-      // Library is made, and the next start finishes one way or the other.
+      // Whatever failed, the line or the rename: put the Library back, so the person is never
+      // left with no Library and a restore that can neither finish nor be cancelled. If that
+      // fails too it stays aside, named in the intent: no new Library is made, and the next
+      // start finishes one way or the other.
       const putBack = (await asideThere())
         ? await NodeFSP.rename(aside, libraryRoot).then(
             () => true,
             () => false,
           )
         : true;
+      if (putBack && intent.putBack !== undefined) {
+        // The kept Library is left as it was: without the line of a put-back that did not happen.
+        const restores = await restoresOf(staged).catch(() => null);
+        if (restores?.some((entry) => entry.restoreId === restoreId && !entry.finishedAt)) {
+          await atomicWriteJson(
+            NodePath.join(staged, RESTORES_FILE),
+            {
+              formatVersion: 1,
+              restores: restores.filter((entry) => entry.restoreId !== restoreId),
+            },
+            MAX_SMALL_BYTES,
+          ).catch(() => undefined);
+        }
+      }
       return failed(
         putBack
           ? reasonOf(error)
@@ -780,8 +830,8 @@ export async function listScientLibraryRestores(
   for (const entry of await restoresOf(library.root).catch(() => [])) {
     if (!entry.finishedAt) continue;
     const kept =
-      entry.kept && (await snapshot(entry.kept.path).catch(() => "missing")) === "directory"
-        ? entry.kept
+      entry.kept && (await keptIsThere(library.root, entry.kept))
+        ? { path: entry.kept.path, sources: entry.kept.sources }
         : null;
     listed.push({
       restoreId: entry.restoreId,

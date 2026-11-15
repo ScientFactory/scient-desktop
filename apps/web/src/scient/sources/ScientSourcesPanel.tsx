@@ -1633,6 +1633,7 @@ export function ScientSourcesPanel(props: {
           }}
           onCancel={() => void sources.cancelImport()}
           cancelling={sources.cancelling}
+          {...(scopes ? { onShowSources: showPackageSources } : {})}
           {...(scopes && !sources.operation.pinInstanceId
             ? {
                 libraryOnly: canChangeProject

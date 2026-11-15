@@ -5,10 +5,12 @@ import { listScientLibraryRecentMerges } from "./libraryMerge.ts";
 import { listScientLibraryRestores } from "./libraryRestore.ts";
 import type { ScientLibraryLocation } from "./libraryRoot.ts";
 import type { ScientLibraryRecentChange, ScientLibraryRecentChanges } from "./model.ts";
+import { notBroughtAmount, notBroughtName, summarizeNotBrought } from "./notBrought.ts";
 import {
   listScientSourceIds,
   listScientSourceImports,
   readScientSourceImport,
+  readSourceImportOperation,
   readScientSourcesRemovedByPerson,
 } from "./store.ts";
 
@@ -38,6 +40,28 @@ export async function listScientLibraryImportSources(
     readScientLibraryAliases(library),
   ]);
   return found ? availableNow(found.importedSourceIds, aliases, present) : [];
+}
+
+/**
+ * What one import read and did not bring, as its record on disk still says, each thing with
+ * the sources it concerns that are in the Library now; reads only.
+ */
+export async function listScientLibraryImportNotBrought(
+  library: ScientLibraryLocation,
+  operationId: string,
+): Promise<NonNullable<ScientLibraryRecentChanges["importNotBrought"]>> {
+  const [operation, present, aliases] = await Promise.all([
+    readSourceImportOperation(library, operationId),
+    listScientSourceIds(library),
+    readScientLibraryAliases(library),
+  ]);
+  return operation
+    ? summarizeNotBrought(operation).map((line) => ({
+        what: notBroughtName(line),
+        amount: notBroughtAmount(line),
+        sourceIds: [...availableNow(line.sourceIds, aliases, present)],
+      }))
+    : [];
 }
 
 /**
@@ -113,6 +137,7 @@ export async function listScientLibraryRecentChanges(
       imported: entry.importedSourceIds.length,
       available: availableNow(entry.importedSourceIds, aliases, present).length,
       failed: entry.failed,
+      ...(entry.notBrought > 0 ? { notBrought: entry.notBrought } : {}),
     })),
     ...trash.map((entry) => ({
       kind: "trash" as const,

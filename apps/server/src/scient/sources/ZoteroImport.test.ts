@@ -179,6 +179,90 @@ describe("Zotero import", () => {
     expect(operation.items[0]?.note).toContain("“Figures” joined “Thesis / Chapter 2”");
   });
 
+  it("says what Zotero holds for each reference that it did not bring", async () => {
+    const root = await project();
+    const zotero = fakeZoteroAccess(
+      fakeZoteroTransport({
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem("ABCD2345", {
+                itemType: "book",
+                title: "A book with an edition",
+                abstractNote: "A.",
+                publisher: "A Press",
+                extra: "Citation Key: book2026\nOCLC: 12345\nbought second hand",
+                tags: [{ tag: "methods" }, { tag: "Humans", type: 1 }],
+                relations: { "dc:relation": ["http://zotero.org/users/1/items/EFGH2345"] },
+                // Fields the record has no place for yet.
+                ...({ place: "Leiden", edition: "2nd", numPages: "412" } as object),
+              }),
+              children: [
+                { ...pdfAttachment("PDFA2345", "book.pdf"), meta: { numChildren: 7 } },
+                pdfAttachment("PDFB2345", "not-in-zotero-storage.pdf"),
+                zoteroItem("SNAP2345", {
+                  itemType: "attachment",
+                  contentType: "text/html",
+                  linkMode: "imported_url",
+                }),
+                zoteroItem("LINK2345", { itemType: "attachment", linkMode: "linked_url" }),
+                zoteroItem("NOTE2345", {
+                  itemType: "note",
+                  note: '<p>See <a href="https://example.org">the errata</a>.</p>',
+                }),
+              ],
+            },
+          ],
+          // A note that belongs to no reference: the import passes it by and says so.
+          [
+            "LONE2345",
+            {
+              item: zoteroItem("LONE2345", { itemType: "note", note: "<p>Ideas</p>" }),
+              children: [],
+            },
+          ],
+        ]),
+        files: new Map([["PDFA2345", await pdf(root, "book.pdf")]]),
+      }),
+    );
+
+    const begun = await beginZoteroScopedImport({
+      root,
+      operationId: "not-brought",
+      scope: { kind: "library" },
+      zotero,
+    });
+    expect(begun.items.map((item) => item.itemKey)).toEqual(["ABCD2345"]);
+    expect(begun.notBrought).toEqual([{ kind: "notes-alone", count: 1 }]);
+    const operation = await advanceSourceImport({ root, operationId: "not-brought", zotero });
+
+    expect(operation.items[0]).toMatchObject({ state: "imported" });
+    expect(operation.items[0]?.notBrought).toEqual([
+      { kind: "field", name: "place", count: 1 },
+      { kind: "field", name: "edition", count: 1 },
+      { kind: "field", name: "numPages", count: 1 },
+      { kind: "extra", name: "oclc", count: 1 },
+      { kind: "extra", name: "(text)", count: 1 },
+      { kind: "related", count: 1 },
+      { kind: "automatic-tags", count: 1 },
+      { kind: "highlights", count: 7 },
+      { kind: "file", name: "text/html", count: 1 },
+      { kind: "link", count: 1 },
+      { kind: "note-formatting", count: 1 },
+      { kind: "pdf", name: "unavailable", count: 1 },
+    ]);
+    // What it did bring is as before.
+    const [record] = await listScientSourceRecords(root);
+    expect(record).toMatchObject({
+      title: "A book with an edition",
+      publisher: "A Press",
+      citationKey: "book2026",
+      tags: ["methods", "Humans"],
+    });
+    expect(record?.attachments.map((attachment) => attachment.fileName)).toEqual(["book.pdf"]);
+  });
+
   it("imports metadata when Zotero has no copy of the PDF file", async () => {
     const root = await project();
     const zotero = fakeZoteroAccess(

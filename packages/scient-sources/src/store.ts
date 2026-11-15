@@ -58,6 +58,7 @@ import {
   type ScientSourceReadingStatus,
   ScientSourceImportOperation,
   ScientSourceImportReceipt,
+  type ScientSourceNotBrought,
   ScientSourceRecordV1,
   type ScientSourceRecord,
   ScientSourceStagedMaterial,
@@ -90,6 +91,7 @@ import {
   type ScientSourceZoteroSync as ScientSourceZoteroSyncType,
   ScientSourceTrashEntry,
 } from "./model.ts";
+import { summarizeNotBrought } from "./notBrought.ts";
 
 export const SCIENT_SOURCES_DIRECTORY = ".scient/sources";
 export const SCIENT_SOURCE_RECORDS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/records`;
@@ -1793,6 +1795,8 @@ export interface ScientSourceImportSummary {
   /** The sources it added, by the IDs they had then. */
   readonly importedSourceIds: ReadonlyArray<string>;
   readonly failed: number;
+  /** How many kinds of things it read and did not bring. */
+  readonly notBrought: number;
 }
 
 /**
@@ -1846,6 +1850,7 @@ async function importSummary(
         outcome: receipt.outcome,
         importedSourceIds: receipt.importedSourceIds,
         failed: receipt.failedItemKeys.length,
+        notBrought: summarizeNotBrought(operation).length,
       }
     : null;
 }
@@ -2012,6 +2017,8 @@ export async function createSourceImportOperation(input: {
   readonly zoteroGroupId?: string;
   /** Library stores only: the checkout instance the imported sources are pinned in. */
   readonly pinInstanceId?: string;
+  /** What the place imported from holds that belongs to no item. */
+  readonly notBrought?: ReadonlyArray<ScientSourceNotBrought>;
 }): Promise<ScientSourceImportOperation> {
   assertSafeIdentifier(input.operationId, "Operation ID");
   if (input.pinInstanceId !== undefined) assertSafeIdentifier(input.pinInstanceId, "Instance ID");
@@ -2090,6 +2097,9 @@ export async function createSourceImportOperation(input: {
       })),
       ...(input.zoteroGroupId ? { zoteroGroupId: input.zoteroGroupId } : {}),
       ...(input.pinInstanceId ? { pinInstanceId: input.pinInstanceId } : {}),
+      ...(input.notBrought && input.notBrought.length > 0
+        ? { notBrought: input.notBrought.slice(0, 20) }
+        : {}),
     };
     await atomicWriteJson(
       operationPath(paths.operations, input.operationId),
@@ -2153,6 +2163,7 @@ export async function updateSourceImportOperationItem(input: {
   readonly sourceId?: string;
   readonly message?: string;
   readonly note?: string;
+  readonly notBrought?: ReadonlyArray<ScientSourceNotBrought>;
 }): Promise<ScientSourceImportOperation> {
   const paths = await sourceStorePaths(input.root);
   return withStoreLock(paths, input.operationId, async () => {
@@ -2174,6 +2185,9 @@ export async function updateSourceImportOperationItem(input: {
               sourceId: input.sourceId ?? null,
               message: input.message ?? null,
               ...(input.note ? { note: input.note } : {}),
+              ...(input.notBrought && input.notBrought.length > 0
+                ? { notBrought: input.notBrought.slice(0, 80) }
+                : {}),
             }
           : item,
       ),

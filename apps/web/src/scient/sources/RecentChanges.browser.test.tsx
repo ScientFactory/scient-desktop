@@ -243,6 +243,49 @@ describe("Recent changes", () => {
       .not.toBeInTheDocument();
   });
 
+  it("opens what an import did not bring, and shows the sources one line concerns", async () => {
+    const handlers = setup([
+      {
+        kind: "import",
+        id: "zotero-1",
+        at: "2026-11-15T09:00:00.000Z",
+        by: "user",
+        intake: "zotero",
+        outcome: "completed",
+        imported: 40,
+        available: 40,
+        failed: 0,
+        notBrought: 2,
+      },
+    ]);
+    await using _screen = await render(dialog(handlers, false), { router: false });
+    // Looking is not a change: a session that may only read is offered it too.
+    mocks.read.mockResolvedValue({
+      changes: [],
+      more: false,
+      importNotBrought: [
+        { what: "Place of publication", amount: "12 references", sourceIds: ["s1", "s2"] },
+        { what: "Notes that belong to no reference", amount: "5", sourceIds: [] },
+      ],
+    });
+    await userEvent.click(page.getByRole("button", { name: /^Not brought \(2\)/u }));
+    expect(mocks.read).toHaveBeenLastCalledWith(environmentId, {
+      root: "/project",
+      notBroughtOfImport: "zotero-1",
+    });
+    await expect.element(page.getByText("12 references")).toBeVisible();
+    await expect
+      .element(page.getByText("Notes that belong to no reference:", { exact: false }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Show: Notes that belong to no reference" }))
+      .not.toBeInTheDocument();
+
+    await userEvent.click(page.getByRole("button", { name: "Show: Place of publication" }));
+    expect(handlers.onShowSources).toHaveBeenCalledWith(["s1", "s2"]);
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("says why a merge Undo did not happen, and what a finished Undo left", async () => {
     const handlers = setup([
       {

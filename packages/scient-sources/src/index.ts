@@ -6,6 +6,7 @@ export * from "./duplicates.ts";
 export * from "./editable.ts";
 export * from "./editorialStatus.ts";
 export * from "./model.ts";
+export * from "./notBrought.ts";
 export * from "./normalize.ts";
 export * from "./organize.ts";
 export * from "./identifierInput.ts";

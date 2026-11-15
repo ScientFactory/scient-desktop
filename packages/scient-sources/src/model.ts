@@ -555,6 +555,8 @@ export const ScientLibraryRecentChange = Schema.Union([
     /** How many of them are in the Library now: a merged one counts as the source that kept it. */
     available: Schema.Int,
     failed: Schema.Int,
+    /** How many kinds of things the import read and did not bring; absent when none. */
+    notBrought: Schema.optionalKey(Schema.Int),
   }),
   Schema.Struct({
     kind: Schema.Literal("trash"),
@@ -691,6 +693,19 @@ export const ScientLibraryRecentChanges = Schema.Struct({
   importSourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
   /** Only when one join's differences were asked for. */
   joinDifferences: Schema.optionalKey(ScientLibraryJoinDifferences),
+  /**
+   * Only when one import's "not brought" list was asked for: each thing in words, how many,
+   * and the sources it concerns that are in the Library now.
+   */
+  importNotBrought: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        what: Schema.String,
+        amount: Schema.String,
+        sourceIds: Schema.Array(NonEmptyString),
+      }),
+    ),
+  ),
 });
 export type ScientLibraryRecentChanges = typeof ScientLibraryRecentChanges.Type;
 
@@ -734,6 +749,43 @@ export const ScientSourcePreflightItem = Schema.Struct({
 });
 export type ScientSourcePreflightItem = typeof ScientSourcePreflightItem.Type;
 
+/**
+ * Something an import read where the source came from and did not bring, or brought changed,
+ * for one item. `kind` says what sort of thing, `name` which one (a field's name there, a
+ * file's type), `count` how many. The panel and the agent's result say it in words.
+ */
+export const ScientSourceNotBrought = Schema.Struct({
+  kind: Schema.Literals([
+    /** A bibliographic field the record has no place for; `name` is the field there. */
+    "field",
+    /** A line of Zotero's Extra that Scient does not read; `name` is the line's name. */
+    "extra",
+    /** A file that is not a PDF; `name` is its content type. */
+    "file",
+    /** A link kept as an attachment. */
+    "link",
+    /** PDFs not copied; `name`: `over-limit` or `unavailable`. */
+    "pdf",
+    /** The notes together were longer than a note may be and were cut. */
+    "note-cut",
+    /** Notes whose links, headings, tables, images or code became plain text. */
+    "note-formatting",
+    /** Highlights and comments made on a PDF. */
+    "highlights",
+    /** Links to related items. */
+    "related",
+    /** Tags a program added, which arrive as ordinary tags. */
+    "automatic-tags",
+    /** Notes that belong to no reference (an import of references passes them by). */
+    "notes-alone",
+    /** Files that belong to no reference. */
+    "files-alone",
+  ]),
+  name: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(120))),
+  count: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type ScientSourceNotBrought = typeof ScientSourceNotBrought.Type;
+
 export const ScientSourceOperationItem = Schema.Struct({
   itemKey: NonEmptyString,
   allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
@@ -745,6 +797,10 @@ export const ScientSourceOperationItem = Schema.Struct({
   message: NullableText,
   /** Something worth telling about an imported item, such as a flattened Zotero collection. */
   note: Schema.optionalKey(NonEmptyString),
+  /** What the import read for this item and did not bring; absent when it brought it all. */
+  notBrought: Schema.optionalKey(
+    Schema.Array(ScientSourceNotBrought).check(Schema.isMaxLength(80)),
+  ),
 });
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 
@@ -771,6 +827,10 @@ export const ScientSourceImportOperation = Schema.Struct({
   zoteroGroupId: Schema.optionalKey(Schema.String),
   /** Library imports started from a project: the checkout instance each imported source is pinned in. */
   pinInstanceId: Schema.optionalKey(NonEmptyString),
+  /** What the place imported from holds that belongs to no item, and so was not brought. */
+  notBrought: Schema.optionalKey(
+    Schema.Array(ScientSourceNotBrought).check(Schema.isMaxLength(20)),
+  ),
 });
 export type ScientSourceImportOperation = typeof ScientSourceImportOperation.Type;
 

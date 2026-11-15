@@ -116,6 +116,45 @@ describe("Zotero agent tools", () => {
     }),
   );
 
+  it.effect("tells the agent what Zotero holds that the import did not bring", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(project);
+      const local = fakeZoteroTransport({
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem("ABCD2345", {
+                itemType: "book",
+                title: "A book",
+                abstractNote: "A.",
+                ...({ place: "Leiden" } as object),
+              }),
+              children: [],
+            },
+          ],
+          [
+            "LONE2345",
+            {
+              item: zoteroItem("LONE2345", { itemType: "note", note: "<p>Ideas</p>" }),
+              children: [],
+            },
+          ],
+        ]),
+      });
+      const run = inProject(root, { local, inspectLocal: ready });
+
+      const imported = yield* run(importZoteroForInvocation({ all: true }));
+
+      expect(imported).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
+      // In the words the panel uses, so the agent can tell the person.
+      expect(imported.notBrought).toEqual([
+        { what: "Place of publication", amount: "1 reference" },
+        { what: "Notes that belong to no reference", amount: "1" },
+      ]);
+    }),
+  );
+
   it.effect("imports the whole library once, skipping what is already there", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(project);

@@ -204,7 +204,7 @@ export function useLibraryBackup(input: {
     change:
       | { action: "prepare"; fromFolder: string }
       | { action: "put-back"; folder: string }
-      | { action: "cancel" },
+      | { action: "cancel"; restoreId?: string },
   ) => {
     const asked = context;
     return changeLibraryRestore(input.environmentId, { root: input.root, change }).then(
@@ -228,6 +228,9 @@ export function useLibraryBackup(input: {
     }, failed(JOIN_LABELS.failed));
   };
 
+  // Cancel names the restore this window shows: one another window chose since is not dropped.
+  const waiting =
+    copies?.restore.state === "ready" && !copies.restore.begun ? copies.restore : null;
   return {
     joinLine: copies ? joinRunningLabel(copies.join) : null,
     /** Adds what a backup, or a Library a restore replaced, holds and this Library lacks. */
@@ -237,9 +240,13 @@ export function useLibraryBackup(input: {
     restoreLine: copies ? restoreLine(copies.restore) : null,
     /** Offered while a checked copy waits for the next start. */
     cancelRestore:
-      copies?.restore.state === "ready" && !copies.restore.begun
-        ? () => changeRestore({ action: "cancel" })
-        : undefined,
+      waiting === null
+        ? undefined
+        : () =>
+            changeRestore({
+              action: "cancel",
+              ...(waiting.restoreId ? { restoreId: waiting.restoreId } : {}),
+            }),
     restoreFrom: (fromFolder: string) => changeRestore({ action: "prepare", fromFolder }),
     /** Puts a Library a restore kept back in the Library's place at the next start. */
     putBack: (folder: string) => changeRestore({ action: "put-back", folder }),

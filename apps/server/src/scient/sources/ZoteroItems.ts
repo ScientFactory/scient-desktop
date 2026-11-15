@@ -8,11 +8,14 @@ import {
   type ScientSourceCreator,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
+  type ScientSourceNotBrought,
   type ZoteroCollection,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 
 export const ZOTERO_ITEM_KEY_PATTERN = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/u;
+/** How many PDFs of one item an import copies. */
+export const ZOTERO_PDFS_PER_ITEM = 10;
 const MAX_IMPORTED_NOTE_CHARACTERS = 100_000;
 
 const ZoteroRawCreator = Schema.Struct({
@@ -55,7 +58,11 @@ const ZoteroRawItemData = Schema.Struct({
   url: OptionalText,
   extra: OptionalText,
   citationKey: OptionalText,
-  tags: Schema.optionalKey(Schema.Array(Schema.Struct({ tag: Schema.String }))),
+  // `type` 1 marks a tag a program added (a publisher's keyword), not the person.
+  tags: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ tag: Schema.String, type: Schema.optionalKey(Schema.Number) })),
+  ),
+  relations: Schema.optionalKey(Schema.Unknown),
   collections: Schema.optionalKey(Schema.Array(Schema.String)),
   note: OptionalText,
   parentItem: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
@@ -73,11 +80,36 @@ export const ZoteroRawItem = Schema.Struct({
     id: Schema.Union([Schema.String, Schema.Number]),
   }),
   data: ZoteroRawItemData,
+  /** `numChildren` of a PDF attachment counts the highlights and comments made on it. */
+  meta: Schema.optionalKey(Schema.Struct({ numChildren: Schema.optionalKey(Schema.Number) })),
+  /**
+   * Every text field Zotero sent for the item that is not empty, by Zotero's name, whether
+   * Sources reads it or not: what the import brought is checked against all of it. Not part of
+   * Zotero's answer; `decodeZoteroRawItem` fills it in.
+   */
+  fields: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 export type ZoteroRawItem = typeof ZoteroRawItem.Type;
 
-export const decodeZoteroRawItem = Schema.decodeUnknownSync(ZoteroRawItem);
-export const decodeZoteroRawItems = Schema.decodeUnknownSync(Schema.Array(ZoteroRawItem));
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The item as Zotero sent it, with its non-empty text fields listed before any are dropped. */
+function withAllFields(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.data)) return value;
+  const fields: Record<string, string> = {};
+  for (const [name, field] of Object.entries(value.data)) {
+    if (typeof field === "string" && field.trim()) fields[name] = field;
+  }
+  return { ...value, fields };
+}
+
+const decodeRawItem = Schema.decodeUnknownSync(ZoteroRawItem);
+const decodeRawItems = Schema.decodeUnknownSync(Schema.Array(ZoteroRawItem));
+export const decodeZoteroRawItem = (value: unknown): ZoteroRawItem =>
+  decodeRawItem(withAllFields(value));
+export const decodeZoteroRawItems = (value: unknown): ReadonlyArray<ZoteroRawItem> =>
+  decodeRawItems(Array.isArray(value) ? value.map(withAllFields) : value);
 
 const ZoteroRawCollection = Schema.Struct({
   key: Schema.String,
@@ -359,6 +391,127 @@ function zoteroNotesText(children: ReadonlyArray<ZoteroRawItem>): string | null 
     : joined;
 }
 
+/** The fields the record takes as they are, by Zotero's name. */
+const FIELDS_BROUGHT: ReadonlySet<string> = new Set([
+  "title",
+  "date",
+  "DOI",
+  "ISBN",
+  "ISSN",
+  "PMID",
+  "abstractNote",
+  "volume",
+  "issue",
+  "pages",
+  "language",
+  "url",
+  "citationKey",
+]);
+/** Zotero's own bookkeeping, and fields read elsewhere (Extra by line, notes and files as such). */
+const FIELDS_NOT_CONTENT: ReadonlySet<string> = new Set([
+  "key",
+  "itemType",
+  "dateAdded",
+  "dateModified",
+  "parentItem",
+  "extra",
+  "note",
+  "contentType",
+  "filename",
+  "linkMode",
+  "charset",
+  "md5",
+  "mtime",
+  "path",
+]);
+/** Lines of Extra that Sources reads. */
+const EXTRA_LINES_READ: ReadonlySet<string> = new Set([
+  ...Object.keys(EXTRA_FIELDS),
+  "citation key",
+]);
+
+/**
+ * Where each non-empty text field of a Zotero item goes: into the record, nowhere, or it is not
+ * content. Of several container or publisher fields, the record takes the first.
+ */
+export function zoteroFieldDispositions(
+  item: ZoteroRawItem,
+): ReadonlyMap<string, "brought" | "not-brought" | "not-content"> {
+  const container = firstField(item.data, CONTAINER_FIELDS)?.field;
+  const publisher = firstField(item.data, PUBLISHER_FIELDS)?.field;
+  return new Map(
+    Object.keys(item.fields ?? {}).map((name) => [
+      name,
+      FIELDS_NOT_CONTENT.has(name)
+        ? "not-content"
+        : FIELDS_BROUGHT.has(name) || name === container || name === publisher
+          ? "brought"
+          : "not-brought",
+    ]),
+  );
+}
+
+/** The lines of Extra that Sources does not read, by name; a line with no name is `(text)`. */
+function extraLinesNotRead(extra: string | undefined): ReadonlyArray<string> {
+  return (extra ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const name = /^([A-Za-z][A-Za-z0-9 _-]{0,60}?)\s*:\s*\S/u.exec(line)?.[1]?.toLowerCase();
+      return name === undefined ? ["(text)"] : EXTRA_LINES_READ.has(name) ? [] : [name];
+    });
+}
+
+const NOTE_FORMATTING = /<(a|h[1-6]|table|img|pre|code|blockquote)\b|data-citation/iu;
+
+function relatedCount(relations: unknown): number {
+  const related = isRecord(relations) ? relations["dc:relation"] : undefined;
+  return Array.isArray(related) ? related.length : typeof related === "string" && related ? 1 : 0;
+}
+
+/**
+ * What Zotero holds for an item that the import does not bring, or brings changed: checked
+ * against everything Zotero sent, so nothing is left out without being counted here.
+ */
+function zoteroNotBrought(
+  item: ZoteroRawItem,
+  children: ReadonlyArray<ZoteroRawItem>,
+): ReadonlyArray<ScientSourceNotBrought> {
+  const listed: ScientSourceNotBrought[] = [];
+  const add = (kind: ScientSourceNotBrought["kind"], count: number, name?: string) => {
+    if (count <= 0) return;
+    const at = listed.findIndex((entry) => entry.kind === kind && entry.name === name);
+    if (at >= 0) listed[at] = { ...listed[at]!, count: listed[at]!.count + count };
+    else listed.push({ kind, ...(name === undefined ? {} : { name: name.slice(0, 120) }), count });
+  };
+  for (const [name, disposition] of zoteroFieldDispositions(item)) {
+    if (disposition === "not-brought") add("field", 1, name);
+  }
+  for (const name of extraLinesNotRead(item.data.extra)) add("extra", 1, name);
+  add("related", relatedCount(item.data.relations));
+  add("automatic-tags", (item.data.tags ?? []).filter((tag) => tag.type === 1).length);
+
+  const attachments = children.filter((child) => child.data.itemType === "attachment");
+  const pdfs = zoteroPdfAttachments(children);
+  add("pdf", Math.max(0, pdfs.length - ZOTERO_PDFS_PER_ITEM), "over-limit");
+  for (const attachment of attachments) {
+    // Highlights and comments are the PDF's own children; Zotero says how many it has.
+    add("highlights", attachment.meta?.numChildren ?? 0);
+    if (pdfs.includes(attachment)) continue;
+    if (attachment.data.linkMode === "linked_url") add("link", 1);
+    else add("file", 1, attachment.data.contentType?.toLowerCase() || "unknown");
+  }
+  const notes = children.filter((child) => child.data.itemType === "note");
+  add("note-formatting", notes.filter((note) => NOTE_FORMATTING.test(note.data.note ?? "")).length);
+  const joined = notes
+    .map((note) => zoteroNoteToText(note.data.note ?? ""))
+    .filter((note) => note.length > 0)
+    .join("\n\n---\n\n");
+  add("note-cut", joined.length > MAX_IMPORTED_NOTE_CHARACTERS ? 1 : 0);
+  return listed;
+}
+
 /** Everything one Zotero item brings: its metadata, notes, PDFs, citation key and collections. */
 export interface ZoteroItemMaterial {
   readonly candidate: ScientSourceCandidate;
@@ -366,6 +519,8 @@ export interface ZoteroItemMaterial {
   readonly citationKey: string | null;
   readonly collectionKeys: ReadonlyArray<string>;
   readonly pdfs: ReadonlyArray<ZoteroRawItem>;
+  /** What Zotero holds for the item that this does not bring. */
+  readonly notBrought: ReadonlyArray<ScientSourceNotBrought>;
 }
 
 export function zoteroItemMaterial(
@@ -387,6 +542,7 @@ export function zoteroItemMaterial(
     citationKey,
     collectionKeys: [...(item.data.collections ?? [])],
     pdfs,
+    notBrought: zoteroNotBrought(item, children),
   };
 }
 

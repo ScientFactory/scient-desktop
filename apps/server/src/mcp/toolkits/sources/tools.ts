@@ -969,6 +969,10 @@ export const ScientSourcesZoteroImportResult = Schema.Struct({
       note: Schema.optionalKey(Schema.String),
     }),
   ).pipe(Schema.check(Schema.isMaxLength(500))),
+  /** What Zotero holds for the imported references that was not brought; tell the user. */
+  notBrought: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ what: Schema.String, amount: Schema.String })),
+  ),
 });
 
 /** Library mode: intake from a project pins what it brings in unless this is false. */

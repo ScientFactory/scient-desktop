@@ -304,6 +304,19 @@ a collection nested deeper joins its ancestor one level down, and the import
 result says which ones did. The original Zotero references and attachments are
 never changed by an import.
 
+When the import ends it lists, under **Not brought from Zotero**, everything
+Zotero holds for the imported references that did not come, each with how
+many references it concerns: fields Scient has no place for yet (place of
+publication, edition, number of pages and others), lines of Zotero's Extra it
+does not read, highlights and comments on PDFs, files that are not PDFs, links
+kept as attachments, PDFs Zotero could not hand over, notes whose links or
+tables became plain text, and notes and files that belong to no reference.
+**Show** on a line shows the references it concerns. All of it is still in
+Zotero. The list is made by comparing what was brought with everything Zotero
+sent, so what is not on it was brought. It stays with the import: in **Recent
+changes**, the import's line has **Not brought** with the same list, also
+after you have dismissed the summary.
+
 Zotero must be open in the same environment where the project runs. For a
 remote project, that means Zotero must run on the remote computer, not only on
 the computer displaying Scient. If Zotero blocks local access, enable **Allow
@@ -536,9 +549,12 @@ again later, the folders kept by earlier restores stay listed too.
 
 If you restored by mistake, or restored the wrong backup, open **Recent
 changes**: the line of the restore has **Put it back**. The Library that was
-replaced then takes its place again the next time Scient starts, exactly as
-it was, and the Library you restored is kept in a folder in its turn, so this
-too can be taken back. Until you restart, **Cancel** leaves everything as it
+replaced then takes its place again the next time Scient starts, as it was
+kept, and the Library you restored is kept in a folder in its turn, so this
+too can be taken back. A **Move back into this project** you chose in between
+is kept. A source you added to a project in between is still cited there from
+the details the project saved, and returns to the Library when the project is
+next changed; its PDF and personal note stay in the kept folder. Until you restart, **Cancel** leaves everything as it
 is. **Add its sources** on the same line is for the other case: you want to
 keep the restored Library and only bring over what the earlier one had more.
 

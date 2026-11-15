@@ -282,6 +282,41 @@ async function fileBytes(path: string): Promise<Buffer | null> {
   }
 }
 
+/**
+ * A file of the other Library, for copying into this one. From a backup it must be the file the
+ * backup's own list names, byte for byte: a file changed or added since the backup was made is
+ * refused, never copied.
+ */
+async function checkedBytes(
+  otherRoot: string,
+  listed: ReadonlyMap<string, string> | null,
+  path: string,
+): Promise<Buffer | null> {
+  const bytes = await fileBytes(path);
+  if (!bytes || !listed) return bytes;
+  const relative = NodePath.relative(otherRoot, path).split(NodePath.sep).join("/");
+  if (listed.get(relative) !== hashOfBytes(bytes)) {
+    throw new Error(`The backup's file ${relative} is not the one the backup lists.`);
+  }
+  return bytes;
+}
+
+/** The big folders that hold one file or more per source; what else a backup lists is small. */
+const PER_SOURCE = /^(records|history|files|annotations|trash|deleted|zotero)\//u;
+
+/**
+ * Whether the files of a backup that say how its sources are organised and kept apart
+ * (collections, "not duplicates" pairs, merges, aliases) are the ones its list names.
+ */
+async function decisionsAsListed(other: OtherFolder): Promise<boolean> {
+  for (const [relative, sha256] of other.listed ?? []) {
+    if (PER_SOURCE.test(relative)) continue;
+    const bytes = await fileBytes(NodePath.join(other.root, ...relative.split("/")));
+    if (!bytes || hashOfBytes(bytes) !== sha256) return false;
+  }
+  return true;
+}
+
 /** Whether the other Library has highlights on one of these PDFs that this one lacks or holds differently. */
 async function highlightsDiffer(
   libraryRoot: string,
@@ -876,11 +911,14 @@ async function place(input: {
 async function addSource(input: {
   readonly libraryRoot: string;
   readonly otherRoot: string;
+  /** A backup's own checksums: every file read from it must be the one its list names. */
+  readonly listed: ReadonlyMap<string, string> | null;
   readonly record: ScientSourceRecord;
   readonly beforeRecord: () => Promise<void>;
   readonly afterFiles?: (() => void) | undefined;
 }): Promise<Pick<Arrived, "sourceId" | "highlights" | "missingPdfs" | "highlightsKept"> | string> {
   const { libraryRoot, otherRoot, record } = input;
+  const theirBytes = (path: string) => checkedBytes(otherRoot, input.listed, path);
   const id = record.sourceId;
   assertSafeIdentifier(id, "Source ID");
   const recordPath = NodePath.join(libraryRoot, "records", `${id}.json`);
@@ -893,12 +931,31 @@ async function addSource(input: {
   }
   const library = scientLibraryLocation(libraryRoot);
   const other = scientLibraryLocation(otherRoot);
+  // Everything small is read, and checked, before anything is written: a file that is not
+  // what the backup lists stops the source before any of it is here.
+  const bytes = await theirBytes(NodePath.join(otherRoot, "records", `${id}.json`));
+  if (!bytes) throw new Error("The other Library no longer has it.");
+  decodePersistedScientSourceRecord(JSON.parse(bytes.toString("utf8")));
+  const history = NodePath.join(otherRoot, "history", id);
+  const versions: Array<{ readonly name: string; readonly bytes: Buffer }> = [];
+  for (const name of await NodeFSP.readdir(history).catch(() => [] as string[])) {
+    if (!/^\d+\.json$/u.test(name)) continue;
+    const version = await theirBytes(NodePath.join(history, name));
+    if (version) versions.push({ name, bytes: version });
+  }
+  const theirHighlights = new Map<string, Buffer | null>();
+  for (const attachment of record.attachments) {
+    theirHighlights.set(
+      attachment.sha256,
+      await theirBytes(annotationPath(otherRoot, attachment.sha256)),
+    );
+  }
   const highlights: Array<{ sha256: string; hash: string | null }> = [];
   let missingPdfs = 0;
   let highlightsKept = false;
   for (const attachment of record.attachments) {
     const ourPdf = sourceAttachmentAbsolutePath(library, attachment);
-    const theirs = await fileBytes(annotationPath(otherRoot, attachment.sha256));
+    const theirs = theirHighlights.get(attachment.sha256) ?? null;
     const ours = annotationPath(libraryRoot, attachment.sha256);
     if (await exists(ourPdf)) {
       // The PDF is here already: its highlights stay as this Library has them.
@@ -917,13 +974,10 @@ async function addSource(input: {
     highlights.push({ sha256: attachment.sha256, hash: now ? hashOfBytes(now) : null });
   }
   input.afterFiles?.();
-  const history = NodePath.join(otherRoot, "history", id);
-  for (const name of await NodeFSP.readdir(history).catch(() => [] as string[])) {
-    if (!/^\d+\.json$/u.test(name)) continue;
-    const bytes = await NodeFSP.readFile(NodePath.join(history, name));
+  for (const { name, bytes: versionBytes } of versions) {
     // A PDF only an earlier version names comes too while the other Library still has it, so
     // going back to that version here finds it.
-    const version = await Promise.resolve(bytes.toString("utf8"))
+    const version = await Promise.resolve(versionBytes.toString("utf8"))
       .then((text) => decodePersistedScientSourceRecord(JSON.parse(text)))
       .catch(() => null);
     for (const attachment of version?.attachments ?? []) {
@@ -933,12 +987,10 @@ async function addSource(input: {
         attachment.sha256,
       ).catch(() => "missing" as const);
     }
-    await createUnderLock(NodePath.join(libraryRoot, "history", id, name), bytes);
+    await createUnderLock(NodePath.join(libraryRoot, "history", id, name), versionBytes);
   }
-  const bytes = await NodeFSP.readFile(NodePath.join(otherRoot, "records", `${id}.json`));
-  // Written as the other Library keeps it, once it is known to be a record this Scient reads.
-  decodePersistedScientSourceRecord(JSON.parse(bytes.toString("utf8")));
-  // Before the record exists, so no automatic merge ever sees it without these decisions.
+  // The record is written last, as the other Library keeps it; the decisions come before
+  // it exists, so no automatic merge ever sees it without them.
   await input.beforeRecord();
   if (!(await createUnderLock(recordPath, bytes))) return "it is here now";
   return { sourceId: id, highlights, missingPdfs, highlightsKept };
@@ -1061,31 +1113,46 @@ async function oneAtATime<A>(libraryRoot: string, run: () => Promise<A>): Promis
 }
 
 /**
- * A mark of what deciding "new" reads, apart from what this join itself added: the names in
- * `records/`, `trash/` and `deleted/`, each record's time and size, and the merge aliases.
- * Equal marks mean no other writer added, removed, merged or edited a source since (an edit
- * can make a source here the same paper as one about to be added).
+ * What deciding "new" reads, as it is on disk: each record's time and size, the names in
+ * `trash/` and `deleted/`, and the merge aliases. Equal marks mean nobody added, removed,
+ * merged or edited a source since (an edit can make a source here the same paper as one
+ * about to be added). A record is replaced by a rename, so an edit always gives it a new time.
  */
-async function libraryMark(libraryRoot: string, own: ReadonlySet<string>): Promise<string> {
+interface LibraryMark {
+  readonly records: Map<string, string>;
+  readonly rest: string;
+}
+
+const recordStat = (libraryRoot: string, name: string) =>
+  NodeFSP.stat(NodePath.join(libraryRoot, "records", name)).then(
+    (stats) => `${stats.mtimeMs}:${stats.size}`,
+    () => "gone",
+  );
+
+async function libraryMark(libraryRoot: string): Promise<LibraryMark> {
   const names = async (folder: string) =>
     (await NodeFSP.readdir(NodePath.join(libraryRoot, folder)).catch(() => [] as string[]))
-      .filter((name) => name.endsWith(".json") && !own.has(name.slice(0, -".json".length)))
+      .filter((name) => name.endsWith(".json"))
       .toSorted();
-  const records = await Promise.all(
-    (await names("records")).map(async (name) => {
-      // A record is replaced by a rename, so an edit always gives it a new time.
-      const stats = await NodeFSP.stat(NodePath.join(libraryRoot, "records", name)).catch(
-        () => null,
-      );
-      return `${name}:${stats ? `${stats.mtimeMs}:${stats.size}` : "gone"}`;
-    }),
-  );
+  const records = new Map<string, string>();
+  const all = await names("records");
+  // A few hundred at a time: a Library of tens of thousands must not open them all at once.
+  for (let start = 0; start < all.length; start += 256) {
+    const batch = all.slice(start, start + 256);
+    const stats = await Promise.all(batch.map((name) => recordStat(libraryRoot, name)));
+    batch.forEach((name, index) => records.set(name, stats[index]!));
+  }
   const aliases = await NodeFSP.stat(NodePath.join(libraryRoot, "aliases.json")).then(
     (stats) => `${stats.mtimeMs}:${stats.size}`,
     () => "none",
   );
-  return sha256Of(stableJson([records, await names("trash"), await names("deleted"), aliases]));
+  return { records, rest: stableJson([await names("trash"), await names("deleted"), aliases]) };
 }
+
+const sameMark = (left: LibraryMark, right: LibraryMark) =>
+  left.rest === right.rest &&
+  left.records.size === right.records.size &&
+  [...left.records].every(([name, stat]) => right.records.get(name) === stat);
 
 export type ScientLibraryJoinResult =
   | {
@@ -1148,9 +1215,10 @@ export async function joinScientLibrary(input: {
     for (const joinId of await unfinishedJoins(libraryRoot)) {
       await settleStopped(libraryRoot, joinId, input.actor);
     }
-    const own = new Set<string>();
+    /** What this join added, each with its details on arrival. */
+    const own = new Map<string, string>();
     // Taken before the comparison, so a change during it is seen as one since.
-    let mark = await libraryMark(libraryRoot, own);
+    let mark = await libraryMark(libraryRoot);
     const compared = await compareScientLibraries(library, source.root);
     const decisions = await otherDecisions(source.root);
     const joinId = `join_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
@@ -1210,13 +1278,24 @@ export async function joinScientLibrary(input: {
       // Written first: whatever happens next, the join's record names what it may have added.
       await atomicWriteJson(partPath(directory, number), part, MAX_PART_BYTES);
       const settled = await withScientLibraryLock(libraryRoot, async () => {
-        // Under the lock: if anything but this join added, removed or merged a source since
-        // the Library was last read, it is read again and each source is judged against it.
-        const now = await libraryMark(libraryRoot, own);
-        if (now !== mark) {
-          state = await localState(library);
-          mark = now;
-        }
+        // Under the lock: if anything but this join added, removed, merged or edited a source
+        // since the Library was last read, it is read again and each source is judged against
+        // it. The join's own additions are in the mark as it left them, so an edit of one of
+        // those is seen too.
+        const now = await libraryMark(libraryRoot);
+        if (!sameMark(now, mark)) state = await localState(library);
+        mark = now;
+        // The other Library keeps its sources apart from each other, so what this join added
+        // does not make a later one "not new", unless its details were changed here since.
+        const current = state;
+        const apart = new Set(
+          current === null
+            ? own.keys()
+            : [...own].flatMap(([sourceId, details]) => {
+                const live = current.live.get(sourceId);
+                return live && detailsOf(live) === details ? [sourceId] : [];
+              }),
+        );
         const partAdded: Arrived[] = [];
         const partSkipped: Array<{ sourceId: string; why: string }> = [];
         // A test's stop inside `addSource` ends the join, as a kill would; it is not a skip.
@@ -1235,11 +1314,12 @@ export async function joinScientLibrary(input: {
           if (input.faults?.stopAfter === index) throw new Error("Stopped (test fault).");
           const id = record.sourceId;
           const arrived =
-            state !== null && standingOf(record, state, own).kind !== "fresh"
+            state !== null && standingOf(record, state, apart).kind !== "fresh"
               ? "it is no longer new here"
               : await addSource({
                   libraryRoot,
                   otherRoot: source.root,
+                  listed: source.listed,
                   record,
                   beforeRecord: () =>
                     keepApart({ library, sourceId: id, decisions, present, actor: input.actor }),
@@ -1253,7 +1333,9 @@ export async function joinScientLibrary(input: {
             continue;
           }
           // The record is in: counted at once, so a failure below cannot say nothing arrived.
-          own.add(id);
+          own.set(id, detailsOf(record));
+          // And it is in the mark as this join left it.
+          mark.records.set(`${id}.json`, await recordStat(libraryRoot, `${id}.json`));
           missingPdfs += arrived.missingPdfs;
           if (arrived.highlightsKept) highlightsKept += 1;
           input.onProgress?.({ done, total: compared.fresh.length, added: own.size });
@@ -1868,12 +1950,15 @@ export async function takeFromScientLibraryJoin(input: {
       if (input.shown.relation !== "possibly-same" && input.shown.relation !== "not-here") {
         return { outcome: "changed" };
       }
+      // The whole backup is not hashed again for one paper: what this reads from it is.
+      if (!(await decisionsAsListed(otherFolder))) return { outcome: "unavailable" };
       const decisions = await otherDecisions(otherRoot);
       const present = (sourceId: string) =>
         exists(NodePath.join(libraryRoot, "records", `${sourceId}.json`));
       const arrived = await addSource({
         libraryRoot,
         otherRoot,
+        listed: otherFolder.listed,
         record: theirs,
         // Kept apart from every paper it resembled before it exists, so nothing merges them.
         beforeRecord: async () => {
@@ -1893,7 +1978,9 @@ export async function takeFromScientLibraryJoin(input: {
             });
           }
         },
-      });
+        // A file of the backup that is not the one it lists: nothing of the paper is added.
+      }).catch(() => null);
+      if (arrived === null) return { outcome: "unavailable" };
       if (typeof arrived === "string") return { outcome: "changed" };
       await place({
         library,
