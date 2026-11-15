@@ -1076,7 +1076,17 @@ function trashedCountOf(entries: ReadonlyArray<ScientSourceTrashEntry>): {
   return count > 0 ? { trashedCount: count } : {};
 }
 
-/** The chosen entries and, for each, every copy merged into it, directly or through another. */
+/** The Trash as a person or an agent is shown it: what was removed, without merges' copies. */
+export async function readScientSourcesRemovedByPerson(
+  root: ScientSourceStoreLocation,
+): Promise<ReadonlyArray<ScientSourceTrashEntry>> {
+  return removedByPerson((await scanTrash(await sourceStorePaths(root))).entries);
+}
+
+/**
+ * The chosen entries and every copy merged into them, directly or through another, copies
+ * first: a deletion stopped part way leaves the chosen entry in the Trash to delete again.
+ */
 function withCopiesMergedInto(
   all: ReadonlyArray<ScientSourceTrashEntry>,
   chosen: ReadonlyArray<ScientSourceTrashEntry>,
@@ -1091,7 +1101,7 @@ function withCopiesMergedInto(
       grew = true;
     }
   }
-  return [...going.values()];
+  return [...going.values()].toReversed();
 }
 
 export async function listScientSourceTrash(
