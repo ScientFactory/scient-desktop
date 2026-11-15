@@ -2514,6 +2514,36 @@ each `batchId`, a merge with `undo-merge`, a Trash entry with
 (121,112 measured); no model eval covers it yet, because the tool-use eval
 does not load the Sources tools.
 
+## Library backup
+
+`backUpScientLibrary` (`libraryBackup.ts`) copies the Library's folder into
+`<destination>/Scient Library backup <date time>/library/`, with `backup.json`
+(format version, backup ID, the Library's ID, counts, every file with size and
+SHA-256, what was left out and why) and a README. It first settles interrupted
+merges, then holds every checkout's move lock (answering `busy` when a move
+holds one) and the Library's write lock for the whole copy, because deleting a
+source for good collects PDFs that no live or trashed record names. Every
+regular file is kept, also ones this version does not know, except `text/`
+(rebuilt from PDFs), lock files and temporary files; links are not followed.
+Each copy is hashed against what was read, the folder is built under a hidden
+`.partial` name and renamed once the manifest is written, and a stop or a
+failure removes it. The callbacks run inside the lock and must only report.
+`checkScientLibraryBackup` reads a folder against its manifest: files changed,
+gone, or not listed.
+
+The server runs one backup at a time in the background (`LibraryBackupRuns.ts`,
+organize `back-up-library` with an absolute `inFolder`) and keeps how the last
+one ended until the next starts or the server stops; `backupStatus` (read
+scope) reports none, running with files done and total, done with the folder
+and counts, or failed with the reason. The panel (`LibraryBackup.tsx`) offers
+the menu item where this computer's folder dialog can choose the folder, asks
+the status each second while one runs, and announces the end of a backup it
+saw running. Library writes wait on the lock meanwhile (30 s, then
+`ScientLibraryBusyError`). Agents have no action for it yet (a recorded
+parity gap). Restore is not built: it needs a barrier outside the swapped
+folder and a recoverable swap, designed on its own
+(`reviews/sources-improve-20261115/DECISIONS.md`).
+
 ## Citing
 
 Documents cite by key. In Markdown, typing `[@` opens a list of Library
@@ -3279,7 +3309,8 @@ single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
 an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a named test. No gaps are left.
+`libraryParity.test.ts` lists each gap as a named test. One gap stands: an
+agent cannot start or watch a Library backup.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is

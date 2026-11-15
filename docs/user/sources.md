@@ -481,6 +481,31 @@ Identifiers and the preprint type survive in every format. When a format has
 no place for something (for example EndNote XML holds an arXiv ID or a PMID,
 not both), a note after the export names what the file leaves out.
 
+## Back up the Library
+
+Choose **Back up the Library…** (in the **⋯** menu at the top of the Library)
+and pick a folder. Scient writes a new folder there, named "Scient Library
+backup" with the date and time: a copy of everything in your Library as it is
+at that moment. It holds your sources with their versions, personal notes,
+reading status and stars, PDFs, highlights, collections and saved searches,
+the Trash, merges with their Undo, "not duplicates" decisions, and the markers
+that keep a deleted source deleted. The files are the ones Scient itself
+keeps: JSON you can read, and PDFs. A `README.md` in the folder says what is
+in it, and `backup.json` lists every file with its size and checksum.
+
+While the backup runs, changes to the Library wait, and the Library says so;
+a change that waits longer than half a minute is refused and can be made
+again afterwards. A large Library with many PDFs can take a few minutes.
+
+A Library backup is not a backup of your projects. Each project's citation
+keys, project notes, systematic reviews and citation style live in the
+project's own folder, and so do the sources of a project that has not moved
+into your Library. Your Zotero sign-in is not in it either.
+
+The menu item is offered for a Library on this computer. Restoring a backup
+into Scient is not available yet; the folder is complete and readable without
+it.
+
 ## Project packages
 
 A project package is a folder with everything this project uses from your
