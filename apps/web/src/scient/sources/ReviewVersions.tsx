@@ -254,6 +254,8 @@ export function ReviewVersionsLine(props: {
         .readConflicts(props.reviewId, { conflictId: version.conflictId!, offset: 0 })
         .catch(() => null);
       if (read !== latestRead.current) return;
+      // Read against another version in force than the one the choices would name: read again.
+      if (page && page.currentRevision !== next.currentRevision) return load();
       pages.set(version.conflictId!, page?.differences ?? null);
     }
     setDifferences(pages);

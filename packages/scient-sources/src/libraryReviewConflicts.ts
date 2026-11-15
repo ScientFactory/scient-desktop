@@ -452,25 +452,47 @@ function versionSummary(
   };
 }
 
-/** The version in force and each other version, for the picker. Reads only. */
+/**
+ * The version in force and each other version, for the picker; with `differencesOf`, also a page
+ * of what differs from that one. Each file is read once, so the differences are those of the
+ * version `currentRevision` names. Reads the project folder only.
+ */
 export async function readScientReviewVersions(input: {
   readonly projectRoot: string;
   readonly reviewId: string;
+  readonly differencesOf?: { readonly conflictId: string; readonly offset: number };
 }): Promise<{
   readonly current: ScientReviewVersionSummary | null;
   /** Names the version in force for `resolveScientReviewConflict`'s `expectedRevision`. */
   readonly currentRevision: string | null;
   readonly versions: ReadonlyArray<ScientReviewVersionSummary>;
+  /** With `differencesOf`; null when either version is missing or does not decode. */
+  readonly differences?: ScientReviewVersionDifferences | null;
 }> {
   const root = await projectRootFor(input.projectRoot);
   const conflicts = await listScientReviewConflicts(input);
-  if (conflicts.length === 0) return { current: null, currentRevision: null, versions: [] };
-  const text = await readText(reviewFile(root, input.reviewId));
-  const current = reviewOrNull(text);
+  const text = conflicts.length > 0 ? await readText(reviewFile(root, input.reviewId)) : null;
+  const here = reviewOrNull(text);
+  const other = conflicts.find(({ conflictId }) => conflictId === input.differencesOf?.conflictId);
+  const differences = async () => {
+    if (!here || !other) return null;
+    // Titles come from the copies of the sources' details saved with each version.
+    const [mine, theirs] = await Promise.all([
+      readScientReviewSnapshotAt(inForceSnapshotAt(root, input.reviewId)),
+      readScientReviewSnapshotAt(conflictSnapshotAt(root, input.reviewId, other.conflictId)),
+    ]);
+    return scientReviewVersionDifferences({
+      here,
+      other: other.review,
+      titleOf: (sourceId) => (mine.get(sourceId) ?? theirs.get(sourceId))?.title ?? null,
+      offset: input.differencesOf?.offset ?? 0,
+    });
+  };
   return {
-    current: current ? versionSummary(null, current) : null,
+    current: here ? versionSummary(null, here) : null,
     currentRevision: text ? revisionOf(text) : null,
     versions: conflicts.map((conflict) => versionSummary(conflict.conflictId, conflict.review)),
+    ...(input.differencesOf ? { differences: await differences() } : {}),
   };
 }
 
@@ -624,35 +646,6 @@ export function scientReviewVersionDifferences(input: {
     rows: rows.slice(input.offset, end),
     nextOffset: end < rows.length ? end : null,
   };
-}
-
-/**
- * What differs between the version in force and another, for the picker and for agents. Reads
- * the project folder only; null when either version is missing or does not decode.
- */
-export async function readScientReviewVersionDifferences(input: {
-  readonly projectRoot: string;
-  readonly reviewId: string;
-  readonly conflictId: string;
-  readonly offset: number;
-}): Promise<ScientReviewVersionDifferences | null> {
-  const root = await projectRootFor(input.projectRoot);
-  if (!isConflictId(input.conflictId)) return null;
-  // The other version first: its path refuses an unsafe review ID before any file is read.
-  const other = reviewOrNull(await readText(conflictFile(root, input.reviewId, input.conflictId)));
-  const here = reviewOrNull(await readText(reviewFile(root, input.reviewId)));
-  if (!here || !other || other.reviewId !== input.reviewId) return null;
-  // Titles come from the copies of the sources' details saved with each version.
-  const [mine, theirs] = await Promise.all([
-    readScientReviewSnapshotAt(inForceSnapshotAt(root, input.reviewId)),
-    readScientReviewSnapshotAt(conflictSnapshotAt(root, input.reviewId, input.conflictId)),
-  ]);
-  return scientReviewVersionDifferences({
-    here,
-    other,
-    titleOf: (sourceId) => (mine.get(sourceId) ?? theirs.get(sourceId))?.title ?? null,
-    offset: input.offset,
-  });
 }
 
 /** Combine's report for a review, until someone dismisses it. */
