@@ -112,6 +112,10 @@ const RPC_AGGREGATES = {
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: "scheduledTasks",
   [WS_METHODS.secretsAnswerRequest]: "secrets",
   [WS_METHODS.guestShareCreate]: "guest-share",
+  // SCIENT-FORK: thread rooms.
+  [WS_METHODS.threadRoomInvite]: "thread-room",
+  [WS_METHODS.threadRoomInviteLink]: "thread-room",
+  [WS_METHODS.threadRoomPresence]: "thread-room",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
   [WS_METHODS.cloudInstallRelayClient]: "cloud",
   // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
