@@ -179,7 +179,19 @@ not move it again on its own.
 pulled from git) changed a systematic review differently, the review shows
 "This review has another version from a copy of this project." Choose **Show
 versions** on that line to see both versions side by side: who changed each one last, and their searches,
-records and decisions. Choose **Keep this version**, **Use the other**, or
+records and decisions. Under them Scient says what differs, counts first: the
+decisions that differ, and the decisions, searches and records only one version
+has. If the title, the question, the exclusion reasons, the records marked as
+duplicates or the full-text retrieval records differ, it names them. Below the
+choices, each difference is listed with both versions' side: for a record the
+two decided differently, each decision with its reason, its date, whether an
+agent made it, and its note; for a search, its details and how many records
+each version has for it. What the two versions agree on is left out. A long
+list shows 100 differences at a time, the decisions that differ first; **Show
+more** brings the next. Looking changes nothing. An agent can read the same
+list.
+
+Choose **Keep this version**, **Use the other**, or
 **Combine**. Combine keeps the searches and sources of both versions and
 reopens any source the two decided differently, so you can decide it again. The
 version you do not keep is stored aside, not deleted. After Combine, a short
