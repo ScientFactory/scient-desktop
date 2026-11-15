@@ -15,6 +15,10 @@ const PR_HEAD = "d".repeat(40);
 const MERGE = "e".repeat(40);
 const TREE = "f".repeat(40);
 const OTHER = "9".repeat(40);
+const sha1 = (value) => createHash("sha1").update(value).digest("hex");
+const BASE_TREE = sha1("base tree");
+const PR_TREE = sha1("pull request tree");
+const RECIPES = "apps/server/src/scient/compute/managed-python";
 const REPO = "ScientFactory/scient-desktop";
 const WORKFLOW = ".github/workflows/ci.yml";
 const { ADVISORY, JOBS } = require("./ci-check.cjs");
@@ -200,9 +204,27 @@ function fixture(t, event = "push") {
       data: Buffer.from(JSON.stringify(payloads.get(artifact_id))),
     }),
   };
+  const trees = new Map();
+  // A root tree whose Compute recipe directory is `recipes`; other entries are irrelevant.
+  const tree = (root, recipes) => {
+    const names = RECIPES.split("/");
+    let sha = recipes;
+    for (let depth = names.length - 1; depth >= 0; depth--) {
+      const id = depth === 0 ? root : sha1(`${root}:${names.slice(0, depth).join("/")}`);
+      const entries = [{ path: "README.md", type: "blob", sha: sha1(id) }];
+      if (sha) entries.push({ path: names[depth], type: "tree", sha });
+      trees.set(id, { sha: id, truncated: false, tree: entries });
+      sha = id;
+    }
+  };
   const git = {
     getCommit: async ({ commit_sha }) => {
       const data = commits.get(commit_sha);
+      if (!data) throw new Error("Not Found");
+      return { data: structuredClone(data) };
+    },
+    getTree: async ({ tree_sha }) => {
+      const data = trees.get(tree_sha);
       if (!data) throw new Error("Not Found");
       return { data: structuredClone(data) };
     },
@@ -259,6 +281,8 @@ function fixture(t, event = "push") {
     receipt,
     commits,
     commit,
+    trees,
+    tree,
     runs,
     artifacts,
     jobs,
@@ -536,8 +560,14 @@ for (const [name, change] of [
   ["a tested merge on another base", (f) => f.commit(MERGE, TREE, [OTHER, PR_HEAD])],
   ["a tested merge of another head", (f) => f.commit(MERGE, TREE, [BASE, OTHER])],
   ["an unknown tested merge", (f) => f.commits.delete(MERGE)],
-  // The merge would combine both sides, so history reads could select the merge commit itself.
-  ["a PR that does not contain its base", (f) => f.commit(PR_HEAD, OTHER, [MID])],
+  // Both changed the recipes: their history read would find each merge commit itself.
+  ["a PR and main that both changed Compute recipes", (f) => behind(f, "base", "pr", "merged")],
+  ["a PR behind main whose base is unknown", (f) => behind(f).commits.delete(BASE)],
+  [
+    "a PR behind main with an unreadable tree",
+    (f) => behind(f).trees.delete(sha1(`${TREE}:apps/server`)),
+  ],
+  ["a PR behind main with a truncated tree", (f) => (behind(f).trees.get(TREE).truncated = true)],
 ]) {
   test(`queue: ${name} selects full CI and leaves no partial reports`, async (t) => {
     const f = fixture(t, "merge_group");
@@ -545,6 +575,37 @@ for (const [name, change] of [
     await refused(f);
   });
 }
+
+/** The PR doesn't contain its base; `merged` combines both sides' recipe directories. */
+function behind(f, base = "same", pr = "same", merged = "same") {
+  const recipes = (name) => (name === "same" ? sha1("recipes") : sha1(`recipes ${name}`));
+  f.commit(PR_HEAD, PR_TREE, [MID]);
+  f.commit(BASE, BASE_TREE, [MID]);
+  f.tree(BASE_TREE, recipes(base));
+  f.tree(PR_TREE, recipes(pr));
+  f.tree(TREE, recipes(merged));
+  return f;
+}
+
+for (const [name, sides] of [
+  ["neither side changed Compute recipes", []],
+  ["only the PR changed Compute recipes", ["same", "pr", "pr"]],
+  ["only main changed Compute recipes", ["base", "same", "base"]],
+]) {
+  test(`a queue entry behind main reuses a PR run of this content and base: ${name}`, async (t) => {
+    const f = behind(fixture(t, "merge_group"), ...sides);
+    await restore(f.args);
+    reused(f);
+    assert.equal(f.outputs.source_run_id, "10");
+  });
+}
+
+test("a queue entry behind main reuses when neither side has Compute recipes", async (t) => {
+  const f = behind(fixture(t, "merge_group"));
+  for (const root of [BASE_TREE, PR_TREE, TREE]) f.tree(root, null);
+  await restore(f.args);
+  reused(f);
+});
 
 function receiptFixture(t, event) {
   const f = fixture(t, event);

@@ -328,7 +328,9 @@ test-only edits skip packaging.
 Nothing that already passed on the same content runs again. The merge queue reuses a
 same-repository PR run whose `Check` passed into main only for the exact content and comparison
 base, even while that run's advisory jobs still run or after one of them failed,
-and a push to main reuses the queue runs that qualified each commit it lands. Receipts
+and a push to main reuses the queue runs that qualified each commit it lands. A PR whose CI ran
+against the main it is queued on qualifies whether or not its branch contains that main, unless
+both changed Compute recipes, whose sealing reads Git history. Receipts
 record which web/server suites actually ran and that Overleaf Windows passed; only those
 reports must be restored, from the attempt whose job passed, before reuse is confirmed.
 Missing, stale, legacy, or partial evidence falls back to ordinary CI, as does a push the
