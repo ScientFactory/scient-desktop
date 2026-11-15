@@ -42,6 +42,7 @@ import {
   sourcePositionFromPointerEvent,
   type LatexSourceNavigation,
 } from "./latexSourceNavigation";
+import { useLatexCitationOpener, useLatexSourceCitationOpen } from "./useLatexCitationOpener";
 import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
@@ -998,6 +999,18 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     keyboardStep: LATEX_SPLIT_KEYBOARD_STEP,
     onCommit: commitSplitFraction,
   });
+  const citationOpener = useLatexCitationOpener({
+    environmentId: props.environmentId,
+    root: props.cwd,
+    threadRef: props.threadRef,
+  });
+  const linkedSourcePane =
+    (mode === "split" && persistence !== null && !sourceRecovery.blocked) || !!linkedSourceReveal;
+  const sourceCitation = useLatexSourceCitationOpen(linkedSourcePane ? null : citationOpener, () =>
+    persistence === null || sourceRecovery.blocked
+      ? props.contents
+      : persistence.getSnapshot().draftSource,
+  );
 
   const diagnostics = build.snapshot?.diagnostics ?? NO_DIAGNOSTICS;
   const diagnosticRows = latexDiagnosticRows(diagnostics);
@@ -2263,12 +2276,15 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           <div
             ref={primaryPaneRef}
             className={cn("scient-latex-pane", mode === "split" ? "scient-latex-pane-sized" : null)}
-            onPointerDownCapture={() => {
+            onPointerDownCapture={(event) => {
               syncRequestRef.current += 1;
               containerRef.current?.dispatchEvent(
                 new CustomEvent("scient-latex-source-interaction"),
               );
+              sourceCitation.onPointerDown(event);
             }}
+            onMouseDownCapture={sourceCitation.onMouseDown}
+            onClickCapture={sourceCitation.onClick}
             onKeyDownCapture={() => {
               syncRequestRef.current += 1;
               containerRef.current?.dispatchEvent(
@@ -2288,9 +2304,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
                 );
             }}
           >
-            {(mode === "split" && persistence !== null && !sourceRecovery.blocked) ||
-            linkedSourceReveal ? (
+            {linkedSourcePane ? (
               <LatexVisualSourcePane
+                citationOpener={citationOpener}
                 threadRef={props.threadRef}
                 onCite={props.onCite}
                 key={linkedSourceReveal?.path ?? props.relativePath}

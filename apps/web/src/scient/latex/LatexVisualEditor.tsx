@@ -17,6 +17,7 @@ import {
   type ResolveLatexSourceOwner,
   type LatexSourceOwner,
 } from "./latexVisualSelection";
+import type { CitationItem } from "@scientfactory/scient-sources";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { latexVisualNodeSignature } from "./latexVisualDocument";
@@ -186,6 +187,8 @@ import {
 import "../markdownEditor/scient-markdown-editor.css";
 import { LatexReferenceDialog } from "./LatexReferenceDialog";
 import { useLatexCitationSuggestions } from "./useLatexCitationSuggestions";
+import { useLatexCitationOpener, type LatexCitationOpener } from "./useLatexCitationOpener";
+import { isCitationOpenClick, latexCitationOpenItems, latexQuoteBefore } from "./latexCitationOpen";
 import { bibliographyChangePublished, mergeBibliographySourceEdit } from "./latexBibliographyModel";
 import {
   LatexReferencesPanel,
@@ -1673,6 +1676,8 @@ function LatexInlineCommandView({
   const argument = String(node.attrs.argument ?? "");
   const citation = latexCitationParts(String(node.attrs.raw ?? ""));
   const referenceManager = useContext(LatexReferencesContext);
+  const citationOpener = citation ? (referenceManager?.citationOpener ?? null) : null;
+  const pendingCitation = useRef<ReadonlyArray<CitationItem> | null>(null);
   const citationTargets = useLatexReferenceState(
     name === "cite" ? referenceEditor : null,
     (current) => {
@@ -1896,6 +1901,48 @@ function LatexInlineCommandView({
       data-anchor={name === "hypertarget" || undefined}
       data-citation={!!citationTargets || undefined}
       contentEditable={false}
+      onMouseDownCapture={(event: MouseEvent<HTMLElement>) => {
+        pendingCitation.current = null;
+        if (!citation || !citationOpener) return;
+        const key =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>("[data-citation-key]")
+            : null;
+        // Read-only, a plain click opens the source unless it already goes to a reference.
+        const reading =
+          !editable &&
+          event.button === 0 &&
+          !(event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) &&
+          key?.dataset.citationTarget === undefined;
+        if (!isCitationOpenClick(event) && !reading) return;
+        const items = latexCitationOpenItems(
+          argument,
+          citation.notes,
+          key?.dataset.citationKey ?? null,
+        );
+        if (!citationOpener.opens(items)) return;
+        pendingCitation.current = items;
+        // The press would select the citation and open its options.
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClickCapture={(event: MouseEvent<HTMLElement>) => {
+        const items = pendingCitation.current;
+        pendingCitation.current = null;
+        if (!items || !citationOpener) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const position = getPos();
+        const before = typeof position === "number" ? editor.state.doc.resolve(position) : null;
+        citationOpener.open(
+          items,
+          before &&
+            latexQuoteBefore(
+              before.parent.textBetween(0, before.parentOffset, undefined, "\ufffc"),
+            ),
+          { x: event.clientX, y: event.clientY },
+        );
+      }}
     >
       {name === "hfill" ? null : textEditing && (hasLinkText || name === "footnote") ? (
         <>
@@ -2000,7 +2047,9 @@ function LatexInlineCommandView({
                 >
                   <button
                     type="button"
-                    disabled={!editable && !target}
+                    disabled={!editable && !target && !citationOpener}
+                    data-citation-key={key}
+                    data-citation-target={target ? "" : undefined}
                     aria-label={
                       target
                         ? `Go to reference ${target.number ?? key}`
@@ -2029,7 +2078,7 @@ function LatexInlineCommandView({
       ) : (
         <button
           type="button"
-          disabled={!editable && !equationReference && name !== "footnote"}
+          disabled={!editable && !equationReference && name !== "footnote" && !citationOpener}
           aria-label={
             name === "footnote"
               ? `Go to footnote ${footnoteNumber ?? ""}`
@@ -2428,6 +2477,8 @@ const LatexWorkspaceContext = createContext<LatexVisualWorkspace | null>(null);
 const LatexReferencesContext = createContext<{
   open: (key?: string) => void;
   entries: readonly BibliographyDetails[];
+  /** Opens a citation's Library source; null while it cannot. */
+  citationOpener: LatexCitationOpener | null;
 } | null>(null);
 
 function normalizeFigurePath(sourceRelativePath: string, figurePath: string): string | null {
@@ -6056,6 +6107,14 @@ function LatexVisualEditorReady(
   const currentSetupSource = useRef(props.sourceSnapshot.setupSource);
   // Plugins and fields live as long as the editor and read the newest setup through this.
   const readSetupSource = useStableCallback(() => currentSetupSource.current);
+  const citationOpener = useLatexCitationOpener({
+    environmentId: props.environmentId ?? null,
+    root: props.citationSource?.cwd ?? null,
+    threadRef: props.citationSource && {
+      environmentId: props.citationSource.environmentId,
+      threadId: props.citationSource.threadId,
+    },
+  });
   const citationSuggestions = useLatexCitationSuggestions({
     environmentId: props.environmentId ?? null,
     root: props.cwd ?? null,
@@ -8866,6 +8925,7 @@ function LatexVisualEditorReady(
   const referencesContext = {
     open: (key?: string) => openReferenceManagerRef.current(key),
     entries: referenceCatalog,
+    citationOpener,
   };
   const selectedCitation = useEditorState({
     editor,
