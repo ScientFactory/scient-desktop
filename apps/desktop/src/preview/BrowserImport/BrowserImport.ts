@@ -49,6 +49,12 @@ import {
   windowsImportBlockReason,
   // SCIENT-FORK:END
 } from "./Sources.ts";
+// SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+import {
+  listedThroughBrowser,
+  readThroughBrowser,
+} from "../../scient/accounts/browserConnectionImport.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
 import { countSites } from "../../scient/accounts/signedInSites.ts";
 // SCIENT-FORK:END
@@ -288,6 +294,9 @@ export const make = Effect.gen(function* BrowserImportMake() {
   const managedPolicy = yield* DesktopManagedPolicy.DesktopManagedPolicy;
   const platform = yield* HostProcess.Platform;
   const executablePath = yield* HostProcess.ExecutablePath;
+  // SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+  const environment = yield* HostProcess.Environment;
+  // SCIENT-FORK:END
   const platformServices = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >();
@@ -297,6 +306,10 @@ export const make = Effect.gen(function* BrowserImportMake() {
     BROWSER_IMPORT_SOURCES,
     Effect.fnUntraced(function* (definition) {
       const unavailable = yield* unavailableReason(definition, pathContext);
+      // SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+      const throughBrowser = yield* listedThroughBrowser(definition, pathContext, unavailable);
+      if (throughBrowser) return throughBrowser;
+      // SCIENT-FORK:END
       return {
         id: definition.id,
         name: definition.name,
@@ -306,6 +319,49 @@ export const make = Effect.gen(function* BrowserImportMake() {
       } satisfies BrowserImportSource;
     }),
   ).pipe(Effect.provide(platformServices));
+
+  // SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+  /** Writes what was read into the target profile, whichever way it was read. */
+  const store = Effect.fn("BrowserImport.store")(function* (
+    definition: BrowserImportSourceDefinition,
+    result: CookieReadResult,
+    input: {
+      readonly input: BrowserImportInput;
+      readonly scope: string;
+      readonly persistent: boolean;
+      readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
+    },
+  ) {
+    const session = yield* browserSession
+      .getSession(input.scope, input.persistent, input.namespace)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new BrowserImportFailedError({
+              sourceId: definition.id,
+              reason: "sessionUnavailable",
+              cause,
+            }),
+        ),
+      );
+
+    // Chromium serializes writes; a rejected cookie should not prevent the others.
+    // A refresh leaves working sign-ins alone.
+    return yield* writeCookies(session, result, input.input.keepSites, (cookie) =>
+      Effect.tryPromise({
+        try: () =>
+          withCookieDebugger(session, (send) =>
+            setCookies(send, [sessionCookieFromImported(cookie)]),
+          ),
+        catch: (cause) =>
+          new BrowserCookieWriteError({ url: cookie.url, cookieName: cookie.name, cause }),
+      }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ),
+    );
+  });
+  // SCIENT-FORK:END
 
   const importCookies = Effect.fn("BrowserImport.importCookies")(function* (input: {
     readonly input: BrowserImportInput;
@@ -327,6 +383,19 @@ export const make = Effect.gen(function* BrowserImportMake() {
     const blocked = yield* unavailableReason(definition, pathContext).pipe(
       Effect.provide(platformServices),
     );
+    // SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+    const throughBrowser = yield* readThroughBrowser(definition, pathContext, {
+      unavailable: blocked,
+      sourceProfileDirectory: input.input.sourceProfileDirectory,
+      environment,
+    }).pipe(Effect.provide(platformServices));
+    if (throughBrowser?.ok === false)
+      return yield* new BrowserImportFailedError({
+        sourceId: definition.id,
+        reason: throughBrowser.reason,
+      });
+    if (throughBrowser) return yield* store(definition, throughBrowser.read, input);
+    // SCIENT-FORK:END
     if (blocked !== undefined) {
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: blocked });
     }
@@ -409,34 +478,8 @@ export const make = Effect.gen(function* BrowserImportMake() {
       }),
     );
 
-    const session = yield* browserSession
-      .getSession(input.scope, input.persistent, input.namespace)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new BrowserImportFailedError({
-              sourceId: definition.id,
-              reason: "sessionUnavailable",
-              cause,
-            }),
-        ),
-      );
-
-    // Chromium serializes writes; a rejected cookie should not prevent the others.
-    // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
-    return yield* writeCookies(session, result, input.input.keepSites, (cookie) =>
-      Effect.tryPromise({
-        try: () =>
-          withCookieDebugger(session, (send) =>
-            setCookies(send, [sessionCookieFromImported(cookie)]),
-          ),
-        catch: (cause) =>
-          new BrowserCookieWriteError({ url: cookie.url, cookieName: cookie.name, cause }),
-      }).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      ),
-    );
+    // SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+    return yield* store(definition, result, input);
     // SCIENT-FORK:END
   });
 

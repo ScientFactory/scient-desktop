@@ -65,6 +65,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { toastManager } from "~/components/ui/toast";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
 import { addBrowserProfile } from "./addBrowserProfile";
@@ -73,6 +74,13 @@ import { recordImportedSessions } from "./importedSessions";
 import { protectedNotice } from "./importSummary";
 import { copySignInIntoMain } from "./mainFill";
 import { CHROME_WINDOW_ACTION, useChromeSignIn } from "./ChromeSignIn";
+import {
+  BrowserConnectStep,
+  REMOTE_DEBUGGING_QUESTION,
+  REMOTE_DEBUGGING_SETTING,
+  isConnectable,
+  type ConnectableSource,
+} from "./BrowserConnectStep";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
@@ -386,6 +394,13 @@ export function BrowserImportDialog({
   const [quitting, setQuitting] = useState<ReturnType<typeof mergeSourceProfiles>[number] | null>(
     null,
   );
+  // A browser that hands its sign-ins over itself: the step before its import, then which one
+  // is asking the person to allow the connection.
+  const [connecting, setConnecting] = useState<ConnectableSource<
+    ReturnType<typeof mergeSourceProfiles>[number]
+  > | null>(null);
+  const [connectReady, setConnectReady] = useState<ReadonlySet<string>>(new Set());
+  const [asking, setAsking] = useState<string | null>(null);
   // What each profile imported here brought, by its key.
   const [brought, setBrought] = useState<ReadonlyMap<string, string>>(new Map());
   const passwordsImporting = useImportingPasswords();
@@ -398,10 +413,13 @@ export function BrowserImportDialog({
       : undefined;
   // Windows keeps these browsers' sign-ins from other apps; an older desktop calls Chrome and
   // Edge unsupported there instead.
-  const isProtected = (source: Pick<BrowserImportSource, "id" | "unavailable">) =>
-    source.unavailable === "appBoundEncryption" ||
-    ((source.id === "chrome" || source.id === "edge") &&
-      source.unavailable === "unsupportedPlatform");
+  const isProtected = (source: BrowserImportSource) =>
+    !(isConnectable(source) && source.profiles.length > 0) &&
+    (source.unavailable === "appBoundEncryption" ||
+      ((source.id === "chrome" || source.id === "edge") &&
+        source.unavailable === "unsupportedPlatform"));
+  /** Whether a selected profile of `source` can be imported now, or how it can be. */
+  const importable = (source: BrowserImportSource) => !source.unavailable || isConnectable(source);
   const linkedProfile = (
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
@@ -452,7 +470,7 @@ export function BrowserImportDialog({
   const selectedPasswordCount = withPasswords.length
     ? withPasswords.reduce((sum, profile) => sum + (profile.passwordCount ?? 0), 0)
     : undefined;
-  const runImport = async (loaded = sources) => {
+  const runImport = async (loaded = sources, ready = connectReady) => {
     if (!canWrite || !previewBridge) return;
     if (importRunning) {
       toastManager.add({ type: "info", title: "A browser import is already running" });
@@ -470,6 +488,22 @@ export function BrowserImportDialog({
       return;
     }
     setQuitting(null);
+    // The step comes once per browser and dialog; after it the browser asks for each connection.
+    const toConnect = loaded.find(
+      (source): source is ConnectableSource<(typeof loaded)[number]> =>
+        isConnectable(source) &&
+        !ready.has(source.id) &&
+        source.profiles.some(
+          (profile) =>
+            selected.has(JSON.stringify([source.id, profile.directory])) &&
+            !isImported(source, profile),
+        ),
+    );
+    if (toConnect) {
+      setConnecting(toConnect);
+      return;
+    }
+    setConnecting(null);
     importRunning = true;
     setBusy(true);
     const done = new Set<string>();
@@ -480,15 +514,19 @@ export function BrowserImportDialog({
     }> = [];
     const passwordTotals = { imported: 0, skipped: 0, failed: false };
     const sessionsFrom: Array<{ profileId: string; from: string; filled: boolean }> = [];
+    /** Browsers this import connected to, which keep remote debugging on until turned off. */
+    const connected = new Map<string, ConnectableSource>();
     try {
       for (const source of loaded)
         for (const profile of source.profiles) {
           const key = JSON.stringify([source.id, profile.directory]);
-          if (!selected.has(key) || source.unavailable) continue;
+          if (!selected.has(key) || !importable(source)) continue;
           let profileId: string | undefined = linkedProfile(source, profile);
           // A profile imported before keeps its sign-ins; only its passwords can still come in.
           if (!isImported(source, profile)) {
             profileId = `profile-${randomUUID()}`;
+            // Its first profile opens the connection, which the browser asks about.
+            if (isConnectable(source) && !connected.has(source.id)) setAsking(source.name);
             const outcome = await importBrowserCookiesIntoTarget(
               previewBridge,
               source,
@@ -500,13 +538,20 @@ export function BrowserImportDialog({
                 fillMain: false,
               },
             );
+            setAsking(null);
             if (outcome.kind === "blocked") {
               toastManager.add({
                 type: "error",
                 title: BROWSER_IMPORT_FAILURE_COPY[outcome.reason],
               });
+              // Turned off since the step: the step shows again next time.
+              if (outcome.reason === "connectionOff")
+                setConnectReady(
+                  (current) => new Set([...current].filter((id) => id !== source.id)),
+                );
               continue;
             }
+            if (isConnectable(source)) connected.set(source.id, source);
             // Before the passwords: an interrupted import still leaves a complete profile.
             const record = sourceRecord(profileId, source.id, profile);
             if (Option.isSome(record)) await updateRecord(record.value);
@@ -558,10 +603,21 @@ export function BrowserImportDialog({
             ? `Imported ${passwordTotals.imported} passwords, ${passwordTotals.skipped} skipped`
             : `Imported ${passwordTotals.imported} passwords`,
         });
+      for (const source of connected.values())
+        toastManager.add({
+          type: "info",
+          title: `Remote debugging is still on in ${source.name}`,
+          description: `To turn it off, open ${source.connection.settingsUrl} in ${source.name}.`,
+          actionProps: {
+            children: "Copy address",
+            onClick: () => void writeTextToClipboard(source.connection.settingsUrl),
+          },
+        });
       setSelected((current) => new Set([...current].filter((key) => !done.has(key))));
     } catch {
       profileError();
     }
+    setAsking(null);
     setImportingPasswords(false);
     importRunning = false;
     setBusy(false);
@@ -574,7 +630,29 @@ export function BrowserImportDialog({
       }}
     >
       <DialogPopup data-accounts-dialog>
-        {quitting ? (
+        {connecting ? (
+          <BrowserConnectStep
+            source={connecting}
+            onCancel={() => setConnecting(null)}
+            {...(windowAction
+              ? {
+                  alternative: {
+                    label: `${windowAction} instead`,
+                    onSelect: () => {
+                      setConnecting(null);
+                      chromeSignIn.start({ id: DEFAULT_BROWSER_PROFILE_ID, name: "Main" });
+                    },
+                  },
+                }
+              : {})}
+            onContinue={() => {
+              const ready = new Set([...connectReady, connecting.id]);
+              setConnectReady(ready);
+              setConnecting(null);
+              void runImport(sources, ready);
+            }}
+          />
+        ) : quitting ? (
           <QuitStep
             source={quitting}
             onCancel={() => setQuitting(null)}
@@ -675,7 +753,7 @@ export function BrowserImportDialog({
                                   busy ||
                                   !canWrite ||
                                   (alreadyImported && !passwordsOnly) ||
-                                  (!!source.unavailable && source.unavailable !== "browserRunning")
+                                  (!importable(source) && source.unavailable !== "browserRunning")
                                 }
                                 icon={
                                   <ProfilePicture
@@ -697,7 +775,7 @@ export function BrowserImportDialog({
                                         .join(" · ")
                                     : source.unavailable === "browserRunning"
                                       ? `${source.name} · ${RUNNING_BROWSER_COPY}`
-                                      : source.unavailable
+                                      : source.unavailable && !isConnectable(source)
                                         ? BROWSER_IMPORT_FAILURE_COPY[source.unavailable]
                                         : [
                                             source.name,
@@ -774,7 +852,11 @@ export function BrowserImportDialog({
                   </Collapsible>
                 ) : null}
               </DiscoveryList>
-              {passwordsImporting ? (
+              {asking ? (
+                <p role="status" className="py-3 text-sm text-muted-foreground">
+                  {asking} asks &ldquo;{REMOTE_DEBUGGING_QUESTION}&rdquo;: click Allow in {asking}.
+                </p>
+              ) : passwordsImporting ? (
                 <p role="status" className="py-3 text-sm text-muted-foreground">
                   Importing saved passwords…
                 </p>
@@ -1090,6 +1172,9 @@ export function BrowserProfiles({
     let protectedSkipped = 0;
     /** Browsers whose every readable sign-in Windows keeps from other apps. */
     const protectedOnly = new Set<string>();
+    /** Browsers that hand sign-ins over themselves but didn't this time, with why. */
+    const notConnected = new Map<string, { source: ConnectableSource; reason: string }>();
+    const told = new Set<string>();
     for (const { id, record } of targets) {
       let refreshed = false;
       const linked = record.source;
@@ -1105,8 +1190,25 @@ export function BrowserProfiles({
       }
       // Sign-ins can only be read once the browser is closed; passwords and details can now.
       if (source.unavailable === "browserRunning") running.add(source.name);
-      else if (source.unavailable) failed = true;
+      else if (source.unavailable && !isConnectable(source)) failed = true;
+      else if (
+        isConnectable(source) &&
+        !(await window.desktopBridge?.accounts?.browserConnection?.(source.id).catch(() => null))
+          ?.on
+      )
+        notConnected.set(source.id, {
+          source,
+          reason: `Turn on “${REMOTE_DEBUGGING_SETTING}” at ${source.connection.settingsUrl}, then Refresh.`,
+        });
       else {
+        // Once per browser: its one connection serves every profile of the refresh.
+        if (isConnectable(source) && !told.has(source.id)) {
+          told.add(source.id);
+          toastManager.add({
+            type: "info",
+            title: `${source.name} asks “${REMOTE_DEBUGGING_QUESTION}”: click Allow in ${source.name}`,
+          });
+        }
         // Asked now: Accounts may not have seen yet that Google signed this profile out.
         const google = await window.desktopBridge?.accounts
           ?.googleSessions?.(id, environmentId)
@@ -1124,6 +1226,18 @@ export function BrowserProfiles({
         protectedSkipped += result.protectedSkipped ?? 0;
         if (result.kind === "blocked" && result.reason === "appBoundEncryption")
           protectedOnly.add(source.name);
+        else if (
+          result.kind === "blocked" &&
+          isConnectable(source) &&
+          result.reason.startsWith("connection")
+        )
+          notConnected.set(source.id, {
+            source,
+            reason:
+              result.reason === "connectionOff"
+                ? `Turn on “${REMOTE_DEBUGGING_SETTING}” at ${source.connection.settingsUrl}, then Refresh.`
+                : BROWSER_IMPORT_FAILURE_COPY[result.reason],
+          });
         else if (result.kind === "blocked") failed = true;
         else refreshed = true;
         if (refreshed && google && !google.some((session) => session.valid)) {
@@ -1160,6 +1274,13 @@ export function BrowserProfiles({
     // Google and every row look again at what the refresh brought.
     window.dispatchEvent(new Event("scient-accounts-session-changed"));
     if (failed) profileError();
+    else if (notConnected.size)
+      for (const { source, reason } of notConnected.values())
+        toastManager.add({
+          type: "error",
+          title: `Couldn't refresh sign-ins from ${source.name}`,
+          description: reason,
+        });
     else if (protectedOnly.size)
       toastManager.add({
         type: "error",

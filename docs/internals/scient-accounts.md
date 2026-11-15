@@ -183,6 +183,34 @@ session and remembered device. An import writes the profile's record before its 
 interrupted import still leaves a complete profile. A profile made in Scient carries
 `madeInScient`; one imported or made elsewhere can't be told apart, so none is ever folded away.
 
+#### Windows Chromium through the browser
+
+Chrome 127+ app-bound encryption keeps Windows Chrome and Edge cookie files (`v20`) from every
+other app. Since Chrome 144 (Edge too) a person can allow outside connections to their running
+browser: `chrome://inspect/#remote-debugging`, "Allow remote debugging for this browser instance",
+an app-wide `Local State` preference (`devtools.remote_debugging.user-enabled`, the policy
+`RemoteDebuggingAllowed` turns it off). The browser then listens on 127.0.0.1, writes
+`DevToolsActivePort` in its user data folder, answers plain HTTP with 404 and asks "Allow remote
+debugging?" for every WebSocket connection, naming no app and never remembering an answer; while a
+connection is open it shows the "controlled by automated test software" banner. The Chrome 136
+restriction on the default profile covers only the command-line debugging switches.
+
+`windowsImportBlock.connection` (`Sources.ts`) marks Chrome and Edge. Their sources list profiles
+from `Local State` alone, with `connection.settingsUrl`, while `unavailable` stays
+`appBoundEncryption` (their files are never read, passwords included). An import of such a profile
+(`browserConnectionImport.ts`, `browserConnection.ts`) refuses with `connectionOff` before opening
+anything when the browser neither listens nor saved the switch on; otherwise it starts the installed
+browser with `--profile-directory` and a `data:` page carrying a nonce (a running browser takes the
+tab and the process exits), connects, finds that tab by its nonce and reads
+`Network.getAllCookies` on it: the connection reaches only the last used profile directly, and
+Network commands act on the tab's own context (verified on Chrome 157 with two profiles, HttpOnly
+values included). The tab is closed and the cookies go through the import's usual writer. One
+connection per browser serves every profile of an import, reads queue, and it closes 10 s after
+the last one. A closed socket before it opens is the person's refusal (`connectionDeclined`); no
+answer in three minutes is `connectionUnanswered`. The renderer polls
+`accounts.browserConnection` (never asks the person) for the switch in `BrowserConnectStep`. Not
+tested on Windows hardware, with Windows security software or under organisation policies.
+
 Main is filled from the other profiles by one desktop writer, `fillMain`
 (`apps/desktop/src/scient/accounts/mainFill.ts`), under a lock per environment. Each unit (a
 registrable site, or every site of one multi-site sign-in) is one transaction in the shared

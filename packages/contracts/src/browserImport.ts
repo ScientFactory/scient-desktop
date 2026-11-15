@@ -43,6 +43,12 @@ export const BrowserImportFailureReason = Schema.Literals([
   // SCIENT-FORK:START — Scient Accounts: cookies read but none could be stored in the profile.
   "writeFailed",
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+  "connectionOff",
+  "connectionDeclined",
+  "connectionUnanswered",
+  "connectionFailed",
+  // SCIENT-FORK:END
 ]);
 export type BrowserImportFailureReason = typeof BrowserImportFailureReason.Type;
 
@@ -53,11 +59,27 @@ export const BrowserImportSourceProfile = Schema.Struct({
 });
 export type BrowserImportSourceProfile = typeof BrowserImportSourceProfile.Type;
 
+// SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+/**
+ * A browser whose cookies Scient can't read from its files (Windows app-bound encryption) but can
+ * ask the browser itself for: the person turns on remote debugging at `settingsUrl` once, and the
+ * browser asks them to allow each connection.
+ */
+export const BrowserImportConnection = Schema.Struct({
+  settingsUrl: TrimmedNonEmptyString,
+});
+export type BrowserImportConnection = typeof BrowserImportConnection.Type;
+// SCIENT-FORK:END
+
 export const BrowserImportSource = Schema.Struct({
   id: BrowserImportSourceId,
   name: TrimmedNonEmptyString,
   profiles: Schema.Array(BrowserImportSourceProfile),
   unavailable: Schema.optional(BrowserImportUnavailableReason),
+  // SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+  /** With `unavailable: "appBoundEncryption"`: its listed profiles import through the browser. */
+  connection: Schema.optional(BrowserImportConnection),
+  // SCIENT-FORK:END
 });
 export type BrowserImportSource = typeof BrowserImportSource.Type;
 
@@ -134,5 +156,14 @@ export const BROWSER_IMPORT_FAILURE_COPY: Readonly<Record<BrowserImportFailureRe
   readFailed: "The browser's cookie database could not be read.",
   // SCIENT-FORK:START — Scient Accounts: cookies read but none could be stored in the profile.
   writeFailed: "The cookies were read, but none could be saved into the profile.",
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: Windows Chromium sign-ins come through the browser itself.
+  connectionOff:
+    "Remote debugging is off in the browser. Turn on “Allow remote debugging for this browser instance” on its inspect page, then try again.",
+  connectionDeclined: "The browser didn't allow the connection. Try again and click Allow.",
+  connectionUnanswered:
+    "The browser's question went unanswered. Try again and click Allow when it asks.",
+  connectionFailed:
+    "Scient couldn't connect to the browser. Make sure it can open, then try again.",
   // SCIENT-FORK:END
 };
