@@ -863,6 +863,7 @@ describe("OpenCodeAdapterV2", () => {
       ]);
       let failNextChildUpdate = false;
       let ignoreChildUpdates = false;
+      let ignoreRootUpdates = false;
       const aborted: Array<string> = [];
       const harness = yield* makeOpenCodeRuntimeHarness("child-policy-change", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
@@ -882,7 +883,10 @@ describe("OpenCodeAdapterV2", () => {
               throw new Error("child update failed");
             }
             updates.push(input);
-            if (!(input.sessionID === child && ignoreChildUpdates))
+            if (
+              !(input.sessionID === child && ignoreChildUpdates) &&
+              !(input.sessionID === root && ignoreRootUpdates)
+            )
               nativePermissions.set(input.sessionID, input.permission);
             return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
           },
@@ -891,7 +895,9 @@ describe("OpenCodeAdapterV2", () => {
             aborted.push(input.sessionID);
             return { data: true };
           },
-          children: async () => ({ data: [] }),
+          children: async (input: { sessionID: string }) => ({
+            data: input.sessionID === root ? [{ id: child }] : [],
+          }),
         },
       });
 
@@ -978,6 +984,19 @@ describe("OpenCodeAdapterV2", () => {
         runtimePolicy: fullAccess,
       });
       assert.equal(permissionAction(nativePermissions.get(child)!, "bash"), "allow");
+
+      // Root rules OpenCode does not confirm stop the running child too; a turn start
+      // writes its root rules through the same guard.
+      ignoreRootUpdates = true;
+      aborted.length = 0;
+      const narrowed = yield* Effect.exit(
+        harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          runtimePolicy: supervised,
+        }),
+      );
+      assert.isTrue(Exit.isFailure(narrowed));
+      assert.includeMembers(aborted, [root, child]);
       // SCIENT-FORK:END
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
@@ -3112,8 +3131,8 @@ describe("OpenCodeAdapterV2", () => {
             .pipe(Effect.exit);
           assert.isTrue(Exit.isFailure(failed));
           assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
-          if (end === "resume-unconfirmed") {
-            // SCIENT-FORK: the failed resume already stopped the whole session tree.
+          if (end !== "invalid-continuation") {
+            // SCIENT-FORK: the unconfirmed resume or start already stopped the session tree.
             assert.sameMembers([...new Set(aborted)], [root, "ses_descendant"]);
             assert.deepEqual(aborted.slice(0, 2), [root, "ses_descendant"]);
           } else assert.deepEqual(aborted, [root, "ses_descendant"]);

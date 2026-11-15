@@ -1684,7 +1684,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   permissionConfirmed: true,
                   appliedPolicy: childPolicy,
                 });
-              }),
+              }).pipe(
+                // Unconfirmed for any reason, including a failed first read, the child stops.
+                // An interruption is a teardown, which aborts every descendant itself.
+                Effect.onExit((exit) =>
+                  Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)
+                    ? Effect.void
+                    : sdkCall("session.abort", { sessionID: childSessionId }, (signal) =>
+                        client.session.abort({ sessionID: childSessionId }, { signal }),
+                      ).pipe(Effect.timeout("1 second"), Effect.ignore({ log: true })),
+                ),
+              ),
             );
             // SCIENT-FORK:END
             yield* emitProviderEvent({
@@ -3505,7 +3515,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             "OpenCode did not confirm a subagent's permission rules.",
           ).pipe(
             Effect.onExit((exit) =>
-              Exit.isSuccess(exit)
+              Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)
                 ? Effect.void
                 : sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
                     client.session.abort({ sessionID: sessionId }, { signal }),
@@ -3518,7 +3528,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const applyPermissionRulesUnguarded = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          rewriteState: boolean,
+          progress: { writeStarted: boolean },
         ) {
+          // SCIENT-FORK: a session that broke while this waited for the permit takes no writes.
+          if (closing || nativeStreamFailure !== null)
+            return yield* protocolError(
+              "OpenCode event stream has ended; reconnect the provider session before starting another turn.",
+            );
           const parentRules = openCodePermissionRules(policy);
           const pending = [state];
           for (let target = pending.pop(); target !== undefined; target = pending.pop()) {
@@ -3528,11 +3545,13 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ? parentRules
                 : openCodeChildPermissionRules(policy, previous, target.inheritedPermission);
             if (
+              (rewriteState && target === state) ||
               !target.permissionConfirmed ||
               permission.length !== previous.length ||
               !permission.every((rule, index) => permissionRuleEquals(rule, previous[index]!))
             ) {
               // SCIENT-FORK:START — read back, as for the root's own turn rules.
+              progress.writeStarted = true;
               target.permissionConfirmed = false;
               yield* target.parentSubagent === null
                 ? writeConfirmedPermissionRules(
@@ -3554,15 +3573,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         });
         // SCIENT-FORK:START — a session tree whose new rules OpenCode does not all confirm stops
         // as a whole, so no session keeps rules broader than the policy.
+        // `rewriteState` writes `state`'s rules even when OpenCode last reported them, as a turn
+        // start does for its root: native conversations keep their rules across process replacement.
         const applyPermissionRules = (
           state: OpenCodeThreadState,
           policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          rewriteState = false,
         ) => {
           let owner = state;
           while (owner.parentSubagent !== null) owner = owner.parentSubagent.parentState;
-          return applyPermissionRulesUnguarded(state, policy).pipe(
+          // Nothing changed before the first write, so stopping only then is enough.
+          const progress = { writeStarted: false };
+          return applyPermissionRulesUnguarded(state, policy, rewriteState, progress).pipe(
             Effect.onExit((exit) =>
-              Exit.isSuccess(exit)
+              Exit.isSuccess(exit) || !progress.writeStarted
                 ? Effect.void
                 : abortRootSession(owner).pipe(
                     Effect.ignore({ log: true }),
@@ -3943,18 +3967,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               // SCIENT-FORK:START — native conversations persist their original rules across
               // process replacement. Install this turn's captured authority before prompting,
-              // and before a continuation admits the wake OpenCode already runs.
-              const permission = openCodePermissionRules(turnInput.runtimePolicy);
-              state.permissionConfirmed = false;
-              yield* writeConfirmedPermissionRules(
-                sessionId,
-                permission,
-                "OpenCode did not confirm this turn's permission rules.",
-              );
-              state.permission = permission;
-              state.permissionConfirmed = true;
+              // and before a continuation admits the wake OpenCode already runs; the whole
+              // session tree stops if OpenCode does not confirm it.
+              yield* applyPermissionRules(state, turnInput.runtimePolicy, true);
               // SCIENT-FORK:END
-              yield* applyPermissionRules(state, turnInput.runtimePolicy);
               // A continuation admits a wake OpenCode is already running, so it sends no prompt.
               const isCompaction =
                 !continuation &&
