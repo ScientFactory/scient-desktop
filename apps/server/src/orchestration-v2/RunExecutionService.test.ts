@@ -830,6 +830,8 @@ it("routes an earlier run's plan rows to this thread's active root turn only", (
   const priorRunId = RunId.make("run:earlier-plan-routing:prior");
   const rootTurnId = ProviderTurnId.make("provider-turn:earlier-plan-routing:current");
   const identity: RunExecutionService.ProviderEventRouteIdentity = {
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
     threadId,
     runId: RunId.make("run:earlier-plan-routing:current"),
     attemptId: RunAttemptId.make("attempt:earlier-plan-routing:current"),

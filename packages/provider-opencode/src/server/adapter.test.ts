@@ -2446,6 +2446,8 @@ describe("OpenCodeAdapterV2", () => {
               },
             },
           },
+          true,
+          {},
           {},
           end === "owned-exit" ? { exitCode: Deferred.await(nativeExit) } : {},
         ).pipe(

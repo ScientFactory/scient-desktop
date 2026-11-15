@@ -1,4 +1,3 @@
-import * as TestClock from "effect/testing/TestClock";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";

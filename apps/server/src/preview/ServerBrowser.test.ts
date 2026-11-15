@@ -5047,7 +5047,7 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       closingPage.unloadGate.resolve();
       const concurrent = yield* Effect.all([Fiber.join(firstOpen), Fiber.join(secondOpen)]);
       expect(concurrent.every((status) => status.available)).toBe(true);
-      const remaining = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      const remaining = (yield* manager.list({ threadId: scope.threadId })).sessions;
       expect(remaining).toHaveLength(32);
       const closedBeforeReturn = yield* Deferred.make<void>();
       const finishClose = yield* Deferred.make<void>();
@@ -5071,7 +5071,7 @@ it.effect("a full server takes back the slot of the longest idle agent tab nobod
       expect(takingFreedSlot.available).toBe(true);
       yield* Deferred.succeed(finishClose, undefined);
       expect((yield* Fiber.join(reclaimingOpen)).available).toBe(true);
-      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(32);
+      expect((yield* manager.list({ threadId: scope.threadId })).sessions).toHaveLength(32);
       expect(remaining.some((session) => session.tabId === opened[3])).toBe(false);
       expect(remaining.some((session) => session.tabId === opened[4])).toBe(false);
     }),

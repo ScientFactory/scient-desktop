@@ -1316,7 +1316,7 @@ it.effect.each([3, 4])(
       const now = yield* DateTime.now;
       const instanceId = ProviderInstanceId.make("codex");
       const events = yield* Ref.make<ReadonlyArray<string>>([]);
-      const layer = layerExecutorFor({
+      const layer = makeExecutorLayer({
         events,
         continueAfterRestart: true,
         threads: {

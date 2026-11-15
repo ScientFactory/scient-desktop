@@ -101,7 +101,6 @@ import {
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   PiRpcError,
-  PiRpcTimeoutError,
   findReportedPiModel,
   makePiRpcConnection,
   resolvePiModelSlug,
@@ -635,10 +634,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           ? input.initialNativeThreadId
           : undefined;
       // SCIENT-FORK:START — owned session files and an ordered transport scope.
-      // Pi lazily creates its default session file. An owned empty file lets
-      // Pi write the native header before an empty thread is published.
-      // Startup cleanup stays ordered even when the caller closes its parent
-      // scope finalizers in parallel. The file is released after the process.
+      // An owned empty file lets Pi write its header before an empty thread is published.
+      // Cleanup stays ordered when the parent closes finalizers in parallel; the file goes last.
       const connectionScope = yield* Scope.fork(scope, "sequential");
       // Forked first, so owned session files are released after every launch has closed.
       const sessionFilesScope = yield* Scope.fork(connectionScope, "sequential");
@@ -732,7 +729,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           ),
         );
       });
-      let started = yield* startConnection(initialSessionPath ?? (yield* allocateFreshSession)).pipe(
+      let started = yield* startConnection(
+        initialSessionPath ?? (yield* allocateFreshSession),
+      ).pipe(
         Effect.onExit((exit) => rollbackStartup(exit)),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.mapError(
@@ -752,12 +751,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const discoverSkillNames = Effect.suspend(() =>
         connection.request({ type: "get_commands" }, PI_SKILL_DISCOVERY_TIMEOUT_MS),
       ).pipe(
-          Effect.map((data) => {
-            const commands = parsePiDiscoveredCommands(data);
-            nativeCommandNames = piNativeCommandNames(commands);
-            return new Set(commands.skills.map((skill) => skill.name));
-          }),
-        );
+        Effect.map((data) => {
+          const commands = parsePiDiscoveredCommands(data);
+          nativeCommandNames = piNativeCommandNames(commands);
+          return new Set(commands.skills.map((skill) => skill.name));
+        }),
+      );
       let skillNames: Set<string> | null = null;
       const now = yield* DateTime.now;
       let sessionEntity: OrchestrationV2ProviderSession = {

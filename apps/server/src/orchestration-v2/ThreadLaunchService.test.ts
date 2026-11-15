@@ -1,5 +1,4 @@
 import * as OrchestratorMcpService from "../mcp/OrchestratorMcpService.ts";
-import { EnvironmentId } from "@t3tools/contracts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";

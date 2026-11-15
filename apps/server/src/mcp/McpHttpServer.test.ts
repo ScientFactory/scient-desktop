@@ -301,7 +301,7 @@ it.effect("rejects a metadata-only response when the screenshot is saved", () =>
         { type: "text", text: expect.stringContaining("did not contain requested PNG pixels") },
       ]);
     }),
-  ).pipe(Effect.provide(layerTest)),
+  ).pipe(Effect.provide(TestLayer)),
 );
 
 const layerRecordingTools = (calls: Array<unknown>) => {

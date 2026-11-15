@@ -25624,7 +25624,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
-    it.effect("ends a goal check without re-prompting while T3 work will wake the thread", () =>
+    it.effect("ends a goal check without re-prompting while Scient work will wake the thread", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -25635,7 +25635,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer secret-claude-token",
-          browserToolsAvailable: true,
+          capabilities: new Set(["preview"]),
+          connectors: [],
           hasPendingWake: Effect.succeed(true),
         });
         const stop = Effect.promise(() =>

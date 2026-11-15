@@ -404,15 +404,17 @@ describe("Cursor command catalog", () => {
 });
 
 describe("buildInitialCursorProviderSnapshot", () => {
-  effectIt.effect.each([true, false])("advertises manual compaction only when enabled (%s)", (enabled) =>
-    Effect.gen(function* () {
-      const provider = yield* buildInitialCursorProviderSnapshot({
-        ...baseCursorSettings,
-        enabled,
-      });
+  effectIt.effect.each([true, false])(
+    "advertises manual compaction only when enabled (%s)",
+    (enabled) =>
+      Effect.gen(function* () {
+        const provider = yield* buildInitialCursorProviderSnapshot({
+          ...baseCursorSettings,
+          enabled,
+        });
 
-      expect(provider.slashCommands).toEqual(enabled ? [COMPACT_SLASH_COMMAND] : []);
-    }),
+        expect(provider.slashCommands).toEqual(enabled ? [COMPACT_SLASH_COMMAND] : []);
+      }),
   );
 });
 
