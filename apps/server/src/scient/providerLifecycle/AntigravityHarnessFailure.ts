@@ -1,6 +1,8 @@
 import type { OrchestrationV2ProviderFailure } from "@t3tools/contracts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
+import { redactFailureDetail } from "./providerFailureText.ts";
+
 // The trajectory's error step: field 1 is this headline, field 2 the harness's error chain
 // without the Go stack trace that field 3 repeats it with.
 const HEADLINE = Buffer.from("Agent execution terminated due to error.");
@@ -29,7 +31,7 @@ function errorChain(payload: Uint8Array): string | undefined {
     .split(/\r?\n/u, 1)[0]
     ?.replace(EXECUTOR_PREFIX, "")
     .trim();
-  return line || undefined;
+  return line ? redactFailureDetail(line) : undefined;
 }
 
 const bounded = (text: string) => {

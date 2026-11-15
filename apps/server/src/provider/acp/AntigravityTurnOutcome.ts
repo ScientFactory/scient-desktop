@@ -125,8 +125,9 @@ function turnFailure(
       code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
       retryable: true,
       resetAt: resetAtFrom(text, now) ?? null,
-      // SCIENT-FORK: the Google API error's HTTP status.
+      // SCIENT-FORK:START — the Google API error's HTTP status.
       httpStatus: apiError === null ? null : Number(apiError[1]),
+      // SCIENT-FORK:END
     });
   }
   if (apiError === null) {
@@ -142,8 +143,9 @@ function turnFailure(
     code: status ?? null,
     retryable: rateLimited || Number(httpStatus) >= 500,
     resetAt: resetAtFrom(text, now) ?? null,
-    // SCIENT-FORK: the Google API error's HTTP status.
+    // SCIENT-FORK:START — the Google API error's HTTP status.
     httpStatus: Number(httpStatus),
+    // SCIENT-FORK:END
   });
 }
 

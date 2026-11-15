@@ -75,11 +75,53 @@ describe("watchAntigravityPromptOutcome (Scient)", () => {
         {
           class: "provider_error",
           message:
-            'Antigravity could not start the tool server "ct-crash", so it stopped this turn: CT Crash could not start: Error: CT Crash: config file /etc/ct-crash.conf not found.',
+            'Antigravity could not start the tool server "ct-crash", so it stopped this turn: CT Crash could not start: Error: CT Crash: config file ct-crash.conf not found.',
           code: "mcp_load_failed",
           retryable: false,
         },
       );
+      // regression: the shown and stored text kept paths, addresses and keys from the chain.
+      const secrets = [
+        "/Users/fixture/.config",
+        "C:\\Users\\fixture",
+        "\\\\corp-share",
+        "fixture@example.invalid",
+        "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+        "ghp_abcdefghijklmnopqrstuvwxyz0123",
+        "xoxb-1234567890-abcdefghij",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl",
+        "sk-ant-abcdefghijklmnop1234",
+        "0123456789abcdef0123456789abcdef",
+        "QWxhZGRpbjpvcGVuIHNlc2FtZQ1234567890ABCDEFGH",
+        "synthetic-secret",
+        "pw@",
+        "sig=",
+      ];
+      const hostile = yield* turn(
+        errorStep(
+          [
+            `failed to construct executor: MCP load failed for fixture-tools: calling "initialize":`,
+            "Fixture could not read /Users/fixture/.config/key.json, C:\\Users\\fixture\\key.json or \\\\corp-share\\home\\notes.txt",
+            `for fixture@example.invalid with ${secrets.slice(4, 11).join(" ")} token=synthetic-secret`,
+            "via https://user:pw@api.example.invalid/v1/models?sig=abc.",
+          ].join(" "),
+        ),
+      );
+      for (const secret of secrets) assert.notInclude(hostile?.message, secret);
+      assert.include(
+        hostile?.message,
+        'tool server "fixture-tools", so it stopped this turn: Fixture could not read key.json, key.json or notes.txt for [REDACTED] with',
+      );
+      assert.include(
+        hostile?.message,
+        "token=[REDACTED] via https://api.example.invalid/v1/models.",
+      );
+      // Redaction comes before the bound, so a key the bound would cut is still caught.
+      const cut = yield* turn(
+        errorStep(`agent executor error: ${"x".repeat(528)} ${"0123456789abcdef".repeat(4)}`),
+      );
+      assert.notInclude(cut?.message, "0123456789abcdef");
+      assert.match(cut?.message ?? "", / \[REDACTED\]$/u);
       // A chain longer than 127 bytes has a multi-byte length.
       const longReason = `The service answered ${"slowly ".repeat(30)}and then closed.`;
       assert.deepEqual(

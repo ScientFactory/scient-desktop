@@ -7,6 +7,8 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { redactFailureDetail } from "../../scient/providerLifecycle/providerFailureText.ts";
+
 interface TurnEndReason {
   readonly class: OrchestrationV2ProviderFailureClass;
   readonly retryable: boolean | null;
@@ -117,28 +119,38 @@ const USAGE_LIMIT = /\busage limit\b/iu;
 const RESETS_IN = /\bresets in (?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)\s*min)?/iu;
 const NO_ACTIVE_SUBSCRIPTION = "no_active_subscription";
 
+// Factory's resets are hours away; anything beyond a year is not a reset time.
+const MAX_RESET_DELAY_MS = 366 * 24 * 60 * 60_000;
+
 function resetAtFrom(text: string, now: DateTime.Utc): string | null {
   const match = RESETS_IN.exec(text);
   if (match === null) return null;
   const [, days = "0", hours = "0", minutes = "0"] = match;
   const delayMs = ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60_000;
-  return delayMs > 0 ? DateTime.formatIso(DateTime.add(now, { milliseconds: delayMs })) : null;
+  if (!Number.isFinite(delayMs) || delayMs <= 0 || delayMs > MAX_RESET_DELAY_MS) return null;
+  return Option.match(DateTime.make(DateTime.toEpochMillis(now) + delayMs), {
+    onNone: () => null,
+    onSome: DateTime.formatIso,
+  });
 }
 
 /**
  * Classifies a failed Droid prompt. Droid names the cause in `reason`; Factory's 402 body tells a
- * used-up plan from a missing subscription. `detail` is Droid's redacted text for the failure.
+ * used-up plan from a missing subscription, so a 402 decides over Droid's broad usage reason.
+ * `detail` is Droid's credential-redacted text for the failure.
  */
 export function droidTurnFailure(input: {
   readonly reason: DroidTurnEndReason | undefined;
   readonly detail: string;
   readonly now: DateTime.Utc;
 }): OrchestrationV2ProviderFailure {
-  const { reason, detail, now } = input;
-  const status = LEADING_STATUS.exec(detail);
+  const { reason, now } = input;
+  const status = LEADING_STATUS.exec(input.detail);
   const httpStatus = status === null ? null : Number(status[1]);
   const body = status === null ? Option.none() : decodeFactoryErrorBody(status[2]);
-  const bodyDetail = Option.isSome(body) ? body.value.detail?.trim() || undefined : undefined;
+  const rawBodyDetail = Option.isSome(body) ? body.value.detail?.trim() || undefined : undefined;
+  const bodyDetail = rawBodyDetail === undefined ? undefined : redactFailureDetail(rawBodyDetail);
+  const detail = redactFailureDetail(input.detail);
   const shown = bodyDetail ?? (detail && !PLACEHOLDER.test(detail) ? detail : undefined);
   if (Option.isSome(body) && body.value.code === NO_ACTIVE_SUBSCRIPTION) {
     return makeProviderFailure({
@@ -150,8 +162,7 @@ export function droidTurnFailure(input: {
     });
   }
   const quota =
-    reason === "model_usage_exhausted" ||
-    (reason === undefined && httpStatus === 402 && USAGE_LIMIT.test(bodyDetail ?? ""));
+    httpStatus === 402 ? USAGE_LIMIT.test(rawBodyDetail ?? "") : reason === "model_usage_exhausted";
   if (quota) {
     return makeProviderFailure({
       class: "usage_limit",
@@ -162,7 +173,7 @@ export function droidTurnFailure(input: {
       httpStatus,
     });
   }
-  if (reason === undefined) {
+  if (reason === undefined || (reason === "model_usage_exhausted" && httpStatus === 402)) {
     return makeProviderFailure({
       class: "provider_error",
       message: bodyDetail ?? (detail || undefined),
