@@ -16,6 +16,7 @@ import { parse, type DefaultTreeAdapterMap } from "parse5";
 import { getDomain } from "tldts";
 
 import { withRegistryContact } from "./metadataHttp.ts";
+import { createSerialRequestLane } from "./NcbiRequestLane.ts";
 
 const ICON_REQUEST_TIMEOUT_MS = 2_000;
 const MAX_ICON_BYTES = 128 * 1024;
@@ -28,6 +29,9 @@ const SUCCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const FAILURE_TTL_MS = 6 * 60 * 60 * 1_000;
 const USER_AGENT =
   "Scient/0.0 (https://github.com/ScientFactory/scient-desktop; journal icon resolution)";
+
+// Crossref answers 429 to parallel lookups, as a list of rows asks for its icons at once.
+const runWithCrossrefLimit = createSerialRequestLane({ minimumStartIntervalMs: 200 });
 
 const blockedAddresses = new NodeNet.BlockList();
 for (const [network, prefix] of [
@@ -106,6 +110,8 @@ type HopResponse = {
   readonly status: number;
   readonly location: string | null;
   readonly body: Buffer;
+  /** The body stopped at maxBytes; the rest was not read. */
+  readonly truncated?: boolean;
 };
 
 /** One HTTPS exchange that never follows redirects; the default pins a verified public address. */
@@ -236,23 +242,21 @@ const publicHttpsHop: PublicHttpsHop = async ({ url, accept, maxBytes }) => {
         resolve({ status, location, body: Buffer.alloc(0) });
         return;
       }
-      const declaredLength = Number(response.headers["content-length"]);
-      if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-        response.resume();
-        reject(new Error("The icon response was too large."));
-        return;
-      }
       const chunks: Buffer[] = [];
       let byteLength = 0;
       response.on("aborted", () => reject(new Error("The icon response was interrupted.")));
       response.on("error", reject);
       response.on("data", (chunk: Buffer) => {
-        byteLength += chunk.byteLength;
-        if (byteLength > maxBytes) {
-          request.destroy(new Error("The icon response was too large."));
-          return;
-        }
         chunks.push(chunk);
+        byteLength += chunk.byteLength;
+        if (byteLength <= maxBytes) return;
+        resolve({
+          status,
+          location,
+          body: Buffer.concat(chunks).subarray(0, maxBytes),
+          truncated: true,
+        });
+        request.destroy();
       });
       response.on("end", () => resolve({ status, location, body: Buffer.concat(chunks) }));
     },
@@ -265,12 +269,16 @@ const publicHttpsHop: PublicHttpsHop = async ({ url, accept, maxBytes }) => {
   return promise;
 };
 
-/** Follows at most MAX_REDIRECTS standard-HTTPS redirects; returns the final address with the body. */
+/**
+ * Follows at most MAX_REDIRECTS standard-HTTPS redirects; returns the final address with the
+ * body. A longer body is refused, or with `partial` kept up to maxBytes.
+ */
 async function requestPublicHttps(input: {
   readonly url: URL;
   readonly maxBytes: number;
   readonly accept: string;
   readonly hop: PublicHttpsHop;
+  readonly partial?: boolean;
 }): Promise<{ readonly url: URL; readonly body: Buffer }> {
   let url = input.url;
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
@@ -285,10 +293,11 @@ async function requestPublicHttps(input: {
     if (response.status < 200 || response.status >= 300) {
       throw new Error(`The icon host returned HTTP ${response.status}.`);
     }
-    if (response.body.byteLength > input.maxBytes) {
+    const tooLong = response.truncated === true || response.body.byteLength > input.maxBytes;
+    if (tooLong && !input.partial) {
       throw new Error("The icon response was too large.");
     }
-    return { url, body: response.body };
+    return { url, body: tooLong ? response.body.subarray(0, input.maxBytes) : response.body };
   }
   throw new Error("The icon request redirected too many times.");
 }
@@ -470,12 +479,14 @@ async function defaultResolveLandingUrl(
   if (!doi) return null;
   try {
     const encodedDoi = doi.split("/").map(encodeURIComponent).join("/");
-    const { body } = await requestPublicHttps({
-      url: withRegistryContact(new URL(`https://api.crossref.org/works/${encodedDoi}`)),
-      maxBytes: MAX_CROSSREF_BYTES,
-      accept: "application/json",
-      hop,
-    });
+    const { body } = await runWithCrossrefLimit(() =>
+      requestPublicHttps({
+        url: withRegistryContact(new URL(`https://api.crossref.org/works/${encodedDoi}`)),
+        maxBytes: MAX_CROSSREF_BYTES,
+        accept: "application/json",
+        hop,
+      }),
+    );
     return crossrefLandingUrl(JSON.parse(body.toString("utf8")) as unknown);
   } catch {
     return null;
@@ -488,11 +499,13 @@ async function declaredIconsOf(
   hop: PublicHttpsHop,
 ): Promise<{ readonly url: URL; readonly candidates: readonly DeclaredIconCandidate[] } | null> {
   try {
+    // The icons are named in the head; a long article page is read only that far.
     const document = await requestPublicHttps({
       url,
       maxBytes: MAX_ICON_DOCUMENT_BYTES,
       accept: HTML_ACCEPT,
       hop,
+      partial: true,
     });
     return {
       url: document.url,

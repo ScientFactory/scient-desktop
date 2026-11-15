@@ -314,6 +314,40 @@ describe("journal icon resolution", () => {
     await expect(NodeFSP.readFile(icon!.absolutePath)).resolves.toEqual(touchIcon);
   });
 
+  it("finds the icons in the head of an article page longer than the document limit", async () => {
+    // AlphaFold's Nature page is over 512 KiB; refusing it hid Nature's icon for every row.
+    const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
+    const touchIcon = pngOfSize(180);
+    const articleUrl = "https://www.nature.com/articles/s41586-021-03819-2";
+    const { hop } = recordedHop({
+      "https://api.crossref.org/works/10.1038/s41586-021-03819-2": {
+        status: 200,
+        body: JSON.stringify({ message: { resource: { primary: { URL: articleUrl } } } }),
+      },
+      [articleUrl]: {
+        status: 200,
+        body: `<!DOCTYPE html><html><head>
+          <link rel="apple-touch-icon" sizes="180x180" href=/oscar-static/images/favicons/nature/apple-touch-icon-f39cb19454.png>
+          </head><body>${"<p>Supplementary information</p>".repeat(20_000)}</body></html>`,
+      },
+      "https://www.nature.com/oscar-static/images/favicons/nature/apple-touch-icon-f39cb19454.png":
+        { status: 200, body: touchIcon },
+    });
+
+    const icon = await resolveJournalIcon({
+      // As the import stores it: no address, the DOI lowercased.
+      record: article({
+        containerTitle: "Nature",
+        identifiers: [{ scheme: "doi", value: "10.1038/s41586-021-03819-2" }],
+        url: null,
+      }),
+      cacheRoot,
+      options: { httpsHop: hop },
+    });
+
+    await expect(NodeFSP.readFile(icon!.absolutePath)).resolves.toEqual(touchIcon);
+  });
+
   it("keeps the fallback when Crossref does not know the DOI", async () => {
     const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
     const { hop, requested } = recordedHop({});

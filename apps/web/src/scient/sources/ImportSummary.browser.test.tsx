@@ -69,12 +69,12 @@ describe("a finished Zotero import's receipt", () => {
     });
     await using _screen = await render(<Receipt content={content} />, { router: false });
 
+    // The summary counts the exceptions; the details say each once.
     await expect
-      .element(
-        page.getByText(
-          "2 references imported and added to My Library. Zotero holds more for some references than was brought.",
-        ),
-      )
+      .element(page.getByText("2 references imported and added to My Library. 1 exception."))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Zotero holds more for some references than was brought."))
       .toBeVisible();
     await expect.element(page.getByText("Not brought from Zotero")).toBeVisible();
     await expect.element(page.getByText("15 on 2 references")).toBeVisible();
@@ -107,12 +107,12 @@ describe("a finished Zotero import's receipt", () => {
     });
     await using _screen = await render(<Receipt content={content} />, { router: false });
     await expect
-      .element(
-        page.getByText(
-          "1 reference imported and added to My Library. The import was stopped; 1 was not imported. See Details for more.",
-        ),
-      )
+      .element(page.getByText("1 reference imported and added to My Library. 2 exceptions."))
       .toBeVisible();
+    await expect
+      .element(page.getByText("The import was stopped; 1 was not imported."))
+      .toBeVisible();
+    await expect.element(page.getByText("4,613 more are not imported yet.")).toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Import the rest (4,613)" }));
     expect(onImport).toHaveBeenCalledTimes(1);
   });
