@@ -210,11 +210,9 @@ async function writeNoticeWatch(library: ScientLibraryLocation, file: NoticeWatc
 }
 
 /**
- * Brings the Library's sources in line with the Retraction Watch file and records the check.
- * Compared by kind: a kind the file has and the source lacks is added. Only a reinstatement takes
- * one off, a Retraction Watch retraction: a paper missing from the file is no evidence, and
- * reading it as one could show a retracted paper as sound. Notices of the publisher or PubMed are
- * a refresh's to change. `found` is null when the file has not changed since the last check.
+ * Brings the Library's sources in line with the Retraction Watch file, compared by kind: a kind
+ * the file has is added; only a reinstatement takes Retraction Watch's retraction off, since a
+ * missing row is no evidence. `found` is null when the file has not changed since the last check.
  */
 export async function recordScientLibraryNoticeCheck(input: {
   readonly library: ScientLibraryLocation;
