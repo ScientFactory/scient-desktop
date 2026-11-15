@@ -53,11 +53,11 @@ const NOTE_MARKDOWN_TRANSFORMERS = [BOLD_ITALIC_STAR, BOLD_STAR, ITALIC_STAR];
  * character back escaped, so one edit would rewrite the Markdown of the whole note. Escaped
  * on the way in and unescaped on the way out, a note is shown and saved as it was written.
  */
-export function noteMarkdownForEditor(note: string): string {
+function noteMarkdownForEditor(note: string): string {
   return note.replace(/[\\_`~]/gu, "\\$&");
 }
 
-export function noteMarkdownFromEditor(markdown: string): string {
+function noteMarkdownFromEditor(markdown: string): string {
   return markdown.replace(/\\([\\*_`~])/gu, "$1");
 }
 
