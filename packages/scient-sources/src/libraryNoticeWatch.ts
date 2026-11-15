@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The notice watch keeps one small file in the library.
+import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
 import * as Schema from "effect/Schema";
@@ -37,6 +38,8 @@ const NoticeWatchFile = Schema.Struct({
   /** The last check that read the whole file, or learned it had not changed. */
   checkedAt: NonEmptyString,
   etag: Schema.optionalKey(NonEmptyString),
+  /** The papers the last whole read matched, as `scientLibraryNoticeCoverage` names them. */
+  covered: Schema.optionalKey(NonEmptyString),
   /** One per source and kind: the last thing the check did there. */
   changes: Schema.Array(ScientLibraryNoticeChange),
 });
@@ -66,6 +69,16 @@ export async function scientLibraryWatchedIdentifiers(
 ): Promise<ReadonlySet<string>> {
   const { records } = await inspectScientLibrarySources(library);
   return new Set(records.flatMap(watchedIdentifiers));
+}
+
+/**
+ * Names a set of watched papers. An unchanged file says nothing of a paper the last whole read
+ * did not match, so the check asks for the file again whenever the set differs.
+ */
+export function scientLibraryNoticeCoverage(keys: Iterable<string>): string {
+  return NodeCrypto.createHash("sha256")
+    .update([...keys].toSorted().join("\n"))
+    .digest("hex");
 }
 
 /** The fields of one CSV row; quotes inside a quoted field are doubled. */
@@ -275,10 +288,14 @@ export async function recordScientLibraryNoticeCheck(input: {
       changes.set(changeKey(change), { ...change, at: input.checkedAt });
     }
     const etag = input.found ? input.etag : previous?.etag;
+    const covered = input.found
+      ? scientLibraryNoticeCoverage(input.found.notices.keys())
+      : previous?.covered;
     await writeNoticeWatch(input.library, {
       formatVersion: 1,
       checkedAt: input.checkedAt,
       ...(etag ? { etag } : {}),
+      ...(covered ? { covered } : {}),
       changes: [...changes.values()],
     });
   });
