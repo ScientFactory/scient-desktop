@@ -228,6 +228,7 @@ export interface FakeThread {
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly runtimeRequests?: OrchestrationV2ThreadProjection["runtimeRequests"];
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -342,7 +343,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     providerSessions: [],
     providerThreads: [...(thread.providerThreads ?? [])],
     providerTurns: [],
-    runtimeRequests: [],
+    runtimeRequests: [...(thread.runtimeRequests ?? [])],
     messages: [],
     plans: [],
     turnItems: [...thread.items],

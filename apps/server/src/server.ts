@@ -564,6 +564,7 @@ const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDr
 const layerPortScanner = PortScanner.layer.pipe(
   Layer.provide(ProcessRunner.layer),
   Layer.provide(OwnedLocalEndpoints.layer),
+  Layer.provide(layerBackground),
 );
 
 const layerTerminal = TerminalManager.layer(

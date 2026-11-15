@@ -108,6 +108,7 @@ function makeExecutorLayer(input: {
         interrupt: input.interrupt ?? (() => Effect.succeed("adapter-stopped" as const)),
         steer: () => Effect.void,
         applyModelSelection: () => Effect.void,
+        applyThreadTitle: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined

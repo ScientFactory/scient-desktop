@@ -221,6 +221,7 @@ export interface AcpAdapterV2RuntimeInput {
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly resumeSessionId?: string;
   readonly interruptPromptOnCancel?: boolean;
+  readonly sessionMeta?: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["sessionMeta"]>;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: AcpSessionRuntime.AcpSessionRuntimeOptions["clientInfo"];
   readonly requestLogger?: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["requestLogger"]>;
@@ -636,6 +637,10 @@ export interface AcpAdapterV2Flavor {
   ) => ReadonlyArray<ProviderApprovalOption>;
   /** Scient remembers the session grant when this agent only accepts allow-once on the wire. */
   readonly allowOnceForSessionApproval?: boolean;
+  /** Options T3 may answer with; the rest (e.g. Devin's bypass-permissions plan exit) are never sent. */
+  readonly answerablePermissionOptions?: (
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => ReadonlyArray<EffectAcpSchema.PermissionOption>;
   readonly onSessionEvent?: (
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
   ) => Effect.Effect<void>;
@@ -1650,7 +1655,7 @@ function selectPermissionOptionId(
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
   const optionIdOfKind = (kind: EffectAcpSchema.PermissionOption["kind"]) =>
-    request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+    request.options.find((option) => option.kind === kind)?.optionId;
   if (decision === "acceptForSession") {
     // Agents may offer only allow_once, and answering "cancelled" would stop the turn the user approved.
     return optionIdOfKind("allow_always") ?? optionIdOfKind("allow_once");
@@ -2365,6 +2370,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           EffectAcpSchema.SessionUpdate,
           { sessionUpdate: "state_update" }
         > | null = null;
+        // The root's last reportForegroundWork state; undefined until the agent reports one.
+        let rootForegroundWork: "running" | "idle" | undefined;
         const agentRequests = new Set<object>();
         const nativeChildren = new Map<string, AcpNativeChildSession>();
         const extractSubagentUpdate = (tool: AcpToolCallState) =>
@@ -2398,6 +2405,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             continuationRequests !== undefined &&
             setup.initializeResult.protocolVersion === 2;
           agentWork = null;
+          rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
@@ -5393,8 +5401,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             postSettleContinuationEnabled &&
             (yield* Ref.get(activeSessionId)) === sessionId &&
             (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
-            ((yield* Ref.get(wakeBuffer)).length > 0 ||
-              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
+            (yield* Ref.get(wakeBuffer)).some((notification) =>
+              acpPostSettleContinuationOfferEvidence(notification, flavor),
+            )
           ) {
             yield* offerContinuationRun(sessionId);
           }
@@ -5514,8 +5523,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           const backgroundWorkRunning = (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
           const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
+          // Chunks carry no task id: while an unpolled completion awaits its report, keep them.
           const isInTurnHandledAgentChatter =
             handledInTurnCount > 0 &&
+            (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size === 0 &&
             (update.sessionUpdate === "agent_message_chunk" ||
               update.sessionUpdate === "agent_thought_chunk");
           // Grok re-prompts for each post-settle monitor event; retaining them would replay the whole burst.
@@ -5860,6 +5871,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context !== null &&
             context.finalized &&
             (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size > 0 &&
+            (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size === 0 &&
             (update.sessionUpdate === "agent_message_chunk" ||
               update.sessionUpdate === "agent_thought_chunk")
           ) {
@@ -7341,6 +7353,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* userInput.acknowledgeNativeResponse;
                 return response ?? ({ outcome: { outcome: "cancelled" } } as const);
               }
+              const answerableParams =
+                flavor.answerablePermissionOptions === undefined
+                  ? params
+                  : { ...params, options: flavor.answerablePermissionOptions(params) };
               const dispositionFor = (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
@@ -7372,7 +7388,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       : params,
                   );
                   if (disposition === "allow") {
-                    const optionId = selectAutoApprovedPermissionOption(params);
+                    const optionId = selectAutoApprovedPermissionOption(answerableParams);
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -7382,7 +7398,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     };
                   }
                   if (disposition === "deny") {
-                    const optionId = selectPermissionOptionId(params, "decline");
+                    const optionId = selectPermissionOptionId(answerableParams, "decline");
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -7466,9 +7482,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   return { outcome: { outcome: "cancelled" } } as const;
                 }
                 const optionId =
-                  selectPermissionOptionId(params, decision) ??
+                  selectPermissionOptionId(answerableParams, decision) ??
                   (decision === "acceptForSession" && flavor.allowOnceForSessionApproval === true
-                    ? selectPermissionOptionId(params, "accept")
+                    ? selectPermissionOptionId(answerableParams, "accept")
                     : undefined);
                 return optionId === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)
@@ -7647,6 +7663,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   handlerGeneration,
                   Effect.gen(function* () {
                     if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    if ((yield* Ref.get(activeSessionId)) === notice.sessionId) {
+                      rootForegroundWork = notice.state;
+                    }
                     const context = yield* Ref.get(activeTurn);
                     if (
                       context === null ||
@@ -8722,18 +8741,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             settledStatus === "completed" &&
             !directStopQuarantine &&
             (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
-            ((yield* Ref.get(wakeBuffer)).length > 0 ||
-              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
+            (yield* Ref.get(wakeBuffer)).some((notification) =>
+              acpPostSettleContinuationOfferEvidence(notification, flavor),
+            )
           ) {
             const sessionId = yield* Ref.get(activeSessionId);
             if (sessionId !== null) {
               yield* offerContinuationRun(sessionId);
             }
           }
-          if (
-            settledStatus !== "completed" ||
-            (yield* Ref.get(runningBackgroundTaskIds)).size === 0
-          ) {
+          if (settledStatus !== "completed") {
             yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
           }
           yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
@@ -9403,6 +9420,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               // SCIENT-FORK:START — see testHooks.beforeContinuationSettled.
               yield* options.testHooks?.beforeContinuationSettled?.() ?? Effect.void;
               // SCIENT-FORK:END
+              // A root woken after foreground idle ends on its next idle report.
+              if (drainedWakeCount > 0 && rootForegroundWork !== undefined) {
+                yield* runtimeCallbackPermit.withPermit(
+                  Effect.suspend(() => {
+                    if (rootForegroundWork === "idle") return finalizeTurn(context, "completed");
+                    context.workAccepted = true;
+                    return Effect.void;
+                  }),
+                );
+                return;
+              }
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
               if (drainedWakeCount === 0) {
@@ -9826,6 +9854,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   )
                     return true;
                   if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
+                  if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
                   if (yield* Ref.get(continuationRequested)) return true;
                   if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
                   const active = yield* Ref.get(activeTurn);

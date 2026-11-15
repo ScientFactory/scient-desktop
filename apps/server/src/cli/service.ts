@@ -20,7 +20,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveCliCommand, resolveEntryPath } from "./invocation.ts";
+import { resolveCliCommand, resolveEntryPath, resolveHostCliHint } from "./invocation.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -195,8 +195,12 @@ export function formatServiceStatus(
     ].join("\n");
   }
   const installedVersion = status.installedVersion ?? cliVersion;
+  // SCIENT-FORK:START — problems name this installation's repair command.
+  const commands =
+    repairCommand === undefined ? undefined : { install: repairCommand, restart: repairCommand };
+  // SCIENT-FORK:END
   const problems = (status.problems ?? []).map(
-    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
+    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem, commands)}`,
   );
   if (
     !status.current &&
@@ -266,7 +270,8 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
         }
         yield* Console.log(formatServiceChange(result));
         if (!result.previouslyInstalled) {
-          yield* Console.log("Run `t3 up` to choose how your other devices reach it.");
+          const upCommand = yield* resolveHostCliHint("up", flags.baseDir);
+          yield* Console.log(`Run \`${upCommand}\` to choose how your other devices reach it.`);
         }
       }),
     ),

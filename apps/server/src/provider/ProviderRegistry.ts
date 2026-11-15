@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
@@ -518,6 +519,10 @@ export const mergeProviderSnapshot = (
         ? { workspaceSnapshots: previousWorkspaceSnapshots }
         : {}),
     // SCIENT-FORK:END
+    ...(nextProvider.workspaceRescannedAt === undefined &&
+    previousProvider.workspaceRescannedAt !== undefined
+      ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }
+      : {}),
     ...(shouldRetainMissingDynamicMetadata(nextProvider)
       ? {
           slashCommands:
@@ -671,6 +676,10 @@ export const layer = Layer.effect(
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
+    const workspaceRescans = yield* Queue.unbounded<{
+      readonly instance: ProviderInstance;
+      readonly cwd: string;
+    }>();
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<
         ProviderInstanceId,
@@ -711,6 +720,7 @@ export const layer = Layer.effect(
       // SCIENT-FORK:START — Scient Extensions: provider-native inventory is live state, never cached.
       const {
         workspaceSnapshots: _workspaceSnapshots,
+        workspaceRescannedAt: _workspaceRescannedAt,
         nativeInventoryGeneration: _nativeInventoryGeneration,
         ...machineProvider
       } = provider;
@@ -1285,6 +1295,11 @@ export const layer = Layer.effect(
             ).pipe(Effect.forkScoped);
           }
           // SCIENT-FORK:END
+          if (instance.workspaceRescans) {
+            yield* Stream.runForEach(instance.workspaceRescans, (cwd) =>
+              Queue.offer(workspaceRescans, { instance, cwd }),
+            ).pipe(Effect.forkScoped);
+          }
         }
         yield* Effect.yieldNow;
 
@@ -1461,7 +1476,25 @@ export const layer = Layer.effect(
       // SCIENT-FORK:START — explicit full-inventory reads await native listing publication.
       readonly awaitNativeInventory?: boolean;
       // SCIENT-FORK:END
+      // Set by an instance's own report that its workspace skills changed.
+      readonly rescan?: ProviderInstance;
     }) {
+      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
+        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
+      // What clients saw before the awaited scan, which may already have published the change.
+      const heldBeforeWait = input.rescan
+        ? workspaceSnapshotOf(
+            (yield* Ref.get(providersRef)).find(
+              (candidate) => candidate.instanceId === input.instanceId,
+            ),
+          )
+        : undefined;
+      // A rescan waits for a running scan, which may have read files before the hook linked them.
+      // Claims are read before snapshots: a scan publishes before it releases its claim.
+      const runningScan = input.rescan
+        ? (yield* Ref.get(workspaceRefreshesRef)).get(input.rescan)?.get(input.cwd)
+        : undefined;
+      if (runningScan) yield* Deferred.await(runningScan);
       if (input.fresh) {
         // SCIENT-FORK:START — Scient Extensions: the snapshots this drops stop their plugin listings.
         const afterDrop = yield* updateProviders((providers) =>
@@ -1480,13 +1513,12 @@ export const layer = Layer.effect(
       }
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
-        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
       const now = yield* DateTime.now;
       if (!provider || !provider.enabled) return providers;
       if (
         !input.fresh &&
+        !input.rescan &&
         scannedFrom &&
         !isProviderWorkspaceSnapshotPending(scannedFrom) &&
         isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now))
@@ -1506,6 +1538,10 @@ export const layer = Layer.effect(
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       const snapshotForCwd = instance?.snapshotForCwd;
       if (!instance || !snapshotForCwd) return providers;
+      // A report never enrolls a cwd nobody requested, nor outlives the instance that made it.
+      if (input.rescan && (input.rescan !== instance || (!runningScan && !scannedFrom))) {
+        return providers;
+      }
       const token = yield* Deferred.make<void>();
       const releaseClaim = Ref.update(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
@@ -1555,19 +1591,31 @@ export const layer = Layer.effect(
                   ) {
                     return currentProviders;
                   }
-                  return currentProviders.map((candidate) =>
-                    candidate.instanceId === input.instanceId &&
-                    Equal.equals(workspaceSnapshotOf(candidate), scanBase)
-                      ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                          ...scopedSnapshot,
-                          checkedAt: scannedAt,
-                          // Without driver command discovery, retain previous commands after failed health checks and retry.
-                          slashCommandsPending:
-                            scopedSnapshot.slashCommandsPending ??
-                            scopedSnapshot.status === "error",
-                        })
-                      : candidate,
-                  );
+                  return currentProviders.map((candidate) => {
+                    if (
+                      candidate.instanceId !== input.instanceId ||
+                      !Equal.equals(workspaceSnapshotOf(candidate), scanBase)
+                    ) {
+                      return candidate;
+                    }
+                    const scanned = upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                      ...scopedSnapshot,
+                      checkedAt: scannedAt,
+                      // Without driver command discovery, retain previous commands after failed health checks and retry.
+                      slashCommandsPending:
+                        scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                    });
+                    // Clients keep fetched snapshots, so a changed rescan must tell them to fetch again.
+                    const rescanned = workspaceSnapshotOf(scanned);
+                    const held = heldBeforeWait ?? scanBase;
+                    return input.rescan &&
+                      !(
+                        Equal.equals(rescanned?.skills, held?.skills) &&
+                        Equal.equals(rescanned?.slashCommands, held?.slashCommands)
+                      )
+                      ? { ...scanned, workspaceRescannedAt: scannedAt }
+                      : scanned;
+                  });
                 }).pipe(
                   // SCIENT-FORK:START — list plugins after publication and stop evicted listings.
                   Effect.tap((afterScan) =>
@@ -1638,6 +1686,11 @@ export const layer = Layer.effect(
         : scanned;
       // SCIENT-FORK:END
     });
+    yield* Stream.runForEach(Stream.fromQueue(workspaceRescans), ({ instance, cwd }) =>
+      refreshWorkspaceSnapshot({ instanceId: instance.instanceId, cwd, rescan: instance }).pipe(
+        Effect.ignoreCause({ log: true }),
+      ),
+    ).pipe(Effect.forkScoped);
 
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
       input: Parameters<ProviderRegistry["Service"]["invalidateModelCaches"]>[0],

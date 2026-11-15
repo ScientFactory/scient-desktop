@@ -8,8 +8,9 @@ import * as Equal from "effect/Equal";
 type ServerProviderEntry = ServerConfig["providers"][number];
 
 /**
- * The provider-wide fields a workspace snapshot builds on. A live session, a sign-out, or a
- * /usage-limits change shows up here, so a snapshot fetched before it no longer applies.
+ * The provider-wide fields a workspace snapshot builds on. A live session, a sign-out, a
+ * /usage-limits change, or a server rescan that changed the skills shows up here, so a snapshot
+ * fetched before it no longer applies.
  */
 // SCIENT-FORK:START — a full inventory reply's own machine fields decide its provenance. Replies
 // leave out the models and the catalog digest, so those come from the config's provider, as upstream.
@@ -25,6 +26,9 @@ const snapshotBasis = (
     ...(configProvider?.catalogDigest === undefined
       ? { slashCommands: provider.slashCommands, skills: provider.skills }
       : { catalogDigest: configProvider.catalogDigest }),
+    ...(configProvider?.workspaceRescannedAt === undefined
+      ? {}
+      : { workspaceRescannedAt: configProvider.workspaceRescannedAt }),
   };
 // SCIENT-FORK:END
 

@@ -274,7 +274,9 @@ describe("pull request toolkit handlers", () => {
       const error = yield* harness
         .call("link_pull_request", { threadId: bareId, number: 123 })
         .pipe(Effect.flip);
-      expect(error.message).toBe(`Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`?`);
+      expect(error.message).toBe(
+        `Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`? Thread ids belong to one environment: for a thread on a linked one, find it with \`scient_environment_links\` and pass its \`environmentId\` to a tool that takes one.`,
+      );
       expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
@@ -751,6 +753,36 @@ describe("pull request guide tools", () => {
     }),
   );
 
+  it.effect(
+    "reads a guide on a host readable without a checkout through the caller's project",
+    () =>
+      Effect.gen(function* () {
+        const api = makeProject({
+          canonicalKey: "bitbucket.org/acme/api",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "git@bitbucket.org:acme/api.git",
+          },
+          provider: SourceControlProviderKind.make("bitbucket"),
+          displayName: "acme/api",
+          owner: "acme",
+          name: "api",
+        });
+        const harness = yield* makeHarness({ project: api });
+        const result = yield* harness.call("read_pull_request_guide", {
+          url: "https://bitbucket.org/acme/web/pull-requests/123",
+        });
+        expect(result).toMatchObject({
+          host: "bitbucket.org",
+          repository: "acme/web",
+          number: 123,
+          guide: null,
+          currentHeadSha: "head-1",
+        });
+      }),
+  );
+
   it.effect("finds an Azure DevOps checkout for a pull request named by its full path", () =>
     Effect.gen(function* () {
       const azure = {
@@ -801,7 +833,7 @@ describe("native review-guide project scope", () => {
   };
 
   it.effect(
-    "refuses foreign guide writes and reads without using that project's provider or stored guide",
+    "refuses foreign guide writes and reads a foreign pull request only through its own project",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness({ projects: [makeProject(), other] });
@@ -815,9 +847,12 @@ describe("native review-guide project scope", () => {
           number: 7,
         });
         expect(yield* Ref.get(harness.guideRequests)).toEqual([]);
-        const error = yield* harness.call("read_pull_request_guide", target).pipe(Effect.flip);
-        expect(error).toMatchObject({ _tag: "PullRequestProjectNotFoundError" });
-        expect(yield* Ref.get(harness.guideReads)).toEqual([]);
+        // GitHub reads without a checkout, so the caller's own project serves it, never `other`.
+        const read = yield* harness.call("read_pull_request_guide", target);
+        expect(read).toMatchObject({ repository: "acme/web", number: 7, guide: null });
+        expect((yield* Ref.get(harness.guideReads)).map((ref) => ref.projectId)).toEqual([
+          PROJECT_ID,
+        ]);
       }),
   );
 
