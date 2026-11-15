@@ -224,6 +224,8 @@ export function zoteroExtraLineTarget(
   name: string,
 ): { readonly typed: ZoteroTypedTarget } | { readonly more: string } | undefined {
   const csl = name.toLowerCase().trim().replace(/\s+/gu, "-");
+  // In Extra, `Type:` names the kind of item to cite it as, not a thesis's or report's kind.
+  if (csl === "type") return undefined;
   const variable = [csl, csl.replace(/-/gu, "_")].find(isScientSourceMoreName);
   if (variable !== undefined && variable !== "extra") return { more: variable };
   const typed = TYPED_BY_CSL[csl];

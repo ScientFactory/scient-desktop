@@ -1,6 +1,6 @@
 import type { ScientSourceCreator, ScientSourceRecord, ScientSourceType } from "../model.ts";
 import { normalizeImportedCitationKey } from "../citationKeys.ts";
-import { scientSourceMoreKind } from "../sourceMore.ts";
+import { SCIENT_SOURCE_MORE_FIELDS, scientSourceMoreKind } from "../sourceMore.ts";
 import { ZOTERO_PRIMARY_ROLE, ZOTERO_ROLE_CSL, ZOTERO_TYPE_CSL } from "../zoteroSchema.ts";
 import {
   BibliographyEntryBuilder,
@@ -25,6 +25,9 @@ function stringValue(value: unknown): string | null {
 }
 
 const TYPE_BY_CSL_TYPE: Readonly<Record<string, ScientSourceType>> = {
+  software: "software",
+  speech: "presentation",
+  manuscript: "manuscript",
   "article-journal": "article",
   "article-magazine": "article",
   "article-newspaper": "article",
@@ -82,6 +85,16 @@ const NAME_ROLES: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /** Fields with no bibliographic content (Zotero's internal source and the CSL bookkeeping). */
+/** Details read with their own rule in `entryFromItem`, not by the general loop. */
+const CSL_MORE_READ_ABOVE: ReadonlySet<string> = new Set([
+  "original-date",
+  "number",
+  "genre",
+  "title-short",
+  "container-title-short",
+  "archive_location",
+]);
+
 const IGNORED_FIELDS = new Set([
   "id",
   "type",
@@ -185,7 +198,10 @@ function entryFromItem(item: JsonObject, index: number): BibliographyEntry {
   }
   for (const field of ["issued", "original-date"]) {
     handled.add(field);
-    builder.set("issuedRaw", cslDate(item[field]), field);
+    // The original date stands in for a missing date; beside one it is a detail of its own.
+    if (!builder.set("issuedRaw", cslDate(item[field]), field)) {
+      builder.setMore("original-date", cslDate(item[field]), field);
+    }
   }
   builder.set("publisher", text("publisher"), "publisher");
   builder.set("volume", text("volume"), "volume");
@@ -218,8 +234,38 @@ function entryFromItem(item: JsonObject, index: number): BibliographyEntry {
   const arxiv = arxivIn(archiveId) ?? arxivNumber ?? arxivIn(stringValue(item["URL"]));
   if (arxiv) builder.addIdentifier("arxiv", arxiv, arxivIn(archiveId) ? "archive_location" : "URL");
   else if (archiveId) builder.notKeep("archive_location");
+  // A report's number is its own; elsewhere a number with no issue is the issue.
   if (issue) builder.set("issue", issue, "issue");
-  else if (number && !arxivNumber) builder.set("issue", number, "number");
+  if (number && !arxivNumber) {
+    if (builder.type === "report" || issue) builder.setMore("number", number, "number");
+    else builder.set("issue", number, "number");
+  }
+  if (builder.type !== "other" && builder.type !== "preprint") {
+    builder.setMore("genre", genre, "genre");
+  }
+  builder.setMore(
+    "title-short",
+    stringValue(item["title-short"]) ?? stringValue(item["shortTitle"]),
+    item["title-short"] === undefined ? "shortTitle" : "title-short",
+  );
+  if (
+    builder.get("containerTitle") !==
+    collapseWhitespace(stringValue(item["container-title-short"]) ?? "")
+  ) {
+    builder.setMore(
+      "container-title-short",
+      stringValue(item["container-title-short"]) ?? stringValue(item["journalAbbreviation"]),
+      item["container-title-short"] === undefined ? "journalAbbreviation" : "container-title-short",
+    );
+  }
+  // Every other detail CSL has a variable for, under that variable.
+  for (const { name, kind } of SCIENT_SOURCE_MORE_FIELDS) {
+    if (name === "extra" || handled.has(name) || CSL_MORE_READ_ABOVE.has(name)) continue;
+    const value = kind === "date" ? cslDate(item[name]) : stringValue(item[name]);
+    if (!value) continue;
+    handled.add(name);
+    builder.setMore(name, value, name);
+  }
 
   const keyword = text("keyword");
   if (keyword) builder.addTags(keyword.split(/[,;]/u), "keyword");

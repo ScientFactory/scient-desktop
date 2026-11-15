@@ -1654,7 +1654,8 @@ describe("Scient Sources MCP handlers", () => {
         imported: [{ citationKey: "rossi2020sleep" }],
         alreadyInLibrary: 0,
         remaining: 0,
-        notKept: [{ field: "CY", entryCount: 1, citationKeys: ["rossi2020sleep"] }],
+        // The place of publication has a place in a source now, so it is not reported.
+        notKept: [],
       });
       const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
       expect(listed.records[0]).toMatchObject({ addedBy: "agent", verification: "unchecked" });

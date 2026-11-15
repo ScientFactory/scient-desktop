@@ -83,7 +83,9 @@ describe("BibTeX import", () => {
       pages: "101-110",
       tags: ["gene editing", "bacteria", "review"],
       identifiers: [{ scheme: "doi", value: "10.1038/s41586-019-0001-x" }],
-      notKept: ["address"],
+      // The place of publication is kept, under the name citations use.
+      more: { "publisher-place": "London" },
+      notKept: [],
     });
     expect(article.creators).toEqual([
       author("Jörg", "Müller"),
@@ -119,7 +121,8 @@ describe("BibTeX import", () => {
     ]);
     expect(article.abstract).toBe("Background: We study reconstruction.\n\nResults: It works.");
     expect(article.note).toBe("Publisher: Nature Publishing Group");
-    expect(article.notKept).toEqual(["urldate"]);
+    expect(article.more).toEqual({ accessed: "2023-02-01" });
+    expect(article.notKept).toEqual([]);
     expect(article.linkedFiles).toEqual([
       { field: "file", path: "/Users/someone/Zotero/storage/ABCD/garcia.pdf" },
     ]);
@@ -218,12 +221,14 @@ describe("RIS import", () => {
         { scheme: "doi", value: "10.1000/jse.2020.1" },
         { scheme: "issn", value: "1234-5679" },
       ],
-      notKept: ["CY"],
+      more: { "publisher-place": "Boston" },
+      notKept: [],
     });
     expect(entries[1]).toMatchObject({
       type: "book",
       identifiers: [{ scheme: "isbn", value: "9780000000002" }],
-      notKept: ["ET"],
+      more: { edition: "2nd" },
+      notKept: [],
     });
   });
 
@@ -253,7 +258,8 @@ describe("CSL-JSON import", () => {
       issuedRaw: "2018-07-01",
       pages: "10-19",
       note: "Two reefs studied",
-      notKept: ["accessed"],
+      more: { accessed: "2023-01-01" },
+      notKept: [],
     });
     expect(entries[0]?.creators[1]).toEqual(author("Ludwig", "van Beethoven"));
     expect(entries[1]).toMatchObject({
@@ -306,7 +312,8 @@ describe("EndNote XML import", () => {
     expect(entries[1]).toMatchObject({
       type: "book-chapter",
       containerTitle: "The Example Heart Book",
-      notKept: ["pub-location"],
+      more: { "publisher-place": "Oxford" },
+      notKept: [],
     });
     expect(entries[1]?.creators[1]?.creatorType).toBe("editor");
   });
@@ -387,7 +394,8 @@ describe("import plan", () => {
       remaining: 1,
       unreadableCount: 3,
       withoutCitationKey: 0,
-      notKept: [{ field: "address", entryCount: 1, citationKeys: ["a"] }],
+      // A field a source has a place for is no longer reported; one it has none for is.
+      notKept: [],
     });
     expect(report.unreadable.map((entry) => entry.reason)).toEqual([
       "This entry has the same identifier as the entry on line 3.",
@@ -463,6 +471,70 @@ describe("export", () => {
     importedAt: "2026-01-01T00:00:00.000Z",
   });
   const items = [{ record, citationKey: "muller2021gene" }];
+
+  it.each(BIBLIOGRAPHY_FORMATS)(
+    "carries a book's and a report's further details out and back through %s",
+    (format: BibliographyFormat) => {
+      const book = decodeRecord({
+        ...record,
+        sourceId: "source_book",
+        type: "book",
+        title: "Statistical methods in medical research",
+        containerTitle: null,
+        volume: null,
+        issue: null,
+        pages: null,
+        identifiers: [],
+        more: {
+          edition: "4",
+          "publisher-place": "Oxford",
+          "collection-title": "Methods in medicine",
+          "number-of-volumes": "2",
+          "title-short": "Statistical methods",
+          accessed: "2026-03-10",
+        },
+      });
+      const report = decodeRecord({
+        ...record,
+        sourceId: "source_report",
+        type: "report",
+        title: "Global tuberculosis report",
+        containerTitle: null,
+        volume: null,
+        issue: null,
+        pages: null,
+        identifiers: [],
+        more: { number: "WHO/UCN/TB/2024.3", genre: "Technical report" },
+      });
+      const text = formatBibliography(
+        [
+          { record: book, citationKey: "armitage2002" },
+          { record: report, citationKey: "who2024" },
+        ],
+        format,
+        { includeNotes: false },
+      );
+      const { entries, unreadable } = parseBibliography(text, format);
+      expect(unreadable).toEqual([]);
+      // Every format has a field for each of these; none is reported as not kept.
+      expect(entries[0]).toMatchObject({ type: "book", more: book.more, notKept: [] });
+      expect(entries[1]).toMatchObject({ type: "report", more: report.more, notKept: [] });
+    },
+  );
+
+  it("reads a program, slides and a manuscript as what they are", () => {
+    const types = (text: string, format: BibliographyFormat) =>
+      parseBibliography(text, format).entries.map((entry) => entry.type);
+    expect(
+      types("@software{a, title={lme4}, author={Bates, D}, version={1.1-35}}", "bibtex"),
+    ).toEqual(["software"]);
+    expect(
+      types("TY  - COMP\nTI  - lme4\nER  - \n\nTY  - SLIDE\nTI  - A talk\nER  - \n", "ris"),
+    ).toEqual(["software", "presentation"]);
+    expect(
+      types(JSON.stringify([{ id: "a", type: "manuscript", title: "A draft" }]), "csl-json"),
+    ).toEqual(["manuscript"]);
+  });
 
   it.each(BIBLIOGRAPHY_FORMATS)("round-trips a source through %s", (format: BibliographyFormat) => {
     const text = formatBibliography(items, format, { includeNotes: true });

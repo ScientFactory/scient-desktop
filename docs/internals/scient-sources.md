@@ -3419,7 +3419,23 @@ Two sources with the same title, lead creator and year whose `edition`
 numbers or `version` texts differ are not a possible match
 (`sourceEditionsDiffer`), at intake and in the Library's duplicate finder;
 only where both name one. The join's "details differ" includes `more`, one
-row per entry. Not yet: reference files (the next commit).
+row per entry.
+
+Reference files carry `more` both ways. `BibliographyEntryBuilder.setMore`
+keeps the first value for a name and reports a second one, or one too long,
+as not kept. Each reader has a table from its own field to the variable:
+BibTeX and BibLaTeX (`edition`, `address` or `location`, `series`,
+`pagetotal`, `volumes`, `shorttitle`, `shortjournal`, `venue`, `eventdate`,
+`urldate`, `origdate`, `version`, `chapter`, a thesis's or report's `type`,
+an `eventtitle` that is not the container), RIS (`ET`, `CY`, `T3`, `NV`,
+`ST`, `M1`, `M3`, `SE`, `CN`, `Y2`), EndNote XML (`edition`, `pub-location`,
+`num-vols`, `work-type`, `section`, `call-num`, `access-date`, the third and
+short titles) and CSL-JSON (every variable of the list). A report's `number`
+is its own number, not an issue; a book's `number` beside a `series` is its
+number in the series. The writers emit the same fields, so a book and a
+report come back from every format with what they had
+(`bibliography.test.ts`). `software`, slides and `manuscript` entries are
+read as those types.
 
 **What was not brought.** `decodeZoteroRawItem` lists every non-empty text
 field Zotero sent (`fields`) before the item's schema drops the ones Sources

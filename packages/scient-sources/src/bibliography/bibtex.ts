@@ -1,4 +1,5 @@
 import type { ScientSourceType } from "../model.ts";
+import type { ScientSourceMoreName } from "../sourceMore.ts";
 import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import {
   BibliographyEntryBuilder,
@@ -276,6 +277,7 @@ function readBibtex(text: string): {
 }
 
 const TYPE_BY_BIBTEX_TYPE: Readonly<Record<string, ScientSourceType>> = {
+  software: "software",
   article: "article",
   periodical: "article",
   suppperiodical: "article",
@@ -473,10 +475,12 @@ function entryFromRaw(raw: RawBibtexEntry, index: number): BibliographyEntry {
     const value = text(name);
     if (value === null) continue;
     use(name);
+    // A conference's name that is not the container is kept as the event, below.
     if (
       !builder.set("containerTitle", value, name) &&
       name !== "journaltitle" &&
-      name !== "journal"
+      name !== "journal" &&
+      name !== "eventtitle"
     )
       builder.notKeep(name);
   }
@@ -488,11 +492,25 @@ function entryFromRaw(raw: RawBibtexEntry, index: number): BibliographyEntry {
   }
   builder.set("volume", text("volume"), "volume");
   use("volume");
+  // `number` is an article's issue, a report's own number, and a book's number in its series.
+  const numberIs: ScientSourceMoreName | null =
+    type === "report"
+      ? "number"
+      : (type === "book" || type === "book-chapter") && fields.has("series")
+        ? "collection-number"
+        : null;
   for (const name of ["number", "issue"]) {
     const value = text(name);
     if (value === null) continue;
     use(name);
-    if (!builder.set("issue", value, name)) builder.notKeep(name);
+    if (name === "number" && numberIs) builder.setMore(numberIs, value, name);
+    else if (!builder.set("issue", value, name)) builder.notKeep(name);
+  }
+  for (const [name, variable] of BIBTEX_MORE) {
+    const value = text(name);
+    if (value === null) continue;
+    use(name);
+    builder.setMore(variable, value, name);
   }
   const pageValue = fields.get("pages");
   if (pageValue !== undefined) builder.set("pages", pages(pageValue), "pages");
@@ -603,6 +621,13 @@ function entryFromRaw(raw: RawBibtexEntry, index: number): BibliographyEntry {
   builder.type = type;
   const typeLabel = text("type");
   if (type === "other" && typeLabel) builder.customType = collapseWhitespace(typeLabel);
+  // A thesis's or a report's `type` says what kind it is ("PhD thesis", "Working paper").
+  else if (typeLabel) builder.setMore("genre", typeLabel, "type");
+  // A conference's name is where a paper appeared only when no proceedings title says so.
+  const event = text("eventtitle");
+  if (event && builder.get("containerTitle") !== collapseWhitespace(event)) {
+    builder.setMore("event-title", event, "eventtitle");
+  }
 
   for (const name of fields.keys()) {
     if (!handled.has(name) && !IGNORED_FIELDS.has(name)) builder.notKeep(name);
@@ -637,6 +662,27 @@ export function parseBibtex(text: string): BibliographyParseResult {
     unreadable,
   };
 }
+
+/** BibTeX and BibLaTeX fields that are one of a source's further details. */
+const BIBTEX_MORE: ReadonlyArray<readonly [string, ScientSourceMoreName]> = [
+  ["edition", "edition"],
+  ["address", "publisher-place"],
+  ["location", "publisher-place"],
+  ["series", "collection-title"],
+  ["pagetotal", "number-of-pages"],
+  ["volumes", "number-of-volumes"],
+  ["shorttitle", "title-short"],
+  ["shortjournal", "container-title-short"],
+  ["venue", "event-place"],
+  ["eventdate", "event-date"],
+  ["urldate", "accessed"],
+  ["origdate", "original-date"],
+  ["origlocation", "original-publisher-place"],
+  ["origpublisher", "original-publisher"],
+  ["version", "version"],
+  ["chapter", "chapter-number"],
+  ["part", "part-number"],
+];
 
 const BIBTEX_TYPE_BY_TYPE: Readonly<Record<ScientSourceType, string>> = {
   article: "article",
@@ -719,6 +765,20 @@ export function formatBibtex(
             ? "institution"
             : "publisher";
       add(publisherField, record.publisher);
+      const more = record.more ?? {};
+      // The first BibTeX name of each detail; `number` only where no issue took it.
+      const written = new Set<string>();
+      for (const [name, variable] of BIBTEX_MORE) {
+        if (written.has(variable) || !more[variable]) continue;
+        written.add(variable);
+        if (variable === "accessed" || variable === "event-date" || variable === "original-date") {
+          raw(name, /^\d{4}(?:-\d{2}(?:-\d{2})?)?/u.exec(more[variable])?.[0]);
+        } else add(name, more[variable]);
+      }
+      if (!record.issue) add("number", more.number ?? more["collection-number"]);
+      if (more["event-title"] && record.containerTitle !== more["event-title"]) {
+        add("eventtitle", more["event-title"]);
+      }
       for (const doi of identifierValues(item, "doi").slice(0, 1)) raw("doi", doi);
       raw("url", record.url);
       const isbn = identifierValues(item, "isbn");
@@ -736,6 +796,7 @@ export function formatBibtex(
       if (record.tags.length > 0) add("keywords", record.tags.join(", "));
       add("language", record.language);
       if (record.type === "other" && record.customType) add("type", record.customType);
+      else add("type", more.genre);
       if (options.includeNotes) add("annote", record.note ?? null);
       const body = fields.map(([name, value]) => `  ${name} = ${value}`).join(",\n");
       return `@${BIBTEX_TYPE_BY_TYPE[record.type]}{${item.citationKey},\n${body}\n}\n`;

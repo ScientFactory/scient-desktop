@@ -1,4 +1,5 @@
 import type { ScientSourceType } from "../model.ts";
+import type { ScientSourceMoreName } from "../sourceMore.ts";
 import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import {
   BibliographyEntryBuilder,
@@ -20,6 +21,8 @@ import {
 } from "./xml.ts";
 
 const TYPE_BY_ENDNOTE_TYPE: Readonly<Record<string, ScientSourceType>> = {
+  "computer program": "software",
+  manuscript: "manuscript",
   "journal article": "article",
   "electronic article": "article",
   "magazine article": "article",
@@ -41,6 +44,8 @@ const TYPE_BY_ENDNOTE_TYPE: Readonly<Record<string, ScientSourceType>> = {
 };
 
 const TYPE_BY_ENDNOTE_NUMBER: Readonly<Record<string, ScientSourceType>> = {
+  "9": "software",
+  "36": "manuscript",
   "17": "article",
   "43": "article",
   "6": "book",
@@ -53,6 +58,17 @@ const TYPE_BY_ENDNOTE_NUMBER: Readonly<Record<string, ScientSourceType>> = {
   "59": "dataset",
   "12": "web",
 };
+
+/** EndNote elements that are one of a source's further details. */
+const ENDNOTE_MORE: ReadonlyArray<readonly [string, ScientSourceMoreName]> = [
+  ["edition", "edition"],
+  ["pub-location", "publisher-place"],
+  ["num-vols", "number-of-volumes"],
+  ["work-type", "genre"],
+  ["section", "section"],
+  ["call-num", "call-number"],
+  ["access-date", "accessed"],
+];
 
 const IGNORED_ELEMENTS = new Set([
   "database",
@@ -127,8 +143,23 @@ function entryFromRecord(record: XmlElement, index: number): BibliographyEntry {
     );
   }
   if (titles) {
+    builder.setMore(
+      "title-short",
+      text(childElements(titles, "short-title")[0]),
+      "titles/short-title",
+    );
+    // A book's third title is its series.
+    builder.setMore(
+      "collection-title",
+      text(childElements(titles, "tertiary-title")[0]),
+      "titles/tertiary-title",
+    );
     for (const element of childElements(titles)) {
-      if (!["title", "secondary-title", "short-title", "alt-title"].includes(element.name)) {
+      if (
+        !["title", "secondary-title", "short-title", "alt-title", "tertiary-title"].includes(
+          element.name,
+        )
+      ) {
         builder.notKeep(`titles/${element.name}`);
       }
     }
@@ -145,15 +176,27 @@ function entryFromRecord(record: XmlElement, index: number): BibliographyEntry {
   builder.set("issuedRaw", isoDate ?? year, isoDate ? "dates/pub-dates" : "dates/year");
 
   builder.set("volume", text(child("volume")), "volume");
-  builder.set(
-    "issue",
-    text(child("number")) ?? text(child("issue")),
-    child("number") ? "number" : "issue",
-  );
+  // A report's number is its own; elsewhere `number` is the issue.
+  if (builder.type === "report") {
+    builder.setMore("number", text(child("number")), "number");
+    builder.set("issue", text(child("issue")), "issue");
+  } else {
+    builder.set(
+      "issue",
+      text(child("number")) ?? text(child("issue")),
+      child("number") ? "number" : "issue",
+    );
+  }
   const pages = text(child("pages"));
   if (pages) builder.set("pages", pages.replace(/\s*[–—]+\s*/gu, "-"), "pages");
   builder.set("publisher", text(child("publisher")), "publisher");
   builder.set("language", text(child("language")), "language");
+  for (const [name, variable] of ENDNOTE_MORE) {
+    const value = text(child(name));
+    // "Preprint" as a type of work is the source's type, read below.
+    if (name === "work-type" && /^preprint$/iu.test(value ?? "")) continue;
+    builder.setMore(variable, value, name);
+  }
   builder.set("abstract", multilineText(child("abstract")), "abstract");
   builder.addNote(multilineText(child("notes")));
   builder.addNote(multilineText(child("research-notes")));
@@ -226,6 +269,7 @@ function entryFromRecord(record: XmlElement, index: number): BibliographyEntry {
     "keywords",
     "urls",
     "label",
+    ...ENDNOTE_MORE.map(([name]) => name),
   ]);
   for (const element of childElements(record)) {
     if (!handled.has(element.name) && !IGNORED_ELEMENTS.has(element.name) && text(element)) {
@@ -312,17 +356,18 @@ export function formatEndnoteXml(
     const isArticle = record.type === "article" || record.type === "preprint";
     const year = record.issuedYear !== null ? String(record.issuedYear) : record.issuedRaw;
     const pubDate = record.issuedRaw && record.issuedRaw !== year ? record.issuedRaw : null;
+    const more = record.more ?? {};
     const parts = [
       `<rec-number>${index + 1}</rec-number>`,
       `<ref-type name="${typeName}">${typeNumber}</ref-type>`,
       contributors ? `<contributors>${contributors}</contributors>` : "",
-      `<titles>${element("title", record.title)}${element("secondary-title", record.containerTitle)}</titles>`,
+      `<titles>${element("title", record.title)}${element("secondary-title", record.containerTitle)}${element("tertiary-title", more["collection-title"])}${element("short-title", more["title-short"])}</titles>`,
       isArticle && record.containerTitle
         ? `<periodical>${element("full-title", record.containerTitle)}</periodical>`
         : "",
       element("pages", record.pages),
       element("volume", record.volume),
-      element("number", record.issue),
+      element("number", record.issue ?? more.number),
       record.tags.length > 0
         ? `<keywords>${record.tags.map((tag) => element("keyword", tag)).join("")}</keywords>`
         : "",
@@ -330,6 +375,9 @@ export function formatEndnoteXml(
         ? `<dates>${element("year", year)}${pubDate ? `<pub-dates>${element("date", pubDate)}</pub-dates>` : ""}</dates>`
         : "",
       element("publisher", record.publisher),
+      ...ENDNOTE_MORE.flatMap(([name, variable]) =>
+        name === "work-type" ? [] : [element(name, more[variable])],
+      ),
       element("isbn", standardNumbers),
       element("accession-num", pmid ?? (arxiv ? `arXiv:${arxiv}` : null)),
       element("electronic-resource-num", identifier("doi")),
@@ -343,7 +391,7 @@ export function formatEndnoteXml(
         ? element("work-type", "Preprint")
         : record.type === "other" && record.customType
           ? element("work-type", record.customType)
-          : "",
+          : element("work-type", more.genre),
       element("custom2", identifier("pmcid")),
     ];
     return `<record>${parts.join("")}</record>`;
