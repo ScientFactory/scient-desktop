@@ -980,7 +980,11 @@ async function readTrashEntry(
   return entry;
 }
 
-async function scanTrash(paths: SourceStorePaths): Promise<{
+async function scanTrash(
+  paths: SourceStorePaths,
+  /** Entries not to read at all, for a caller that knows they are not what it lists. */
+  skip?: ReadonlySet<string>,
+): Promise<{
   readonly entries: ReadonlyArray<ScientSourceTrashEntry>;
   readonly issues: ReadonlyArray<ScientSourceStoreIssue>;
 }> {
@@ -992,6 +996,7 @@ async function scanTrash(paths: SourceStorePaths): Promise<{
   for (const file of await NodeFSP.readdir(paths.trash, { withFileTypes: true })) {
     if (!file.name.endsWith(".json")) continue;
     const sourceId = file.name.slice(0, -".json".length);
+    if (skip?.has(sourceId)) continue;
     const filePath = NodePath.join(paths.trash, file.name);
     if (!file.isFile()) {
       issues.push({ path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE });
@@ -1076,11 +1081,15 @@ function trashedCountOf(entries: ReadonlyArray<ScientSourceTrashEntry>): {
   return count > 0 ? { trashedCount: count } : {};
 }
 
-/** The Trash as a person or an agent is shown it: what was removed, without merges' copies. */
+/**
+ * The Trash as a person or an agent is shown it: what was removed, without merges' copies.
+ * `mergedAway` names sources known to be such copies, so a large Library's are not read.
+ */
 export async function readScientSourcesRemovedByPerson(
   root: ScientSourceStoreLocation,
+  mergedAway?: ReadonlySet<string>,
 ): Promise<ReadonlyArray<ScientSourceTrashEntry>> {
-  return removedByPerson((await scanTrash(await sourceStorePaths(root))).entries);
+  return removedByPerson((await scanTrash(await sourceStorePaths(root), mergedAway)).entries);
 }
 
 /**
@@ -1744,6 +1753,73 @@ export async function readSourceImportOperation(
 ): Promise<ScientSourceImportOperation | null> {
   const paths = await sourceStorePaths(root);
   return readSourceImportOperationFromPaths(paths, operationId);
+}
+
+/** One finished import of a file, of Zotero items or of PDFs, as its receipt and operation say. */
+export interface ScientSourceImportSummary {
+  readonly operationId: string;
+  readonly finishedAt: string;
+  readonly by: ScientSourceActor;
+  readonly intake: ScientSourceImportOperation["intake"];
+  readonly outcome: ScientSourceImportReceipt["outcome"];
+  /** The sources it added, by the IDs they had then. */
+  readonly importedSourceIds: ReadonlyArray<string>;
+  readonly failed: number;
+}
+
+/**
+ * The newest finished imports that added at least one source; reads only. An import whose
+ * receipt or operation cannot be read is left out.
+ */
+export async function listScientSourceImports(
+  root: ScientSourceStoreLocation,
+  limit: number,
+): Promise<ReadonlyArray<ScientSourceImportSummary>> {
+  const paths = await sourceStorePaths(root);
+  if ((await snapshot(paths.receipts)) !== "directory") return [];
+  const receipts: ScientSourceImportReceipt[] = [];
+  for (const name of await NodeFSP.readdir(paths.receipts)) {
+    if (!name.endsWith(".json")) continue;
+    const receipt = await readBoundedJson(
+      NodePath.join(paths.receipts, name),
+      MAX_OPERATION_BYTES,
+      ScientSourceImportReceipt,
+    ).catch(() => null);
+    if (receipt && receipt.importedSourceIds.length > 0) receipts.push(receipt);
+  }
+  const newest = receipts
+    .toSorted((left, right) => (left.finishedAt < right.finishedAt ? 1 : -1))
+    .slice(0, limit);
+  const imports: ScientSourceImportSummary[] = [];
+  for (const receipt of newest) {
+    const operation = await readSourceImportOperationFromPaths(paths, receipt.operationId).catch(
+      () => null,
+    );
+    if (!operation) continue;
+    imports.push({
+      operationId: receipt.operationId,
+      finishedAt: receipt.finishedAt,
+      by: operation.actor,
+      intake: operation.intake,
+      outcome: receipt.outcome,
+      importedSourceIds: receipt.importedSourceIds,
+      failed: receipt.failedItemKeys.length,
+    });
+  }
+  return imports;
+}
+
+/** The IDs of the sources in the store now, from the record files' names; reads no record. */
+export async function listScientSourceIds(
+  root: ScientSourceStoreLocation,
+): Promise<ReadonlySet<string>> {
+  const paths = await sourceStorePaths(root);
+  if ((await snapshot(paths.records)) !== "directory") return new Set();
+  return new Set(
+    (await NodeFSP.readdir(paths.records))
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => name.slice(0, -".json".length)),
+  );
 }
 
 async function readSourceImportOperationFromPaths(

@@ -977,6 +977,52 @@ async function mergeUndoState(
   return { undo: "available", merged };
 }
 
+/**
+ * The newest finished merges with what their Undo would answer now; reads only. Found through
+ * the aliases, so the receipts of a large Library are not all read; a pair merged, undone and
+ * merged again is listed once, by its latest merge.
+ */
+export async function listScientLibraryRecentMerges(
+  library: ScientLibraryLocation,
+  limit: number,
+): Promise<
+  ReadonlyArray<{
+    readonly merge: ScientLibraryMerge;
+    readonly undo: ScientLibraryMergeUndoState;
+    /** Null once the source the merge kept is no longer in the Library. */
+    readonly keptTitle: string | null;
+    readonly mergedTitle: string | null;
+  }>
+> {
+  const paths = await libraryPaths(library);
+  const newest = [...(await readLibraryAliasesAt(paths.root)).values()]
+    .toSorted((left, right) => (left.mergedAt < right.mergedAt ? 1 : -1))
+    .slice(0, limit);
+  const trashed = await trashFileNames(paths);
+  const listed = [];
+  for (const alias of newest) {
+    const merge = await readBoundedJson(
+      mergePath(paths, alias.mergeId),
+      MAX_MERGE_BYTES,
+      ScientLibraryMerge,
+    ).catch(() => null);
+    if (!merge || merge.state === "pending") continue;
+    const live = new Map<string, ScientSourceRecord>();
+    for (const sourceId of [merge.survivorId, merge.loserId]) {
+      const record = await readScientSourceRecordIfPresent(paths, sourceId);
+      if (record) live.set(sourceId, record);
+    }
+    const { undo, merged } = await mergeUndoState(paths, merge, live, trashed);
+    listed.push({
+      merge,
+      undo,
+      keptTitle: live.get(merge.survivorId)?.title ?? null,
+      mergedTitle: merged?.title ?? null,
+    });
+  }
+  return listed;
+}
+
 async function trashFileNames(paths: StorePaths): Promise<ReadonlySet<string>> {
   return new Set(
     (await snapshot(paths.trash)) === "directory"

@@ -248,6 +248,10 @@ export const ScientSourcesBulkReceipt = Schema.Struct({
   // Set when every entry is undone.
   undoneAt: Schema.optionalKey(NonEmptyString),
   undoneBy: Schema.optionalKey(ScientSourceActor),
+  // How many sources and collections Undo left as they were, because they changed since.
+  left: Schema.optionalKey(Schema.Int),
+  // One edit sent in several requests shares this, so it is listed and undone as one.
+  partOf: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourcesBulkReceipt = typeof ScientSourcesBulkReceipt.Type;
 
