@@ -173,6 +173,7 @@ apps never touch the installed app's library.
 ├── projects/<instance-id>.json  per checkout: project source ID → library ID
 ├── aliases.json             merged source ID → survivor, with Undo tombstones
 ├── distinct-pairs.json      pairs never merged automatically
+├── notice-watch.json        the weekly notice check: when it last ran, what it found
 ├── merges/<merge-id>.json   one per merge: report and what Undo reverts
 ├── merges/pending/          merges and Undos a stopped process left halfway
 ├── zotero/<source-id>.json  Zotero merge bases
@@ -1085,6 +1086,8 @@ library backend:
 - `LibraryMovePass.ts` runs the same move for every project the environment
   lists, two minutes after start and every six hours, one project at a time.
   A folder that is not there (an unattached drive) waits for a later pass.
+  The same pass then runs the weekly notice check ("Weekly notice check"
+  below); there is no second timer.
 
 **Journal.** `<library>/migrations/<instanceId>/journal.json`, written with an
 atomic replace. States: `copying`, `prepared`, `committed`, `cleanup`, `done`,
@@ -2382,6 +2385,72 @@ When a project already contains PDFs, preflight validates and hashes the
 selected local Zotero PDF before presenting the decision. Import revalidates
 and hashes while copying, so the review and durable write use the same content
 identity without trusting a stale path.
+
+### Weekly notice check
+
+A paper retracted after it was added is found without anyone asking. At the
+end of each periodic pass (`LibraryMovePass.ts`), `runLibraryNoticeWatch`
+(`LibraryNoticeWatch.ts`) runs when the Library exists, holds a source with a
+DOI or PMID, and the last successful check is a week old or there was none.
+
+**One public file, matched here.** It fetches Crossref's copy of the
+Retraction Watch database
+(`gitlab.com/crossref/retraction-watch-data`, `retraction_watch.csv`, about
+70 MB, replaced each working day) with the kept `ETag`, and matches it against
+the Library on this computer, so no service learns which works the Library
+holds; the request carries no contact email. Asking the registry for every
+source each week was rejected for that reason and for its cost (one request a
+source). A `304` records the check and nothing else. The answer is read as it
+arrives (`retractionWatchReader` in `libraryNoticeWatch.ts`) and only the rows
+of the Library's papers are kept, by DOI or PMID of the original paper; nothing
+is stored on disk. The file's kinds are Retraction, Expression of concern and
+Correction; a reinstated paper has only a Reinstatement row, which is no
+notice. Retractions are comprehensive there; corrections and expressions of
+concern are not, and the publisher's own notices are not in the file at all:
+those are still learned when a source is added or refreshed.
+
+**Whole or not at all.** The file counts only when its first row names the
+columns used and every row is as wide as the first. No connection, an error
+status, a cut download or a changed layout throws: nothing is written, the
+check is not recorded, the pass logs a warning and the next pass tries again.
+This is what keeps a cut file from being read as withdrawn notices.
+
+**What changes on a source** (`recordScientLibraryNoticeCheck`), compared by
+kind, not by notice, because the registry often reports the same retraction as
+the publisher's with another date:
+
+- A kind the file has and the source has no notice of is added, in the shape
+  the registry gives the same row (`kind`, the notice's DOI, its date, `source:
+  "retraction-watch"`), so a later refresh that finds it changes nothing.
+- A `retraction-watch` notice of a kind the file no longer has for the paper
+  is taken off. Notices of the publisher or PubMed are never touched.
+- A source the file says nothing about is not written, also one never checked.
+  A source whose identifiers were not among those asked for (added or edited
+  while the file was read) waits for the next check.
+
+The status is built by `editorialStatusFromNotices` and written by
+`recordScientSourceCheck` with the source's verification unchanged, so each
+change is a revision in the source's history, credited to the user like the
+pass's other writes; a source edited meanwhile answers `stale` and is matched
+the next week. The Trash is not checked.
+
+**Told once.** `notice-watch.json` in the Library holds the time of the last
+successful check, the file's `ETag`, and one entry per source and kind for
+what the check did there (`added` or `withdrawn`, when, and `dismissed`). The
+overview carries the entries not yet dismissed, for sources still held, as
+`noticeChanges`, whatever the scope; the panel shows them as one line with
+**Show** (the list narrowed to those sources) and **Dismiss** (the organize
+action `dismiss-notice-changes`). A notice the check puts back after a refresh
+took it off (a registry that does not repeat it) corrects the source and is
+not listed again, since its entry already says `added`. Entries of sources no
+longer in the Library are dropped at the next check that reads the file. A
+state file that cannot be read counts as none: the check runs again.
+
+Agents get no new input: a source's status is in the list, and its notices and
+the revision that recorded them are in its detail. Dismissing is the person's
+own and has no agent action. If Scient stops between the sources' writes and
+the state file's, the next pass checks again; the sources already changed are
+then found unchanged and are not listed.
 
 ## Citation keys
 
