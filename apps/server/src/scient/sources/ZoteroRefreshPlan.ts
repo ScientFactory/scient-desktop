@@ -252,10 +252,14 @@ export function planZoteroRefresh(input: {
       ? localNote === input.base.note
       : localNote === null || localNote === legacyNote;
     // Asked of Zotero's own HTML, never of a conversion: a better converter is not a change.
+    // By digest, which every note has even when its HTML was too long to keep.
+    const digests = (notes: ReadonlyArray<{ readonly itemKey: string; readonly sha256: string }>) =>
+      notes.map(({ itemKey, sha256 }) => `${itemKey}:${sha256}`);
     const zoteroChanged = !input.base
       ? true
       : input.base.notes
-        ? !same(input.base.notes, input.zotero.notes) && zoteroNote !== input.base.note
+        ? !same(digests(input.base.notes), digests(input.zotero.notes)) &&
+          zoteroNote !== input.base.note
         : legacyNote !== input.base.note;
     if (useZotero.has("note") || untouched) {
       note = { value: zoteroNote };

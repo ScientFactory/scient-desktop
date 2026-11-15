@@ -370,10 +370,11 @@ highlights and comments on files that are not here, highlights and comments
 too long to keep (over 100,000 characters), files that are not PDFs,
 links kept as attachments, PDFs Zotero could not hand over, images in notes,
 notes too long to keep whole (a note holds 100,000 characters; what does not
-fit is left out from a paragraph on), notes and files that belong to no
-reference, and collections that could not be made or filled here (the Library
-holds 500 collections, ten levels, names of 200 characters, and 20,000 sources
-in one collection).
+fit is left out from a paragraph on), notes not kept as Zotero wrote them
+(Scient keeps 1,000,000 characters of a reference's notes that way), notes and
+files that belong to no reference, and collections that could not be made or
+filled here (the Library holds 500 collections, ten levels, names of 200
+characters, and 20,000 sources in one collection).
 A reference that was already in your Library (the same DOI or the same PDF)
 is listed too: nothing was taken from Zotero's copy of it, with one exception.
 When the reference is certainly the same one and the source here has no **My

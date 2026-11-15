@@ -79,7 +79,9 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
         ? "PDFs beyond the first 10 of a reference"
         : "PDFs Zotero could not hand over";
     case "note-cut":
-      return "Notes cut at 100,000 characters";
+      return name === "original"
+        ? "Notes not kept as Zotero wrote them (over 1,000,000 characters together)"
+        : "Notes cut at 100,000 characters";
     case "note-formatting":
       return "Notes whose links, headings, tables, images or code became plain text";
     case "note-images":

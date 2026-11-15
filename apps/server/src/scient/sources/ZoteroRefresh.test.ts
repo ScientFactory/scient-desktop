@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This test exercises the real project filesystem boundary.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -410,6 +411,11 @@ describe("Zotero refresh", () => {
   const markdown = "# Aims\n\nSee [the errata](https://example.org).";
   const revisedHtml = "<h1>Aims</h1><p>Revised in Zotero.</p>";
   const revisedMarkdown = "# Aims\n\nRevised in Zotero.";
+  const kept = (html: string) => ({
+    itemKey: "NOTE2345",
+    sha256: NodeCrypto.createHash("sha256").update(html).digest("hex"),
+    html,
+  });
 
   it.each([
     // [the import, edited here, changed in Zotero] → the note after, and whether it clashes
@@ -482,12 +488,39 @@ describe("Zotero refresh", () => {
       expect((await readScientSourceZoteroSync(root, sourceId))?.notes).toEqual(
         clash
           ? imported === "now"
-            ? [{ itemKey: "NOTE2345", html: noteHtml }]
+            ? [kept(noteHtml)]
             : undefined
-          : [{ itemKey: "NOTE2345", html: zoteroHtml }],
+          : [kept(zoteroHtml)],
       );
     },
   );
+
+  it("says a note too long to keep as Zotero wrote it, and still sees it change in Zotero", async () => {
+    // Formatting makes the HTML pass what is kept while the note itself is short.
+    const long = (letter: string) =>
+      `<p>${`<span style="color: #ff2020">${letter}</span>`.repeat(40_000)}</p>`;
+    const { root, library, zotero, record, operation } = await importedFromZotero(original, [
+      zoteroItem("NOTE2345", { itemType: "note", note: long("a") }),
+    ]);
+    expect(operation.items[0]?.notBrought).toEqual([
+      { kind: "note-cut", name: "original", count: 1 },
+    ]);
+    await updateScientSourceNote({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      note: "My own words",
+    });
+    library.items.set("ABCD2345", {
+      item: original,
+      children: [zoteroItem("NOTE2345", { itemType: "note", note: long("b") })],
+    });
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("My own words");
+  });
 
   it("leaves a source alone when its item is gone from Zotero", async () => {
     const { root, library, zotero, record } = await importedFromZotero(original);

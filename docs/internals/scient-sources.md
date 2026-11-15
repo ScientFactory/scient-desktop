@@ -3552,9 +3552,11 @@ each under a `##` heading that is its first line, ordered by that line as
 Zotero's own list is. A note holds 100,000 characters: blocks are added while
 they fit and the rest is left out and listed (`note-cut`). The notes as
 Zotero wrote them go into the source's Zotero file (`notes`, by item key,
-without the bytes of embedded images, at most 1,000,000 characters by whole
-notes), so a backup, a restore and a join carry them; a project package does
-not, and neither does a note given to a source that was already here.
+without the bytes of embedded images): every note's sha256, and its HTML while
+the notes fit 1,000,000 characters by whole notes; a note past that keeps only
+its digest and is listed (`note-cut` named `original`). A backup, a restore and
+a join carry them; a project package does not, and neither does a note given
+to a source that was already here.
 Every stored or linked PDF is copied (the first with
 the record, the rest attached), and a PDF Zotero cannot provide is skipped
 rather than failing the item. zotero.org PDFs are streamed to a temporary file
@@ -3817,10 +3819,11 @@ changed by a refresh.
 
 The note has its own rule, because the text here is a conversion of Zotero's
 HTML. The base holds `note`, the text Scient last wrote from Zotero, and
-`notes`, Zotero's HTML. The note is untouched when it equals `base.note`
-(with no base: when it is empty or equals the plain text an earlier import
-would have made, `legacyNote`). Zotero changed when its HTML differs from
-`base.notes` and its Markdown from `base.note`; for a base without `notes`,
+`notes`, the digest of each of Zotero's notes. The note is untouched when it
+equals `base.note` (with no base: when it is empty or equals the plain text an
+earlier import would have made, `legacyNote`). Zotero changed when its notes'
+digests differ from `base.notes` (whether or not their HTML was kept) and its
+Markdown from `base.note`; for a base without `notes`,
 when `legacyNote` differs from `base.note`. An untouched note takes Zotero's
 Markdown, which is also how an earlier import's plain text becomes Markdown;
 an edited one is kept, and reported only when Zotero changed. An open clash
