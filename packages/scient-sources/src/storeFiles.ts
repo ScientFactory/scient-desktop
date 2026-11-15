@@ -67,18 +67,19 @@ export async function ensureDirectory(filePath: string): Promise<void> {
   }
 }
 
-export async function atomicWriteJson(
+/**
+ * Replaces a file with new contents so a reader sees the old file or the new one, never a part:
+ * written beside it, flushed, then renamed over it. The folder must exist and be safe.
+ */
+export async function replaceFileAtomically(
   filePath: string,
-  value: unknown,
-  maximumBytes: number,
+  contents: string | Uint8Array,
 ): Promise<void> {
-  const serialized = boundedJson(value, maximumBytes, NodePath.basename(filePath));
-  await ensureDirectory(NodePath.dirname(filePath));
   const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;
   try {
     handle = await NodeFSP.open(temporaryPath, "wx", 0o600);
-    await handle.writeFile(serialized, "utf8");
+    await handle.writeFile(contents, "utf8");
     await handle.sync();
     await handle.close();
     handle = null;
@@ -87,6 +88,16 @@ export async function atomicWriteJson(
     await handle?.close();
     await NodeFSP.rm(temporaryPath, { force: true });
   }
+}
+
+export async function atomicWriteJson(
+  filePath: string,
+  value: unknown,
+  maximumBytes: number,
+): Promise<void> {
+  const serialized = boundedJson(value, maximumBytes, NodePath.basename(filePath));
+  await ensureDirectory(NodePath.dirname(filePath));
+  await replaceFileAtomically(filePath, serialized);
 }
 
 export async function atomicCreateJson(

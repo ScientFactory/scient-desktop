@@ -79,6 +79,7 @@ import {
   atomicWriteJson,
   ensureDirectory,
   isNodeError,
+  replaceFileAtomically,
 } from "./storeFiles.ts";
 import { ScientSystematicReview } from "./systematicReview.ts";
 
@@ -463,19 +464,7 @@ async function createExclusive(
 
 async function replaceAtomically(filePath: string, bytes: Buffer): Promise<void> {
   await ensureDirectory(NodePath.dirname(filePath));
-  const temporary = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
-  try {
-    const handle = await NodeFSP.open(temporary, "wx", 0o600);
-    try {
-      await handle.writeFile(bytes);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await NodeFSP.rename(temporary, filePath);
-  } finally {
-    await NodeFSP.rm(temporary, { force: true });
-  }
+  await replaceFileAtomically(filePath, bytes);
 }
 
 const createJson = (ctx: MoveContext, filePath: string, value: unknown) =>

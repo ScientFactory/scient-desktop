@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Full text is part of Scient's explicit source store filesystem boundary.
-import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -10,7 +9,7 @@ import { withScientLibraryLock } from "./libraryLock.ts";
 import { isScientLibraryLocation, type ScientSourceStoreLocation } from "./libraryRoot.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { canonicalizeScientSourceRoot, SCIENT_SOURCES_DIRECTORY } from "./store.ts";
-import { ensureDirectory, snapshot } from "./storeFiles.ts";
+import { ensureDirectory, replaceFileAtomically, snapshot } from "./storeFiles.ts";
 
 export const SCIENT_SOURCE_TEXT_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/text/sha256`;
 const LIBRARY_TEXT_DIRECTORY = "text/sha256";
@@ -118,19 +117,7 @@ export async function writeScientSourceFullText(
   }
   await asWriter(store, async () => {
     await assertTextDirectory(store, NodePath.dirname(filePath), { create: true });
-    const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
-    let handle: NodeFSP.FileHandle | null = null;
-    try {
-      handle = await NodeFSP.open(temporaryPath, "wx", 0o600);
-      await handle.writeFile(serialized, "utf8");
-      await handle.sync();
-      await handle.close();
-      handle = null;
-      await NodeFSP.rename(temporaryPath, filePath);
-    } finally {
-      await handle?.close();
-      await NodeFSP.rm(temporaryPath, { force: true });
-    }
+    await replaceFileAtomically(filePath, serialized);
   });
 }
 
