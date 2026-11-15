@@ -3002,6 +3002,20 @@ inside the server process, like the Sources store. On the library backend,
 highlights on library PDFs live in the library (see "Highlights, the two notes
 and reading status").
 
+A highlight may carry `color` (`#rrggbb`) and `underline`, kept from the
+reader it was made in (a Zotero import); the reader paints one Custom
+Highlight for each colour and kind in use, and no control changes them. A
+file's optional `unplaced` list holds another reader's highlights and
+comments that could not be placed on a page (`ScientUnplacedAnnotation`:
+kind, page, quote, comment, colour, revision, tombstone); `remove` and
+`restore` work on them by revision, the source's annotations result lists the
+live ones by page, and the details panel shows them under the PDF's
+highlights. `addImportedAnnotations` adds another reader's highlights once: an
+ID the file has, placed or not, live or removed, is never written again. The
+move into the Library and back (`mergeAnnotationFiles`, `annotationsCovered`)
+and a project package (`joinAnnotationFiles`) join `unplaced` by ID, the
+higher revision winning (`joinUnplaced`).
+
 A Source PDF's attachment preview names it to the reader by its project
 locator `.scient/sources/<attachment path>` on both backends; after the move
 the signed URL is rooted in the Library, and the annotation service resolves
@@ -3375,6 +3389,33 @@ arXiv, DOI for types without a DOI field) and the citation key (Zotero's field,
 then Better BibTeX's `Citation Key:` line, then Better BibTeX's JSON-RPC) are
 read; S2's key rules keep it.
 
+**Highlights and comments.** Zotero keeps them as annotation items under a
+file. zotero.org counts them on the file (`meta.numChildren`) and lists them
+as its children, so one request is made for each file that has some. Zotero
+on this computer counts none and lists only notes and files as children; a
+search by the reference's key (`/items?itemKey=<key>&itemType=annotation`)
+reaches its files' annotations, one request for each reference that has a
+file. `readZoteroItemWithChildren` adds them to the children, and
+`zoteroItemMaterial` reads them (`annotations`: kind, page from
+`annotationPosition`, text, comment, colour, and Zotero's count of the page's
+characters before it from `annotationSortIndex`). For each PDF copied, the
+import places them on the record's PDF (`bringZoteroAnnotations` and the pure
+`placeZoteroAnnotations`, `ZoteroAnnotations.ts`): a highlight or underline
+whose text `anchorPdfQuote` finds once on its page becomes a highlight
+(`ann_zotero_<key>`, by the user, at Zotero's date, the comment as its note,
+colour and underline kept); found several times, it is placed only when
+exactly one match lies within 20 characters plus 2% of Zotero's count (spaces
+not counted) and every other is more than twice that away. Everything else is
+kept in the PDF's `unplaced` list. The source's Zotero file keeps which PDF
+here each Zotero file with highlights is (`pdfs`, attachment key to sha256,
+hashed before the import lets the copy go), so a refresh brings new ones onto
+the same PDF; a PDF not in it (imported before, or without highlights then)
+is learnt at the refresh that finds some on it, by reading that file from
+Zotero once more and hashing it.
+Highlights are written last, after the Zotero file, so a failure leaves the
+rest saved: the import's item says so in its `note`, and a refresh retries.
+A refresh that adds some lists `highlights` among its `changedFields`.
+
 Zotero collections are intake scopes when browsing. After an item is imported
 it joins a Library collection (`collections.json`) named after each Zotero
 collection it belongs to. One level of Zotero's nesting is kept as a
@@ -3475,9 +3516,10 @@ a count) and adds what else an
 item holds that does not come: related
 items, automatic tags (brought as ordinary tags), files that are not PDFs,
 link attachments, PDFs past the tenth, images in notes, notes that are cut,
-and the highlights on each PDF (the attachment's
-`meta.numChildren`; they are not fetched). The import adds PDFs Zotero could
-not hand over and stores the entries on the operation's item; a scoped
+and the highlights on files that are not copied (`highlights`, name
+`no-file`). The import adds PDFs Zotero could not hand over, with their
+highlights (`no-file`), and the highlights it kept without a place on the
+page (`unplaced`), and stores the entries on the operation's item; a scoped
 import also counts the notes and files in the scope that belong to no
 reference (each once, also when filed in two collections) and stores them
 on the operation, or says that Zotero could not be asked

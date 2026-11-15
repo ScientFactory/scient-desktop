@@ -326,13 +326,25 @@ already has, from Zotero or Better BibTeX, is kept. Each source also joins a
 Library collection named after each Zotero collection it is in. The Library
 keeps one level of nesting, so **Chapter 2** inside **Thesis** stays inside it;
 a collection nested deeper joins its ancestor one level down, and the import
-result says which ones did. The original Zotero references and attachments are
+result says which ones did.
+
+Highlights, underlines and comments you made on a PDF in Zotero come with
+the PDF. Each is placed by its quoted text on its page of the same PDF, in
+its Zotero colour, with its comment as its note and Zotero's date, as made by
+you. When that text is found more than once on the page, Zotero's own record
+of where on the page you marked it decides, only when it clearly points to one
+of them. What cannot be placed this way (text the two readers read
+differently, a phrase that repeats, a marked image area, a drawing, a note on
+the page) is not guessed: it is kept with its page, quote and comment in the
+source's details, under the PDF's highlights, as **From Zotero, not placed on
+the page**. The original Zotero references and attachments are
 never changed by an import.
 
 When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
-many references it concerns: highlights and comments on PDFs, files that are
-not PDFs, links
+many references it concerns: highlights and comments not placed on the page,
+highlights and comments on files that did not come, files that are not PDFs,
+links
 kept as attachments, PDFs Zotero could not hand over, images in notes, notes
 too long to keep whole (a note holds 100,000 characters; what does not fit is
 left out from a paragraph on), and notes and files that belong to no reference.
@@ -379,7 +391,7 @@ Zotero on the computer is used first when both are available.
 
 Choose **Import sources → Refresh from Zotero** to bring changes you made in
 Zotero into sources imported from it. Fields you changed in Zotero are updated,
-new notes and PDFs come in, and tags you added or removed in Zotero are added or
+new notes, PDFs and highlights come in, and tags you added or removed in Zotero are added or
 removed here. A note you have not changed here follows Zotero's notes; a note
 you edited here is never replaced, and is listed only when the notes also
 changed in Zotero. A source imported before notes came as Markdown has a
@@ -392,7 +404,9 @@ in Zotero stays in your Library. The details under **More details** (edition,
 place of publication and the like) are compared one by one: a new one comes
 in while one you corrected here stays, and one you removed here stays removed
 as long as Zotero's did not change. A source imported before Scient kept
-these details gets them on its next refresh. A large Library is read again
+these details gets them on its next refresh, and its highlights from Zotero
+too. A highlight comes from Zotero once: one you removed here does not come
+back. A large Library is read again
 200 sources at a time, and the dialog says how far it is; closing it stops
 there and keeps what was read. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
@@ -895,6 +909,10 @@ quote is copied as Markdown so you can paste it.
 
 A source's details list the highlights and notes on its PDFs in reading order.
 Choose a passage to open the PDF at it. Passages an agent added say so.
+Highlights imported from Zotero keep their colour, and an underline stays an
+underline. Below them, **From Zotero, not placed on the page** lists the ones
+an import could not place, with their page; choose one to open the PDF, or
+**Remove** it.
 
 Highlights belong to the PDF's content, not its file name: the same PDF moved
 or copied elsewhere in the project keeps them. If a PDF is replaced by a
