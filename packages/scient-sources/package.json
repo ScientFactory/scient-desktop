@@ -56,6 +56,10 @@
       "types": "./src/libraryReviewConflicts.ts",
       "import": "./src/libraryReviewConflicts.ts"
     },
+    "./library-backup": {
+      "types": "./src/libraryBackup.ts",
+      "import": "./src/libraryBackup.ts"
+    },
     "./library-changes": {
       "types": "./src/libraryChanges.ts",
       "import": "./src/libraryChanges.ts"
