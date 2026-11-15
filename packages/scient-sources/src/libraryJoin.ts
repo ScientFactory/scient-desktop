@@ -41,11 +41,15 @@ import {
 import {
   ScientSourceActor,
   scientSourceReadingState,
+  type ScientLibraryJoinDifferenceRow,
+  type ScientLibraryJoinDifferences,
+  type ScientLibraryJoinSide,
   type ScientSourceCandidate,
   type ScientSourceRecord,
 } from "./model.ts";
 import { readScientProjectPins } from "./projectPins.ts";
 import {
+  attachScientSourcePdf,
   decodePersistedScientSourceRecord,
   listScientSourceRecords,
   readScientSourceIntakeAssessor,
@@ -55,6 +59,7 @@ import {
   readScientSourcesRemovedByPerson,
   removeScientSource,
   sourceAttachmentAbsolutePath,
+  updateScientSourceNote,
 } from "./store.ts";
 import {
   assertSafeIdentifier,
@@ -94,14 +99,19 @@ const Difference = Schema.Struct({
   /** The source here it stands against; null when several might be it. */
   sourceId: Schema.NullOr(Schema.String),
   relation: Relation,
-  /** What differs (`same-id`), or what the other has that this one lacks. */
+  /** What the other has that this one lacks; `details` where the two differ in them. */
   parts: Schema.Array(Schema.Literals(PARTS)),
+  /** The other Library's title for it, so the list can be shown while its folder is away. */
+  otherTitle: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** `possibly-same` with several sources here that could be it: all of them. */
+  candidates: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientLibraryJoinDifference = typeof Difference.Type;
 
 const RemovedHere = Schema.Struct({
   otherSourceId: Schema.String,
   state: Schema.Literals(["trash", "deleted"]),
+  title: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 const Other = Schema.Struct({
@@ -110,6 +120,8 @@ const Other = Schema.Struct({
   /** The folder that was chosen: a backup folder, or a Library a restore moved aside. */
   folder: Schema.String,
   backupCreatedAt: Schema.optionalKey(Schema.String),
+  /** Which backup it was: another backup put at the same path later is not this one. */
+  backupId: Schema.optionalKey(Schema.String),
 });
 
 const JoinHeader = Schema.Struct({
@@ -332,6 +344,7 @@ export async function openScientLibraryJoinSource(
         kind: "backup",
         folder: chosen,
         backupCreatedAt: manifest.createdAt,
+        backupId: manifest.backupId,
       },
     };
   }
@@ -390,6 +403,8 @@ type Standing =
       readonly kind: "here";
       readonly relation: ScientLibraryJoinDifference["relation"];
       readonly against: ScientSourceRecord | null;
+      /** Every source here that could be it, when it is not certain which. */
+      readonly candidates: ReadonlyArray<string>;
     };
 
 /**
@@ -407,7 +422,8 @@ function standingOf(
   const here = (
     relation: ScientLibraryJoinDifference["relation"],
     against: ScientSourceRecord | null,
-  ): Standing => ({ kind: "here", relation, against });
+    candidates: ReadonlyArray<string> = [],
+  ): Standing => ({ kind: "here", relation, against, candidates });
   const same = state.live.get(id);
   if (same) return here("same-id", same);
   const survivor = state.live.get(state.resolve(id));
@@ -442,7 +458,63 @@ function standingOf(
     candidates.length === 1;
   // One candidate is named even when it is not certain; several are not, since none is "it".
   const match = candidates.length === 1 ? (state.live.get(candidates[0]!) ?? null) : null;
-  return here(sure && match ? "same-paper" : "possibly-same", match);
+  return sure && match
+    ? here("same-paper", match)
+    : here(
+        "possibly-same",
+        match,
+        candidates.filter((sourceId) => state.live.has(sourceId)),
+      );
+}
+
+/** What the other's source has that the one here lacks. */
+async function partsLacking(
+  libraryRoot: string,
+  otherRoot: string,
+  theirsRecord: ScientSourceRecord,
+  oursRecord: ScientSourceRecord,
+  withDetails: boolean,
+): Promise<ReadonlyArray<ScientLibraryJoinPart>> {
+  const parts: ScientLibraryJoinPart[] = [];
+  if (withDetails && detailsOf(theirsRecord) !== detailsOf(oursRecord)) parts.push("details");
+  const ourTags = new Set(tagsOf(oursRecord));
+  if (tagsOf(theirsRecord).some((tag) => !ourTags.has(tag))) parts.push("tags");
+  const note = noteOf(theirsRecord);
+  if (note && !noteOf(oursRecord).includes(note)) parts.push("note");
+  const [theirReading, ourReading] = [readingOf(theirsRecord), readingOf(oursRecord)];
+  if (
+    (theirReading.readingStatus === "read" && ourReading.readingStatus !== "read") ||
+    (theirReading.starred && !ourReading.starred)
+  ) {
+    parts.push("reading");
+  }
+  const ourPdfs = new Set(pdfsOf(oursRecord));
+  if (pdfsOf(theirsRecord).some((sha256) => !ourPdfs.has(sha256))) parts.push("pdfs");
+  if (await highlightsDiffer(libraryRoot, otherRoot, pdfsOf(theirsRecord))) {
+    parts.push("highlights");
+  }
+  return parts;
+}
+
+/**
+ * What a difference lists: what the other Library's source has that the one here lacks, and
+ * whether their details differ where the two are known to be the same record or paper. What
+ * only this Library has is not a difference a join left behind.
+ */
+function partsBetween(
+  libraryRoot: string,
+  otherRoot: string,
+  relation: ScientLibraryJoinDifference["relation"],
+  theirsRecord: ScientSourceRecord,
+  oursRecord: ScientSourceRecord,
+): Promise<ReadonlyArray<ScientLibraryJoinPart>> {
+  return partsLacking(
+    libraryRoot,
+    otherRoot,
+    theirsRecord,
+    oursRecord,
+    relation === "same-id" || relation === "rebuilt-here" || relation === "same-paper",
+  );
 }
 
 export interface ScientLibraryComparison {
@@ -473,55 +545,6 @@ export async function compareScientLibraries(
   const removedHere: Array<typeof RemovedHere.Type> = [];
   let identical = 0;
 
-  /** What the other's source has that the one here lacks. */
-  const lacks = async (
-    theirsRecord: ScientSourceRecord,
-    oursRecord: ScientSourceRecord,
-    withDetails: boolean,
-  ): Promise<ReadonlyArray<ScientLibraryJoinPart>> => {
-    const parts: ScientLibraryJoinPart[] = [];
-    if (withDetails && detailsOf(theirsRecord) !== detailsOf(oursRecord)) parts.push("details");
-    const ourTags = new Set(tagsOf(oursRecord));
-    if (tagsOf(theirsRecord).some((tag) => !ourTags.has(tag))) parts.push("tags");
-    const note = noteOf(theirsRecord);
-    if (note && !noteOf(oursRecord).includes(note)) parts.push("note");
-    const [theirReading, ourReading] = [readingOf(theirsRecord), readingOf(oursRecord)];
-    if (
-      (theirReading.readingStatus === "read" && ourReading.readingStatus !== "read") ||
-      (theirReading.starred && !ourReading.starred)
-    ) {
-      parts.push("reading");
-    }
-    const ourPdfs = new Set(pdfsOf(oursRecord));
-    if (pdfsOf(theirsRecord).some((sha256) => !ourPdfs.has(sha256))) parts.push("pdfs");
-    if (await highlightsDiffer(libraryRoot, otherRoot, pdfsOf(theirsRecord))) {
-      parts.push("highlights");
-    }
-    return parts;
-  };
-  /** How two records under one ID differ, in either direction. */
-  const differs = async (
-    theirsRecord: ScientSourceRecord,
-    oursRecord: ScientSourceRecord,
-  ): Promise<ReadonlyArray<ScientLibraryJoinPart>> => {
-    const parts: ScientLibraryJoinPart[] = [];
-    if (detailsOf(theirsRecord) !== detailsOf(oursRecord)) parts.push("details");
-    if (stableJson(tagsOf(theirsRecord).toSorted()) !== stableJson(tagsOf(oursRecord).toSorted())) {
-      parts.push("tags");
-    }
-    if (noteOf(theirsRecord) !== noteOf(oursRecord)) parts.push("note");
-    if (stableJson(readingOf(theirsRecord)) !== stableJson(readingOf(oursRecord))) {
-      parts.push("reading");
-    }
-    if (stableJson(pdfsOf(theirsRecord).toSorted()) !== stableJson(pdfsOf(oursRecord).toSorted())) {
-      parts.push("pdfs");
-    }
-    if (await highlightsDiffer(libraryRoot, otherRoot, pdfsOf(theirsRecord))) {
-      parts.push("highlights");
-    }
-    return parts;
-  };
-
   for (const record of theirs) {
     const standing = standingOf(record, state);
     if (standing.kind === "fresh") {
@@ -529,15 +552,17 @@ export async function compareScientLibraries(
       continue;
     }
     if (standing.kind === "removed") {
-      removedHere.push({ otherSourceId: record.sourceId, state: standing.state });
+      removedHere.push({
+        otherSourceId: record.sourceId,
+        state: standing.state,
+        title: record.title,
+      });
       continue;
     }
     const { relation, against } = standing;
-    const parts = !against
-      ? []
-      : relation === "same-id"
-        ? await differs(record, against)
-        : await lacks(record, against, relation === "rebuilt-here" || relation === "same-paper");
+    const parts = against
+      ? await partsBetween(libraryRoot, otherRoot, relation, record, against)
+      : [];
     // A paper that may be the same is always shown; the others only when something differs.
     if (parts.length === 0 && relation !== "possibly-same") identical += 1;
     else {
@@ -546,6 +571,8 @@ export async function compareScientLibraries(
         sourceId: against?.sourceId ?? null,
         relation,
         parts: [...parts],
+        otherTitle: record.title,
+        ...(standing.candidates.length > 0 ? { candidates: [...standing.candidates] } : {}),
       });
     }
   }
@@ -1474,4 +1501,378 @@ export async function listScientLibraryJoins(
     });
   }
   return joins.toSorted((left, right) => right.at.localeCompare(left.at));
+}
+
+const NOTE_LIMIT = 100_000;
+const TAKEN_DIRECTORY = "taken";
+
+const byOf = (record: ScientSourceRecord) => {
+  const first = record.creators[0];
+  const name = first?.familyName ?? first?.literalName ?? first?.givenName ?? "";
+  return [name, record.issuedYear ?? ""].filter(Boolean).join(" ");
+};
+
+async function sideOf(record: ScientSourceRecord, root: string): Promise<ScientLibraryJoinSide> {
+  const location = scientLibraryLocation(root);
+  const reading = readingOf(record);
+  return {
+    sourceId: record.sourceId,
+    title: record.title,
+    by: byOf(record),
+    fingerprint: fingerprintOf(record),
+    note: noteOf(record),
+    tags: record.tags,
+    read: reading.readingStatus === "read",
+    starred: reading.starred,
+    pdfs: await Promise.all(
+      record.attachments.map(async (attachment) => ({
+        sha256: attachment.sha256,
+        fileName: attachment.fileName,
+        available: await exists(sourceAttachmentAbsolutePath(location, attachment)),
+      })),
+    ),
+  };
+}
+
+const namesOf = (record: ScientSourceRecord) =>
+  record.creators
+    .map(
+      (creator) =>
+        creator.literalName ?? [creator.familyName, creator.givenName].filter(Boolean).join(", "),
+    )
+    .join("; ");
+
+/** The bibliographic fields, each as a person reads it. */
+const DETAIL_FIELDS: ReadonlyArray<readonly [string, (record: ScientSourceRecord) => string]> = [
+  ["Title", (record) => record.title ?? ""],
+  ["Type", (record) => record.customType ?? record.type],
+  ["Authors", namesOf],
+  ["Date", (record) => record.issuedRaw ?? String(record.issuedYear ?? "")],
+  [
+    "Identifiers",
+    (record) => record.identifiers.map(({ scheme, value }) => `${scheme}: ${value}`).join("; "),
+  ],
+  ["Abstract", (record) => record.abstract ?? ""],
+  ["Published in", (record) => record.containerTitle ?? ""],
+  ["Publisher", (record) => record.publisher ?? ""],
+  ["Volume", (record) => record.volume ?? ""],
+  ["Issue", (record) => record.issue ?? ""],
+  ["Pages", (record) => record.pages ?? ""],
+  ["Language", (record) => record.language ?? ""],
+  ["Link", (record) => record.url ?? ""],
+];
+
+const detailsBetween = (ours: ScientSourceRecord, theirs: ScientSourceRecord) =>
+  DETAIL_FIELDS.flatMap(([field, read]) => {
+    const [here, other] = [read(ours), read(theirs)];
+    return here === other ? [] : [{ field, here, other }];
+  });
+
+/** The folder a join read, if it is there and is still the snapshot that join read. */
+async function sameSnapshot(
+  library: ScientLibraryLocation,
+  header: JoinHeader,
+): Promise<string | null> {
+  const source = await openScientLibraryJoinSource(library, header.other.folder).catch(() => null);
+  if (source?.outcome !== "ready" || source.other.libraryId !== header.other.libraryId) return null;
+  // A backup put at the same path later is another snapshot.
+  if (header.other.backupId !== undefined && source.other.backupId !== header.other.backupId) {
+    return null;
+  }
+  return source.root;
+}
+
+async function otherRecord(
+  otherRoot: string,
+  sourceId: string,
+): Promise<ScientSourceRecord | null> {
+  assertSafeIdentifier(sourceId, "Source ID");
+  const bytes = await fileBytes(NodePath.join(otherRoot, "records", `${sourceId}.json`));
+  if (!bytes) return null;
+  try {
+    return decodePersistedScientSourceRecord(JSON.parse(bytes.toString("utf8")));
+  } catch {
+    return null;
+  }
+}
+
+/** Every difference a join recorded, with added sources that kept this Library's highlights. */
+async function recordedDifferences(
+  libraryRoot: string,
+  header: JoinHeader,
+): Promise<ReadonlyArray<ScientLibraryJoinDifference>> {
+  const parts = await readParts(joinDirectory(libraryRoot, header.joinId)).catch(() => []);
+  return [
+    ...header.different,
+    ...parts
+      .flatMap((part) => part.added)
+      .filter((entry) => entry.highlightsKept)
+      .map((entry) => ({
+        otherSourceId: entry.sourceId,
+        sourceId: entry.sourceId,
+        relation: "same-id" as const,
+        parts: ["highlights" as const],
+      })),
+  ];
+}
+
+/**
+ * The papers a join left as they are here because both Libraries hold them, each with both
+ * sides as they are now; reads only, and reads the other Library's folder in place. A paper
+ * that no longer differs is left out. Null when this Library has no such join.
+ */
+export async function readScientLibraryJoinDifferences(input: {
+  readonly library: ScientLibraryLocation;
+  readonly joinId: string;
+  readonly offset?: number;
+  readonly limit?: number;
+}): Promise<ScientLibraryJoinDifferences | null> {
+  const libraryRoot = await NodeFSP.realpath(input.library.root);
+  const library = scientLibraryLocation(libraryRoot);
+  const header = await readHeader(libraryRoot, input.joinId);
+  if (!header) return null;
+  const otherRoot = await sameSnapshot(library, header);
+  const recorded = await recordedDifferences(libraryRoot, header);
+  const offset = Math.max(0, input.offset ?? 0);
+  const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
+  const aliases = await readScientLibraryAliases(library);
+  const hereOf = (sourceId: string) =>
+    readScientSourceRecord(library, resolveScientLibraryAlias(aliases, sourceId));
+  const rows: ScientLibraryJoinDifferenceRow[] = [];
+  for (const difference of recorded.slice(offset, offset + limit)) {
+    const ours = difference.sourceId ? await hereOf(difference.sourceId) : null;
+    const theirs = otherRoot ? await otherRecord(otherRoot, difference.otherSourceId) : null;
+    // A paper that may be the same and was added separately since is here under its own ID.
+    if (
+      difference.relation === "possibly-same" &&
+      (await exists(NodePath.join(libraryRoot, "records", `${difference.otherSourceId}.json`)))
+    ) {
+      continue;
+    }
+    const parts =
+      ours && theirs && otherRoot
+        ? await partsBetween(libraryRoot, otherRoot, difference.relation, theirs, ours)
+        : difference.parts;
+    if (parts.length === 0 && difference.relation !== "possibly-same") continue;
+    const candidates = await Promise.all(
+      (difference.candidates ?? []).map(async (sourceId) => ({
+        sourceId,
+        title: (await hereOf(sourceId))?.title ?? null,
+      })),
+    );
+    rows.push({
+      otherSourceId: difference.otherSourceId,
+      relation: difference.relation,
+      parts,
+      here: ours ? await sideOf(ours, libraryRoot) : null,
+      candidates,
+      other: theirs && otherRoot ? await sideOf(theirs, otherRoot) : null,
+      otherTitle: theirs?.title ?? difference.otherTitle ?? null,
+      details: ours && theirs && parts.includes("details") ? detailsBetween(ours, theirs) : [],
+    });
+  }
+  return {
+    joinId: header.joinId,
+    from: header.other.kind,
+    backupCreatedAt: header.other.backupCreatedAt ?? null,
+    folder: header.other.folder,
+    available: otherRoot !== null,
+    total: recorded.length,
+    nextOffset: offset + limit < recorded.length ? offset + limit : null,
+    rows,
+    removedHere:
+      offset === 0
+        ? header.removedHere.map((entry) => ({ ...entry, title: entry.title ?? null }))
+        : [],
+  };
+}
+
+/** What a person takes from the other Library's version of one paper. */
+export type ScientLibraryJoinTake =
+  /** The other note, added under this paper's own note. */
+  | { readonly kind: "note" }
+  /** One PDF the other has and this paper lacks. */
+  | { readonly kind: "pdf"; readonly sha256: string }
+  /** The whole paper as its own source, kept apart from the papers it may be. */
+  | { readonly kind: "add-separately" };
+
+export type ScientLibraryJoinTaken =
+  | { readonly outcome: "taken"; readonly sourceId: string }
+  /** This very request was applied before (its answer was lost): nothing more was done. */
+  | { readonly outcome: "already" }
+  /** One of the two papers, or how they stand, is no longer what the list showed. */
+  | { readonly outcome: "changed" }
+  /** The folder the join read is away, is another snapshot now, or lacks the file. */
+  | { readonly outcome: "unavailable" }
+  /** The two notes together are longer than a note may be. */
+  | { readonly outcome: "too-long" }
+  | { readonly outcome: "not-found" };
+
+const fromLabel = (other: typeof Other.Type) =>
+  other.kind === "backup" && other.backupCreatedAt
+    ? `the backup of ${other.backupCreatedAt.slice(0, 10)}`
+    : other.kind === "backup"
+      ? "a backup"
+      : "the Library a restore replaced";
+
+/**
+ * Takes one thing from the other Library's version of a paper, as an ordinary edit of this
+ * Library: nothing is replaced, and nothing is done unless both papers are exactly what the
+ * list showed (`shown`), checked under the Library's lock. `operationId` makes a repeated
+ * request do nothing.
+ */
+export async function takeFromScientLibraryJoin(input: {
+  readonly library: ScientLibraryLocation;
+  readonly joinId: string;
+  readonly otherSourceId: string;
+  readonly take: ScientLibraryJoinTake;
+  /** The fingerprints of both sides as the list showed them; `here` null for a paper not here. */
+  readonly shown: { readonly here: string | null; readonly other: string };
+  readonly operationId: string;
+  readonly actor: ScientSourceActor;
+}): Promise<ScientLibraryJoinTaken> {
+  assertSafeIdentifier(input.operationId, "Operation ID");
+  const libraryRoot = await NodeFSP.realpath(input.library.root);
+  const library = scientLibraryLocation(libraryRoot);
+  const header = await readHeader(libraryRoot, input.joinId);
+  if (!header) return { outcome: "not-found" };
+  const otherRoot = await sameSnapshot(library, header);
+  if (!otherRoot) return { outcome: "unavailable" };
+  const takenPath = NodePath.join(
+    joinDirectory(libraryRoot, input.joinId),
+    TAKEN_DIRECTORY,
+    `${input.operationId}.json`,
+  );
+  const theirs = await otherRecord(otherRoot, input.otherSourceId);
+  if (!theirs || fingerprintOf(theirs) !== input.shown.other) return { outcome: "changed" };
+  const recorded = (await recordedDifferences(libraryRoot, header)).find(
+    (difference) => difference.otherSourceId === input.otherSourceId,
+  );
+  if (!recorded) return { outcome: "changed" };
+  const other = scientLibraryLocation(otherRoot);
+  const { take } = input;
+
+  return withScientLibraryLock(libraryRoot, async (): Promise<ScientLibraryJoinTaken> => {
+    if (await exists(takenPath)) return { outcome: "already" };
+    const standing = standingOf(theirs, await localState(library));
+    const done = async (sourceId: string): Promise<ScientLibraryJoinTaken> => {
+      await atomicWriteJson(
+        takenPath,
+        {
+          formatVersion: 1,
+          operationId: input.operationId,
+          at: new Date().toISOString(),
+          by: input.actor,
+          take,
+          otherSourceId: input.otherSourceId,
+          sourceId,
+        },
+        MAX_PART_BYTES,
+      );
+      return { outcome: "taken", sourceId };
+    };
+
+    if (take.kind === "add-separately") {
+      // Only a paper that may be one here, or that nothing here could be any more.
+      const candidates =
+        standing.kind === "fresh"
+          ? []
+          : standing.kind === "here" && standing.relation === "possibly-same"
+            ? [
+                ...new Set([
+                  ...standing.candidates,
+                  ...(standing.against ? [standing.against.sourceId] : []),
+                ]),
+              ]
+            : null;
+      if (candidates === null) return { outcome: "changed" };
+      const decisions = await otherDecisions(otherRoot);
+      const present = (sourceId: string) =>
+        exists(NodePath.join(libraryRoot, "records", `${sourceId}.json`));
+      const arrived = await addSource({
+        libraryRoot,
+        otherRoot,
+        record: theirs,
+        // Kept apart from every paper it resembled before it exists, so nothing merges them.
+        beforeRecord: async () => {
+          await keepApart({
+            library,
+            sourceId: theirs.sourceId,
+            decisions,
+            present,
+            actor: input.actor,
+          });
+          for (const candidate of candidates) {
+            await markScientLibrarySourcesDistinct({
+              library,
+              sourceIds: [theirs.sourceId, candidate],
+              reason: "marked-distinct",
+              actor: input.actor,
+            });
+          }
+        },
+      });
+      if (typeof arrived === "string") return { outcome: "changed" };
+      await place({
+        library,
+        sourceId: theirs.sourceId,
+        decisions,
+        collections: await ensureCollections({
+          library,
+          otherRoot,
+          fresh: new Set([theirs.sourceId]),
+          actor: input.actor,
+        }),
+        actor: input.actor,
+      });
+      return done(theirs.sourceId);
+    }
+
+    // The paper here must be the one the row named, exactly as the row showed it.
+    const ours = standing.kind === "here" ? standing.against : null;
+    if (
+      !ours ||
+      ours.sourceId !== recorded.sourceId ||
+      standing.kind !== "here" ||
+      standing.relation !== recorded.relation ||
+      fingerprintOf(ours) !== input.shown.here
+    ) {
+      return { outcome: "changed" };
+    }
+    if (take.kind === "note") {
+      const theirNote = noteOf(theirs);
+      const ourNote = noteOf(ours);
+      if (!theirNote || ourNote.includes(theirNote)) return { outcome: "changed" };
+      // This Library's note stays as it is; the other is added under a line saying whence.
+      const next = ourNote
+        ? `${ours.note}\n\n(From ${fromLabel(header.other)}:)\n${theirNote}`
+        : theirNote;
+      if (next.length > NOTE_LIMIT) return { outcome: "too-long" };
+      const updated = await updateScientSourceNote({
+        root: library,
+        sourceId: ours.sourceId,
+        expectedRevision: ours.revision,
+        expectedNote: ours.note ?? null,
+        note: next,
+        actor: input.actor,
+      });
+      return updated.outcome === "updated" ? done(ours.sourceId) : { outcome: "changed" };
+    }
+    const attachment = theirs.attachments.find((entry) => entry.sha256 === take.sha256);
+    if (!attachment || ours.attachments.some((entry) => entry.sha256 === take.sha256)) {
+      return { outcome: "changed" };
+    }
+    const pdfPath = sourceAttachmentAbsolutePath(other, attachment);
+    if (!(await exists(pdfPath))) return { outcome: "unavailable" };
+    // The ordinary attach: checked bytes, a new version, and no highlights taken with it.
+    const attached = await attachScientSourcePdf({
+      root: library,
+      sourceId: ours.sourceId,
+      expectedRevision: ours.revision,
+      pdfPath,
+      fileName: attachment.fileName,
+      actor: input.actor,
+    });
+    return attached.outcome === "attached" ? done(ours.sourceId) : { outcome: "changed" };
+  });
 }
