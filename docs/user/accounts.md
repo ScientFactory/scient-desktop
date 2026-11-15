@@ -176,8 +176,9 @@ on that computer can read them.
 ## Papers behind a subscription
 
 On a university network, **Get PDF** and agents reach closed papers with no setup. From anywhere
-else, connect your university: **Connect your university** is the first row in the Library. Its own
-sign-in opens beside your work, and its crest then stays beside the Library title. If your
+else, connect your university: choose **Connect your university** beside the Library's title. Its
+own sign-in opens beside your work, and its crest then stands in that place, showing **Sign in**
+when its sign-in has lapsed. If your
 university isn't listed, paste a link from your library's website. The first article you open at a
 journal reloads once through your university. Being on campus never counts as signed in, and
 scripts can't take your university sign-in's session.

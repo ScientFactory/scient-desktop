@@ -1067,13 +1067,32 @@ its state.
   from a library ID or a project source ID (see above).
 
 The web (`useScientSources.ts`) sends `scope` after the person picks the
-Library view. **This project / All Library** is always above the list when the
-overview has `scopes`, including empty projects and read-only sessions.
-**Choose from Library** in an empty project opens its nonempty Library.
-Collections only filter within the selected scope. A pin this Library lacks
+Library view. **This project / My Library** is always above the list when the
+overview has `scopes`, including empty projects and read-only sessions; the
+labels are `LIBRARY_LABELS.scopes`, while the scope values stay `project` and
+`library`. **Choose from Library** in an empty project opens its nonempty Library;
+the empty list's words (`emptySourcesLabel`) say how to add sources, never how
+to recover them. Collections only filter within the selected scope. A pin this Library lacks
 keeps its **Not in this Library** warning; routine membership and added-time
 labels live on hover or in details. The review screen uses the review's
 `records` when present.
+
+**Header and menus.** The header holds the university slot (`UniversityCrest`
+in `accounts/University.tsx`: the crest when a university is saved, **Sign in**
+beside it when its sign-in lapsed, a quiet **Connect your university** that
+opens `UniversityPicker` otherwise; nothing for a session without account
+write permission), **Import sources**, **Activity** and **⋯**. Import sources
+holds every intake, including `ImportPackageSubmenu` from `ProjectPackageMenu.tsx`.
+`AskLibraryButton` sits beside the scope toggle. `SourcesHeaderMenu` groups the
+rest with separators: research (Check references, Systematic reviews, Possible
+duplicates, missing PDFs, Refresh from Zotero when sources came from Zotero),
+output (Citation style, Export, whose last group is `SaveProjectPackageItem`
+because a package is always the whole project), records (Recent changes, Trash)
+and one **Backup and recovery** submenu (backup, restore, join, then
+`RecoverPreMoveItem` and move back). A submenu repeats no title its item already
+says; Export's group label stays because it adds the scope and count.
+**Package imports** is a section at the end of `RecentChangesDialog`, opening
+`PackageImportsDialog` (Undo only for a session that may change the Library).
 
 ### Moving a project into the library
 
@@ -1437,10 +1456,10 @@ including after Undo. Receipt files are read independently: `packageImportDiagno
 names skipped unreadable files. Live-paper enrichment is best effort and reports
 unreadable record or alias files separately, preserving the historical row.
 These listing diagnostics do not relax Undo's authoritative receipt and version
-checks. Recover → Package imports reads that list on every open
+checks. Recent changes → Package imports reads that list on every open
 and after Undo; Undo rechecks the receipt and each project's addition at apply.
 The panel reports the retained paper count and
-**Show them** selects All Library with an explicit source-ID filter and a
+**Show them** selects My Library with an explicit source-ID filter and a
 **Show all** control; other list filters and selections are cleared first.
 
 #### Lock holds, progress and one move per project (5e-1)
@@ -1615,10 +1634,11 @@ duplicates at **Merged**, where each merge explains the values it kept. A write 
 when it has finished." (`scientSourcesErrorMessage`, and the reader's highlight
 toast).
 
-**Recovery** lives in "More Library actions" > "Recover": "Recover sources
-from before the move" calls `restore-pre-move`, "Keep this project's sources
-in its folder" explains the archive and calls `move-back`, and "Save a current
-package" exports a current handoff. Package import has its own menu.
+**Recovery** lives in "More Library actions" > "Backup and recovery": "Recover
+sources from before the move" calls `restore-pre-move`, and "Keep this
+project's sources in its folder", shown only while a move back is possible,
+explains the archive and calls `move-back`. A current handoff is saved from
+Export ("Save a project package…"); package import is under Import sources.
 
 **Move back** is offered on a `done` or
 `cleanup-pending` project to a session holding operate, after a confirmation.
@@ -4063,7 +4083,7 @@ labels can show a different number.
 The skill text lives in both `built-ins/references/SKILL.md` and its embedded
 copy in `BuiltInSkillSources.ts`; a test keeps them identical.
 
-The Library menu's **Ask the Library** puts the same rules, as the tested
+The Library's **Ask the Library** button (`AskLibraryButton`, beside the scope toggle) puts the same rules, as the tested
 sentence (`ASK_LIBRARY_PROMPT` in `apps/web/src/scient/sources/askLibrary.ts`),
 at the start of the open thread's draft through the composer handle's
 `insertTextAtStart`. It never sends, keeps the draft that was there, and does
