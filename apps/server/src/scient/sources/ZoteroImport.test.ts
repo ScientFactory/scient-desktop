@@ -288,6 +288,50 @@ describe("Zotero import", () => {
     ]);
   });
 
+  it("keeps the collections of two personal libraries apart when their keys are the same", async () => {
+    const root = await project();
+    // Two Zotero accounts, each with its own collection under one key.
+    const account = (userId: number, itemKey: string, name: string) =>
+      fakeZoteroAccess(
+        fakeZoteroTransport({
+          items: new Map([
+            [
+              itemKey,
+              {
+                item: zoteroItem(
+                  itemKey,
+                  { title: `Filed in ${name}`, abstractNote: "A.", collections: ["COLL2345"] },
+                  userId,
+                ),
+                children: [],
+              },
+            ],
+          ]),
+          collections: [{ key: "COLL2345", name }],
+          library: { type: "user", id: userId },
+        }),
+      );
+    for (const [operationId, zotero] of [
+      ["first", account(111, "AAAA2345", "Thesis")],
+      ["second", account(222, "BBBB2345", "Teaching")],
+    ] as const) {
+      await beginZoteroScopedImport({ root, operationId, scope: { kind: "library" }, zotero });
+      await advanceSourceImport({ root, operationId, zotero });
+    }
+
+    const titles = new Map(
+      (await listScientSourceRecords(root)).map((record) => [record.sourceId, record.title]),
+    );
+    expect(
+      (await readScientSourcesOrganization(root)).collections
+        .map((entry) => [entry.name, entry.sourceIds.map((sourceId) => titles.get(sourceId))])
+        .toSorted(),
+    ).toEqual([
+      ["Teaching", ["Filed in Teaching"]],
+      ["Thesis", ["Filed in Thesis"]],
+    ]);
+  });
+
   it("lists the collections it could not make instead of dropping them", async () => {
     const root = await project();
     const zotero = fakeZoteroAccess(
@@ -331,12 +375,13 @@ describe("Zotero import", () => {
 
   it("says what Zotero holds for each reference that it did not bring", async () => {
     const root = await project();
-    const mark = (key: string, parentItem: string) =>
+    const mark = (key: string, parentItem: string, annotationComment = "") =>
       zoteroItem(key, {
         itemType: "annotation",
         parentItem,
         annotationType: "highlight",
         annotationText: "A passage",
+        annotationComment,
         annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
       });
     const zotero = fakeZoteroAccess(
@@ -388,8 +433,12 @@ describe("Zotero import", () => {
         ]),
         files: new Map([["PDFA2345", await pdf(root, "book.pdf")]]),
         // This PDF has no text to place one on; the second PDF and the snapshot do not come.
+        // One comment is longer than anything here holds.
         annotations: new Map([
-          ["PDFA2345", [mark("MARKA234", "PDFA2345")]],
+          [
+            "PDFA2345",
+            [mark("MARKA234", "PDFA2345"), mark("MARKA345", "PDFA2345", "x".repeat(100_001))],
+          ],
           ["PDFB2345", [mark("MARKB234", "PDFB2345"), mark("MARKB345", "PDFB2345")]],
           ["SNAP2345", [mark("MARKS234", "SNAP2345")]],
         ]),
@@ -415,6 +464,7 @@ describe("Zotero import", () => {
       { kind: "highlights", name: "no-file", count: 3 },
       { kind: "pdf", name: "unavailable", count: 1 },
       { kind: "highlights", name: "unplaced", count: 1 },
+      { kind: "highlights", name: "too-long", count: 1 },
     ]);
     // What it did bring is as before; the note keeps its link.
     const [record] = await listScientSourceRecords(root);
@@ -676,6 +726,7 @@ describe("Zotero import", () => {
         if (path.startsWith("/collections?")) {
           const collection = (key: string, parentCollection: string | false) => ({
             key,
+            library: { type: "user", id: 0 },
             data: { key, name: key, parentCollection },
           });
           return json([collection("TOPC2345", false), collection("SUBC2345", "TOPC2345")], 2);
@@ -836,7 +887,6 @@ describe("Zotero import", () => {
       annotationText: "A passage",
       annotationColor: "#5FB236",
       annotationPosition: JSON.stringify({ pageIndex: 2, rects: [] }),
-      annotationSortIndex: "00002|000412|00100",
     });
     // zotero.org counts a file's highlights; Zotero here counts none.
     const library = (numChildren: number) => ({
@@ -868,7 +918,6 @@ describe("Zotero import", () => {
       text: "A passage",
       comment: "",
       color: "#5fb236",
-      offset: 412,
       addedAt: null,
     };
     expect([fromWeb.annotations, fromLocal.annotations]).toEqual([[read], [read]]);

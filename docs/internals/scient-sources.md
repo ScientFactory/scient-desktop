@@ -3124,10 +3124,12 @@ change returns the current record. Removal is a tombstone that restore undoes,
 and the last ten revisions of each annotation are kept so `revert` can bring
 an earlier note back as a new revision. Each record credits `createdBy` and
 `updatedBy` (`user` or `agent`). A file that does not decode is never written
-over and is reported, not hidden, in listings. Writes are serialized per PDF
-inside the server process, like the Sources store. On the library backend,
-highlights on library PDFs live in the library (see "Highlights, the two notes
-and reading status").
+over and is reported, not hidden, in listings; every write decodes the file it
+is about to publish with the reader's own schema and size limit first, so no
+writer can leave a file that hides the PDF's other annotations. Writes are
+serialized per PDF inside the server process, like the Sources store. On the
+library backend, highlights on library PDFs live in the library (see
+"Highlights, the two notes and reading status").
 
 A highlight may carry `color` (`#rrggbb`) and `underline`, kept from the
 reader it was made in (a Zotero import); the reader paints one Custom
@@ -3287,14 +3289,16 @@ an agent.
 - `placeScientSourceCollections` is how a tree kept elsewhere arrives (Zotero,
   another Library, a project package). It takes the whole outside tree and
   the collections wanted, and in one locked change finds or makes each with
-  the ones above it: the live collection with the outside collection's ID;
-  else a live one with its name under the same parent that no other outside
-  collection has taken; else a new one with that ID. The whole tree is
+  the ones above it: the live collection with the outside collection's ID, or
+  one that remembers it (`outsideIds`); else a live one with its name under the
+  same parent that no other outside collection has taken; else a new one with
+  that ID. A collection found by name remembers the outside ID, so a rename or
+  a move here does not lose it. The whole tree is
   matched on every call in one order, so which same-named sibling has a
   collection made by hand does not depend on what was wanted. A collection
   the person deleted here is left out, or with `remake` made again as a new
-  collection with a new ID beside it, so the deleted one keeps its members and
-  can still be restored (later calls find the new one by name). An outside
+  collection with a new ID beside it that remembers the outside ID, so the
+  deleted one keeps its members and can still be restored. An outside
   collection under a deleted one that is not made again is made under it. One
   that cannot be made (500 collections, ten levels, a 200-character name)
   comes back with the reason.
@@ -3574,9 +3578,11 @@ each under a `##` heading that is its first line, ordered by that line as
 Zotero's own list is. A note holds 100,000 characters: blocks are added while
 they fit and the rest is left out and listed (`note-cut`). The notes as
 Zotero wrote them go into the source's Zotero file (`notes`, by item key,
-without the bytes of embedded images, at most 1,000,000 characters by whole
-notes), so a backup, a restore and a join carry them; a project package does
-not, and neither does a note given to a source that was already here.
+without the bytes of embedded images): every note's sha256, and its HTML while
+the notes fit 1,000,000 characters by whole notes; a note past that keeps only
+its digest and is listed (`note-cut` named `original`). A backup, a restore and
+a join carry them; a project package does not, and neither does a note given
+to a source that was already here.
 Every stored or linked PDF is copied (the first with
 the record, the rest attached), and a PDF Zotero cannot provide is skipped
 rather than failing the item. zotero.org PDFs are streamed to a temporary file
@@ -3593,16 +3599,22 @@ search by the reference's key (`/items?itemKey=<key>&itemType=annotation`)
 reaches its files' annotations, one request for each reference that has a
 file. `readZoteroItemWithChildren` adds them to the children, and
 `zoteroItemMaterial` reads them (`annotations`: kind, page from
-`annotationPosition`, text, comment, colour, and Zotero's count of the page's
-characters before it from `annotationSortIndex`). For each PDF copied, the
+`annotationPosition`, text, comment, colour). For each PDF copied, the
 import places them on the record's PDF (`bringZoteroAnnotations` and the pure
 `placeZoteroAnnotations`, `ZoteroAnnotations.ts`): a highlight or underline
 whose text `anchorPdfQuote` finds once on its page becomes a highlight
-(`ann_zotero_<key>`, by the user, at Zotero's date, the comment as its note,
-colour and underline kept); found several times, it is placed only when
-exactly one match lies within 20 characters plus 2% of Zotero's count (spaces
-not counted) and every other is more than twice that away. Everything else is
-kept in the PDF's `unplaced` list. The source's Zotero file keeps which PDF
+(`ann_zotero_user_<id>_<key>` or `ann_zotero_group_<id>_<key>`, from the
+library of the source's Zotero link: a key is unique only in its library, and
+the link keeps the library as it was at import, so Zotero here signing in to
+sync, which turns its `0` into the user ID, does not bring each highlight
+twice; by the user, at Zotero's date, the comment as its note, colour and
+underline kept). One found more than once there is not placed:
+Zotero's sort index counts characters in its own reading of the page, which
+nothing ties to Scient's. Everything else is kept in the PDF's `unplaced`
+list, whole: a comment longer than a highlight's note (8,000 characters)
+goes there too, and one whose quote or comment is longer than that list
+holds (100,000 characters) is not brought and is counted as `highlights`
+named `too-long`. The source's Zotero file keeps which PDF
 here each Zotero file with highlights is (`pdfs`, attachment key to sha256,
 hashed before the import lets the copy go), so a refresh brings new ones onto
 the same PDF; a PDF not in it (imported before, or without highlights then)
@@ -3611,17 +3623,27 @@ Zotero once more and hashing it.
 Highlights are written last, after the Zotero file, so a failure leaves the
 rest saved: "not brought" counts them as `highlights` named `later`, and a
 refresh retries.
-A refresh that adds some lists `highlights` among its `changedFields`.
+A refresh that adds some lists `highlights` among its `changedFields`, and
+its item's `notBrought` says, as an import's does, how many it added without
+placing (`unplaced`), how many are on a Zotero file with no PDF here
+(`no-file`: a PDF removed here is not attached again for them) and how many
+were too long to keep (`too-long`); the refresh dialog lists them under "Not
+brought from Zotero" (`notBroughtBySource`, shared with the import summary),
+and the agent's refresh result lists such a source even when nothing changed.
 
 Zotero collections are intake scopes when browsing, and arrive as a tree. A
 Zotero collection's ID here is a hash of its Zotero library and key
-(`zoteroCollectionId`), so every import, part and restart finds the same
-collection with no stored map. When a scoped import begins, the scope's
-collections are placed (`makeZoteroScopeCollections`: the chosen collection,
-its subcollections when included, the ones above them; empty ones too)
-without remaking what the person deleted here. Each imported item then joins
-the collection of every Zotero collection it is in, with `remake`, so a
-deleted one comes back only for a reference filed in it. A collection problem
+(`zoteroCollectionId`; the library as the collection reports it,
+`zoteroLibraryId`: `groups/<id>`, or the user ID, which Zotero on this
+computer gives only when it is signed in to sync and otherwise reports as
+`0`), so every import, part and restart finds the same collection with no
+stored map, and two accounts' collections stay apart. When a scoped import
+begins, the scope's collections are placed (`makeZoteroScopeCollections`: the
+chosen collection, its subcollections when included, the ones above them;
+empty ones too) without remaking what the person deleted here. Each imported
+item then joins the collection of every Zotero collection it is in, with
+`remake`, so a deleted one comes back only for a reference filed in it. A
+collection problem
 never fails the import: what could not be made or filled is a `collection`
 entry of "not brought" (`unmade` on the operation, `unfiled` on the item, or
 `unread` when Zotero did not list its collections). A refresh reads details,
@@ -3826,10 +3848,11 @@ changed by a refresh.
 
 The note has its own rule, because the text here is a conversion of Zotero's
 HTML. The base holds `note`, the text Scient last wrote from Zotero, and
-`notes`, Zotero's HTML. The note is untouched when it equals `base.note`
-(with no base: when it is empty or equals the plain text an earlier import
-would have made, `legacyNote`). Zotero changed when its HTML differs from
-`base.notes` and its Markdown from `base.note`; for a base without `notes`,
+`notes`, the digest of each of Zotero's notes. The note is untouched when it
+equals `base.note` (with no base: when it is empty or equals the plain text an
+earlier import would have made, `legacyNote`). Zotero changed when its notes'
+digests differ from `base.notes` (whether or not their HTML was kept) and its
+Markdown from `base.note`; for a base without `notes`,
 when `legacyNote` differs from `base.note`. An untouched note takes Zotero's
 Markdown, which is also how an earlier import's plain text becomes Markdown;
 an edited one is kept, and reported only when Zotero changed. An open clash
@@ -3849,7 +3872,10 @@ the citation key and identifiers without a Zotero field.
 With `pdfs` (the panel's **Include PDF**, off when the panel opens and held in
 `useZoteroSync`; the agent's `pdfs` input) each PDF of a source whose item was
 created, updated or found unchanged is sent by `sendPdfs` after the item's
-attachments are read once. A stored attachment with the PDF's MD5 means Zotero
+attachments are read once. One `sendPdfs` runs at a time for each Zotero item
+in the server process (`oneSendPerItem`, keyed by library and item key): two
+overlapping Sends would both read no attachment and each make one. A Send from
+another computer is not kept out. A stored attachment with the PDF's MD5 means Zotero
 has it (`in-zotero`). A `linked_file` attachment with the same file name (its
 `filename`, or the last part of its `path`) is not uploaded over: Zotero keeps
 only a path for it, so the name is all there is to compare. A personal library

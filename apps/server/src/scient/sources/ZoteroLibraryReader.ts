@@ -1,7 +1,6 @@
 import {
   normalizeImportedCitationKey,
   type ScientSourceCandidate,
-  type ZoteroCollection,
   type ZoteroCollectionsResult,
   type ZoteroImportScope,
   type ZoteroLibraryPage,
@@ -18,6 +17,7 @@ import {
   ZOTERO_ITEM_KEY_PATTERN,
   ZOTERO_PDFS_PER_ITEM,
   type ZoteroItemMaterial,
+  type ZoteroLibraryCollection,
   type ZoteroRawItem,
 } from "./ZoteroItems.ts";
 
@@ -73,10 +73,11 @@ function totalResults(response: ZoteroResponse, fallback: number): number {
   return Number.isFinite(reported) && reported >= 0 ? reported : fallback;
 }
 
-async function listAllCollections(
+/** Every collection of the library, with the library it is in. */
+export async function listZoteroLibraryCollections(
   transport: ZoteroTransport,
-): Promise<ReadonlyArray<ZoteroCollection>> {
-  const collections: ZoteroCollection[] = [];
+): Promise<ReadonlyArray<ZoteroLibraryCollection>> {
+  const collections: ZoteroLibraryCollection[] = [];
   let start = 0;
   while (true) {
     const parameters = new URLSearchParams({
@@ -101,7 +102,8 @@ async function listAllCollections(
 export async function listZoteroCollectionsWith(
   transport: ZoteroTransport,
 ): Promise<ZoteroCollectionsResult> {
-  return { collections: [...(await listAllCollections(transport))] };
+  const collections = await listZoteroLibraryCollections(transport);
+  return { collections: collections.map(({ libraryId: _libraryId, ...collection }) => collection) };
 }
 
 function scopePath(scope: ZoteroImportScope): string {
@@ -167,7 +169,7 @@ async function readAllScopedItems(
   if (scope.kind === "library" || !scope.includeSubcollections) {
     return readAllItemsAtPath(transport, scopePath(scope), query, maximumItems);
   }
-  const collections = await listAllCollections(transport);
+  const collections = await listZoteroLibraryCollections(transport);
   if (!collections.some((collection) => collection.key === scope.collectionKey)) {
     throw new Error("The Zotero collection no longer exists.");
   }
@@ -246,7 +248,7 @@ async function scopeItemPaths(
   scope: ZoteroImportScope,
 ): Promise<ReadonlyArray<string>> {
   if (scope.kind === "library" || !scope.includeSubcollections) return [scopePath(scope)];
-  const collections = await listAllCollections(transport);
+  const collections = await listZoteroLibraryCollections(transport);
   if (!collections.some((collection) => collection.key === scope.collectionKey)) {
     throw new Error("The Zotero collection no longer exists.");
   }

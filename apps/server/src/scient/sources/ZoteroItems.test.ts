@@ -231,7 +231,7 @@ describe("Zotero items", () => {
 
     expect(material.note).toBe("## First & **key**\n\n## Second *note*");
     // Zotero's own HTML is kept by key, without the bytes of an embedded image.
-    expect(material.notes).toEqual([
+    expect(material.notes.map(({ itemKey, html }) => ({ itemKey, html }))).toEqual([
       { itemKey: "NOTE2345", html: '<p>First &amp; <strong>key</strong> <img src=""></p>' },
       { itemKey: "NOTE3456", html: "<p>Second <em>note</em></p>" },
     ]);

@@ -1,8 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import {
+  importScientAnnotations,
+  readScientAnnotationFile,
+} from "../annotations/annotationStore.ts";
 import type { PdfPageText } from "../annotations/pdfQuoteAnchor.ts";
+import { temporaryProject } from "../annotations/annotationTestUtils.ts";
+import { zoteroItem } from "./Zotero.testkit.ts";
 import { placeZoteroAnnotations } from "./ZoteroAnnotations.ts";
-import type { ZoteroPdfAnnotation } from "./ZoteroItems.ts";
+import { zoteroItemMaterial, type ZoteroPdfAnnotation } from "./ZoteroItems.ts";
 
 const page = (number: number, lines: ReadonlyArray<string>): PdfPageText => ({
   page: number,
@@ -20,7 +26,6 @@ const lines = [
   "Later work found the same: the effect held in every group we tested.",
 ];
 const text = { extractorVersion: "test", pages: [page(1, lines), page(2, ["Methods."])] };
-const nonSpace = (value: string) => value.replace(/\s/gu, "").length;
 
 const annotation = (
   key: string,
@@ -32,25 +37,36 @@ const annotation = (
   page: 1,
   comment: "",
   color: "#ffd400",
-  offset: null,
   addedAt: "2024-01-24T04:36:20Z",
   ...fields,
 });
 
 describe("placing Zotero's highlights", () => {
-  it("places a quote found once on its page, or singled out by Zotero's position, and keeps the rest", () => {
+  it("places a quote found once on its page and keeps the rest, a repeated one too", () => {
     const repeated = "the effect held in every group we tested";
-    const second = nonSpace(lines.slice(0, 3).join("") + "Later work found the same:");
+    // As Zotero sends it, with its count of the characters before the second one: that
+    // count comes from another reading of the page, so it decides nothing here.
+    const before = (lines.slice(0, 3).join("") + "Later work found the same:").replace(/\s/gu, "");
+    const sortIndex = { annotationSortIndex: `00000|${before.length + 3}|00100` };
+    const [underline] = zoteroItemMaterial(zoteroItem("ABCD2345"), [
+      zoteroItem("REPT2345", {
+        itemType: "annotation",
+        parentItem: "PDFA2345",
+        annotationType: "underline",
+        annotationText: repeated,
+        annotationColor: "#ffd400",
+        annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+        ...sortIndex,
+      }),
+    ]).annotations;
     const { placed, unplaced } = placeZoteroAnnotations(
       [
         annotation("ONCE2345", { text: "strong in the first", comment: "Key", color: "#ff6666" }),
-        annotation("NEAR2345", { kind: "underline", text: repeated, offset: second + 3 }),
-        // Halfway between the two: Zotero's position decides nothing, so it is not guessed.
-        annotation("HALF2345", { text: repeated, offset: Math.round(second / 2) }),
-        annotation("NONE2345", { text: repeated }),
+        underline!,
         annotation("GONE2345", { text: "Not in the text", page: 2 }),
         annotation("IMAG2345", { kind: "image", text: "", comment: "Figure 2" }),
       ],
+      "475425",
       text,
       "2026-11-15T09:00:00.000Z",
     );
@@ -66,19 +82,11 @@ describe("placing Zotero's highlights", () => {
       })),
     ).toEqual([
       {
-        id: "ann_zotero_ONCE2345",
+        id: "ann_zotero_user_475425_ONCE2345",
         at: lines[0]!.indexOf("strong"),
         note: "Key",
         color: "#ff6666",
         underline: undefined,
-        dated: "2024-01-24T04:36:20Z",
-      },
-      {
-        id: "ann_zotero_NEAR2345",
-        at: text.pages[0]!.text.lastIndexOf(repeated),
-        note: "",
-        color: "#ffd400",
-        underline: true,
         dated: "2024-01-24T04:36:20Z",
       },
     ]);
@@ -91,16 +99,16 @@ describe("placing Zotero's highlights", () => {
         comment,
       ]),
     ).toEqual([
-      ["ann_zotero_HALF2345", "highlight", 1, repeated, ""],
-      ["ann_zotero_NONE2345", "highlight", 1, repeated, ""],
-      ["ann_zotero_GONE2345", "highlight", 2, "Not in the text", ""],
-      ["ann_zotero_IMAG2345", "image", 1, "", "Figure 2"],
+      ["ann_zotero_user_475425_REPT2345", "underline", 1, repeated, ""],
+      ["ann_zotero_user_475425_GONE2345", "highlight", 2, "Not in the text", ""],
+      ["ann_zotero_user_475425_IMAG2345", "image", 1, "", "Figure 2"],
     ]);
   });
 
   it("keeps every one of a PDF without text, with its page, quote and comment", () => {
     const { placed, unplaced } = placeZoteroAnnotations(
       [annotation("SCAN2345", { text: "strong in the first", comment: "Scanned" })],
+      "475425",
       null,
       "2026-11-15T09:00:00.000Z",
     );
@@ -108,7 +116,7 @@ describe("placing Zotero's highlights", () => {
     expect(placed).toEqual([]);
     expect(unplaced).toEqual([
       {
-        annotationId: "ann_zotero_SCAN2345",
+        annotationId: "ann_zotero_user_475425_SCAN2345",
         revision: 1,
         kind: "highlight",
         page: 1,
@@ -118,6 +126,47 @@ describe("placing Zotero's highlights", () => {
         createdAt: "2024-01-24T04:36:20Z",
         deletedAt: null,
       },
+    ]);
+  });
+
+  it("keeps a group's highlight apart from one of My Library with the same key, on one PDF and on two", async () => {
+    await using project = await temporaryProject();
+    const mark = annotation("ABCD2345", { text: "strong in the first" });
+    const bring = (sha256: string, libraryId: string, comment: string) =>
+      importScientAnnotations({
+        canonicalRoot: project.root,
+        material: { sha256, byteLength: 100 },
+        ...placeZoteroAnnotations(
+          [{ ...mark, comment }],
+          libraryId,
+          text,
+          "2026-11-15T09:00:00.000Z",
+        ),
+      });
+    const marks = async (sha256: string) =>
+      (await readScientAnnotationFile(project.root, sha256))?.annotations.map((entry) => [
+        entry.annotationId,
+        entry.note,
+      ]);
+    const [one, first, second] = ["a", "b", "c"].map((digit) => digit.repeat(64)) as [
+      string,
+      string,
+      string,
+    ];
+
+    await bring(one, "475425", "Mine");
+    await bring(one, "groups/4321", "The lab's");
+    await bring(first, "475425", "Mine");
+    await bring(second, "groups/4321", "The lab's");
+
+    expect(await marks(one)).toEqual([
+      ["ann_zotero_user_475425_ABCD2345", "Mine"],
+      ["ann_zotero_group_4321_ABCD2345", "The lab's"],
+    ]);
+    // An agent finds a highlight by its ID alone, in the first file that has it.
+    expect([await marks(first), await marks(second)]).toEqual([
+      [["ann_zotero_user_475425_ABCD2345", "Mine"]],
+      [["ann_zotero_group_4321_ABCD2345", "The lab's"]],
     ]);
   });
 });

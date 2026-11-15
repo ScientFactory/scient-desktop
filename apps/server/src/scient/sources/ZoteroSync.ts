@@ -7,12 +7,14 @@ import {
   normalizeScientSourceEditableMetadata,
   type ScientSourceActor,
   type ScientSourceExternalReference,
+  type ScientSourceNotBrought,
   type ScientSourceRecord,
   type ScientSourceZoteroRefreshItem,
   type ScientSourceZoteroRefreshResult,
   type ScientSourceZoteroSendItem,
   type ZoteroConnection,
   zoteroGroupIdOfLibrary,
+  zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
 import {
   attachScientSourcePdf,
@@ -36,7 +38,12 @@ import {
   type ZoteroAccess,
 } from "./ZoteroConnections.ts";
 import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
-import { decodeZoteroRawItem, type ZoteroItemMaterial, type ZoteroRawItem } from "./ZoteroItems.ts";
+import {
+  addNotBrought,
+  decodeZoteroRawItem,
+  type ZoteroItemMaterial,
+  type ZoteroRawItem,
+} from "./ZoteroItems.ts";
 import {
   readZoteroAttachmentFiles,
   readZoteroItemChildren,
@@ -324,7 +331,8 @@ async function refreshOne(input: {
     attachmentKeys: attached.keys,
     pdfs: Object.fromEntries(pdfs),
   });
-  // Last, so a failure here leaves the rest saved; each one comes once, so a retry is safe.
+  // Last, so a failure here leaves the rest saved; each one comes once, so a retry is safe. A
+  // Zotero file whose PDF was removed here is not brought back for its highlights: they are said.
   const highlights = await bringZoteroAnnotations({
     root: input.root,
     record,
@@ -333,6 +341,10 @@ async function refreshOne(input: {
     now: new Date().toISOString(),
   });
   if (highlights.added > 0) changedFields.push("highlights");
+  const notBrought: ScientSourceNotBrought[] = [];
+  addNotBrought(notBrought, "highlights", highlights.unplaced, "unplaced");
+  addNotBrought(notBrought, "highlights", highlights.elsewhere, "no-file");
+  addNotBrought(notBrought, "highlights", highlights.tooLong, "too-long");
   const updated = changedFields.length > 0 || attached.added > 0;
   return {
     ...summary,
@@ -341,6 +353,7 @@ async function refreshOne(input: {
     addedPdfCount: attached.added,
     conflicts: plan.conflicts,
     message: null,
+    ...(notBrought.length > 0 ? { notBrought } : {}),
   };
 }
 
@@ -495,6 +508,22 @@ function noFilesMessage(library: ZoteroWebLibrary): string {
   return library.groupId
     ? "This group does not let the key in Accounts add files."
     : "The Zotero key in Accounts does not allow files.";
+}
+
+const itemSends = new Map<string, Promise<unknown>>();
+
+/**
+ * One PDF Send at a time for each Zotero item in this server: two that overlap would both find
+ * no attachment and each make one. A Send from another computer is not kept out.
+ */
+async function oneSendPerItem<A>(key: string, run: () => Promise<A>): Promise<A> {
+  const current = (itemSends.get(key) ?? Promise.resolve()).catch(() => undefined).then(run);
+  itemSends.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (itemSends.get(key) === current) itemSends.delete(key);
+  }
 }
 
 /**
@@ -721,11 +750,17 @@ export async function sendSourcesToZotero(input: {
       const item = await sendOne({ root: input.root, record, library, actor: input.actor });
       const placed =
         item.outcome === "created" || item.outcome === "updated" || item.outcome === "unchanged";
+      const { itemKey } = item;
+      const libraryId = library.groupId
+        ? zoteroGroupLibraryId(library.groupId)
+        : library.account.userId;
       items.push(
-        input.pdfs && placed && item.itemKey
+        input.pdfs && placed && itemKey
           ? {
               ...item,
-              pdfs: await sendPdfs({ root: input.root, record, library, itemKey: item.itemKey }),
+              pdfs: await oneSendPerItem(`${libraryId}\0${itemKey}`, () =>
+                sendPdfs({ root: input.root, record, library, itemKey }),
+              ),
             }
           : item,
       );

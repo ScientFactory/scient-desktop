@@ -8,6 +8,7 @@ import type { ScientAnnotationCommand } from "@t3tools/contracts";
 
 import {
   applyAnnotationCommand,
+  importScientAnnotations,
   listScientAnnotationFiles,
   MAX_ANNOTATIONS_PER_PDF,
   mutateScientAnnotations,
@@ -259,6 +260,40 @@ describe("annotation files", () => {
     const listing = await listScientAnnotationFiles(project.root);
     expect(listing.files.map((file) => file.material.sha256)).toEqual([material.sha256]);
     expect(listing.unreadable).toEqual([`${"b".repeat(64)}.json`]);
+  });
+
+  it("never writes what it could not read back, so the person's own highlights stay readable", async () => {
+    await using project = await temporaryProject();
+    const mine = await mutateScientAnnotations({
+      canonicalRoot: project.root,
+      material,
+      relativePath: null,
+      command: create("ann_00000001", "Mine"),
+      actor: "user",
+      now: "2026-11-10T12:00:00.000Z",
+    });
+    const tooLong = {
+      annotationId: "ann_zotero_user_0_ABCD2345",
+      revision: 1,
+      kind: "highlight" as const,
+      page: 1,
+      quote: "A passage",
+      comment: "x".repeat(100_001),
+      createdAt: "2024-01-24T04:36:20Z",
+      deletedAt: null,
+    };
+
+    await expect(
+      importScientAnnotations({
+        canonicalRoot: project.root,
+        material,
+        placed: [],
+        unplaced: [tooLong],
+      }),
+    ).rejects.toThrow();
+    expect((await readScientAnnotationFile(project.root, material.sha256))?.annotations).toEqual([
+      mine.annotation,
+    ]);
   });
 
   it("serializes concurrent creates on one PDF so none is lost", async () => {

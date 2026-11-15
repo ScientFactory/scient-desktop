@@ -1,10 +1,11 @@
-import type { ScientSourceRecord } from "@scientfactory/scient-sources";
+import { zoteroGroupIdOfLibrary, type ScientSourceRecord } from "@scientfactory/scient-sources";
 import {
   isScientLibraryLocation,
   type ScientSourceStoreLocation,
 } from "@scientfactory/scient-sources/library-root";
 import { sourceAttachmentAbsolutePath } from "@scientfactory/scient-sources/store";
-import type { ScientUnplacedAnnotation } from "@t3tools/contracts";
+import { ScientUnplacedAnnotation } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import {
   annotationProjectRoot,
@@ -17,59 +18,47 @@ import type { ZoteroPdfAnnotation } from "./ZoteroItems.ts";
 
 /** A highlight's note holds this much; a longer comment is kept with the ones not placed. */
 const NOTE_CHARACTERS = 8_000;
+const keptWhole = Schema.is(ScientUnplacedAnnotation);
 
 /**
- * Of a phrase found several times on its page, the one Zotero's own count of the characters
- * before it singles out: the only one near that count, with every other far off. Null when
- * the count does not decide; the two readers read a page's text differently, hence the margin.
+ * A highlight's ID here, the same on every import and refresh: a Zotero key is unique only in
+ * its library. That is the library the source's link names, which stays as it was at import
+ * (Zotero on this computer reports `0` for My Library until it signs in to sync).
  */
-function zoteroRepeatAt(
-  repeats: ReadonlyArray<{ readonly pageText: string; readonly start: number }>,
-  offset: number,
-): number | null {
-  const near = 20 + 0.02 * offset;
-  const distances = repeats.map(({ pageText, start }) =>
-    Math.abs(pageText.slice(0, start).replace(/\s/gu, "").length - offset),
-  );
-  const close = distances.flatMap((distance, at) => (distance <= near ? [at] : []));
-  if (close.length !== 1) return null;
-  return distances.every((distance, at) => at === close[0] || distance > 2 * near)
-    ? close[0]!
-    : null;
+function zoteroAnnotationId(libraryId: string, key: string): string {
+  const groupId = zoteroGroupIdOfLibrary(libraryId);
+  return `ann_zotero_${groupId === null ? `user_${libraryId}` : `group_${groupId}`}_${key}`;
 }
 
 /**
- * Places each highlight and underline by its quoted text on its page of these bytes. One
- * found once there is placed; one found several times only when Zotero's position singles
- * one out. Everything else is kept, with its page, quote and comment, as not placed.
+ * Places each highlight and underline of the item in `libraryId` by its quoted text on its
+ * page of these bytes, when it is found there once; a phrase that repeats on its page is never
+ * guessed between. Everything else is kept, with its page, quote and comment, as not placed,
+ * unless it is longer than that list holds: `tooLong` counts those, so they are said, not cut.
  */
 export function placeZoteroAnnotations(
   annotations: ReadonlyArray<ZoteroPdfAnnotation>,
+  libraryId: string,
   text: { readonly extractorVersion: string; readonly pages: ReadonlyArray<PdfPageText> } | null,
   now: string,
 ): {
   readonly placed: ReadonlyArray<ImportedAnnotation>;
   readonly unplaced: ReadonlyArray<ScientUnplacedAnnotation>;
+  readonly tooLong: number;
 } {
   const placed: ImportedAnnotation[] = [];
   const unplaced: ScientUnplacedAnnotation[] = [];
+  let tooLong = 0;
   for (const annotation of annotations) {
-    const annotationId = `ann_zotero_${annotation.key}`;
+    const annotationId = zoteroAnnotationId(libraryId, annotation.key);
     const at = annotation.addedAt ?? now;
-    const { offset } = annotation;
     const anchoring =
       text &&
       annotation.page !== null &&
       (annotation.kind === "highlight" || annotation.kind === "underline") &&
       annotation.text.trim() &&
       annotation.comment.length <= NOTE_CHARACTERS
-        ? anchorPdfQuote(
-            text.pages,
-            annotation.text,
-            text.extractorVersion,
-            annotation.page,
-            offset === null ? undefined : (repeats) => zoteroRepeatAt(repeats, offset),
-          )
+        ? anchorPdfQuote(text.pages, annotation.text, text.extractorVersion, annotation.page)
         : null;
     if (anchoring?._tag === "Found") {
       placed.push({
@@ -82,7 +71,7 @@ export function placeZoteroAnnotations(
       });
       continue;
     }
-    unplaced.push({
+    const kept: ScientUnplacedAnnotation = {
       annotationId,
       revision: 1,
       kind: annotation.kind,
@@ -92,16 +81,18 @@ export function placeZoteroAnnotations(
       ...(annotation.color ? { color: annotation.color } : {}),
       createdAt: at,
       deletedAt: null,
-    });
+    };
+    if (keptWhole(kept)) unplaced.push(kept);
+    else tooLong += 1;
   }
-  return { placed, unplaced };
+  return { placed, unplaced, tooLong };
 }
 
 /**
  * Brings Zotero's highlights and comments onto the PDFs of a source here, each once (see
  * `addImportedAnnotations`). `pdfs` says which PDF here each Zotero file is, by its sha256.
- * Says how many were added, how many of those were not placed, and how many are on a file
- * that is not here.
+ * Says how many were added, how many of those were not placed, how many are on a file that
+ * is not here, and how many were too long to keep.
  */
 export async function bringZoteroAnnotations(input: {
   readonly root: ScientSourceStoreLocation;
@@ -109,10 +100,20 @@ export async function bringZoteroAnnotations(input: {
   readonly annotations: ReadonlyArray<ZoteroPdfAnnotation>;
   readonly pdfs: ReadonlyMap<string, string>;
   readonly now: string;
-}): Promise<{ readonly added: number; readonly unplaced: number; readonly elsewhere: number }> {
+}): Promise<{
+  readonly added: number;
+  readonly unplaced: number;
+  readonly elsewhere: number;
+  readonly tooLong: number;
+}> {
+  const libraryId = input.record.externalReferences.find(
+    (reference) => reference.system === "zotero",
+  )?.libraryId;
+  if (libraryId === undefined) throw new Error("This source is not linked to Zotero.");
   let added = 0;
   let unplaced = 0;
   let elsewhere = 0;
+  let tooLong = 0;
   const byFile = Map.groupBy(input.annotations, (annotation) => annotation.attachmentKey);
   for (const [attachmentKey, annotations] of byFile) {
     const sha256 = input.pdfs.get(attachmentKey);
@@ -129,13 +130,16 @@ export async function bringZoteroAnnotations(input: {
       pdfPath: sourceAttachmentAbsolutePath(input.root, attachment),
       ...material,
     }).catch(() => null);
+    const marks = placeZoteroAnnotations(annotations, libraryId, text, input.now);
     const written = await importScientAnnotations({
       canonicalRoot: home,
       material,
-      ...placeZoteroAnnotations(annotations, text, input.now),
+      placed: marks.placed,
+      unplaced: marks.unplaced,
     });
     added += written.placed + written.unplaced;
     unplaced += written.unplaced;
+    tooLong += marks.tooLong;
   }
-  return { added, unplaced, elsewhere };
+  return { added, unplaced, elsewhere, tooLong };
 }

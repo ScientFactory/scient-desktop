@@ -37,6 +37,8 @@ export interface FakeZoteroLibrary {
     readonly name: string;
     readonly parent?: string;
   }>;
+  /** The library its collections say they are in; My Library on this computer by default. */
+  readonly library?: ZoteroRawItem["library"];
 }
 
 const json = (value: unknown, total?: number): ZoteroResponse => ({
@@ -95,6 +97,7 @@ export function fakeZoteroTransport(
       if (route === "/collections") {
         const collections = (library.collections ?? []).map((collection) => ({
           key: collection.key,
+          library: library.library ?? { type: "user", id: 0 },
           data: {
             key: collection.key,
             name: collection.name,

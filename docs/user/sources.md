@@ -358,24 +358,24 @@ already in your Library are not filed again.
 Highlights, underlines and comments you made on a PDF in Zotero come with
 the PDF. Each is placed by its quoted text on its page of the same PDF, in
 its Zotero colour, with its comment as its note and Zotero's date, as made by
-you. When that text is found more than once on the page, Zotero's own record
-of where on the page you marked it decides, only when it clearly points to one
-of them. What cannot be placed this way (text the two readers read
-differently, a phrase that repeats, a marked image area, a drawing, a note on
-the page) is not guessed: it is kept with its page, quote and comment in the
-source's details, under the PDF's highlights, as **From Zotero, not placed on
-the page**.
+you. What cannot be placed this way (text the two readers read differently,
+a phrase found more than once on its page, a marked image area, a drawing, a
+note on the page) is not guessed: it is kept with its page, quote and comment
+in the source's details, under the PDF's highlights, as **From Zotero, not
+placed on the page**.
 
 When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
 many references it concerns: highlights and comments not placed on the page,
-highlights and comments on files that did not come, files that are not PDFs,
+highlights and comments on files that are not here, highlights and comments
+too long to keep (over 100,000 characters), files that are not PDFs,
 links kept as attachments, PDFs Zotero could not hand over, images in notes,
 notes too long to keep whole (a note holds 100,000 characters; what does not
-fit is left out from a paragraph on), notes and files that belong to no
-reference, and collections that could not be made or filled here (the Library
-holds 500 collections, ten levels, names of 200 characters, and 20,000 sources
-in one collection).
+fit is left out from a paragraph on), notes not kept as Zotero wrote them
+(Scient keeps 1,000,000 characters of a reference's notes that way), notes and
+files that belong to no reference, and collections that could not be made or
+filled here (the Library holds 500 collections, ten levels, names of 200
+characters, and 20,000 sources in one collection).
 A reference that was already in your Library (the same DOI or the same PDF)
 is listed too: nothing was taken from Zotero's copy of it, with one exception.
 When the reference is certainly the same one and the source here has no **My
@@ -435,9 +435,13 @@ in while one you corrected here stays, and one you removed here stays removed
 as long as Zotero's did not change. A source imported before Scient kept
 these details gets them on its next refresh, and its highlights from Zotero
 too. A highlight comes from Zotero once: one you removed here does not come
-back. In a project the refresh reads the project's Zotero sources; in **All
-Library**, every Zotero source in the Library. A large Library is read again
-200 sources at a time, and the dialog says how far it is; closing it stops
+back, and a PDF you removed here is not brought back for its highlights. The
+refresh lists, under **Not brought from Zotero**, the highlights and comments
+it could not place on the page, those on files that are not here, and those
+too long to keep. In a project the refresh reads the project's Zotero
+sources; in **All Library**, every Zotero source in the Library. A large
+Library is read again 200 sources at a time, and the dialog says how far it
+is; closing it stops
 there and keeps what was read. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
 leaving it. A refresh does not file sources again: a reference you moved

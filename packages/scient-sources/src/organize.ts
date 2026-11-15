@@ -47,6 +47,11 @@ export const ScientSourceCollection = Schema.Struct({
   name: Name,
   /** The collection it is in. It stays when that one is deleted, so a restore puts both back. */
   parentCollectionId: Schema.optionalKey(NonEmptyString),
+  /**
+   * Collections kept elsewhere (Zotero, another Library) it stands for besides its own ID: one
+   * it was matched to by name, or made beside a deleted one for. Found by them after a rename.
+   */
+  outsideIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
   // Ids stay when a source is removed, so restoring it from the trash restores membership too.
   sourceIds: Schema.Array(NonEmptyString).pipe(
     Schema.check(Schema.isMaxLength(SCIENT_SOURCE_COLLECTION_MEMBER_LIMIT)),

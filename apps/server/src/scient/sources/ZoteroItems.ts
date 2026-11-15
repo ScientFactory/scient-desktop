@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A Zotero note's digest is a sha256 of its HTML, computed in place.
+import * as NodeCrypto from "node:crypto";
+
 import {
   citationKeyFromZoteroExtra,
   isScientSourceMoreName,
@@ -89,18 +92,26 @@ const ZoteroRawItemData = Schema.Struct({
   annotationColor: OptionalText,
   /** `pageIndex` (from 0) and the marked rectangles, as JSON text. */
   annotationPosition: OptionalText,
-  /** `page|characters before it on the page|top`, zero-padded. */
-  annotationSortIndex: OptionalText,
   dateModified: OptionalText,
 });
+
+const ZoteroRawLibrary = Schema.Struct({
+  type: Schema.String,
+  id: Schema.Union([Schema.String, Schema.Number]),
+});
+
+/**
+ * A library as a source's link names it: `groups/<id>`, or the user ID for My Library. Zotero
+ * on this computer reports the signed-in user's ID there, or `0` when it is not signed in.
+ */
+function zoteroLibraryId(library: typeof ZoteroRawLibrary.Type): string {
+  return library.type === "group" ? zoteroGroupLibraryId(String(library.id)) : String(library.id);
+}
 
 export const ZoteroRawItem = Schema.Struct({
   key: Schema.String,
   version: Schema.Int,
-  library: Schema.Struct({
-    type: Schema.String,
-    id: Schema.Union([Schema.String, Schema.Number]),
-  }),
+  library: ZoteroRawLibrary,
   data: ZoteroRawItemData,
   /** On zotero.org, `numChildren` of a file counts the highlights and comments made on it. */
   meta: Schema.optionalKey(Schema.Struct({ numChildren: Schema.optionalKey(Schema.Number) })),
@@ -146,6 +157,7 @@ export const decodeZoteroRawItems = (value: unknown): ReadonlyArray<ZoteroRawIte
 
 const ZoteroRawCollection = Schema.Struct({
   key: Schema.String,
+  library: ZoteroRawLibrary,
   data: Schema.Struct({
     key: Schema.String,
     name: Schema.String,
@@ -157,12 +169,18 @@ export const decodeZoteroRawCollections = Schema.decodeUnknownSync(
 );
 type ZoteroRawCollection = typeof ZoteroRawCollection.Type;
 
-export function collectionFromRaw(raw: ZoteroRawCollection): ZoteroCollection {
+/** A collection with its library, as `zoteroLibraryId` names it: a key is unique only there. */
+export interface ZoteroLibraryCollection extends ZoteroCollection {
+  readonly libraryId: string;
+}
+
+export function collectionFromRaw(raw: ZoteroRawCollection): ZoteroLibraryCollection {
   const parent = raw.data.parentCollection;
   return {
     key: raw.data.key || raw.key,
     name: raw.data.name.trim() || "Untitled collection",
     parentCollectionKey: typeof parent === "string" && parent.trim() ? parent : null,
+    libraryId: zoteroLibraryId(raw.library),
   };
 }
 
@@ -484,10 +502,7 @@ export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate
     externalReferences: [
       {
         system: "zotero",
-        libraryId:
-          raw.library.type === "group"
-            ? zoteroGroupLibraryId(String(raw.library.id))
-            : String(raw.library.id),
+        libraryId: zoteroLibraryId(raw.library),
         itemKey: raw.key,
         itemVersion: raw.version,
         rawItemType: data.itemType,
@@ -545,8 +560,6 @@ export interface ZoteroPdfAnnotation {
   readonly text: string;
   readonly comment: string;
   readonly color: string | null;
-  /** How many of the page's characters come before it in Zotero's reading, spaces not counted. */
-  readonly offset: number | null;
   readonly addedAt: string | null;
 }
 
@@ -573,7 +586,6 @@ function zoteroPdfAnnotations(
     if (data.itemType !== "annotation" || typeof data.parentItem !== "string") return [];
     const type = data.annotationType ?? "";
     const color = data.annotationColor?.trim().toLowerCase() ?? "";
-    const offset = Number.parseInt(data.annotationSortIndex?.split("|")[1] ?? "", 10);
     return [
       {
         key: child.key,
@@ -584,7 +596,6 @@ function zoteroPdfAnnotations(
         text: data.annotationText ?? "",
         comment: data.annotationComment ?? "",
         color: /^#[0-9a-f]{6}$/u.test(color) ? color : null,
-        offset: Number.isFinite(offset) ? offset : null,
         addedAt: data.dateAdded ?? data.dateModified ?? null,
       },
     ];
@@ -645,29 +656,35 @@ function legacyZoteroNotesText(children: ReadonlyArray<ZoteroRawItem>): string |
   return notes.join("\n\n---\n\n").slice(0, ZOTERO_NOTE_CHARACTERS);
 }
 
-/** A note as Zotero wrote it, to keep. */
+/**
+ * A note as Zotero wrote it: its digest always, so a refresh sees every change, and its HTML
+ * to keep while the reference's notes fit the bound.
+ */
 export interface ZoteroNoteOriginal {
   readonly itemKey: string;
-  readonly html: string;
+  readonly sha256: string;
+  readonly html?: string;
 }
 
 /**
  * A reference's notes as Zotero wrote them, by key, without the bytes of embedded images
- * (images are not carried and are counted). Whole notes, as many as the bound holds.
+ * (images are not carried and are counted). The HTML of whole notes, as many as the bound
+ * holds; a note past it has only its digest.
  */
 function zoteroNoteOriginals(
   children: ReadonlyArray<ZoteroRawItem>,
 ): ReadonlyArray<ZoteroNoteOriginal> {
-  const originals: ZoteroNoteOriginal[] = [];
   let characters = 0;
-  for (const child of children.toSorted((left, right) => left.key.localeCompare(right.key))) {
-    if (child.data.itemType !== "note" || !child.data.note?.trim()) continue;
-    const html = child.data.note.replace(/(\ssrc\s*=\s*["'])data:[^"']*/giu, "$1");
-    characters += html.length;
-    if (characters > ZOTERO_NOTE_ORIGINAL_CHARACTERS) break;
-    originals.push({ itemKey: child.key, html });
-  }
-  return originals;
+  return children
+    .toSorted((left, right) => left.key.localeCompare(right.key))
+    .flatMap((child) => {
+      if (child.data.itemType !== "note" || !child.data.note?.trim()) return [];
+      const html = child.data.note.replace(/(\ssrc\s*=\s*["'])data:[^"']*/giu, "$1");
+      const sha256 = NodeCrypto.createHash("sha256").update(html).digest("hex");
+      const kept = characters + html.length <= ZOTERO_NOTE_ORIGINAL_CHARACTERS;
+      if (kept) characters += html.length;
+      return [{ itemKey: child.key, sha256, ...(kept ? { html } : {}) }];
+    });
 }
 
 /** Fields that are not bibliographic text, or are read elsewhere (identifiers, notes, files). */
@@ -742,7 +759,11 @@ export function addNotBrought(
 function zoteroNotBrought(
   item: ZoteroRawItem,
   children: ReadonlyArray<ZoteroRawItem>,
-  notes: { readonly images: number; readonly cut: boolean },
+  notes: {
+    readonly images: number;
+    readonly cut: boolean;
+    readonly originals: ReadonlyArray<ZoteroNoteOriginal>;
+  },
   annotations: ReadonlyArray<ZoteroPdfAnnotation>,
 ): ReadonlyArray<ScientSourceNotBrought> {
   const listed: ScientSourceNotBrought[] = [];
@@ -773,6 +794,7 @@ function zoteroNotBrought(
   );
   add("note-images", notes.images);
   add("note-cut", notes.cut ? 1 : 0);
+  add("note-cut", notes.originals.some((note) => note.html === undefined) ? 1 : 0, "original");
   return listed;
 }
 
@@ -802,11 +824,14 @@ export function zoteroItemMaterial(
 ): ZoteroItemMaterial {
   const pdfs = zoteroPdfAttachments(children);
   const primaryPdf = pdfs[0];
-  const notes = zoteroNotesMarkdown(
-    children.flatMap((child) =>
-      child.data.itemType === "note" ? [{ itemKey: child.key, html: child.data.note ?? "" }] : [],
+  const notes = {
+    ...zoteroNotesMarkdown(
+      children.flatMap((child) =>
+        child.data.itemType === "note" ? [{ itemKey: child.key, html: child.data.note ?? "" }] : [],
+      ),
     ),
-  );
+    originals: zoteroNoteOriginals(children),
+  };
   const annotations = zoteroPdfAnnotations(children);
   return {
     candidate: {
@@ -817,7 +842,7 @@ export function zoteroItemMaterial(
       pdfAttachmentCount: pdfs.length,
     },
     note: notes.markdown,
-    notes: zoteroNoteOriginals(children),
+    notes: notes.originals,
     legacyNote: legacyZoteroNotesText(children),
     citationKey,
     collectionKeys: [...(item.data.collections ?? [])],
