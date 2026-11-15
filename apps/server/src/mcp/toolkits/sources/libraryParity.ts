@@ -143,6 +143,8 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "dismiss-move-summary": ["dismiss-move-summary"],
   // Every change an agent makes runs a failed move again first.
   "retry-move": [],
+  // "I have seen these" is the person's; an agent reads each source's notices and their history.
+  "dismiss-notice-changes": [],
   "link-pin": ["link-pin"],
   "unlink-pin": ["unlink-pin"],
   "keep-pin-separate": ["keep-pin-separate"],
