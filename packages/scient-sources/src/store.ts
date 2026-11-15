@@ -1350,6 +1350,25 @@ async function readKeptRevisions(
   return kept;
 }
 
+/**
+ * The tags a live source had at each revision after `revision`, oldest first and ending with
+ * now; null when the source is gone or a revision in between is no longer kept.
+ */
+export async function readScientSourceTagsAfter(
+  root: ScientSourceStoreLocation,
+  sourceId: string,
+  revision: number,
+): Promise<ReadonlyArray<ReadonlyArray<string>> | null> {
+  const paths = await sourceStorePaths(root);
+  const current = await readScientSourceRecordIfPresent(paths, sourceId);
+  if (!current) return null;
+  const between = (await readKeptRevisions(paths, sourceId))
+    .filter((record) => record.revision > revision && record.revision < current.revision)
+    .toSorted((left, right) => left.revision - right.revision);
+  if (between.length !== Math.max(0, current.revision - revision - 1)) return null;
+  return [...between, current].map((record) => record.tags);
+}
+
 /** The kept revisions of a live source, newest first, including the current one. */
 export async function listScientSourceRevisions(
   root: ScientSourceStoreLocation,
@@ -1788,25 +1807,55 @@ export async function listScientSourceImports(
     if (receipt && receipt.importedSourceIds.length > 0) receipts.push(receipt);
   }
   const newest = receipts
-    .toSorted((left, right) => (left.finishedAt < right.finishedAt ? 1 : -1))
+    .toSorted(
+      (left, right) =>
+        right.finishedAt.localeCompare(left.finishedAt) ||
+        left.operationId.localeCompare(right.operationId),
+    )
     .slice(0, limit);
   const imports: ScientSourceImportSummary[] = [];
   for (const receipt of newest) {
-    const operation = await readSourceImportOperationFromPaths(paths, receipt.operationId).catch(
-      () => null,
-    );
-    if (!operation) continue;
-    imports.push({
-      operationId: receipt.operationId,
-      finishedAt: receipt.finishedAt,
-      by: operation.actor,
-      intake: operation.intake,
-      outcome: receipt.outcome,
-      importedSourceIds: receipt.importedSourceIds,
-      failed: receipt.failedItemKeys.length,
-    });
+    const summary = await importSummary(paths, receipt);
+    if (summary) imports.push(summary);
   }
   return imports;
+}
+
+async function importSummary(
+  paths: SourceStorePaths,
+  receipt: ScientSourceImportReceipt,
+): Promise<ScientSourceImportSummary | null> {
+  const operation = await readSourceImportOperationFromPaths(paths, receipt.operationId).catch(
+    () => null,
+  );
+  return operation
+    ? {
+        operationId: receipt.operationId,
+        finishedAt: receipt.finishedAt,
+        by: operation.actor,
+        intake: operation.intake,
+        outcome: receipt.outcome,
+        importedSourceIds: receipt.importedSourceIds,
+        failed: receipt.failedItemKeys.length,
+      }
+    : null;
+}
+
+/** One finished import by its operation ID; null when it is not on record. */
+export async function readScientSourceImport(
+  root: ScientSourceStoreLocation,
+  operationId: string,
+): Promise<ScientSourceImportSummary | null> {
+  assertSafeIdentifier(operationId, "Operation ID");
+  const paths = await sourceStorePaths(root);
+  const filePath = operationPath(paths.receipts, operationId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  const receipt = await readBoundedJson(
+    filePath,
+    MAX_OPERATION_BYTES,
+    ScientSourceImportReceipt,
+  ).catch(() => null);
+  return receipt ? importSummary(paths, receipt) : null;
 }
 
 /** The IDs of the sources in the store now, from the record files' names; reads no record. */

@@ -35,6 +35,7 @@ import { assertScientProjectDirectory } from "./projectFiles.ts";
 import {
   listScientSourceRecords,
   readScientSourceRecord,
+  readScientSourceTagsAfter,
   SCIENT_SOURCES_DIRECTORY,
   scientSourceStoreInternals,
   updateScientSourcesMetadata,
@@ -1179,8 +1180,9 @@ export async function bulkUpdateScientSources(input: {
   readonly root: ScientSourceStoreLocation;
   readonly change: ScientSourcesBulkRequestChange;
   readonly actor: ScientSourceActor;
-  /** The same value on every request of one edit that was sent in parts. */
+  /** The same name on every request of one edit that was sent in parts, numbered from 1. */
   readonly partOf?: string;
+  readonly partNumber?: number;
 }): Promise<ScientSourcesBulkResult> {
   if ("undoBatchId" in input.change) {
     return undoBulkUpdate({ ...input, batchId: input.change.undoBatchId });
@@ -1210,6 +1212,7 @@ export async function bulkUpdateScientSources(input: {
         sources: receiptSources,
         collections: receiptCollections,
         ...(input.partOf ? { partOf: input.partOf } : {}),
+        ...(input.partOf && input.partNumber !== undefined ? { partNumber: input.partNumber } : {}),
       },
       options,
     );
@@ -1545,6 +1548,21 @@ const CHANGED_DURING_EDIT =
  * Whether a write the receipt recorded as about to happen landed. `null` means Undo should
  * restore the entry; otherwise it is settled, with a conflict when a later edit was kept.
  */
+const TAGS_CHANGED_SINCE =
+  "Tags were added to it or removed from it after the bulk edit, so those tags were kept.";
+
+/** The tags whose presence differs between two consecutive sets of the sequence, by key. */
+function changedTagKeys(sequence: ReadonlyArray<ReadonlyArray<string>>): ReadonlySet<string> {
+  const changed = new Set<string>();
+  for (let index = 1; index < sequence.length; index += 1) {
+    const earlier = new Set(sequence[index - 1]!.map(scientSourceTagKey));
+    const later = new Set(sequence[index]!.map(scientSourceTagKey));
+    for (const key of earlier) if (!later.has(key)) changed.add(key);
+    for (const key of later) if (!earlier.has(key)) changed.add(key);
+  }
+  return changed;
+}
+
 function settledSource(
   entry: BulkReceiptSource,
   revision: number,
@@ -1599,18 +1617,13 @@ async function undoBulkUpdate(input: {
     }
     const receiptSources = [...receipt.sources];
     const receiptCollections = [...receipt.collections];
-    let finishedAt: string | undefined;
-    let left = receipt.left ?? 0;
-    const save = (undoneAt?: string) => {
-      finishedAt = undoneAt ?? finishedAt;
-      return writeBulkReceipt(paths, {
+    const save = (undoneAt?: string) =>
+      writeBulkReceipt(paths, {
         ...receipt,
         sources: receiptSources,
         collections: receiptCollections,
-        ...(left > 0 ? { left } : {}),
-        ...(finishedAt ? { undoneAt: finishedAt, undoneBy: input.actor } : {}),
+        ...(undoneAt ? { undoneAt, undoneBy: input.actor } : {}),
       });
-    };
     let unsaved = null as string | null;
     const stop = (error: unknown): string => {
       unsaved = `Not undone because Undo could not be saved. ${failureMessage(error, "")}`.trim();
@@ -1641,8 +1654,10 @@ async function undoBulkUpdate(input: {
     const open = [...receiptSources.entries()].filter(([, entry]) => entry.undoneAt === undefined);
     const known = new Map<number, Awaited<ReturnType<typeof updateBulkFields>>[number]>();
     const toWrite: Array<readonly [number, BulkReceiptSource]> = [];
+    const revisionNow = new Map<string, number>();
     for (const [index, entry] of open) {
       const record = await readScientSourceRecord(paths.location, entry.sourceId);
+      if (record) revisionNow.set(entry.sourceId, record.revision);
       const settled = record
         ? settledSource(
             entry,
@@ -1660,6 +1675,23 @@ async function undoBulkUpdate(input: {
       }
     }
     const indexBySource = new Map(toWrite.map(([index, entry]) => [entry.sourceId, index]));
+    // A tag the paper gained or lost after the bulk edit is someone's later decision: Undo
+    // leaves it. Read from the paper's versions; when one is no longer kept, every tag stays.
+    const laterTags = new Map<string, ReadonlySet<string> | "unknown">();
+    for (const [, entry] of toWrite) {
+      if (entry.revision === undefined || revisionNow.get(entry.sourceId) === entry.revision + 1) {
+        continue;
+      }
+      const since = await readScientSourceTagsAfter(
+        paths.location,
+        entry.sourceId,
+        entry.revision + 1,
+      );
+      laterTags.set(
+        entry.sourceId,
+        since ? changedTagKeys([entry.after.tags, ...since]) : "unknown",
+      );
+    }
     const restored = await updateBulkFields({
       root: paths.location,
       sourceIds: toWrite.map(([, entry]) => entry.sourceId),
@@ -1674,18 +1706,30 @@ async function undoBulkUpdate(input: {
         const isType = (fields: BulkFields) =>
           current.type === fields.type && current.customType === fields.customType;
         const typeKept = typeChanged && !isType(after) && !isType(before);
+        const later = laterTags.get(sourceId);
+        const decidedSince = (tag: string) =>
+          later === "unknown" || later?.has(scientSourceTagKey(tag)) === true;
+        const tagsKept = [...added, ...removed].some(decidedSince);
         return {
           next: {
             type: typeChanged && isType(after) ? before.type : current.type,
             customType: typeChanged && isType(after) ? before.customType : current.customType,
             // Untouched since: restore the original order too.
-            tags: sameTags(current.tags, after.tags)
-              ? before.tags
-              : applyScientSourceTagChanges({ tags: current.tags, add: removed, remove: added }),
+            tags:
+              !tagsKept && sameTags(current.tags, after.tags)
+                ? before.tags
+                : applyScientSourceTagChanges({
+                    tags: current.tags,
+                    add: removed.filter((tag) => !decidedSince(tag)),
+                    remove: added.filter((tag) => !decidedSince(tag)),
+                  }),
           },
-          conflicts: typeKept
-            ? ["Its type was changed after the bulk edit, so the newer type was kept."]
-            : [],
+          conflicts: [
+            ...(typeKept
+              ? ["Its type was changed after the bulk edit, so the newer type was kept."]
+              : []),
+            ...(tagsKept ? [TAGS_CHANGED_SINCE] : []),
+          ],
         };
       },
       beforeWrite: (planned) =>
@@ -1701,6 +1745,7 @@ async function undoBulkUpdate(input: {
     });
     for (const [position, [index]] of toWrite.entries()) known.set(index, restored[position]!);
     const conflicts: BulkConflict[] = [];
+    const kept = new Set<number>();
     const outcomes: Array<{
       readonly index: number;
       readonly entry: BulkSourceResult;
@@ -1725,12 +1770,19 @@ async function undoBulkUpdate(input: {
         conflicts.push({ sourceId, message: "The source is no longer in the Library." });
       }
       for (const message of result.conflicts) conflicts.push({ sourceId, message });
+      // Said in the same write that marks it done, so the list never calls it simply undone.
+      if (result.entry.outcome === "not-found" || result.conflicts.length > 0) kept.add(index);
       outcomes.push({ index, entry: result.entry, done: true });
     }
     const unrecorded = outcomes.some((outcome) => outcome.done)
       ? await markDone((undoneAt) => {
           for (const { index, done } of outcomes) {
-            if (done) receiptSources[index] = { ...receiptSources[index]!, undoneAt };
+            if (!done) continue;
+            receiptSources[index] = {
+              ...receiptSources[index]!,
+              undoneAt,
+              ...(kept.has(index) ? { kept: true as const } : {}),
+            };
           }
         })
       : undefined;
@@ -1745,6 +1797,14 @@ async function undoBulkUpdate(input: {
         collections.push({ collectionId, outcome: "failed", message: unsaved });
         continue;
       }
+      const reported = conflicts.length;
+      const done = (undoneAt: string) => {
+        receiptCollections[index] = {
+          ...(receiptCollections[index] ?? delta),
+          undoneAt,
+          ...(conflicts.length > reported ? { kept: true as const } : {}),
+        };
+      };
       const document = await readDocument(paths).catch(() => null);
       const existing = document ? findCollection(document, collectionId) : undefined;
       if (delta.created) {
@@ -1779,9 +1839,7 @@ async function undoBulkUpdate(input: {
             message: "Sources or collections were added to it since, so it was kept.",
           });
         }
-        const unrecorded = await markDone((undoneAt) => {
-          receiptCollections[index] = { ...(receiptCollections[index] ?? delta), undoneAt };
-        });
+        const unrecorded = await markDone(done);
         collections.push(
           unrecorded
             ? { collectionId, outcome: "failed", message: unrecorded }
@@ -1833,19 +1891,12 @@ async function undoBulkUpdate(input: {
           });
         }
       }
-      const unrecorded = await markDone((undoneAt) => {
-        receiptCollections[index] = { ...(receiptCollections[index] ?? delta), undoneAt };
-      });
+      const unrecorded = await markDone(done);
       collections.push(
         unrecorded
           ? { collectionId, outcome: "failed", message: unrecorded }
           : { collectionId, outcome },
       );
-    }
-    if (conflicts.length > 0) {
-      // Kept for the list of past edits, which must not call this one simply "Undone".
-      left += conflicts.length;
-      await save().catch(() => undefined);
     }
     return { sources, collections, ...(conflicts.length > 0 ? { conflicts } : {}) };
   });
@@ -1857,7 +1908,13 @@ export interface ScientSourcesBulkEditSummary {
   readonly id: string;
   readonly at: string;
   readonly by: ScientSourceActor;
-  readonly parts: ReadonlyArray<{ readonly batchId: string; readonly sourceCount: number }>;
+  readonly parts: ReadonlyArray<{
+    readonly batchId: string;
+    readonly sourceCount: number;
+    readonly undone: boolean;
+  }>;
+  /** The oldest requests of the edit are no longer kept: this is the rest of it. */
+  readonly partsMissing: boolean;
   readonly sourceIds: ReadonlyArray<string>;
   readonly tagsAdded: ReadonlyArray<string>;
   readonly tagsRemoved: ReadonlyArray<string>;
@@ -1895,7 +1952,8 @@ export async function listScientSourcesBulkEdits(
     const receipt = await readBulkReceipt(paths, name.slice(0, -".json".length)).catch(() => null);
     // A request that changed nothing still left its (empty) receipt.
     if (!receipt || receipt.sources.length + receipt.collections.length === 0) continue;
-    const key = receipt.partOf ?? receipt.batchId;
+    // Two actors' edits are never one edit, whatever name their requests carry.
+    const key = receipt.partOf ? `${receipt.actor}\0${receipt.partOf}` : receipt.batchId;
     const known = byKey.get(key);
     if (known) {
       known.push(receipt);
@@ -1907,7 +1965,11 @@ export async function listScientSourcesBulkEdits(
     byKey.set(key, receipts);
     edits.push({ key, receipts });
   }
-  return edits.map(({ receipts }) => {
+  return edits.map(({ receipts: found }) => {
+    // Newest first as read; numbered parts are put in their own order, whatever the clock said.
+    const receipts = found.every((receipt) => receipt.partNumber !== undefined)
+      ? found.toSorted((left, right) => right.partNumber! - left.partNumber!)
+      : found;
     const newest = receipts[0]!;
     const sources = receipts.flatMap((receipt) => receipt.sources);
     const tags = (from: "before" | "after", to: "before" | "after") => [
@@ -1939,7 +2001,9 @@ export async function listScientSourcesBulkEdits(
       id: newest.batchId,
       at: newest.createdAt,
       by: newest.actor,
+      partsMissing: Math.min(...receipts.map((receipt) => receipt.partNumber ?? 1)) > 1,
       parts: receipts.toReversed().map((receipt) => ({
+        undone: receipt.undoneAt !== undefined,
         batchId: receipt.batchId,
         sourceCount: new Set([
           ...receipt.sources.map((source) => source.sourceId),
@@ -1957,7 +2021,11 @@ export async function listScientSourcesBulkEdits(
       ).length,
       collections: [...collections].map(([collectionId, counts]) => ({ collectionId, ...counts })),
       undone: receipts.every((receipt) => receipt.undoneAt !== undefined),
-      left: receipts.reduce((sum, receipt) => sum + (receipt.left ?? 0), 0),
+      left: receipts.reduce(
+        (sum, receipt) =>
+          sum + [...receipt.sources, ...receipt.collections].filter((entry) => entry.kept).length,
+        0,
+      ),
     };
   });
 }
