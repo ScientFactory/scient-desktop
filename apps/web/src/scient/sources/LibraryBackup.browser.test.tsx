@@ -426,6 +426,7 @@ describe("backing up the Library from the panel", () => {
           removedHere: 3,
           removedThere: 1,
           missingPdfs: 2,
+          unplacedIn: ["Thesis"],
         },
       ],
     );
@@ -450,7 +451,7 @@ describe("backing up the Library from the panel", () => {
         type: "success",
         title: "Sources added from the other Library",
         description:
-          "Added 312 sources, each with its versions, note, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. 2 PDFs were not in the other Library's folder and did not come. Recent changes lists this, with Undo.",
+          "Added 312 sources, each with its versions, note, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. 2 PDFs were not in the other Library's folder and did not come. Some of them could not be put in the collection Thesis; you can file them there by hand. Recent changes lists this, with Undo.",
       }),
     );
     expect(onAdded).toHaveBeenCalledTimes(1);

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Joins real Libraries in temporary folders.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -18,6 +19,7 @@ import {
 import { readScientLibraryDistinctPairs } from "./libraryExclusions.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { finishScientLibraryRestore, prepareScientLibraryRestore } from "./libraryRestore.ts";
+import { pinScientLibrarySource } from "./projectPins.ts";
 import {
   deleteScientSourcesPermanently,
   detachScientSourcePdf,
@@ -674,6 +676,160 @@ describe("adding what another Library holds", () => {
     expect(names.toSorted()).toEqual(["Chapter 3", "Thesis"]);
   });
 
+  it("adds both of two papers the other Library keeps as two, whichever part each falls in", async () => {
+    // The other Library holds one paper twice, under two IDs (a raw copy), on purpose.
+    const theirs = await built([{ op: "add", label: "dup", pdf: false }]);
+    const first = workOf(theirs.model, "dup").sourceId;
+    const second = `source_${"d".repeat(32)}`;
+    const records = NodePath.join(theirs.scenario.libraryRoot, "records");
+    const original = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(records, `${first}.json`), "utf8"),
+    ) as Record<string, unknown>;
+    await NodeFSP.writeFile(
+      NodePath.join(records, `${second}.json`),
+      JSON.stringify({ ...original, sourceId: second }),
+    );
+    const backup = await backUp(theirs.scenario);
+    for (const partSize of [100, 1]) {
+      const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+      // A paper is imported here while the join runs, so each part is judged afresh.
+      let imported = false;
+      const result = await joinScientLibrary({
+        library: ours.library,
+        folder: backup,
+        actor: "user",
+        faults: { partSize },
+        onStarted: () => {
+          imported = true;
+        },
+      });
+      expect(imported).toBe(true);
+      expect(result).toMatchObject({ outcome: "joined", added: 2, skipped: 0 });
+      expect(await ids(ours.scenario)).toEqual(
+        [first, second, workOf(ours.model, "mine").sourceId].toSorted(),
+      );
+    }
+  });
+
+  it("keeps apart the sources the other Library's own rule keeps apart after a later merge", async () => {
+    // There: b was unmerged from a, then a was merged into c. Its rule keeps c and b apart.
+    const theirs = await built([
+      { op: "add", label: "a", pdf: false },
+      { op: "add", label: "b", pdf: false },
+      { op: "add", label: "c", pdf: false },
+      { op: "merge", survivor: "a", loser: "b" },
+      { op: "undoMerge", loser: "b" },
+      { op: "merge", survivor: "c", loser: "a" },
+    ]);
+    const id = (label: string) => workOf(theirs.model, label).sourceId;
+    const backup = await backUp(theirs.scenario);
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    expect(
+      await joinScientLibrary({ library: ours.library, folder: backup, actor: "user" }),
+    ).toMatchObject({ outcome: "joined", added: 2 });
+    expect(
+      (await readScientLibraryDistinctPairs(ours.scenario.libraryRoot)).map((pair) =>
+        [...pair.sourceIds].toSorted(),
+      ),
+    ).toEqual([[id("b"), id("c")].toSorted()]);
+  });
+
+  it("leaves on Undo a source a project has just pinned, and one whose state on arrival is not known", async () => {
+    const theirs = await built([
+      { op: "add", label: "a", pdf: true },
+      { op: "add", label: "b", pdf: true },
+    ]);
+    const backup = await backUp(theirs.scenario);
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    // The first source's record lands, then the join is killed before it is filed.
+    await expect(
+      joinScientLibrary({
+        library: ours.library,
+        folder: backup,
+        actor: "user",
+        faults: {
+          beforeOrganise: () => {
+            throw new Error("Stopped before organising (test fault).");
+          },
+        },
+      }),
+    ).rejects.toThrow("test fault");
+    const [stopped] = await listScientLibraryJoins(ours.library);
+    const second = await joinScientLibrary({
+      library: ours.library,
+      folder: backup,
+      actor: "user",
+    });
+    if (second.outcome !== "joined") throw new Error(`Not joined: ${second.outcome}`);
+    expect(second.added).toBe(1);
+    // The stopped join's source: its highlights on arrival were never recorded, and its PDF
+    // has a highlights file now. The second join's source: a project pinned it, and the
+    // Library's map of that project has not been written yet.
+    const stoppedId = (await ids(ours.scenario)).find(
+      (sourceId) =>
+        sourceId !== workOf(ours.model, "mine").sourceId &&
+        sourceId !== lastAdded(second.joinId, ours.scenario.libraryRoot),
+    )!;
+    const pdf = (await readScientSourceRecord(ours.library, stoppedId))!.attachments[0]!.sha256;
+    const highlights = NodePath.join(ours.scenario.libraryRoot, "annotations", "v1");
+    await NodeFSP.mkdir(highlights, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(highlights, `${pdf}.json`), "{}");
+    const pinned = lastAdded(second.joinId, ours.scenario.libraryRoot);
+    await pinScientLibrarySource({
+      projectRoot: ours.scenario.projects[0]!,
+      library: ours.library,
+      sourceId: pinned,
+      actor: "user",
+      note: null,
+    });
+
+    expect(
+      await undoScientLibraryJoin({
+        library: ours.library,
+        joinId: stopped!.joinId,
+        actor: "user",
+      }),
+    ).toEqual({ outcome: "undone", trashed: 0, left: 1 });
+    expect(
+      await undoScientLibraryJoin({ library: ours.library, joinId: second.joinId, actor: "user" }),
+    ).toEqual({ outcome: "undone", trashed: 0, left: 1 });
+    expect(await ids(ours.scenario)).toHaveLength(3);
+  });
+
+  it("brings the highlights of a source whose PDF had been copied when the join was killed", async () => {
+    const theirs = await built([{ op: "add", label: "a", pdf: true }]);
+    const pdf = workOf(theirs.model, "a").pdfs[0]!.sha256;
+    const theirHighlights = NodePath.join(theirs.scenario.libraryRoot, "annotations", "v1");
+    await NodeFSP.mkdir(theirHighlights, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(theirHighlights, `${pdf}.json`), '{"marks":2}\n');
+    const backup = await backUp(theirs.scenario);
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+    await expect(
+      joinScientLibrary({
+        library: ours.library,
+        folder: backup,
+        actor: "user",
+        faults: {
+          afterFiles: () => {
+            throw new Error("Stopped after the files (test fault).");
+          },
+        },
+      }),
+    ).rejects.toThrow("test fault");
+    // The PDF is here and its record is not. The next join must not take the PDF for one of
+    // this Library's own and leave the highlights behind.
+    expect(await ids(ours.scenario)).toHaveLength(1);
+    expect(
+      await joinScientLibrary({ library: ours.library, folder: backup, actor: "user" }),
+    ).toMatchObject({ outcome: "joined", added: 1, different: 0 });
+    expect(
+      await NodeFSP.readFile(
+        NodePath.join(ours.scenario.libraryRoot, "annotations", "v1", `${pdf}.json`),
+        "utf8",
+      ),
+    ).toBe('{"marks":2}\n');
+  });
+
   it("reads only a finished backup or a Library its own restore moved aside", async () => {
     const theirs = await built([{ op: "add", label: "a", pdf: true }]);
     const ours = await built([{ op: "add", label: "mine", pdf: false }]);
@@ -714,6 +870,14 @@ describe("adding what another Library holds", () => {
     expect(compared).toMatchObject({ fresh: [], identical: 1 });
   });
 });
+
+/** The one source a finished join's record says it added. */
+function lastAdded(joinId: string, libraryRoot: string): string {
+  const part = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(libraryRoot, "joins", joinId, "part-00001.json"), "utf8"),
+  ) as { added: ReadonlyArray<{ sourceId: string }> };
+  return part.added[0]!.sourceId;
+}
 
 async function moveToTrash(scenario: Scenario, sourceId: string) {
   const library = libraryOf(scenario);

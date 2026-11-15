@@ -22,7 +22,7 @@ import {
   type ScientProjectSourceResolution,
 } from "./libraryInstanceMap.ts";
 import { withScientFileLock, type ScientLibraryLockOptions } from "./libraryLock.ts";
-import type { ScientLibraryLocation } from "./libraryRoot.ts";
+import { registerScientLibraryInstance, type ScientLibraryLocation } from "./libraryRoot.ts";
 import {
   ScientSourceActor,
   ScientSourceCitationKey,
@@ -418,6 +418,10 @@ export async function pinScientLibrarySource(input: {
   readonly note?: string | null;
 }): Promise<ScientPinResult> {
   const root = await projectRootFor(input.projectRoot);
+  // The Library knows this project folder from its first pin on, before the pin is written:
+  // an Undo of sources added from another Library reads the pins of the folders it knows.
+  const { projectId } = await readScientProjectIdentity(root);
+  await registerScientLibraryInstance({ library: input.library, projectId, projectRoot: root });
   return withPinsLock(root, async () => {
     const aliases = await readScientLibraryAliases(input.library);
     const record = await readScientSourceRecord(

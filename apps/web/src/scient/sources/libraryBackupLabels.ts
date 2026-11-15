@@ -98,8 +98,10 @@ const sourcesWord = (value: number) => (value === 1 ? "1 source" : `${count(valu
 /** The one line shown while sources are added. */
 export function joinRunningLabel(status: ScientSourcesJoinStatus): string | null {
   if (status.state !== "running") return null;
-  const progress = status.total > 0 ? `: ${count(status.done)} of ${count(status.total)} done` : "";
-  return `Adding sources from the other Library${progress}. Nothing that is in this Library is changed.`;
+  // Before the first source is added the two Libraries are compared, which can take a while.
+  return status.total > 0
+    ? `Adding sources from the other Library: ${count(status.done)} of ${count(status.total)} done. Nothing that is in this Library is changed.`
+    : "Comparing the other Library with this one. Nothing that is in this Library is changed.";
 }
 
 /** What a join did, and what it left alone, in the order a person cares about. */
@@ -122,6 +124,9 @@ export function joinDoneLabel(status: Extract<ScientSourcesJoinStatus, { state: 
       : "",
     status.missingPdfs > 0
       ? `${status.missingPdfs === 1 ? "One PDF was" : `${count(status.missingPdfs)} PDFs were`} not in the other Library's folder and did not come.`
+      : "",
+    status.unplacedIn.length > 0
+      ? `Some of them could not be put in ${status.unplacedIn.length === 1 ? "the collection" : "the collections"} ${status.unplacedIn.slice(0, 3).join(", ")}${status.unplacedIn.length > 3 ? " and others" : ""}; you can file them there by hand.`
       : "",
     status.added > 0 ? "Recent changes lists this, with Undo." : "",
   ];

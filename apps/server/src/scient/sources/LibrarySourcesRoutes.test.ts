@@ -417,6 +417,37 @@ describe("Library routes on the library backend", () => {
     }),
   );
 
+  it.effect("while a restore has not finished, writes nothing to the Library", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      yield* Effect.promise(() => threeSources(fixture));
+      const libraryRoot = scientLibraryRootFor(fixture.stateDir);
+      // As a start killed right after the swap leaves it: the Library records the restore
+      // with no end time, and the intent still waits beside it.
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          NodePath.join(libraryRoot, "restores.json"),
+          JSON.stringify({
+            formatVersion: 1,
+            restores: [
+              { restoreId: "restore_1", backupId: "backup_1", backupCreatedAt: "x", at: "x" },
+            ],
+          }),
+        );
+        await NodeFSP.writeFile(
+          `${libraryRoot}.restore.json`,
+          JSON.stringify({ formatVersion: 1, restoreId: "restore_1" }),
+        );
+      });
+      // Reading still works; a change is refused until Scient restarts.
+      expect((yield* storeFor(fixture, "read")).kind).toBe("library");
+      const refused = yield* storeFor(fixture, "write").pipe(Effect.exit);
+      expect(String(refused)).toContain("did not finish. Restart Scient");
+      yield* Effect.promise(() => NodeFSP.rm(`${libraryRoot}.restore.json`));
+      expect((yield* storeFor(fixture, "write")).kind).toBe("library");
+    }),
+  );
+
   it.effect(
     "adds another Library's new sources in the background, lists the join, and undoes it",
     () =>
