@@ -425,6 +425,7 @@ describe("backing up the Library from the panel", () => {
           different: 14,
           removedHere: 3,
           removedThere: 1,
+          missingPdfs: 2,
         },
       ],
     );
@@ -439,7 +440,7 @@ describe("backing up the Library from the panel", () => {
     await expect
       .element(
         screen.getByText(
-          "Adding sources from the other Library: 40 of 312 added. Nothing that is in this Library is changed.",
+          "Adding sources from the other Library: 40 of 312 done. Nothing that is in this Library is changed.",
         ),
       )
       .toBeVisible();
@@ -449,11 +450,46 @@ describe("backing up the Library from the panel", () => {
         type: "success",
         title: "Sources added from the other Library",
         description:
-          "Added 312 sources, each with its versions, note, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. Recent changes lists this, with Undo.",
+          "Added 312 sources, each with its versions, note, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. 2 PDFs were not in the other Library's folder and did not come. Recent changes lists this, with Undo.",
       }),
     );
     expect(onAdded).toHaveBeenCalledTimes(1);
     await expect.element(screen.getByText(/^Adding sources/u)).not.toBeInTheDocument();
+  });
+
+  it("says what had been added when adding stopped part way, and reads the list again", async ({
+    signal,
+  }) => {
+    using _timers = fakeTimers();
+    const onAdded = vi.fn();
+    setup(
+      [{ state: "none" }],
+      [{ state: "none" }],
+      [
+        { state: "none" },
+        { state: "running", done: 40, total: 312 },
+        {
+          state: "failed",
+          failedAt: "2026-11-15T10:05:00.000Z",
+          reason: "The disk is full.",
+          added: 40,
+        },
+      ],
+    );
+    await using screen = await render(<Harness onAdded={onAdded} />, { router: false });
+    await vi.waitFor(() => expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: "Add from" }));
+    await expect.element(screen.getByText(/40 of 312 done/u)).toBeVisible();
+    await advanceTestClock(signal, 1_000);
+    await vi.waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith({
+        type: "error",
+        title: "Adding from the other Library stopped part way",
+        description:
+          "40 sources were added before it stopped: The disk is full. Recent changes lists what was added, with Undo; adding again brings the rest.",
+      }),
+    );
+    expect(onAdded).toHaveBeenCalledTimes(1);
   });
 
   it("asks nothing where the Library is not kept", async () => {

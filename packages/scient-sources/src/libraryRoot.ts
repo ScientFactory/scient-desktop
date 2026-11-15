@@ -92,11 +92,34 @@ export async function readScientLibraryManifest(root: string): Promise<ScientLib
 export const SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX = ".restore.json";
 
 // @effect-diagnostics-next-line extendsNativeError:off - The source stores are Promise-based; callers catch native errors.
-class ScientLibraryRestoreUnfinishedError extends Error {
+export class ScientLibraryRestoreUnfinishedError extends Error {
   constructor() {
     super("Restoring the Library from a backup did not finish. Restart Scient to finish it.");
     this.name = "ScientLibraryRestoreUnfinishedError";
   }
+}
+
+/** The restore's intent beside this Library, read loosely: only the two fields asked for here. */
+async function readRestoreIntent(root: string): Promise<{
+  readonly parent: string;
+  readonly restoreId: unknown;
+  readonly replaced: unknown;
+} | null> {
+  const parent = await NodeFSP.realpath(NodePath.dirname(root)).catch(() => null);
+  if (parent === null) return null;
+  const intent: unknown = await NodeFSP.readFile(
+    `${NodePath.join(parent, NodePath.basename(root))}${SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX}`,
+    "utf8",
+  ).then(
+    (text) => JSON.parse(text) as unknown,
+    () => null,
+  );
+  if (typeof intent !== "object" || intent === null) return null;
+  return {
+    parent,
+    restoreId: "restoreId" in intent ? intent.restoreId : null,
+    replaced: "replaced" in intent ? intent.replaced : null,
+  };
 }
 
 /**
@@ -107,21 +130,46 @@ class ScientLibraryRestoreUnfinishedError extends Error {
  */
 async function restoreHalfWay(root: string): Promise<boolean> {
   if ((await snapshot(root)) !== "missing") return false;
-  const parent = await NodeFSP.realpath(NodePath.dirname(root)).catch(() => null);
-  if (parent === null) return false;
-  const intent: unknown = await NodeFSP.readFile(
-    `${NodePath.join(parent, NodePath.basename(root))}${SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX}`,
+  const intent = await readRestoreIntent(root);
+  const replaced = intent?.replaced;
+  return (
+    intent !== null &&
+    typeof replaced === "string" &&
+    NodePath.basename(replaced) === replaced &&
+    (await snapshot(NodePath.join(intent.parent, replaced))) === "directory"
+  );
+}
+
+/**
+ * A restore put its copy in place but has not finished: the Library records the restore with
+ * no end time while its intent still waits (a start was killed there, or carrying over the
+ * projects' "moved back" decisions failed). No project may move in until the next start
+ * finishes it, or a project that was moved back would be moved in again.
+ */
+export async function scientLibraryRestoreUnfinished(root: string): Promise<boolean> {
+  const intent = await readRestoreIntent(root);
+  if (intent === null || typeof intent.restoreId !== "string") return false;
+  const restores: unknown = await NodeFSP.readFile(
+    NodePath.join(root, "restores.json"),
     "utf8",
   ).then(
     (text) => JSON.parse(text) as unknown,
     () => null,
   );
-  const replaced =
-    typeof intent === "object" && intent !== null && "replaced" in intent ? intent.replaced : null;
+  const entries =
+    typeof restores === "object" && restores !== null && "restores" in restores
+      ? restores.restores
+      : null;
   return (
-    typeof replaced === "string" &&
-    NodePath.basename(replaced) === replaced &&
-    (await snapshot(NodePath.join(parent, replaced))) === "directory"
+    Array.isArray(entries) &&
+    entries.some(
+      (entry: unknown) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        "restoreId" in entry &&
+        entry.restoreId === intent.restoreId &&
+        !("finishedAt" in entry && typeof entry.finishedAt === "string"),
+    )
   );
 }
 

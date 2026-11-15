@@ -326,6 +326,13 @@ describe("restoring a backup of the Library", () => {
       await moveScientProjectBackIntoProject({ library, projectRoot: project, actor: "user" }),
     ).toMatchObject({ outcome: "moved-back" });
     await prepareScientLibraryRestore({ libraryRoot: scenario.libraryRoot, backup });
+    // A start killed right after the swap: the decision is not carried over yet, so until the
+    // next start finishes the restore no project may move in.
+    await expect(
+      finishScientLibraryRestore(scenario.libraryRoot, { fault: "after-swap" }),
+    ).rejects.toThrow("test fault");
+    await expect(move()).rejects.toThrow("did not finish. Restart Scient");
+    expect(await readScientSourceRecord(project, own.record!.sourceId)).not.toBeNull();
     expect(await finishScientLibraryRestore(scenario.libraryRoot)).toMatchObject({
       outcome: "restored",
     });

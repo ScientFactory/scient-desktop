@@ -43,7 +43,9 @@ import {
   listScientLibraryInstances,
   readScientLibraryManifest,
   registerScientLibraryInstance,
+  ScientLibraryRestoreUnfinishedError,
   scientLibraryLocation,
+  scientLibraryRestoreUnfinished,
   type ScientLibraryLocation,
 } from "./libraryRoot.ts";
 import {
@@ -2217,6 +2219,10 @@ async function moveContext(
 export async function runScientLibraryMove(
   input: ScientLibraryMoveInput,
 ): Promise<ScientLibraryMoveResult> {
+  // A restore that has not finished may still owe this project its "moved back" decision.
+  if (await scientLibraryRestoreUnfinished(await NodeFSP.realpath(input.library.root))) {
+    throw new ScientLibraryRestoreUnfinishedError();
+  }
   const ctx = await moveContext(input, true);
   if (!ctx) throw new Error("The project could not be registered with the library.");
   // Nothing to move and nothing begun: no lock, and no migration folder for this checkout.

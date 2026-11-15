@@ -9,6 +9,7 @@ import * as NodeStreamPromises from "node:stream/promises";
 import * as Schema from "effect/Schema";
 
 import {
+  changeScientSourceCollectionMembers,
   createScientSourceCollection,
   deleteScientSourceCollection,
   readScientSourcesOrganization,
@@ -21,8 +22,13 @@ import {
   checkScientLibraryBackup,
 } from "./libraryBackup.ts";
 import { readScientLibraryDistinctPairs } from "./libraryExclusions.ts";
-import { withScientLibraryLock } from "./libraryLock.ts";
+import {
+  ScientLibraryBusyError,
+  withScientFileLock,
+  withScientLibraryLock,
+} from "./libraryLock.ts";
 import { markScientLibrarySourcesDistinct } from "./libraryMerge.ts";
+import { listScientLibraryRestores } from "./libraryRestore.ts";
 import {
   readScientLibraryManifest,
   scientLibraryLocation,
@@ -47,7 +53,6 @@ import {
 } from "./store.ts";
 import {
   assertSafeIdentifier,
-  atomicCreateJson,
   atomicWriteJson,
   isNodeError,
   readBoundedJson,
@@ -59,10 +64,8 @@ const HEADER_FILE = "join.json";
 const ANNOTATIONS_DIRECTORY = NodePath.join("annotations", "v1");
 const MAX_HEADER_BYTES = 128 * 1024 * 1024;
 const MAX_PART_BYTES = 8 * 1024 * 1024;
-const MAX_RECORD_BYTES = 16 * 1024 * 1024;
 /** Sources added under one hold of the Library's lock, so other changes get their turn. */
 const PART_SIZE = 100;
-const REPLACED_MARK = ".replaced-";
 
 const PARTS = ["details", "tags", "note", "reading", "pdfs", "highlights"] as const;
 export type ScientLibraryJoinPart = (typeof PARTS)[number];
@@ -120,12 +123,13 @@ const JoinHeader = Schema.Struct({
   removedThere: Schema.Int,
   different: Schema.Array(Difference),
   removedHere: Schema.Array(RemovedHere),
-  collections: Schema.optionalKey(
+  /** The other Library's collections that hold a new source, and the one here each goes to. */
+  collections: Schema.Array(
     Schema.Struct({
-      created: Schema.Array(Schema.String),
-      extended: Schema.Array(
-        Schema.Struct({ collectionId: Schema.String, sourceIds: Schema.Array(Schema.String) }),
-      ),
+      otherId: Schema.String,
+      collectionId: Schema.String,
+      /** Made by this join; Undo deletes it once nothing here is in it. */
+      created: Schema.Boolean,
     }),
   ),
   undone: Schema.optionalKey(
@@ -139,13 +143,29 @@ const JoinHeader = Schema.Struct({
 });
 type JoinHeader = typeof JoinHeader.Type;
 
+/** One source a join added, with what Undo needs to tell whether it was used since. */
+const Arrived = Schema.Struct({
+  sourceId: Schema.String,
+  /** The collections here the join put it in. */
+  collections: Schema.Array(Schema.String),
+  /** Each PDF the join copied for it, with the hash of its highlights file as written, or null. */
+  highlights: Schema.Array(
+    Schema.Struct({ sha256: Schema.String, hash: Schema.NullOr(Schema.String) }),
+  ),
+  /** PDFs it names that the other Library's folder did not hold. */
+  missingPdfs: Schema.Int,
+  /** A PDF of it was already here with other highlights: this Library's stayed. */
+  highlightsKept: Schema.Boolean,
+});
+type Arrived = typeof Arrived.Type;
+
 /** Written before its sources are added, so a join that stops still says what it may have added. */
 const JoinPart = Schema.Struct({
   formatVersion: Schema.Literal(1),
   number: Schema.Int,
   sources: Schema.Array(Schema.Struct({ sourceId: Schema.String, fingerprint: Schema.String })),
   state: Schema.Literals(["pending", "done"]),
-  added: Schema.Array(Schema.String),
+  added: Schema.Array(Arrived),
   skipped: Schema.Array(Schema.Struct({ sourceId: Schema.String, why: Schema.String })),
 });
 type JoinPart = typeof JoinPart.Type;
@@ -258,16 +278,17 @@ export type ScientLibraryJoinSource =
       readonly root: string;
       readonly other: typeof Other.Type;
     }
-  /** Not a finished backup, and not a Library this Scient's restore moved aside. */
+  /** Not a finished backup, and not a Library this Library's own restore moved aside. */
   | { readonly outcome: "not-a-library" }
   /** A backup whose files do not match its own list. */
   | { readonly outcome: "damaged" }
-  /** It is this Library's own copy with nothing else in it to add (the same folder). */
+  /** The folder is this Library itself. */
   | { readonly outcome: "same-library" };
 
 /**
  * Accepts only folders nothing can be writing: a finished backup (checked against its
- * checksums), or a Library a restore of this one moved aside. Reads only.
+ * checksums), or the Library a restore of this one moved aside, as that restore recorded it.
+ * Reads only.
  */
 export async function openScientLibraryJoinSource(
   library: ScientLibraryLocation,
@@ -300,11 +321,11 @@ export async function openScientLibraryJoinSource(
       },
     };
   }
-  // A Library that a restore moved aside sits beside this one under the restore's name.
-  const replaced =
-    NodePath.dirname(chosen) === NodePath.dirname(libraryRoot) &&
-    NodePath.basename(chosen).startsWith(`${NodePath.basename(libraryRoot)}${REPLACED_MARK}`);
-  if (!replaced) return { outcome: "not-a-library" };
+  // Only a folder this Library's own record of a restore names: its name alone proves nothing.
+  const kept = (await listScientLibraryRestores(scientLibraryLocation(libraryRoot))).some(
+    (restore) => restore.kept?.path === chosen,
+  );
+  if (!kept) return { outcome: "not-a-library" };
   const manifest = await readScientLibraryManifest(chosen).catch(() => null);
   if (!manifest) return { outcome: "not-a-library" };
   return {
@@ -312,6 +333,99 @@ export async function openScientLibraryJoinSource(
     root: chosen,
     other: { libraryId: manifest.libraryId, kind: "replaced", folder: chosen },
   };
+}
+
+/** What this Library holds and has removed, as far as deciding what is new needs it. */
+async function localState(library: ScientLibraryLocation) {
+  const [ours, aliases, trashed, deleted, assessor] = await Promise.all([
+    listScientSourceRecords(library),
+    readScientLibraryAliases(library),
+    readScientSourceTrashEntries(library),
+    readScientSourceTombstones(library),
+    readScientSourceIntakeAssessor(library),
+  ]);
+  const live = new Map(ours.map((record) => [record.sourceId, record]));
+  /** Copies Scient rebuilt from a project, by the project source they stand for. */
+  const rebuilt = new Map(
+    ours.flatMap((record) =>
+      record.hydratedFromProjectSourceId ? [[record.hydratedFromProjectSourceId, record]] : [],
+    ),
+  );
+  const removed = new Map<string, "trash" | "deleted">();
+  const removedRebuilt = new Map<string, "trash" | "deleted">();
+  // The Trash copy is whole, so it says more than the marker of a deletion that stopped half way.
+  for (const [entries, state] of [
+    [deleted, "deleted"],
+    [trashed, "trash"],
+  ] as const) {
+    for (const entry of entries) {
+      removed.set(entry.sourceId, state);
+      const from = entry.record.hydratedFromProjectSourceId;
+      if (from) removedRebuilt.set(from, state);
+    }
+  }
+  const resolve = (sourceId: string) => resolveScientLibraryAlias(aliases, sourceId);
+  return { live, rebuilt, removed, removedRebuilt, resolve, assess: assessor.assess };
+}
+type LocalState = Awaited<ReturnType<typeof localState>>;
+
+type Standing =
+  | { readonly kind: "fresh" }
+  | { readonly kind: "removed"; readonly state: "trash" | "deleted" }
+  | {
+      readonly kind: "here";
+      readonly relation: ScientLibraryJoinDifference["relation"];
+      readonly against: ScientSourceRecord | null;
+    };
+
+/**
+ * Where a source of the other Library stands in this one. `fresh` only when nothing here could
+ * be it, by its ID, by the project source a rebuilt copy stands for (on either side), or by the
+ * import's duplicate rule, which must name no candidate at all.
+ */
+function standingOf(record: ScientSourceRecord, state: LocalState): Standing {
+  const id = record.sourceId;
+  const here = (
+    relation: ScientLibraryJoinDifference["relation"],
+    against: ScientSourceRecord | null,
+  ): Standing => ({ kind: "here", relation, against });
+  const same = state.live.get(id);
+  if (same) return here("same-id", same);
+  const survivor = state.live.get(state.resolve(id));
+  if (survivor) return here("merged-here", survivor);
+  const gone = state.removed.get(id) ?? state.removed.get(state.resolve(id));
+  if (gone) return { kind: "removed", state: gone };
+  // A copy Scient rebuilt from a project stands for the source the project named.
+  const from = record.hydratedFromProjectSourceId;
+  if (from) {
+    const original = state.live.get(state.resolve(from));
+    if (original) return here("rebuilt-there", original);
+    // Both Libraries rebuilt the same project source, each under its own ID.
+    const twin = state.rebuilt.get(from);
+    if (twin) return here("rebuilt-here", twin);
+    const goneOriginal =
+      state.removed.get(from) ??
+      state.removed.get(state.resolve(from)) ??
+      state.removedRebuilt.get(from);
+    if (goneOriginal) return { kind: "removed", state: goneOriginal };
+  }
+  const copy = state.rebuilt.get(id);
+  if (copy) return here("rebuilt-here", copy);
+  const goneCopy = state.removedRebuilt.get(id);
+  if (goneCopy) return { kind: "removed", state: goneCopy };
+  const assessed = state.assess(candidateOf(record), record.attachments[0]?.sha256);
+  // `new` with candidates means several sources here could be it: not certainly new.
+  if (assessed.kind === "new" && assessed.matchingSourceIds.length === 0) return { kind: "fresh" };
+  const sure =
+    assessed.kind !== "possible-metadata-match" &&
+    assessed.kind !== "new" &&
+    assessed.matchingSourceIds.length === 1;
+  // One candidate is named even when it is not certain; several are not, since none is "it".
+  const match =
+    assessed.matchingSourceIds.length === 1
+      ? (state.live.get(assessed.matchingSourceIds[0]!) ?? null)
+      : null;
+  return here(sure && match ? "same-paper" : "possibly-same", match);
 }
 
 export interface ScientLibraryComparison {
@@ -324,49 +438,19 @@ export interface ScientLibraryComparison {
   readonly removedThere: number;
 }
 
-/**
- * What the other Library holds, against this one; reads only. A source is `fresh` only when
- * nothing here could be it: no record, merge, Trash entry or deletion under its ID or under the
- * project ID a rebuilt copy came from, and no match by the import's own duplicate rule.
- */
+/** What the other Library holds, against this one; reads only. */
 export async function compareScientLibraries(
   library: ScientLibraryLocation,
   otherRoot: string,
 ): Promise<ScientLibraryComparison> {
   const libraryRoot = await NodeFSP.realpath(library.root);
   const other = scientLibraryLocation(otherRoot);
-  const [ours, aliases, trashed, deleted, assessor, theirs, theirTrash, theirDeleted] =
-    await Promise.all([
-      listScientSourceRecords(library),
-      readScientLibraryAliases(library),
-      readScientSourceTrashEntries(library),
-      readScientSourceTombstones(library),
-      readScientSourceIntakeAssessor(library),
-      listScientSourceRecords(other),
-      readScientSourcesRemovedByPerson(other),
-      readScientSourceTombstones(other),
-    ]);
-  const live = new Map(ours.map((record) => [record.sourceId, record]));
-  const rebuiltHere = new Map(
-    ours.flatMap((record) =>
-      record.hydratedFromProjectSourceId ? [[record.hydratedFromProjectSourceId, record]] : [],
-    ),
-  );
-  const removed = new Map<string, "trash" | "deleted">();
-  // The Trash copy is whole, so it says more than the marker of a deletion that stopped half way.
-  for (const entry of deleted) removed.set(entry.sourceId, "deleted");
-  for (const entry of trashed) removed.set(entry.sourceId, "trash");
-  const removedRebuilt = new Map<string, "trash" | "deleted">();
-  for (const [entries, state] of [
-    [deleted, "deleted"],
-    [trashed, "trash"],
-  ] as const) {
-    for (const entry of entries) {
-      const from = entry.record.hydratedFromProjectSourceId;
-      if (from) removedRebuilt.set(from, state);
-    }
-  }
-
+  const [state, theirs, theirTrash, theirDeleted] = await Promise.all([
+    localState(library),
+    listScientSourceRecords(other),
+    readScientSourcesRemovedByPerson(other),
+    readScientSourceTombstones(other),
+  ]);
   const fresh: ScientSourceRecord[] = [];
   const different: ScientLibraryJoinDifference[] = [];
   const removedHere: Array<typeof RemovedHere.Type> = [];
@@ -420,12 +504,23 @@ export async function compareScientLibraries(
     }
     return parts;
   };
-  const note = (
-    record: ScientSourceRecord,
-    against: ScientSourceRecord | null,
-    relation: ScientLibraryJoinDifference["relation"],
-    parts: ReadonlyArray<ScientLibraryJoinPart>,
-  ) => {
+
+  for (const record of theirs) {
+    const standing = standingOf(record, state);
+    if (standing.kind === "fresh") {
+      fresh.push(record);
+      continue;
+    }
+    if (standing.kind === "removed") {
+      removedHere.push({ otherSourceId: record.sourceId, state: standing.state });
+      continue;
+    }
+    const { relation, against } = standing;
+    const parts = !against
+      ? []
+      : relation === "same-id"
+        ? await differs(record, against)
+        : await lacks(record, against, relation === "rebuilt-here" || relation === "same-paper");
     // A paper that may be the same is always shown; the others only when something differs.
     if (parts.length === 0 && relation !== "possibly-same") identical += 1;
     else {
@@ -436,62 +531,11 @@ export async function compareScientLibraries(
         parts: [...parts],
       });
     }
-  };
-
-  for (const record of theirs) {
-    const id = record.sourceId;
-    const same = live.get(id);
-    if (same) {
-      note(record, same, "same-id", await differs(record, same));
-      continue;
-    }
-    const survivor = live.get(resolveScientLibraryAlias(aliases, id));
-    if (survivor) {
-      note(record, survivor, "merged-here", await lacks(record, survivor, false));
-      continue;
-    }
-    const gone = removed.get(id) ?? removed.get(resolveScientLibraryAlias(aliases, id));
-    if (gone) {
-      removedHere.push({ otherSourceId: id, state: gone });
-      continue;
-    }
-    // A copy Scient rebuilt from a project stands for the source the project named.
-    const from = record.hydratedFromProjectSourceId;
-    const original = from ? live.get(resolveScientLibraryAlias(aliases, from)) : undefined;
-    if (original) {
-      note(record, original, "rebuilt-there", await lacks(record, original, false));
-      continue;
-    }
-    const originalGone = from
-      ? (removed.get(from) ?? removed.get(resolveScientLibraryAlias(aliases, from)))
-      : undefined;
-    const rebuiltGone = removedRebuilt.get(id);
-    if (originalGone ?? rebuiltGone) {
-      removedHere.push({ otherSourceId: id, state: (originalGone ?? rebuiltGone)! });
-      continue;
-    }
-    const copy = rebuiltHere.get(id);
-    if (copy) {
-      note(record, copy, "rebuilt-here", await lacks(record, copy, true));
-      continue;
-    }
-    const assessed = assessor.assess(candidateOf(record), record.attachments[0]?.sha256);
-    if (assessed.kind === "new") {
-      fresh.push(record);
-      continue;
-    }
-    const sure =
-      assessed.kind !== "possible-metadata-match" && assessed.matchingSourceIds.length === 1;
-    const match = live.get(assessed.matchingSourceIds[0] ?? "") ?? null;
-    note(
-      record,
-      match,
-      sure && match ? "same-paper" : "possibly-same",
-      match ? await lacks(record, match, true) : [],
-    );
   }
   const goneThere = new Set(
-    [...theirTrash, ...theirDeleted].map((entry) => entry.sourceId).filter((id) => live.has(id)),
+    [...theirTrash, ...theirDeleted]
+      .map((entry) => entry.sourceId)
+      .filter((id) => state.live.has(id)),
   );
   return { fresh, different, removedHere, identical, removedThere: goneThere.size };
 }
@@ -502,6 +546,8 @@ const joinDirectory = (libraryRoot: string, joinId: string) => {
 };
 const partPath = (directory: string, number: number) =>
   NodePath.join(directory, `part-${String(number).padStart(5, "0")}.json`);
+/** Beside the Library: held for a join's or an Undo's whole life, so only one runs. */
+const lifetimeLock = (libraryRoot: string) => `${libraryRoot}.join.lock`;
 
 async function readHeader(libraryRoot: string, joinId: string): Promise<JoinHeader | null> {
   try {
@@ -529,10 +575,50 @@ async function exists(path: string): Promise<boolean> {
   return (await snapshot(path)) !== "missing";
 }
 
-/** Copies a PDF by its hash, checking the bytes; a file already here is left. False when the other Library lacks it. */
-async function copyPdf(from: string, to: string, sha256: string): Promise<boolean> {
-  if (await exists(to)) return true;
-  if (!(await exists(from))) return false;
+/**
+ * Creates a file with these bytes only if no file has its name: written beside it, flushed,
+ * then linked into place, so a kill never leaves half a file under the final name.
+ */
+async function createExclusively(path: string, bytes: Uint8Array): Promise<boolean> {
+  if (await exists(path)) return false;
+  await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+  const temporary = `${path}.tmp-${NodeCrypto.randomUUID()}`;
+  let handle: NodeFSP.FileHandle | null = null;
+  try {
+    handle = await NodeFSP.open(temporary, "wx", 0o600);
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    try {
+      await NodeFSP.link(temporary, path);
+      return true;
+    } catch (error) {
+      if (isNodeError(error, "EEXIST")) return false;
+      if (!isNodeError(error, "EPERM") && !isNodeError(error, "ENOTSUP")) throw error;
+      // No hard links on this volume: an exclusive copy is the nearest thing.
+      return await NodeFSP.copyFile(temporary, path, NodeFSP.constants.COPYFILE_EXCL).then(
+        () => true,
+        (failure: unknown) => {
+          if (isNodeError(failure, "EEXIST")) return false;
+          throw failure;
+        },
+      );
+    }
+  } finally {
+    await handle?.close();
+    await NodeFSP.rm(temporary, { force: true });
+  }
+}
+
+/** Copies a PDF by its hash, checking the bytes. A file already here is left. */
+async function copyPdf(
+  from: string,
+  to: string,
+  sha256: string,
+): Promise<"copied" | "here" | "missing"> {
+  if (await exists(to)) return "here";
+  if (!(await exists(from))) return "missing";
   await NodeFSP.mkdir(NodePath.dirname(to), { recursive: true });
   const temporary = `${to}.tmp-${NodeCrypto.randomUUID()}`;
   const hash = NodeCrypto.createHash("sha256");
@@ -549,21 +635,145 @@ async function copyPdf(from: string, to: string, sha256: string): Promise<boolea
     );
     if (hash.digest("hex") !== sha256) throw new Error("A PDF does not match its checksum.");
     await NodeFSP.rename(temporary, to);
-    return true;
+    return "copied";
   } finally {
     await NodeFSP.rm(temporary, { force: true });
   }
 }
 
+const hashOfBytes = (bytes: Uint8Array) =>
+  NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+
+/** What the other Library decided about its sources that must hold here too. */
+interface OtherDecisions {
+  /** The other Library's collections each source is in. */
+  readonly collectionsOf: ReadonlyMap<string, ReadonlyArray<string>>;
+  /** Sources each source must stay apart from: "not duplicates", and merges it undid. */
+  readonly apartFrom: ReadonlyMap<string, ReadonlyArray<string>>;
+}
+
+async function otherDecisions(otherRoot: string): Promise<OtherDecisions> {
+  const other = scientLibraryLocation(otherRoot);
+  const [organization, pairs, aliases] = await Promise.all([
+    readScientSourcesOrganization(other),
+    readScientLibraryDistinctPairs(otherRoot).catch(() => []),
+    readScientLibraryAliases(other).catch(() => new Map()),
+  ]);
+  const collectionsOf = new Map<string, string[]>();
+  for (const collection of organization.collections) {
+    for (const sourceId of collection.sourceIds) {
+      collectionsOf.set(sourceId, [
+        ...(collectionsOf.get(sourceId) ?? []),
+        collection.collectionId,
+      ]);
+    }
+  }
+  const apartFrom = new Map<string, string[]>();
+  const apart = (first: string, second: string) => {
+    apartFrom.set(first, [...(apartFrom.get(first) ?? []), second]);
+    apartFrom.set(second, [...(apartFrom.get(second) ?? []), first]);
+  };
+  for (const pair of pairs) apart(pair.sourceIds[0], pair.sourceIds[1]);
+  // A merge the other Library undid keeps its two sources apart there; so it must here.
+  for (const alias of aliases.values()) {
+    if (alias.undoneAt !== undefined) apart(alias.sourceId, alias.survivorId);
+  }
+  return { collectionsOf, apartFrom };
+}
+
 /**
- * Adds one source as the other Library has it: PDFs, highlights and earlier versions first,
- * the record last, created only if no file has its name. Caller holds the Library's lock.
+ * Finds or makes here the collections of the other Library that hold a new source, matched by
+ * name under the same parent. Members are added later, one source at a time. A collection that
+ * cannot be made (a limit) is left out, and its sources arrive without it.
+ */
+async function ensureCollections(input: {
+  readonly library: ScientLibraryLocation;
+  readonly otherRoot: string;
+  readonly fresh: ReadonlySet<string>;
+  readonly actor: ScientSourceActor;
+}): Promise<JoinHeader["collections"]> {
+  if (input.fresh.size === 0) return [];
+  const theirs = await readScientSourcesOrganization(scientLibraryLocation(input.otherRoot));
+  const byId = new Map(theirs.collections.map((entry) => [entry.collectionId, entry]));
+  const mapped = new Map<string, { collectionId: string; created: boolean }>();
+  const ensure = async (otherId: string): Promise<string | null> => {
+    const known = mapped.get(otherId);
+    if (known) return known.collectionId;
+    const collection = byId.get(otherId);
+    if (!collection) return null;
+    const parentId = collection.parentCollectionId
+      ? await ensure(collection.parentCollectionId)
+      : null;
+    if (collection.parentCollectionId && !parentId) return null;
+    const change = await createScientSourceCollection({
+      root: input.library,
+      name: collection.name,
+      ...(parentId ? { parentCollectionId: parentId } : {}),
+      actor: input.actor,
+    }).catch(() => null);
+    if (!change?.collection) return null;
+    mapped.set(otherId, {
+      collectionId: change.collection.collectionId,
+      created: change.outcome === "created",
+    });
+    return change.collection.collectionId;
+  };
+  for (const collection of theirs.collections) {
+    if (collection.sourceIds.some((sourceId) => input.fresh.has(sourceId))) {
+      await ensure(collection.collectionId);
+    }
+  }
+  return [...mapped].map(([otherId, entry]) => ({ otherId, ...entry }));
+}
+
+/**
+ * Puts a source the join added where the other Library had it and keeps it apart from what the
+ * other Library kept it apart from. Safe to repeat. Caller holds the Library's lock, so no
+ * automatic merge can see the source before its "not duplicates" decisions are here.
+ */
+async function organise(input: {
+  readonly library: ScientLibraryLocation;
+  readonly sourceId: string;
+  readonly decisions: OtherDecisions;
+  readonly collections: JoinHeader["collections"];
+  readonly present: (sourceId: string) => Promise<boolean>;
+  readonly actor: ScientSourceActor;
+}): Promise<ReadonlyArray<string>> {
+  for (const other of input.decisions.apartFrom.get(input.sourceId) ?? []) {
+    if (!(await input.present(other))) continue;
+    await markScientLibrarySourcesDistinct({
+      library: input.library,
+      sourceIds: [input.sourceId, other],
+      reason: "marked-distinct",
+      actor: input.actor,
+    });
+  }
+  const placed: string[] = [];
+  for (const otherId of input.decisions.collectionsOf.get(input.sourceId) ?? []) {
+    const collectionId = input.collections.find((entry) => entry.otherId === otherId)?.collectionId;
+    if (!collectionId) continue;
+    // A full collection or one deleted meanwhile: the source arrives without it.
+    const change = await changeScientSourceCollectionMembers({
+      root: input.library,
+      collectionId,
+      add: [input.sourceId],
+      actor: input.actor,
+    }).catch(() => null);
+    if (change?.collection?.sourceIds.includes(input.sourceId)) placed.push(collectionId);
+  }
+  return placed;
+}
+
+/**
+ * Adds one source as the other Library has it: PDFs and highlights first, then its earlier
+ * versions with the PDFs they name, the record last, each created only if no file has its
+ * name. Highlights come only with a PDF this Library did not have. Caller holds the lock.
  */
 async function addSource(input: {
   readonly libraryRoot: string;
   readonly otherRoot: string;
   readonly record: ScientSourceRecord;
-}): Promise<"added" | string> {
+}): Promise<Omit<Arrived, "collections"> | string> {
   const { libraryRoot, otherRoot, record } = input;
   const id = record.sourceId;
   assertSafeIdentifier(id, "Source ID");
@@ -577,57 +787,80 @@ async function addSource(input: {
   }
   const library = scientLibraryLocation(libraryRoot);
   const other = scientLibraryLocation(otherRoot);
+  const highlights: Array<Arrived["highlights"][number]> = [];
+  let missingPdfs = 0;
+  let highlightsKept = false;
   for (const attachment of record.attachments) {
-    await copyPdf(
+    const copied = await copyPdf(
       sourceAttachmentAbsolutePath(other, attachment),
       sourceAttachmentAbsolutePath(library, attachment),
       attachment.sha256,
     );
-    const highlights = await fileBytes(annotationPath(otherRoot, attachment.sha256));
-    const ours = annotationPath(libraryRoot, attachment.sha256);
-    // Highlights on a PDF this Library already has stay as they are here.
-    if (highlights && !(await exists(ours))) {
-      await NodeFSP.mkdir(NodePath.dirname(ours), { recursive: true });
-      await NodeFSP.writeFile(ours, highlights, { flag: "wx", mode: 0o600 }).catch(
-        (error: unknown) => {
-          if (!isNodeError(error, "EEXIST")) throw error;
-        },
-      );
+    if (copied === "missing") {
+      missingPdfs += 1;
+      continue;
     }
+    const theirs = await fileBytes(annotationPath(otherRoot, attachment.sha256));
+    const ours = annotationPath(libraryRoot, attachment.sha256);
+    if (copied === "here") {
+      // The PDF belongs to a source of this Library too: its highlights stay as they are.
+      const mine = await fileBytes(ours);
+      if (theirs && (!mine || !mine.equals(theirs))) highlightsKept = true;
+      continue;
+    }
+    if (theirs) await createExclusively(ours, theirs);
+    const written = await fileBytes(ours);
+    highlights.push({ sha256: attachment.sha256, hash: written ? hashOfBytes(written) : null });
   }
   const history = NodePath.join(otherRoot, "history", id);
   for (const name of await NodeFSP.readdir(history).catch(() => [] as string[])) {
     if (!/^\d+\.json$/u.test(name)) continue;
-    const version: unknown = JSON.parse(
-      await NodeFSP.readFile(NodePath.join(history, name), "utf8"),
-    );
-    await atomicCreateJson(
-      NodePath.join(libraryRoot, "history", id, name),
-      version,
-      MAX_RECORD_BYTES,
-    );
+    const bytes = await NodeFSP.readFile(NodePath.join(history, name));
+    // A PDF only an earlier version names comes too while the other Library still has it, so
+    // going back to that version here finds it.
+    const version = await Promise.resolve(bytes.toString("utf8"))
+      .then((text) => decodePersistedScientSourceRecord(JSON.parse(text)))
+      .catch(() => null);
+    for (const attachment of version?.attachments ?? []) {
+      await copyPdf(
+        sourceAttachmentAbsolutePath(other, attachment),
+        sourceAttachmentAbsolutePath(library, attachment),
+        attachment.sha256,
+      ).catch(() => "missing" as const);
+    }
+    await createExclusively(NodePath.join(libraryRoot, "history", id, name), bytes);
   }
-  const raw: unknown = JSON.parse(
-    await NodeFSP.readFile(NodePath.join(otherRoot, "records", `${id}.json`), "utf8"),
-  );
+  const bytes = await NodeFSP.readFile(NodePath.join(otherRoot, "records", `${id}.json`));
   // Written as the other Library keeps it, once it is known to be a record this Scient reads.
-  decodePersistedScientSourceRecord(raw);
-  return (await atomicCreateJson(recordPath, raw, MAX_RECORD_BYTES)) ? "added" : "it is here now";
+  decodePersistedScientSourceRecord(JSON.parse(bytes.toString("utf8")));
+  if (!(await createExclusively(recordPath, bytes))) return "it is here now";
+  return { sourceId: id, highlights, missingPdfs, highlightsKept };
 }
 
 /**
  * Settles a join that stopped part way: a part that never finished names what it meant to add,
  * and what of that is here in any form (live, in the Trash, deleted) is what it added. Decided
- * before any later join adds anything, so no source is ever counted for two joins.
+ * before any later join adds anything, so no source is ever counted for two joins. Where the
+ * other Library's folder can still be read, the sources it added are put in their collections.
  */
-async function settleStopped(libraryRoot: string, joinId: string): Promise<void> {
+async function settleStopped(
+  libraryRoot: string,
+  joinId: string,
+  actor: ScientSourceActor,
+): Promise<void> {
   const header = await readHeader(libraryRoot, joinId).catch(() => null);
   if (header?.state !== "running") return;
   const directory = joinDirectory(libraryRoot, joinId);
+  const library = scientLibraryLocation(libraryRoot);
+  const source = await openScientLibraryJoinSource(library, header.other.folder).catch(() => null);
+  const decisions =
+    source?.outcome === "ready" && source.other.libraryId === header.other.libraryId
+      ? await otherDecisions(source.root).catch(() => null)
+      : null;
   await withScientLibraryLock(libraryRoot, async () => {
     for (const part of await readParts(directory)) {
       if (part.state === "done") continue;
-      const added: string[] = [];
+      const added: Arrived[] = [];
       for (const planned of part.sources) {
         const name = `${planned.sourceId}.json`;
         const anywhere = await Promise.all(
@@ -635,9 +868,30 @@ async function settleStopped(libraryRoot: string, joinId: string): Promise<void>
             exists(NodePath.join(libraryRoot, folder, name)),
           ),
         );
-        if (anywhere.some(Boolean)) added.push(planned.sourceId);
+        if (!anywhere.some(Boolean)) continue;
+        const record = await readScientSourceRecord(library, planned.sourceId);
+        // Only a source still exactly as planned is organised: a changed one is the person's.
+        const collections =
+          decisions && record && fingerprintOf(record) === planned.fingerprint
+            ? await organise({
+                library,
+                sourceId: planned.sourceId,
+                decisions,
+                collections: header.collections,
+                present: (sourceId) =>
+                  exists(NodePath.join(libraryRoot, "records", `${sourceId}.json`)),
+                actor,
+              })
+            : [];
+        added.push({
+          sourceId: planned.sourceId,
+          collections: [...collections],
+          highlights: [],
+          missingPdfs: 0,
+          highlightsKept: false,
+        });
       }
-      const here = new Set(added);
+      const here = new Set(added.map((entry) => entry.sourceId));
       await atomicWriteJson(
         partPath(directory, part.number),
         {
@@ -676,6 +930,24 @@ async function unfinishedJoins(libraryRoot: string): Promise<ReadonlyArray<strin
   return unfinished;
 }
 
+/** Runs holding the join's lifetime lock, or answers `busy` when a join or an Undo holds it. */
+async function oneAtATime<A>(libraryRoot: string, run: () => Promise<A>): Promise<A | "busy"> {
+  let held = false;
+  try {
+    return await withScientFileLock(
+      lifetimeLock(libraryRoot),
+      () => {
+        held = true;
+        return run();
+      },
+      { timeoutMs: 0 },
+    );
+  } catch (error) {
+    if (error instanceof ScientLibraryBusyError && !held) return "busy";
+    throw error;
+  }
+}
+
 export type ScientLibraryJoinResult =
   | {
       readonly outcome: "joined";
@@ -687,227 +959,187 @@ export type ScientLibraryJoinResult =
       readonly removedHere: number;
       readonly removedThere: number;
       readonly identical: number;
+      /** PDFs the added sources name that the other Library's folder did not hold. */
+      readonly missingPdfs: number;
     }
   | { readonly outcome: "stopped"; readonly joinId: string; readonly added: number }
+  /** Another join, or an Undo of one, is running in this Library. */
+  | { readonly outcome: "busy" }
   | { readonly outcome: "not-a-library" | "damaged" | "same-library" };
 
 /**
  * Adds the sources another Library has that are certainly new here, each whole, and records
  * everything else it found as differences without changing anything that exists here. It can
- * be run again with the same folder: what is already here is no longer new. One join runs in a
- * Library at a time; the caller sees to that.
+ * be run again with the same folder: what is already here is no longer new.
  */
 export async function joinScientLibrary(input: {
   readonly library: ScientLibraryLocation;
   /** A backup folder, or a Library a restore moved aside. */
   readonly folder: string;
   readonly actor: ScientSourceActor;
-  readonly onProgress?: (progress: { readonly done: number; readonly total: number }) => void;
+  /** `done` counts the sources dealt with, added or not; `added` those that are in now. */
+  readonly onProgress?: (progress: {
+    readonly done: number;
+    readonly total: number;
+    readonly added: number;
+  }) => void;
   /** Called once the join has its record, before it adds anything. */
   readonly onStarted?: (joinId: string) => void;
   /** Asked between parts; true stops the join where it is. */
   readonly shouldStop?: () => boolean;
   /** Tests only: stops after this many sources of a part, as a killed process would. */
-  readonly faults?: { readonly stopAfter?: number };
+  readonly faults?: { readonly stopAfter?: number; readonly beforeOrganise?: () => void };
 }): Promise<ScientLibraryJoinResult> {
   const source = await openScientLibraryJoinSource(input.library, input.folder);
   if (source.outcome !== "ready") return source;
   const libraryRoot = await NodeFSP.realpath(input.library.root);
   const library = scientLibraryLocation(libraryRoot);
-  // One join at a time in a Library: any other that is marked running stopped part way.
-  for (const joinId of await unfinishedJoins(libraryRoot)) await settleStopped(libraryRoot, joinId);
-  const compared = await compareScientLibraries(library, source.root);
-  const joinId = `join_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
-  const directory = joinDirectory(libraryRoot, joinId);
-  await NodeFSP.mkdir(directory, { recursive: true });
-  const writeHeader = (header: JoinHeader) =>
-    atomicWriteJson(NodePath.join(directory, HEADER_FILE), header, MAX_HEADER_BYTES);
-  let header: JoinHeader = {
-    formatVersion: 1,
-    joinId,
-    startedAt: new Date().toISOString(),
-    by: input.actor,
-    other: source.other,
-    state: "running",
-    planned: compared.fresh.length,
-    identical: compared.identical,
-    removedThere: compared.removedThere,
-    different: compared.different,
-    removedHere: compared.removedHere,
-  };
-  await writeHeader(header);
-  input.onStarted?.(joinId);
-
-  const added: string[] = [];
-  let skipped = 0;
-  let done = 0;
-  for (let start = 0, number = 1; start < compared.fresh.length; start += PART_SIZE, number += 1) {
-    if (input.shouldStop?.()) return { outcome: "stopped", joinId, added: added.length };
-    const records = compared.fresh.slice(start, start + PART_SIZE);
-    const part: JoinPart = {
+  const joined = await oneAtATime(libraryRoot, async (): Promise<ScientLibraryJoinResult> => {
+    // Holding the lifetime lock: any join still marked running stopped part way.
+    for (const joinId of await unfinishedJoins(libraryRoot)) {
+      await settleStopped(libraryRoot, joinId, input.actor);
+    }
+    const compared = await compareScientLibraries(library, source.root);
+    const decisions = await otherDecisions(source.root);
+    const joinId = `join_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
+    const directory = joinDirectory(libraryRoot, joinId);
+    await NodeFSP.mkdir(directory, { recursive: true });
+    const writeHeader = (header: JoinHeader) =>
+      atomicWriteJson(NodePath.join(directory, HEADER_FILE), header, MAX_HEADER_BYTES);
+    let header: JoinHeader = {
       formatVersion: 1,
-      number,
-      sources: records.map((record) => ({
-        sourceId: record.sourceId,
-        fingerprint: fingerprintOf(record),
-      })),
-      state: "pending",
-      added: [],
-      skipped: [],
+      joinId,
+      startedAt: new Date().toISOString(),
+      by: input.actor,
+      other: source.other,
+      state: "running",
+      planned: compared.fresh.length,
+      identical: compared.identical,
+      removedThere: compared.removedThere,
+      different: compared.different,
+      removedHere: compared.removedHere,
+      collections: [],
     };
-    // Written first: whatever happens next, the join's record names what it may have added.
-    await atomicWriteJson(partPath(directory, number), part, MAX_PART_BYTES);
-    const settled = await withScientLibraryLock(libraryRoot, async () => {
-      // Merged or removed here since the join looked: no longer new.
-      const aliases = await readScientLibraryAliases(library);
-      const partAdded: string[] = [];
-      const partSkipped: Array<{ sourceId: string; why: string }> = [];
-      for (const [index, record] of records.entries()) {
-        if (input.faults?.stopAfter === index) throw new Error("Stopped (test fault).");
-        const id = record.sourceId;
-        const outcome =
-          resolveScientLibraryAlias(aliases, id) !== id
-            ? "it was merged here"
-            : await addSource({ libraryRoot, otherRoot: source.root, record }).catch(
-                (error: unknown) =>
-                  error instanceof Error && error.message ? error.message : "it could not be read",
-              );
-        if (outcome === "added") partAdded.push(id);
-        else partSkipped.push({ sourceId: id, why: outcome });
-        done += 1;
-        input.onProgress?.({ done, total: compared.fresh.length });
-      }
-      return { partAdded, partSkipped };
-    });
-    await atomicWriteJson(
-      partPath(directory, number),
-      { ...part, state: "done", added: settled.partAdded, skipped: settled.partSkipped },
-      MAX_PART_BYTES,
-    );
-    added.push(...settled.partAdded);
-    skipped += settled.partSkipped.length;
-  }
+    await writeHeader(header);
+    input.onStarted?.(joinId);
+    header = {
+      ...header,
+      collections: await ensureCollections({
+        library,
+        otherRoot: source.root,
+        fresh: new Set(compared.fresh.map((record) => record.sourceId)),
+        actor: input.actor,
+      }),
+    };
+    await writeHeader(header);
 
-  const collections = await placeInCollections({
-    library,
-    otherRoot: source.root,
-    added: new Set(added),
-    actor: input.actor,
-  });
-  await keepApart({ library, otherRoot: source.root, added: new Set(added), actor: input.actor });
-  header = {
-    ...header,
-    state: "done",
-    finishedAt: new Date().toISOString(),
-    ...(collections.created.length + collections.extended.length > 0 ? { collections } : {}),
-  };
-  await writeHeader(header);
-  return {
-    outcome: "joined",
-    joinId,
-    added: added.length,
-    skipped,
-    different: compared.different.length,
-    removedHere: compared.removedHere.length,
-    removedThere: compared.removedThere,
-    identical: compared.identical,
-  };
-}
-
-/**
- * Puts the added sources where the other Library had them: into its collections, matched here
- * by name under the same parent, and made here when there is none. Only added sources are
- * placed; membership of sources this Library already had is not touched.
- */
-async function placeInCollections(input: {
-  readonly library: ScientLibraryLocation;
-  readonly otherRoot: string;
-  readonly added: ReadonlySet<string>;
-  readonly actor: ScientSourceActor;
-}): Promise<NonNullable<JoinHeader["collections"]>> {
-  const created: string[] = [];
-  const extended: Array<{ collectionId: string; sourceIds: ReadonlyArray<string> }> = [];
-  if (input.added.size === 0) return { created, extended };
-  const theirs = await readScientSourcesOrganization(scientLibraryLocation(input.otherRoot));
-  const names = new Map(theirs.collections.map((entry) => [entry.collectionId, entry.name]));
-  /** The other Library's collection ID → this Library's, for parents made or found here. */
-  const here = new Map<string, string>();
-  const ensure = async (
-    collection: (typeof theirs.collections)[number],
-    members: ReadonlyArray<string>,
-  ): Promise<string | null> => {
-    const parentName = collection.parentCollectionId
-      ? names.get(collection.parentCollectionId)
-      : undefined;
-    let parentId: string | undefined;
-    if (collection.parentCollectionId && parentName) {
-      parentId =
-        here.get(collection.parentCollectionId) ??
-        (
-          await createScientSourceCollection({
-            root: input.library,
-            name: parentName,
-            actor: input.actor,
-          }).then((change) => {
-            if (change.outcome === "created" && change.collection) {
-              created.push(change.collection.collectionId);
-            }
-            return change;
-          })
-        ).collection?.collectionId;
-      if (parentId) here.set(collection.parentCollectionId, parentId);
-    }
-    const change = await createScientSourceCollection({
-      root: input.library,
-      name: collection.name,
-      sourceIds: members,
-      ...(parentId ? { parentCollectionId: parentId } : {}),
-      actor: input.actor,
-    });
-    if (!change.collection) return null;
-    if (change.outcome === "created") created.push(change.collection.collectionId);
-    else if ("addedSourceIds" in change && change.addedSourceIds.length > 0) {
-      extended.push({
-        collectionId: change.collection.collectionId,
-        sourceIds: change.addedSourceIds,
+    let added = 0;
+    let skipped = 0;
+    let missingPdfs = 0;
+    let done = 0;
+    for (
+      let start = 0, number = 1;
+      start < compared.fresh.length;
+      start += PART_SIZE, number += 1
+    ) {
+      if (input.shouldStop?.()) return { outcome: "stopped", joinId, added };
+      const records = compared.fresh.slice(start, start + PART_SIZE);
+      const part: JoinPart = {
+        formatVersion: 1,
+        number,
+        sources: records.map((record) => ({
+          sourceId: record.sourceId,
+          fingerprint: fingerprintOf(record),
+        })),
+        state: "pending",
+        added: [],
+        skipped: [],
+      };
+      // Written first: whatever happens next, the join's record names what it may have added.
+      await atomicWriteJson(partPath(directory, number), part, MAX_PART_BYTES);
+      const settled = await withScientLibraryLock(libraryRoot, async () => {
+        // Under the lock, against the Library as it is now: an import, a merge or a removal
+        // since the join first looked means the source is no longer certainly new.
+        const state = await localState(library);
+        const partAdded: Arrived[] = [];
+        const partSkipped: Array<{ sourceId: string; why: string }> = [];
+        for (const [index, record] of records.entries()) {
+          if (input.faults?.stopAfter === index) throw new Error("Stopped (test fault).");
+          const id = record.sourceId;
+          const arrived =
+            standingOf(record, state).kind !== "fresh"
+              ? "it is no longer new here"
+              : await addSource({ libraryRoot, otherRoot: source.root, record }).catch(
+                  (error: unknown) =>
+                    error instanceof Error && error.message
+                      ? error.message
+                      : "it could not be read",
+                );
+          if (typeof arrived === "string") partSkipped.push({ sourceId: id, why: arrived });
+          else {
+            input.faults?.beforeOrganise?.();
+            const collections = await organise({
+              library,
+              sourceId: id,
+              decisions,
+              collections: header.collections,
+              present: (sourceId) =>
+                exists(NodePath.join(libraryRoot, "records", `${sourceId}.json`)),
+              actor: input.actor,
+            });
+            partAdded.push({ ...arrived, collections: [...collections] });
+            added += 1;
+            missingPdfs += arrived.missingPdfs;
+          }
+          done += 1;
+          input.onProgress?.({ done, total: compared.fresh.length, added });
+        }
+        return { partAdded, partSkipped };
       });
+      await atomicWriteJson(
+        partPath(directory, number),
+        { ...part, state: "done", added: settled.partAdded, skipped: settled.partSkipped },
+        MAX_PART_BYTES,
+      );
+      skipped += settled.partSkipped.length;
     }
-    return change.collection.collectionId;
-  };
-  // Parents first, so a child made here finds its parent.
-  const ordered = theirs.collections.toSorted(
-    (left, right) =>
-      Number(Boolean(left.parentCollectionId)) - Number(Boolean(right.parentCollectionId)),
-  );
-  for (const collection of ordered) {
-    const members = collection.sourceIds.filter((sourceId) => input.added.has(sourceId));
-    if (members.length === 0) continue;
-    const id = await ensure(collection, members);
-    if (id) here.set(collection.collectionId, id);
-  }
-  return { created, extended };
+    await writeHeader({ ...header, state: "done", finishedAt: new Date().toISOString() });
+    return {
+      outcome: "joined",
+      joinId,
+      added,
+      skipped,
+      different: compared.different.length,
+      removedHere: compared.removedHere.length,
+      removedThere: compared.removedThere,
+      identical: compared.identical,
+      missingPdfs,
+    };
+  });
+  return joined === "busy" ? { outcome: "busy" } : joined;
 }
 
-/** "Not duplicates" decisions of the other Library about a source this join added. */
-async function keepApart(input: {
-  readonly library: ScientLibraryLocation;
-  readonly otherRoot: string;
-  readonly added: ReadonlySet<string>;
-  readonly actor: ScientSourceActor;
-}): Promise<void> {
-  if (input.added.size === 0) return;
-  const present = new Set((await listScientSourceRecords(input.library)).map((r) => r.sourceId));
-  for (const pair of await readScientLibraryDistinctPairs(input.otherRoot).catch(() => [])) {
-    const [first, second] = pair.sourceIds;
-    if (!input.added.has(first) && !input.added.has(second)) continue;
-    if (!present.has(first) || !present.has(second)) continue;
-    await markScientLibrarySourcesDistinct({
-      library: input.library,
-      sourceIds: [first, second],
-      reason: pair.reason,
-      actor: input.actor,
-    });
+/** Source IDs a project on this computer has pinned, linked or resolved to, as the Library records. */
+async function usedByProjects(libraryRoot: string): Promise<ReadonlySet<string>> {
+  const folder = NodePath.join(libraryRoot, "projects");
+  const used = new Set<string>();
+  for (const name of await NodeFSP.readdir(folder).catch(() => [] as string[])) {
+    if (!name.endsWith(".json")) continue;
+    const map: unknown = await NodeFSP.readFile(NodePath.join(folder, name), "utf8").then(
+      (text) => JSON.parse(text) as unknown,
+      () => null,
+    );
+    const sources =
+      typeof map === "object" && map !== null && "sources" in map && Array.isArray(map.sources)
+        ? (map.sources as ReadonlyArray<unknown>)
+        : [];
+    for (const entry of sources) {
+      if (typeof entry === "object" && entry !== null && "sourceId" in entry) {
+        if (typeof entry.sourceId === "string") used.add(entry.sourceId);
+      }
+    }
   }
+  return used;
 }
 
 export type ScientLibraryJoinUndo =
@@ -915,16 +1147,17 @@ export type ScientLibraryJoinUndo =
       readonly outcome: "undone";
       /** Sources the join added that were still as it left them: now in the Trash. */
       readonly trashed: number;
-      /** Sources the join added that changed since, and collections still in use: left. */
+      /** Sources the join added that were changed or used since, and collections in use: left. */
       readonly left: number;
     }
-  | { readonly outcome: "not-found" | "already-undone" };
+  /** `running`: that join, another one, or another Undo is under way. */
+  | { readonly outcome: "not-found" | "already-undone" | "running" };
 
 /**
- * Takes a join back as far as nothing has changed since: each source it added goes to the
- * Trash only if it is exactly as the join left it; one that was edited, read, starred, given a
- * PDF or merged stays. A collection the join made is deleted once nothing here is in it.
- * In the Trash the sources count as removed here, so a later join does not add them again.
+ * Takes a join back as far as nothing has happened since: a source it added goes to the Trash
+ * only if its record is as the join left it, no project uses it, it is in no other collection,
+ * and the highlights that came with it are untouched. A collection the join made goes once
+ * nothing is in or under it. In the Trash the sources are removed here, so no join adds them again.
  */
 export async function undoScientLibraryJoin(input: {
   readonly library: ScientLibraryLocation;
@@ -933,64 +1166,86 @@ export async function undoScientLibraryJoin(input: {
 }): Promise<ScientLibraryJoinUndo> {
   const libraryRoot = await NodeFSP.realpath(input.library.root);
   const library = scientLibraryLocation(libraryRoot);
-  await settleStopped(libraryRoot, input.joinId);
-  const header = await readHeader(libraryRoot, input.joinId);
-  if (!header) return { outcome: "not-found" };
-  if (header.state === "undone") return { outcome: "already-undone" };
-  const directory = joinDirectory(libraryRoot, input.joinId);
-  let trashed = 0;
-  let left = 0;
-  for (const part of await readParts(directory)) {
-    const planned = new Map(part.sources.map((entry) => [entry.sourceId, entry.fingerprint]));
-    for (const sourceId of part.added) {
-      const record = await readScientSourceRecord(library, sourceId);
-      // Gone, merged away or changed in any way since: it is the person's now.
-      if (!record || fingerprintOf(record) !== planned.get(sourceId)) {
-        left += 1;
-        continue;
-      }
-      const removed = await removeScientSource({
-        root: library,
-        sourceId,
-        expectedRevision: record.revision,
-        actor: input.actor,
+  const undone = await oneAtATime(libraryRoot, async (): Promise<ScientLibraryJoinUndo> => {
+    await settleStopped(libraryRoot, input.joinId, input.actor);
+    const header = await readHeader(libraryRoot, input.joinId);
+    if (!header) return { outcome: "not-found" };
+    if (header.state === "undone") return { outcome: "already-undone" };
+    const directory = joinDirectory(libraryRoot, input.joinId);
+    let trashed = 0;
+    let left = 0;
+    for (const part of await readParts(directory)) {
+      const planned = new Map(part.sources.map((entry) => [entry.sourceId, entry.fingerprint]));
+      // One hold of the lock for the part: nothing changes between the look and the removal.
+      await withScientLibraryLock(libraryRoot, async () => {
+        const used = await usedByProjects(libraryRoot);
+        const organization = await readScientSourcesOrganization(library);
+        for (const arrived of part.added) {
+          const { sourceId } = arrived;
+          const record = await readScientSourceRecord(library, sourceId);
+          const placed = new Set(arrived.collections);
+          const untouched =
+            record !== null &&
+            fingerprintOf(record) === planned.get(sourceId) &&
+            !used.has(sourceId) &&
+            organization.collections.every(
+              (collection) =>
+                !collection.sourceIds.includes(sourceId) || placed.has(collection.collectionId),
+            ) &&
+            (
+              await Promise.all(
+                arrived.highlights.map(async ({ sha256, hash }) => {
+                  const now = await fileBytes(annotationPath(libraryRoot, sha256));
+                  return (now ? hashOfBytes(now) : null) === hash;
+                }),
+              )
+            ).every(Boolean);
+          const removed = untouched
+            ? await removeScientSource({
+                root: library,
+                sourceId,
+                expectedRevision: record.revision,
+                actor: input.actor,
+              })
+            : null;
+          if (removed?.outcome === "removed") trashed += 1;
+          else left += 1;
+        }
       });
-      if (removed.outcome === "removed") trashed += 1;
-      else left += 1;
     }
-  }
-  const present = new Set((await listScientSourceRecords(library)).map((r) => r.sourceId));
-  const organization = await readScientSourcesOrganization(library, present);
-  // Children first, so a parent the join made is empty when its turn comes.
-  for (const collectionId of (header.collections?.created ?? []).toReversed()) {
-    const collection = organization.collections.find(
-      (entry) => entry.collectionId === collectionId,
+    // Children first; a collection goes only when nothing here is in it and nothing is under it.
+    const created = header.collections.filter((entry) => entry.created).toReversed();
+    for (const { collectionId } of created) {
+      const present = new Set((await listScientSourceRecords(library)).map((r) => r.sourceId));
+      const organization = await readScientSourcesOrganization(library, present);
+      const collection = organization.collections.find(
+        (entry) => entry.collectionId === collectionId,
+      );
+      if (!collection) continue;
+      const inUse =
+        collection.sourceIds.some((sourceId) => present.has(sourceId)) ||
+        organization.collections.some((entry) => entry.parentCollectionId === collectionId);
+      if (inUse) left += 1;
+      else {
+        await deleteScientSourceCollection({
+          root: library,
+          collectionId,
+          actor: input.actor,
+        }).catch(() => undefined);
+      }
+    }
+    await atomicWriteJson(
+      NodePath.join(directory, HEADER_FILE),
+      {
+        ...header,
+        state: "undone",
+        undone: { at: new Date().toISOString(), by: input.actor, trashed, left },
+      } satisfies JoinHeader,
+      MAX_HEADER_BYTES,
     );
-    if (!collection) continue;
-    const inUse =
-      collection.sourceIds.some((sourceId) => present.has(sourceId)) ||
-      organization.collections.some(
-        (entry) =>
-          entry.parentCollectionId === collectionId &&
-          !(header.collections?.created ?? []).includes(entry.collectionId),
-      );
-    if (inUse) left += 1;
-    else {
-      await deleteScientSourceCollection({ root: library, collectionId, actor: input.actor }).catch(
-        () => undefined,
-      );
-    }
-  }
-  await atomicWriteJson(
-    NodePath.join(directory, HEADER_FILE),
-    {
-      ...header,
-      state: "undone",
-      undone: { at: new Date().toISOString(), by: input.actor, trashed, left },
-    } satisfies JoinHeader,
-    MAX_HEADER_BYTES,
-  );
-  return { outcome: "undone", trashed, left };
+    return { outcome: "undone", trashed, left };
+  });
+  return undone === "busy" ? { outcome: "running" } : undone;
 }
 
 /** One join as "Recent changes" and the differences view show it. */
@@ -1002,10 +1257,13 @@ export interface ScientLibraryJoinRecord {
   /** `stopped`: it did not finish; what it added is in the Library and it can be undone. */
   readonly state: "done" | "stopped" | "undone";
   readonly added: number;
+  /** With the added sources whose PDF was already here with other highlights. */
   readonly different: ReadonlyArray<ScientLibraryJoinDifference>;
   readonly removedHere: number;
   readonly removedThere: number;
-  /** After Undo: what stayed because it changed since. */
+  /** PDFs the added sources name that the other Library's folder did not hold. */
+  readonly missingPdfs: number;
+  /** After Undo: what stayed because it was changed or used since. */
   readonly left: number;
 }
 
@@ -1030,14 +1288,17 @@ export async function listScientLibraryJoins(
     if (!header) continue;
     const parts = await readParts(joinDirectory(libraryRoot, joinId)).catch(() => []);
     let added = 0;
+    const arrived: Arrived[] = [];
     for (const part of parts) {
-      if (part.state === "done") added += part.added.length;
-      else {
-        // A part that never finished: what of it is here is what it added.
-        for (const planned of part.sources) {
-          const path = NodePath.join(libraryRoot, "records", `${planned.sourceId}.json`);
-          if (await exists(path)) added += 1;
-        }
+      if (part.state === "done") {
+        added += part.added.length;
+        arrived.push(...part.added);
+        continue;
+      }
+      // A part that never finished: what of it is here is what it added.
+      for (const planned of part.sources) {
+        const path = NodePath.join(libraryRoot, "records", `${planned.sourceId}.json`);
+        if (await exists(path)) added += 1;
       }
     }
     joins.push({
@@ -1047,9 +1308,20 @@ export async function listScientLibraryJoins(
       other: header.other,
       state: header.state === "running" ? "stopped" : header.state,
       added,
-      different: header.different,
+      different: [
+        ...header.different,
+        ...arrived
+          .filter((entry) => entry.highlightsKept)
+          .map((entry) => ({
+            otherSourceId: entry.sourceId,
+            sourceId: entry.sourceId,
+            relation: "same-id" as const,
+            parts: ["highlights" as const],
+          })),
+      ],
       removedHere: header.removedHere.length,
       removedThere: header.removedThere,
+      missingPdfs: arrived.reduce((sum, entry) => sum + entry.missingPdfs, 0),
       left: header.undone?.left ?? 0,
     });
   }

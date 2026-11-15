@@ -2643,72 +2643,88 @@ if needed) and the saved result its status line reads; a journal it replaces
 is kept as `journal.before-<restoreId>.json`. This runs before the first move
 pass, so the project is not moved in again. Only `moved-back` is carried: it
 is the one state no code path leaves, so nothing executable is transplanted.
+If carrying fails, or a start is killed after the swap, the Library records
+the restore without an end time while the intent still waits; until the next
+start finishes it, `runScientLibraryMove` refuses to move any project in
+(`scientLibraryRestoreUnfinished`), so a project still keeps its own store.
 Where the Library that knew the decision is gone (another computer, a lost
 disk), the restored Library's older journal stands and the project moves in
 again at its next change.
 
 ## Library join ("Add from another Library")
 
-`joinScientLibrary` (`libraryJoin.ts`) changes nothing that exists in the
+`joinScientLibrary` (`libraryJoin.ts`) changes no source that exists in the
 Library. It accepts only inputs nothing can be writing
 (`openScientLibraryJoinSource`): a backup folder, checked against its manifest
-first, or a folder beside the Library named `<library>.replaced-…` (a Library
-a restore moved aside). Any other folder, a running Scient's Library
-included, is refused.
+first, or the folder this Library's own `restores.json` records as the Library
+a restore moved aside. A folder that merely has such a name, or a running
+Scient's Library, is refused.
 
 `compareScientLibraries` (reads only) sorts every live source of the other
-Library:
+Library with `standingOf`:
 
 - **fresh**, to be added: nothing here could be it. No live record, alias,
-  Trash entry or tombstone under its ID; none under the project ID a rebuilt
-  copy came from (`hydratedFromProjectSourceId`), in either direction; and the
-  intake rule (`readScientSourceIntakeAssessor`) says `new`.
+  Trash entry or tombstone under its ID; none under the project source a
+  rebuilt copy stands for (`hydratedFromProjectSourceId`), whichever side
+  rebuilt it, both included; and the intake rule
+  (`readScientSourceIntakeAssessor`) answers `new` and names no candidate
+  (it answers `new` with candidates when several sources here could be it).
 - **different**, recorded and left: `same-id` (both hold it; details, tags,
   note, read and star, PDFs or highlights differ), `merged-here`,
-  `rebuilt-there` / `rebuilt-here` (one side's is a copy rebuilt from a
-  project), `same-paper` (one strong intake match), `possibly-same` (a
-  metadata match, or several). For the last five the parts listed are what the
-  other has that the source here lacks. Details are compared by bibliographic
-  fields only.
+  `rebuilt-there` / `rebuilt-here`, `same-paper` (one strong intake match),
+  `possibly-same` (a metadata match, or several candidates, then none is
+  named). Except for `same-id` the parts listed are what the other has that
+  the source here lacks. Details are compared by bibliographic fields only.
 - **removed here** (Trash or deleted for good): not added, counted.
 - identical, and live here but removed there: counted.
 
-The join writes `joins/<joinId>/join.json` (the other Library, counts, the
-differences) and then, in parts of 100, a part file naming the sources it will
-add with each one's fingerprint (a hash of the whole record), before adding
-them under the Library's lock: PDFs by hash (checked, flushed), a highlight
-file only where this Library has none for that PDF, earlier versions, and last
-the record, created exclusively from the other Library's own bytes. A source
-that appeared, was merged or was removed here since the comparison is skipped.
-Afterwards the added sources are placed in the other Library's collections
-(matched here by name under the same parent, made when missing; membership of
-existing sources is not touched), and "not duplicates" pairs that involve an
-added source are copied. No duplicate pass runs: a possible duplicate was not
-added in the first place.
+A join holds `<library>.join.lock` for its whole life (so does an Undo), so
+one runs per Library. It writes `joins/<joinId>/join.json` (the other
+Library, counts, the differences), finds or makes the collections of the other
+Library that hold a fresh source (by name under the same parent) and records
+that map, then works in parts of 100. A part file naming the sources and each
+one's fingerprint (a hash of the whole record) is written before the part is
+applied under the Library's lock. Under that lock each source is checked
+again against the Library as it is now, then added: its PDFs by hash
+(checked, flushed), each with its highlights file if the PDF was not here
+(a PDF already here keeps this Library's highlights, and the source is
+recorded as differing); its earlier versions, and the PDFs only they name
+while the other Library still has them; last the record. Every file is
+created exclusively from the other Library's own bytes, through a flushed
+temporary file. Still under the lock, the source is put in its collections
+and kept apart from what the other Library kept it apart from ("not
+duplicates" pairs, and merges it undid), so no automatic merge can see it
+before those decisions are here. No duplicate pass runs: a possible duplicate
+was not added in the first place.
 
 Why no ledger of earlier joins is needed: the only thing a join creates is a
 source under its own ID. Whatever is done to it afterwards (edit, merge,
 Trash, deletion) leaves evidence under that ID, so the next join does not see
 it as new. A join that stopped leaves its part file `pending`; before any
-later join adds anything, and before an Undo, it is settled: what of that part
-is here in any form is what it added. One join runs per Library (the server's
-runner, `LibraryJoinRuns.ts`).
+later join adds anything, and before an Undo, it is settled: what of that
+part is here in any form is what it added, and where the other Library's
+folder can still be read those sources are put in their collections.
 
-`undoScientLibraryJoin` moves each added source to the Trash only if its
-fingerprint is still the one recorded; any change (an edit, a note, read or
-star, a PDF, a merge) leaves it and counts it. A collection the join made is
-deleted once nothing here is in it. In the Trash the sources are "removed
-here", so a later join skips them.
+`undoScientLibraryJoin` moves an added source to the Trash only if, under the
+Library's lock: its fingerprint is still the one recorded; no project's map in
+`projects/` names it; it is in no collection the join did not put it in; and
+the highlights file of each PDF that came with it is as the join wrote it.
+Anything else leaves it and counts it. A collection the join made is deleted
+once nothing here is in it and nothing is under it. In the Trash the sources
+are "removed here", so a later join skips them. Not seen by Undo: a
+systematic review that screened the source (the review keeps its own copy).
 
-Server: organize actions `add-from-library` and `undo-join`; `backupStatus`
-also answers the join (running with a count, done with what it added and what
-it left, failed with the reason). "Recent changes" lists each join (kind
-`join`, with Undo) and offers **Add its sources** on a restore whose replaced
-Library is kept. Agents have neither action yet (recorded with the backup's
-gap). Not built: a view of the differences with one-click "use the other";
-joining an existing source's note, PDFs or details; carrying merges made in
-the other Library. The reasons (a repeatable join of existing sources needs
-what a sync engine needs) are in
+Server: organize actions `add-from-library` and `undo-join` (the organize
+route resolves the store with write access, so starting a join can first move
+the open project into the Library, as any change does); `backupStatus` also
+answers the join (running with a count, done with what it added and what it
+left, failed with the reason and how many had arrived). "Recent changes"
+lists each join (kind `join`, with Undo) and offers **Add its sources** on a
+restore whose replaced Library is kept. Agents have neither action yet
+(recorded with the backup's gap). Not built: a view of the differences with
+one-click "use the other"; joining an existing source's note, PDFs or
+details; carrying merges made in the other Library. The reasons (a repeatable
+join of existing sources needs what a sync engine needs) are in
 `reviews/sources-improve-20261115/DECISIONS.md`.
 
 ## Citing

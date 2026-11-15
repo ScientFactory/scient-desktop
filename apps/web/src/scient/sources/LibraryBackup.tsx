@@ -20,6 +20,7 @@ import {
   backupRunningLabel,
   joinDoneLabel,
   joinRunningLabel,
+  joinStoppedLabel,
   restoreLine,
   restoreRefusedLabel,
   restoredLabel,
@@ -67,7 +68,12 @@ function sayHowJoinEnded(environmentId: EnvironmentId, join: ScientSourcesJoinSt
       description: joinDoneLabel(join),
     });
   } else if (join.state === "failed") {
-    toastManager.add({ type: "error", title: JOIN_LABELS.failed, description: join.reason });
+    // Some sources may have arrived before it failed: say so, not "nothing was added".
+    toastManager.add({
+      type: "error",
+      title: join.added > 0 ? JOIN_LABELS.stopped : JOIN_LABELS.failed,
+      description: join.added > 0 ? joinStoppedLabel(join) : join.reason,
+    });
   }
 }
 
@@ -157,8 +163,8 @@ export function useLibraryBackup(input: {
     sayHowRestoreEnded(input.environmentId, next.restore);
     const ended = next.join.state !== "running" && followingJoin.has(input.environmentId);
     sayHowJoinEnded(input.environmentId, next.join);
-    // New sources are in the Library: the list is read again.
-    if (ended && next.join.state === "done" && next.join.added > 0) input.onAdded?.();
+    // New sources are in the Library, also when it stopped part way: the list is read again.
+    if (ended && next.join.state !== "none" && next.join.added > 0) input.onAdded?.();
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the backup's and the restore's status from the environment server when the panel opens on a Library
