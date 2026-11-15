@@ -436,9 +436,6 @@ interface OpenCodeThreadState {
   permission: PermissionRuleset;
   /** Parent rules last written into this child's `permission`; empty for root sessions. */
   inheritedPermission: PermissionRuleset;
-  // SCIENT-FORK: the rules OpenCode last read back for this session, unlike `permission`,
-  // which also holds rules written without a readback.
-  confirmedPermission?: PermissionRuleset;
 }
 
 interface OpenCodeRequestOwner {
@@ -3851,43 +3848,33 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }
               // SCIENT-FORK:START — native conversations persist their original rules across
-              // process replacement. Install this turn's captured authority before prompting.
-              // A continuation sends no prompt: its wake already runs on this process, so it
-              // rewrites, and confirms, only rules that differ from those confirmed there.
+              // process replacement. Install this turn's captured authority before prompting,
+              // and before a continuation admits the wake OpenCode already runs.
               const permission = openCodePermissionRules(turnInput.runtimePolicy);
-              const readBack = state.confirmedPermission;
-              const confirmedHere =
-                continuation &&
-                readBack !== undefined &&
-                permission.length === readBack.length &&
-                permission.every((rule, index) => permissionRuleEquals(rule, readBack[index]!));
-              if (!confirmedHere) {
-                yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
-                  client.session.update({ sessionID: sessionId, permission }, { signal }),
+              yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
+                client.session.update({ sessionID: sessionId, permission }, { signal }),
+              );
+              const confirmed = unwrapData(
+                "session.get",
+                yield* sdkCall("session.get", { sessionID: sessionId }, (signal) =>
+                  client.session.get({ sessionID: sessionId }, { signal }),
+                ),
+              );
+              const effectivePermission = confirmed.permission;
+              if (
+                confirmed.id !== sessionId ||
+                effectivePermission === undefined ||
+                effectivePermission.length !== permission.length ||
+                !permission.every((rule, index) => {
+                  const effective = effectivePermission[index];
+                  return effective !== undefined && permissionRuleEquals(rule, effective);
+                })
+              ) {
+                return yield* protocolError(
+                  "OpenCode did not confirm this turn's permission rules.",
                 );
-                const confirmed = unwrapData(
-                  "session.get",
-                  yield* sdkCall("session.get", { sessionID: sessionId }, (signal) =>
-                    client.session.get({ sessionID: sessionId }, { signal }),
-                  ),
-                );
-                const effectivePermission = confirmed.permission;
-                if (
-                  confirmed.id !== sessionId ||
-                  effectivePermission === undefined ||
-                  effectivePermission.length !== permission.length ||
-                  !permission.every((rule, index) => {
-                    const effective = effectivePermission[index];
-                    return effective !== undefined && permissionRuleEquals(rule, effective);
-                  })
-                ) {
-                  return yield* protocolError(
-                    "OpenCode did not confirm this turn's permission rules.",
-                  );
-                }
-                state.permission = permission;
-                state.confirmedPermission = permission;
               }
+              state.permission = permission;
               // SCIENT-FORK:END
               yield* applyPermissionRules(state, turnInput.runtimePolicy);
               // A continuation admits a wake OpenCode is already running, so it sends no prompt.
