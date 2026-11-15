@@ -43,7 +43,7 @@ export class PeerForwarding extends Context.Service<
     // SCIENT-FORK:START — Scient MCP tool names.
     /**
      * Runs `tool` in the linked environment `environmentId` with `params`. A
-     * `scient_thread_wait` goes in pieces short enough to survive any route.
+     * `scient_thread_wait` returns within the same 45 s cap as a local one.
      */
     readonly call: <T extends Tool.Any>(
       scope: Scope,

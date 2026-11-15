@@ -2353,6 +2353,7 @@ describe("OpenCodeAdapterV2", () => {
         const nativeEvents = asyncEventStream();
         const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
         const root = "ses_root";
+        let rootPermission: unknown;
         const promptIds: Array<string> = [];
         const aborted: Array<string> = [];
         const nativeExit = yield* Deferred.make<number>();
@@ -2402,6 +2403,10 @@ describe("OpenCodeAdapterV2", () => {
                   data: {
                     id: input.sessionID,
                     ...(input.sessionID === "ses_held_child" ? { parentID: root } : {}),
+                    // SCIENT-FORK: Scient reads back the permission rules it wrote.
+                    ...(input.sessionID === root && rootPermission !== undefined
+                      ? { permission: rootPermission }
+                      : {}),
                     time: { created: 1, updated: 1 },
                   },
                 };
@@ -2419,8 +2424,11 @@ describe("OpenCodeAdapterV2", () => {
               children: async (input: { sessionID: string }) => ({
                 data: input.sessionID === root ? [{ id: "ses_descendant" }] : [],
               }),
-              update: async () => {
-                if (end === "policy-failure") throw new Error("permission update failed");
+              update: async (input: { readonly permission?: unknown }) => {
+                // SCIENT-FORK: Scient writes the rules at every turn start; fail the changed policy.
+                if (end === "policy-failure" && rootPermission !== undefined)
+                  throw new Error("permission update failed");
+                rootPermission = input.permission;
                 return { data: { id: root } };
               },
               abort: async (input: { sessionID: string }) => {
@@ -3146,6 +3154,7 @@ describe("OpenCodeAdapterV2", () => {
           yield* Scope.close(sessionScope, Exit.void);
           const replacementEvents = asyncEventStream();
           const replacementAborts: string[] = [];
+          let replacementPermission: unknown;
           const replacementOffers: ProviderContinuationRequests.ProviderContinuationRequest[] = [];
           const replacement = yield* makeOpenCodeRuntimeHarness(
             "replacement-root",
@@ -3156,7 +3165,16 @@ describe("OpenCodeAdapterV2", () => {
                 create: async () => ({
                   data: { id: "ses_replacement", time: { created: 1, updated: 1 } },
                 }),
-                get: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+                get: async () => ({
+                  // SCIENT-FORK: Scient reads back the permission rules it wrote.
+                  data: {
+                    id: root,
+                    ...(replacementPermission === undefined
+                      ? {}
+                      : { permission: replacementPermission }),
+                    time: { created: 1, updated: 1 },
+                  },
+                }),
                 messages: async () => ({
                   data: [
                     {
@@ -3170,7 +3188,10 @@ describe("OpenCodeAdapterV2", () => {
                     },
                   ],
                 }),
-                update: async () => ({ data: { id: root } }),
+                update: async (input: { readonly permission?: unknown }) => {
+                  replacementPermission = input.permission;
+                  return { data: { id: root } };
+                },
                 promptAsync: async () => ({ data: true }),
                 children: async () => ({ data: [] }),
                 abort: async (input: { sessionID: string }) => {

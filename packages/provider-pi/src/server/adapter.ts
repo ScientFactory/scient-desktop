@@ -794,7 +794,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let threadState: PiThreadState | null = null;
       let expectedNativeSessionId: string | undefined;
       let boundThreadId = input.threadId;
-      let registrationAttempted = initialSessionPath !== undefined;
+      // SCIENT-FORK: a thread registered with no provider thread binds to the launch session; a
+      // provider thread whose native ref was cleared still gets a new session (see registerThread).
+      let registrationAttempted = false;
       let registrationInProgress = false;
       let lastNativeThreadId: string | null = initialSessionPath ?? null;
       let stopRequested = false;
@@ -2461,11 +2463,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
+      // Pi may spell an attached session file differently from its recorded path.
+      const sameSessionFile = (left: string | undefined, right: string | null | undefined) =>
+        left !== undefined &&
+        right != null &&
+        (left === right || path.resolve(cwd, left) === path.resolve(cwd, right));
       const assertSessionIdentity = Effect.fnUntraced(function* (data: unknown) {
         const state = threadState;
         if (state === null) return;
         if (
-          recordString(data, "sessionFile") === state.providerThread.nativeThreadRef?.nativeId &&
+          sameSessionFile(
+            recordString(data, "sessionFile"),
+            state.providerThread.nativeThreadRef?.nativeId,
+          ) &&
           (expectedNativeSessionId === undefined ||
             recordString(data, "sessionId") === expectedNativeSessionId)
         )
@@ -3455,7 +3465,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
           // SCIENT-FORK:END
           const resumeId = existing?.nativeThreadRef?.nativeId;
-          const needsNewSession = resumeId == null && registrationAttempted;
+          const needsNewSession =
+            resumeId == null &&
+            (registrationAttempted || (existing !== undefined && initialSessionPath !== undefined));
           registrationAttempted = true;
           // This probe replaces switch_session as a resume's first request, so it keeps the lifecycle deadline.
           // It also recovers a failed spawn session before lifecycleRequest offers to its dead queue.
@@ -3466,9 +3478,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const liveSessionFile = recordString(stateData, "sessionFile");
           // Switching replaces the session and reloads extensions, so keep an already attached file.
           const alreadyOnResumeFile =
-            resumeId != null &&
-            liveSessionFile !== undefined &&
-            path.resolve(cwd, liveSessionFile) === path.resolve(cwd, resumeId);
+            resumeId != null && sameSessionFile(liveSessionFile, resumeId);
           if (!alreadyOnResumeFile && (resumeId != null || needsNewSession)) {
             if (bufferedWork !== null) {
               return yield* protocolError(

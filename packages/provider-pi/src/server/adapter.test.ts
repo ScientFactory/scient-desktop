@@ -378,6 +378,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         const cancelled = vetoSwitch;
         vetoSwitch = false;
         if (!cancelled) serviceTier = null;
+        // SCIENT-FORK: this fake keeps its session state, so a switch moves it as Pi's does.
+        if (!cancelled && typeof record["sessionPath"] === "string")
+          sessionFile = record["sessionPath"];
         return { ...base, data: { cancelled } };
       }
       case "get_entries":
@@ -2067,10 +2070,16 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      // SCIENT-FORK: a Scient session refuses another app thread before reading Pi's state, so
+      // the wake races a switch of this thread to another native session instead.
       const otherThread = {
         ...providerThread,
-        appThreadId: ThreadId.make("other-thread"),
         id: ProviderThreadId.make("other-provider-thread"),
+        nativeThreadRef: {
+          driver: PI_PROVIDER,
+          nativeId: "/fake/other-thread-session.jsonl",
+          strength: "strong" as const,
+        },
       };
       const reading = yield* Deferred.make<void>();
       fake.deferNextState(reading);
@@ -2512,9 +2521,10 @@ describe("PiAdapterV2", () => {
         yield* startTurn(runtime, resumed, "anthropic/claude-sonnet", [], "Continue", undefined, 2);
         assert.equal((yield* fake.takeRequest("prompt"))["message"], "Continue");
         assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+        // SCIENT-FORK: Scient confirms the selection with set_model on every turn (one per turn).
         assert.equal(
           fake.allRequests().filter((request) => request.type === "set_model").length,
-          1,
+          2,
         );
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
@@ -2600,7 +2610,8 @@ describe("PiAdapterV2", () => {
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
       assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
-      assert.equal(fake.allRequests().filter((request) => request.type === "set_model").length, 1);
+      // SCIENT-FORK: Scient confirms the selection with set_model on every turn (one per turn).
+      assert.equal(fake.allRequests().filter((request) => request.type === "set_model").length, 2);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -2752,10 +2763,15 @@ describe("PiAdapterV2", () => {
           thread.nativeThreadRef?.nativeId,
         );
         const coldArgs = coldFake.lastSpawn().args;
-        assert.equal(
-          coldArgs.includes("--session") ? coldArgs[coldArgs.indexOf("--session") + 1] : undefined,
-          thread === sameCwd ? sameCwd.nativeThreadRef?.nativeId : undefined,
-        );
+        const coldSession = coldArgs.includes("--session")
+          ? coldArgs[coldArgs.indexOf("--session") + 1]
+          : undefined;
+        // SCIENT-FORK: a session from another cwd starts on Scient's owned empty file instead.
+        if (thread === sameCwd) assert.equal(coldSession, sameCwd.nativeThreadRef?.nativeId);
+        else {
+          assert.isDefined(coldSession);
+          assert.notEqual(coldSession, otherCwd.nativeThreadRef?.nativeId);
+        }
       }
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

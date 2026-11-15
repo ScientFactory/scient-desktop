@@ -72,12 +72,13 @@ export function assertPiThreadRollbackOutput(
     piReplayExpectedSessionFile(transcript, "/pi-sessions/session-1.jsonl"),
   );
   assert.equal(providerThread?.nativeThreadRef?.nativeId, expectedFile);
-  assert.deepEqual(
+  assert.lengthOf(
     outboundOfType(
       { ...transcript, entries: piReplayObservedEntries(transcript) },
       "switch_session",
-    ).map((frame) => field(frame, "sessionPath")),
-    [expectedFile],
+    ),
+    0,
+    "the fork already selected the rollback session file",
   );
 
   const finalAnswer = projection.turnItems.findLast((item) => item.type === "assistant_message");

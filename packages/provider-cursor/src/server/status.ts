@@ -46,7 +46,6 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
   if (!cursorSettings.enabled) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
-      slashCommands: [COMPACT_SLASH_COMMAND],
       enabled: false,
       checkedAt,
       models,
