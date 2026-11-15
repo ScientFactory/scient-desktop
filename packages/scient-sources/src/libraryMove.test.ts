@@ -1428,7 +1428,10 @@ describe("the library lock during a move", () => {
     const { library, project, sha256 } = await seededMove();
     await move(library, project);
     const libraryFile = NodePath.join(library.root, "annotations/v1", `${sha256}.json`);
-    const write = async (annotations: ReadonlyArray<object>) =>
+    const write = async (
+      annotations: ReadonlyArray<object>,
+      unplaced: ReadonlyArray<object> = [],
+    ) =>
       NodeFSP.writeFile(
         libraryFile,
         JSON.stringify({
@@ -1437,6 +1440,7 @@ describe("the library lock during a move", () => {
           paths: [],
           annotations,
           history: [],
+          unplaced,
         }),
       );
     await write([{ annotationId: "ann_1", revision: 2, highlighted: true, note: "Edited" }]);
@@ -1449,10 +1453,14 @@ describe("the library lock during a move", () => {
     });
     await pause.reached;
     // Made while the PDFs come back, with the library lock free: read again in the last hold.
-    await write([
-      { annotationId: "ann_1", revision: 2, highlighted: true, note: "Edited" },
-      { annotationId: "ann_2", revision: 1, highlighted: true, note: "Added while moved" },
-    ]);
+    // A Zotero highlight kept without a place on the page travels the same way.
+    await write(
+      [
+        { annotationId: "ann_1", revision: 2, highlighted: true, note: "Edited" },
+        { annotationId: "ann_2", revision: 1, highlighted: true, note: "Added while moved" },
+      ],
+      [{ annotationId: "ann_zotero_ABCD2345", revision: 1, quote: "Kept", deletedAt: null }],
+    );
     pause.release();
     expect((await movingBack).outcome).toBe("moved-back");
     const restored = JSON.parse(
@@ -1469,6 +1477,9 @@ describe("the library lock during a move", () => {
     ).toEqual([
       ["ann_1", 2],
       ["ann_2", 1],
+    ]);
+    expect(restored.unplaced).toEqual([
+      { annotationId: "ann_zotero_ABCD2345", revision: 1, quote: "Kept", deletedAt: null },
     ]);
     expect(await exists(libraryFile)).toBe(true);
   });

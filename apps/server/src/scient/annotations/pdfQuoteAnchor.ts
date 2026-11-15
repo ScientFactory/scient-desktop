@@ -81,13 +81,17 @@ function textHash(text: string): string {
 /**
  * Finds an agent's quote in the PDF's page texts and builds the same anchor
  * the reader stores for a selection. Never guesses between repeats; `page`
- * narrows the search to matches that start on that page.
+ * narrows the search to matches that start on that page. `among` may pick one
+ * repeat on evidence of its own: it gets where each starts in its page's text.
  */
 export function anchorPdfQuote(
   pages: ReadonlyArray<PdfPageText>,
   quote: string,
   extractorVersion: string,
   page?: number,
+  among?: (
+    repeats: ReadonlyArray<{ readonly pageText: string; readonly start: number }>,
+  ) => number | null,
 ): PdfQuoteAnchoring {
   const needle = fold(quote).text;
   if (needle.length === 0) return { _tag: "NotFound" };
@@ -116,14 +120,26 @@ export function anchorPdfQuote(
     if (matches.length > 8) break;
   }
   if (matches.length === 0) return { _tag: "NotFound" };
-  if (matches.length > 1) {
+  // More than eight repeats were not all collected, so none of them can be picked.
+  const picked =
+    matches.length === 1
+      ? 0
+      : matches.length <= 8
+        ? (among?.(
+            matches.map((at) => ({
+              pageText: ordered[pageAt[at]!]!.text,
+              start: originAt[at]!,
+            })),
+          ) ?? null)
+        : null;
+  const first = picked === null ? undefined : matches[picked];
+  if (first === undefined) {
     return {
       _tag: "Ambiguous",
       pages: [...new Set(matches.map((at) => ordered[pageAt[at]!]!.page))],
     };
   }
 
-  const first = matches[0]!;
   const last = first + needle.length - 1;
   const firstPage = pageAt[first]!;
   const lastPage = pageAt[last]!;

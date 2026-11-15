@@ -177,7 +177,6 @@ describe("what a Zotero import brings, on real references", () => {
       .map(([name, count]) => `${name}: ${count}`);
     expect(lines).toMatchInlineSnapshot(`
       [
-        "Notes whose links, headings, tables, images or code became plain text: 23",
         "Automatic tags, which came in as ordinary tags: 6",
         "Links kept as attachments: 4",
         "Files (application/xml): 1",

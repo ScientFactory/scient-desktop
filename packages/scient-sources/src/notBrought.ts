@@ -82,8 +82,16 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
       return "Notes cut at 100,000 characters";
     case "note-formatting":
       return "Notes whose links, headings, tables, images or code became plain text";
+    case "note-images":
+      return "Images in notes";
     case "highlights":
-      return "Highlights and comments on PDFs";
+      return name === "unplaced"
+        ? "Highlights and comments not placed on the page (listed with the PDF's highlights)"
+        : name === "no-file"
+          ? "Highlights and comments on files that did not come"
+          : name === "later"
+            ? "Highlights and comments not saved this time: Refresh from Zotero brings them"
+            : "Highlights and comments on PDFs";
     case "related":
       return "Links to related items";
     case "automatic-tags":
@@ -101,7 +109,7 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
           ? "Empty collections: Zotero did not list its collections"
           : "Collections that could not be made here";
     case "already-here":
-      return "References that were already in your Library: nothing was taken from Zotero's copy (its notes, files and details)";
+      return "References that were already in your Library: nothing was taken from Zotero's copy (its files and details), except its note where the one here had none";
   }
 }
 

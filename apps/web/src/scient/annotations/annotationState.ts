@@ -7,6 +7,7 @@ import {
   type ScientAnnotationMutationResult,
   type ScientPdfAnnotation,
   type ScientPdfAnnotationAnchor,
+  type ScientUnplacedAnnotation,
 } from "@t3tools/contracts";
 
 import { toastManager } from "~/components/ui/toast";
@@ -171,6 +172,41 @@ export async function removeAnnotation(
           action: "restore",
           annotationId: removed.annotationId,
           expectedRevision: removed.revision,
+        });
+      },
+    },
+  });
+}
+
+/** Removes one kept from another reader, with an Undo; `changed` gets each version it reaches. */
+export async function removeUnplacedAnnotation(
+  pdf: AnnotatedPdf,
+  entry: ScientUnplacedAnnotation,
+  changed: (next: ScientUnplacedAnnotation) => void,
+): Promise<void> {
+  const result = await send(pdf, {
+    action: "remove",
+    annotationId: entry.annotationId,
+    expectedRevision: entry.revision,
+  });
+  if (result?.unplaced) changed(result.unplaced);
+  const removed = result?.outcome === "removed" ? result.unplaced : undefined;
+  if (!removed) return;
+  toastManager.add({
+    type: "success",
+    title:
+      removed.kind === "highlight" || removed.kind === "underline"
+        ? "Highlight removed"
+        : "Note removed",
+    actionProps: {
+      children: "Undo",
+      onClick: () => {
+        void send(pdf, {
+          action: "restore",
+          annotationId: removed.annotationId,
+          expectedRevision: removed.revision,
+        }).then((restored) => {
+          if (restored?.unplaced) changed(restored.unplaced);
         });
       },
     },

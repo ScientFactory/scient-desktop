@@ -1543,6 +1543,13 @@ library's annotation file for each PDF it restored into the project's file, in
 the hold that publishes the restored store; the library keeps its copy. A
 project that is not moved behaves as before.
 
+**Notes are Markdown.** The read view renders a note with `ChatMarkdown`
+(line breaks kept, raw HTML off). The editor is Lexical with bold and italic
+only; `noteMarkdownForEditor` and `noteMarkdownFromEditor` (`SourceNote.tsx`)
+escape the note before Lexical reads it and unescape what Lexical writes,
+because Lexical escapes `` ` ``, `~`, `_` and `\` in all text on every
+change, which would rewrite the rest of a Markdown note at the first edit.
+
 **Two notes.** In library mode a source has the project note (on the pin) and
 the person's own note (on the library record). `note` keeps meaning the project
 note on every route. The detail adds `projectNote` and, only for a session
@@ -3111,6 +3118,20 @@ inside the server process, like the Sources store. On the library backend,
 highlights on library PDFs live in the library (see "Highlights, the two notes
 and reading status").
 
+A highlight may carry `color` (`#rrggbb`) and `underline`, kept from the
+reader it was made in (a Zotero import); the reader paints one Custom
+Highlight for each colour and kind in use, and no control changes them. A
+file's optional `unplaced` list holds another reader's highlights and
+comments that could not be placed on a page (`ScientUnplacedAnnotation`:
+kind, page, quote, comment, colour, revision, tombstone); `remove` and
+`restore` work on them by revision, the source's annotations result lists the
+live ones by page, and the details panel shows them under the PDF's
+highlights. `addImportedAnnotations` adds another reader's highlights once: an
+ID the file has, placed or not, live or removed, is never written again. The
+move into the Library and back (`mergeAnnotationFiles`, `annotationsCovered`)
+and a project package (`joinAnnotationFiles`) join `unplaced` by ID, the
+higher revision winning (`joinUnplaced`).
+
 A Source PDF's attachment preview names it to the reader by its project
 locator `.scient/sources/<attachment path>` on both backends; after the move
 the signed URL is rooted in the Library, and the annotation service resolves
@@ -3518,14 +3539,53 @@ merely not running, so the product does not invent that distinction.
 Library pagination advances by the number of raw Zotero items received, even
 when notes, annotations and attachments are filtered from the Scient view.
 Import re-fetches each selected item with all its children immediately before
-storing it. Child notes (HTML) become the source note as plain text with
-Markdown bold and italic; every stored or linked PDF is copied (the first with
+storing it. Child notes (HTML) become the source note as Markdown
+(`ZoteroNoteMarkdown.ts`, a pure converter over `parse5`): headings, links,
+lists, quotes, tables, code, bold, italic and strikethrough; an embedded
+citation and Zotero's math as their text; text escaped so a typed `*` or `#`
+stays a character; images left out and counted. Several notes are one note,
+each under a `##` heading that is its first line, ordered by that line as
+Zotero's own list is. A note holds 100,000 characters: blocks are added while
+they fit and the rest is left out and listed (`note-cut`). The notes as
+Zotero wrote them go into the source's Zotero file (`notes`, by item key,
+without the bytes of embedded images, at most 1,000,000 characters by whole
+notes), so a backup, a restore and a join carry them; a project package does
+not, and neither does a note given to a source that was already here.
+Every stored or linked PDF is copied (the first with
 the record, the rest attached), and a PDF Zotero cannot provide is skipped
 rather than failing the item. zotero.org PDFs are streamed to a temporary file
 that is removed after import. Identifiers Zotero keeps in Extra (PMID, PMCID,
 arXiv, DOI for types without a DOI field) and the citation key (Zotero's field,
 then Better BibTeX's `Citation Key:` line, then Better BibTeX's JSON-RPC) are
 read; S2's key rules keep it.
+
+**Highlights and comments.** Zotero keeps them as annotation items under a
+file. zotero.org counts them on the file (`meta.numChildren`) and lists them
+as its children, so one request is made for each file that has some. Zotero
+on this computer counts none and lists only notes and files as children; a
+search by the reference's key (`/items?itemKey=<key>&itemType=annotation`)
+reaches its files' annotations, one request for each reference that has a
+file. `readZoteroItemWithChildren` adds them to the children, and
+`zoteroItemMaterial` reads them (`annotations`: kind, page from
+`annotationPosition`, text, comment, colour, and Zotero's count of the page's
+characters before it from `annotationSortIndex`). For each PDF copied, the
+import places them on the record's PDF (`bringZoteroAnnotations` and the pure
+`placeZoteroAnnotations`, `ZoteroAnnotations.ts`): a highlight or underline
+whose text `anchorPdfQuote` finds once on its page becomes a highlight
+(`ann_zotero_<key>`, by the user, at Zotero's date, the comment as its note,
+colour and underline kept); found several times, it is placed only when
+exactly one match lies within 20 characters plus 2% of Zotero's count (spaces
+not counted) and every other is more than twice that away. Everything else is
+kept in the PDF's `unplaced` list. The source's Zotero file keeps which PDF
+here each Zotero file with highlights is (`pdfs`, attachment key to sha256,
+hashed before the import lets the copy go), so a refresh brings new ones onto
+the same PDF; a PDF not in it (imported before, or without highlights then)
+is learnt at the refresh that finds some on it, by reading that file from
+Zotero once more and hashing it.
+Highlights are written last, after the Zotero file, so a failure leaves the
+rest saved: "not brought" counts them as `highlights` named `later`, and a
+refresh retries.
+A refresh that adds some lists `highlights` among its `changedFields`.
 
 Zotero collections are intake scopes when browsing, and arrive as a tree. A
 Zotero collection's ID here is a hash of its Zotero library and key
@@ -3636,17 +3696,20 @@ and fields read elsewhere). `zoteroItemMaterial` turns the second into entries
 a count) and adds what else an
 item holds that does not come: related
 items, automatic tags (brought as ordinary tags), files that are not PDFs,
-link attachments, PDFs past the tenth, notes with formatting that is lost or
-that are cut, and the highlights on each PDF (the attachment's
-`meta.numChildren`; they are not fetched). The import adds PDFs Zotero could
-not hand over and stores the entries on the operation's item; a scoped
+link attachments, PDFs past the tenth, images in notes, notes that are cut,
+and the highlights on files that are not copied (`highlights`, name
+`no-file`). The import adds PDFs Zotero could not hand over, with their
+highlights (`no-file`), and the highlights it kept without a place on the
+page (`unplaced`), and stores the entries on the operation's item; a scoped
 import also counts the notes and files in the scope that belong to no
 reference (each once, also when filed in two collections) and stores them
 on the operation, or says that Zotero could not be asked
 (`alone-uncounted`), never zero. `summarizeNotBrought` adds one line for the
 references a Zotero import skipped because the same work was already here
 under another origin, by its identifier or its PDF (`already-here`): nothing
-of Zotero's copy was looked at. A possible match is not in that line; the
+of Zotero's copy was taken, except that a certain match (one source) whose
+source here has no note receives Zotero's notes as its note
+(`addNoteToSourceAlreadyHere`). A possible match is not in that line; the
 summary asks the person to review those.
 `summarizeNotBrought`
 and `notBroughtName` (`packages/scient-sources/src/notBrought.ts`) add them up
@@ -3729,11 +3792,23 @@ a field Zotero changed is taken unless it was edited here (field provenance
 conflict. A conflict keeps its old merge base, so it is reported again until
 the user takes Zotero's value (`useZotero`) or keeps theirs (`keepLocal`).
 Empty Zotero values never clear a field; tags merge as additions and removals;
-notes follow the same rule as fields; new PDFs (by attachment key) are
+new PDFs (by attachment key) are
 attached; the record's Zotero item version is updated; an item gone from Zotero
 is reported and left alone. Without a sync file (sources imported before this
 existed), every difference counts as a Zotero change. The citation key is never
 changed by a refresh.
+
+The note has its own rule, because the text here is a conversion of Zotero's
+HTML. The base holds `note`, the text Scient last wrote from Zotero, and
+`notes`, Zotero's HTML. The note is untouched when it equals `base.note`
+(with no base: when it is empty or equals the plain text an earlier import
+would have made, `legacyNote`). Zotero changed when its HTML differs from
+`base.notes` and its Markdown from `base.note`; for a base without `notes`,
+when `legacyNote` differs from `base.note`. An untouched note takes Zotero's
+Markdown, which is also how an earlier import's plain text becomes Markdown;
+an edited one is kept, and reported only when Zotero changed. An open clash
+keeps its base, and with no base stores `note: null`, never the note here,
+which would read as untouched at the next refresh and be replaced.
 
 Send to Zotero (`ZoteroWrite.ts`) is one way and needs the zotero.org key with
 write access. A source without a Zotero item is created with a write token

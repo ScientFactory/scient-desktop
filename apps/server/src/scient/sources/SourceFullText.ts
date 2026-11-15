@@ -165,12 +165,32 @@ export async function extractSourcePdfFullText(
 }
 
 /** Extracts a PDF file's text after reading its bytes once and checking them against the expected hash. */
-export async function extractSourcePdfFileFullText(
+async function extractSourcePdfFileFullText(
   input: PdfMaterialIdentity & { readonly pdfPath: string },
 ): Promise<ScientSourceFullText> {
   if (input.byteLength > MAX_PDF_BYTES) return failedText(input, "too-large");
   const data = await readScientSourcePdfBytes(input.pdfPath, input).catch(() => null);
   return data ? extractSourcePdfFullText({ ...input, data }) : failedText(input, "unreadable");
+}
+
+/**
+ * A PDF's page texts in the reader's profile, for placing a quote: the stored full text when
+ * it is complete, else read from the file now. Null when the PDF has no readable text.
+ */
+export async function readSourcePdfPageTexts(
+  textStore: ScientSourceStoreLocation,
+  pdf: PdfMaterialIdentity & { readonly pdfPath: string },
+): Promise<{
+  readonly extractorVersion: string;
+  readonly pages: ReadonlyArray<ScientSourceFullTextPage>;
+} | null> {
+  const stored = await readScientSourceFullText(textStore, pdf.sha256).catch(() => null);
+  const text =
+    stored?.outcome === "extracted" && stored.complete
+      ? stored
+      : await extractSourcePdfFileFullText(pdf);
+  if (text.outcome !== "extracted") return null;
+  return { extractorVersion: text.extractor.version, pages: text.pages };
 }
 
 async function extractMaterialText(

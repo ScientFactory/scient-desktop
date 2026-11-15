@@ -84,6 +84,11 @@ the project, and **My note**, which follows the paper into every project and is
 not saved in any project folder. Agents read and write My note too. A paper
 that is not in this project has only My note.
 
+A note is Markdown. When you read it, headings, lists, links, quotes, tables
+and code are shown as such; when you edit it, you see and type the Markdown
+itself (`# Heading`, `- item`, `[text](address)`), with bold and italic shown
+as you type. An edit changes only what you typed.
+
 Notes save against the note you read. Changing metadata or attaching a PDF does
 not block a note save, including a save still finishing after you leave the editor.
 A note for this project is never overwritten by a change made elsewhere. If
@@ -315,9 +320,16 @@ had chosen before it.
    imported twice. After Scient was closed in the middle, the summary counts
    from where the import went on; the line in Recent changes counts all of it.
 
-Scient copies each reference's metadata, tags, child notes (as **My note**)
-and every PDF attachment into your Library, and adds the references to this
-project unless **All** is shown. Every bibliographic field comes, also the
+Scient copies each reference's metadata, tags, notes and every PDF attachment
+into your Library, and adds the references to this project unless **All** is
+shown. A reference's notes become its **My note**, as Markdown you can go on
+editing: headings, links, lists, quotes, tables, code, bold and italic are
+kept, and a citation placed in a note becomes its text. Several notes on one
+reference stay one note, each under its first line as a heading, in the order
+Zotero lists them. Markdown has no text colour, underline or superscript, so
+those arrive as plain text, and images in notes are not carried. Scient also
+keeps each note exactly as Zotero wrote it, with the source in your Library,
+so nothing is lost by the conversion. Every bibliographic field comes, also the
 ones beyond a source's main details: edition, place of publication, series,
 number of pages, report number, date accessed and the like are kept under
 the names citations use, so a book is cited with its edition. A field only
@@ -342,19 +354,33 @@ that import brings a reference that is filed in it; then a new one is made, and
 the one you deleted can still be brought back. References that were
 already in your Library are not filed again.
 
+Highlights, underlines and comments you made on a PDF in Zotero come with
+the PDF. Each is placed by its quoted text on its page of the same PDF, in
+its Zotero colour, with its comment as its note and Zotero's date, as made by
+you. When that text is found more than once on the page, Zotero's own record
+of where on the page you marked it decides, only when it clearly points to one
+of them. What cannot be placed this way (text the two readers read
+differently, a phrase that repeats, a marked image area, a drawing, a note on
+the page) is not guessed: it is kept with its page, quote and comment in the
+source's details, under the PDF's highlights, as **From Zotero, not placed on
+the page**.
+
 When the import ends it lists, under **Not brought from Zotero**, everything
 Zotero holds for the imported references that did not come, each with how
-many references it concerns: highlights and comments on PDFs, files that are
-not PDFs, links
-kept as attachments, PDFs Zotero could not hand over, notes whose links or
-tables became plain text, notes and files that belong to no reference, and
-collections that could not be made or filled here (the Library holds 500
-collections, ten levels, names of 200 characters, and 20,000 sources in one
-collection).
+many references it concerns: highlights and comments not placed on the page,
+highlights and comments on files that did not come, files that are not PDFs,
+links kept as attachments, PDFs Zotero could not hand over, images in notes,
+notes too long to keep whole (a note holds 100,000 characters; what does not
+fit is left out from a paragraph on), notes and files that belong to no
+reference, and collections that could not be made or filled here (the Library
+holds 500 collections, ten levels, names of 200 characters, and 20,000 sources
+in one collection).
 A reference that was already in your Library (the same DOI or the same PDF)
-is listed too: nothing was taken from Zotero's copy of it. A possible match
-is not listed there; the summary asks you to look at those. **Show** on a line
-shows the references it concerns. All of it is
+is listed too: nothing was taken from Zotero's copy of it, with one exception.
+When the reference is certainly the same one and the source here has no **My
+note**, Zotero's notes become its note. A possible match is not listed there;
+the summary asks you to look at those. **Show** on a line shows the references
+it concerns. All of it is
 still in Zotero. Zotero's Trash, saved searches and tag colours are not
 looked at. The list is made by comparing what was brought with everything Zotero
 sent, so what is not on it was brought. It stays with the import: in **Recent
@@ -393,18 +419,25 @@ Zotero on the computer is used first when both are available.
 
 Choose **Import sources → Refresh from Zotero** to bring changes you made in
 Zotero into sources imported from it. Fields you changed in Zotero are updated,
-new notes and PDFs come in, and tags you added or removed in Zotero are added or
-removed here. When you changed the same field both here and in Zotero, your
+new notes, PDFs and highlights come in, and tags you added or removed in Zotero are added or
+removed here. A note you have not changed here follows Zotero's notes; a note
+you edited here is never replaced, and is listed only when the notes also
+changed in Zotero. A source imported before notes came as Markdown has a
+plain-text note: the first refresh gives it the Markdown of the same notes
+when you have not edited it (its History keeps the earlier text), and leaves
+it alone when you have. When you changed the same field both here and in Zotero, your
 version here is kept and the refresh lists it: choose **Use Zotero's** or **Keep
 mine**. An empty field in Zotero never clears one here, and an item you deleted
 in Zotero stays in your Library. The details under **More details** (edition,
 place of publication and the like) are compared one by one: a new one comes
 in while one you corrected here stays, and one you removed here stays removed
 as long as Zotero's did not change. A source imported before Scient kept
-these details gets them on its next refresh. In a project the refresh reads
-the project's Zotero sources; in **All Library**, every Zotero source in the
-Library. A large Library is read again 200 sources at a time, and the dialog
-says how far it is; closing it stops there and keeps what was read. If Zotero cannot be read (for example it is
+these details gets them on its next refresh, and its highlights from Zotero
+too. A highlight comes from Zotero once: one you removed here does not come
+back. In a project the refresh reads the project's Zotero sources; in **All
+Library**, every Zotero source in the Library. A large Library is read again
+200 sources at a time, and the dialog says how far it is; closing it stops
+there and keeps what was read. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
 leaving it. A refresh does not file sources again: a reference you moved
 between collections in Zotero stays in its collections here.
@@ -940,6 +973,10 @@ quote is copied as Markdown so you can paste it.
 
 A source's details list the highlights and notes on its PDFs in reading order.
 Choose a passage to open the PDF at it. Passages an agent added say so.
+Highlights imported from Zotero keep their colour, and an underline stays an
+underline. Below them, **From Zotero, not placed on the page** lists the ones
+an import could not place, with their page; choose one to open the PDF, or
+**Remove** it.
 
 Highlights belong to the PDF's content, not its file name: the same PDF moved
 or copied elsewhere in the project keeps them. If a PDF is replaced by a

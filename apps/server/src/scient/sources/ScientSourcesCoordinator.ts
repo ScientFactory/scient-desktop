@@ -124,7 +124,11 @@ import {
   readZoteroItemMaterial,
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
-import { ZOTERO_PDFS_PER_ITEM, zoteroDescendantCollectionKeys } from "./ZoteroItems.ts";
+import {
+  addNotBrought,
+  ZOTERO_PDFS_PER_ITEM,
+  zoteroDescendantCollectionKeys,
+} from "./ZoteroItems.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import {
@@ -146,6 +150,7 @@ import {
   readBibliographyFile,
   resolveProjectBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
+import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
 import { recordZoteroSync } from "./ZoteroSync.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 import {
@@ -1550,6 +1555,33 @@ async function importFileOperationItem(input: {
   return { ...result, record };
 }
 
+/**
+ * A Zotero item skipped because its reference is certainly here already, under another
+ * origin, still gives its notes when the source here has no note. Anything more would be a
+ * merge (whose note, whose PDF), which is the person's to decide.
+ */
+async function addNoteToSourceAlreadyHere(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly duplicate: ScientSourceDuplicateAssessment;
+  readonly note: string | null;
+  readonly actor: ScientSourceActor;
+}): Promise<boolean> {
+  const { kind, matchingSourceIds } = input.duplicate;
+  const sourceId = matchingSourceIds[0];
+  if (!input.note || !sourceId || matchingSourceIds.length !== 1) return false;
+  if (kind !== "same-identifier" && kind !== "same-pdf") return false;
+  const record = await readScientSourceRecord(input.root, sourceId);
+  if (!record || record.note?.trim()) return false;
+  const updated = await updateScientSourceNote({
+    root: input.root,
+    sourceId,
+    expectedRevision: record.revision,
+    note: input.note,
+    actor: input.actor,
+  });
+  return updated.outcome === "updated";
+}
+
 async function importZoteroOperationItem(input: {
   readonly root: ScientSourceStoreLocation;
   readonly operation: ScientSourceImportOperation;
@@ -1591,11 +1623,24 @@ async function importZoteroOperationItem(input: {
       record = attached.record;
     }
     if (result.outcome === "imported" && record) {
+      // Which PDF here each Zotero file with highlights is, before its copy goes.
+      const highlighted = new Set(material.annotations.map((entry) => entry.attachmentKey));
+      const pdfs = new Map(
+        await Promise.all(
+          files
+            .filter((file) => highlighted.has(file.attachmentKey))
+            .map(
+              async (file) =>
+                [file.attachmentKey, (await inspectScientSourcePdf(file.path)).sha256] as const,
+            ),
+        ),
+      );
       await recordZoteroSync({
         root: input.root,
         record,
         material,
         attachmentKeys: files.map((file) => file.attachmentKey),
+        pdfs: Object.fromEntries(pdfs),
       });
       const unfiled = await addToZoteroCollections({
         root: input.root,
@@ -1604,18 +1649,36 @@ async function importZoteroOperationItem(input: {
         sourceId: record.sourceId,
         collectionKeys: material.collectionKeys,
       });
+      // Those on a PDF past the tenth or on another file are in `material.notBrought` already.
+      const copied = new Set(material.pdfs.slice(0, ZOTERO_PDFS_PER_ITEM).map((pdf) => pdf.key));
+      const onCopied = material.annotations.filter((annotation) =>
+        copied.has(annotation.attachmentKey),
+      );
+      const highlights = await bringZoteroAnnotations({
+        root: input.root,
+        record,
+        annotations: onCopied,
+        pdfs,
+        now: new Date().toISOString(),
+      }).catch(() => null);
       // A PDF Zotero has and could not hand over (a linked file read over the web, a file
-      // that is gone) is said with the rest of what did not come.
+      // that is gone) is said with the rest of what did not come, and so are its highlights.
       const unavailable = Math.min(material.pdfs.length, ZOTERO_PDFS_PER_ITEM) - files.length;
-      const notBrought = [
-        ...material.notBrought,
-        ...(unavailable > 0
-          ? [{ kind: "pdf" as const, name: "unavailable", count: unavailable }]
-          : []),
-        ...(unfiled > 0 ? [{ kind: "collection" as const, name: "unfiled", count: unfiled }] : []),
-      ];
+      const notBrought = [...material.notBrought];
+      addNotBrought(notBrought, "pdf", unavailable, "unavailable");
+      addNotBrought(notBrought, "collection", unfiled, "unfiled");
+      addNotBrought(notBrought, "highlights", highlights?.unplaced ?? 0, "unplaced");
+      addNotBrought(notBrought, "highlights", highlights?.elsewhere ?? 0, "no-file");
+      addNotBrought(notBrought, "highlights", highlights ? 0 : onCopied.length, "later");
       return { ...result, record, notBrought };
     }
+    // The import's "already here" line says such a reference may have taken Zotero's note.
+    await addNoteToSourceAlreadyHere({
+      root: input.root,
+      duplicate: result.duplicate,
+      note: material.note,
+      actor: input.operation.actor,
+    });
     return { ...result, record };
   } finally {
     await Promise.all(files.map((file) => file.release().catch(() => undefined)));
