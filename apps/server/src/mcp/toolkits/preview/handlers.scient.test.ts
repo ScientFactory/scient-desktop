@@ -401,6 +401,9 @@ it.effect("the account check before an action spends the action's budget, not it
     // The budgets each action reached the browser with: the broker's and the one its host reads.
     const dispatched: Array<{ envelope: number | undefined; input: number | undefined }> = [];
     let reached = Deferred.makeUnsafe<void>();
+    // How long finding the thread's Accounts session takes, and the status checks sent after it.
+    let lookupMs = 0;
+    let statusChecks = 0;
     const dependencies = Layer.mergeAll(
       liveThreadsLayer,
       NodeServices.layer,
@@ -422,7 +425,8 @@ it.effect("the account check before an action spends the action's budget, not it
       Layer.mock(PreviewAutomationBroker)({
         invoke: <A>(request: PreviewAutomationInvokeInput) => {
           const dispatch = Effect.sync(() => {
-            if (request.operation !== "status")
+            if (request.operation === "status") statusChecks += 1;
+            else
               dispatched.push({
                 envelope: request.timeoutMs,
                 input: (request.input as { timeoutMs?: number }).timeoutMs,
@@ -453,7 +457,13 @@ it.effect("the account check before an action spends the action's budget, not it
       }),
       Layer.succeed(AccountsService, service),
       Layer.mock(ProjectionStoreV2)({
-        getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
+        getThreadRecords: () =>
+          lookupMs === 0
+            ? Effect.succeed(idleThreadProjection(shell))
+            : Deferred.succeed(reached, undefined).pipe(
+                Effect.andThen(Effect.sleep(lookupMs)),
+                Effect.as(idleThreadProjection(shell)),
+              ),
       }),
     );
     const toolkit = yield* PreviewStandardToolkit.pipe(
@@ -511,5 +521,14 @@ it.effect("the account check before an action spends the action's budget, not it
       error: "PreviewAutomationTimeoutError",
       dispatched: [],
     });
+    // regression: a session lookup that used the whole budget still sent the status check.
+    lookupMs = 5_000;
+    statusChecks = 0;
+    expect(yield* waitFor({}, 5_000)).toEqual({
+      tookMs: 5_000,
+      error: "PreviewAccountCheckTimeoutError",
+      dispatched: [],
+    });
+    expect(statusChecks).toBe(0);
   }).pipe(Effect.scoped),
 );

@@ -128,19 +128,21 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
     ? request()
     : withPreviewAccounts(request(), (accountScope) =>
         Effect.gen(function* () {
+          // Work sent with no time left would act on the page after the agent was told it failed.
+          const expired = new PreviewAccountCheckTimeoutError({ operation, timeoutMs: budgetMs });
+          const statusMs = yield* remainingMs;
+          if (statusMs < 1) return yield* expired;
           const status = yield* broker.invoke<PreviewAutomationStatus>({
             scope,
             operation: "status",
             input: {},
-            timeoutMs: Math.max(1, yield* remainingMs),
+            timeoutMs: statusMs,
             updateCurrentTab: false,
             ...(tabId === undefined ? {} : { tabId }),
           });
           yield* authorizePreviewTab(accountScope, status, tabId);
           const leftMs = yield* remainingMs;
-          // Work sent with no time left would act on the page after the agent was told it failed.
-          if (leftMs < 1)
-            return yield* new PreviewAccountCheckTimeoutError({ operation, timeoutMs: budgetMs });
+          if (leftMs < 1) return yield* expired;
           // An omitted tab stays omitted, so the browser still resolves it the usual way.
           return yield* request(leftMs);
         }),
