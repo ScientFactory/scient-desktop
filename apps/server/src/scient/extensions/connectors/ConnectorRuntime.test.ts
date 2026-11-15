@@ -2424,6 +2424,31 @@ describe("connector disconnect", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("does not bring a refusal back when a refresh running at turn-off settles later", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const connectorId = yield* harness.connectSecure();
+      vendor.validTokens.delete("vendor-access-token-1");
+      vendor.refreshMode = "invalid_grant";
+      const refresh = gateOf(vendor.refresh);
+      const inFlight = yield* harness.proxy(connectorId, initialize(2)).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => refresh.arrived);
+      // regression: turning off cleared the refusal, then the pending refresh published it again.
+      const off = yield* harness.runtime
+        .update({ connectorId, enabled: false })
+        .pipe(Effect.forkScoped);
+      refresh.release();
+      yield* Fiber.join(inFlight);
+      yield* Fiber.join(off);
+      yield* harness.runtime.update({ connectorId, enabled: true });
+      expect(
+        yield* readJson(
+          yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 3, method: "tools/list" }),
+        ),
+      ).toEqual({ jsonrpc: "2.0", id: 3, result: { tools: [] } });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("answers discovery as an empty server when a 403 says nothing about the key", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

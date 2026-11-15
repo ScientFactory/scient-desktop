@@ -2836,7 +2836,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         ? commit
         : authoring.exclusive(input.connectorId)(commit);
       // Turned off, the person has dealt with the refused sign-in: it meets the empty server.
-      if (input.enabled === false) refusedSignIns.delete(input.connectorId);
+      // Under the lifecycle lock, so a refresh already running when it was turned off (which
+      // publishes its refusal under that lock) settles first and cannot bring the refusal back.
+      if (input.enabled === false) {
+        yield* lifecycle(input.connectorId).withPermits(1)(
+          Effect.sync(() => refusedSignIns.delete(input.connectorId)),
+        );
+      }
       // Turned off, set up again or restarted: running copies stop; the next request starts anew.
       if (restarts || input.enabled === false) {
         yield* localHost.stop(
