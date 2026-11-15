@@ -9,6 +9,7 @@ import {
 import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import type { AtomRegistry } from "effect/reactivity";
 import { accountsState } from "./accountsState";
+import { parseUrl } from "@t3tools/shared/url";
 
 const FIRST_GAP_MS = 24 * 60 * 60 * 1000;
 /** A session shorter than this is left alone: chasing it would look like a bot. */
@@ -70,8 +71,9 @@ export function nextQuietVisit(
 /** A site's answer that means the session is over. A site may also just show its public page. */
 export function sessionEnded(requestedUrl: string, answeredUrl: string, status: number) {
   if (status === 401) return true;
-  if (!URL.canParse(answeredUrl)) return false;
-  return isLoginPlace(new URL(answeredUrl)) && !isLoginPlace(new URL(requestedUrl));
+  const answered = parseUrl(answeredUrl);
+  if (answered === null) return false;
+  return isLoginPlace(answered) && !isLoginPlace(new URL(requestedUrl));
 }
 
 /** Sessions ended between visits get visited more often, down to the shortest gap. */

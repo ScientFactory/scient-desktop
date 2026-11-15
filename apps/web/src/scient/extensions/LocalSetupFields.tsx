@@ -34,6 +34,7 @@ import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
 import { commandFailureMessage } from "./ExtensionsFeedback";
 import { updateConnector } from "./extensionsState";
+import { parseUrl } from "@t3tools/shared/url";
 
 /** A plain answer as typed, or a key as an Accounts choice or a pasted value. */
 export type SetupAnswer =
@@ -52,7 +53,7 @@ function useSignInAccounts(environmentId: EnvironmentId, site: string | undefine
   );
 }
 
-export const siteHost = (site: string) => (URL.canParse(site) ? new URL(site).host : site);
+export const siteHost = (site: string) => parseUrl(site)?.host ?? site;
 
 export function useKeyAccounts(environmentId: EnvironmentId) {
   const query = useEnvironmentQuery(accountsState.snapshot({ environmentId, input: {} }));
