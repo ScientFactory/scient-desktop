@@ -57,7 +57,7 @@ export type ScientSourcesStore =
 
 export type ScientSourcesLibraryStore = Extract<ScientSourcesStore, { readonly kind: "library" }>;
 
-async function libraryExists(root: string): Promise<boolean> {
+export async function libraryExists(root: string): Promise<boolean> {
   return NodeFSP.lstat(NodePath.join(root, "library.json")).then(
     (stats) => stats.isFile(),
     () => false,

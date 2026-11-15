@@ -823,6 +823,25 @@ when the source is added and each time you refresh its metadata. If its DOI or
 PMID no longer exists, or now names a different work, the source says that
 instead.
 
+About once a week Scient also checks the papers already in your Library, so a
+paper that is retracted after you added it does not go unnoticed. It downloads
+the public Retraction Watch list from Crossref and compares it with your
+Library on this computer, by DOI and PubMed ID; nothing about your Library is
+sent anywhere. A paper with a notice it does not show yet gets it, as a change
+in the paper's **History**, and one line above the Library list says what was
+found, for example "The weekly check found: 1 paper was retracted." Choose
+**Show** to list those papers and **Dismiss** when you have seen them; a
+notice is announced once. If Retraction Watch lists a retracted paper as
+reinstated, its retraction is removed and the line says so.
+
+The weekly check finds retractions reliably. It finds an expression of
+concern or a correction only when Retraction Watch lists it; the publisher's
+own corrections are found when you refresh the source's metadata. A paper
+without a DOI or PubMed ID is not checked, and neither is the Trash. The list
+is about 70 MB and is downloaded only when your Library holds a paper with a
+DOI or PubMed ID. Without a connection the check changes nothing and tries
+again a few hours later.
+
 Use **Edit** to correct the metadata. Under **More details** the source shows
 what it has beyond its main details: edition, place of publication, series,
 number of pages, a report's number, the date you accessed a page and the

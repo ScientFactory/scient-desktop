@@ -24,6 +24,7 @@ import {
   scientReviewScreeningIds,
   ScientSystematicReview,
   SCIENT_REVIEW_DEFAULT_EXCLUSION_REASONS,
+  sameReviewSearch,
   type ScientReviewRetrieval,
   type ScientReviewScreening,
   type ScientSystematicReviewAction,
@@ -297,12 +298,7 @@ function applyChange(input: {
         return unchanged({ message: "The collection was not found." });
       }
       // The same database, query and date is the same search; logging it again replaces it.
-      const same = current.searches.find(
-        (search) =>
-          search.database.toLocaleLowerCase() === change.database.trim().toLocaleLowerCase() &&
-          search.query.trim() === change.query.trim() &&
-          search.searchedOn === change.searchedOn.trim(),
-      );
+      const same = current.searches.find((search) => sameReviewSearch(search, change));
       const searchId = same?.searchId ?? newId("search");
       return touched(
         {

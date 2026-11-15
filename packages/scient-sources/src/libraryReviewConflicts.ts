@@ -29,6 +29,7 @@ import {
   isNodeError,
 } from "./storeFiles.ts";
 import {
+  pairReviewSearches,
   ScientReviewCombineReport,
   scientReviewDecisions,
   scientReviewRecordIds,
@@ -166,19 +167,18 @@ export function combineScientReviews(input: {
 }): { readonly review: ScientSystematicReview; readonly report: ScientReviewCombineReport } {
   const { existing, incoming } = input;
   const differingSearches: Array<ScientReviewCombineReport["differingSearches"][number]> = [];
-  const searches = existing.searches.map((search) => {
-    const other = incoming.searches.find((entry) => entry.searchId === search.searchId);
-    if (!other) return search;
-    if (JSON.stringify(searchDetails(other)) !== JSON.stringify(searchDetails(search))) {
-      differingSearches.push({ searchId: search.searchId, incoming: searchDetails(other) });
-    }
-    return { ...search, sourceIds: [...new Set([...search.sourceIds, ...other.sourceIds])] };
-  });
-  for (const search of incoming.searches) {
-    if (!existing.searches.some((entry) => entry.searchId === search.searchId)) {
-      searches.push(search);
-    }
-  }
+  // A search both copies logged is one search with the records of both, under this copy's ID;
+  // kept twice it would count its records twice among those identified.
+  const searches = pairReviewSearches(existing.searches, incoming.searches).flatMap(
+    ({ here: search, other }) => {
+      if (!search) return other ? [other] : [];
+      if (!other) return [search];
+      if (searchContent(other) !== searchContent(search)) {
+        differingSearches.push({ searchId: search.searchId, incoming: searchDetails(other) });
+      }
+      return [{ ...search, sourceIds: [...new Set([...search.sourceIds, ...other.sourceIds])] }];
+    },
+  );
 
   const duplicatePairs = (review: ScientSystematicReview) =>
     new Set(review.duplicates.map((entry) => pairKey(entry.sourceId, entry.duplicateOf)));
@@ -572,20 +572,19 @@ export function scientReviewVersionDifferences(input: {
           recordsOnlyThisSide: search.sourceIds.filter((id) => !counterpart.has(id)).length,
         }
       : null;
-  const searches = [
-    ...new Set([...here.searches, ...other.searches].map((search) => search.searchId)),
-  ].flatMap((searchId) => {
-    const mine = here.searches.find((search) => search.searchId === searchId);
-    const theirs = other.searches.find((search) => search.searchId === searchId);
+  // Paired as Combine pairs them, so the list shows what Combine will act on.
+  const searches = pairReviewSearches(here.searches, other.searches).flatMap((pair) => {
     const row = {
       kind: "search" as const,
-      here: searchSide(mine, new Set(theirs?.sourceIds)),
-      other: searchSide(theirs, new Set(mine?.sourceIds)),
+      here: searchSide(pair.here, new Set(pair.other?.sourceIds)),
+      other: searchSide(pair.other, new Set(pair.here?.sourceIds)),
     };
     const same =
+      pair.here !== undefined &&
+      pair.other !== undefined &&
       row.here?.recordsOnlyThisSide === 0 &&
       row.other?.recordsOnlyThisSide === 0 &&
-      searchContent(mine!) === searchContent(theirs!);
+      searchContent(pair.here) === searchContent(pair.other);
     return same ? [] : [row];
   });
 

@@ -139,12 +139,16 @@ describe("differences between two versions of a review", () => {
           search("search_reworded", { sourceIds: ["a"] }),
           search("search_grown", { sourceIds: ["a", "b"] }),
           search("search_mine", { database: "Embase" }),
+          search("search_logged_here", { database: "Scopus", sourceIds: ["a"] }),
         ],
       }),
       review({
         searches: [
           // Logged again with nothing changed: not a difference.
           { ...same, loggedAt: "2026-11-09T00:00:00.000Z" },
+          // The same search logged apart on the other copy (another ID): one search, as it
+          // is to Combine, and not a difference.
+          search("search_logged_there", { database: "Scopus", sourceIds: ["a"] }),
           search("search_reworded", { query: "sepsis AND trial", sourceIds: ["a"] }),
           search("search_grown", { sourceIds: ["a"] }),
         ],

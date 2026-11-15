@@ -63,6 +63,18 @@ export function useSourcesExport(props: {
             includeNotes,
           });
           downloadBlob(new Blob([result.content], { type: option.mediaType }), result.fileName);
+          // A selected source removed meanwhile (in another window): the file is not all of them.
+          const missing = result.missingSourceIds.length;
+          if (missing > 0) {
+            toastManager.add({
+              type: "warning",
+              title:
+                missing === 1
+                  ? "1 selected source is not in this file"
+                  : `${missing} selected sources are not in this file`,
+              description: "They are no longer in the Library.",
+            });
+          }
           if (result.notKept.length > 0) {
             const lost = result.notKept
               .map(({ field, entryCount }) =>

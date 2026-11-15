@@ -72,6 +72,10 @@
       "types": "./src/libraryChanges.ts",
       "import": "./src/libraryChanges.ts"
     },
+    "./library-notice-watch": {
+      "types": "./src/libraryNoticeWatch.ts",
+      "import": "./src/libraryNoticeWatch.ts"
+    },
     "./library-merge": {
       "types": "./src/libraryMerge.ts",
       "import": "./src/libraryMerge.ts"

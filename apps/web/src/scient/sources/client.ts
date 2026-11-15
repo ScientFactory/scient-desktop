@@ -32,6 +32,7 @@ import type {
   ScientSourcePersonalNoteUpdateRequest,
   ScientSourceRemovalRequest,
   ScientSourceSavePageRequest,
+  ScientSourcesFullTextSearchRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesDuplicatesRequest,
   ScientSourcesLibraryRestoreRequest,
@@ -226,11 +227,7 @@ export function bulkUpdateScientSources(
 
 export async function searchScientSourcesFullText(
   environmentId: EnvironmentId,
-  input: {
-    readonly root: string;
-    readonly query: string;
-    readonly sourceIds?: ReadonlyArray<string>;
-  },
+  input: ScientSourcesFullTextSearchRequest,
 ) {
   return runtime.runPromise(
     searchEnvironmentScientSourcesFullText({ prepared: prepared(environmentId), ...input }),

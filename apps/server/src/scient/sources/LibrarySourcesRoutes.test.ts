@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import { checkScientLibraryBackup } from "@scientfactory/scient-sources/library-backup";
+import { recordScientLibraryNoticeCheck } from "@scientfactory/scient-sources/library-notice-watch";
 import { changeScientLibraryReview } from "@scientfactory/scient-sources/library-reviews";
 import {
   ensureScientLibrary,
@@ -247,6 +248,60 @@ describe("Library routes on the library backend", () => {
       expect(overview.recordDiagnostics).toEqual([
         { sourceId: untitled.sourceId, diagnostics: [expect.objectContaining({ field: "title" })] },
       ]);
+    }),
+  );
+
+  it.effect("lists what the weekly check found for the sources still held, until Dismiss", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const [held, trashed] = yield* Effect.promise(() =>
+        Promise.all([
+          libraryRecord(fixture, "held", {
+            title: "Still in the Library",
+            identifiers: [{ scheme: "doi", value: "10.1000/held" }],
+          }),
+          libraryRecord(fixture, "trashed", {
+            title: "Moved to the Trash since",
+            identifiers: [{ scheme: "doi", value: "10.1000/trashed" }],
+          }),
+        ]),
+      );
+      const retraction = [{ kind: "retraction" as const, source: "retraction-watch" }];
+      yield* Effect.promise(() =>
+        recordScientLibraryNoticeCheck({
+          library: fixture.library,
+          found: {
+            notices: new Map([
+              ["doi:10.1000/held", retraction],
+              ["doi:10.1000/trashed", retraction],
+            ]),
+            reinstated: new Set(),
+          },
+          etag: null,
+          checkedAt: "2026-11-15T10:00:00.000Z",
+        }),
+      );
+      yield* Effect.promise(() =>
+        removeScientSource({
+          root: fixture.library,
+          sourceId: trashed.sourceId,
+          expectedRevision: trashed.revision + 1,
+        }),
+      );
+      const store = yield* storeFor(fixture, "write");
+      // Asked from a project that cites neither: the line is about the whole Library.
+      const overview = Effect.promise(() =>
+        libraryOverview(store, { scope: "project", background: false }),
+      );
+      expect((yield* overview).noticeChanges).toEqual([
+        { sourceId: held.sourceId, kind: "retraction", change: "added" },
+      ]);
+      expect(
+        yield* Effect.promise(() =>
+          organizeLibrarySources(store, { change: { action: "dismiss-notice-changes" } }),
+        ),
+      ).toEqual({ outcome: "dismissed" });
+      expect(yield* overview).not.toHaveProperty("noticeChanges");
     }),
   );
 

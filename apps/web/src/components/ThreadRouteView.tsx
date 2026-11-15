@@ -20,11 +20,9 @@ import {
   useEnvironmentThreadRefs,
   useAnyEnvironmentHiding,
   useQuietThreadShell,
-  // SCIENT-FORK:START — unavailable draft projects and deleted thread status.
+  // SCIENT-FORK:START — unavailable draft projects.
   useAllEnvironmentShellsBootstrapped,
   useProject,
-  useThreadStatus,
-  resolveThreadDetailRef,
   // SCIENT-FORK:END
 } from "../state/entities";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -93,14 +91,6 @@ export function ThreadRouteView({
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
-  // SCIENT-FORK:START — deleted thread status.
-  const serverThreadStatus = useThreadStatus(
-    resolveThreadDetailRef(serverThreadRef, {
-      shellExists: serverThreadShell !== null,
-      waitForShell: draftThread !== null,
-    }),
-  );
-  // SCIENT-FORK:END
   // Reached from the sidebar before finalize, the thread still has its draft.
   const serverThreadDraftId = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftIdByRef(serverThreadRef) : null,
@@ -161,7 +151,7 @@ export function ThreadRouteView({
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadExists: serverThreadShell !== null,
-    serverThreadDeleted: serverThreadShell?.deletedAt != null || serverThreadStatus === "deleted",
+    serverThreadDeleted: serverThreadShell?.deletedAt != null,
     unlistedThreadDetail,
     draftThreadExists: draftThread !== null,
   });

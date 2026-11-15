@@ -454,6 +454,8 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
   /** Runs a move that failed again now: `moved`, or `not-moved` when it failed again. */
   Schema.Struct({ action: Schema.Literal("retry-move") }),
+  /** The person has seen the notices the weekly check listed (`noticeChanges`). */
+  Schema.Struct({ action: Schema.Literal("dismiss-notice-changes") }),
   ...ScientSourcesPinRepairAction.members,
   /**
    * Puts the sealed copy from before a move (the newest, or archiveId) back in the project;
@@ -1224,7 +1226,7 @@ export const ScientSourcesLocalPdfUploadResult = Schema.Struct({
 });
 export type ScientSourcesLocalPdfUploadResult = typeof ScientSourcesLocalPdfUploadResult.Type;
 
-export const ScientSourcesFileImportRequest = Schema.Struct({
+const fileImportParts = {
   root: NonEmptyString,
   operationId: NonEmptyString,
   file: Multipart.SingleFileSchema,
@@ -1232,9 +1234,11 @@ export const ScientSourcesFileImportRequest = Schema.Struct({
   sourcePath: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_096))),
   /** "false" from the Library view; a multipart field is text. */
   pin: Schema.optionalKey(Schema.Literals(["true", "false"])),
-}).pipe(
+};
+export const ScientSourcesFileImportRequest = Schema.Struct(fileImportParts).pipe(
   HttpApiSchema.asMultipart({
-    maxParts: 4,
+    // Every part may be sent at once: from the Library view on this computer, all are.
+    maxParts: Object.keys(fileImportParts).length,
     maxFieldSize: 16 * 1024,
     maxFileSize: 32 * 1024 * 1024,
     maxTotalSize: 32 * 1024 * 1024 + 64 * 1024,
@@ -1365,6 +1369,19 @@ export const ScientSourcesOverviewResult = Schema.Struct({
    * its own folder (not moved yet, or moved back), which has no `scopes`: ask `moveStatus`.
    */
   libraryBackend: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * Notices the weekly check put on the Library's sources (`added`) or took off them
+   * (`withdrawn`) that the person has not dismissed; of the whole Library, whatever the scope.
+   */
+  noticeChanges: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        sourceId: NonEmptyString,
+        kind: Schema.Literals(["retraction", "expression-of-concern", "correction"]),
+        change: Schema.Literals(["added", "withdrawn"]),
+      }),
+    ),
+  ),
 });
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;
 

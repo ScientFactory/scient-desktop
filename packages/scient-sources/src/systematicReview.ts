@@ -34,6 +34,42 @@ export const ScientReviewSearch = Schema.Struct({
 });
 export type ScientReviewSearch = typeof ScientReviewSearch.Type;
 
+type SearchIdentity = Pick<ScientReviewSearch, "database" | "query" | "searchedOn">;
+
+/** The same database, query and date is the same search, whoever logged it and under which ID. */
+export const sameReviewSearch = (left: SearchIdentity, right: SearchIdentity) =>
+  left.database.trim().toLocaleLowerCase() === right.database.trim().toLocaleLowerCase() &&
+  left.query.trim() === right.query.trim() &&
+  left.searchedOn.trim() === right.searchedOn.trim();
+
+/**
+ * The searches of two versions of a review side by side: by ID, else the same search logged
+ * apart in each (two IDs). One with no counterpart stands alone.
+ */
+export function pairReviewSearches(
+  here: ReadonlyArray<ScientReviewSearch>,
+  other: ReadonlyArray<ScientReviewSearch>,
+): ReadonlyArray<{ readonly here?: ScientReviewSearch; readonly other?: ScientReviewSearch }> {
+  const mine = new Set(here.map((search) => search.searchId));
+  const taken = new Set<string>();
+  const pairs = here.map((search) => {
+    const counterpart =
+      other.find((entry) => entry.searchId === search.searchId) ??
+      other.find(
+        (entry) =>
+          !mine.has(entry.searchId) &&
+          !taken.has(entry.searchId) &&
+          sameReviewSearch(entry, search),
+      );
+    if (counterpart) taken.add(counterpart.searchId);
+    return counterpart ? { here: search, other: counterpart } : { here: search };
+  });
+  return [
+    ...pairs,
+    ...other.flatMap((search) => (taken.has(search.searchId) ? [] : [{ other: search }])),
+  ];
+}
+
 const { sourceIds: _searchSourceIds, ...searchDetailFields } = ScientReviewSearch.fields;
 
 /** What Combine left for a person: kept beside the review's conflict files until dismissed. */

@@ -75,6 +75,7 @@ import { SourcesList } from "./SourcesList";
 import { requestSourceTextReveal } from "./sourceTextReveal";
 import { useLibraryFileImport } from "./libraryFileHandoff";
 import { newlyObservedSourceIds } from "./sourceLabels";
+import { NOTICE_CHANGES_SHOWN } from "./sourceLifecycleLabels";
 import {
   filterScientSourceSearchIndex,
   indexScientSourceSummaries,
@@ -91,6 +92,7 @@ import { SourceHistoryDialog } from "./SourceHistory";
 import { SourceStoreNotice } from "./SourceStoreNotice";
 import { LibraryDuplicatesView, type DuplicatesSection } from "./LibraryDuplicates";
 import { LibraryMoveNotice } from "./LibraryMoveNotice";
+import { LibraryNoticeChanges } from "./LibraryNoticeChanges";
 import { useLibraryMoveStatus } from "./useLibraryMoveStatus";
 import { announceSourceMovedToTrash } from "./SourceTrash";
 import { shownSourceRecord } from "./sourcesWorkflow";
@@ -106,7 +108,12 @@ import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
 import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from "./sourcesCommands";
-import { readScientSource, updateScientSourceNote, updateScientSourcePersonalNote } from "./client";
+import {
+  organizeScientSources,
+  readScientSource,
+  updateScientSourceNote,
+  updateScientSourcePersonalNote,
+} from "./client";
 import {
   inLibraryNotProjectLabel,
   LIBRARY_LABELS,
@@ -522,6 +529,19 @@ export function ScientSourcesPanel(props: {
     setPackageSources(new Set(sourceIds));
     void sources.selectScope("library");
   };
+  const dismissNoticeChanges = () =>
+    void organizeScientSources(props.environmentId, {
+      root: props.root,
+      change: { action: "dismiss-notice-changes" },
+    })
+      .then(() => sources.refreshOverview())
+      .catch((cause: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "The line was not dismissed",
+          description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+        });
+      });
   const selectedSummary = selectedSourceId
     ? (sources.overview?.records.find((record) => record.sourceId === selectedSourceId) ?? null)
     : null;
@@ -1537,6 +1557,11 @@ export function ScientSourcesPanel(props: {
         joinLine={backup.joinLine}
         restoreLine={backup.restoreLine}
         onCancelRestore={backup.cancelRestore}
+      />
+      <LibraryNoticeChanges
+        changes={sources.overview.noticeChanges ?? []}
+        onShow={(sourceIds) => showPackageSources(sourceIds, NOTICE_CHANGES_SHOWN)}
+        onDismiss={canChange ? dismissNoticeChanges : undefined}
       />
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
       {showingRecentChanges ? (
