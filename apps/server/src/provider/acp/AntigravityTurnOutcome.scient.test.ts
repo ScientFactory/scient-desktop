@@ -116,6 +116,15 @@ describe("watchAntigravityPromptOutcome (Scient)", () => {
         hostile?.message,
         "token=[REDACTED] via https://api.example.invalid/v1/models.",
       );
+      // regression: a folder name with spaces, quoted or not, left the person's name visible.
+      const spaced = yield* turn(
+        errorStep(
+          `failed to construct executor: MCP load failed for fixture-tools: calling "initialize": Could not read C:\\Users\\Jane Smith Doe\\key.json, "C:\\Users\\Jane Doe\\key.json" or /Users/Jane Doe/key.json; home is /Users/Jane Doe`,
+        ),
+      );
+      for (const name of ["Jane", "Smith", "Doe"]) assert.notInclude(spaced?.message, name);
+      assert.include(spaced?.message, 'tool server "fixture-tools"');
+      assert.include(spaced?.message, 'key.json, "key.json" or key.json; home is [REDACTED]');
       // Redaction comes before the bound, so a key the bound would cut is still caught.
       const cut = yield* turn(
         errorStep(`agent executor error: ${"x".repeat(528)} ${"0123456789abcdef".repeat(4)}`),

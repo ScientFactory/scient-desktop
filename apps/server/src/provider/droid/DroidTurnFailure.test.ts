@@ -122,6 +122,19 @@ describe("droidTurnFailure", () => {
       },
     },
     {
+      // regression: a folder name with spaces left the person's name in the shown text.
+      name: "another reason, with a home folder whose name has spaces",
+      reason: "model_request_rejected",
+      detail: '400 Could not read C:\\Users\\Jane Smith Doe\\key.json or "/Users/Jane Doe/a b.md".',
+      expected: {
+        class: "validation_error",
+        message: '400 Could not read key.json or "a b.md".',
+        code: "model_request_rejected",
+        retryable: false,
+        httpStatus: 400,
+      },
+    },
+    {
       name: "another reason, with Droid's own text",
       reason: "model_authentication_failed",
       detail: "401 Invalid API key",
