@@ -15,6 +15,7 @@ import type {
 import { useRef, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
+import { randomUUID } from "../../lib/utils";
 import {
   bulkChangeParts,
   bulkPartsAnnouncement,
@@ -243,14 +244,24 @@ export function useSourcesOrganize(input: {
     const failed = [...result.sources, ...result.collections].filter(
       (entry) => entry.outcome === "failed",
     );
+    const kept = result.conflicts ?? [];
     if (failed.length > 0) {
       const id = toastManager.add({
         type: "warning",
         title: "Some changes were not undone",
-        description:
+        description: [
           failed.length === 1
             ? "1 change could not be undone."
             : `${failed.length} changes could not be undone.`,
+          // What Undo left on purpose is said here too, not lost behind the failure.
+          ...(kept.length > 0
+            ? [
+                kept.length === 1
+                  ? "1 later change was kept."
+                  : `${kept.length} later changes were kept.`,
+              ]
+            : []),
+        ].join(" "),
         actionProps: {
           children: "Try again",
           onClick: whenFree(() => {
@@ -261,7 +272,7 @@ export function useSourcesOrganize(input: {
       });
       return;
     }
-    const conflicts = result.conflicts ?? [];
+    const conflicts = kept;
     if (conflicts.length === 0) return;
     const undidNothing = result.sources.length === 0 && result.collections.length === 0;
     toastManager.add({
@@ -317,6 +328,8 @@ export function useSourcesOrganize(input: {
 
   const bulkInParts = async (change: ScientSourcesBulkChange, failureTitle: string) => {
     const parts = bulkChangeParts(change);
+    // One name for every request of this edit, so Recent changes lists and undoes it as one.
+    const partOf = `edit_${randomUUID()}`;
     const outcome = await runInParts(
       "changing",
       parts.reduce((sum, part) => sum + part.sourceIds.length, 0),
@@ -327,6 +340,7 @@ export function useSourcesOrganize(input: {
             bulkUpdateScientSources(input.environmentId, {
               root: input.root,
               change: { ...change, sourceIds },
+              ...(parts.length > 1 ? { partOf } : {}),
             }),
           isLost: isLostAnswerError,
           onProgress: showDone,
@@ -450,6 +464,9 @@ export function useSourcesOrganize(input: {
       );
     },
     canChange,
+    /** Undoes a past bulk edit, every request of it, with the same progress and messages. */
+    undoBulkEdit: (parts: ReadonlyArray<BulkUndoPart>) =>
+      parts.length === 1 ? undoBulk(parts[0]!.batchId) : undoInParts(parts),
     filter: listFilter,
     fullFilter,
     filterActive: !scientSourceFilterIsEmpty(listFilter),

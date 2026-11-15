@@ -8,6 +8,7 @@ import {
   MessageCircleQuestionIcon,
   MoreHorizontal,
   PenLine,
+  History,
   Trash2,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -25,6 +26,7 @@ import { toastManager } from "../../components/ui/toast";
 import { useComposerHandleContext } from "../../composerHandleContext";
 import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
 import { askLibraryInsertion } from "./askLibrary";
+import { RECENT_CHANGES_LABELS } from "./recentChangeLabels";
 import { CitationStylePicker } from "./CitationStylePicker";
 import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
 import { MoveBackDialog } from "./LibraryMoveNotice";
@@ -57,6 +59,8 @@ export function SourcesHeaderMenu(props: {
   /** Present only on a personal Library for a session that may change it. */
   readonly onPackageImported?: () => Promise<unknown>;
   readonly onShowPackageSources?: (sourceIds: ReadonlyArray<string>) => void;
+  /** Present only on a personal Library. */
+  readonly onOpenRecentChanges?: () => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [importsOpen, setImportsOpen] = useState(false);
@@ -182,6 +186,12 @@ export function SourcesHeaderMenu(props: {
               onImported={props.onPackageImported}
               {...(props.onShowPackageSources ? { onShowSources: props.onShowPackageSources } : {})}
             />
+          ) : null}
+          {props.onOpenRecentChanges ? (
+            <MenuItem onClick={props.onOpenRecentChanges}>
+              <History />
+              {RECENT_CHANGES_LABELS.menuItem}
+            </MenuItem>
           ) : null}
           {props.trashedCount > 0 ? (
             <>
