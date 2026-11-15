@@ -64,6 +64,24 @@ function identity(context, env) {
   };
 }
 
+// Compute recipe sealing reads `git log -1` on these recipes (apps/server/scripts/compute-recipes.ts).
+const RECIPE_HISTORY = "apps/server/src/scient/compute/managed-python";
+
+/** The object at `dir` in a root tree, or null when absent. */
+async function objectAt(github, repo, tree, dir) {
+  let sha = tree;
+  for (const name of dir.split("/")) {
+    const { data } = await github.rest.git.getTree({ ...repo, tree_sha: sha });
+    assert(data.sha === sha && !data.truncated && Array.isArray(data.tree), "Tree is unreadable");
+    const entry = data.tree.find((candidate) => candidate.path === name);
+    if (!entry) return null;
+    assert(SHA.test(entry.sha ?? ""), "Tree is unreadable");
+    if (entry.type !== "tree") return `${entry.type}:${entry.sha}`;
+    sha = entry.sha;
+  }
+  return sha;
+}
+
 async function commitOf(github, repo, sha) {
   const { data } = await github.rest.git.getCommit({ ...repo, commit_sha: sha });
   const parents = (data.parents ?? []).map((parent) => parent.sha);
@@ -404,9 +422,9 @@ async function pushSegments(probe) {
 }
 
 /**
- * Reuse PR CI only for identical base/content, workflow at the tested commit, and content already
- * on the PR head. Path-limited recipe history must follow that head: test/queue merge timestamps
- * differ. Forks and every other case run normal CI.
+ * Reuse PR CI only for identical base/content and workflow at the tested commit. Both merges join
+ * the same base and head, so change gates and history reads agree, except a path-limited read
+ * where both sides changed: it finds the merge itself, whose timestamp differs. Forks run normally.
  */
 async function queueSegments(probe) {
   const { github, repo, who, context } = probe;
@@ -423,10 +441,16 @@ async function queueSegments(probe) {
     "Queue commit does not merge one pull request onto its base",
   );
   const prHead = commit.parents[1];
-  assert(
-    (await commitOf(github, repo, prHead)).tree === commit.tree,
-    "The pull request does not already contain its queue base",
-  );
+  const head = await commitOf(github, repo, prHead);
+  if (head.tree !== commit.tree) {
+    const recipes = (tree) => objectAt(github, repo, tree, RECIPE_HISTORY);
+    const merged = await recipes(commit.tree);
+    const base = await recipes((await commitOf(github, repo, group.base_sha)).tree);
+    assert(
+      merged === base || merged === (await recipes(head.tree)),
+      "Main and the pull request both changed Compute recipes",
+    );
+  }
   const segment = await qualifiedRun({ ...probe, event: "pull_request", headSha: prHead });
   checkReceipt(segment.receipt, {
     schemaVersion: SCHEMA,

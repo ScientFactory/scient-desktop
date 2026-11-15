@@ -1496,7 +1496,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                         <span className="grid">
                           <span>{source.name}</span>
                           <span className="text-xs text-muted-foreground">
-                            {BROWSER_IMPORT_FAILURE_COPY.appBoundEncryption}
+                            {source.connection
+                              ? "Import it in Accounts → Import from a browser…"
+                              : BROWSER_IMPORT_FAILURE_COPY.appBoundEncryption}
                           </span>
                         </span>
                       ) : (

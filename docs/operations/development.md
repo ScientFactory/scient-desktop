@@ -328,7 +328,9 @@ test-only edits skip packaging.
 Nothing that already passed on the same content runs again. The merge queue reuses a
 same-repository PR run whose `Check` passed into main only for the exact content and comparison
 base, even while that run's advisory jobs still run or after one of them failed,
-and a push to main reuses the queue runs that qualified each commit it lands. Receipts
+and a push to main reuses the queue runs that qualified each commit it lands. A PR whose CI ran
+against the main it is queued on qualifies whether or not its branch contains that main, unless
+both changed Compute recipes, whose sealing reads Git history. Receipts
 record which web/server suites actually ran and that Overleaf Windows passed; only those
 reports must be restored, from the attempt whose job passed, before reuse is confirmed.
 Missing, stale, legacy, or partial evidence falls back to ordinary CI, as does a push the
@@ -337,8 +339,8 @@ small jobs report the `Test` and `Test Server 1`–`3` names that `release/stabl
 requires on the promoted commit; other shard names are not required contexts. A successful workflow still needs transfer evidence
 whenever server tests ran.
 
-A reused push still saves main's Linux and Windows dependency stores when the merged
-lockfile needs a new one, because pull requests restore them. Other main-only work, such
+A reused push still saves main's Linux dependency store when the merged lockfile needs
+a new one, because pull requests restore it. Other main-only work, such
 as the Windows packaging caches and the 10- and 50-file Overleaf benchmark, moves to the
 nightly run: a `schedule` run of CI on main at 02:41 UTC that selects every lane on every
 computer. It catches environment drift and anything an exact gate missed, up to a day after

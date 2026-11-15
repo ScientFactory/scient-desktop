@@ -219,3 +219,135 @@ it("lists Chrome and Edge on Windows as protected, each offering a window of the
   expect(state.intoMain).toHaveBeenCalledWith(environmentId, "https://accounts.google.com/");
   expect(state.importCookies).not.toHaveBeenCalled();
 });
+
+it("imports Windows Chrome profiles through Chrome itself, once remote debugging is on", async () => {
+  state.sources = [
+    {
+      id: "chrome",
+      name: "Chrome",
+      profiles: [{ directory: "Profile 2", name: "Lab" }],
+      unavailable: "appBoundEncryption",
+      connection: { settingsUrl: "chrome://inspect/#remote-debugging" },
+    },
+  ];
+  const imported = Promise.withResolvers<unknown>();
+  state.importCookies.mockReset().mockReturnValue(imported.promise);
+  state.toast.mockReset();
+  let on = false;
+  const browserConnection = vi.fn(async () => ({ on }));
+  using _bridge = stubGlobal("desktopBridge", {
+    getLocalEnvironmentBootstraps: () => [],
+    getClientPlatform: () => "win32",
+    accounts: {
+      sourceProfiles: async () => [
+        { sourceId: "chrome", directory: "Profile 2", name: "Lab", email: "lab@example.invalid" },
+      ],
+      browserConnection,
+      chromeSignIn: vi.fn(),
+      chromeSignInBrowser: async () => ({ name: "Chrome", canQuit: true }),
+    },
+  });
+  await using _screen = await render(
+    <BrowserImportDialog
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={snapshot}
+      canWrite
+      onClose={vi.fn()}
+    />,
+  );
+  // A profile like any other: no protected row, nothing counted from files Windows locks.
+  await expect
+    .element(page.getByText("Windows protects this browser's saved sign-ins from other apps."))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("Chrome · lab@example.invalid", { exact: true }))
+    .toBeVisible();
+  await page.getByRole("checkbox", { name: "Lab · Chrome" }).click();
+  await page.getByRole("button", { name: "Import (1)", exact: true }).click();
+  await expect.element(page.getByRole("heading", { name: "Import from Chrome" })).toBeVisible();
+  await expect.element(page.getByText("chrome://inspect/#remote-debugging")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Sign in in a Chrome window instead" }))
+    .toBeVisible();
+  const proceed = page.getByRole("button", { name: "Continue" });
+  await expect.element(proceed).toBeDisabled();
+  expect(state.importCookies).not.toHaveBeenCalled();
+  // The person turns the switch on in Chrome; the step notices by itself.
+  on = true;
+  await expect.element(page.getByText("It’s on.")).toBeVisible();
+  await proceed.click();
+  await expect
+    .element(page.getByText("Chrome asks “Allow remote debugging?”: click Allow in Chrome."))
+    .toBeVisible();
+  expect(state.importCookies).toHaveBeenCalledOnce();
+  expect(state.importCookies.mock.calls[0]?.[3]).toMatchObject({
+    sourceProfileDirectory: "Profile 2",
+    profileName: "Lab",
+    target: { kind: "new" },
+  });
+  imported.resolve({
+    kind: "imported",
+    imported: 9,
+    skipped: 0,
+    skippedDomains: [],
+    importedSites: 3,
+    targetName: "Lab",
+  });
+  await expect
+    .element(page.getByText("Chrome · lab@example.invalid · cookies for 3 sites"))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Chrome asks “Allow remote debugging?”: click Allow in Chrome."))
+    .not.toBeInTheDocument();
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: "Remote debugging is still on in Chrome",
+      description: "To turn it off, open chrome://inspect/#remote-debugging in Chrome.",
+    }),
+  );
+});
+
+it("asks Chrome once per import: after a refusal its other profiles wait", async () => {
+  state.sources = [
+    {
+      id: "chrome",
+      name: "Chrome",
+      profiles: [
+        { directory: "Default", name: "Home" },
+        { directory: "Profile 2", name: "Lab" },
+      ],
+      unavailable: "appBoundEncryption",
+      connection: { settingsUrl: "chrome://inspect/#remote-debugging" },
+    },
+  ];
+  state.importCookies
+    .mockReset()
+    .mockResolvedValue({ kind: "blocked", reason: "connectionDeclined" });
+  state.toast.mockReset();
+  using _bridge = stubGlobal("desktopBridge", {
+    getLocalEnvironmentBootstraps: () => [],
+    accounts: { sourceProfiles: async () => [], browserConnection: async () => ({ on: true }) },
+  });
+  await using _screen = await render(
+    <BrowserImportDialog
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={snapshot}
+      canWrite
+      onClose={vi.fn()}
+    />,
+  );
+  await page.getByRole("checkbox", { name: "Home · Chrome" }).click();
+  await page.getByRole("checkbox", { name: "Lab · Chrome" }).click();
+  await page.getByRole("button", { name: "Import (2)", exact: true }).click();
+  await expect.element(page.getByText("It’s on.")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await vi.waitFor(() =>
+    expect(state.toast).toHaveBeenCalledWith({
+      type: "error",
+      title: "The browser didn't allow the connection. Try again and click Allow.",
+    }),
+  );
+  expect(state.importCookies).toHaveBeenCalledOnce();
+  // Both stay selected for another try.
+  await expect.element(page.getByRole("button", { name: "Import (2)", exact: true })).toBeEnabled();
+});

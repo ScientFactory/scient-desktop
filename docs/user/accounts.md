@@ -59,6 +59,15 @@ refresh button brings in new ones later. Each profile's row says how many sites 
 open it to see them, each with its agent access and status, **Imported** until Scient sees it
 working.
 
+On Windows, Chrome and Edge keep their sign-ins from other apps, so Scient asks the browser itself
+to hand them over. The first import walks you through turning on **Allow remote debugging for this
+browser instance** at `chrome://inspect/#remote-debugging` (`edge://inspect/#remote-debugging` in
+Edge), once. The browser then asks **Allow remote debugging?**: click **Allow**. Scient opens a tab
+in that profile, copies its sign-ins, closes the tab and disconnects; one Allow covers every profile
+of one import, and Refresh asks again. The browser can stay open. Saved passwords stay in the
+browser there. You can turn the setting off again on the same page; Scient then can't refresh from
+that browser until it's back on. A computer managed by your organisation may block the setting.
+
 **Main**, Scient's own profile, gets a copy of every sign-in from your other profiles, so it can open
 everything. On first start Scient fills Main once and opens new tabs in it; Browser profiles says so
 in a line you can dismiss, and **Use for new tabs** changes it. Copies show **Copied** until seen
@@ -122,15 +131,16 @@ row, with its own chip for Source Control and for the GitHub connector.
 
 ### Google
 
-Google doesn't allow signing in inside the browsers built into apps, Scient's included, on any
-computer. So when a tab reaches Google's sign-in, or a site's **Continue with Google** opens it,
-Scient stops Google's sign-in pages it recognizes before they load, and the tab offers two ways
-that work:
+Google decides each sign-in inside the browsers built into apps, Scient's included. It may
+let you sign in in the tab as usual, or refuse with "This browser or app may not be
+secure". When it refuses, in the tab or in a window a site's **Continue with Google** opened,
+Scient explains over the page and offers two ways that work:
 
 - **Sign in in a Chrome window** opens a small window of your own Chrome, Edge, Brave or Chromium,
   with a separate profile that is deleted afterwards. Sign in there and click **Done** (on Linux,
-  close the window); the tab's profile gets the sign-in. For **Continue with Google**, the window
-  opens the site you were on: press **Continue with Google** there again.
+  close the window); the tab's profile gets the sign-in and the tab opens the page again, signed
+  in. For **Continue with Google**, the window opens the site you were on: press **Continue with
+  Google** there again.
 - **Open in my browser** opens Google, or the site you were on, in your usual browser, and you
   carry on there. Nothing comes back into Scient's profile.
 

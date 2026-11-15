@@ -492,8 +492,8 @@ describe("CI workflow decisions", () => {
     ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 10],
     ["main push", "docs/operations/development.md", "push", false, 53],
     ["nightly", "docs/operations/development.md", "schedule", false, 52],
-    // Probe, release notes, two suite reporters, four stable contexts, two store refreshes, Check.
-    ["reused main push", "docs/operations/development.md", "push", true, 11],
+    // Probe, release notes, two suite reporters, four stable contexts, the store refresh, Check.
+    ["reused main push", "docs/operations/development.md", "push", true, 10],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {

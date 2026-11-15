@@ -275,6 +275,13 @@ export interface DesktopAccountsBridge {
     readonly name: string;
     readonly canQuit: boolean;
   } | null>;
+  /**
+   * Whether a browser that imports through itself (`BrowserImportSource.connection`) has remote
+   * debugging turned on; null when refused. Never asks the person anything.
+   */
+  readonly browserConnection?: (
+    sourceId: BrowserImportSourceId,
+  ) => Promise<{ readonly on: boolean } | null>;
   /** Resolves once the window closed and its sign-in was copied, or with why not. */
   readonly chromeSignIn?: (input: DesktopChromeSignInInput) => Promise<DesktopChromeSignInResult>;
   /** Done (`keep`) quits the open sign-in window, Cancel stops it. False when none is open. */
