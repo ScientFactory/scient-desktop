@@ -185,7 +185,7 @@ import {
 } from "~/components/ui/menu";
 import "../markdownEditor/scient-markdown-editor.css";
 import { LatexReferenceDialog } from "./LatexReferenceDialog";
-import { useLibraryLatexCitationSuggestions } from "../sources/useLibraryCitations";
+import { useLatexCitationSuggestions } from "./useLatexCitationSuggestions";
 import { bibliographyChangePublished, mergeBibliographySourceEdit } from "./latexBibliographyModel";
 import {
   LatexReferencesPanel,
@@ -334,7 +334,7 @@ import {
 import { insertLatexBlock } from "./latexInsertion";
 import { LatexBibliographyDialog } from "./LatexBibliographyDialog";
 import { LatexLinkDialog } from "./LatexLinkDialog";
-import { withoutComments } from "./latexAuthoringModel";
+import { bibliographyPaths, withoutComments } from "./latexAuthoringModel";
 import {
   LATEX_PROJECTION_METADATA_REPAIR,
   LatexVisualSearch,
@@ -6056,16 +6056,23 @@ function LatexVisualEditorReady(
   const currentSetupSource = useRef(props.sourceSnapshot.setupSource);
   // Plugins and fields live as long as the editor and read the newest setup through this.
   const readSetupSource = useStableCallback(() => currentSetupSource.current);
-  const libraryCitations = useLibraryLatexCitationSuggestions({
+  const citationSuggestions = useLatexCitationSuggestions({
     environmentId: props.environmentId ?? null,
     root: props.cwd ?? null,
+    bibliography: () => ({
+      paths: bibliographyPaths(
+        readSetupSource(),
+        props.rootRelativePath ?? props.relativePath ?? "",
+      ),
+      wholeDocument: true,
+    }),
   });
   const commandContext = {
     source: mathSetupSource,
     referenceSource: readSetupSource,
     macros: documentMathSetup.macros,
     colors: latexDocumentColors(mathSetupSource),
-    citations: libraryCitations,
+    citations: citationSuggestions,
   };
   const completionContext = useRef(commandContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the command context for editor plugins to read

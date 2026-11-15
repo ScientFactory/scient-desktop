@@ -95,18 +95,9 @@ export function citationGroupKeys(source: string): ReadonlyArray<string> {
     .filter(Boolean);
 }
 
-/** Library sources for a typed LaTeX citation, best match first for what follows `\\cite{`. */
-export function libraryLatexCitationSuggestions(
-  candidates: ReadonlyArray<LibraryCitationCandidate>,
-  typed: string,
-): ReadonlyArray<{ readonly key: string; readonly detail: string }> {
-  return filterLibraryCitations(candidates, typed).map((candidate) => ({
-    key: candidate.citationKey,
-    detail: [candidate.label === candidate.citationKey ? null : candidate.label, candidate.title]
-      .filter((part) => part !== null)
-      .join(" · "),
-  }));
-}
+/** Said where a Library source is offered to a document that does not load the managed file. */
+export const LIBRARY_BIBLIOGRAPHY_HINT =
+  "Add \\bibliography{references} to this document so LaTeX finds Library sources.";
 
 /** Library sources for the LaTeX citation dialog, after the document's own .bib entries. */
 export function libraryLatexCitationChoices(

@@ -33,6 +33,14 @@
   background: var(--accent);
   color: var(--accent-foreground);
 }
+.scient-latex-command-completion-note {
+  margin-top: 3px;
+  padding: 4px 6px 3px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.35;
+}
 body[data-math-completion-hides-native] #mathlive-suggestion-popover {
   display: none;
 }

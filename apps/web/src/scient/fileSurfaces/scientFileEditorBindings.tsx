@@ -22,7 +22,8 @@ import {
   sourcePosition,
 } from "~/scient/math/input/sourceAdapter";
 import { installLatexFileCompletion } from "~/scient/latex/latexFileCompletion";
-import { useLibraryLatexCitationSuggestions } from "~/scient/sources/useLibraryCitations";
+import { bibliographyPaths } from "~/scient/latex/latexAuthoringModel";
+import { useLatexCitationSuggestions } from "~/scient/latex/useLatexCitationSuggestions";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
 import {
@@ -141,16 +142,29 @@ export function useScientFileEditorBindings<Annotation>({
     return mathInput.attach(host, sourceMathOwnsEvent);
   }, [mathInput, surfaceRef]);
   const isLatex = /\.tex$/iu.test(relativePath);
-  const libraryCitations = useLibraryLatexCitationSuggestions({
+  const citationSuggestions = useLatexCitationSuggestions({
     environmentId: isLatex ? environmentId : null,
     root: cwd,
+    bibliography: () => {
+      const source = editor?.getText() ?? "";
+      // A file included by another has its bibliography there, which this editor does not read.
+      return {
+        paths: bibliographyPaths(source, relativePath),
+        wholeDocument: /\\documentclass\b/u.test(source),
+      };
+    },
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs LaTeX completion on the editor and surface DOM node until unmount
   useEffect(() => {
     const host = surfaceRef.current;
     if (!host || !editor || !isLatex) return;
-    return installLatexFileCompletion(editor, host, () => mathEditable.current, libraryCitations);
-  }, [editor, isLatex, libraryCitations, surfaceRef]);
+    return installLatexFileCompletion(
+      editor,
+      host,
+      () => mathEditable.current,
+      citationSuggestions,
+    );
+  }, [editor, isLatex, citationSuggestions, surfaceRef]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the selection reporter for the document listener to call
   useLayoutEffect(() => {
     reportEditorSelectionRef.current = reportEditorSelection;

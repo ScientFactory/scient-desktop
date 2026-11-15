@@ -48,7 +48,18 @@ describe("latexSourceChoices", () => {
       ]);
     });
 
-    it.each(["citet*", "Citep", "citeauthor", "parencite", "textcite", "autocite", "nocite"])(
+    it("replaces every word of a search for a title, after earlier keys", () => {
+      const source = "\\cite{lovelace1843notes, computing machin";
+      expect(at(source)).toMatchObject([
+        {
+          label: "turing1950computing",
+          from: "\\cite{lovelace1843notes, ".length,
+          to: source.length,
+        },
+      ]);
+    });
+
+    it.each(["citet*", "Citeauthor", "footfullcite", "citetitle", "nocite"])(
       "works in \\%s",
       (command) => {
         expect(at(`\\${command}{love`).map((choice) => choice.label)).toEqual([
@@ -56,6 +67,20 @@ describe("latexSourceChoices", () => {
         ]);
       },
     );
+
+    it("works in each list of a biblatex multicite", () => {
+      const source = "\\parencites(see)()[p.~1]{lovelace1843notes}[p.~2]{tur";
+      expect(at(source).map((choice) => choice.label)).toEqual(["turing1950computing"]);
+      // A single-list command has ended once its keys are closed.
+      expect(at("\\parencite{lovelace1843notes}{tur")).toEqual([]);
+    });
+
+    it("leaves a command written after a line break's backslashes alone", () => {
+      expect(at("one\\\\cite{tur")).toEqual([]);
+      expect(at("one\\\\\\cite{tur").map((choice) => choice.label)).toEqual([
+        "turing1950computing",
+      ]);
+    });
 
     it("lists the document's own entries first and never repeats one", () => {
       const source = "\\bibitem{lovelace1843notes} Notes.\n\\bibitem{local2020} Local.\n\\cite{l";

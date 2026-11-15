@@ -9,6 +9,8 @@ export interface LatexCitationSuggestion {
   readonly key: string;
   /** Shown beside the key, e.g. "Lovelace 1843 · Notes". */
   readonly detail: string;
+  /** What the document still needs before this key resolves, said once under the list. */
+  readonly note?: string;
 }
 
 export interface LatexCompletionContext {
@@ -27,6 +29,8 @@ export interface LatexCommandChoice {
   readonly text?: boolean;
   readonly argument?: boolean;
   readonly math?: boolean;
+  /** One sentence the list shows under its choices while a choice that carries it is offered. */
+  readonly note?: string;
 }
 
 export interface LatexSourceChoice extends LatexCommandChoice {
@@ -218,9 +222,34 @@ function latexChoiceInsertion(choice: LatexCommandChoice) {
   };
 }
 
-/** The key being typed in a natbib or biblatex citation, after any optional notes. */
-const CITATION_ARGUMENT =
-  /\\((?:[Cc]ite(?:[pt]|al[pt]|author|year|yearpar)?|[Pp]arencite|[Tt]extcite|[Aa]utocite|[Ff]ootcite|[Ss]martcite|supercite|fullcite|nocite))\*?(?:\[[^\]]*\]){0,2}\{([^{}]*)$/u;
+/** natbib and biblatex commands that take one list of keys, after up to two optional notes. */
+const CITATION_COMMANDS = new Set(
+  (
+    "cite Cite citet Citet citep Citep citealt Citealt citealp Citealp citeauthor Citeauthor " +
+    "citeyear citeyearpar citenum citetitle citeurl citedate parencite Parencite textcite " +
+    "Textcite autocite Autocite footcite footcitetext smartcite Smartcite supercite fullcite " +
+    "footfullcite nocite"
+  ).split(" "),
+);
+/** biblatex commands that repeat `(notes)[notes]{keys}` for several lists. */
+const MULTICITE_COMMANDS = new Set(
+  (
+    "cites Cites parencites Parencites textcites Textcites autocites Autocites footcites " +
+    "footcitetexts smartcites Smartcites supercites"
+  ).split(" "),
+);
+/** A command that is not escaped, its arguments so far, and the text of the one still open. */
+const OPEN_ARGUMENT =
+  /(?<!\\)(?:\\\\)*\\([A-Za-z]+)\*?((?:\[[^\]]*\]|\([^()]*\)|\{[^{}]*\})*)\{([^{}]*)$/u;
+
+/** The citation command the caret is in and the text of its open key list, if it is in one. */
+function openCitation(before: string): RegExpExecArray | null {
+  const match = OPEN_ARGUMENT.exec(before);
+  if (!match) return null;
+  const [, command, earlier] = match;
+  if (MULTICITE_COMMANDS.has(command!)) return match;
+  return CITATION_COMMANDS.has(command!) && /^(?:\[[^\]]*\]){0,2}$/u.test(earlier!) ? match : null;
+}
 
 /** Complete literal argument values while preserving the rest of an existing command. */
 export function latexArgumentChoices(
@@ -233,12 +262,13 @@ export function latexArgumentChoices(
     /\\(color|textcolor|colorbox|fcolorbox)\{([^{}]*)$/u.exec(before) ??
     /\\(fcolorbox|colorlet)\{[^{}]*\}\{([^{}]*)$/u.exec(before);
   const reference = /\\(ref|eqref|autoref|cref|Cref)\{([^{}]*)$/u.exec(before);
-  const citation = color || reference ? null : CITATION_ARGUMENT.exec(before);
+  const citation = color || reference ? null : openCitation(before);
   const match = color ?? reference ?? citation;
   if (!match) return [];
   if (Object.hasOwn(context.macros ?? {}, match[1]!)) return [];
-  const typed = match[2]!;
-  const fragment = /[^!,\s]*$/u.exec(typed)![0];
+  const typed = citation ? citation[3]! : match[2]!;
+  // A citation is searched by words too (a title, an author), so its whole item is the fragment.
+  const fragment = citation ? /[^,]*$/u.exec(typed)![0].trimStart() : /[^!,\s]*$/u.exec(typed)![0];
   const from = caret - fragment.length;
   const following = /^[^{}!,\s]*/u.exec(source.slice(caret))![0];
   const colors = context.colors ?? latexDocumentColors(context.source ?? "");
@@ -252,7 +282,7 @@ export function latexArgumentChoices(
         ),
       ].map((entry) => entry[1]!);
   const own = [...new Set(values)].filter((name) => name.startsWith(fragment));
-  const choice = (name: string, preview: string) => ({
+  const choice = (name: string, preview: string, note?: string) => ({
     label: name,
     latex: name,
     preview,
@@ -260,6 +290,7 @@ export function latexArgumentChoices(
     to: caret + following.length,
     replacement: name,
     caret: name.length,
+    ...(note ? { note } : {}),
   });
   // The document's own entries come first; a suggestion never repeats one of them.
   const suggested = citation
@@ -268,7 +299,7 @@ export function latexArgumentChoices(
   return [
     ...own.map((name) => choice(name, name)),
     ...suggested.map((entry) =>
-      choice(entry.key, entry.detail ? `${entry.key} · ${entry.detail}` : entry.key),
+      choice(entry.key, entry.detail ? `${entry.key} · ${entry.detail}` : entry.key, entry.note),
     ),
   ];
 }
