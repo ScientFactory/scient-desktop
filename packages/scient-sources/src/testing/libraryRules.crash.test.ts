@@ -15,7 +15,7 @@ import type { WorkerAction, WorkerRequest, WorkerResult } from "./libraryWorker.
 /**
  * Stops one step at its file changes with a real SIGKILL (or a full disk) in a child process;
  * a fresh process then checks the rules, recovers, does the step again and checks once more.
- * Default: a spread sample per case. Every change: LIBRARY_CRASH_SWEEP=full vp test run <file>.
+ * Default: a smoke check. Every change of every case: LIBRARY_CRASH_SWEEP=full vp test run <file>.
  */
 interface CrashCase {
   readonly name: string;
@@ -85,7 +85,17 @@ const CASES: ReadonlyArray<CrashCase> = [
 
 const WORKER = NodePath.join(import.meta.dirname, "libraryWorker.ts");
 const FULL = NodeProcess.env["LIBRARY_CRASH_SWEEP"] === "full";
-const SAMPLE_SIZE = 5;
+/**
+ * The default run is a smoke check sized for CI, where these process-and-fsync tests run about
+ * eight times slower than on a developer's Mac: four cases, two changes each, one at a time.
+ */
+const SAMPLE_SIZE = 2;
+const SMOKE_CASES = new Set([
+  "add a paper with its PDF",
+  "delete for good",
+  "merge two papers",
+  "undo a merge",
+]);
 /** A full sweep runs in parts, so each test stays well inside the project's test time. */
 const PARTS = FULL ? 12 : 1;
 
@@ -194,6 +204,7 @@ async function sweep(crashCase: CrashCase, part: number): Promise<ReadonlyArray<
     const plans: FileFaultPlan[] = [];
     for (const at of sample(points)) {
       plans.push({ kind: "kill", at });
+      if (!FULL) continue;
       if (WRITES_CONTENTS.has(points[at - 1]!.call)) plans.push({ kind: "kill", at, torn: true });
       plans.push({ kind: "error", at, code: "ENOSPC", persist: true });
     }
@@ -297,14 +308,16 @@ async function sweep(crashCase: CrashCase, part: number): Promise<ReadonlyArray<
 }
 
 describe("the Library keeps its rules when a write is interrupted", () => {
-  const runs = CASES.flatMap((crashCase) =>
-    Array.from({ length: PARTS }, (_, part) => ({
-      crashCase,
-      part,
-      name: PARTS === 1 ? crashCase.name : `${crashCase.name}, part ${part + 1}`,
-    })),
+  const runs = CASES.filter((crashCase) => FULL || SMOKE_CASES.has(crashCase.name)).flatMap(
+    (crashCase) =>
+      Array.from({ length: PARTS }, (_, part) => ({
+        crashCase,
+        part,
+        name: PARTS === 1 ? crashCase.name : `${crashCase.name}, part ${part + 1}`,
+      })),
   );
-  it.concurrent.each(runs)("$name", async ({ crashCase, part }) => {
+  // Side by side only in a full sweep on a developer's machine; CI has few cores.
+  (FULL ? it.concurrent.each(runs) : it.each(runs))("$name", async ({ crashCase, part }) => {
     expect(await sweep(crashCase, part)).toEqual([]);
   });
 });

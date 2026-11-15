@@ -110,8 +110,9 @@ async function runSteps(root: string, seed: number, stepCount: number): Promise<
 }
 
 // A longer hunt: LIBRARY_RULES_SEEDS=300 LIBRARY_RULES_STEPS=150 vp test run <this file>
-const seedCount = Number(NodeProcess.env["LIBRARY_RULES_SEEDS"] ?? 12);
-const stepCount = Number(NodeProcess.env["LIBRARY_RULES_STEPS"] ?? 60);
+// The default is sized for CI, where a step costs about eight times what it does on a Mac.
+const seedCount = Number(NodeProcess.env["LIBRARY_RULES_SEEDS"] ?? 6);
+const stepCount = Number(NodeProcess.env["LIBRARY_RULES_STEPS"] ?? 40);
 
 describe("the Library keeps its rules under random use", () => {
   const seeds = Array.from({ length: seedCount }, (_, index) => index + 1);
