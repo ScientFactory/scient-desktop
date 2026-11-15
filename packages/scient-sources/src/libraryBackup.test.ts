@@ -229,6 +229,7 @@ describe("backing up the Library", () => {
     expect(result.unfinishedMoves).toBe(1);
     const readme = await NodeFSP.readFile(NodePath.join(result.path, "README.md"), "utf8");
     expect(readme).toContain("1 project(s) had not finished moving");
+    expect(readme).toContain("Keep those project\nfolders too");
   });
 
   it("says which files of a backup changed, are gone or do not belong", async () => {

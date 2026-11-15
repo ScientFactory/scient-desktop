@@ -16,6 +16,8 @@ import {
   scientLibraryBackupLeavesOut,
 } from "./libraryBackup.ts";
 import { ScientLibraryBusyError, withScientFileLock } from "./libraryLock.ts";
+import { SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX, type ScientLibraryLocation } from "./libraryRoot.ts";
+import { ScientSourceActor } from "./model.ts";
 import { atomicWriteJson, isNodeError, readBoundedJson, snapshot } from "./storeFiles.ts";
 
 const MAX_MANIFEST_BYTES = 256 * 1024 * 1024;
@@ -30,11 +32,10 @@ const UNUSED_FILES = new Set(["library.json", "instances.json"]);
  * volume (the swap is a rename) and outside it (the swap replaces the folder).
  */
 const beside = (libraryRoot: string) => ({
-  intent: `${libraryRoot}.restore.json`,
+  intent: `${libraryRoot}${SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX}`,
   lock: `${libraryRoot}.restore.lock`,
   staged: (restoreId: string) => `${libraryRoot}.restoring-${restoreId}`,
-  replaced: (restoreId: string, attempt: number) =>
-    `${libraryRoot}.replaced-${restoreId}${attempt > 1 ? `-${attempt}` : ""}`,
+  replaced: (restoreId: string) => `${libraryRoot}.replaced-${restoreId}`,
   stagedPrefix: `${NodePath.basename(libraryRoot)}.restoring-`,
   replacedPrefix: `${NodePath.basename(libraryRoot)}.replaced-`,
 });
@@ -60,20 +61,33 @@ export const ScientLibraryRestoreIntent = Schema.Struct({
   backupCreatedAt: Schema.String,
   preparedAt: Schema.String,
   counts: Counts,
+  /**
+   * The folder name the Library was moved aside under, written before it is moved. While that
+   * folder exists and no Library does, `ensureScientLibrary` refuses to make a new one.
+   */
+  replaced: Schema.optionalKey(Schema.String),
 });
 export type ScientLibraryRestoreIntent = typeof ScientLibraryRestoreIntent.Type;
+
+const RestoreEntry = Schema.Struct({
+  restoreId: Schema.String,
+  backupId: Schema.String,
+  backupCreatedAt: Schema.String,
+  /** When the copy was made. */
+  at: Schema.String,
+  by: Schema.optionalKey(ScientSourceActor),
+  sources: Schema.optionalKey(Schema.Int),
+  pdfs: Schema.optionalKey(Schema.Int),
+  /** When it took the Library's place; absent in a copy that still waits. */
+  finishedAt: Schema.optionalKey(Schema.String),
+  /** The Library it replaced, where that held anything: its folder and its source count. */
+  kept: Schema.optionalKey(Schema.Struct({ path: Schema.String, sources: Schema.Int })),
+});
 
 /** Kept in the restored Library: which restores of which backups made it what it is. */
 const ScientLibraryRestores = Schema.Struct({
   formatVersion: Schema.Literal(1),
-  restores: Schema.Array(
-    Schema.Struct({
-      restoreId: Schema.String,
-      backupId: Schema.String,
-      backupCreatedAt: Schema.String,
-      at: Schema.String,
-    }),
-  ),
+  restores: Schema.Array(RestoreEntry),
 });
 
 const newRestoreId = () => `restore_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
@@ -122,30 +136,46 @@ export async function scientLibraryUnused(libraryRoot: string): Promise<boolean>
   );
 }
 
-/** The paths a restore will create must stay inside the Library and not collide. */
-function pathsAreSafe(files: ScientLibraryBackupManifest["files"]): boolean {
+/** Names Windows will not create, whatever the extension. */
+const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/iu;
+
+/**
+ * The first path a restore will not write, or null: every path must stay inside the Library,
+ * be writable on any of Scient's platforms, and not collide with another when case or Unicode
+ * form is ignored. `library.json` must be among them.
+ */
+function unsafePath(files: ScientLibraryBackupManifest["files"]): string | null {
   const seen = new Set<string>();
   const folders = new Set<string>();
+  const keyOf = (path: string) => path.normalize("NFC").toLowerCase();
   for (const file of files) {
     const parts = file.path.split("/");
     if (
-      parts.some((part) => part === "" || part === "." || part === ".." || /[\\\0]/u.test(part)) ||
+      parts.some(
+        (part) =>
+          part === "" ||
+          part === "." ||
+          part === ".." ||
+          /[\\:*?"<>|\u0000-\u001f]/u.test(part) ||
+          /[. ]$/u.test(part) ||
+          RESERVED.test(part) ||
+          Buffer.byteLength(part) > 255,
+      ) ||
       !SHA256.test(file.sha256) ||
       file.bytes < 0 ||
-      scientLibraryBackupLeavesOut(file.path)
+      scientLibraryBackupLeavesOut(file.path) ||
+      seen.has(keyOf(file.path))
     ) {
-      return false;
+      return file.path;
     }
-    // A folder that keeps names apart only by their case would lose one of them elsewhere.
-    const key = file.path.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
+    seen.add(keyOf(file.path));
     for (let depth = 1; depth < parts.length; depth += 1) {
-      folders.add(parts.slice(0, depth).join("/").toLowerCase());
+      folders.add(keyOf(parts.slice(0, depth).join("/")));
     }
   }
-  for (const key of seen) if (folders.has(key)) return false;
-  return seen.has("library.json");
+  // A name that is a file for one entry and a folder for another.
+  for (const file of files) if (folders.has(keyOf(file.path))) return file.path;
+  return seen.has("library.json") ? null : "library.json";
 }
 
 async function readBackupManifest(
@@ -178,8 +208,10 @@ export type ScientLibraryRestorePrepared =
       readonly backupCreatedAt: string;
       readonly counts: ScientLibraryRestoreIntent["counts"];
     }
-  /** No readable `backup.json`, or one whose paths a restore will not write. */
+  /** No readable `backup.json`. */
   | { readonly outcome: "not-a-backup" }
+  /** It lists a file whose name a restore will not write here (or lacks `library.json`). */
+  | { readonly outcome: "unsafe-paths"; readonly file: string }
   /** A backup written by a later Scient. */
   | { readonly outcome: "unsupported" }
   /** A listed file is gone or changed, or the backup holds something it does not list. */
@@ -201,6 +233,7 @@ export async function prepareScientLibraryRestore(input: {
   readonly onProgress?: (progress: { readonly done: number; readonly total: number }) => void;
   /** Asked between files; true abandons the copy and removes it. */
   readonly shouldStop?: () => boolean;
+  readonly actor?: ScientSourceActor;
 }): Promise<ScientLibraryRestorePrepared> {
   await NodeFSP.mkdir(NodePath.dirname(input.libraryRoot), { recursive: true });
   const libraryRoot = (await canonicalRoot(input.libraryRoot))!;
@@ -211,7 +244,8 @@ export async function prepareScientLibraryRestore(input: {
   if (backup === null) return { outcome: "not-a-backup" };
   const manifest = await readBackupManifest(backup);
   if (typeof manifest === "string") return { outcome: manifest };
-  if (!pathsAreSafe(manifest.files)) return { outcome: "not-a-backup" };
+  const refused = unsafePath(manifest.files);
+  if (refused !== null) return { outcome: "unsafe-paths", file: refused };
   const payload = NodePath.join(backup, SCIENT_LIBRARY_BACKUP_PAYLOAD);
   if ((await snapshot(payload)) !== "directory") return { outcome: "damaged", file: "library" };
   const listed = new Set(manifest.files.map((file) => file.path));
@@ -277,7 +311,15 @@ export async function prepareScientLibraryRestore(input: {
             formatVersion: 1,
             restores: [
               ...(await restoresOf(staged)),
-              { restoreId, backupId: manifest.backupId, backupCreatedAt: manifest.createdAt, at },
+              {
+                restoreId,
+                backupId: manifest.backupId,
+                backupCreatedAt: manifest.createdAt,
+                at,
+                by: input.actor ?? "user",
+                sources: manifest.counts.sources,
+                pdfs: manifest.counts.pdfs,
+              },
             ],
           },
           MAX_SMALL_BYTES,
@@ -393,13 +435,12 @@ export async function finishScientLibraryRestore(
   if (leftovers.length === 0 && !(await readIntent(libraryRoot))) return { outcome: "none" };
 
   return withScientFileLock(paths.lock, async (): Promise<ScientLibraryRestoreFinished> => {
-    const replacedFolders = () => folderNames(parent, paths.replacedPrefix);
     /** Removes staged copies nothing waits for and replaced Libraries that hold nothing. */
     const sweep = async () => {
       for (const folder of await folderNames(parent, paths.stagedPrefix)) {
         await NodeFSP.rm(folder, { recursive: true, force: true });
       }
-      for (const folder of await replacedFolders()) {
+      for (const folder of await folderNames(parent, paths.replacedPrefix)) {
         if (await scientLibraryUnused(folder)) {
           await NodeFSP.rm(folder, { recursive: true, force: true });
         }
@@ -413,11 +454,8 @@ export async function finishScientLibraryRestore(
     }
     const { restoreId } = intent;
     const staged = paths.staged(restoreId);
-    /** The Library this restore moved aside, if a start stopped between its two renames. */
-    const movedAside = async () =>
-      (await replacedFolders()).findLast((folder) =>
-        folder.startsWith(paths.replaced(restoreId, 1)),
-      );
+    const aside = paths.replaced(restoreId);
+    const asideThere = async () => (await snapshot(aside)) === "directory";
     const failed = (reason: string, waiting: boolean): ScientLibraryRestoreFinished => ({
       outcome: "failed",
       restoreId,
@@ -427,22 +465,42 @@ export async function finishScientLibraryRestore(
     const reasonOf = (error: unknown) =>
       error instanceof Error && error.message ? error.message : "A folder could not be renamed.";
     const committed = async (): Promise<ScientLibraryRestoreFinished> => {
+      // A replaced Library that held anything stays; the restored Library records where it is
+      // before the intent goes, so a start killed right here still leaves the record.
+      const kept =
+        (await asideThere()) && !(await scientLibraryUnused(aside))
+          ? {
+              path: aside,
+              sources: (await scientLibraryBackupEntries(aside)).files.filter((path) =>
+                path.startsWith("records/"),
+              ).length,
+            }
+          : null;
+      const restores = await restoresOf(libraryRoot);
+      if (restores.some((entry) => entry.restoreId === restoreId && !entry.finishedAt)) {
+        const finishedAt = new Date().toISOString();
+        await atomicWriteJson(
+          NodePath.join(libraryRoot, RESTORES_FILE),
+          {
+            formatVersion: 1,
+            restores: restores.map((entry) =>
+              entry.restoreId === restoreId
+                ? { ...entry, finishedAt, ...(kept ? { kept } : {}) }
+                : entry,
+            ),
+          },
+          MAX_SMALL_BYTES,
+        );
+      }
       stop("before-intent-removed");
       await NodeFSP.rm(paths.intent, { force: true });
       await sweep();
-      // What is left of this restore's own renames is a Library that held something.
-      const kept = await movedAside();
-      const sources = kept
-        ? (await scientLibraryBackupEntries(kept)).files.filter((path) =>
-            path.startsWith("records/"),
-          ).length
-        : 0;
       return {
         outcome: "restored",
         restoreId,
         backupCreatedAt: intent.backupCreatedAt,
         counts: intent.counts,
-        keptReplaced: kept ? { path: kept, sources } : null,
+        keptReplaced: kept,
       };
     };
 
@@ -452,18 +510,28 @@ export async function finishScientLibraryRestore(
         libraryState === "directory" &&
         (await restoresOf(libraryRoot)).some((entry) => entry.restoreId === restoreId);
       if (done) return committed();
-      // The copy is gone. A Library this restore had moved aside goes back to its place.
-      const aside = await movedAside();
-      if (libraryState === "missing" && aside) await NodeFSP.rename(aside, libraryRoot);
+      // The copy is gone. A Library this restore had moved aside goes back to its place; if
+      // that fails the intent stays, so no new Library is made and the next start tries again.
+      if (libraryState === "missing" && (await asideThere())) {
+        await NodeFSP.rename(aside, libraryRoot);
+      }
       await NodeFSP.rm(paths.intent, { force: true });
       return failed("The copy of the backup that was waiting is gone.", false);
     }
     if (libraryState !== "missing") {
-      // The Library that is there, whatever it holds, steps aside under a name of its own.
-      let attempt = 1;
-      while ((await snapshot(paths.replaced(restoreId, attempt))) !== "missing") attempt += 1;
+      if (await asideThere()) {
+        return failed("A folder of an earlier attempt is in the way; nothing was changed.", true);
+      }
+      // Named in the intent first: from the rename until the copy is in place, no new Library
+      // may be made here (`ensureScientLibrary` checks).
+      await atomicWriteJson(
+        paths.intent,
+        { ...intent, replaced: NodePath.basename(aside) } satisfies ScientLibraryRestoreIntent,
+        MAX_SMALL_BYTES,
+      );
       try {
-        await NodeFSP.rename(libraryRoot, paths.replaced(restoreId, attempt));
+        // The Library that is there, whatever it holds, steps aside under a name of its own.
+        await NodeFSP.rename(libraryRoot, aside);
       } catch (error) {
         // A file held open (Windows): nothing moved; the next start tries again.
         return failed(reasonOf(error), true);
@@ -473,11 +541,58 @@ export async function finishScientLibraryRestore(
     try {
       await NodeFSP.rename(staged, libraryRoot);
     } catch (error) {
-      const aside = await movedAside();
-      if (aside) await NodeFSP.rename(aside, libraryRoot).catch(() => undefined);
-      return failed(reasonOf(error), true);
+      // Put the Library back. If that fails too it stays aside, named in the intent: no new
+      // Library is made, and the next start finishes one way or the other.
+      const putBack = (await asideThere())
+        ? await NodeFSP.rename(aside, libraryRoot).then(
+            () => true,
+            () => false,
+          )
+        : true;
+      return failed(
+        putBack
+          ? reasonOf(error)
+          : `${reasonOf(error)} The Library is kept beside its place until Scient restarts.`,
+        true,
+      );
     }
     stop("after-swap");
     return committed();
   });
+}
+
+/** One restore that took this Library's place, as the Library itself records it. */
+export interface ScientLibraryRestoreRecord {
+  readonly restoreId: string;
+  readonly finishedAt: string;
+  readonly by: ScientSourceActor;
+  readonly backupCreatedAt: string;
+  readonly sources: number;
+  readonly pdfs: number;
+  /** The replaced Library's folder, while that folder is still there. */
+  readonly kept: { readonly path: string; readonly sources: number } | null;
+}
+
+/** The restores that made this Library, oldest first; reads only. */
+export async function listScientLibraryRestores(
+  library: ScientLibraryLocation,
+): Promise<ReadonlyArray<ScientLibraryRestoreRecord>> {
+  const listed: ScientLibraryRestoreRecord[] = [];
+  for (const entry of await restoresOf(library.root).catch(() => [])) {
+    if (!entry.finishedAt) continue;
+    const kept =
+      entry.kept && (await snapshot(entry.kept.path).catch(() => "missing")) === "directory"
+        ? entry.kept
+        : null;
+    listed.push({
+      restoreId: entry.restoreId,
+      finishedAt: entry.finishedAt,
+      by: entry.by ?? "user",
+      backupCreatedAt: entry.backupCreatedAt,
+      sources: entry.sources ?? 0,
+      pdfs: entry.pdfs ?? 0,
+      kept,
+    });
+  }
+  return listed;
 }

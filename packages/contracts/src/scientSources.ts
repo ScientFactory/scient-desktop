@@ -812,6 +812,8 @@ export const ScientSourcesRestoreStatus = Schema.Union([
     pdfs: Schema.Int,
     /** Why the last start could not put it in place; the next start tries again. */
     problem: Schema.optionalKey(Schema.String),
+    /** A later request to restore another backup failed; this copy still waits. */
+    refused: Schema.optionalKey(Schema.Struct({ failedAt: NonEmptyString, reason: Schema.String })),
   }),
   Schema.Struct({
     state: Schema.Literal("restored"),

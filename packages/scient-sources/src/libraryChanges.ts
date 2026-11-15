@@ -1,6 +1,7 @@
 import { listScientSourcesBulkEdits, readScientSourcesOrganization } from "./collections.ts";
 import { readScientLibraryAliases, resolveScientLibraryAlias } from "./libraryAliases.ts";
 import { listScientLibraryRecentMerges } from "./libraryMerge.ts";
+import { listScientLibraryRestores } from "./libraryRestore.ts";
 import type { ScientLibraryLocation } from "./libraryRoot.ts";
 import type { ScientLibraryRecentChange, ScientLibraryRecentChanges } from "./model.ts";
 import {
@@ -57,12 +58,13 @@ export async function listScientLibraryRecentChanges(
       alias.undoneAt === undefined ? [alias.sourceId] : [],
     ),
   );
-  const [bulkEdits, merges, imports, trash, organization] = await Promise.all([
+  const [bulkEdits, merges, imports, trash, organization, restores] = await Promise.all([
     listScientSourcesBulkEdits(library, limit + 1),
     listScientLibraryRecentMerges(library, limit + 1),
     listScientSourceImports(library, limit + 1),
     readScientSourcesRemovedByPerson(library, mergedAway),
     readScientSourcesOrganization(library, present),
+    listScientLibraryRestores(library),
   ]);
   const collectionNames = new Map(
     organization.collections.map((collection) => [collection.collectionId, collection.name]),
@@ -115,6 +117,16 @@ export async function listScientLibraryRecentChanges(
       by: entry.removedBy,
       title: entry.record.title,
       revision: entry.record.revision,
+    })),
+    ...restores.map((restore) => ({
+      kind: "restore" as const,
+      id: restore.restoreId,
+      at: restore.finishedAt,
+      by: restore.by,
+      backupCreatedAt: restore.backupCreatedAt,
+      sources: restore.sources,
+      pdfs: restore.pdfs,
+      kept: restore.kept,
     })),
     // Newest first; changes of the same instant keep one fixed order.
   ].toSorted(

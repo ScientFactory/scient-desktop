@@ -12,6 +12,7 @@ import {
   saveScientSourceSearch,
 } from "./collections.ts";
 import { backUpScientLibrary, scientLibraryBackupLeavesOut } from "./libraryBackup.ts";
+import { listScientLibraryRecentChanges } from "./libraryChanges.ts";
 import { markScientLibrarySourcesDistinct } from "./libraryMerge.ts";
 import {
   cancelScientLibraryRestore,
@@ -234,6 +235,71 @@ describe("restoring a backup of the Library", () => {
     // A later start leaves the kept Library alone.
     expect(await finishScientLibraryRestore(newRoot)).toEqual({ outcome: "none" });
     expect(await inventory(kept)).toEqual(rebuilt);
+    // The restored Library itself records where the old one is, and Recent changes lists it
+    // for as long as that folder is there.
+    const restore = async () =>
+      (await listScientLibraryRecentChanges(libraryOf(fresh), 50)).changes.find(
+        (change) => change.kind === "restore",
+      );
+    expect(await restore()).toMatchObject({
+      id: prepared.restoreId,
+      by: "user",
+      sources: 4,
+      kept: { path: kept, sources: 4 },
+    });
+    await NodeFSP.rm(kept, { recursive: true });
+    expect(await restore()).toMatchObject({ id: prepared.restoreId, kept: null });
+  });
+
+  it("still records the kept Library when a start is killed right after the swap is recorded", async () => {
+    const { scenario } = await build();
+    const backup = await backUp(scenario);
+    const other = await createScenario(await temporaryRoot());
+    const step: Step = { op: "add", label: "mine", pdf: false };
+    await runStep(other, EMPTY_MODEL, step);
+    const prepared = await prepareScientLibraryRestore({ libraryRoot: other.libraryRoot, backup });
+    if (prepared.outcome !== "ready") throw new Error(`Not ready: ${prepared.outcome}`);
+
+    await expect(
+      finishScientLibraryRestore(other.libraryRoot, { fault: "before-intent-removed" }),
+    ).rejects.toThrow("test fault");
+    // The next start finishes; the record made before the stop is the one that stands.
+    const kept = `${other.libraryRoot}.replaced-${prepared.restoreId}`;
+    expect(await finishScientLibraryRestore(other.libraryRoot)).toMatchObject({
+      outcome: "restored",
+      keptReplaced: { path: kept, sources: 1 },
+    });
+    expect(
+      (await listScientLibraryRecentChanges(libraryOf(other), 50)).changes.filter(
+        (change) => change.kind === "restore",
+      ),
+    ).toMatchObject([{ kept: { path: kept, sources: 1 } }]);
+  });
+
+  it("makes no new Library while the old one is aside and the copy is not in place", async () => {
+    const { scenario } = await build();
+    const backup = await backUp(scenario);
+    const other = await createScenario(await temporaryRoot());
+    const step: Step = { op: "add", label: "mine", pdf: true };
+    await runStep(other, EMPTY_MODEL, step);
+    await prepareScientLibraryRestore({ libraryRoot: other.libraryRoot, backup });
+
+    // A copy that only waits does not stop the Library from being used or made.
+    await expect(ensureScientLibrary(other.libraryRoot)).resolves.toMatchObject({});
+    await expect(
+      finishScientLibraryRestore(other.libraryRoot, { fault: "after-aside" }),
+    ).rejects.toThrow("test fault");
+    // Half way: a write that would make a Library is refused, so the real one is not shadowed.
+    await expect(ensureScientLibrary(other.libraryRoot)).rejects.toThrow(
+      "did not finish. Restart Scient",
+    );
+    expect(await besideOf(other.libraryRoot)).not.toContain("library");
+
+    expect(await finishScientLibraryRestore(other.libraryRoot)).toMatchObject({
+      outcome: "restored",
+      keptReplaced: { sources: 1 },
+    });
+    await expect(ensureScientLibrary(other.libraryRoot)).resolves.toMatchObject({});
   });
 
   it.each<ScientLibraryRestoreFault>(["after-aside", "after-swap", "before-intent-removed"])(
@@ -315,20 +381,28 @@ describe("restoring a backup of the Library", () => {
     expect(await prepare()).toEqual({ outcome: "damaged", file: "records/stray.json" });
     await NodeFSP.rm(NodePath.join(payload, "records", "stray.json"));
 
-    // Paths a restore will not write: outside the Library, twice, or a name a backup leaves out.
+    // Names a restore will not write: outside the Library, twice by case, a name a backup
+    // leaves out, one Windows cannot create, and a backup without `library.json`.
+    const first = (JSON.parse(manifest) as { files: Listed }).files[0]!.path;
     await withManifest((value) => {
       (value.files as Listed)[0]!.path = "../outside.json";
     });
-    expect(await prepare()).toEqual({ outcome: "not-a-backup" });
+    expect(await prepare()).toEqual({ outcome: "unsafe-paths", file: "../outside.json" });
     await withManifest((value) => {
       const files = value.files as Listed;
-      files.push({ ...files[0]!, path: files[0]!.path.toUpperCase() });
+      files.push({ ...files[0]!, path: first.toUpperCase() });
     });
-    expect(await prepare()).toEqual({ outcome: "not-a-backup" });
+    expect(await prepare()).toEqual({ outcome: "unsafe-paths", file: first.toUpperCase() });
+    for (const path of ["library.lock", "records/aux.json", "records/name.", "a:b.json"]) {
+      await withManifest((value) => {
+        (value.files as Listed).push({ path, sha256: "0".repeat(64), bytes: 0 });
+      });
+      expect(await prepare()).toEqual({ outcome: "unsafe-paths", file: path });
+    }
     await withManifest((value) => {
-      (value.files as Listed).push({ path: "library.lock", sha256: "0".repeat(64), bytes: 0 });
+      value.files = (value.files as Listed).filter((file) => file.path !== "library.json");
     });
-    expect(await prepare()).toEqual({ outcome: "not-a-backup" });
+    expect(await prepare()).toEqual({ outcome: "unsafe-paths", file: "library.json" });
     await withManifest((value) => {
       value.formatVersion = 2;
     });
