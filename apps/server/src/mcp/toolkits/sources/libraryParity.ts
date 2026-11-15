@@ -160,6 +160,7 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   // Not for agents yet, like the backup it reads: both come with the organize tool's next action.
   "add-from-library": [],
   "undo-join": [],
+  "take-from-library": [],
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */

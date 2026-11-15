@@ -32,7 +32,11 @@ import {
   type ScientLibraryMerge,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
-import { undoScientLibraryJoin } from "@scientfactory/scient-sources/library-join";
+import {
+  readScientLibraryJoinDifferences,
+  takeFromScientLibraryJoin,
+  undoScientLibraryJoin,
+} from "@scientfactory/scient-sources/library-join";
 import {
   listScientLibraryImportSources,
   listScientLibraryRecentChanges,
@@ -986,9 +990,24 @@ export async function libraryTrash(store: Store, projects?: ReadonlyArray<KnownP
 /** The Library's recent changes; the whole Library's, whichever project asks. */
 export async function libraryRecentChanges(
   store: Store,
-  input: { readonly limit?: number; readonly sourcesOfImport?: string },
+  input: {
+    readonly limit?: number;
+    readonly sourcesOfImport?: string;
+    readonly differencesOfJoin?: { readonly joinId: string; readonly offset?: number };
+  },
 ): Promise<ScientLibraryRecentChanges> {
   if (!store.exists) return { changes: [], more: false };
+  if (input.differencesOfJoin !== undefined) {
+    // Reads only, this Library and the folder the join read; a join it does not know is empty.
+    const joinDifferences = await readScientLibraryJoinDifferences({
+      library: store.library,
+      joinId: input.differencesOfJoin.joinId,
+      ...(input.differencesOfJoin.offset === undefined
+        ? {}
+        : { offset: input.differencesOfJoin.offset }),
+    });
+    return { changes: [], more: false, ...(joinDifferences ? { joinDifferences } : {}) };
+  }
   if (input.sourcesOfImport !== undefined) {
     return {
       changes: [],
@@ -1117,6 +1136,7 @@ export const isLibraryOrganizeAction = (
   change.action === "back-up-library" ||
   change.action === "add-from-library" ||
   change.action === "undo-join" ||
+  change.action === "take-from-library" ||
   change.action === "undo-import" ||
   isPinRepairAction(change);
 
@@ -1283,6 +1303,29 @@ export async function organizeLibrarySources(
         outcome: "join-undone" as const,
         joinUndone: { trashed: undone.trashed, left: undone.left },
       };
+    }
+    case "take-from-library": {
+      const taken = await takeFromScientLibraryJoin({
+        library: store.library,
+        joinId: change.joinId,
+        otherSourceId: change.otherSourceId,
+        take: change.take,
+        shown: change.shown,
+        operationId: change.operationId,
+        actor: ACTOR,
+      });
+      if (taken.outcome === "taken") {
+        await afterChange(store, [taken.sourceId]);
+        return { outcome: "taken" as const };
+      }
+      const answers = {
+        already: "take-already",
+        changed: "take-changed",
+        unavailable: "take-unavailable",
+        "too-long": "take-too-long",
+        "not-found": "join-not-found",
+      } as const;
+      return { outcome: answers[taken.outcome] };
     }
     case "undo-import":
       return undoLibraryProjectPackageImport(store, change, ACTOR);

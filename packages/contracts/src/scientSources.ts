@@ -493,6 +493,25 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   }),
   /** Moves the sources that join added to the Trash, each only if unchanged since. */
   Schema.Struct({ action: Schema.Literal("undo-join"), joinId: NonEmptyString }),
+  /**
+   * Takes one thing from the other Library's version of a paper that both hold, as an ordinary
+   * edit: its note added under this paper's own, one PDF attached, or the whole paper added
+   * separately. Nothing is done unless both papers are still exactly what the list showed.
+   */
+  Schema.Struct({
+    action: Schema.Literal("take-from-library"),
+    joinId: NonEmptyString,
+    otherSourceId: NonEmptyString,
+    take: Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("note") }),
+      Schema.Struct({ kind: Schema.Literal("pdf"), sha256: NonEmptyString }),
+      Schema.Struct({ kind: Schema.Literal("add-separately") }),
+    ]),
+    /** The fingerprints of both sides as the list showed them. */
+    shown: Schema.Struct({ here: Schema.NullOr(NonEmptyString), other: NonEmptyString }),
+    /** Made by the caller; the same request sent again does nothing more. */
+    operationId: NonEmptyString.check(Schema.isMaxLength(128)),
+  }),
   /** A package folder in the project, or an absolute path. */
   Schema.Struct({
     action: Schema.Literal("import-package"),
@@ -605,6 +624,11 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "join-undone",
     "join-not-found",
     "join-busy",
+    "taken",
+    "take-already",
+    "take-changed",
+    "take-unavailable",
+    "take-too-long",
     "project-store-present",
     "dismissed",
     "nothing-to-dismiss",
@@ -999,9 +1023,20 @@ export const ScientSourcesRecentChangesRequest = Schema.Struct({
   root: NonEmptyString,
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 400 }))),
   sourcesOfImport: Schema.optionalKey(NonEmptyString),
+  /** Instead of the list: the papers that join left as they are here, a page at a time. */
+  differencesOfJoin: Schema.optionalKey(
+    Schema.Struct({
+      joinId: NonEmptyString,
+      offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    }),
+  ),
 });
 export type ScientSourcesRecentChangesRequest = typeof ScientSourcesRecentChangesRequest.Type;
 export type ScientSourcesRecentChange = ScientLibraryRecentChanges["changes"][number];
+export type ScientSourcesJoinDifferences = NonNullable<
+  ScientLibraryRecentChanges["joinDifferences"]
+>;
+export type ScientSourcesJoinDifferenceRow = ScientSourcesJoinDifferences["rows"][number];
 
 export const ScientSourceRestoreRequest = Schema.Struct({
   root: NonEmptyString,

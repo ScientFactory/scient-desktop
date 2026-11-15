@@ -73,6 +73,7 @@ function setup(listed: ReadonlyArray<ScientSourcesRecentChange> = changes, more 
     onShowSources: vi.fn(),
     onChanged: vi.fn(async () => undefined),
     onAddFromLibrary: vi.fn(async () => undefined),
+    onShowDifferences: vi.fn(),
     onClose: vi.fn(),
   };
 }
@@ -179,6 +180,11 @@ describe("Recent changes", () => {
     await expect
       .element(page.getByText(`The Library that was here (16 sources) is kept in ${kept}`))
       .toBeVisible();
+
+    await userEvent.click(
+      page.getByRole("button", { name: /^Show differences: Added 12 sources/u }),
+    );
+    expect(handlers.onShowDifferences).toHaveBeenCalledWith("join_1");
 
     await userEvent.click(page.getByRole("button", { name: /^Undo: Added 12 sources/u }));
     await vi.waitFor(() =>

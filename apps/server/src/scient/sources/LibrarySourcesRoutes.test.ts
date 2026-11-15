@@ -463,6 +463,24 @@ describe("Library routes on the library backend", () => {
           const fresh = await libraryRecord(theirs, "only-theirs", {
             title: "A paper only they have",
           });
+          // A paper both Libraries have (the same DOI), with a note only in the other one.
+          const doi = [{ scheme: "doi", value: "10.1000/shared" }];
+          const mine = await libraryRecord(fixture, "shared", {
+            title: "A paper both have",
+            identifiers: doi,
+          });
+          const theirShared = await libraryRecord(theirs, "shared", {
+            title: "A paper both have",
+            identifiers: doi,
+          });
+          await updateScientSourceNote({
+            root: theirs.library,
+            sourceId: theirShared.sourceId,
+            expectedRevision: theirShared.revision,
+            expectedNote: null,
+            note: "Written in the other Library.",
+            actor: "user",
+          });
           await NodeFSP.mkdir(destination);
           await organizeLibrarySources(theirStore, {
             change: { action: "back-up-library", inFolder: destination },
@@ -490,7 +508,36 @@ describe("Library routes on the library backend", () => {
             if (status.state !== "done") throw new Error(`The join is ${status.state}.`);
             return status;
           });
-          expect(done).toMatchObject({ added: 1, skipped: 0 });
+          expect(done).toMatchObject({ added: 1, skipped: 0, different: 1 });
+
+          // The paper both have is listed with both sides; its note is taken by one request.
+          const differences = async () =>
+            (await libraryRecentChanges(store, { differencesOfJoin: { joinId: done.joinId } }))
+              .joinDifferences!;
+          const [row] = (await differences()).rows;
+          expect(row).toMatchObject({
+            relation: "same-paper",
+            parts: ["note"],
+            here: { sourceId: mine.sourceId, note: "" },
+            other: { note: "Written in the other Library." },
+          });
+          const take = () =>
+            organizeLibrarySources(store, {
+              change: {
+                action: "take-from-library",
+                joinId: done.joinId,
+                otherSourceId: theirShared.sourceId,
+                take: { kind: "note" },
+                shown: { here: row!.here!.fingerprint, other: row!.other!.fingerprint },
+                operationId: "take_route_1",
+              },
+            });
+          expect(await take()).toEqual({ outcome: "taken" });
+          expect(await take()).toEqual({ outcome: "take-already" });
+          expect((await readScientSourceRecord(store.library, mine.sourceId))?.note).toBe(
+            "Written in the other Library.",
+          );
+          expect((await differences()).rows).toEqual([]);
           expect(await readScientSourceRecord(store.library, fresh.sourceId)).toMatchObject({
             title: "A paper only they have",
           });

@@ -68,6 +68,7 @@ import { SourceFullTextResults } from "./SourceFullTextResults";
 import type { SourceRowContext } from "./SourceRow";
 import { showSourceRowMenu } from "./sourceRowMenu";
 import { LibraryBackupNotice, useLibraryBackup } from "./LibraryBackup";
+import { JoinDifferencesDialog } from "./JoinDifferences";
 import { RecentChangesDialog } from "./RecentChanges";
 import { RECENT_CHANGES_LABELS } from "./recentChangeLabels";
 import { SourcesList } from "./SourcesList";
@@ -299,6 +300,8 @@ export function ScientSourcesPanel(props: {
   const [showingReviews, setShowingReviews] = useState(false);
   const [showingDuplicates, setShowingDuplicates] = useState<DuplicatesSection | null>(null);
   const [showingRecentChanges, setShowingRecentChanges] = useState(false);
+  /** The join whose differences are shown, over Recent changes. */
+  const [showingJoinDifferences, setShowingJoinDifferences] = useState<string | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -1546,7 +1549,18 @@ export function ScientSourcesPanel(props: {
           }
           onChanged={sources.refreshOverview}
           onAddFromLibrary={backup.addFrom}
+          onShowDifferences={setShowingJoinDifferences}
           onClose={() => setShowingRecentChanges(false)}
+        />
+      ) : null}
+      {showingJoinDifferences ? (
+        <JoinDifferencesDialog
+          environmentId={props.environmentId}
+          root={props.root}
+          joinId={showingJoinDifferences}
+          canChange={canChange}
+          onChanged={sources.refreshOverview}
+          onClose={() => setShowingJoinDifferences(null)}
         />
       ) : null}
       <ZoteroRefreshDialog

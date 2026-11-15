@@ -598,6 +598,87 @@ export const ScientLibraryRecentChange = Schema.Union([
 ]);
 export type ScientLibraryRecentChange = typeof ScientLibraryRecentChange.Type;
 
+/** One side of a paper both Libraries hold, as the differences list shows it. */
+export const ScientLibraryJoinSide = Schema.Struct({
+  sourceId: NonEmptyString,
+  title: Schema.NullOr(Schema.String),
+  /** First author and year, to tell papers apart. */
+  by: Schema.String,
+  /** Everything the record says, as one value: an action is refused once this has changed. */
+  fingerprint: NonEmptyString,
+  note: Schema.String,
+  tags: Schema.Array(Schema.String),
+  read: Schema.Boolean,
+  starred: Schema.Boolean,
+  /** `available`: the file is in that Library's folder. */
+  pdfs: Schema.Array(
+    Schema.Struct({ sha256: NonEmptyString, fileName: Schema.String, available: Schema.Boolean }),
+  ),
+});
+export type ScientLibraryJoinSide = typeof ScientLibraryJoinSide.Type;
+
+export const ScientLibraryJoinRelation = Schema.Literals([
+  "same-id",
+  "merged-here",
+  "rebuilt-there",
+  "rebuilt-here",
+  "same-paper",
+  "possibly-same",
+]);
+export const ScientLibraryJoinPart = Schema.Literals([
+  "details",
+  "tags",
+  "note",
+  "reading",
+  "pdfs",
+  "highlights",
+]);
+
+export const ScientLibraryJoinDifferenceRow = Schema.Struct({
+  otherSourceId: NonEmptyString,
+  relation: ScientLibraryJoinRelation,
+  /** What differs now; what was recorded, while the other Library's folder is away. */
+  parts: Schema.Array(ScientLibraryJoinPart),
+  here: Schema.NullOr(ScientLibraryJoinSide),
+  /** `possibly-same`: every source here it may be. */
+  candidates: Schema.Array(
+    Schema.Struct({ sourceId: NonEmptyString, title: Schema.NullOr(Schema.String) }),
+  ),
+  /** Null while the other Library's folder is away; `otherTitle` is then what was recorded. */
+  other: Schema.NullOr(ScientLibraryJoinSide),
+  otherTitle: Schema.NullOr(Schema.String),
+  /** The detail fields that differ, each with both values. */
+  details: Schema.Array(
+    Schema.Struct({ field: Schema.String, here: Schema.String, other: Schema.String }),
+  ),
+});
+export type ScientLibraryJoinDifferenceRow = typeof ScientLibraryJoinDifferenceRow.Type;
+
+/** The papers a join left as they are here, with both sides; nothing in it is a change. */
+export const ScientLibraryJoinDifferences = Schema.Struct({
+  joinId: NonEmptyString,
+  from: Schema.Literals(["backup", "replaced"]),
+  backupCreatedAt: Schema.NullOr(Schema.String),
+  /** The folder the join read. */
+  folder: Schema.String,
+  /** False when that folder is away, or is no longer the snapshot the join read. */
+  available: Schema.Boolean,
+  /** How many differences the join recorded; rows that no longer differ are left out. */
+  total: Schema.Int,
+  /** Where the next page starts in what was recorded, or null at the end. */
+  nextOffset: Schema.NullOr(Schema.Int),
+  rows: Schema.Array(ScientLibraryJoinDifferenceRow),
+  /** Removed here and still in the other Library: not brought back, listed only. */
+  removedHere: Schema.Array(
+    Schema.Struct({
+      otherSourceId: NonEmptyString,
+      state: Schema.Literals(["trash", "deleted"]),
+      title: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type ScientLibraryJoinDifferences = typeof ScientLibraryJoinDifferences.Type;
+
 export const ScientLibraryRecentChanges = Schema.Struct({
   /** Newest first. */
   changes: Schema.Array(ScientLibraryRecentChange),
@@ -605,6 +686,8 @@ export const ScientLibraryRecentChanges = Schema.Struct({
   more: Schema.Boolean,
   /** Only when one import's sources were asked for: those in the Library now. */
   importSourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
+  /** Only when one join's differences were asked for. */
+  joinDifferences: Schema.optionalKey(ScientLibraryJoinDifferences),
 });
 export type ScientLibraryRecentChanges = typeof ScientLibraryRecentChanges.Type;
 
