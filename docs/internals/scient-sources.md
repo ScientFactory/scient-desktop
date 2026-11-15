@@ -385,7 +385,11 @@ pairs and what is left as possible duplicates. One merge:
 - Library collection membership moves to the survivor. When the survivor
   gains a Zotero link it lacked, the loser's Zotero base is copied to it.
 - The loser goes to the trash with `mergedInto` (survivor and merge ID). A
-  plain restore refuses it; only the merge's Undo brings it back.
+  plain restore refuses it; only the merge's Undo brings it back. Such an
+  entry is Undo material, not something a person removed: the Trash list, its
+  count and Empty Trash leave it out (`removedByPerson` in `store.ts`), a
+  deletion that names it still deletes it, and deleting a source for good
+  takes every copy merged into it (`withCopiesMergedInto`).
 - `aliases.json` maps the loser to the survivor. `resolveScientLibraryAlias`
   (`/library-aliases`) follows aliases to the last survivor and skips
   tombstones; the instance map (5c) resolves through it.
@@ -1542,7 +1546,10 @@ which replaces the server's own bulk-edit line. `moveStatus` carries no
 "dismissed" flag, so empty `lines` (dismissed, or a move with nothing to say)
 show no summary; `cleanup-pending` still shows its files-left sentence. Dismiss
 (organize `dismiss-move-summary`) is offered for a summary, and a failure offers
-"Check again", which only reads the status. **Review** opens Possible
+"Try again" (organize `retry-move`): like every write call it runs the move
+before anything else, and answers `moved`, or `not-moved` when the move failed
+again; the line then shows the new status. Agents have no tool for it because
+any change they make does the same. **Review** opens Possible
 duplicates at **Merged**, where each merge explains the values it kept. A write refused with
 `scient_sources_library_moving` shows "The Library is still moving. Try again
 when it has finished." (`scientSourcesErrorMessage`, and the reader's highlight
@@ -2447,11 +2454,18 @@ Documents cite by key. In Markdown, typing `[@` opens a list of Library
 sources (`prosemirror/libraryCitation.ts`, ranked by
 `sources/libraryCitations.ts`) and inserts the existing Pandoc `citation`
 node; the LaTeX citation dialog appends Library sources after the document's
-own `.bib` entries. Typing inside a LaTeX citation command offers the same
-sources in every LaTeX field: `useLibraryLatexCitationSuggestions` gives the
-completion context (`latexCommandCompletion.ts`) a `citations` function, the
-document's own `\bibitem` keys come first, and the menu inserts the key. The
-typed list does not read the document's own `.bib` files; the dialog does. A
+own `.bib` entries. Typing inside a LaTeX citation command offers sources in
+every LaTeX field: `useLatexCitationSuggestions` gives the completion context
+(`latexCommandCompletion.ts`) a `citations` function. The document's own
+`\bibitem` keys come first; then one ranked list of the entries of its linked
+`.bib` files (the first 24, read when the editor opens and again when a
+citation is typed and the last read is five seconds old) and the project's
+Library sources. The citation commands are a named set; a multicite's every
+key list is completed; the text searched and replaced is the whole item after
+the last comma. A Library source offered to a whole document that does not link
+the managed `references.bib` carries a note the menu shows once under the
+list. The Source editor reads the paths from the open file only, so a file
+included by another gets Library sources without that note. A
 citation opens its source through
 `librarySourceRequest.ts`, which the Library panel acts on once loaded.
 
