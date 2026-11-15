@@ -167,6 +167,15 @@ export interface LocalThreadMessage {
 
 type RawThreadFeedEntry =
   | {
+      readonly type: "room-message";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly item: Extract<OrchestrationV2TurnItem, { type: "room_message" }>;
+      /** A fork shows it from its source thread: it can be read, not sent or deleted. */
+      readonly inherited: boolean;
+    }
+  | {
       readonly type: "message";
       readonly id: string;
       readonly createdAt: string;
@@ -211,7 +220,10 @@ export type ThreadFeedEntry = ThreadFeedEntryContent & {
 };
 
 type ThreadFeedEntryContent =
-  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "sent-message" | "mcp-app" }>
+  | Extract<
+      RawThreadFeedEntry,
+      { type: "message" | "html-render" | "sent-message" | "mcp-app" | "room-message" }
+    >
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -563,6 +575,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "globe";
     case "approval_request":
       return item.requestKind === "permission" ? "lock" : "message";
+    case "room_message":
     case "user_input_request":
     case "user_message":
     case "assistant_message":
@@ -613,6 +626,7 @@ function itemSummary(
   toolPresentation: T3McpToolPresentation | null = null,
 ): string {
   if (item.type === "notification") return item.summary;
+  if (item.type === "room_message") return item.deletedAt ? "Message deleted" : "To people";
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
   const title =
@@ -726,6 +740,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
       return item.markdown || null;
     case "todo_list":
       return `${item.steps.filter((step) => step.status === "completed").length}/${item.steps.length} completed`;
+    case "room_message":
+      return item.deletedAt ? null : item.text || null;
     case "user_message":
     case "assistant_message":
       return item.text || null;
@@ -2477,6 +2493,27 @@ export function buildThreadFeed(
         createdAt,
         runId: item.runId,
         text: sentMessage,
+      };
+      projectedEntriesCache.set(row, { attemptId, entries: [entry] });
+      entries.push(entry);
+      entryRows.push(index);
+      continue;
+    }
+    if (item.type === "room_message") {
+      // SCIENT-FORK: a room message leaves the feed once deleted or sent to the agent; the
+      // agent's message stands in for it. A cancelled send brings it back.
+      if (
+        item.deletedAt !== undefined ||
+        item.deliveries?.some((delivery) => delivery.status === "sent") === true
+      )
+        continue;
+      const entry: RawThreadFeedEntry = {
+        type: "room-message",
+        id: `room-message:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        createdAt,
+        runId: null,
+        item,
+        inherited: row.visibility === "inherited",
       };
       projectedEntriesCache.set(row, { attemptId, entries: [entry] });
       entries.push(entry);

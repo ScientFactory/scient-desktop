@@ -3,6 +3,9 @@ import {
   applyOrchestrationV2ThreadVisit,
   checkpointSupportsRewind,
   pendingGuestMessageCount,
+  // SCIENT-FORK: thread rooms.
+  roomPeople,
+  roomWaitingCount,
 } from "@t3tools/contracts";
 // SCIENT-FORK:START — retained-source adapters and fixture selection.
 import { ContextHandoffId, type OrchestrationV2ContextHandoff } from "@t3tools/contracts";
@@ -636,6 +639,8 @@ export interface ProjectionStoreV2Shape {
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
+    /** SCIENT-FORK: only an item the thread wrote, never one a fork shows from its source. */
+    readonly ownOnly?: boolean;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
   readonly getMessagesById: (
     threadId: ThreadId,
@@ -2027,7 +2032,12 @@ function shellFromState(input: {
     lastErrorCode: input.state.lastErrorCode,
     usageLimitResetAt: input.state.usageLimitResetAt,
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
-    pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
+    pendingGuestMessageCount:
+      pendingGuestMessageCount(input.state.thread.guestShare) +
+      // SCIENT-FORK: guests' room messages the owner has not seen yet.
+      roomWaitingCount(input.state.thread.room),
+    // SCIENT-FORK: who has joined the thread's room, for its sidebar card.
+    roomPeople: roomPeople(input.state.thread.room),
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
@@ -6629,7 +6639,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
     // SCIENT-FORK:END
-    const getTurnItem: ProjectionStoreV2Shape["getTurnItem"] = ({ threadId, itemId }) =>
+    const getTurnItem: ProjectionStoreV2Shape["getTurnItem"] = ({ threadId, itemId, ownOnly }) =>
       sql<{
         payload_json: string;
       }>`SELECT ${turnItemMetadataSql(sql, sql`payload_json`)} AS payload_json
@@ -6638,8 +6648,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.flatMap((rows) =>
           rows[0] !== undefined
             ? decodeTurnItemPayload(rows[0].payload_json)
-            : // SCIENT-FORK: an item a fork shows from its history, as it shows it.
-              sql<{ readonly position: number; readonly payload_json: string | null }>`
+            : ownOnly === true
+              ? Effect.succeed(null)
+              : // SCIENT-FORK: an item a fork shows from its history, as it shows it.
+                sql<{ readonly position: number; readonly payload_json: string | null }>`
                 SELECT history.position, ${turnItemMetadataSql(sql, sql`COALESCE(frozen.item_json, item.payload_json)`)} AS payload_json
                 FROM scient_fork_history AS history
                 LEFT JOIN scient_fork_frozen_items AS frozen
@@ -6650,14 +6662,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND history.source_thread_id <> ${threadId}
                 LIMIT 1
               `.pipe(
-                Effect.flatMap(([shown]) =>
-                  shown?.payload_json == null
-                    ? Effect.succeed(null)
-                    : decodeTurnItemPayload(shown.payload_json).pipe(
-                        Effect.map((item) => presentInheritedItem(item, shown.position, threadId)),
-                      ),
+                  Effect.flatMap(([shown]) =>
+                    shown?.payload_json == null
+                      ? Effect.succeed(null)
+                      : decodeTurnItemPayload(shown.payload_json).pipe(
+                          Effect.map((item) =>
+                            presentInheritedItem(item, shown.position, threadId),
+                          ),
+                        ),
+                  ),
                 ),
-              ),
         ),
         Effect.mapError(controlReadError(threadId)),
       );
@@ -6718,11 +6732,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       WHERE thread.thread_id = ${threadId}
         AND json_extract(message.value, '$.status') = 'pending'
     `,
+        // SCIENT-FORK: files posted to a thread's room are held by their room messages.
+        sql<{ id: string }>`
+      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+      FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.roomMessage.attachments') AS attachment
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'room_message'
+        ${exceptShownByLiveFork ? sql`AND NOT ${shownByLiveFork(threadId, "item.run_id")}` : sql``}
+      UNION
+      SELECT held.value AS id
+      FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.roomMessage.heldFileIds') AS held
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'room_message'
+        ${exceptShownByLiveFork ? sql`AND NOT ${shownByLiveFork(threadId, "item.run_id")}` : sql``}
+    `,
       ]).pipe(
-        Effect.map(([messages, renders, answerFiles, guestFiles]) => [
+        Effect.map(([messages, renders, answerFiles, guestFiles, roomFiles]) => [
           ...new Set([
             ...messages.map((row) => row.id),
             ...guestFiles.map((row) => row.id),
+            ...roomFiles.map((row) => row.id),
             ...answerFiles.map((row) => row.id),
             ...threadHtmlRenderAttachmentIds(
               threadId,
@@ -8857,7 +8888,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
-                  pendingGuestMessageCount: pendingGuestMessageCount(thread.guestShare),
+                  pendingGuestMessageCount:
+                    pendingGuestMessageCount(thread.guestShare) +
+                    // SCIENT-FORK: guests' room messages the owner has not seen yet.
+                    roomWaitingCount(thread.room),
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:
                       latestRunId === null || status === "idle"

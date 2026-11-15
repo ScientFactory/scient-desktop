@@ -50,3 +50,67 @@
 :is(button, [role="button"]):is(:hover, [data-popup-open], [data-pressed]) > .scient-quiet-icon {
   color: var(--foreground);
 }
+
+/* Thread rooms: each person's messages take their own hue in place of the guest colour. */
+@utility room-person-owner {
+  --guest: var(--color-sky-500);
+  --guest-foreground: var(--color-sky-600);
+  --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
+  @variant dark {
+    --guest-foreground: var(--color-sky-300);
+  }
+}
+
+@utility room-person-0 {
+  --guest: var(--color-fuchsia-500);
+  --guest-foreground: var(--color-fuchsia-600);
+  --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
+  @variant dark {
+    --guest-foreground: var(--color-fuchsia-300);
+  }
+}
+
+@utility room-person-1 {
+  --guest: var(--color-amber-500);
+  --guest-foreground: var(--color-amber-600);
+  --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
+  @variant dark {
+    --guest-foreground: var(--color-amber-300);
+  }
+}
+
+@utility room-person-2 {
+  --guest: var(--color-emerald-500);
+  --guest-foreground: var(--color-emerald-600);
+  --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
+  @variant dark {
+    --guest-foreground: var(--color-emerald-300);
+  }
+}
+
+@utility room-person-3 {
+  --guest: var(--color-violet-500);
+  --guest-foreground: var(--color-violet-600);
+  --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
+  @variant dark {
+    --guest-foreground: var(--color-violet-300);
+  }
+}
+
+@utility room-person-4 {
+  --guest: var(--color-rose-500);
+  --guest-foreground: var(--color-rose-600);
+  --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
+  @variant dark {
+    --guest-foreground: var(--color-rose-300);
+  }
+}
+
+@utility room-person-5 {
+  --guest: var(--color-teal-500);
+  --guest-foreground: var(--color-teal-600);
+  --guest-surface: color-mix(in srgb, var(--guest) 14%, var(--message-surface));
+  @variant dark {
+    --guest-foreground: var(--color-teal-300);
+  }
+}

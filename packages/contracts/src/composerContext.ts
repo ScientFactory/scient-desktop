@@ -13,6 +13,8 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { GUEST_MESSAGE_MAX_LENGTH, GUEST_NAME_MAX_LENGTH } from "./guestShare.ts";
+// SCIENT-FORK: the room message a sent message came from (scient/threadRoom.ts).
+import { RoomMessageAttribution } from "./scient/threadRoom.ts";
 
 /** Image and file records reference `ChatAttachment` ids, never bytes. */
 
@@ -312,6 +314,8 @@ export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
   guest: Schema.optional(GuestMessageAttribution),
+  // SCIENT-FORK: set only by the server when a room message is sent to the agent.
+  room: Schema.optional(RoomMessageAttribution),
   records: Schema.Array(Schema.Unknown)
     .check(
       Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),
