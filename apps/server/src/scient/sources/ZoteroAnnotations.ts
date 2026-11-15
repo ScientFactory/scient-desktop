@@ -1,4 +1,4 @@
-import type { ScientSourceRecord } from "@scientfactory/scient-sources";
+import { zoteroGroupIdOfLibrary, type ScientSourceRecord } from "@scientfactory/scient-sources";
 import {
   isScientLibraryLocation,
   type ScientSourceStoreLocation,
@@ -18,6 +18,13 @@ import type { ZoteroPdfAnnotation } from "./ZoteroItems.ts";
 /** A highlight's note holds this much; a longer comment is kept with the ones not placed. */
 const NOTE_CHARACTERS = 8_000;
 
+/** A highlight's ID here, the same on every import: a Zotero key is unique only in its library. */
+function zoteroAnnotationId(annotation: ZoteroPdfAnnotation): string {
+  const groupId = zoteroGroupIdOfLibrary(annotation.libraryId);
+  const library = groupId === null ? `user_${annotation.libraryId}` : `group_${groupId}`;
+  return `ann_zotero_${library}_${annotation.key}`;
+}
+
 /**
  * Places each highlight and underline by its quoted text on its page of these bytes, when it
  * is found there once; a phrase that repeats on its page is never guessed between. Everything
@@ -34,7 +41,7 @@ export function placeZoteroAnnotations(
   const placed: ImportedAnnotation[] = [];
   const unplaced: ScientUnplacedAnnotation[] = [];
   for (const annotation of annotations) {
-    const annotationId = `ann_zotero_${annotation.key}`;
+    const annotationId = zoteroAnnotationId(annotation);
     const at = annotation.addedAt ?? now;
     const anchoring =
       text &&

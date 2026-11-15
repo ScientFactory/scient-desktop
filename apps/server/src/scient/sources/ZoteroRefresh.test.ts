@@ -599,14 +599,14 @@ describe("Zotero refresh", () => {
         mark("GONE2345", "Not in the text"),
       ]);
     const placed = {
-      id: "ann_zotero_HIGH2345",
+      id: "ann_zotero_user_0_HIGH2345",
       note: "On HIGH2345",
       color: "#ff6666",
       by: "user",
       at: "2024-01-24T04:36:20Z",
       removed: false,
     };
-    const kept = [["ann_zotero_GONE2345", "Not in the text", "On GONE2345"]];
+    const kept = [["ann_zotero_user_0_GONE2345", "Not in the text", "On GONE2345"]];
     expect(await marks()).toEqual({ placed: [placed], unplaced: kept });
     expect(operation.items[0]?.notBrought).toEqual(
       expect.arrayContaining([
@@ -620,7 +620,7 @@ describe("Zotero refresh", () => {
       canonicalRoot: home,
       material,
       relativePath: null,
-      command: { action: "remove", annotationId: "ann_zotero_HIGH2345", expectedRevision: 1 },
+      command: { action: "remove", annotationId: placed.id, expectedRevision: 1 },
       actor: "user",
       now: "2026-11-15T10:00:00.000Z",
     });
@@ -635,7 +635,7 @@ describe("Zotero refresh", () => {
     expect(await marks()).toEqual({
       placed: [
         { ...placed, removed: true },
-        { ...placed, id: "ann_zotero_NEWW2345", note: "On NEWW2345" },
+        { ...placed, id: "ann_zotero_user_0_NEWW2345", note: "On NEWW2345" },
       ],
       unplaced: kept,
     });
@@ -651,6 +651,8 @@ describe("Zotero refresh", () => {
 
     await refreshZoteroSources({ root, actor: "user", zotero });
 
-    expect((await marks()).placed?.map((entry) => entry.id)).toEqual(["ann_zotero_HIGH2345"]);
+    expect((await marks()).placed?.map((entry) => entry.id)).toEqual([
+      "ann_zotero_user_0_HIGH2345",
+    ]);
   });
 });

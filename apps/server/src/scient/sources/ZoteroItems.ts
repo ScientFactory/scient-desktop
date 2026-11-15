@@ -92,13 +92,23 @@ const ZoteroRawItemData = Schema.Struct({
   dateModified: OptionalText,
 });
 
+const ZoteroRawLibrary = Schema.Struct({
+  type: Schema.String,
+  id: Schema.Union([Schema.String, Schema.Number]),
+});
+
+/**
+ * A library as a source's link names it: `groups/<id>`, or the user ID for My Library. Zotero
+ * on this computer reports the signed-in user's ID there, or `0` when it is not signed in.
+ */
+export function zoteroLibraryId(library: typeof ZoteroRawLibrary.Type): string {
+  return library.type === "group" ? zoteroGroupLibraryId(String(library.id)) : String(library.id);
+}
+
 export const ZoteroRawItem = Schema.Struct({
   key: Schema.String,
   version: Schema.Int,
-  library: Schema.Struct({
-    type: Schema.String,
-    id: Schema.Union([Schema.String, Schema.Number]),
-  }),
+  library: ZoteroRawLibrary,
   data: ZoteroRawItemData,
   /** On zotero.org, `numChildren` of a file counts the highlights and comments made on it. */
   meta: Schema.optionalKey(Schema.Struct({ numChildren: Schema.optionalKey(Schema.Number) })),
@@ -482,10 +492,7 @@ export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate
     externalReferences: [
       {
         system: "zotero",
-        libraryId:
-          raw.library.type === "group"
-            ? zoteroGroupLibraryId(String(raw.library.id))
-            : String(raw.library.id),
+        libraryId: zoteroLibraryId(raw.library),
         itemKey: raw.key,
         itemVersion: raw.version,
         rawItemType: data.itemType,
@@ -536,6 +543,8 @@ function zoteroPdfAttachments(
 /** A highlight or comment Zotero holds on one of an item's files. */
 export interface ZoteroPdfAnnotation {
   readonly key: string;
+  /** The library it is in, as `zoteroLibraryId` names it: a key is unique only there. */
+  readonly libraryId: string;
   readonly attachmentKey: string;
   readonly kind: ScientUnplacedAnnotation["kind"];
   /** The page, counted from 1; null when Zotero did not say. */
@@ -572,6 +581,7 @@ function zoteroPdfAnnotations(
     return [
       {
         key: child.key,
+        libraryId: zoteroLibraryId(child.library),
         attachmentKey: data.parentItem,
         // A kind Zotero adds later is kept as a comment, with its page and text.
         kind: isAnnotationKind(type) ? type : "note",

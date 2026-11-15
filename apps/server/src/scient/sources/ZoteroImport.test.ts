@@ -861,6 +861,7 @@ describe("Zotero import", () => {
 
     const read = {
       key: "MARK2345",
+      libraryId: "0",
       attachmentKey: "PDFA2345",
       kind: "underline",
       page: 3,
