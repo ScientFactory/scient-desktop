@@ -1168,9 +1168,9 @@ file, never a source.
 
 ## Check references
 
-Choose **Check references** in the Library's **⋯** menu, or in the menu of a Markdown
-or LaTeX document. Scient checks the Library, or the chosen `.md`, `.tex` or
-`.bib` file together with the bibliography files it names and the sources its
+Choose **Check references** in the Library's **⋯** menu, or in the menu of a Markdown,
+LaTeX or Word document. Scient checks the Library, or the chosen `.md`, `.tex`,
+`.bib` or `.docx` file together with the bibliography files it names and the sources its
 citation keys name: this project's keys, including papers it only keeps as
 citation details. A fix to a Library source changes that source in your Library. Each DOI, PMID, arXiv ID and ISBN is looked up
 in its registry, the same way sources are checked when they are added.
@@ -1196,6 +1196,32 @@ The check compares reference details only. It does not judge whether a cited wor
 supports the sentence that cites it, and a reference without an identifier is
 counted but not looked up. When a registry does not answer, the results say the
 check is incomplete.
+
+### Word documents
+
+A Word document (`.docx`) is checked the same way, with two differences in
+what is read.
+
+- **Citations inserted with Zotero, Mendeley or EndNote** carry the cited works'
+  details inside the document. Scient reads those details, not the text Word
+  shows, looks each work up by its DOI or PMID, and names it in the results by
+  its title. A work is matched with your Library by its Zotero item, DOI or
+  PMID; the results say how many cited works are not in the Library. A work
+  Zotero's bibliography editor left out of the list is reported, and works it
+  added to the list without a citation are counted. In such a document,
+  citations typed by hand are not read.
+- **A document without them**, or with citations from another tool, is read as
+  text: numbered citations (`[3]`, `[1–3]`, superscripts) or author and year
+  (`(Smith et al., 2020)`) are matched with the list under the last
+  **References** heading (or **Bibliography**, **Works cited**, **Literature
+  cited**). A DOI, PMID, arXiv ID or ISBN written in an entry is looked up.
+
+The body text, tables, text boxes, footnotes and endnotes are read. Tracked
+changes are read as if accepted, and the results say so. Comments, headers and
+footers are not read; the results say so when the document has comments.
+Findings in a Word document have no line to open and no fix to apply: correct
+the citation in Word, or in your reference manager, and check again. Older
+`.doc` files are not read.
 
 ## Work with agents
 

@@ -3035,6 +3035,31 @@ same two functions.
   (relative to it, through the project-file guard in `projectFiles.ts`, which
   refuses paths in or linked into `.scient`), and the Library records whose
   `citationKey` matches an otherwise unlisted citation.
+- A `.docx` is read by `WordFile.ts` on the server (the zip and XML readers
+  the server already has, no pandoc): the main part named by the package, its
+  footnotes, endnotes, styles and custom properties, each XML part at most
+  32 MB uncompressed, pictures never. It returns plain data (paragraphs in
+  order, field codes, content-control tags, and whether the file has tracked
+  changes or comments); `wordReferences.ts` in the package interprets it.
+  Fields are tracked by their begin, separate and end marks across runs and
+  paragraphs, so a code Word split and a bibliography spanning paragraphs read
+  whole; deleted and moved-away text and a text box's fallback copy are
+  skipped. Comments, headers and footers are not read.
+- Citations a reference manager inserted are read from their data: Zotero's
+  `ADDIN ZOTERO_ITEM CSL_CITATION` field (or, in bookmark mode, the code kept
+  in the custom properties `<bookmark>_1`, `_2`… of each `ZOTERO_BREF_`
+  bookmark in the body), Mendeley Desktop's `ADDIN CSL_CITATION` field,
+  Mendeley Cite's content control tagged `MENDELEY_CITATION_v3_<base64>`, and
+  EndNote's `ADDIN EN.CITE` record in the code or, base64, in the field's
+  `w:fldData` (the nested `EN.CITE.DATA` is the same data and is skipped).
+  Each distinct work is one reference with the details the document holds,
+  matched with a Library record by Zotero item key or work-level identifier;
+  Zotero's `ZOTERO_BIBL` code gives the works left out of the list
+  (`omitted`) and the count added without a citation (`uncited`). Without such
+  citations the text is read against the list under the last reference
+  heading, numbers or author and year. Both feed the same bookkeeping as a
+  Markdown document (`citationBookkeeping`); Word findings carry no location
+  and no fix.
 - On a moved project both adapters resolve the Sources backend in read mode
   (`referenceCheckSources` in `ReferenceStores.ts`): a Library check reads the
   personal Library (none yet reads as empty; nothing is created or moved), and
