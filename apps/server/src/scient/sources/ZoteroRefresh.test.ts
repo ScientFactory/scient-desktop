@@ -409,7 +409,14 @@ describe("Zotero refresh", () => {
     { imported: "earlier", edited: false, changed: true, note: revisedMarkdown, clash: false },
     { imported: "earlier", edited: true, changed: true, note: "My own words", clash: true },
     { imported: "before-bases", edited: false, changed: false, note: markdown, clash: false },
+    // With no base nothing tells an earlier import's text from an edit once Zotero changed.
+    { imported: "before-bases", edited: false, changed: true, note: earlierText, clash: true },
     { imported: "before-bases", edited: true, changed: false, note: "My own words", clash: true },
+    { imported: "before-bases", edited: true, changed: true, note: "My own words", clash: true },
+    { imported: "now", edited: false, changed: false, note: markdown, clash: false },
+    { imported: "now", edited: true, changed: false, note: "My own words", clash: false },
+    { imported: "now", edited: false, changed: true, note: revisedMarkdown, clash: false },
+    { imported: "now", edited: true, changed: true, note: "My own words", clash: true },
     // Only a colour changed in Zotero, which Markdown does not show: nothing to choose between.
     { imported: "now", edited: true, changed: "colour", note: "My own words", clash: false },
   ] as const)(
@@ -462,9 +469,13 @@ describe("Zotero refresh", () => {
         );
         expect((await readScientSourceRecord(root, sourceId))?.note).toBe(note);
       }
-      // Zotero's own HTML is kept from the first refresh on, unless a clash is still open.
+      // Zotero's own HTML is kept from the first refresh on; an open clash keeps the base it had.
       expect((await readScientSourceZoteroSync(root, sourceId))?.notes).toEqual(
-        clash ? undefined : [{ itemKey: "NOTE2345", html: zoteroHtml }],
+        clash
+          ? imported === "now"
+            ? [{ itemKey: "NOTE2345", html: noteHtml }]
+            : undefined
+          : [{ itemKey: "NOTE2345", html: zoteroHtml }],
       );
     },
   );
