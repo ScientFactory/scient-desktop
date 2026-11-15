@@ -34,6 +34,7 @@ import {
 } from "./recentChangeLabels";
 import { settleAfter } from "./settleAfter";
 import { restoreProblem } from "./sourceLifecycleLabels";
+import { PackageImportsDialog } from "./PackageImportsDialog";
 
 const PAGE = 50;
 const MOST = 400;
@@ -135,6 +136,8 @@ export function RecentChangesDialog(props: {
   readonly onPutBackLibrary: (folder: string) => Promise<unknown>;
   /** Opens the papers a join left as they are here because both Libraries have them. */
   readonly onShowDifferences: (joinId: string) => void;
+  /** Shows the papers a package import's Undo kept; the import rows use `onShowSources`. */
+  readonly onShowPackageSources?: (sourceIds: ReadonlyArray<string>) => void;
   readonly onClose: () => void;
 }) {
   const { environmentId, root } = props;
@@ -146,6 +149,7 @@ export function RecentChangesDialog(props: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  const [packageImportsOpen, setPackageImportsOpen] = useState(false);
   const latest = useRef(0);
   // The newest request's answer is the one shown, whether asked on opening or after an action.
   const load = useStableCallback(
@@ -424,7 +428,37 @@ export function RecentChangesDialog(props: {
           ) : listed?.more ? (
             <p className="mt-3 text-xs text-muted-foreground">{RECENT_CHANGES_LABELS.noOlder}</p>
           ) : null}
+          <section
+            aria-label={RECENT_CHANGES_LABELS.packageImports}
+            className="mt-4 border-t border-border pt-3 text-sm"
+          >
+            <h3 className="font-medium">{RECENT_CHANGES_LABELS.packageImports}</h3>
+            <p className="text-xs text-muted-foreground">
+              {RECENT_CHANGES_LABELS.packageImportsAbout}
+            </p>
+            <Button
+              className="mt-1"
+              size="xs"
+              variant="outline"
+              onClick={() => setPackageImportsOpen(true)}
+            >
+              {RECENT_CHANGES_LABELS.openPackageImports}
+            </Button>
+          </section>
         </DialogPanel>
+        {packageImportsOpen ? (
+          <PackageImportsDialog
+            environmentId={environmentId}
+            root={root}
+            canChange={props.canChange}
+            onImported={props.onChanged}
+            onShowSources={(sourceIds) => {
+              (props.onShowPackageSources ?? props.onShowSources)(sourceIds);
+              props.onClose();
+            }}
+            onClose={() => setPackageImportsOpen(false)}
+          />
+        ) : null}
       </DialogPopup>
     </Dialog>
   );

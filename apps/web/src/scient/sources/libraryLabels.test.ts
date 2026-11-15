@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   addedToProjectLabel,
   alsoInOtherProjectsLabel,
+  emptySourcesLabel,
   goneFromComputerLabel,
   inLibraryNotProjectLabel,
   LIBRARY_LABELS,
@@ -35,6 +36,9 @@ describe("library labels", () => {
         removeSnapshotsHelp(count),
         goneFromComputerLabel(count),
       ]),
+      ...(["project", "library", undefined] as const).flatMap((listed) =>
+        Object.values(emptySourcesLabel(listed)),
+      ),
       sourcePinLabel({ pinned: true }, "library"),
       sourcePinLabel({ pinned: true, fromSnapshot: true }, "project"),
     ];

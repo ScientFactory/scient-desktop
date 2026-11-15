@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScientSourcesOrganizeResult } from "@t3tools/contracts";
-import { Package, Undo2 } from "lucide-react";
+import { ArchiveRestore, Package, PackagePlus } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -67,21 +67,19 @@ function parentOf(root: string): string {
   return root.replace(/[\\/]+$/u, "").replace(/[\\/][^\\/]+$/u, "") || root;
 }
 
-/** Save this project's package where the person chooses, or import one. */
-export function ProjectPackageSubmenu(props: {
+/** Package and recovery work for this project; each menu item holds its own while it runs. */
+function useProjectPackage(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
-  readonly onImported: () => Promise<unknown>;
-  readonly mode: "recover" | "import";
-  readonly onMoveBack?: () => void;
-  readonly onOpenImports?: () => void;
+  /** The project changed: the list reads it again. */
+  readonly onChanged?: () => Promise<unknown>;
   readonly onShowSources?: (sourceIds: ReadonlyArray<string>) => void;
 }) {
-  const [packages, setPackages] = useState<PackageListing | null>(null);
   const [working, setWorking] = useState(false);
   // A chosen folder names this computer's files, so only the local environment can use one.
   const local = props.environmentId === usePrimaryEnvironmentId();
   const pickFolder = local && window.desktopBridge ? readLocalApi()?.dialogs.pickFolder : undefined;
+  const changed = () => props.onChanged?.() ?? Promise.resolve();
 
   const organize = (change: Parameters<typeof organizeScientSources>[1]["change"]) =>
     organizeScientSources(props.environmentId, { root: props.root, change });
@@ -113,15 +111,16 @@ export function ProjectPackageSubmenu(props: {
       });
     }, "The project package was not saved");
 
-  const exportElsewhere = async (pick: NonNullable<typeof pickFolder>) => {
-    const folder = await pick({ initialPath: parentOf(props.root) }).catch(() => null);
+  const savePackage = async () => {
+    if (!pickFolder) return exportPackage();
+    const folder = await pickFolder({ initialPath: parentOf(props.root) }).catch(() => null);
     if (folder) await exportPackage(folder);
   };
 
   const undoImport = (importId: string) =>
     run(async () => {
       const result = await organize({ action: "undo-import", importId });
-      await props.onImported();
+      await changed();
       if (result.outcome !== "undone") {
         toastManager.add({
           type: "info",
@@ -136,12 +135,12 @@ export function ProjectPackageSubmenu(props: {
       const left = result.packageReport?.left ?? [];
       const retained = result.packageReport?.retainedSourceIds ?? [];
       const description = [
-        `${plural(retained.length, "paper stays", "papers stay")} in your Library, with their PDFs.`,
+        `${plural(retained.length, "paper stays", "papers stay")} in My Library, with their PDFs.`,
         kept.length > 0
           ? `Changed since or used by another import, so kept: ${kept.join(", ")}.`
           : "",
         left.length > 0
-          ? `Left as evidence: ${plural(left.length, "item", "items")}. See Recover → Package imports for the full list.`
+          ? `Left as evidence: ${plural(left.length, "item", "items")}. See Recent changes → Package imports for the full list.`
           : "",
       ]
         .filter(Boolean)
@@ -175,7 +174,7 @@ export function ProjectPackageSubmenu(props: {
         toastManager.add({ type: "error", title: `${relativePath} is not a project package` });
         return;
       }
-      await props.onImported();
+      await changed();
       const report = result.packageReport;
       const importId = report?.importId;
       const id = toastManager.add({
@@ -201,88 +200,113 @@ export function ProjectPackageSubmenu(props: {
     if (folder) await importPackage(folder);
   };
 
-  if (props.mode === "recover")
-    return (
-      <MenuSub>
-        <MenuSubTrigger disabled={working}>
-          <Undo2 />
-          Recover
-        </MenuSubTrigger>
-        <MenuSubPopup>
-          <MenuItem
-            onClick={() =>
-              void run(async () => {
-                const result = await organize({ action: "restore-pre-move" });
-                await props.onImported();
-                toastManager.add({
-                  type: result.outcome === "archive-changed" ? "error" : "info",
-                  title:
-                    result.outcome === "restored"
-                      ? "Recovered sources from before the move"
-                      : result.outcome === "no-archive"
-                        ? "No pre-move copy was found"
-                        : result.outcome === "project-store-present"
-                          ? "Sources are already in this project's folder"
-                          : "The pre-move copy changed and was not recovered",
-                });
-              }, "Sources could not be recovered")
-            }
-          >
-            Recover sources from before the move
-          </MenuItem>
-          <MenuItem onClick={props.onOpenImports}>Package imports</MenuItem>
-          <MenuItem disabled={!props.onMoveBack} onClick={props.onMoveBack}>
-            Keep this project's sources in its folder
-          </MenuItem>
-          <MenuItem
-            onClick={() => void (pickFolder ? exportElsewhere(pickFolder) : exportPackage())}
-          >
-            Save a current package
-          </MenuItem>
-        </MenuSubPopup>
-      </MenuSub>
-    );
+  const recoverPreMove = () =>
+    run(async () => {
+      const result = await organize({ action: "restore-pre-move" });
+      await changed();
+      toastManager.add({
+        type: result.outcome === "archive-changed" ? "error" : "info",
+        title:
+          result.outcome === "restored"
+            ? "Recovered sources from before the move"
+            : result.outcome === "no-archive"
+              ? "No copy from before the move was found"
+              : result.outcome === "project-store-present"
+                ? "Sources are already in this project's folder"
+                : "The copy from before the move changed and was not recovered",
+      });
+    }, "Sources could not be recovered");
 
+  return { working, pickFolder, savePackage, importPackage, importChosen, recoverPreMove };
+}
+
+/**
+ * Export's last item: a portable copy of the whole project, whatever the reference export's
+ * scope, so its group says so.
+ */
+export function SaveProjectPackageItem(props: {
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+}) {
+  const project = useProjectPackage(props);
+  return (
+    <MenuGroup>
+      <MenuGroupLabel>The whole project, with its PDFs and highlights</MenuGroupLabel>
+      <MenuItem disabled={project.working} onClick={() => void project.savePackage()}>
+        <Package />
+        Save a project package…
+      </MenuItem>
+    </MenuGroup>
+  );
+}
+
+/** In Import sources: a package folder in this project, or one chosen on this computer. */
+export function ImportPackageSubmenu(props: {
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+  readonly onImported: () => Promise<unknown>;
+  readonly onShowSources?: (sourceIds: ReadonlyArray<string>) => void;
+}) {
+  const project = useProjectPackage({ ...props, onChanged: props.onImported });
+  const [packages, setPackages] = useState<PackageListing | null>(null);
+  const { pickFolder } = project;
   return (
     <MenuSub
       onOpenChange={(open) => {
         if (!open) return;
-        void organize({ action: "list-packages" })
+        void organizeScientSources(props.environmentId, {
+          root: props.root,
+          change: { action: "list-packages" },
+        })
           .then((result) => setPackages(result.packages ?? []))
           .catch(() => setPackages([]));
       }}
     >
-      <MenuSubTrigger disabled={working}>
-        <Package />
+      <MenuSubTrigger disabled={project.working}>
+        <PackagePlus />
         Import a package
       </MenuSubTrigger>
       <MenuSubPopup className="min-w-56">
-        <MenuGroup>
-          <MenuGroupLabel>Import a package</MenuGroupLabel>
-          {pickFolder ? (
-            <MenuItem onClick={() => void importChosen(pickFolder)}>Choose a folder…</MenuItem>
-          ) : null}
-          {packages === null ? (
-            <MenuItem disabled>Looking in this project…</MenuItem>
-          ) : packages.length === 0 ? (
-            <MenuItem disabled>No package folder in this project</MenuItem>
-          ) : (
-            packages.map((entry) => (
-              <MenuItem
-                key={entry.relativePath}
-                onClick={() => void importPackage(entry.relativePath)}
-              >
-                <span className="min-w-0 flex-1 truncate">{entry.relativePath}</span>
-                <MenuItemDetail>
-                  {new Date(entry.exportedAt).toLocaleDateString(undefined, {
-                    dateStyle: "medium",
-                  })}
-                </MenuItemDetail>
-              </MenuItem>
-            ))
-          )}
-        </MenuGroup>
+        {pickFolder ? (
+          <MenuItem onClick={() => void project.importChosen(pickFolder)}>
+            Choose a folder…
+          </MenuItem>
+        ) : null}
+        {packages === null ? (
+          <MenuItem disabled>Looking in this project…</MenuItem>
+        ) : packages.length === 0 ? (
+          <MenuItem disabled>No package folder in this project</MenuItem>
+        ) : (
+          packages.map((entry) => (
+            <MenuItem
+              key={entry.relativePath}
+              onClick={() => void project.importPackage(entry.relativePath)}
+            >
+              <span className="min-w-0 flex-1 truncate">{entry.relativePath}</span>
+              <MenuItemDetail>
+                {new Date(entry.exportedAt).toLocaleDateString(undefined, {
+                  dateStyle: "medium",
+                })}
+              </MenuItemDetail>
+            </MenuItem>
+          ))
+        )}
       </MenuSubPopup>
     </MenuSub>
+  );
+}
+
+/** Brings back the sealed copy of this project's sources taken before they moved to My Library. */
+export function RecoverPreMoveItem(props: {
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+  readonly onRecovered: () => Promise<unknown>;
+}) {
+  const project = useProjectPackage({ ...props, onChanged: props.onRecovered });
+  return (
+    <MenuItem disabled={project.working} onClick={() => void project.recoverPreMove()}>
+      <ArchiveRestore />
+      Recover sources from before the move
+    </MenuItem>
   );
 }
