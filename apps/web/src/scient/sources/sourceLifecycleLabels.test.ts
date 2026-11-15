@@ -58,7 +58,7 @@ describe("source lifecycle labels", () => {
         { sourceId: "d", kind: "retraction", change: "withdrawn" },
       ]),
     ).toBe(
-      "The weekly check found: 2 papers were retracted, 1 paper was corrected, 1 paper had a notice taken back.",
+      "The weekly check found: 2 papers were retracted, 1 paper was corrected, 1 paper was reinstated.",
     );
     expect(noticeChangesLine([])).toBeNull();
   });

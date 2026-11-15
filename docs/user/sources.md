@@ -814,9 +814,8 @@ sent anywhere. A paper with a notice it does not show yet gets it, as a change
 in the paper's **History**, and one line above the Library list says what was
 found, for example "The weekly check found: 1 paper was retracted." Choose
 **Show** to list those papers and **Dismiss** when you have seen them; a
-notice is announced once. If Retraction Watch takes a notice back, for example
-when a retracted paper is reinstated, the notice is removed and the line says
-so.
+notice is announced once. If Retraction Watch lists a retracted paper as
+reinstated, its retraction is removed and the line says so.
 
 The weekly check finds retractions reliably. It finds an expression of
 concern or a correction only when Retraction Watch lists it; the publisher's

@@ -155,7 +155,7 @@ const NOTICE_CHANGE_WORDS = [
     "were flagged with an expression of concern",
   ],
   ["correction", "was corrected", "were corrected"],
-  ["withdrawn", "had a notice taken back", "had a notice taken back"],
+  ["withdrawn", "was reinstated", "were reinstated"],
 ] as const;
 
 /** What the weekly check found, each paper counted once under its most serious new notice. */

@@ -2406,7 +2406,7 @@ arrives (`retractionWatchReader` in `libraryNoticeWatch.ts`) and only the rows
 of the Library's papers are kept, by DOI or PMID of the original paper; nothing
 is stored on disk. The file's kinds are Retraction, Expression of concern and
 Correction; a reinstated paper has only a Reinstatement row, which is no
-notice. Retractions are comprehensive there; corrections and expressions of
+notice but is kept as the paper's reinstatement. Retractions are comprehensive there; corrections and expressions of
 concern are not, and the publisher's own notices are not in the file at all:
 those are still learned when a source is added or refreshed.
 
@@ -2423,8 +2423,11 @@ the publisher's with another date:
 - A kind the file has and the source has no notice of is added, in the shape
   the registry gives the same row (`kind`, the notice's DOI, its date, `source:
   "retraction-watch"`), so a later refresh that finds it changes nothing.
-- A `retraction-watch` notice of a kind the file no longer has for the paper
-  is taken off. Notices of the publisher or PubMed are never touched.
+- A `retraction-watch` retraction is taken off only when the file lists the
+  paper as reinstated and no longer as retracted. A paper missing from the file
+  is not evidence: reading it as one could show a retracted paper as sound
+  (the registry and the file do not always agree). Notices of the publisher or
+  PubMed are never touched.
 - A source the file says nothing about is not written, also one never checked.
   A source whose identifiers were not among those asked for (added or edited
   while the file was read) waits for the next check.

@@ -270,10 +270,13 @@ describe("Library routes on the library backend", () => {
       yield* Effect.promise(() =>
         recordScientLibraryNoticeCheck({
           library: fixture.library,
-          found: new Map([
-            ["doi:10.1000/held", retraction],
-            ["doi:10.1000/trashed", retraction],
-          ]),
+          found: {
+            notices: new Map([
+              ["doi:10.1000/held", retraction],
+              ["doi:10.1000/trashed", retraction],
+            ]),
+            reinstated: new Set(),
+          },
           etag: null,
           checkedAt: "2026-11-15T10:00:00.000Z",
         }),

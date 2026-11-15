@@ -21,7 +21,6 @@ const RETRACTION_WATCH = "retraction-watch";
 /** The kinds the Retraction Watch file can say; a withdrawal is only ever the publisher's. */
 const WatchedKind = Schema.Literals(["retraction", "expression-of-concern", "correction"]);
 type WatchedKind = typeof WatchedKind.Type;
-const isWatchedKind = Schema.is(WatchedKind);
 
 /** A notice the weekly check put on a source or took off it, and whether the person dismissed it. */
 const ScientLibraryNoticeChange = Schema.Struct({
@@ -104,11 +103,13 @@ function isoDate(value: string): string | null {
   return match ? `${match[3]}-${match[1]!.padStart(2, "0")}-${match[2]!.padStart(2, "0")}` : null;
 }
 
-/** What the file says about each paper asked for, by DOI or PMID key; empty when it has no row. */
-export type RetractionWatchNotices = ReadonlyMap<
-  string,
-  ReadonlyArray<ScientSourceEditorialNotice>
->;
+/** What the file says about the papers asked for, by DOI or PMID key. */
+export interface RetractionWatchNotices {
+  /** Each paper asked for, with its notices; empty when the file has no notice for it. */
+  readonly notices: ReadonlyMap<string, ReadonlyArray<ScientSourceEditorialNotice>>;
+  /** The papers asked for that the file lists as reinstated. */
+  readonly reinstated: ReadonlySet<string>;
+}
 
 /**
  * Reads the Retraction Watch file as it arrives and keeps the notices of the wanted papers, by
@@ -120,6 +121,7 @@ export function retractionWatchReader(wanted: ReadonlySet<string>): {
   readonly end: () => RetractionWatchNotices;
 } {
   const found = new Map<string, ScientSourceEditorialNotice[]>([...wanted].map((key) => [key, []]));
+  const reinstated = new Set<string>();
   let pending = "";
   let quoted = false;
   let width = 0;
@@ -146,8 +148,10 @@ export function retractionWatchReader(wanted: ReadonlySet<string>): {
       return;
     }
     if (fields.length !== width) throw new Error("The Retraction Watch file has a cut row.");
-    const kind = editorialNoticeKind(fields[columns.RetractionNature]!);
-    if (!kind) return;
+    const nature = fields[columns.RetractionNature]!;
+    const kind = editorialNoticeKind(nature);
+    const reinstatement = nature.trim().toLowerCase() === "reinstatement";
+    if (!kind && !reinstatement) return;
     const doi = fields[columns.OriginalPaperDOI]!.trim();
     const pmid = fields[columns.OriginalPaperPubMedID]!.trim();
     const keys = [
@@ -155,6 +159,10 @@ export function retractionWatchReader(wanted: ReadonlySet<string>): {
       ...(/^[1-9]\d*$/u.test(pmid) ? [normalizePersistentIdentifier("pmid", pmid)] : []),
     ].filter((key) => found.has(key));
     if (keys.length === 0) return;
+    if (!kind) {
+      for (const key of keys) reinstated.add(key);
+      return;
+    }
     const noticeDoi = fields[columns.RetractionDOI]!.trim().toLowerCase();
     const date = isoDate(fields[columns.RetractionDate]!);
     const notice: ScientSourceEditorialNotice = {
@@ -185,7 +193,7 @@ export function retractionWatchReader(wanted: ReadonlySet<string>): {
       if (pending.trim()) takeRow(pending);
       pending = "";
       if (!columns) throw new Error("The Retraction Watch file is empty.");
-      return found;
+      return { notices: found, reinstated };
     },
   };
 }
@@ -203,9 +211,10 @@ async function writeNoticeWatch(library: ScientLibraryLocation, file: NoticeWatc
 
 /**
  * Brings the Library's sources in line with the Retraction Watch file and records the check.
- * Compared by kind: a kind the file has and the source lacks is added; a Retraction Watch notice
- * of a kind the file no longer has for the paper is taken off. Notices of the publisher or PubMed
- * are a refresh's to change. `found` is null when the file has not changed since the last check.
+ * Compared by kind: a kind the file has and the source lacks is added. Only a reinstatement takes
+ * one off, a Retraction Watch retraction: a paper missing from the file is no evidence, and
+ * reading it as one could show a retracted paper as sound. Notices of the publisher or PubMed are
+ * a refresh's to change. `found` is null when the file has not changed since the last check.
  */
 export async function recordScientLibraryNoticeCheck(input: {
   readonly library: ScientLibraryLocation;
@@ -221,17 +230,17 @@ export async function recordScientLibraryNoticeCheck(input: {
   for (const record of records ?? []) {
     const keys = watchedIdentifiers(record);
     // A source added or re-identified while the file was read was not asked about: next check.
-    if (keys.length === 0 || keys.some((key) => !input.found?.has(key))) continue;
-    const listed = keys.flatMap((key) => input.found?.get(key) ?? []);
+    if (keys.length === 0 || keys.some((key) => !input.found?.notices.has(key))) continue;
+    const listed = keys.flatMap((key) => input.found?.notices.get(key) ?? []);
     const current = record.editorialStatus?.notices ?? [];
     const listedKinds = new Set(listed.map((notice) => notice.kind));
     const currentKinds = new Set(current.map((notice) => notice.kind));
     const added = listed.filter((notice) => !currentKinds.has(notice.kind));
+    const reinstated =
+      keys.some((key) => input.found?.reinstated.has(key)) && !listedKinds.has("retraction");
     const kept = current.filter(
       (notice) =>
-        notice.source !== RETRACTION_WATCH ||
-        !isWatchedKind(notice.kind) ||
-        listedKinds.has(notice.kind),
+        !(reinstated && notice.source === RETRACTION_WATCH && notice.kind === "retraction"),
     );
     if (added.length === 0 && kept.length === current.length) continue;
     const keptKinds = new Set(kept.map((notice) => notice.kind));

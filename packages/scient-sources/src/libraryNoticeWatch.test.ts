@@ -127,17 +127,15 @@ async function setup() {
 
 describe("reading the Retraction Watch file", () => {
   it("keeps the notices of the papers asked for, by DOI or PMID", () => {
-    expect(
-      Object.fromEntries(
-        fileNotices([
-          RETRACTED_KEY,
-          "pmid:26221215",
-          "doi:10.21275/mr241114172224",
-          "doi:10.1016/j.heliyon.2023.e18637",
-          "doi:10.1000/not-in-the-file",
-        ]),
-      ),
-    ).toEqual({
+    const found = fileNotices([
+      RETRACTED_KEY,
+      "pmid:26221215",
+      "doi:10.21275/mr241114172224",
+      "doi:10.1016/j.heliyon.2023.e18637",
+      "doi:10.1000/not-in-the-file",
+    ]);
+    expect(found.reinstated).toEqual(new Set(["doi:10.1016/j.heliyon.2023.e18637"]));
+    expect(Object.fromEntries(found.notices)).toEqual({
       [RETRACTED_KEY]: [WATCH_RETRACTION],
       "pmid:26221215": [
         {
@@ -206,17 +204,27 @@ describe("the weekly notice check", () => {
     const known = await add("The publisher said it first", [RETRACTED], [publishers]);
     const book = await add("A book", [{ scheme: "isbn", value: "9780306406157" }]);
     const fine = await add("Never checked", [{ scheme: "doi", value: "10.1000/fine" }]);
+    // Its row is no longer in the file, and the file does not say it was reinstated.
+    const gone = await add(
+      "Retracted, row gone",
+      [{ scheme: "doi", value: "10.1000/gone" }],
+      [WATCH_RETRACTION],
+    );
 
-    expect(await check([RETRACTED_KEY, "doi:10.1000/fine"], "2026-11-15T10:00:00.000Z")).toEqual({
-      changedSources: 0,
-    });
+    expect(
+      await check(
+        [RETRACTED_KEY, "doi:10.1000/fine", "doi:10.1000/gone"],
+        "2026-11-15T10:00:00.000Z",
+      ),
+    ).toEqual({ changedSources: 0 });
     expect((await record(known)).editorialStatus?.notices).toEqual([publishers]);
+    expect((await record(gone)).editorialStatus?.notices).toEqual([WATCH_RETRACTION]);
     expect(await record(book)).not.toHaveProperty("editorialStatus");
     expect(await record(fine)).not.toHaveProperty("editorialStatus");
     expect(await listScientLibraryNoticeChanges(library)).toEqual([]);
   });
 
-  it("takes off a retraction Retraction Watch withdrew, keeps the publisher's notices, and says so", async () => {
+  it("takes off Retraction Watch's retraction of a reinstated paper, keeps the publisher's notices, and says so", async () => {
     const { library, add, check, record } = await setup();
     const correction: ScientSourceEditorialNotice = {
       kind: "correction",
