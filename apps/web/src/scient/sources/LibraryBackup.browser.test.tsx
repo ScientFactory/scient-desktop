@@ -12,34 +12,37 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { advanceTestClock } from "../../../test/testClock";
-import { LibraryBackupNotice, useLibraryBackup } from "./LibraryBackup";
+import { libraryBackupActivity, useLibraryBackup, type LibraryCopyEnding } from "./LibraryBackup";
 
 const mocks = vi.hoisted(() => ({
   readLibraryBackupStatus: vi.fn(),
   organizeScientSources: vi.fn(),
   changeLibraryRestore: vi.fn(),
-  toast: vi.fn(),
 }));
 vi.mock("./client", () => ({
   readLibraryBackupStatus: mocks.readLibraryBackupStatus,
   organizeScientSources: mocks.organizeScientSources,
   changeLibraryRestore: mocks.changeLibraryRestore,
 }));
-vi.mock("../../components/ui/toast", () => ({ toastManager: { add: mocks.toast } }));
 
 const environmentId = "environment-1" as EnvironmentId;
 
-function Harness(props: { readonly enabled?: boolean; readonly onAdded?: () => void }) {
+function Harness(props: {
+  readonly enabled?: boolean;
+  readonly onAdded?: () => void;
+  readonly onEnded?: (ending: LibraryCopyEnding) => boolean;
+}) {
   const [root, setRoot] = useState("/project");
   const backup = useLibraryBackup({
     environmentId,
     root,
     enabled: props.enabled ?? true,
     ...(props.onAdded ? { onAdded: props.onAdded } : {}),
+    ...(props.onEnded ? { onEnded: props.onEnded } : {}),
   });
   return (
     <>
-      <button type="button" onClick={() => void backup.start("/Users/ada/Backups")}>
+      <button type="button" onClick={() => void backup.start("/Users/ada/Backups", "op-backup")}>
         Back up
       </button>
       <button type="button" onClick={() => setRoot("/other-project")}>
@@ -51,12 +54,9 @@ function Harness(props: { readonly enabled?: boolean; readonly onAdded?: () => v
       <button type="button" onClick={() => void backup.addFrom("/Users/ada/Backups/One")}>
         Add from
       </button>
-      <LibraryBackupNotice
-        line={backup.line}
-        joinLine={backup.joinLine}
-        restoreLine={backup.restoreLine}
-        onCancelRestore={backup.cancelRestore}
-      />
+      {libraryBackupActivity(backup).map((item) => (
+        <div key={item.key}>{item.body}</div>
+      ))}
     </>
   );
 }
@@ -73,7 +73,6 @@ function setup(
   mocks.readLibraryBackupStatus.mockReset();
   mocks.organizeScientSources.mockReset().mockResolvedValue({ outcome: "backup-started" });
   mocks.changeLibraryRestore.mockReset();
-  mocks.toast.mockReset();
   let read = 0;
   mocks.readLibraryBackupStatus.mockImplementation(async () => {
     const backup = statuses[Math.min(read, statuses.length - 1)]!;
@@ -83,6 +82,18 @@ function setup(
     if (!backup) throw new Error("The server did not answer.");
     return { backup, restore, join };
   });
+}
+
+type Screen = Awaited<ReturnType<typeof render>>;
+
+/** Endings are listed with a Dismiss each; nothing else in the harness offers one. */
+const endingsShown = (screen: Screen) =>
+  screen.getByRole("button", { name: "Dismiss" }).elements().length;
+
+async function expectEnding(screen: Screen, title: string, description?: string) {
+  await expect.element(screen.getByText(title, { exact: true })).toBeVisible();
+  if (description)
+    await expect.element(screen.getByText(description, { exact: true })).toBeVisible();
 }
 
 const done: ScientSourcesBackupStatus = {
@@ -119,13 +130,10 @@ describe("backing up the Library from the panel", () => {
       .toBeVisible();
 
     await advanceTestClock(signal, 1_000);
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith({
-        type: "success",
-        title: "Library backed up",
-        description:
-          "1,204 sources and 980 PDFs (3,072 MB) in /Users/ada/Backups/Scient Library backup 2026-11-15 0700",
-      }),
+    await expectEnding(
+      screen,
+      "Library backed up",
+      "1,204 sources and 980 PDFs (3,072 MB) in /Users/ada/Backups/Scient Library backup 2026-11-15 0700",
     );
     await expect.element(screen.getByText(/^Backing up/u)).not.toBeInTheDocument();
     // It ended; nothing asks again.
@@ -147,7 +155,7 @@ describe("backing up the Library from the panel", () => {
     setup([failed, { state: "running", done: 0, total: 0 }, failed]);
     await using screen = await render(<Harness />, { router: false });
     await vi.waitFor(() => expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(1));
-    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(endingsShown(screen)).toBe(0);
 
     await userEvent.click(screen.getByRole("button", { name: "Back up" }));
     await expect
@@ -156,13 +164,7 @@ describe("backing up the Library from the panel", () => {
       )
       .toBeVisible();
     await advanceTestClock(signal, 1_000);
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith({
-        type: "error",
-        title: "The Library was not backed up",
-        description: failed.reason,
-      }),
-    );
+    await expectEnding(screen, "The Library was not backed up", failed.reason);
   });
 
   it("keeps asking after a read fails, also the first one, and names what the backup lacks", async ({
@@ -189,15 +191,12 @@ describe("backing up the Library from the panel", () => {
     await advanceTestClock(signal, 1_000);
     await expect.element(screen.getByText(/1 of 4 files/u)).toBeVisible();
     await advanceTestClock(signal, 1_000);
-    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(endingsShown(screen)).toBe(0);
     await advanceTestClock(signal, 1_000);
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith({
-        type: "success",
-        title: "Library backed up",
-        description:
-          "1,204 sources and 980 PDFs (3,072 MB) in /Users/ada/Backups/Scient Library backup 2026-11-15 0700. One project has not finished moving into or out of the Library. Keep that project folder too: some of its sources may be only there. 2 entries that are not files were not copied; the backup's README lists them.",
-      }),
+    await expectEnding(
+      screen,
+      "Library backed up",
+      "1,204 sources and 980 PDFs (3,072 MB) in /Users/ada/Backups/Scient Library backup 2026-11-15 0700. One project has not finished moving into or out of the Library. Keep that project folder too: some of its sources may be only there. 2 entries that are not files were not copied; the backup's README lists them.",
     );
   });
 
@@ -210,13 +209,9 @@ describe("backing up the Library from the panel", () => {
     await expect.element(screen.getByText(/1 of 4 files/u)).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "Other project" }));
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "success", title: "Library backed up" }),
-      ),
-    );
+    await expectEnding(screen, "Library backed up");
     await advanceTestClock(signal, 3_000);
-    expect(mocks.toast).toHaveBeenCalledTimes(1);
+    expect(endingsShown(screen)).toBe(1);
   });
 
   it("copies a backup beside the Library, says it waits for the next start, and can cancel it", async ({
@@ -266,7 +261,7 @@ describe("backing up the Library from the panel", () => {
     const reads = mocks.readLibraryBackupStatus.mock.calls.length;
     await advanceTestClock(signal, 5_000);
     expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(reads);
-    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(endingsShown(screen)).toBe(0);
 
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(mocks.changeLibraryRestore).toHaveBeenLastCalledWith(environmentId, {
@@ -290,17 +285,15 @@ describe("backing up the Library from the panel", () => {
     const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
       new Date(restored.backupCreatedAt),
     );
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith({
-        type: "success",
-        title: "Library restored from the backup",
-        description: `1,204 sources and 980 PDFs from the backup of ${day}. Project folders were not changed. The Library that was here (4 sources) is kept in /state/scient/library.replaced-restore_1`,
-      }),
+    await expectEnding(
+      screen,
+      "Library restored from the backup",
+      `1,204 sources and 980 PDFs from the backup of ${day}. Project folders were not changed. The Library that was here (4 sources) is kept in /state/scient/library.replaced-restore_1`,
     );
     // Another project's panel in the same window reads the same answer and stays quiet.
     await userEvent.click(screen.getByRole("button", { name: "Other project" }));
     await vi.waitFor(() => expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(2));
-    expect(mocks.toast).toHaveBeenCalledTimes(1);
+    expect(endingsShown(screen)).toBe(1);
   });
 
   it("says why a backup could not be restored", async () => {
@@ -313,12 +306,10 @@ describe("backing up the Library from the panel", () => {
     await using screen = await render(<Harness />, { router: false });
     await vi.waitFor(() => expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(1));
     await userEvent.click(screen.getByRole("button", { name: "Restore" }));
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith({
-        type: "error",
-        title: "The backup was not restored",
-        description: "This folder is not a finished Scient Library backup.",
-      }),
+    await expectEnding(
+      screen,
+      "The backup was not restored",
+      "This folder is not a finished Scient Library backup.",
     );
   });
 
@@ -426,7 +417,7 @@ describe("backing up the Library from the panel", () => {
     mocks.changeLibraryRestore.mockResolvedValueOnce({ state: "preparing", done: 0, total: 0 });
     await using screen = await render(<Harness />, { router: false });
     await expect.element(screen.getByText(/is ready/u)).toBeVisible();
-    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(endingsShown(screen)).toBe(0);
 
     setup(
       [{ state: "none" }],
@@ -447,12 +438,10 @@ describe("backing up the Library from the panel", () => {
     const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
       new Date(ready.backupCreatedAt),
     );
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith({
-        type: "error",
-        title: "The backup was not restored",
-        description: `This folder is not a finished Scient Library backup. The backup of ${day} that was ready is still waiting.`,
-      }),
+    await expectEnding(
+      screen,
+      "The backup was not restored",
+      `This folder is not a finished Scient Library backup. The backup of ${day} that was ready is still waiting.`,
     );
     await expect.element(screen.getByText(/is ready/u)).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
@@ -499,13 +488,10 @@ describe("backing up the Library from the panel", () => {
       )
       .toBeVisible();
     await advanceTestClock(signal, 1_000);
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith({
-        type: "success",
-        title: "Sources added from the other Library",
-        description:
-          "Added 312 sources with their versions, notes, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. 2 PDFs were not in the other Library's folder and did not come. Some of them could not be put in the collection Thesis; you can file them there by hand. Recent changes lists this, with Undo.",
-      }),
+    await expectEnding(
+      screen,
+      "Sources added from the other Library",
+      "Added 312 sources with their versions, notes, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. 2 PDFs were not in the other Library's folder and did not come. Some of them could not be put in the collection Thesis; you can file them there by hand. Recent changes lists this, with Undo.",
     );
     expect(onAdded).toHaveBeenCalledTimes(1);
     await expect.element(screen.getByText(/^Adding sources/u)).not.toBeInTheDocument();
@@ -535,15 +521,32 @@ describe("backing up the Library from the panel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add from" }));
     await expect.element(screen.getByText(/40 of 312 done/u)).toBeVisible();
     await advanceTestClock(signal, 1_000);
-    await vi.waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith({
-        type: "error",
-        title: "Adding from the other Library stopped part way",
-        description:
-          "40 sources were added before it stopped: The disk is full. Recent changes lists what was added, with Undo; adding again brings the rest.",
-      }),
+    await expectEnding(
+      screen,
+      "Adding from the other Library stopped part way",
+      "40 sources were added before it stopped: The disk is full. Recent changes lists what was added, with Undo; adding again brings the rest.",
     );
     expect(onAdded).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the ending of a backup started here to the result slot, which keeps it from Activity", async ({
+    signal,
+  }) => {
+    using _timers = fakeTimers();
+    setup([{ state: "none" }, { state: "running", done: 1, total: 4 }, done]);
+    const onEnded = vi.fn((ending: LibraryCopyEnding) => ending.operationId === "op-backup");
+    await using screen = await render(<Harness onEnded={onEnded} />, { router: false });
+    await vi.waitFor(() => expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: "Back up" }));
+    await expect.element(screen.getByText(/1 of 4 files/u)).toBeVisible();
+    await advanceTestClock(signal, 1_000);
+    await vi.waitFor(() =>
+      expect(onEnded).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: "op-backup", title: "Library backed up" }),
+      ),
+    );
+    await expect.element(screen.getByText(/1 of 4 files/u)).not.toBeInTheDocument();
+    expect(endingsShown(screen)).toBe(0);
   });
 
   it("asks nothing where the Library is not kept", async () => {

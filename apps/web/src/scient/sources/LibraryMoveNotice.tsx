@@ -11,9 +11,10 @@ import { SCIENT_LIBRARY_MERGES_TO_REVIEW } from "@scientfactory/scient-sources";
 
 import { Button } from "../../components/ui/button";
 import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
+import type { SourcesActivityItem } from "./sourcesFeedback";
 import type { LibraryMoveStatus } from "./useLibraryMoveStatus";
 
-/** One line for the project's move into the personal Library, beside the store notices. */
+/** The project's move into the personal Library: its line, with Review, Dismiss or Try again. */
 export function LibraryMoveNotice(props: {
   readonly move: LibraryMoveStatus;
   /** Opens the merges the move made, for a line that says some kept different values. */
@@ -22,7 +23,7 @@ export function LibraryMoveNotice(props: {
   const { line } = props.move;
   if (!line) return null;
   return (
-    <div className="mx-3 mt-2 text-xs text-muted-foreground">
+    <div className="text-xs text-muted-foreground">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 break-words tabular-nums">
           {line.action === "dismiss" ? (
@@ -63,6 +64,29 @@ export function LibraryMoveNotice(props: {
       </div>
     </div>
   );
+}
+
+/**
+ * The move as one Activity item: a failed move needs Try again, a finished one's summary waits
+ * for Dismiss, and a line without a control is the move running or waiting.
+ */
+export function libraryMoveActivity(
+  move: LibraryMoveStatus,
+  onReview?: () => void,
+): SourcesActivityItem | null {
+  const { line } = move;
+  if (!line) return null;
+  return {
+    key: "library-move",
+    tone: line.action === "retry" ? "error" : line.action === "dismiss" ? "advisory" : "running",
+    label:
+      line.action === "retry"
+        ? "Moving the Library failed"
+        : line.action === "dismiss"
+          ? "Moved into your Library"
+          : "Moving the Library",
+    body: <LibraryMoveNotice move={move} {...(onReview ? { onReview } : {})} />,
+  };
 }
 
 export function MoveBackDialog(props: {
