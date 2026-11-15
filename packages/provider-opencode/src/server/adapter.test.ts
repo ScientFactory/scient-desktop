@@ -2930,6 +2930,11 @@ describe("OpenCodeAdapterV2", () => {
               (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
             ),
           );
+          // SCIENT-FORK: the adopted wake already runs natively, so a retry never repeats it.
+          const adopted = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(adopted.providerTurns.at(-1)?.nativeAcceptance, "accepted");
           for (const event of events) {
             if (event.type !== "runtime_request.updated") continue;
             yield* harness.runtime.respondToRuntimeRequest(

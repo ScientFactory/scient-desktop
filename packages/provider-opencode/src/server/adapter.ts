@@ -3990,6 +3990,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                         lastRunOrdinal: turnInput.runOrdinal,
                       });
                       yield* updateProviderSession("running", null);
+                      // SCIENT-FORK: OpenCode already runs the wake this continuation adopts, so
+                      // a retry must not hand its history over again.
+                      if (continuation && wake !== null) yield* markTurnAccepted(state, turn);
                       if (!continuation) {
                         for (const event of wake?.events ?? []) {
                           if (
