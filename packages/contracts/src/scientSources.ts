@@ -865,6 +865,8 @@ export const ScientSourcesRestoreStatus = Schema.Union([
     backupCreatedAt: NonEmptyString,
     sources: Schema.Int,
     pdfs: Schema.Int,
+    /** A Library a restore had kept is put back; `backupCreatedAt` is when it was set aside. */
+    putBack: Schema.optionalKey(Schema.Boolean),
     /** A start already moved a folder for it: it can only be finished, by the next start. */
     begun: Schema.optionalKey(Schema.Boolean),
     /** Why the last start could not put it in place; the next start tries again. */
@@ -876,6 +878,8 @@ export const ScientSourcesRestoreStatus = Schema.Union([
     state: Schema.Literal("restored"),
     restoreId: NonEmptyString,
     backupCreatedAt: NonEmptyString,
+    /** A Library a restore had kept was put back; `backupCreatedAt` is when it was set aside. */
+    putBack: Schema.optionalKey(Schema.Boolean),
     sources: Schema.Int,
     pdfs: Schema.Int,
     /** The Library that was replaced, kept in this folder because it held something. */
@@ -938,8 +942,9 @@ export type ScientSourcesLibraryCopies = typeof ScientSourcesLibraryCopies.Type;
 
 /**
  * `prepare` starts checking and copying the backup folder `fromFolder` (an absolute path on
- * this environment); `cancel` drops a copy that is waiting. Neither touches the Library or
- * moves a project into it.
+ * this environment); `put-back` arranges for a Library a restore kept (`folder`, as Recent
+ * changes names it) to take the Library's place again; `cancel` drops what is waiting. None
+ * touches the Library or moves a project into it; the swap happens at the next start.
  */
 export const ScientSourcesLibraryRestoreRequest = Schema.Struct({
   root: NonEmptyString,
@@ -947,6 +952,10 @@ export const ScientSourcesLibraryRestoreRequest = Schema.Struct({
     Schema.Struct({
       action: Schema.Literal("prepare"),
       fromFolder: NonEmptyString.check(Schema.isMaxLength(4_096)),
+    }),
+    Schema.Struct({
+      action: Schema.Literal("put-back"),
+      folder: NonEmptyString.check(Schema.isMaxLength(4_096)),
     }),
     Schema.Struct({ action: Schema.Literal("cancel") }),
   ]),

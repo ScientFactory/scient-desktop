@@ -359,6 +359,34 @@ describe("backing up the Library from the panel", () => {
     expect(screen.getByText(/2 of 9 files/u).query()).not.toBeNull();
   });
 
+  it("says that an earlier Library waits to be put back, and can cancel that", async () => {
+    setup(
+      [{ state: "none" }],
+      [
+        {
+          state: "ready",
+          backupCreatedAt: "2026-11-14T07:00:00.000Z",
+          sources: 1204,
+          pdfs: 980,
+          putBack: true,
+        },
+      ],
+    );
+    mocks.changeLibraryRestore.mockResolvedValueOnce({ state: "none" });
+    await using screen = await render(<Harness />, { router: false });
+    await expect
+      .element(screen.getByText(/^The Library that was replaced on .* is ready to come back/u))
+      .toBeVisible();
+    await expect
+      .element(screen.getByText(/this Library is then kept in a folder beside it/u))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mocks.changeLibraryRestore).toHaveBeenCalledWith(environmentId, {
+      root: "/project",
+      change: { action: "cancel" },
+    });
+  });
+
   it("offers no Cancel for a restore that a start left part way through", async () => {
     setup(
       [{ state: "none" }],

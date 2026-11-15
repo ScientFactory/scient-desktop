@@ -534,6 +534,14 @@ message after the restart says where, and so does **Recent changes** for as
 long as the folder is there. Scient never removes that folder. If you restore
 again later, the folders kept by earlier restores stay listed too.
 
+If you restored by mistake, or restored the wrong backup, open **Recent
+changes**: the line of the restore has **Put it back**. The Library that was
+replaced then takes its place again the next time Scient starts, exactly as
+it was, and the Library you restored is kept in a folder in its turn, so this
+too can be taken back. Until you restart, **Cancel** leaves everything as it
+is. **Add its sources** on the same line is for the other case: you want to
+keep the restored Library and only bring over what the earlier one had more.
+
 If Scient is stopped in the middle of putting the backup in place, the Library
 says it is part way through and finishes at the next start. Until then
 **Cancel** is not offered and another backup cannot be chosen, because half a

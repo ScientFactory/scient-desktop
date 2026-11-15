@@ -22,6 +22,7 @@ export const RECENT_CHANGES_LABELS = {
   restored: "No earlier Library is kept",
   nothingAdded: "Nothing was new",
   addKept: "Add its sources",
+  putBack: "Put it back",
   importedSources: "Sources from this import",
 } as const;
 
@@ -89,7 +90,9 @@ export function recentChangeSentence(change: ScientSourcesRecentChange): string 
     case "trash":
       return `Moved ${quoted(change.title)} to the Trash`;
     case "restore":
-      return `Restored the Library from the backup of ${day(change.backupCreatedAt)}: ${sources(change.sources)}`;
+      return change.putBack
+        ? `Put back the Library that was replaced on ${day(change.backupCreatedAt)}: ${sources(change.sources)}`
+        : `Restored the Library from the backup of ${day(change.backupCreatedAt)}: ${sources(change.sources)}`;
     case "join": {
       const from =
         change.from === "backup" && change.backupCreatedAt

@@ -2,6 +2,7 @@
 import {
   cancelScientLibraryRestore,
   finishScientLibraryRestore,
+  prepareScientLibraryPutBack,
   prepareScientLibraryRestore,
   readScientLibraryRestorePending,
   type ScientLibraryRestoreFinished,
@@ -69,6 +70,7 @@ export async function libraryRestoreStatus(
       backupCreatedAt: waiting.backupCreatedAt,
       sources: waiting.counts.sources,
       pdfs: waiting.counts.pdfs,
+      ...(waiting.putBack === undefined ? {} : { putBack: true }),
       ...(waiting.begun ? { begun: true } : {}),
       ...(problem === undefined ? {} : { problem }),
       ...(last?.state === "failed"
@@ -103,6 +105,43 @@ export function startLibraryRestore(libraryRoot: string, fromFolder: string): vo
 }
 
 /**
+ * Arranges for a Library a restore kept to take the Library's place at the next start. It
+ * copies nothing, so it is answered at once; a refusal is remembered like a failed restore.
+ */
+export async function putBackLibrary(libraryRoot: string, folder: string): Promise<void> {
+  if (preparing.has(libraryRoot)) return;
+  ended.delete(libraryRoot);
+  problems.delete(libraryRoot);
+  const result = await prepareScientLibraryPutBack({ libraryRoot, folder }).catch(
+    (cause: unknown) => reasonOf(cause),
+  );
+  if (typeof result === "string") {
+    ended.set(libraryRoot, failed(result));
+    return;
+  }
+  switch (result.outcome) {
+    case "ready":
+      return;
+    case "not-kept":
+      ended.set(
+        libraryRoot,
+        failed("That folder is not a Library a restore kept, or it is no longer there."),
+      );
+      return;
+    case "busy":
+      ended.set(libraryRoot, failed("Another restore is being prepared."));
+      return;
+    case "unfinished":
+      ended.set(
+        libraryRoot,
+        failed(
+          "An earlier restore is part way through. Quit Scient and open it again to finish it, then try again.",
+        ),
+      );
+  }
+}
+
+/**
  * Drops the copy that waits; a copy still being made is left to finish first, and a restore
  * that already moved a folder is left for the next start.
  */
@@ -122,6 +161,7 @@ function remember(libraryRoot: string, finished: ScientLibraryRestoreFinished): 
         state: "restored",
         restoreId: finished.restoreId,
         backupCreatedAt: finished.backupCreatedAt,
+        ...(finished.putBack ? { putBack: true } : {}),
         sources: finished.counts.sources,
         pdfs: finished.counts.pdfs,
         ...(finished.keptReplaced ? { kept: finished.keptReplaced } : {}),

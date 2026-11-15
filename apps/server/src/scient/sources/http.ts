@@ -109,6 +109,7 @@ import { libraryJoinStatus } from "./LibraryJoinRuns.ts";
 import {
   cancelLibraryRestore,
   libraryRestoreStatus,
+  putBackLibrary,
   startLibraryRestore,
 } from "./LibraryRestoreRuns.ts";
 import { readLibraryMoveStatus } from "./LibraryMove.ts";
@@ -534,7 +535,9 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             const { change } = args.payload;
             return yield* sourcesOperation(async () => {
               if (change.action === "prepare") startLibraryRestore(libraryRoot, change.fromFolder);
-              else await cancelLibraryRestore(libraryRoot);
+              else if (change.action === "put-back") {
+                await putBackLibrary(libraryRoot, change.folder);
+              } else await cancelLibraryRestore(libraryRoot);
               return libraryRestoreStatus(libraryRoot);
             }).pipe(
               Effect.catch((cause) =>

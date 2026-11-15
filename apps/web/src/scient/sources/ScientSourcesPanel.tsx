@@ -1549,6 +1549,7 @@ export function ScientSourcesPanel(props: {
           }
           onChanged={sources.refreshOverview}
           onAddFromLibrary={backup.addFrom}
+          onPutBackLibrary={backup.putBack}
           onShowDifferences={setShowingJoinDifferences}
           onClose={() => setShowingRecentChanges(false)}
         />
