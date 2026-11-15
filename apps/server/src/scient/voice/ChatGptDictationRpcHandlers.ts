@@ -1,4 +1,4 @@
-/** The composer's ChatGPT dictation, run by the Scient Agent instance the window names. */
+/** The composer's ChatGPT dictation, run by the Scient Agent or Codex instance the window names. */
 import { ChatGptDictationError, WS_METHODS, WsWorkspaceRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
