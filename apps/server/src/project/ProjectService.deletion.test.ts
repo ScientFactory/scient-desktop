@@ -632,6 +632,7 @@ it.effect("shared V2 deletion stops a real pending clone only after deletion com
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: temporaryRoot,
+          isScratchProject: () => Effect.succeed(false),
         }),
         Layer.succeed(McpInvocationContext.McpInvocationContext, {
           environmentId: EnvironmentId.make("clone-delete-environment"),

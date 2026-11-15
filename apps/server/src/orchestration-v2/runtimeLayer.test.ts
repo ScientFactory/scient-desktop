@@ -516,6 +516,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
+  ProjectionStore.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(
@@ -551,7 +552,7 @@ const layerProjectDeletionTest = Layer.mergeAll(
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(ProviderRegistryTestLayer),
   Layer.provide(layerGitWorkflowTest),
-  Layer.provide(PlatformTestLayer),
+  Layer.provideMerge(PlatformTestLayer),
 );
 
 it.layer(layerProjectDeletionTest)("project deletion during thread commands", (it) => {
@@ -883,6 +884,10 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
 
         assert.isFalse(yield* fileSystem.exists(filePath(dropped)));
         assert.equal(yield* fileSystem.readFileString(filePath(shared)), "bytes");
+
+        // SCIENT-FORK: T3's later-fork deletions assume run forks that show their
+        // source's history; Scient's conversation forks share files through their history list,
+        // covered by the file-release tests in ConversationImporterContinuation.native.test.ts.
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -1201,6 +1206,10 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
       }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
     }),
   );
+
+  // SCIENT-FORK: T3's html_render fork-of-fork deletion test spies on
+  // getThreadAttachmentIds; Scient releases files after a delete commits (getReleasableFiles),
+  // covered by "deleting a source keeps the html_render page its live fork shows".
 });
 
 const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
@@ -3160,6 +3169,11 @@ const writeHtmlRenderRun = Effect.fn("test.writeHtmlRenderRun")(function* (input
   const runId = RunId.make(`html-fork-run:${input.key}`);
   const messageId = MessageId.make(`html-fork-message:${input.key}`);
   const attachmentId = createAttachmentId(input.threadId, "html")!;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+  const pagePath = (yield* Path.Path).join(attachmentsDir, `${attachmentId}.html`);
+  yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+  yield* fileSystem.writeFileString(pagePath, "<p>Page</p>");
   yield* eventSink.write({
     events: [
       {
@@ -3241,7 +3255,7 @@ const writeHtmlRenderRun = Effect.fn("test.writeHtmlRenderRun")(function* (input
       },
     ],
   });
-  return { runId, attachmentId };
+  return { runId, pagePath };
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
@@ -3308,13 +3322,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const cleaned = yield* (yield* ProjectionStore.ProjectionStoreV2).getReleasableFiles(
         sourceThreadId,
       );
+      const pageId = (page: { readonly pagePath: string }) =>
+        page.pagePath.replace(/^.*[\\/]/, "").replace(/\.html$/, "");
       // SCIENT-FORK:END
-      assert.include(cleaned, later.attachmentId);
-      assert.notInclude(
-        cleaned,
-        inherited.attachmentId,
-        "deleted a page its live fork still shows",
-      );
+      assert.include(cleaned, pageId(later));
+      assert.notInclude(cleaned, pageId(inherited), "deleted a page its live fork still shows");
     }),
   );
 
@@ -8480,6 +8492,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* witness.end("active", "completed");
       assert.equal(yield* Queue.take(witness.startedRunIds), (yield* witness.runFor("queued")).id);
       assert.isTrue((yield* dispatcher.runFor("issue")).queueHeld);
+      const resume = yield* orchestrator
+        .dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${dispatcherId}:resume`),
+          threadId: dispatcherId,
+        })
+        .pipe(Effect.flip);
+      assert.include(String(resume.cause), "Retry worktree setup");
+      assert.isTrue((yield* dispatcher.runFor("issue")).queueHeld);
     }),
   );
 
@@ -9711,6 +9732,138 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   it.effect.each([false, true])(
+    "starts the queue before a send that arrives as the active run ends (worktree failed: %s)",
+    (worktreeFailed) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const threadId = ThreadId.make(`runtime-layer-send-after-run-end-${worktreeFailed}`);
+        const messageId = (key: string) => MessageId.make(`${threadId}:${key}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Send after run end",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        const dispatch = (key: string, start: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "server",
+            commandId: CommandId.make(`${threadId}:message:${key}`),
+            threadId,
+            messageId: messageId(key),
+            text: key,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: start ? "start_immediately" : "queue_after_active" },
+          });
+        const runFor = (key: string) =>
+          Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) => {
+            const run = runs.find((candidate) => candidate.userMessageId === messageId(key));
+            assert.isDefined(run);
+            return run;
+          });
+        yield* dispatch("active", true);
+        yield* dispatch("queued", false);
+        const active = yield* runFor("active");
+        assert.equal((yield* runFor("queued")).status, "queued");
+
+        // Hold the run-end handler before it takes the thread lock, as a busy handler stream
+        // does, then let it run once and signal when its queue release has finished.
+        const handlerHeld = yield* Deferred.make<void>();
+        const releaseHandler = yield* Deferred.make<void>();
+        const releaseAttempted = yield* Deferred.make<void>();
+        let lockCalls = 0;
+        let armed = false;
+        const withLock = executor.withLock;
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+          key,
+          effect,
+        ) => {
+          if (key !== threadId || !armed) return withLock(key, effect);
+          lockCalls += 1;
+          if (lockCalls === 1) {
+            return Deferred.succeed(handlerHeld, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseHandler)),
+              Effect.andThen(withLock(key, effect)),
+            );
+          }
+          if (lockCalls === 3) {
+            return withLock(key, effect).pipe(
+              Effect.ensuring(Deferred.succeed(releaseAttempted, undefined)),
+            );
+          }
+          return withLock(key, effect);
+        };
+        const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+        yield* Effect.gen(function* () {
+          armed = true;
+          const now = yield* DateTime.now;
+          const { thread } = yield* orchestrator.getThreadProjection(threadId);
+          yield* eventSink.write({
+            events: [
+              // A failed worktree setup leaves the thread without its worktree.
+              ...(worktreeFailed
+                ? [
+                    {
+                      id: EventId.make(`${threadId}:worktree-missing`),
+                      type: "thread.metadata-updated" as const,
+                      threadId,
+                      occurredAt: now,
+                      payload: { ...thread, worktreePath: null },
+                    },
+                  ]
+                : []),
+              {
+                id: EventId.make(`${threadId}:active:completed`),
+                type: "run.updated",
+                threadId,
+                runId: active.id,
+                ...(active.rootNodeId === null ? {} : { nodeId: active.rootNodeId }),
+                providerInstanceId: active.providerInstanceId,
+                occurredAt: now,
+                payload: worktreeFailed
+                  ? {
+                      ...active,
+                      status: "failed",
+                      workspacePreparation: { type: "worktree", baseRef: "main" },
+                      startedAt: now,
+                      completedAt: now,
+                    }
+                  : { ...active, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          yield* Deferred.await(handlerHeld);
+          yield* dispatch("newer", !worktreeFailed);
+          // The thread is idle but has a queue, so the newer send waits behind it.
+          assert.equal((yield* runFor("newer")).status, "queued");
+
+          yield* Deferred.succeed(releaseHandler, undefined);
+          yield* Deferred.await(releaseAttempted);
+          const queued = yield* runFor("queued");
+          if (worktreeFailed) {
+            // Without a worktree the queue stays held instead of running in the project checkout.
+            assert.equal(queued.status, "queued");
+            assert.isTrue(queued.queueHeld);
+          } else {
+            assert.notEqual(queued.status, "queued");
+          }
+        }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
+      }),
+  );
+
+  it.effect.each([false, true])(
     "restarts a continuation that failed before its prompt, unless stopped (%s)",
     (stopped) =>
       Effect.gen(function* () {
@@ -9950,6 +10103,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 threadId,
                 occurredAt: yield* DateTime.now,
                 payload: { ...source, status: "running", startedAt: yield* DateTime.now },
+              },
+              {
+                id: EventId.make(`${threadId}:accepted`),
+                type: "provider-turn.updated",
+                threadId,
+                runId: source.id,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  id: ProviderTurnId.make(`${threadId}:turn`),
+                  providerThreadId: source.providerThreadId!,
+                  nodeId: source.rootNodeId!,
+                  runAttemptId: source.activeAttemptId,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt: yield* DateTime.now,
+                  completedAt: null,
+                },
               },
             ],
           });
@@ -10242,6 +10413,122 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
   // SCIENT-FORK:END
+
+  it.effect.each(["startup", "shutdown"] as const)(
+    "sends a delegated task's prompt again after a %s cut it before the provider accepted it",
+    (trigger) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const parentThreadId = ThreadId.make(`delegate-resend-${trigger}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${parentThreadId}:create`),
+          threadId: parentThreadId,
+          projectId: ProjectId.make(`${parentThreadId}:project`),
+          title: "Delegating parent",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${parentThreadId}:message`),
+          threadId: parentThreadId,
+          messageId: MessageId.make(`${parentThreadId}:message`),
+          text: "Delegate a review",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make(`${parentThreadId}:delegate`),
+          parentThreadId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId!,
+          task: "Review the diff",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "always",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        const threadId = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!
+          .childThreadId!;
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run = before.runs[0]!;
+        const attempt = before.attempts.find((row) => row.id === run.activeAttemptId)!;
+        const rootNode = before.nodes.find((row) => row.id === run.rootNodeId)!;
+        // What a provider turn start commits before the provider accepts the prompt.
+        const startedAt = yield* DateTime.now;
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:running:run`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: startedAt,
+              payload: { ...run, status: "running", startedAt },
+            },
+            {
+              id: EventId.make(`${threadId}:running:attempt`),
+              type: "run-attempt.updated",
+              threadId,
+              runId: run.id,
+              nodeId: rootNode.id,
+              occurredAt: startedAt,
+              payload: { ...attempt, status: "running", startedAt },
+            },
+            {
+              id: EventId.make(`${threadId}:running:node`),
+              type: "node.updated",
+              threadId,
+              runId: run.id,
+              nodeId: rootNode.id,
+              occurredAt: startedAt,
+              payload: { ...rootNode, status: "running", startedAt },
+            },
+          ],
+        });
+        const expectResent = Effect.gen(function* () {
+          const child = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            child.runs.map((row) => [row.id, row.status, row.startedAt]),
+            [[run.id, "starting", null]],
+          );
+          assert.deepEqual(child.messages, before.messages);
+          const starts = yield* outbox.listByCommandId(
+            CommandId.make(`command:restart-resend:${run.id}`),
+          );
+          assert.deepEqual(
+            starts.filter((effect) => effect.status === "pending").map((effect) => effect.request),
+            [{ type: "provider-turn.start", runId: run.id }],
+          );
+        });
+        yield* recovery.reconcile(trigger);
+        yield* expectResent;
+        // The server stops again before the worker sent the prompt.
+        yield* TestClock.adjust("1 second");
+        yield* recovery.reconcile("startup");
+        yield* orchestrator.recoverDelegatedTasks;
+        yield* expectResent;
+        assert.deepInclude((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0], {
+          status: "running",
+          result: null,
+        });
+      }),
+  );
 
   it.effect("starts a provider wake queued beside a held queue", () =>
     Effect.gen(function* () {
@@ -12488,6 +12775,24 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
                 runId: continuation.id,
                 occurredAt: startedAt,
                 payload: { ...continuation, status: "running", startedAt },
+              },
+              {
+                id: EventId.make("recovery:continuation-accepted:resume-started"),
+                type: "provider-turn.updated",
+                threadId,
+                runId: continuation.id,
+                occurredAt: startedAt,
+                payload: {
+                  id: ProviderTurnId.make("recovery:continuation-turn:resume-started"),
+                  providerThreadId: continuation.providerThreadId!,
+                  nodeId: continuation.rootNodeId!,
+                  runAttemptId: continuation.activeAttemptId,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt,
+                  completedAt: null,
+                },
               },
             ],
           });

@@ -1507,7 +1507,8 @@ it.live(
           source.messages,
         );
       }),
-      { modelContextWindow: (model) => (model === "small" ? 20_000 : 800_000) },
+      // Half of the small window is reserved for work, leaving room for one exchange.
+      { modelContextWindow: (model) => (model === "small" ? 8_000 : 800_000) },
     ),
 );
 

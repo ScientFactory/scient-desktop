@@ -1005,9 +1005,17 @@ describe("ClaudeAdapterV2 provider-native inventory (NativeInventory)", () => {
 
 describe("ClaudeAdapterV2 session permissions (Policy)", () => {
   it.each([
-    { decision: "decline", feedback: "  Use a dry run.  ", message: "Use a dry run." },
+    {
+      decision: "decline",
+      feedback: "  Use a dry run.  ",
+      message: "The user declined this tool call and said:\nUse a dry run.",
+    },
     { decision: "decline", feedback: "   ", message: "User declined tool execution." },
-    { decision: "cancel", feedback: "Stop here.", message: "Stop here." },
+    {
+      decision: "cancel",
+      feedback: "Stop here.",
+      message: "The user declined this tool call and said:\nStop here.",
+    },
   ] as const)(
     "returns $decision feedback $feedback to the requesting tool",
     ({ decision, feedback, message }) => {

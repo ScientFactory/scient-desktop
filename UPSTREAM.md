@@ -645,6 +645,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`507093152148c0d31c09bcd40e3ce4b5214a8557` is recorded in
+[the 2026-11-15 5070931521 receipt](docs/internals/t3-upstream-sync-20261115-5070931521.md).
+Literal merge `ef92b7b172029310fd364c57547fe2ae72dbafba` has owned base
+`30c828080be1b4cfeb5366a50bb8a351b4c93610` and the frozen official target as parents, retaining
+the 237 official commits after `7f6e403a88`; PR #949 carries it. The range is fixes and speed-ups:
+long threads open faster, restarts keep unaccepted prompts, Resume refuses a queue behind failed
+worktree setup, and T3's migration 95 lands as Scient's 99. Release remains separate.
+
+The previous committed alignment through
 `7f6e403a88815e5644efbdb6bc8625246f661095` is recorded in
 [the 2026-11-15 7f6e403a88 receipt](docs/internals/t3-upstream-sync-20261115-7f6e403a88.md).
 Literal merge `4f0837dd3bd1d732ded3fcf408eaa9bd62340d0a` has owned base

@@ -294,7 +294,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       readPendingEnvironmentChange: () => null,
       pendingApprovals: [],
       respondingRequestIds: [],
-      activePendingProgress: null,
+      activePendingUserInput: null,
       onAdvanceActivePendingUserInput: noop,
       onRespondToApproval: never,
       beginLocalDispatch: noop,

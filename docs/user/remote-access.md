@@ -249,6 +249,13 @@ off until you explicitly enable it. Turning it on asks Tailscale Serve to proxy
 private HTTPS traffic to the local Scient backend; turning it off removes that
 mapping.
 
+Your tailnet needs MagicDNS and HTTPS certificates enabled; see
+[Tailscale's HTTPS setup](https://tailscale.com/docs/how-to/set-up-https-certificates).
+On Linux, Scient also needs permission to manage Tailscale; see
+[operator permission](https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission)
+for non-root users. If any of these is missing, Scient still starts but can't
+add the HTTPS route.
+
 This is an endpoint option, not a separate kind of Scient environment. LAN,
 custom HTTPS, Tailscale, and SSH connections all use the same environment and
 pairing model.

@@ -56,6 +56,7 @@ import { makeCursorMachineSkillCatalog, probeCursorSkills } from "./skills.ts";
 import { makeCursorCommandCatalog } from "./commandCatalog.ts";
 import { makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
+import { cursorRateModel } from "./accountUsage.ts";
 import { readCursorUsageLimits } from "./usageLimits.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
@@ -155,6 +156,7 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
     usage: {
       kind: "scan",
       provider: "cursor",
+      rateModel: cursorRateModel,
       scan: ({ instances, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
         CursorUsageAccounts.CursorUsageAccounts.pipe(
           Effect.flatMap((accounts) =>
