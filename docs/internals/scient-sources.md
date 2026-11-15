@@ -2577,7 +2577,13 @@ copy is no longer where it waited, or the Library it replaces stands aside),
 the restore has begun: Cancel answers `begun`, a new request `unfinished`, and
 the status carries `begun` so the panel says to restart and offers no Cancel.
 Only the next start ends it, so a Library is never left swapped in without
-the "moved back" decisions being carried over.
+the "moved back" decisions being carried over. Anything that fails after the
+Library stepped aside and before the incoming folder is in its place (the
+rename, or writing a kept Library's line) puts the Library back, so a start
+never leaves no Library together with a restore that cannot be cancelled.
+Cancel names the waiting restore the window showed (`restoreId` in the status
+and in the request); if another one waits by then, it answers `another` and
+drops nothing.
 
 **Putting a kept Library back** (`prepareScientLibraryPutBack`; the
 `libraryRestore` endpoint's `put-back`; "Put it back" on a restore's line in
@@ -2593,6 +2599,13 @@ every place that removes a waiting copy checks for `putBack` first. The
 Library that steps aside is kept like any other, so a put-back can be put
 back. Records of kept folders are carried over only while their folder
 exists.
+
+A record of a kept Library is not proof that a folder is one: a backup takes
+`restores.json` to other computers. `keptIsThere` accepts a kept folder only
+beside this Library, under the name a restore gives (`<library>.replaced-…`),
+holding a Library manifest, and, where the record has it, the same
+`libraryId` the replaced Library had. The listing, "Add its sources" and "Put
+it back" all go through it.
 
 `finishScientLibraryRestore` puts the copy in place and is called once, at the
 server's start, right after the server owns its data folder
@@ -2720,8 +2733,11 @@ before the comparison. If another writer added, removed, merged or edited a
 source since, the Library is read again and each source of the part is judged
 against it, ignoring what this join itself added (the other Library keeps
 those apart, so they must not make each other "not new"). An edit counts
-because it can make a source here the same paper as one about to arrive. Then
-each source is
+because it can make a source here the same paper as one about to arrive. The
+join's own additions are in the mark as it left them, so an edit of one of
+those is seen too, and an arrival whose details were changed here since no
+longer counts as kept apart. The mark is one stat of every record per part
+(about 65 ms for 20,000 records on the development Mac). Then each source is
 added, in an order that survives a kill at any point: for each PDF that is not
 here, its highlights file and then the PDF (checked by hash, flushed); a PDF
 already here keeps this Library's highlights, and the source is recorded as
@@ -2794,7 +2810,14 @@ Library this Library's `restores.json` names); otherwise `available` is false
 and rows carry only what was recorded. A backup is not hashed whole again for
 this (the join did that): each record read from it must match the checksum in
 the backup's own list, or the row is shown as recorded, without the other
-version. A session without the operate scope is served neither Library's
+version. What an action copies is checked the same way: `addSource` reads the
+record, every earlier version and every highlights file through `checkedBytes`
+before it writes anything, PDFs are hashed as they are copied, and "Add
+separately" first compares the backup's files of collections and decisions
+with the list (`decisionsAsListed`). A file that is not the one the backup
+lists ends the action as `unavailable` with nothing of the paper added. Only
+what is shown, never copied, is read unchecked: whether highlights differ and
+whether a PDF's file is in the folder. A session without the operate scope is served neither Library's
 personal note, as for a source's detail.
 
 `takeFromScientLibraryJoin` (organize action `take-from-library`) takes one

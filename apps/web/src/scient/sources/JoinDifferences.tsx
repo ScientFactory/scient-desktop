@@ -244,7 +244,7 @@ export function JoinDifferencesDialog(props: {
                         {otherName}: “{other.title ?? JOIN_DIFFERENCES_LABELS.untitled}”
                         {other.by ? ` (${other.by})` : ""}.{" "}
                         {row.relation === "not-here"
-                          ? "It was not added, because it looked like a paper here that has changed since."
+                          ? "It was not added then, because it looked like a paper that was here. No paper here looks like it now."
                           : "It was not added, because it may be a paper you already have."}
                       </p>
                       {offer ? (

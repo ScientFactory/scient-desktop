@@ -549,9 +549,12 @@ again later, the folders kept by earlier restores stay listed too.
 
 If you restored by mistake, or restored the wrong backup, open **Recent
 changes**: the line of the restore has **Put it back**. The Library that was
-replaced then takes its place again the next time Scient starts, exactly as
-it was, and the Library you restored is kept in a folder in its turn, so this
-too can be taken back. Until you restart, **Cancel** leaves everything as it
+replaced then takes its place again the next time Scient starts, as it was
+kept, and the Library you restored is kept in a folder in its turn, so this
+too can be taken back. A **Move back into this project** you chose in between
+is kept. A source you added to a project in between is still cited there from
+the details the project saved, and returns to the Library when the project is
+next changed; its PDF and personal note stay in the kept folder. Until you restart, **Cancel** leaves everything as it
 is. **Add its sources** on the same line is for the other case: you want to
 keep the restored Library and only bring over what the earlier one had more.
 

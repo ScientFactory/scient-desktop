@@ -861,6 +861,8 @@ export const ScientSourcesRestoreStatus = Schema.Union([
   }),
   Schema.Struct({
     state: Schema.Literal("ready"),
+    /** Which waiting restore this is; Cancel names it, so it never drops another one. */
+    restoreId: Schema.optionalKey(NonEmptyString),
     /** When the backup was made. */
     backupCreatedAt: NonEmptyString,
     sources: Schema.Int,
@@ -957,7 +959,11 @@ export const ScientSourcesLibraryRestoreRequest = Schema.Struct({
       action: Schema.Literal("put-back"),
       folder: NonEmptyString.check(Schema.isMaxLength(4_096)),
     }),
-    Schema.Struct({ action: Schema.Literal("cancel") }),
+    Schema.Struct({
+      action: Schema.Literal("cancel"),
+      /** The waiting restore the person saw; without it, whichever waits is dropped. */
+      restoreId: Schema.optionalKey(NonEmptyString),
+    }),
   ]),
 });
 export type ScientSourcesLibraryRestoreRequest = typeof ScientSourcesLibraryRestoreRequest.Type;

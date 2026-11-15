@@ -537,7 +537,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               if (change.action === "prepare") startLibraryRestore(libraryRoot, change.fromFolder);
               else if (change.action === "put-back") {
                 await putBackLibrary(libraryRoot, change.folder);
-              } else await cancelLibraryRestore(libraryRoot);
+              } else await cancelLibraryRestore(libraryRoot, change.restoreId);
               return libraryRestoreStatus(libraryRoot);
             }).pipe(
               Effect.catch((cause) =>

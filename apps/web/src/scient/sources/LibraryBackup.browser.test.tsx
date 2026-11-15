@@ -365,6 +365,7 @@ describe("backing up the Library from the panel", () => {
       [
         {
           state: "ready",
+          restoreId: "restore_shown",
           backupCreatedAt: "2026-11-14T07:00:00.000Z",
           sources: 1204,
           pdfs: 980,
@@ -380,10 +381,11 @@ describe("backing up the Library from the panel", () => {
     await expect
       .element(screen.getByText(/this Library is then kept in a folder beside it/u))
       .toBeVisible();
+    // Cancel names the restore this window shows, so one chosen elsewhere since is not dropped.
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(mocks.changeLibraryRestore).toHaveBeenCalledWith(environmentId, {
       root: "/project",
-      change: { action: "cancel" },
+      change: { action: "cancel", restoreId: "restore_shown" },
     });
   });
 

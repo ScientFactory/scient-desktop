@@ -67,6 +67,7 @@ export async function libraryRestoreStatus(
     const last = ended.get(libraryRoot);
     return {
       state: "ready",
+      ...(waiting.restoreId ? { restoreId: waiting.restoreId } : {}),
       backupCreatedAt: waiting.backupCreatedAt,
       sources: waiting.counts.sources,
       pdfs: waiting.counts.pdfs,
@@ -145,9 +146,14 @@ export async function putBackLibrary(libraryRoot: string, folder: string): Promi
  * Drops the copy that waits; a copy still being made is left to finish first, and a restore
  * that already moved a folder is left for the next start.
  */
-export async function cancelLibraryRestore(libraryRoot: string): Promise<void> {
+export async function cancelLibraryRestore(
+  libraryRoot: string,
+  /** The waiting restore the person saw: another window may have replaced it since. */
+  restoreId?: string,
+): Promise<void> {
   if (preparing.has(libraryRoot)) return;
-  if ((await cancelScientLibraryRestore(libraryRoot)).outcome === "begun") return;
+  const { outcome } = await cancelScientLibraryRestore(libraryRoot, restoreId);
+  if (outcome === "begun" || outcome === "another") return;
   problems.delete(libraryRoot);
   ended.delete(libraryRoot);
 }

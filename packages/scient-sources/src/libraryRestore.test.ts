@@ -669,6 +669,85 @@ describe("restoring a backup of the Library", () => {
     );
   });
 
+  it("puts the Library back in place when the kept one cannot be marked or moved", async () => {
+    const { scenario, mine, kept, wrong } = await restoredByMistake();
+    const root = scenario.libraryRoot;
+    const prepared = await prepareScientLibraryPutBack({ libraryRoot: root, folder: kept });
+    if (prepared.outcome !== "ready") throw new Error(`Not ready: ${prepared.outcome}`);
+    // The kept Library's own record of restores cannot be read or written (a folder is there).
+    await NodeFSP.mkdir(NodePath.join(kept, "restores.json"));
+
+    expect(await finishScientLibraryRestore(root)).toMatchObject({
+      outcome: "failed",
+      waiting: true,
+    });
+    // The Library that was there is back where it was: Scient opens, and it is not "begun",
+    // so the person can cancel instead of being asked to restart for ever.
+    expect(await inventory(root)).toEqual(wrong);
+    expect(await readScientLibraryRestorePending(root)).toMatchObject({ begun: false });
+    expect(await cancelScientLibraryRestore(root)).toEqual({ outcome: "cancelled" });
+    await NodeFSP.rmdir(NodePath.join(kept, "restores.json"));
+    expect(await inventory(kept)).toEqual(mine);
+  });
+
+  it("takes for a kept Library only the folder a restore here made, holding that Library", async () => {
+    const { scenario, kept } = await restoredByMistake();
+    const root = scenario.libraryRoot;
+    const library = libraryOf(scenario);
+    const listed = async () =>
+      (await listScientLibraryRestores(library)).flatMap((entry) => entry.kept?.path ?? []);
+    expect(await listed()).toEqual([kept]);
+
+    // A record that came with a backup from another computer: it names a folder elsewhere,
+    // and a folder beside this Library that holds some other Library.
+    const elsewhere = NodePath.join(scenario.root, "elsewhere.replaced-restore_x");
+    await NodeFSP.cp(kept, elsewhere, { recursive: true });
+    const impostor = `${root}.replaced-restore_other`;
+    const another = await createScenario(await temporaryRoot());
+    await runStep(another, EMPTY_MODEL, { op: "add", label: "theirs", pdf: false });
+    await NodeFSP.cp(another.libraryRoot, impostor, { recursive: true });
+    const file = NodePath.join(root, "restores.json");
+    const record = JSON.parse(await NodeFSP.readFile(file, "utf8")) as {
+      restores: Array<Record<string, unknown> & { kept?: Record<string, unknown> }>;
+    };
+    const own = record.restores.find((entry) => entry.kept)!;
+    record.restores.push(
+      { ...own, restoreId: "restore_far", kept: { ...own.kept, path: elsewhere } },
+      { ...own, restoreId: "restore_other", kept: { ...own.kept, path: impostor } },
+    );
+    await NodeFSP.writeFile(file, JSON.stringify(record));
+
+    expect(await listed()).toEqual([kept]);
+    for (const folder of [elsewhere, impostor]) {
+      expect(await prepareScientLibraryPutBack({ libraryRoot: root, folder })).toEqual({
+        outcome: "not-kept",
+      });
+      expect(await openScientLibraryJoinSource(library, folder)).toEqual({
+        outcome: "not-a-library",
+      });
+    }
+  });
+
+  it("cancels only the waiting restore that was named", async () => {
+    const { scenario, kept } = await restoredByMistake();
+    const root = scenario.libraryRoot;
+    const first = await prepareScientLibraryPutBack({ libraryRoot: root, folder: kept });
+    if (first.outcome !== "ready") throw new Error(`Not ready: ${first.outcome}`);
+    // Another window chose again; the first window still shows, and cancels, the first.
+    const second = await prepareScientLibraryPutBack({ libraryRoot: root, folder: kept });
+    if (second.outcome !== "ready") throw new Error(`Not ready: ${second.outcome}`);
+
+    expect(await cancelScientLibraryRestore(root, first.restoreId)).toEqual({
+      outcome: "another",
+    });
+    expect(await readScientLibraryRestorePending(root)).toMatchObject({
+      restoreId: second.restoreId,
+    });
+    expect(await cancelScientLibraryRestore(root, second.restoreId)).toEqual({
+      outcome: "cancelled",
+    });
+  });
+
   it("finishes putting a Library back at the next start, wherever a start was killed", async () => {
     for (const fault of ["after-aside", "after-swap", "before-intent-removed"] as const) {
       const { scenario, model, mine, kept } = await restoredByMistake();
