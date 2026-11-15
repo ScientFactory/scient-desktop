@@ -301,4 +301,49 @@ describe("Sources list at Library size", () => {
     expect(offered(1)).toContain("remove-from-project");
     expect(offered(1)).not.toContain("remove");
   });
+
+  it("shows a new sort's headings over the same rows, including one scrolled into view", async () => {
+    setup();
+    const records = overview().records;
+    const ignore = () => undefined;
+    const row = {
+      environmentId,
+      root: "/project",
+      listed: undefined,
+      selection: new Set<string>(),
+      recentlyAddedSourceIds: new Set<string>(),
+      diagnosticsBySourceId: new Map(),
+      onToggleSelected: ignore,
+      onOpenDetails: ignore,
+      onOpenPdf: ignore,
+      onShowMenu: ignore,
+    };
+    const list = (sections: ReadonlyArray<{ label: string; start: number; count: number }>) => (
+      <div style={{ display: "flex", flexDirection: "column", height: 600, width: 720 }}>
+        <SourcesList records={records} row={row} sections={sections} virtualized />
+      </div>
+    );
+    await using screen = await render(
+      list([
+        { label: "Today", start: 0, count: 2995 },
+        { label: "Earlier", start: 2995, count: 5 },
+      ]),
+      { router: false },
+    );
+    await expect.element(screen.getByRole("heading", { name: /^Today/ })).toBeVisible();
+
+    await screen.rerender(
+      list([
+        { label: "2024", start: 0, count: 2995 },
+        { label: "2023", start: 2995, count: 5 },
+      ]),
+    );
+    await expect.element(screen.getByRole("heading", { name: /^2024/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /^Today/ }).query()).toBeNull();
+
+    // The last section starts five rows from the end.
+    const scroller = scrollerOf(rowTitled(screen.container, "Source 0000")!);
+    scroller.scrollTop = scroller.scrollHeight;
+    await expect.element(screen.getByRole("heading", { name: /^2023/ })).toBeVisible();
+  });
 });

@@ -39,7 +39,7 @@ export interface SourceRowContext {
   readonly onToggleStar?: (record: SourceRecord) => Promise<void>;
 }
 
-function MetadataReviewIndicator(props: {
+export function MetadataReviewIndicator(props: {
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   readonly onOpen: () => void;
 }) {
@@ -74,7 +74,7 @@ function MetadataReviewIndicator(props: {
 }
 
 /** A personal Library's star on a row: shown when set, offered on hover to a session that may change it. */
-function RowStar(props: {
+export function RowStar(props: {
   readonly title: string | null;
   readonly starred: boolean;
   readonly onToggle?: () => Promise<void>;
@@ -123,19 +123,111 @@ function creatorLabel(record: SourceRecord): string {
   return creator?.familyName ?? creator?.literalName ?? creator?.givenName ?? "Unknown creator";
 }
 
+/** A click opens the source, or picks it while picking or with a modifier key held. */
+export function activateSource(
+  event: { readonly metaKey: boolean; readonly ctrlKey: boolean; readonly shiftKey: boolean },
+  record: SourceRecord,
+  row: SourceRowContext,
+) {
+  if (row.selection.size > 0 || event.metaKey || event.ctrlKey || event.shiftKey) {
+    row.onToggleSelected(record.sourceId);
+  } else {
+    row.onOpenDetails(record.sourceId);
+  }
+}
+
+/** Opens the source's PDF, or its details when it has several to choose from. */
+export function SourcePdfAction(props: {
+  readonly record: SourceRecord;
+  readonly row: SourceRowContext;
+  readonly size: "icon-sm" | "icon-xs";
+}) {
+  const { record, row } = props;
+  const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
+  if (materialSelection._tag === "Selected") {
+    const pdf = materialSelection.material;
+    return (
+      <ScientTooltip content="Open PDF">
+        <Button
+          variant="ghost"
+          size={props.size}
+          aria-label={`Open PDF: ${pdf.fileName}`}
+          onClick={() => {
+            row.onOpenPdf({
+              sourceId: record.sourceId,
+              attachmentId: pdf.attachmentId,
+              fileName: pdf.fileName,
+            });
+          }}
+        >
+          <FileText />
+        </Button>
+      </ScientTooltip>
+    );
+  }
+  if (materialSelection._tag !== "SeveralMaterials") return null;
+  return (
+    <ScientTooltip content="Choose a PDF in source details">
+      <Button
+        variant="ghost"
+        size={props.size}
+        aria-label={`Choose a PDF to open: ${record.title ?? "Untitled source"}`}
+        onClick={() => row.onOpenDetails(record.sourceId)}
+      >
+        <FileText />
+      </Button>
+    </ScientTooltip>
+  );
+}
+
+export function SourceMenuButton(props: {
+  readonly record: SourceRecord;
+  readonly row: SourceRowContext;
+}) {
+  return (
+    <ScientTooltip content="More source actions">
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="More source actions"
+        onClick={(event) => {
+          event.stopPropagation();
+          const bounds = event.currentTarget.getBoundingClientRect();
+          props.row.onShowMenu(props.record, { x: bounds.right, y: bounds.bottom });
+        }}
+      >
+        <MoreVertical />
+      </Button>
+    </ScientTooltip>
+  );
+}
+
+/** When and by whom the source was added, how it was checked, and whose copy it is. */
+export function SourceProvenance(props: {
+  readonly record: SourceRecord;
+  readonly row: SourceRowContext;
+}) {
+  const { record, row } = props;
+  const justAdded = row.recentlyAddedSourceIds.has(record.sourceId) && !record.fromSnapshot;
+  return (
+    <>
+      {sourceAddedLabel(record.importedAt, justAdded, record.origin?.actor === "agent")}
+      {agentVerificationLabel(record)}
+      {sourcePinLabel(record, row.listed)}
+    </>
+  );
+}
+
 export function SourceRow(props: {
   readonly record: SourceRecord;
   readonly row: SourceRowContext;
 }) {
   const { record, row } = props;
-  const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
-  const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
   const metadataDiagnostics = row.diagnosticsBySourceId.get(record.sourceId);
-  const justAdded = row.recentlyAddedSourceIds.has(record.sourceId) && !record.fromSnapshot;
   const onToggleStar = row.onToggleStar;
   return (
     <div
-      className={`group flex w-full items-start gap-2 px-2 py-1.5 hover:bg-accent/40 ${row.selection.has(record.sourceId) ? "bg-accent/35" : ""}`}
+      className={`group flex w-full items-center gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-foreground/[0.045] ${row.selection.has(record.sourceId) ? "bg-accent/35" : ""}`}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -143,7 +235,7 @@ export function SourceRow(props: {
       }}
     >
       {row.selection.size > 0 ? (
-        <span className="mt-2.5 ml-1 flex shrink-0">
+        <span className="ml-1 flex shrink-0">
           <Checkbox
             checked={row.selection.has(record.sourceId)}
             aria-label={`Select ${record.title ?? "Untitled source"}`}
@@ -156,12 +248,8 @@ export function SourceRow(props: {
           render={
             <button
               type="button"
-              className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              onClick={(event) =>
-                row.selection.size > 0 || event.metaKey || event.ctrlKey || event.shiftKey
-                  ? row.onToggleSelected(record.sourceId)
-                  : row.onOpenDetails(record.sourceId)
-              }
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              onClick={(event) => activateSource(event, record, row)}
             >
               <SourceJournalIcon
                 environmentId={row.environmentId}
@@ -190,12 +278,10 @@ export function SourceRow(props: {
           }
         />
         <TooltipPopup side="top">
-          {sourceAddedLabel(record.importedAt, justAdded, record.origin?.actor === "agent")}
-          {agentVerificationLabel(record)}
-          {sourcePinLabel(record, row.listed)}
+          <SourceProvenance record={record} row={row} />
         </TooltipPopup>
       </Tooltip>
-      <div className="mt-0.5 mr-1 flex shrink-0 items-center gap-1">
+      <div className="mr-1 flex shrink-0 items-center gap-1">
         {record.readingStatus !== undefined ? (
           <RowStar
             title={record.title}
@@ -212,50 +298,9 @@ export function SourceRow(props: {
           ) : null}
         </span>
         <span className="flex size-7 shrink-0 items-center justify-center">
-          {pdf ? (
-            <ScientTooltip content="Open PDF">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Open PDF: ${pdf.fileName}`}
-                onClick={() => {
-                  row.onOpenPdf({
-                    sourceId: record.sourceId,
-                    attachmentId: pdf.attachmentId,
-                    fileName: pdf.fileName,
-                  });
-                }}
-              >
-                <FileText />
-              </Button>
-            </ScientTooltip>
-          ) : materialSelection._tag === "SeveralMaterials" ? (
-            <ScientTooltip content="Choose a PDF in source details">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Choose a PDF to open: ${record.title ?? "Untitled source"}`}
-                onClick={() => row.onOpenDetails(record.sourceId)}
-              >
-                <FileText />
-              </Button>
-            </ScientTooltip>
-          ) : null}
+          <SourcePdfAction record={record} row={row} size="icon-sm" />
         </span>
-        <ScientTooltip content="More source actions">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="More source actions"
-            onClick={(event) => {
-              event.stopPropagation();
-              const bounds = event.currentTarget.getBoundingClientRect();
-              row.onShowMenu(record, { x: bounds.right, y: bounds.bottom });
-            }}
-          >
-            <MoreVertical />
-          </Button>
-        </ScientTooltip>
+        <SourceMenuButton record={record} row={row} />
       </div>
     </div>
   );
