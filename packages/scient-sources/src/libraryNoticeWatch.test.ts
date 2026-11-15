@@ -158,7 +158,8 @@ describe("reading the Retraction Watch file", () => {
   });
 
   it.each([
-    ["a download cut inside a row", slice.slice(0, slice.lastIndexOf(",Retraction,"))],
+    // Cut after the columns that are read: only the row's width shows it is not whole.
+    ["a download cut near the end of a row", slice.slice(0, -4)],
     ["a download cut inside a quoted field", slice.slice(0, slice.lastIndexOf('"') - 20)],
     ["a file with other columns", slice.replace("OriginalPaperDOI", "PaperDOI")],
     ["an empty answer", ""],

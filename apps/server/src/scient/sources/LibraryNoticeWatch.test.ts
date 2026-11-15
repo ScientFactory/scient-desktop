@@ -111,7 +111,7 @@ describe("the weekly notice check", () => {
   it.each([
     ["no connection", () => Promise.reject(new TypeError("fetch failed"))],
     ["an error from the server", () => new Response("Service unavailable", { status: 503 })],
-    ["a file cut short", () => new Response(FILE.slice(0, -120), { status: 200 })],
+    ["a file cut short", () => new Response(FILE.slice(0, -4), { status: 200 })],
   ])("changes nothing after %s and tries again at the next pass", async (_name, answer) => {
     const { library, state, run } = await setup({ scheme: "doi", value: "10.1002/jcb.21852" });
 

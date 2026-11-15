@@ -24,14 +24,14 @@ type WatchedKind = typeof WatchedKind.Type;
 const isWatchedKind = Schema.is(WatchedKind);
 
 /** A notice the weekly check put on a source or took off it, and whether the person dismissed it. */
-export const ScientLibraryNoticeChange = Schema.Struct({
+const ScientLibraryNoticeChange = Schema.Struct({
   sourceId: NonEmptyString,
   kind: WatchedKind,
   change: Schema.Literals(["added", "withdrawn"]),
   at: NonEmptyString,
   dismissed: Schema.optionalKey(Schema.Literal(true)),
 });
-export type ScientLibraryNoticeChange = typeof ScientLibraryNoticeChange.Type;
+type ScientLibraryNoticeChange = typeof ScientLibraryNoticeChange.Type;
 
 const NoticeWatchFile = Schema.Struct({
   formatVersion: Schema.Literal(1),
