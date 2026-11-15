@@ -20,6 +20,7 @@ import {
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "./libraryMerge.ts";
+import { readScientDisplacedCopies } from "./projectDisplacedCopies.ts";
 import {
   listScientProjectPinnedWorks,
   pinScientLibrarySource,
@@ -555,11 +556,23 @@ describe("records the Library holds apart from a source", () => {
 
   // regression: review IDEA-D1c-1, a refresh kept the other paper's value wherever a record had none.
   it("after an Undo, neither paper's copy keeps a value the merge brought from the other", async () => {
-    const { copies } = await mergedPair();
+    const { copies, project } = await mergedPair();
     expect(await copies()).toMatchObject({
       kept: { title: "The kept paper", publisher: "Kept Press", pages: null },
       away: { title: "The merged-away paper", publisher: null, pages: "11-19" },
     });
+
+    // What each copy had and its own record lacks is kept in the project, once.
+    const displaced = async () =>
+      (await readScientDisplacedCopies(await NodeFSP.realpath(project), "project"))
+        .map(({ lost, work }) => ({ lost, work }))
+        .toSorted((left, right) => left.lost.join().localeCompare(right.lost.join()));
+    expect(await displaced()).toMatchObject([
+      { lost: ["pages"], work: { title: "The kept paper", pages: "11-19" } },
+      { lost: ["publisher"], work: { title: "The kept paper", publisher: "Kept Press" } },
+    ]);
+    await copies();
+    expect(await displaced()).toHaveLength(2);
   });
 
   it("the same when either paper is removed before the project refreshes", async () => {

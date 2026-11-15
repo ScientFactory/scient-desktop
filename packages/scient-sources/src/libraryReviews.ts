@@ -7,6 +7,8 @@ import * as NodePath from "node:path";
 import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
+import { keepScientDisplacedCopies, scientValuesLostBy } from "./projectDisplacedCopies.ts";
+
 import { readScientSourcesOrganization } from "./collections.ts";
 import {
   readScientLibraryAliases,
@@ -992,11 +994,23 @@ export async function refreshScientLibraryReviewSnapshot(input: {
     const aliases = await readScientLibraryAliases(input.library);
     const { unmerged } = resolved;
     let removed: Promise<ReadonlyMap<string, ScientSourceRecord>> | undefined;
+    // What an unmerged source's entry knew and its record does not (an imported abstract) is
+    // kept aside, not dropped.
+    const displaced: Array<Parameters<typeof keepScientDisplacedCopies>[2][number]> = [];
+    const replaced = (sourceId: string, earlier: ScientReviewWork, work: ScientReviewWork) => {
+      const lost = scientValuesLostBy(earlier, work);
+      if (lost.length > 0) {
+        displaced.push({ sourceId, heldBy: review.reviewId, lost, work: earlier });
+      }
+      return work;
+    };
     for (const sourceId of named) {
       const stored = document.entries.get(sourceId);
       const record = libraryRecordFor(resolved, sourceId);
       if (stored && record) {
-        const work = refreshedWork(stored.work, record, now, unmerged.has(record.sourceId));
+        const isUnmerged = unmerged.has(record.sourceId);
+        const work = refreshedWork(stored.work, record, now, isUnmerged);
+        if (isUnmerged && work !== stored.work) replaced(sourceId, stored.work, work);
         entries.set(sourceId, work === stored.work ? stored : { ...stored, work });
       } else if (stored) {
         // As for a project key: a removed, unmerged source's entry is its own Trash entry or
@@ -1008,12 +1022,19 @@ export async function refreshScientLibraryReviewSnapshot(input: {
             : undefined;
         entries.set(
           sourceId,
-          own ? { ...stored, work: scientReviewWorkFromRecord(own, now) } : stored,
+          own
+            ? {
+                ...stored,
+                work: replaced(sourceId, stored.work, scientReviewWorkFromRecord(own, now)),
+              }
+            : stored,
         );
       } else if (record) {
         entries.set(sourceId, { work: scientReviewWorkFromRecord(record, now), extra: {} });
       }
     }
+    // Before the entries are replaced, so a stop in between loses neither.
+    await keepScientDisplacedCopies(root, "reviews", displaced);
     const published = await publishSnapshot(folder, review.reviewId, document, entries, []);
     return { changed: published !== document };
   });

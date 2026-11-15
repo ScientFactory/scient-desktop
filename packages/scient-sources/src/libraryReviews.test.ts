@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { editableMetadataFromRecord } from "./editable.ts";
 import { mergeScientLibrarySources, undoScientLibraryMerge } from "./libraryMerge.ts";
+import { readScientDisplacedCopies } from "./projectDisplacedCopies.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import {
   changeScientLibraryReview,
@@ -445,6 +446,19 @@ describe("review record snapshots", () => {
       abstractFrom: null,
       record: { title: "Randomised trial number 2", abstract: null },
     });
+
+    // The refresh replaces the entry with the record whole and keeps what the entry had aside.
+    await refreshScientLibraryReviewSnapshot({ projectRoot, library, reviewId });
+    expect(
+      await readScientDisplacedCopies(await NodeFSP.realpath(projectRoot), "reviews"),
+    ).toMatchObject([
+      {
+        sourceId: merged.sourceId,
+        heldBy: reviewId,
+        lost: expect.arrayContaining(["abstract"]),
+        work: { abstract: "Abstract of the first trial." },
+      },
+    ]);
   });
 
   it("sets a broken snapshot aside, refills it, and removes a snapshot whose review never existed", async () => {

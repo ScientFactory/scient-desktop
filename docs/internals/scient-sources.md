@@ -647,8 +647,12 @@ sources in `<project>/.scient/library/pins.json`:
   live and for a removed source, so the bibliography never cites the stale
   snapshot before the refresh; a review read gives an unmerged record no
   abstract from its snapshot. Any other removed pin keeps its
-  snapshot untouched. Limits: what a project knew about an unmerged source
-  beyond the Library is not kept; a pin whose ID is another computer's and
+  snapshot untouched. What a copy knew and the record that replaces it does
+  not (a field with a value in the copy and none in the record) is kept
+  before the replacement in `.scient/library/displaced/project.json`, and a
+  review entry's in `displaced/reviews.json` (`projectDisplacedCopies.ts`:
+  the copy as it was, who held it, the fields lost; newest 200 per file;
+  nothing reads them back on its own). Limits: a pin whose ID is another computer's and
   was matched here by its data is not repaired after removal; a source merged
   again and unmerged again marks only its latest pair. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not

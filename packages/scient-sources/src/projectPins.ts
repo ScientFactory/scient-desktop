@@ -6,6 +6,8 @@ import * as NodePath from "node:path";
 import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
+import { keepScientDisplacedCopies, scientValuesLostBy } from "./projectDisplacedCopies.ts";
+
 import { assignCitationKey, citationKeyComparisonValue } from "./citationKeys.ts";
 import {
   readScientLibraryAliases,
@@ -901,6 +903,21 @@ export async function refreshScientProjectPinSnapshots(input: {
     const unmerged = scientUnmergedSourceIds(aliases);
     let removed: Promise<ReadonlyMap<string, ScientSourceRecord>> | undefined;
     const pins: StoredPin[] = [];
+    // What an unmerged source's copy knew and its record does not is kept aside, not dropped.
+    const displaced: Array<Parameters<typeof keepScientDisplacedCopies>[2][number]> = [];
+    const whole = (stored: StoredPin, record: ScientSourceRecord): ScientPinWork => {
+      const work = unmergedSourceWork(stored.pin.work, record);
+      const lost = scientValuesLostBy(stored.pin.work, work);
+      if (lost.length > 0) {
+        displaced.push({
+          sourceId: stored.pin.sourceId,
+          heldBy: stored.pin.citationKey,
+          lost,
+          work: stored.pin.work,
+        });
+      }
+      return work;
+    };
     for (const [index, stored] of document.pins.entries()) {
       const resolution = resolutions[index]!;
       const record = resolution.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
@@ -908,7 +925,7 @@ export async function refreshScientProjectPinSnapshots(input: {
         // An unmerged source's copy is its record whole: what the old copy knew beyond it may
         // be the other source's, written while the merge stood.
         const work = unmerged.has(record.sourceId)
-          ? unmergedSourceWork(stored.pin.work, record)
+          ? whole(stored, record)
           : scientPinWorkKeepingUnknown(
               stored.pin.work,
               scientPinWorkFromRecord(withKnownPinCitationValues(record, stored.pin.work)),
@@ -924,12 +941,10 @@ export async function refreshScientProjectPinSnapshots(input: {
         resolution.kind === "unresolved" && resolution.reason === "removed" && unmerged.has(ownId)
           ? (await (removed ??= readScientRemovedLibraryRecords(input.library))).get(ownId)
           : undefined;
-      pins.push(
-        own
-          ? { ...stored, pin: { ...stored.pin, work: unmergedSourceWork(stored.pin.work, own) } }
-          : stored,
-      );
+      pins.push(own ? { ...stored, pin: { ...stored.pin, work: whole(stored, own) } } : stored);
     }
+    // Before the copies are replaced, so a stop in between loses neither.
+    await keepScientDisplacedCopies(root, "project", displaced);
     const changed = await writePinsDocument(root, document, pins);
     return { changed, pins: pins.map(({ pin }) => pin).toSorted(comparePins) };
   });
