@@ -106,6 +106,8 @@ class WorktreeDirectoryReadError extends Schema.TaggedError<WorktreeDirectoryRea
 }
 
 const DAY_MS = 86_400_000;
+// SCIENT-FORK: ForkCheckpointOwnership names a fork's snapshot `turn/0-<attempt uuid>`.
+const FORK_SNAPSHOT_SUFFIX = /^0-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // Give settle scripts time to open terminals that protect the worktree.
 const SETTLE_SCRIPT_GRACE_MS = 60_000;
 // Worktree creation can precede its thread row, including review-guide checkouts.
@@ -1823,6 +1825,8 @@ const make = Effect.gen(function* () {
       workspaceRoot: string | null;
       scopeId: string | null;
       cwd: string | null;
+      forkSnapshotRef: string | null;
+      forkCwd: string | null;
     }>`
       WITH RECURSIVE retained_checkpoint_threads(thread_id) AS (
         SELECT thread_id FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
@@ -1835,7 +1839,9 @@ const make = Effect.gen(function* () {
       SELECT t.thread_id AS "threadId",
         json_extract(t.payload_json, '$.worktreePath') AS "worktreePath",
         p.workspace_root AS "workspaceRoot", s.scope_id AS "scopeId",
-        json_extract(s.payload_json, '$.cwd') AS cwd
+        json_extract(s.payload_json, '$.cwd') AS cwd,
+        json_extract(t.payload_json, '$.conversationFork.checkpointRef') AS "forkSnapshotRef",
+        json_extract(t.payload_json, '$.conversationFork.cwd') AS "forkCwd"
       FROM orchestration_v2_projection_threads t
       LEFT JOIN projection_projects p ON p.project_id = t.project_id
       LEFT JOIN orchestration_v2_projection_checkpoint_scopes s ON s.thread_id = t.thread_id
@@ -1846,11 +1852,25 @@ const make = Effect.gen(function* () {
           WHERE e.thread_id = t.thread_id AND e.status IN ('pending', 'running')
         )
     `.pipe(NodeSqliteClient.readOnly);
-    const targets = new Map<string, Set<string>>();
+    // SCIENT-FORK:START — a fork's snapshot ref is pruned with its deleted thread, unless a
+    // fork attempt still holds it: ForkCheckpointOwnership releases or keeps that one itself.
+    // Unreadable reservations prune no snapshot at all.
+    const reservedSnapshots = yield* sql<{ checkpointRef: string }>`
+      SELECT checkpoint_ref AS "checkpointRef" FROM scient_fork_checkpoint_ownership
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.map((reserved) => new Set(reserved.map((row) => row.checkpointRef))),
+      Effect.catch((cause) =>
+        Effect.logWarning("fork snapshot reservations unreadable", { cause }).pipe(Effect.as(null)),
+      ),
+    );
+    // SCIENT-FORK:END
+    const targets = new Map<string, { prefixes: Set<string>; snapshots: Set<string> }>();
     for (const row of rows) {
       // Derive ownership from tombstones, never from absence in this database:
       // another T3 home can own refs in the same Git repository.
-      const prefixes = [`refs/t3/checkpoints/${Base64Url.encode(row.threadId)}/turn/`];
+      const threadPrefix = `refs/t3/checkpoints/${Base64Url.encode(row.threadId)}/turn/`;
+      const prefixes = [threadPrefix];
       if (row.scopeId !== null) {
         prefixes.push(
           (yield* checkpointRefForScopeOrdinal({
@@ -1859,17 +1879,34 @@ const make = Effect.gen(function* () {
           })).slice(0, -1),
         );
       }
+      // SCIENT-FORK:START — only the exact snapshot this fork recorded, in its own namespace.
+      const snapshot =
+        reservedSnapshots !== null &&
+        row.forkSnapshotRef !== null &&
+        row.forkSnapshotRef.startsWith(threadPrefix) &&
+        FORK_SNAPSHOT_SUFFIX.test(row.forkSnapshotRef.slice(threadPrefix.length)) &&
+        !reservedSnapshots.has(row.forkSnapshotRef)
+          ? row.forkSnapshotRef
+          : null;
+      // SCIENT-FORK:END
       // A worktree may already be gone; its refs live in the shared repository.
-      for (const cwd of [row.cwd, row.worktreePath, row.workspaceRoot]) {
+      for (const cwd of [row.cwd, row.worktreePath, row.workspaceRoot, row.forkCwd]) {
         if (cwd === null) continue;
         const key = path.resolve(cwd);
-        const owned = targets.get(key) ?? new Set<string>();
-        for (const prefix of prefixes) owned.add(prefix);
+        const owned = targets.get(key) ?? {
+          prefixes: new Set<string>(),
+          snapshots: new Set<string>(),
+        };
+        for (const prefix of prefixes) owned.prefixes.add(prefix);
+        if (snapshot !== null) owned.snapshots.add(snapshot);
         targets.set(key, owned);
       }
     }
-    const repositories = new Map<string, { cwd: string; prefixes: Set<string> }>();
-    for (const [cwd, prefixes] of targets) {
+    const repositories = new Map<
+      string,
+      { cwd: string; prefixes: Set<string>; snapshots: Set<string> }
+    >();
+    for (const [cwd, { prefixes, snapshots }] of targets) {
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(cwd))) return;
         const result = yield* git.execute({
@@ -1880,8 +1917,13 @@ const make = Effect.gen(function* () {
         });
         if (result.exitCode !== 0) return;
         const commonDir = yield* fs.realPath(result.stdout.trim());
-        const repository = repositories.get(commonDir) ?? { cwd, prefixes: new Set<string>() };
+        const repository = repositories.get(commonDir) ?? {
+          cwd,
+          prefixes: new Set<string>(),
+          snapshots: new Set<string>(),
+        };
         for (const prefix of prefixes) repository.prefixes.add(prefix);
+        for (const snapshot of snapshots) repository.snapshots.add(snapshot);
         repositories.set(commonDir, repository);
       }).pipe(
         Effect.catch((cause) =>
@@ -1889,7 +1931,7 @@ const make = Effect.gen(function* () {
         ),
       );
     }
-    for (const { cwd, prefixes } of repositories.values()) {
+    for (const { cwd, prefixes, snapshots } of repositories.values()) {
       yield* Effect.gen(function* () {
         const result = yield* git.execute({
           operation: "StorageCleanup.listCheckpointRefs",
@@ -1905,8 +1947,10 @@ const make = Effect.gen(function* () {
         const refs = result.stdout.split("\n").filter((ref) => {
           const ordinalStart = ref.lastIndexOf("/") + 1;
           return (
-            prefixes.has(ref.slice(0, ordinalStart)) &&
-            /^(0|[1-9]\d*)$/.test(ref.slice(ordinalStart))
+            (prefixes.has(ref.slice(0, ordinalStart)) &&
+              /^(0|[1-9]\d*)$/.test(ref.slice(ordinalStart))) ||
+            // SCIENT-FORK: a deleted fork's recorded snapshot.
+            snapshots.has(ref)
           );
         });
         if (refs.length === 0) return;
