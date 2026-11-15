@@ -14,6 +14,7 @@ import {
   type ScientSourceZoteroSendItem,
   type ZoteroConnection,
   zoteroGroupIdOfLibrary,
+  zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
 import {
   attachScientSourcePdf,
@@ -509,6 +510,22 @@ function noFilesMessage(library: ZoteroWebLibrary): string {
     : "The Zotero key in Accounts does not allow files.";
 }
 
+const itemSends = new Map<string, Promise<unknown>>();
+
+/**
+ * One PDF Send at a time for each Zotero item in this server: two that overlap would both find
+ * no attachment and each make one. A Send from another computer is not kept out.
+ */
+async function oneSendPerItem<A>(key: string, run: () => Promise<A>): Promise<A> {
+  const current = (itemSends.get(key) ?? Promise.resolve()).catch(() => undefined).then(run);
+  itemSends.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (itemSends.get(key) === current) itemSends.delete(key);
+  }
+}
+
 /**
  * Each PDF of the source that the item lacks, through Zotero's file upload. An attachment left
  * without its file by an earlier Send is filled, not doubled; one this Send made and Zotero
@@ -733,11 +750,17 @@ export async function sendSourcesToZotero(input: {
       const item = await sendOne({ root: input.root, record, library, actor: input.actor });
       const placed =
         item.outcome === "created" || item.outcome === "updated" || item.outcome === "unchanged";
+      const { itemKey } = item;
+      const libraryId = library.groupId
+        ? zoteroGroupLibraryId(library.groupId)
+        : library.account.userId;
       items.push(
-        input.pdfs && placed && item.itemKey
+        input.pdfs && placed && itemKey
           ? {
               ...item,
-              pdfs: await sendPdfs({ root: input.root, record, library, itemKey: item.itemKey }),
+              pdfs: await oneSendPerItem(`${libraryId}\0${itemKey}`, () =>
+                sendPdfs({ root: input.root, record, library, itemKey }),
+              ),
             }
           : item,
       );

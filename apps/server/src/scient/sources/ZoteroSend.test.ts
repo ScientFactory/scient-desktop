@@ -858,4 +858,38 @@ describe("Send to Zotero", () => {
       { parentItem: "NEWA2345", filename: "paper.pdf", md5: [...org.stored.keys()][0] },
     ]);
   });
+
+  it("makes one attachment when two Sends of one source overlap", async () => {
+    const source = await sourceWithPdf("first");
+    const org = zoteroOrg();
+    await sendSourcesToZotero({
+      root: source.root,
+      sourceIds: [source.sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+    // A Send lists the item's files only once both have read the item: both are under way.
+    let itemReads = 0;
+    const bothRead = Promise.withResolvers<void>();
+    const http: ZoteroWebHttp = {
+      ...org.zotero.http,
+      request: async (request) => {
+        const path = request.url.pathname;
+        if (path === `/users/${USER}/items/NEWA2345` && ++itemReads === 2) bothRead.resolve();
+        if (path === `/users/${USER}/items/NEWA2345/children`) await bothRead.promise;
+        return org.zotero.http.request(request);
+      },
+    };
+    const overlapping = { zotero: { ...org.zotero, http } };
+
+    const sends = await Promise.all([
+      sendWithPdfs(source, overlapping),
+      sendWithPdfs(source, overlapping),
+    ]);
+
+    expect(sends.flatMap((sent) => sent.items[0]?.pdfs?.map((pdf) => pdf.outcome)).toSorted()).toEqual(
+      ["in-zotero", "sent"],
+    );
+    expect(attachmentsIn(org)).toHaveLength(1);
+  });
 });

@@ -3840,7 +3840,10 @@ the citation key and identifiers without a Zotero field.
 With `pdfs` (the panel's **Include PDF**, off when the panel opens and held in
 `useZoteroSync`; the agent's `pdfs` input) each PDF of a source whose item was
 created, updated or found unchanged is sent by `sendPdfs` after the item's
-attachments are read once. A stored attachment with the PDF's MD5 means Zotero
+attachments are read once. One `sendPdfs` runs at a time for each Zotero item
+in the server process (`oneSendPerItem`, keyed by library and item key): two
+overlapping Sends would both read no attachment and each make one. A Send from
+another computer is not kept out. A stored attachment with the PDF's MD5 means Zotero
 has it (`in-zotero`). A `linked_file` attachment with the same file name (its
 `filename`, or the last part of its `path`) is not uploaded over: Zotero keeps
 only a path for it, so the name is all there is to compare. A personal library
