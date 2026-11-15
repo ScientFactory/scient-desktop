@@ -177,6 +177,12 @@ function selectOpenCodeRuntimeAdapter(input: {
     // Both native protocol versions must support the configured host channel.
     mcpSessionInjection:
       input.v1.mcpSessionInjection === true && input.v2.mcpSessionInjection === true,
+    // SCIENT-FORK:START — background-wait recovery: only the runtime a session would use counts.
+    backgroundWait: hot.pipe(
+      Effect.flatMap((adapter) => adapter.backgroundWait ?? Effect.succeed(false)),
+      Effect.orElseSucceed(() => false),
+    ),
+    // SCIENT-FORK:END
     getCapabilities: Effect.fn("OpenCodeDriver.getCapabilities")(function* () {
       const probed = Option.getOrUndefined(yield* input.probe.lastSuccess);
       const adapter = yield* pick(Effect.succeed(probed));

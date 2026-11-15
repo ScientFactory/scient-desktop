@@ -10,6 +10,7 @@ import {
   type ExtensionComponent,
   ExtensionsError,
   type ProjectId,
+  type ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProviderMcpServer,
   type ServerProviderPlugin,
@@ -32,6 +33,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { LocalSetupDialog } from "./LocalSetupFields";
 
 import { WorksWithValue } from "./WorksWith";
+import { AddForAgents, useConnectorAgents } from "./AgentPicker";
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
@@ -63,11 +65,12 @@ import { ErrorNote } from "./ExtensionsFeedback";
 import { siteHost } from "./LocalSetupFields";
 import { useSignIn } from "../accounts/useSignIn";
 import {
-  BackLink,
+  BackToList,
   ExtensionsPage,
   GHOST_LINK_CLASS,
   MutedLine,
   SECTION_HEADING_CLASS,
+  useBackToList,
   useExtensionsEnvironment,
 } from "./ExtensionsPage";
 import { ExtensionIcon, type ExtensionTarget } from "./ExtensionRow";
@@ -94,6 +97,7 @@ import {
   TEST_OUTCOME_LABELS,
   urlHost,
   workspaceLabel,
+  connectorAudience,
 } from "./extensionsView";
 import { providerInventoryMessage } from "./providerInventory";
 
@@ -101,11 +105,12 @@ const isExtensionsError = Schema.is(ExtensionsError);
 
 type BackTo = "discover" | "installed";
 
+/** Back to the list the page was opened from; `to` is used when it was opened directly. */
 function DetailBack({ to }: { readonly to: BackTo }) {
   return to === "discover" ? (
-    <BackLink to="/settings/extensions">Discover</BackLink>
+    <BackToList fallback="/settings/extensions" fallbackLabel="Discover" />
   ) : (
-    <BackLink to="/settings/extensions/installed">Installed</BackLink>
+    <BackToList fallback="/settings/extensions/installed" fallbackLabel="Installed" />
   );
 }
 
@@ -333,9 +338,9 @@ function formatDate(iso: string | undefined): string | undefined {
   return iso === undefined ? undefined : DATE_FORMAT.format(new Date(iso));
 }
 
-/** Curated categories by their section titles; "featured" is a shelf, not a category. */
+/** Curated categories by their section titles; "most-used" is a shelf, not a category. */
 function categoryLabel(entry: DiscoverEntry | undefined, catalog: DiscoverCatalog | null) {
-  const categories = entry?.categories.filter((category) => category !== "featured") ?? [];
+  const categories = entry?.categories.filter((category) => category !== "most-used") ?? [];
   if (categories.length === 0) return undefined;
   return categories
     .map(
@@ -501,7 +506,7 @@ function connectionDetail(connector: ConnectorSummary, busy: string | null): str
 }
 
 /**
- * "Available in" with the projects it names. A saved project deleted since
+ * "Projects" with the projects it names. A saved project deleted since
  * shows as "Deleted project". Every change leaves deleted projects out: the
  * server refuses a list that names one, and dropping it only narrows where
  * the service is available.
@@ -531,9 +536,9 @@ function AvailabilityRows({
     sendProjects(enabled ? [...others, projectId] : others);
   };
   return (
-    <div role="group" aria-label="Available in" className="divide-y divide-border">
+    <div role="group" aria-label="Projects" className="divide-y divide-border">
       <CardRow>
-        <span className="min-w-0 flex-1 text-sm text-foreground">Available in</span>
+        <span className="min-w-0 flex-1 text-sm text-foreground">Projects</span>
         <span className="w-44">
           <NativeSelect
             size="sm"
@@ -616,6 +621,7 @@ function ConnectorDetail({
 }) {
   const { inventory, catalog, environmentId, canWrite } = useExtensionsEnvironment();
   const actions = useConnectorActions(connector);
+  const backToList = useBackToList();
   const allowed = connectorActions(connector);
   const [editing, setEditing] = useState(false);
   const startChat = useConnectorAgentChat(environmentId);
@@ -652,7 +658,12 @@ function ConnectorDetail({
             <Button
               variant="destructive-outline"
               disabled={actions.locked}
-              onClick={() => void actions.remove()}
+              onClick={() =>
+                // Its own page has nothing left to show; a catalog entry's page shows the entry again.
+                void actions.remove().then((removed) => {
+                  if (removed && back === "installed") backToList();
+                })
+              }
             >
               Remove
             </Button>
@@ -673,15 +684,11 @@ function ConnectorDetail({
             </div>
             {allowed.signIn ? (
               <PrimaryAction
-                icon={allowed.signIn === "sign-in" ? LogInIcon : RefreshCwIcon}
+                icon={LogInIcon}
                 disabled={!actions.canSignIn}
                 onClick={() => void actions.signIn()}
               >
-                {actions.busy === "sign-in"
-                  ? "Opening…"
-                  : allowed.signIn === "sign-in"
-                    ? "Sign in"
-                    : "Reconnect"}
+                {actions.busy === "sign-in" ? "Opening…" : "Sign in"}
               </PrimaryAction>
             ) : null}
             <MoreMenu label={`More for ${name} connection`}>
@@ -740,6 +747,12 @@ function ConnectorDetail({
               onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
             />
           </CardRow>
+          <AgentRows
+            connector={connector}
+            name={name}
+            locked={actions.locked}
+            setAgents={actions.setAgents}
+          />
           <AvailabilityRows
             connector={connector}
             name={name}
@@ -851,12 +864,18 @@ function ConnectorDetail({
             "Repository",
             entry?.repositoryUrl ? <ExternalLink href={entry.repositoryUrl} /> : null,
           ),
-          ["Works with", <WorksWithValue key="works-with" />],
+          [
+            "Works with",
+            <WorksWithValue key="works-with" audience={connectorAudience(connector)} />,
+          ],
           ...(connector.local === undefined
             ? ([
-                ["Sign-in used", connectorAuthLabel(connector.auth)],
+                // Connection already says when there is no sign-in.
+                connector.auth.type === "none"
+                  ? null
+                  : ["Sign-in used", connectorAuthLabel(connector.auth)],
                 ["URL", <Mono key="url">{connector.url}</Mono>],
-              ] satisfies ReadonlyArray<Fact>)
+              ] satisfies ReadonlyArray<Fact | null>)
             : [
                 fact("Version", connector.local.version),
                 fact("Author", connector.local.author),
@@ -931,7 +950,8 @@ function ServerDetail({
   onAddWithOptions,
 }: {
   readonly entry: DiscoverEntry;
-  readonly onAddWithOptions: () => void;
+  /** Opens the add form, for the chosen agents (absent: every agent). */
+  readonly onAddWithOptions: (agents?: ReadonlyArray<ProviderInstanceId>) => void;
 }) {
   const { catalog, providers, environmentId } = useExtensionsEnvironment();
   const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
@@ -950,16 +970,22 @@ function ServerDetail({
           tagline={tagline}
           actions={
             <>
-              <PrimaryAction
-                icon={PlusIcon}
+              <AddForAgents
+                name={name}
                 disabled={!actions.canAdd || actions.locked}
-                onClick={() => (entryNeedsSetup(entry) ? onAddWithOptions() : void actions.add())}
-              >
-                {actions.busy === "add" ? "Adding…" : "Add"}
-              </PrimaryAction>
+                onAdd={(agents) =>
+                  entryNeedsSetup(entry) ? onAddWithOptions(agents) : void actions.add(agents)
+                }
+                trigger={
+                  <Button size="sm" type="button" variant="ghost-primary" data-primary-action="">
+                    <PlusIcon aria-hidden />
+                    {actions.busy === "add" ? "Adding…" : "Add"}
+                  </Button>
+                }
+              />
               {actions.canAdd && entry.localBundle === undefined ? (
                 <MoreMenu label={`More for ${name}`}>
-                  <MenuItem disabled={actions.locked} onClick={onAddWithOptions}>
+                  <MenuItem disabled={actions.locked} onClick={() => onAddWithOptions()}>
                     Add with options…
                   </MenuItem>
                 </MoreMenu>
@@ -1052,13 +1078,81 @@ function ServerDetail({
 }
 
 /**
+ * Which agents get a connector: all of them, or the ones chosen here. An agent added later gets
+ * it only while "All agents" is set. The last chosen agent stays on; "Use with agents" turns the
+ * connector off for everyone.
+ */
+function AgentRows({
+  connector,
+  name,
+  locked,
+  setAgents,
+}: {
+  readonly connector: ConnectorSummary;
+  readonly name: string;
+  readonly locked: boolean;
+  readonly setAgents: ConnectorActionsState["setAgents"];
+}) {
+  const agents = useConnectorAgents();
+  if (agents.length <= 1 && connector.agents === undefined) return null;
+  const chosen = connector.agents ?? [];
+  const toggle = (instanceId: ProviderInstanceId, on: boolean) => {
+    const others = chosen.filter((id) => id !== instanceId);
+    void setAgents(on ? [...others, instanceId] : others);
+  };
+  return (
+    <div role="group" aria-label="Agents" className="divide-y divide-border">
+      <CardRow>
+        <span className="min-w-0 flex-1 text-sm text-foreground">Agents</span>
+        <span className="w-44">
+          <NativeSelect
+            size="sm"
+            aria-label={`Which agents get ${name}`}
+            value={connector.agents === undefined ? "all" : "chosen"}
+            disabled={locked}
+            onChange={(event) =>
+              void setAgents(
+                event.target.value === "all" ? null : agents.map((agent) => agent.instanceId),
+              )
+            }
+          >
+            <option value="all">All agents</option>
+            <option value="chosen">Selected agents</option>
+          </NativeSelect>
+        </span>
+      </CardRow>
+      {connector.agents !== undefined
+        ? agents.map((agent) => {
+            const on = chosen.includes(agent.instanceId);
+            return (
+              <NestedRow key={agent.instanceId}>
+                <span className="min-w-0 truncate text-foreground">{agent.label}</span>
+                <Switch
+                  size="sm"
+                  checked={on}
+                  disabled={locked || (on && chosen.length === 1)}
+                  aria-label={`${on ? "Turn off" : "Turn on"} for ${agent.label}`}
+                  onCheckedChange={(checked) => toggle(agent.instanceId, Boolean(checked))}
+                />
+              </NestedRow>
+            );
+          })
+        : null}
+    </div>
+  );
+}
+
+/**
  * Any catalog or registry server by its exact name, looked up on the server
  * so entries no preview lists still open. Once added it is its connector.
  * "Add with options" stays open across that switch, for its sign-in step.
  */
 function ServerDetailContent({ name }: { readonly name: string }) {
   const { environmentId, callbackOrigin, inventory } = useExtensionsEnvironment();
-  const [withOptions, setWithOptions] = useState(false);
+  // The add form, with the agents chosen for it (none chosen: every agent).
+  const [withOptions, setWithOptions] = useState<{
+    readonly agents?: ReadonlyArray<ProviderInstanceId>;
+  } | null>(null);
   const lookup = useEnvironmentQuery(extensionsDiscoverEntry({ environmentId, input: { name } }));
   const entry = lookup.data;
   if (entry === null) {
@@ -1086,17 +1180,21 @@ function ServerDetailContent({ name }: { readonly name: string }) {
           back="discover"
         />
       ) : (
-        <ServerDetail entry={entry} onAddWithOptions={() => setWithOptions(true)} />
+        <ServerDetail
+          entry={entry}
+          onAddWithOptions={(agents) => setWithOptions(agents === undefined ? {} : { agents })}
+        />
       )}
       {withOptions ? (
         <AddConnectorDialog
           open
           onOpenChange={(open) => {
-            if (!open) setWithOptions(false);
+            if (!open) setWithOptions(null);
           }}
           environmentId={environmentId}
           entry={entry}
           callbackOrigin={callbackOrigin}
+          agents={withOptions.agents}
         />
       ) : null}
     </>
@@ -1111,12 +1209,15 @@ export function ServerDetailPage({ name }: { readonly name: string }) {
   );
 }
 
-type ComponentGroupLabel = "Skills" | "Connected services" | "Tools" | "Other";
+type ComponentGroupLabel = "Connected services" | "Tools" | "Other";
+/** A plugin's parts other than its skills, which have their own section. */
+type PluginPart = ExtensionComponent & {
+  readonly type: Exclude<ExtensionComponent["type"], "skill">;
+};
 
 const COMPONENT_KINDS: Readonly<
-  Record<ExtensionComponent["type"], { readonly group: ComponentGroupLabel; readonly kind: string }>
+  Record<PluginPart["type"], { readonly group: ComponentGroupLabel; readonly kind: string }>
 > = {
-  skill: { group: "Skills", kind: "Skill" },
   connector: { group: "Connected services", kind: "Connected service" },
   "mcp-tools": { group: "Tools", kind: "Tools" },
   settings: { group: "Other", kind: "Settings" },
@@ -1124,15 +1225,12 @@ const COMPONENT_KINDS: Readonly<
 };
 
 const COMPONENT_GROUP_ORDER: ReadonlyArray<ComponentGroupLabel> = [
-  "Skills",
   "Connected services",
   "Tools",
   "Other",
 ];
 
-function componentGroups(
-  components: ReadonlyArray<ExtensionComponent>,
-): ReadonlyArray<DetailGroup> {
+function componentGroups(components: ReadonlyArray<PluginPart>): ReadonlyArray<DetailGroup> {
   return COMPONENT_GROUP_ORDER.map((label) => ({
     label,
     rows: components
@@ -1140,15 +1238,7 @@ function componentGroups(
       .map((component) => ({
         key: `${component.type}:${component.name}`,
         name:
-          component.type === "skill" ? (
-            <Link
-              to="/settings/extensions"
-              search={{ kind: "skills" }}
-              className={cn(GHOST_LINK_CLASS, "text-foreground")}
-            >
-              {component.name}
-            </Link>
-          ) : component.type === "mcp-tools" ? (
+          component.type === "mcp-tools" ? (
             <span className="font-mono text-xs leading-5">{component.name}</span>
           ) : (
             component.name
@@ -1212,15 +1302,18 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
           <GroupsCard
             label="Parts"
             groups={componentGroups(
-              plugin.components.filter((component) => component.type !== "skill"),
+              plugin.components.filter(
+                (component): component is PluginPart => component.type !== "skill",
+              ),
             )}
           />
         </DetailSection>
       ) : null}
       <AboutCard
         rows={[
-          ["Developer", plugin.publisher],
-          ["Version", plugin.version],
+          // A built-in's header and Source already say whose it is.
+          builtIn ? null : ["Developer", plugin.publisher],
+          builtIn ? null : ["Version", plugin.version],
           fact("Installed on", formatDate(plugin.installedAt)),
           fact(
             "Settings",
@@ -1345,7 +1438,7 @@ function ProviderPluginDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.uninstall()}
                 >
-                  Remove
+                  Remove from {group.label}
                 </Button>
               ) : (
                 <MutedLine>
@@ -1373,8 +1466,6 @@ function ProviderPluginDetail({
       />
       <AboutCard
         rows={[
-          ["Managed by", group.label],
-          ["Plugin ID", <Mono key="plugin-id">{plugin.name}</Mono>],
           [
             "Works with",
             <WorksWithValue
@@ -1382,7 +1473,8 @@ function ProviderPluginDetail({
               audience={providerExtensionAudience(group.provider, plugin)}
             />,
           ],
-          fact("Version", plugin.version),
+          // Claude records a commit hash where others give a version; a hash tells a person nothing.
+          fact("Version", /^[0-9a-f]{7,40}$/.test(plugin.version ?? "") ? null : plugin.version),
           fact("Marketplace", plugin.marketplace),
           fact("Source", plugin.sourceLabel),
           fact("Workspace", workspace ? workspaceLabel(workspace) : null),
@@ -1478,7 +1570,6 @@ function ProviderServerDetail({
     >
       <AboutCard
         rows={[
-          ["Managed by", group.label],
           [
             "Works with",
             <WorksWithValue
@@ -1487,9 +1578,6 @@ function ProviderServerDetail({
             />,
           ],
           ["Status", status],
-          fact("Tools", server.toolCount === undefined ? null : String(server.toolCount)),
-          fact("Scope", server.scope),
-          fact("From plugin", server.pluginId),
         ]}
       />
     </DetailLayout>

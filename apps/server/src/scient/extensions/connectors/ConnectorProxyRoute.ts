@@ -119,7 +119,12 @@ const handler = Effect.gen(function* () {
   }
 
   const granted =
-    thread !== null && (yield* runtime.isGranted({ connectorId, projectId: thread.projectId }));
+    thread !== null &&
+    (yield* runtime.isGranted({
+      connectorId,
+      projectId: thread.projectId,
+      providerInstanceId: scope.thread.providerInstanceId,
+    }));
   if (!granted || thread === null) {
     // Same shape as a lost upstream grant: a JSON-RPC error for POST, never 401.
     return toServerResponse(

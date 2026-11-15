@@ -13,6 +13,9 @@ describe("analyticsFailureCode", () => {
     ["codex", "subscription_sharing_usage_limit_exceeded"],
     ["cursor", "oom_kill"],
     ["codex", "retry_stalled"],
+    ["antigravity", "prompt_inactivity"],
+    ["antigravity", "mcp_load_failed"],
+    ["droid", "model_usage_exhausted"],
   ])("keeps %s's known code %s", (provider, code) => {
     expect(analyticsFailureCode(provider, code)).toBe(code);
   });
@@ -29,6 +32,9 @@ describe("analyticsFailureCode", () => {
     ["scient", "http_999"],
     ["scient", "error_max_turns"],
     ["cursor", "usageLimitExceeded"],
+    // A tool server's name is not a category.
+    ["antigravity", "ct-crash"],
+    ["droid", "UNAVAILABLE"],
     ["scient", null],
   ])("drops %s's code %s", (provider, code: unknown) => {
     expect(analyticsFailureCode(provider, code)).toBeUndefined();

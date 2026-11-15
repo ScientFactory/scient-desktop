@@ -9,6 +9,7 @@ import {
   type DiscoverEntry,
   EnvironmentId,
   ExtensionsError,
+  ProviderInstanceId,
   SourceControlProviderKind,
   SourceControlSignInError,
 } from "@t3tools/contracts";
@@ -141,6 +142,10 @@ function setup() {
   state.accounts = [];
   state.managedElsewhere = [];
   state.add.mockReset();
+  // Mounting the local form lists importable servers; a test that asserts it was not asked
+  // must not see an earlier test's call.
+  state.importable.mockReset();
+  state.test.mockReset();
   state.inspect.mockReset();
   state.install.mockReset();
   state.skillsAdd.mockReset();
@@ -159,7 +164,7 @@ function setup() {
   const stack = new AsyncDisposableStack();
   let screen: Screen | undefined;
   return {
-    async render(entry: DiscoverEntry | null = null) {
+    async render(entry: DiscoverEntry | null = null, agents?: ReadonlyArray<ProviderInstanceId>) {
       const ui = (
         <AddConnectorDialog
           open
@@ -167,6 +172,7 @@ function setup() {
           environmentId={environmentId}
           entry={entry}
           callbackOrigin="http://127.0.0.1:3773"
+          agents={agents}
         />
       );
       if (screen) await screen.rerender(ui);
@@ -390,6 +396,27 @@ describe("AddConnectorDialog validation", () => {
     });
     expect(document.body.textContent).toContain("Sign in to Linear");
     expect(state.toast).not.toHaveBeenCalled();
+  });
+
+  it("adds for the agents chosen before the form opened", async () => {
+    await using fixture = setup();
+    const codex = ProviderInstanceId.make("codex");
+    state.add.mockResolvedValue({ _tag: "Success", value: { connector, nextStep: "ready" } });
+    await fixture.render(
+      {
+        name: "app.linear/linear",
+        version: "1.0.0",
+        title: "Linear",
+        remotes: [
+          { type: "streamable-http", url: "https://mcp.linear.app/mcp", requiresInput: false },
+        ],
+        installable: true,
+        categories: [],
+      },
+      [codex],
+    );
+    await submit();
+    expect(state.add.mock.calls[0]![0].input.agents).toEqual([codex]);
   });
 
   it("sends the entry's description, trimmed and capped at 1000 characters", async () => {
@@ -850,6 +877,16 @@ describe("local connectors", () => {
       },
     });
     await expect.element(page.getByText("Ready: 1 tool")).toBeVisible();
+  });
+
+  it("adds a local package for the agents chosen before the form opened", async () => {
+    await using fixture = setup();
+    ready();
+    const codex = ProviderInstanceId.make("codex");
+    await fixture.render(localEntry, [codex]);
+    await userEvent.fill(page.getByLabelText("NOTES_KEY", { exact: true }), "notes-key-0123456789");
+    await submit();
+    expect(state.add.mock.calls[0]![0].input.agents).toEqual([codex]);
   });
 
   it("adds a server another app runs in one click", async () => {

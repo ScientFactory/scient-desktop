@@ -30,15 +30,16 @@ const PackageNames = Schema.Array(
 /** The deliberately small public input for a project-owned LaTeX document build. */
 export const ScientLatexPdfBuildInput = Schema.Struct({
   sourcePath: ProjectPath.annotate({
-    description: "Project-relative .tex file.",
+    description: "A .tex file in the project, relative or absolute.",
   }),
   rootSourcePath: Schema.optional(
     ProjectPath.annotate({
-      description: "Project-relative main .tex file, when the source belongs to several documents.",
+      description:
+        "The main .tex file in the project, when the source belongs to several documents.",
     }),
   ),
   outputPath: ProjectPath.annotate({
-    description: "Project-relative .pdf path. An existing file is replaced.",
+    description: "A .pdf path in the project. An existing file is replaced.",
   }),
 });
 export type ScientLatexPdfBuildInput = typeof ScientLatexPdfBuildInput.Type;

@@ -382,6 +382,15 @@ The adapter still owns its native provider protocol.
 | Package-owned Pi adapter                                       | `provider/PiDriverComposition.ts`, package-owned `inputCapabilities.ts` and `nativeSelection.ts`, `NativeTurnReceipts.ts`    | Native input eligibility and confirmed selection without moving Pi protocol/FS reads                  |
 | `Adapters/NativeSessionAdapterV2.ts`, `OmpAdapterV2.ts`        | `NativeProducerLifecycle.ts`, `NativeTurnReceipts.ts`, `OmpProcessOwnership.ts`                                              | Retained native producers and OMP process ownership; Pi remains a separate protocol                   |
 
+[`AntigravityTurnOutcome.ts`](../../apps/server/src/provider/acp/AntigravityTurnOutcome.ts) keeps
+its trajectory reads and Google API error mapping, with marked `httpStatus` fields. One marked
+mount hands any other error step to
+[`AntigravityHarnessFailure.ts`](../../apps/server/src/scient/providerLifecycle/AntigravityHarnessFailure.ts),
+which names a tool server that failed to start and passes the harness text through
+[`providerFailureText.ts`](../../apps/server/src/scient/providerLifecycle/providerFailureText.ts)
+before bounding it. The shared ACP adapter's inactivity watchdog adds its `prompt_inactivity` code
+inside its existing marked Scient message region.
+
 Provider packages own native protocol, selection, and executable probing. Scient composes its
 policy in [`AppProviderDriverComposition.ts`](../../apps/server/src/provider/AppProviderDriverComposition.ts),
 [`PiDriverComposition.ts`](../../apps/server/src/provider/PiDriverComposition.ts),

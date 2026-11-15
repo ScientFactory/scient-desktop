@@ -11,6 +11,7 @@ import type {
   ImportableSkill,
   PersonalSkillCandidate,
   PersonalSkillSource,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { VaultSecretRef } from "@t3tools/contracts";
 import { BotIcon, ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
@@ -207,7 +208,10 @@ export function AddLocalConnectorDialog({
   entry,
   onWebAddress,
   kind,
+  agents,
 }: {
+  /** The agents chosen when it was added from Discover; absent gives it to every agent. */
+  readonly agents?: ReadonlyArray<ProviderInstanceId> | undefined;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
@@ -424,6 +428,7 @@ export function AddLocalConnectorDialog({
         target,
         ...(name && target.type !== "local-import" ? { displayName: name } : {}),
         ...(description ? { description } : {}),
+        ...(agents === undefined ? {} : { agents }),
       },
     });
     setBusy(null);
@@ -554,7 +559,11 @@ export function AddLocalConnectorDialog({
         ? "A skill you add is on for every agent from your next message. You can turn it off or undo the change in Skills."
         : step.name === "choose" && pkg === undefined
           ? "A skill, connector or plugin. Every agent can use it."
-          : "This runs a program on the computer running this environment. Every agent can use its tools.";
+          : `This runs a program on the computer running this environment. ${
+              agents === undefined
+                ? "Every agent can use its tools."
+                : "The agents you chose can use its tools."
+            }`;
   const choosing = step.name === "choose" && pkg === undefined;
   const importCount = skillsFirst ? importableSkills.length : importable.length;
 

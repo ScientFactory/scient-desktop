@@ -18,7 +18,9 @@ import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
-import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
+// SCIENT-FORK:START — the analytics worker shares this outbound setup.
+import { prepareOutboundNetworking } from "./outboundHttp.ts";
+// SCIENT-FORK:END
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { threadCommand } from "./cli/thread.ts";
@@ -142,8 +144,9 @@ export const makeCli = ({
 export const cli = makeCli();
 
 export function runCli() {
-  extendConnectionAttemptTimeout();
-  keepOutboundFetchOnHttp1();
+  // SCIENT-FORK:START — the analytics worker shares this outbound setup.
+  prepareOutboundNetworking();
+  // SCIENT-FORK:END
   offerCliInstall({
     args: process.argv.slice(2),
     // A child started over IPC (a service launcher) has no one to answer.

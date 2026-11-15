@@ -197,6 +197,13 @@ export type ConnectorStatus = typeof ConnectorStatus.Type;
  */
 export { ExtensionIconDataUri, isExtensionIconDataUri } from "./extensionIcon.ts";
 
+/** Agents a connector goes to, when the person chose some; absent means every agent. */
+export const ConnectorAgents = Schema.Array(ProviderInstanceId).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(64),
+);
+export type ConnectorAgents = typeof ConnectorAgents.Type;
+
 export const ConnectorSummary = Schema.Struct({
   connectorId: ConnectorId,
   serverName: ConnectorServerName,
@@ -214,6 +221,8 @@ export const ConnectorSummary = Schema.Struct({
   authRevision: NonNegativeInt,
   /** Projects whose sessions receive this connector. Shared model with Secrets. */
   availability: GrantScope,
+  /** Agents whose sessions receive it; absent means every agent that takes connectors. */
+  agents: Schema.optional(ConnectorAgents),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   /** Most recent user-facing failure, cleared by the next success. */
@@ -458,6 +467,8 @@ export const ConnectorAddInput = Schema.Struct({
   displayName: Schema.optional(ConnectorNameInput),
   /** Shown in Installed; from the Discover entry the connector was added from. */
   description: Schema.optional(ConnectorDescriptionInput),
+  /** Only these agents get it; absent means every agent. */
+  agents: Schema.optional(ConnectorAgents),
   oauthClient: Schema.optional(ConnectorOAuthClientInput),
   /** API-key style servers. */
   credential: Schema.optional(
@@ -516,6 +527,8 @@ export const ConnectorUpdateInput = Schema.Struct({
   displayName: Schema.optional(ConnectorNameInput),
   enabled: Schema.optional(Schema.Boolean),
   availability: Schema.optional(GrantScope),
+  /** Only these agents get it; null gives it to every agent again. */
+  agents: Schema.optional(Schema.NullOr(ConnectorAgents)),
   /** Local connectors: stop every running copy; agents start a fresh one on their next request. */
   restart: Schema.optional(Schema.Literal(true)),
   /** Local connectors: change settings and keys; running copies restart. */
@@ -616,18 +629,19 @@ export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 
 /** Scient-curated catalog sections. Registry servers without curation appear only under "all". */
 export const ExtensionCategory = Schema.Literals([
-  "featured",
+  "most-used",
   "papers",
   "biology",
+  "code",
+  "data",
+  "physics-math",
+  "files",
+  "communication",
+  "projects",
+  "figures",
   "chemistry",
   "earth",
-  "physics-math",
   "social-science",
-  "data",
-  "writing",
-  "figures",
-  "code",
-  "teamwork",
 ]);
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
@@ -755,6 +769,8 @@ export const ExtensionDeliverySkipReason = Schema.Literals([
   "needs-credential",
   "disabled",
   "project-deselected",
+  /** The person chose other agents for this connector. */
+  "agent-deselected",
   "transport-unsupported",
   "name-collision",
   /** The agent could not say which MCP servers it already has, so no connector name was safe. */

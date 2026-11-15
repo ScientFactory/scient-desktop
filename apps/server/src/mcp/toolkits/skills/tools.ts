@@ -33,6 +33,9 @@ export class ScientSkillToolError extends Schema.TaggedError<ScientSkillToolErro
       "not-found",
       "resource-unavailable",
       "invalid-skill",
+      "name-taken",
+      "limit",
+      "storage-failed",
     ]),
     message: NonEmptyString,
   },
@@ -172,7 +175,7 @@ const ScientSkillSaveTool = Tool.make("scient_skill_save", {
 
 const ScientSkillReadTool = Tool.make("scient_skill_read", {
   description:
-    "Read every file of one of the user's own skills (one they added, or one saved for them), to improve it and save it back with scient_skill_save.",
+    "Read every file of one of the user's own skills (one they added, or one saved for them), to improve it and save it back with scient_skill_save. Only the user's own skills.",
   parameters: Schema.Struct({ name: SkillName }),
   success: Schema.Struct({
     name: NonEmptyString,

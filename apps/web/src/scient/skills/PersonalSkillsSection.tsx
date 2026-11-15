@@ -182,8 +182,7 @@ export function PersonalSkillsSection({
   if (skills.length === 0 && problems.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        None yet. Choose Add your own to add a skill from a file, a web address or your other
-        agents, or ask any agent to make one for you.
+        None yet. Add one from a file, a web address or another agent.
       </p>
     );
   }

@@ -3642,6 +3642,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "--exclude=node_modules/node-pty/build*",
       "--exclude=node_modules/node-pty/third_party/conpty*",
       "--exclude=node_modules/@ff-labs/fff-bin-win32-*",
+      // SCIENT-FORK
+      "--exclude=node_modules/@parcel/watcher-win32-*",
       "--exclude=node_modules/@yuuang/ffi-rs-win32-*",
       "--exclude=node_modules/@napi-rs/canvas-win32-*",
       "--exclude=node_modules/@napi-rs/keyring-win32-*",
