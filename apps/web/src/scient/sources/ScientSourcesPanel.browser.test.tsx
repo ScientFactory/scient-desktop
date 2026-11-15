@@ -62,6 +62,7 @@ vi.mock("./useManagedBibliography", () => ({ useManagedBibliography: () => ({ st
 vi.mock("./useLibraryMoveStatus", () => ({ useLibraryMoveStatus: () => ({ line: null }) }));
 vi.mock("../../components/ui/toast", () => ({
   toastManager: { add: mocks.toast, close: vi.fn() },
+  stackedThreadToast: (toast: unknown) => toast,
 }));
 vi.mock("./ZoteroSync", () => ({ useZoteroSync: () => ({}), ZoteroRefreshDialog: () => null }));
 vi.mock("./SourceReference", () => ({ SourceReference: () => null }));

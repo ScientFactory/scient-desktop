@@ -71,6 +71,46 @@ it("saves My note against the library record's revision, apart from this project
   expect(saveProjectNote).not.toHaveBeenCalled();
 });
 
+it("shows a Markdown note with its headings and links, and an edit saves it as it was written", async () => {
+  // A note as it arrives from Zotero: every kind of Markdown the editor does not understand.
+  const fromZotero = [
+    "# Aims",
+    "See [the errata](https://example.org/a_b) for `p < .05`, 2 \\* 3, \\[sic\\] and ~~old~~.",
+    "- one\n  - inner",
+    "| Group | n |\n| --- | --- |\n| A | 12 |",
+    "```\nsnake_case = 1\n```",
+    "**Read** *twice*",
+  ].join("\n\n");
+  const save = vi.fn(async (note: string | null, _expectedRevision: number) => ({
+    outcome: "updated",
+    record: { ...record, revision: 8, personalNote: note },
+  }));
+  await using _screen = await render(
+    <SourceDetails
+      record={{ ...record, personalNote: fromZotero }}
+      diagnostics={[]}
+      library={{ canSavePersonalNote: true, onSavePersonalNote: save }}
+      onBack={() => undefined}
+      onEdit={() => undefined}
+      onSaveNote={async () => ({ outcome: "unchanged" as const, record })}
+      onRefreshMetadata={async () => undefined}
+      onRemove={async () => undefined}
+      onOpenPdf={() => undefined}
+    />,
+  );
+
+  await expect.element(page.getByRole("heading", { name: "Aims" })).toBeVisible();
+  await expect.element(page.getByRole("link", { name: "the errata" })).toBeVisible();
+
+  await userEvent.click(page.getByRole("button", { name: "Edit my note" }), {
+    position: { x: 4, y: 4 },
+  });
+  await userEvent.keyboard("!");
+  await userEvent.tab();
+
+  await vi.waitFor(() => expect(save).toHaveBeenCalledWith(`${fromZotero}!`, 7, expect.anything()));
+});
+
 it("Keep mine saves the draft against the displayed conflict once, including normalized whitespace", async ({
   signal,
 }) => {
