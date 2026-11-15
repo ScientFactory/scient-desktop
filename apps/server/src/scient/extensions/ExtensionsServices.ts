@@ -183,7 +183,10 @@ export interface ConnectorRuntimeShape {
     /** The session's agent, for connectors given to chosen agents only. */
     readonly providerInstanceId?: ProviderInstanceId | undefined;
   }) => Effect.Effect<ConnectorDeliveryResolution>;
-  /** Live grant re-check for each proxied request. */
+  /**
+   * Live grant re-check for each proxied request: on, eligible, for this project and agent.
+   * Whether it is signed in is `forward`'s to answer (a refused sign-in keeps failing discovery).
+   */
   readonly isGranted: (input: {
     readonly connectorId: ConnectorId;
     readonly projectId: ProjectId | undefined;
@@ -198,6 +201,8 @@ export interface ConnectorRuntimeShape {
     readonly name?: string | undefined;
     /** The calling agent: a connector given to other agents only is not there for it. */
     readonly providerInstanceId?: ProviderInstanceId | undefined;
+    /** The chat making the copy: it reuses only its own earlier draft. */
+    readonly owner?: string | undefined;
   }) => Effect.Effect<
     Omit<Effect.Success<ReturnType<LocalConnectorAuthoring["copy"]>>, "variant">,
     ExtensionsError

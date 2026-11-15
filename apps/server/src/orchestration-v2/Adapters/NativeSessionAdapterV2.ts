@@ -4,6 +4,13 @@ import {
   capturedNativeOwnerValidator,
   completeDestructiveNativeInterrupt,
 } from "../scient-provider/NativeProducerLifecycle.ts";
+// SCIENT-FORK:START — native question identity and publication order.
+import {
+  nativeQuestionFrames,
+  nativeQuestionRequest,
+  nativeQuestionSettled,
+} from "../scient-provider/NativeQuestionPublication.ts";
+// SCIENT-FORK:END
 import {
   type ModelSelection,
   type OrchestrationV2PlanStep,
@@ -1284,6 +1291,9 @@ export function makeNativeSessionAdapterV2(
                 )
                   presentationOwners.set(update.id, running);
                 const previous = items.get(nativeId);
+                // SCIENT-FORK:START — a repeated notification cannot reopen an answered question.
+                if (update.type === "question" && nativeQuestionSettled(previous)) return;
+                // SCIENT-FORK:END
                 // Content completion settles an existing block; it cannot create
                 // a reply, allocate an ordinal, or reopen settled content.
                 if (
@@ -1676,25 +1686,29 @@ export function makeNativeSessionAdapterV2(
                   if (observedResult && update.status !== "running" && !resultPending)
                     yield* showSubagentResult(nativeId, subagentItem, observedResult, now);
                 } else {
-                  const requestId = yield* idAllocator.allocate.runtimeRequest({
-                    driver,
-                    providerTurnId: running.turn.id,
-                    nativeRequestId: nativeId,
-                  });
-                  const request: OrchestrationV2RuntimeRequest = {
-                    id: requestId,
-                    nodeId: base.nodeId,
-                    providerTurnId: running.turn.id,
-                    nativeRequestRef: ref(update.id),
-                    kind: update.method === "confirm" ? "command" : "user_input",
-                    status: "pending",
-                    responseCapability: {
-                      type: "live",
-                      providerSessionId: input.providerSessionId,
+                  // SCIENT-FORK:START — repeated questions keep their live response authority.
+                  const request = yield* nativeQuestionRequest(
+                    previous,
+                    requests,
+                    idAllocator.allocate.runtimeRequest({
+                      driver,
+                      providerTurnId: running.turn.id,
+                      nativeRequestId: nativeId,
+                    }),
+                    {
+                      nodeId: base.nodeId,
+                      providerTurnId: running.turn.id,
+                      nativeRequestRef: ref(update.id),
+                      kind: update.method === "confirm" ? "command" : "user_input",
+                      responseCapability: {
+                        type: "live",
+                        providerSessionId: input.providerSessionId,
+                      },
+                      createdAt: now,
                     },
-                    createdAt: now,
-                    resolvedAt: null,
-                  };
+                  );
+                  const requestId = request.id;
+                  // SCIENT-FORK:END
                   item =
                     update.method === "confirm"
                       ? {
@@ -1816,7 +1830,9 @@ export function makeNativeSessionAdapterV2(
                 if (update.type === "item" && update.status !== "running")
                   presentationOwners.delete(update.id);
               });
-              yield* emitBatch(frames, control);
+              // SCIENT-FORK:START — publish question items before their listable requests.
+              yield* emitBatch(nativeQuestionFrames(frames), control);
+              // SCIENT-FORK:END
             }).pipe(
               Effect.catch((cause) =>
                 finish({ type: "terminal", status: "failed", detail: cause.message, broken: true }),

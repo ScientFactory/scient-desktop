@@ -361,6 +361,11 @@
       "path": "packages/scient-analytics/src/failureCodes.ts",
       "anchor": "const OMP_CODES = new Set([",
       "purpose": "List the Scient Agent and Oh My Pi failure codes (the agent's error kinds and the OMP host's outcome reasons) that may leave the computer as failureCode; any other OMP string is dropped."
+    },
+    {
+      "path": "apps/server/src/provider/ScientPersonWaitTools.ts",
+      "anchor": "omp: 10 * 60_000",
+      "purpose": "A person's card waits up to 10 minutes for Scient Agent and Oh My Pi, whose Scient bridge keeps a tool call open past Bun's fetch deadline."
     }
   ]
 }

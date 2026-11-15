@@ -9,7 +9,7 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
 import { Button } from "../../components/ui/button";
@@ -213,6 +213,23 @@ interface AddConnectorDialogProps {
 }
 
 /** A registry entry that only runs locally gets the local form. */
+/** After a few seconds of adding, the person hears that the server is still waking up. */
+const STILL_CONNECTING_AFTER_MS = 4_000;
+
+function useStillConnecting(submitting: boolean): boolean {
+  const [slow, setSlow] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer, held while an add waits, that shows the note
+  useEffect(() => {
+    if (!submitting) return;
+    const timer = window.setTimeout(() => setSlow(true), STILL_CONNECTING_AFTER_MS);
+    return () => {
+      window.clearTimeout(timer);
+      setSlow(false);
+    };
+  }, [submitting]);
+  return submitting && slow;
+}
+
 export function AddConnectorDialog(props: AddConnectorDialogProps) {
   return props.entry?.localPackage === undefined ? (
     <RemoteConnectorDialog {...props} />
@@ -245,6 +262,7 @@ function RemoteConnectorDialog({
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const slow = useStillConnecting(submitting);
   const [needsSignIn, setNeedsSignIn] = useState<ConnectorSummary | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
@@ -672,6 +690,11 @@ function RemoteConnectorDialog({
                 {serverError ? (
                   <p role="alert" className="text-sm text-destructive-foreground">
                     {serverError}
+                  </p>
+                ) : null}
+                {slow ? (
+                  <p role="status" className="text-xs text-muted-foreground">
+                    Still connecting. A hosted server can take up to 30 seconds to wake up.
                   </p>
                 ) : null}
                 <button type="submit" hidden />

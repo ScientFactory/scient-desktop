@@ -641,24 +641,38 @@ export function entryFacts(
   ];
 }
 
+/** Who runs a hosted connector, and so receives what passes through it. */
+function connectorHost(
+  connector: Pick<ConnectorSummary, "url"> & { readonly local?: unknown },
+): string | undefined {
+  if (connector.local !== undefined || !URL.canParse(connector.url)) return undefined;
+  const url = new URL(connector.url);
+  return url.protocol === "https:" || url.protocol === "http:" ? url.host : undefined;
+}
+
 /**
- * A connector's card facts: once its sign-in works, the catalog's access words give way to
- * whose account it uses, or to nothing when the service does not say.
+ * A connector's card facts: where it is hosted, then the catalog's. Once its sign-in works, the
+ * catalog's access words give way to whose account it uses, or to nothing when the service
+ * does not say.
  */
 export function connectorFacts(
   entry: DiscoverEntry | undefined,
-  connector: Pick<ConnectorSummary, "status" | "auth">,
+  connector: Pick<ConnectorSummary, "status" | "auth" | "url"> & { readonly local?: unknown },
 ): ReadonlyArray<readonly [string, string]> {
   const signedIn = connector.status === "connected" && connector.auth.type !== "none";
   // Without a sign-in, the Connection card already says so.
   const settled = signedIn || connector.auth.type === "none";
-  return entryFacts(entry).flatMap(([label, value]) =>
-    !settled || label !== "Access"
-      ? [[label, value] as const]
-      : connector.auth.type === "source-control"
-        ? [[label, `Signed in as ${connector.auth.account}`] as const]
-        : [],
-  );
+  const host = connectorHost(connector);
+  return [
+    ...(host === undefined ? [] : [["Host", host] as const]),
+    ...entryFacts(entry).flatMap(([label, value]) =>
+      !settled || label !== "Access"
+        ? [[label, value] as const]
+        : connector.auth.type === "source-control"
+          ? [[label, `Signed in as ${connector.auth.account}`] as const]
+          : [],
+    ),
+  ];
 }
 
 export function validateCuratedAddress(value: string, template: string): string | null {

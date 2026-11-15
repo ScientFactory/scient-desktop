@@ -1,5 +1,6 @@
 import { ompExtensionBootstrapPrelude } from "./OmpExtensionBootstrap.ts";
 import type { OmpTarget } from "./OmpTarget.ts";
+import { SCIENT_CONNECTOR_LOAD_MODE_ENV } from "../scient/ScientAgentToolLoading.ts";
 
 /** A connector the extension proxies, through Scient's connector endpoint. */
 export interface OmpScientExtensionConnector {
@@ -27,10 +28,10 @@ export interface OmpScientExtensionBootstrap {
 const OMP_SCIENT_TOOL_CALL_TIMEOUT_MS = 65 * 60 * 1_000;
 
 /**
- * OMP tools need essential load mode, and before_agent_start replaces the entire string-array
- * prompt. Share MCP connections across subagent reruns. Connector aliases must avoid native
- * namespaces/collisions and preserve original call names; one failed connector must not remove
- * others' tools.
+ * Older runtimes need essential tools. Supported Scient runtimes mount connector schemas under
+ * xd://; Scient controls stay essential. Share connections and load mode across subagent reruns.
+ * before_agent_start replaces the string-array prompt. Connector aliases preserve call names;
+ * one failed connector must not remove others' tools.
  */
 const ompScientExtensionBody = (target: OmpTarget): string => `
 import { createHash as scientCreateHash } from "node:crypto";
@@ -51,6 +52,9 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     const response = await fetch(endpoint, {
       method: "POST",
       redirect: "error",
+      // Bun cuts a request whose answer is still pending after about 300 s; the signal below is
+      // the only deadline. Node's fetch ignores this option.
+      timeout: false,
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
@@ -227,6 +231,8 @@ const scientToolResult = (output, label) => {
 export default async function scientOmpExtension(pi) {
   const shared = scientOnce((bootstrap) => ({
     awareness: typeof bootstrap.awareness === "string" ? bootstrap.awareness : "",
+    connectorLoadMode:
+      process.env[${JSON.stringify(SCIENT_CONNECTOR_LOAD_MODE_ENV)}] === "discoverable" ? "discoverable" : "essential",
     connection: scientConnect(bootstrap.endpoint, bootstrap.authorization, "Scient"),
     connectors: scientConnectors(bootstrap.connectors).map((connector) => {
       const label = "Connector " + JSON.stringify(connector.displayName);
@@ -236,12 +242,14 @@ export default async function scientOmpExtension(pi) {
       );
     }),
   }));
-  const { awareness } = shared;
+  const awareness = shared.awareness + (shared.connectorLoadMode === "discoverable"
+    ? "\\nConnector tools are available as xd:// devices: use read on xd:// to discover them, read xd://<name> for the schema, and write xd://<name> to call them."
+    : "");
   const [{ tools, request }, connectors] = await Promise.all([
     shared.connection,
     Promise.all(shared.connectors),
   ]);
-  const proxied = tools.map((tool) => ({ ...tool, remoteName: tool.name, label: "Scient", request }));
+  const proxied = tools.map((tool) => ({ ...tool, remoteName: tool.name, label: "Scient", request, loadMode: "essential" }));
   const skipped = new Map();
   const taken = new Set(proxied.map((tool) => tool.name));
   for (const connector of connectors) {
@@ -252,7 +260,7 @@ export default async function scientOmpExtension(pi) {
         continue;
       }
       taken.add(name);
-      proxied.push({ ...tool, name, remoteName: tool.name, label: connector.label, request: connector.request });
+      proxied.push({ ...tool, name, remoteName: tool.name, label: connector.label, request: connector.request, loadMode: shared.connectorLoadMode });
     }
   }
   const toolNames = proxied.map((tool) => tool.name);
@@ -261,7 +269,7 @@ export default async function scientOmpExtension(pi) {
     pi.registerTool({
       name,
       label: name,
-      loadMode: "essential",
+      loadMode: tool.loadMode,
       description: tool.description,
       parameters: tool.parameters,
       // A strict grammar makes models fill optional fields, and a filled field changes
