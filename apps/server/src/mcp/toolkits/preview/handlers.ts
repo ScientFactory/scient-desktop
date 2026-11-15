@@ -7,6 +7,7 @@ import {
   recordProfileUse,
 } from "../../../scient/accounts/agent/previewProfileAccess.ts";
 import type { AccountsError } from "@t3tools/contracts";
+import { PreviewAccountCheckTimeoutError } from "../../../scient/accounts/agent/previewProfileAccess.ts";
 import { previewProfileFallback } from "../../../scient/accounts/agent/previewProfileFallback.ts";
 import * as Clock from "effect/Clock";
 // SCIENT-FORK:END
@@ -63,6 +64,25 @@ function normalizePreviewOpenInput(input: PreviewAutomationOpenInput): PreviewAu
   };
 }
 
+// SCIENT-FORK:START — Scient Accounts: the check before an action spends the action's budget.
+/** Operations whose host reads `input.timeoutMs` (falling back to its own default) besides the envelope's. */
+const OPERATIONS_WITH_INPUT_TIMEOUT: ReadonlySet<PreviewAutomationOperation> = new Set([
+  "navigate",
+  "resize",
+  "click",
+  "hover",
+  "select",
+  "drag",
+  "upload",
+  "type",
+  "waitFor",
+]);
+
+const monotonicMillis = Clock.clockWith((clock) =>
+  Effect.map(clock.monotonicTimeNanos, (nanos) => Number(nanos / 1_000_000n)),
+);
+// SCIENT-FORK:END
+
 const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   operation: PreviewAutomationOperation,
   input: unknown,
@@ -73,7 +93,8 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   | import("@t3tools/contracts").PreviewAutomationError
   | import("@t3tools/contracts").OrchestratorMcpFailure
   // SCIENT-FORK:START — Scient Accounts: existing-tab operations can deny revoked profiles.
-  | AccountsError,
+  | AccountsError
+  | PreviewAccountCheckTimeoutError,
   // SCIENT-FORK:END
   McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
 > {
@@ -90,30 +111,38 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
       },
       scope,
       operation,
-      input,
+      input:
+        budgetMs !== undefined && OPERATIONS_WITH_INPUT_TIMEOUT.has(operation)
+          ? { ...(input as object), timeoutMs: budgetMs }
+          : input,
       ...(budgetMs === undefined ? {} : { timeoutMs: budgetMs }),
       ...(tabId === undefined ? {} : { tabId }),
     });
+  // The check spends the action's budget, so the call still ends when the agent asked.
+  const budgetMs = timeoutMs ?? PreviewAutomationBroker.PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS;
+  const startedAt = yield* monotonicMillis;
+  const remainingMs = Effect.map(monotonicMillis, (now) =>
+    Math.floor(budgetMs - (now - startedAt)),
+  );
   const result = yield* operation === "status" || operation === "open"
     ? request()
     : withPreviewAccounts(request(), (accountScope) =>
         Effect.gen(function* () {
-          // The check spends the action's budget, so the call still ends when the agent asked.
-          const budgetMs =
-            timeoutMs ?? PreviewAutomationBroker.PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS;
-          const startedAt = yield* Clock.currentTimeMillis;
           const status = yield* broker.invoke<PreviewAutomationStatus>({
             scope,
             operation: "status",
             input: {},
-            timeoutMs: budgetMs,
+            timeoutMs: Math.max(1, yield* remainingMs),
             updateCurrentTab: false,
             ...(tabId === undefined ? {} : { tabId }),
           });
           yield* authorizePreviewTab(accountScope, status, tabId);
-          const spentMs = (yield* Clock.currentTimeMillis) - startedAt;
+          const leftMs = yield* remainingMs;
+          // Work sent with no time left would act on the page after the agent was told it failed.
+          if (leftMs < 1)
+            return yield* new PreviewAccountCheckTimeoutError({ operation, timeoutMs: budgetMs });
           // An omitted tab stays omitted, so the browser still resolves it the usual way.
-          return yield* request(Math.max(1, budgetMs - spentMs));
+          return yield* request(leftMs);
         }),
       );
   // SCIENT-FORK:END

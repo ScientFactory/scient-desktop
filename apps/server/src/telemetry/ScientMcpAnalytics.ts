@@ -94,23 +94,17 @@ const stringOf = (value: unknown, key: string) =>
 
 /**
  * A browser host that answered a timeout found the page not ready; one that never answered
- * overran. A script the agent evaluated that threw on the page is the agent's code.
+ * overran. An execution failure stays unclassified: the host gives a script that threw on the
+ * page and a failed browser call the same tag, so neither can be told to be the agent's code.
  */
 function browserFailureClass(error: unknown): string | undefined {
-  const tag = stringOf(error, "_tag");
-  const answered = stringOf(error, "remoteTag") !== undefined;
-  if (tag === "PreviewAutomationTimeoutError") return answered ? "page_not_ready" : "host_overrun";
-  return tag === "PreviewAutomationExecutionError" &&
-    answered &&
-    stringOf(error, "operation") === "evaluate"
-    ? "agent_script_error"
-    : undefined;
+  if (stringOf(error, "_tag") !== "PreviewAutomationTimeoutError") return undefined;
+  return stringOf(error, "remoteTag") === undefined ? "host_overrun" : "page_not_ready";
 }
 
 const CLASS_OWNERS: Readonly<Record<string, FailureOwner>> = {
   page_not_ready: "external",
   host_overrun: "scient",
-  agent_script_error: "code",
 };
 
 export const noteToolFailure = Effect.fn("ScientMcpAnalytics.noteToolFailure")(function* (

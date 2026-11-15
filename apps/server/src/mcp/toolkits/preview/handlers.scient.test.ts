@@ -398,6 +398,8 @@ it.effect("the account check before an action spends the action's budget, not it
     const { service } = yield* makeHarness();
     // How long each operation takes in the browser; one that runs past its budget times out then.
     const takes: Partial<Record<PreviewAutomationOperation, number>> = {};
+    // The budgets each action reached the browser with: the broker's and the one its host reads.
+    const dispatched: Array<{ envelope: number | undefined; input: number | undefined }> = [];
     let reached = Deferred.makeUnsafe<void>();
     const dependencies = Layer.mergeAll(
       liveThreadsLayer,
@@ -419,14 +421,22 @@ it.effect("the account check before an action spends the action's budget, not it
       }),
       Layer.mock(PreviewAutomationBroker)({
         invoke: <A>(request: PreviewAutomationInvokeInput) => {
+          const dispatch = Effect.sync(() => {
+            if (request.operation !== "status")
+              dispatched.push({
+                envelope: request.timeoutMs,
+                input: (request.input as { timeoutMs?: number }).timeoutMs,
+              });
+          });
           const budgetMs = request.timeoutMs ?? PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS;
           const spentMs = takes[request.operation] ?? 0;
           // Signalled just before the browser's timer starts, so the clock moves past it.
           const sleep = (ms: number) =>
             Deferred.succeed(reached, undefined).pipe(Effect.andThen(Effect.sleep(ms)));
           return spentMs <= budgetMs
-            ? sleep(spentMs).pipe(Effect.as(status as A))
-            : sleep(budgetMs).pipe(
+            ? dispatch.pipe(Effect.andThen(sleep(spentMs)), Effect.as(status as A))
+            : dispatch.pipe(
+                Effect.andThen(sleep(budgetMs)),
                 Effect.andThen(
                   new PreviewAutomationTimeoutError({
                     operation: request.operation,
@@ -452,29 +462,54 @@ it.effect("the account check before an action spends the action's budget, not it
       ),
     );
     yield* service.setControls({ target: { type: "profile", profileId: "work" }, access: "ask" });
-    const waitFor = Effect.fn(function* (ms: Partial<Record<PreviewAutomationOperation, number>>) {
+    const waitFor = Effect.fn(function* (
+      ms: Partial<Record<PreviewAutomationOperation, number>>,
+      timeoutMs?: number,
+    ) {
       Object.assign(takes, ms);
+      dispatched.length = 0;
       reached = Deferred.makeUnsafe<void>();
       const call = yield* Effect.timed(
         toolkit
-          .handle("preview_wait_for", { selector: "#done", timeoutMs: 5_000 })
+          .handle("preview_wait_for", {
+            selector: "#done",
+            ...(timeoutMs === undefined ? {} : { timeoutMs }),
+          })
           .pipe(Stream.unwrap, Stream.runDrain, Effect.flip),
       ).pipe(Effect.provide(dependencies), Effect.forkChild);
       // The handler reads real files before it reaches the browser; move the clock once it has.
       yield* Deferred.await(reached);
       yield* TestClock.adjust("20 minutes");
       const [took, error] = yield* Fiber.join(call);
-      return { tookMs: Duration.toMillis(took), error: error._tag };
+      return { tookMs: Duration.toMillis(took), error: error._tag, dispatched: [...dispatched] };
     });
-    // A slow check leaves the wait what remains; a stuck one ends with the agent's budget.
-    for (const timing of [
-      { status: 2_000, waitFor: Number.POSITIVE_INFINITY },
-      { status: Number.POSITIVE_INFINITY },
-    ]) {
-      expect(yield* waitFor(timing)).toEqual({
-        tookMs: 5_000,
-        error: "PreviewAutomationTimeoutError",
-      });
-    }
+    // A slow check leaves the wait what remains, in the browser's own timer too.
+    expect(yield* waitFor({ status: 2_000, waitFor: Number.POSITIVE_INFINITY }, 5_000)).toEqual({
+      tookMs: 5_000,
+      error: "PreviewAutomationTimeoutError",
+      dispatched: [{ envelope: 3_000, input: 3_000 }],
+    });
+    // The agent left the budget to the default, which the browser then reads as given.
+    expect(yield* waitFor({ status: 2_000 })).toEqual({
+      tookMs: PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS,
+      error: "PreviewAutomationTimeoutError",
+      dispatched: [
+        {
+          envelope: PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS - 2_000,
+          input: PREVIEW_AUTOMATION_DEFAULT_TIMEOUT_MS - 2_000,
+        },
+      ],
+    });
+    // A check that used the whole budget sends nothing; a stuck one ends with the agent's budget.
+    expect(yield* waitFor({ status: 5_000 }, 5_000)).toEqual({
+      tookMs: 5_000,
+      error: "PreviewAccountCheckTimeoutError",
+      dispatched: [],
+    });
+    expect(yield* waitFor({ status: Number.POSITIVE_INFINITY }, 5_000)).toEqual({
+      tookMs: 5_000,
+      error: "PreviewAutomationTimeoutError",
+      dispatched: [],
+    });
   }).pipe(Effect.scoped),
 );

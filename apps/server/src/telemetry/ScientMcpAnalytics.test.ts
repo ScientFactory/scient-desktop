@@ -7,6 +7,9 @@ import {
 } from "@t3tools/contracts";
 import { McpSchema } from "effect/ai";
 import * as Effect from "effect/Effect";
+import type { CDPSession } from "playwright-core";
+
+import * as ServerBrowserPage from "../preview/ServerBrowserPage.ts";
 
 import {
   BrowserToolCallLedger,
@@ -128,7 +131,7 @@ describe("Scient MCP analytics input", () => {
   });
 
   it.effect(
-    "tells a page that never got ready from a host that never answered, and a thrown script",
+    "tells a page that never got ready from a host that never answered, and leaves evaluate failures unowned",
     () =>
       Effect.gen(function* () {
         const request = {
@@ -171,21 +174,39 @@ describe("Scient MCP analytics input", () => {
           failureClass: "host_overrun",
           failureOwner: "scient",
         });
-        expect(
-          yield* recorded(
-            new PreviewAutomationExecutionError({
-              ...request,
-              ...answered,
-              remoteTag: "PreviewAutomationExecutionError",
-              operation: "evaluate",
-            }),
-          ),
-        ).toEqual({
-          outcome: "error",
-          errorCode: "execution",
-          failureClass: "agent_script_error",
-          failureOwner: "code",
-        });
+        // A script that threw and a browser call that failed reach analytics with the same tag.
+        const evaluated = (send: () => Promise<unknown>) =>
+          Effect.promise(() =>
+            ServerBrowserPage.evaluate(
+              { send } as unknown as CDPSession,
+              { expression: "1 + 1" },
+              1_000,
+            ).then(
+              () => undefined,
+              (cause: unknown) => ServerBrowserPage.toOperationError(cause),
+            ),
+          );
+        for (const failure of [
+          yield* evaluated(async () => ({
+            result: { type: "object" },
+            exceptionDetails: { text: "Uncaught", exception: { description: "Error: thrown" } },
+          })),
+          yield* evaluated(async () => {
+            throw new Error("Protocol error (Runtime.evaluate): Session closed.");
+          }),
+        ]) {
+          expect(
+            yield* recorded(
+              new PreviewAutomationExecutionError({
+                ...request,
+                remoteTag: failure!.tag,
+                remoteMessageLength: failure!.message.length,
+                cause: failure,
+                operation: "evaluate",
+              }),
+            ),
+          ).toEqual({ outcome: "error", errorCode: "execution", failureOwner: "unknown" });
+        }
       }),
   );
 

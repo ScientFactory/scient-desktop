@@ -1,5 +1,6 @@
 // SCIENT-FORK:START — Scient Accounts: declare profile authorization dependencies and safe denials.
 import { AccountsError } from "@t3tools/contracts";
+import { PreviewAccountCheckTimeoutError } from "../../../scient/accounts/agent/previewProfileAccess.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — acting tools read the live owner's invocation policy.
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
@@ -49,6 +50,7 @@ const PreviewToolFailure = Schema.Union([
   PreviewAutomationError,
   OrchestratorMcpFailure,
   AccountsError,
+  PreviewAccountCheckTimeoutError,
 ]);
 // SCIENT-FORK:END
 
