@@ -306,10 +306,12 @@ export async function libraryOverview(
       ? { trashedCount: inspected.trashedCount }
       : {}),
     records: listed.map((entry) => overviewRow(entry, categories)),
-    recordDiagnostics: listed.map(({ record }) => ({
-      sourceId: record.sourceId,
-      diagnostics: sourceMetadataDiagnostics(record),
-    })),
+    // Only the sources that have one: the list looks each source up and takes a missing entry
+    // as none, and at 20,000 sources the empty entries were 1.6 MB of the answer.
+    recordDiagnostics: listed.flatMap(({ record }) => {
+      const diagnostics = sourceMetadataDiagnostics(record);
+      return diagnostics.length > 0 ? [{ sourceId: record.sourceId, diagnostics }] : [];
+    }),
     ...(organization ? { organization } : {}),
     scopes: {
       listed: input.scope,

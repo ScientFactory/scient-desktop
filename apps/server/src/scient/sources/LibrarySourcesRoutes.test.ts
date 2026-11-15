@@ -209,6 +209,33 @@ async function threeSources(fixture: Fixture) {
 }
 
 describe("Library routes on the library backend", () => {
+  it.effect("sends list diagnostics only for the sources that have one", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const [complete, untitled] = yield* Effect.promise(() =>
+        Promise.all([
+          libraryRecord(fixture, "complete", {
+            title: "A complete record",
+            identifiers: [{ scheme: "doi", value: "10.1000/complete" }],
+          }),
+          libraryRecord(fixture, "untitled", {
+            identifiers: [{ scheme: "doi", value: "10.1000/untitled" }],
+          }),
+        ]),
+      );
+      const store = yield* storeFor(fixture, "read");
+      const overview = yield* Effect.promise(() =>
+        libraryOverview(store, { scope: "library", background: false }),
+      );
+      expect(overview.records.map((record) => record.sourceId).toSorted()).toEqual(
+        [complete.sourceId, untitled.sourceId].toSorted(),
+      );
+      expect(overview.recordDiagnostics).toEqual([
+        { sourceId: untitled.sourceId, diagnostics: [expect.objectContaining({ field: "title" })] },
+      ]);
+    }),
+  );
+
   it.effect(
     "lists this project's pins under project keys or the whole library, with both totals",
     () =>
