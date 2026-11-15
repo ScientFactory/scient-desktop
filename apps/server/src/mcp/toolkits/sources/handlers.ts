@@ -176,6 +176,7 @@ import {
   searchSourceFullText,
 } from "../../../scient/sources/SourceFullText.ts";
 import { saveWebPageSource } from "../../../scient/sources/SourceWebPage.ts";
+import { listProjectSourceUses, listSourceUses } from "../../../scient/sources/SourceUses.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientSourcesToolError>[0]["code"];
 
@@ -1128,7 +1129,11 @@ export const bulkUpdateScientSourcesForInvocation = Effect.fn("ScientSourcesTool
 );
 
 export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get")(
-  function* (input: { readonly sourceId: string; readonly citationKey?: string }) {
+  function* (input: {
+    readonly sourceId: string;
+    readonly citationKey?: string;
+    readonly uses?: boolean;
+  }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     const sourceId = yield* sourceIdIn(store, input.sourceId);
@@ -1162,6 +1167,17 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       record,
       yield* attempt(() => readScientSourceCategories(root)),
     );
+    const uses = input.uses
+      ? yield* attempt(() =>
+          store.kind === "library"
+            ? listSourceUses({
+                root: store.root,
+                library: store.exists ? store.library : null,
+                sourceId,
+              })
+            : listProjectSourceUses({ root: store.root, sourceId }),
+        )
+      : null;
     const maximumAbstractCharacters = 50_000;
     const abstract = record.abstract;
     const abstractTruncated = abstract !== null && abstract.length > maximumAbstractCharacters;
@@ -1221,6 +1237,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
             ...scientSourceReadingState(record),
           }
         : {}),
+      ...(uses ? { uses } : {}),
     };
   },
 );

@@ -41,7 +41,7 @@ import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { Button } from "../../components/ui/button";
 import { managedBibliographyActivity } from "./ManagedBibliographyNotice";
 import { useManagedBibliography } from "./useManagedBibliography";
-import { useLibrarySourceRequest } from "./librarySourceRequest";
+import { useLibrarySourceRequest, useLibraryVersionStore } from "./librarySourceRequest";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
@@ -63,6 +63,7 @@ import { initializeScientProjectForOpening } from "../../lib/scientProjectInitia
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { SourceAnnotations } from "../annotations/SourceAnnotations";
+import { ProjectSourceUses } from "./SourceUses";
 import { AddByIdentifier, identifierAddResult } from "./AddByIdentifier";
 import { AskLibraryButton } from "./AskLibraryButton";
 import { ImportReview } from "./ImportReview";
@@ -258,6 +259,7 @@ export function ScientSourcesPanel(props: {
   readonly onOpenFile?: (path: string, line: number) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const libraryVersion = useLibraryVersionStore((state) => state.byRoot[props.root] ?? "");
   const canChange = useCanChangeLibrary(props.environmentId);
   const canSetReading = useCanRunSourcesCommand(
     sourcesCommands.setReadingState,
@@ -1565,6 +1567,18 @@ export function ScientSourcesPanel(props: {
               record={selectedRecord}
               onOpenPdf={props.onOpenPdf}
             />
+          }
+          uses={
+            // A source not pinned here has no place in this project's documents.
+            selectedRecord.pinned === false ? undefined : (
+              <ProjectSourceUses
+                environmentId={props.environmentId}
+                root={props.root}
+                sourceId={selectedRecord.sourceId}
+                version={libraryVersion}
+                {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
+              />
+            )
           }
         />
         {historySourceId === selectedRecord.sourceId ? (

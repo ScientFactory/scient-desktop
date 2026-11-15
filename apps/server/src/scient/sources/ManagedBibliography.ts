@@ -31,7 +31,7 @@ import {
 } from "@scientfactory/scient-sources/project-pins";
 import * as Schema from "effect/Schema";
 
-const MANAGED_BIBLIOGRAPHY_FILES = ["references.bib", "references.json"] as const;
+export const MANAGED_BIBLIOGRAPHY_FILES = ["references.bib", "references.json"] as const;
 export type ManagedBibliographyFileName = (typeof MANAGED_BIBLIOGRAPHY_FILES)[number];
 
 /** What Scient last wrote, so a later difference in the project file is a hand edit. */

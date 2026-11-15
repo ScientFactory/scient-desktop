@@ -766,6 +766,76 @@ export const ScientLibraryRecentChanges = Schema.Struct({
 });
 export type ScientLibraryRecentChanges = typeof ScientLibraryRecentChanges.Type;
 
+/** Where this project's Markdown and LaTeX documents cite one source, under any of its keys. */
+export const ScientSourceUses = Schema.Struct({
+  /** The project's keys for the source; several after merges or duplicate .bib entries. */
+  citationKeys: Schema.Array(NonEmptyString),
+  occurrences: Schema.Array(
+    Schema.Struct({
+      /** Project-relative, with `/`. */
+      path: NonEmptyString,
+      line: Schema.Int,
+      column: Schema.Int,
+      /** As the document writes it. */
+      citationKey: NonEmptyString,
+      locator: Schema.NullOr(Schema.String),
+      /** The sentence or line around the citation, on one line. */
+      context: Schema.String,
+      /** Where the citation is in `context`. */
+      contextCitation: Schema.Struct({ start: Schema.Int, end: Schema.Int }),
+      /**
+       * `project`: the project's own key. `bibliography`: the document's own bibliography
+       * defines the key; `confirmed` when its identifiers name this source's work.
+       */
+      through: Schema.Union([
+        Schema.Struct({ kind: Schema.Literal("project") }),
+        Schema.Struct({
+          kind: Schema.Literal("bibliography"),
+          path: NonEmptyString,
+          confirmed: Schema.Boolean,
+        }),
+      ]),
+    }),
+  ),
+  /** `\nocite`: in a document's bibliography without a citation in its text; not counted. */
+  listed: Schema.Array(
+    Schema.Struct({ path: NonEmptyString, line: Schema.Int, citationKey: NonEmptyString }),
+  ),
+  /** Documents whose own bibliography gives one of the keys to another work. */
+  elsewhere: Schema.Array(
+    Schema.Struct({ path: NonEmptyString, key: NonEmptyString, bibliography: NonEmptyString }),
+  ),
+  /** How many documents were read. */
+  documents: Schema.Int,
+  skipped: Schema.Array(Schema.Struct({ path: Schema.String, reason: Schema.String })),
+  /** False when anything was skipped or could not be read: absence is then not proven. */
+  complete: Schema.Boolean,
+});
+export type ScientSourceUses = typeof ScientSourceUses.Type;
+
+/** What each citation key of one document names, read with that document's bibliographies. */
+export const ScientSourceCitationKeys = Schema.Struct({
+  keys: Schema.Array(
+    Schema.Struct({
+      /** As requested. */
+      key: NonEmptyString,
+      /**
+       * `library`: a project work, which the document's bibliographies leave undefined or confirm.
+       * `unconfirmed`: a project key they leave open. `other-work`: they give it to another
+       * work. `not-library`: not a project key.
+       */
+      status: Schema.Literals(["library", "unconfirmed", "other-work", "not-library"]),
+      /** The Library sources it may name here; empty unless library or unconfirmed. */
+      sourceIds: Schema.Array(NonEmptyString),
+      /** The project bibliography that defines it, or leaves it open, when there is one. */
+      bibliography: Schema.NullOr(NonEmptyString),
+    }),
+  ),
+  /** False when the document, a bibliography or a LaTeX file could not be read. */
+  complete: Schema.Boolean,
+});
+export type ScientSourceCitationKeys = typeof ScientSourceCitationKeys.Type;
+
 export const ScientSourceRestoreResult = Schema.Struct({
   outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
   sourceId: NonEmptyString,

@@ -181,6 +181,13 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
   "scientSources.journalIcon": { kind: "display", reason: "Serves a journal's icon for display." },
   // The Library's list tool takes `recentChanges`, as it takes `duplicates`.
   "scientSources.recentChanges": tool("scient_sources_list"),
+  "scientSources.sourceUses": tool("scient_sources_get", "uses"),
+  // What a document's keys name, with its bibliographies: the check reports a key its
+  // bibliography gives to another work than the project's, and the get tool's `uses` lists them.
+  "scientSources.sourceCitationKeys": {
+    kind: "tool",
+    tools: [{ tool: "scient_references_check" }, { tool: "scient_sources_get", input: "uses" }],
+  },
   "scientSources.trash": tool("scient_sources_list", "inTrash"),
   "scientSources.systematicReviews": tool("scient_sources_systematic_reviews"),
   "scientSources.systematicReview": tool("scient_sources_systematic_reviews", "reviewId"),

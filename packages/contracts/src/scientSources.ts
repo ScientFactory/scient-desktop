@@ -1,6 +1,8 @@
 import {
   MAX_SOURCE_IDENTIFIER_BATCH,
   ScientLibraryRecentChanges,
+  ScientSourceUses,
+  ScientSourceCitationKeys,
   ScientSourceIdentifierAddItem,
   ScientSourceEditableMetadata,
   ScientSourceImportOperation,
@@ -1086,6 +1088,24 @@ export type ScientSourcesImportNotBrought = NonNullable<
   ScientLibraryRecentChanges["importNotBrought"]
 >;
 
+/** Where this project's Markdown and LaTeX documents cite one source. */
+export const ScientSourceUsesRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+});
+export type ScientSourceUsesRequest = typeof ScientSourceUsesRequest.Type;
+export type ScientSourceUseOccurrence = ScientSourceUses["occurrences"][number];
+
+/** What citation keys name in one project document, read with its bibliographies. */
+export const ScientSourceCitationKeysRequest = Schema.Struct({
+  root: NonEmptyString,
+  /** The document, project-relative with `/`. */
+  path: NonEmptyString,
+  keys: Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(1_000))),
+});
+export type ScientSourceCitationKeysRequest = typeof ScientSourceCitationKeysRequest.Type;
+export type ScientSourceCitationKeyResolution = ScientSourceCitationKeys["keys"][number];
+
 export const ScientSourceRestoreRequest = Schema.Struct({
   root: NonEmptyString,
   sourceId: NonEmptyString,
@@ -1323,6 +1343,8 @@ export {
   ScientSystematicReviewList,
   ScientSourcePermanentDeletionResult,
   ScientLibraryRecentChanges,
+  ScientSourceUses,
+  ScientSourceCitationKeys,
   ScientSourceRestoreResult,
   ScientSourceTrashListing,
   ScientSourceZoteroRefreshField,
