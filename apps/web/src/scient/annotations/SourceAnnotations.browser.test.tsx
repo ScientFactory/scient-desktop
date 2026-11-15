@@ -5,10 +5,12 @@ import {
   type ScientPdfAnnotation,
   type ScientSourceDetailResult,
 } from "@t3tools/contracts";
+import { PDFDocument, PDFName } from "pdf-lib";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
+import type * as AssetUrls from "~/assets/assetUrls";
 import { randomUUID } from "~/lib/utils";
 
 import { render } from "../../../test/render";
@@ -30,6 +32,11 @@ vi.mock("./client", () => ({
   readDocumentAnnotations: client.read,
   readSourceAnnotations: client.readSource,
   mutateAnnotation: client.mutate,
+}));
+const assets = vi.hoisted(() => ({ url: vi.fn<() => Promise<string | null>>() }));
+vi.mock("~/assets/assetUrls", async (importOriginal) => ({
+  ...(await importOriginal<typeof AssetUrls>()),
+  useAssetUrlRefresh: () => assets.url,
 }));
 
 const environmentId = EnvironmentId.make("environment-source-annotations");
@@ -145,7 +152,10 @@ describe("Source highlights and notes", () => {
         relativePath: `.scient/sources/${attachment.relativePath}`,
       }),
     );
-    expect(pendingPdfReveal(key)?.target.selector).toEqual(later.anchor.selector);
+    const reveal = pendingPdfReveal(key);
+    expect(reveal && "target" in reveal ? reveal.target.selector : null).toEqual(
+      later.anchor.selector,
+    );
   });
 
   it("removes a passage from the list by its hash, without a path", async () => {
@@ -218,5 +228,34 @@ describe("Source highlights and notes", () => {
       command: { action: "remove", annotationId: "ann_zotero_ABCD2345", expectedRevision: 1 },
     });
     await expect.element(row).not.toBeInTheDocument();
+  });
+
+  it("cites the printed page of a passage quoted from the list", async () => {
+    const { root, onOpenPdf, record } = setup();
+    // A journal article whose pages are printed from 1121: PDF page 4 is page 1124.
+    const journal = await PDFDocument.create();
+    for (let index = 0; index < 5; index += 1) journal.addPage([612, 792]);
+    journal.catalog.set(
+      PDFName.of("PageLabels"),
+      journal.context.obj({ Nums: [0, { S: "D", St: 1121 }] }),
+    );
+    const url = URL.createObjectURL(
+      new Blob([new Uint8Array(await journal.save())], { type: "application/pdf" }),
+    );
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(url) };
+    assets.url.mockReset().mockResolvedValue(url);
+    using copied = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    await using _screen = await render(
+      <SourceAnnotations
+        environmentId={environmentId}
+        root={root}
+        record={{ ...record, citationKey: "smith2024sleep" }}
+        onOpenPdf={onOpenPdf}
+      />,
+    );
+    await expect.element(page.getByRole("button", { name: /Deep sleep/ })).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Quote in my document" }).nth(1));
+    await vi.waitFor(() => expect(copied).toHaveBeenCalledTimes(1));
+    expect(copied.mock.calls[0]![0]).toBe("> Deep sleep doubled recall [@smith2024sleep, p. 1124]");
   });
 });

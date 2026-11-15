@@ -9,13 +9,14 @@ import {
 import { TextQuote, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { Button } from "~/components/ui/button";
 
 import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { pdfRevealDocumentKey, requestPdfReveal } from "../pdf/anchors/pdfRevealRequests";
 import { pdfDocumentIdentity } from "../pdf/anchors/pdfTextTarget";
-import { workspacePdfSource } from "../pdf/pdfSource";
+import { pdfSourceAssetResource, workspacePdfSource } from "../pdf/pdfSource";
 import {
   annotatedPdfKey,
   removeAnnotation,
@@ -26,6 +27,8 @@ import {
 import { useCanChangeLibrary } from "../sources/sourcesCommands";
 import { readSourceAnnotations } from "./client";
 import { quoteInDocument } from "./documentQuoteTargets";
+import { readQuotePageLabels } from "./pdfQuotePageLabels";
+import { quotePageLabels } from "./quoteFormat";
 import { usePdfAnnotations } from "./useDocumentAnnotations";
 
 type SourceAttachment = ScientSourceDetailResult["attachments"][number];
@@ -152,6 +155,19 @@ function AttachmentAnnotations(props: {
   };
   const annotations = usePdfAnnotations(pdf);
   const canChange = useCanChangeLibrary(environmentId);
+  const descriptor = workspacePdfSource({
+    environmentId,
+    fileName: attachment.fileName,
+    workspaceRoot: root,
+    relativePath: `.scient/sources/${attachment.relativePath}`,
+    origin: {
+      _tag: "source",
+      workspaceRoot: root,
+      sourceId,
+      attachmentId: attachment.attachmentId,
+    },
+  });
+  const pdfUrl = useAssetUrlRefresh(environmentId, pdfSourceAssetResource(descriptor));
   if (annotations.length === 0 && props.unplaced.length === 0) return null;
 
   const openPdf = () =>
@@ -161,18 +177,6 @@ function AttachmentAnnotations(props: {
       fileName: attachment.fileName,
     });
   const open = (annotation: ScientPdfAnnotation) => {
-    const descriptor = workspacePdfSource({
-      environmentId,
-      fileName: attachment.fileName,
-      workspaceRoot: root,
-      relativePath: `.scient/sources/${attachment.relativePath}`,
-      origin: {
-        _tag: "source",
-        workspaceRoot: root,
-        sourceId,
-        attachmentId: attachment.attachmentId,
-      },
-    });
     const document = pdfDocumentIdentity(descriptor);
     if (document) {
       requestPdfReveal(
@@ -223,14 +227,20 @@ function AttachmentAnnotations(props: {
                 size="icon-xs"
                 variant="ghost-muted-row"
                 aria-label="Quote in my document"
-                onClick={() =>
-                  void quoteInDocument(root, {
-                    quote: scientAnnotationQuote(annotation),
-                    pages: annotation.anchor.selector.pages.map((page) => page.page),
-                    citationKey: props.citationKey,
-                    fileName: attachment.fileName,
-                  })
-                }
+                onClick={() => {
+                  const pages = annotation.anchor.selector.pages.map((page) => page.page);
+                  // The PDF is not open here: it is read briefly for its printed page labels.
+                  void readQuotePageLabels({ contentKey: attachment.sha256, url: pdfUrl }).then(
+                    (labels) =>
+                      quoteInDocument(root, {
+                        quote: scientAnnotationQuote(annotation),
+                        pages,
+                        pageLabels: quotePageLabels(pages, labels),
+                        citationKey: props.citationKey,
+                        fileName: attachment.fileName,
+                      }),
+                  );
+                }}
               >
                 <TextQuote />
               </Button>

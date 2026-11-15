@@ -78,10 +78,13 @@ function savedNote(note: string): ScientPdfAnnotation {
   };
 }
 
+type DocumentSources = ReadonlyArray<{ sourceId: string; title: string; citationKey?: string }>;
+
 /** Answers each command as the server would for a single known annotation. */
 function serve(
   initial: ReadonlyArray<ScientPdfAnnotation>,
   alternatives: ReadonlyArray<ScientAnnotationAlternative> = [],
+  sources: DocumentSources = [],
 ) {
   let current = [...initial];
   client.read.mockReset().mockResolvedValue({
@@ -89,6 +92,7 @@ function serve(
     material,
     annotations: initial,
     ...(alternatives.length > 0 ? { alternatives } : {}),
+    ...(sources.length > 0 ? { sources } : {}),
   });
   client.mutate
     .mockReset()
@@ -154,8 +158,9 @@ function paintedText(kind: "highlight" | "note"): string {
 async function setup(
   initial: ReadonlyArray<ScientPdfAnnotation>,
   alternatives: ReadonlyArray<ScientAnnotationAlternative> = [],
+  sources: DocumentSources = [],
 ) {
-  serve(initial, alternatives);
+  serve(initial, alternatives, sources);
   const stack = new AsyncDisposableStack();
   const savedStorage = localStorage.getItem(PDF_READER_SESSION_STORAGE_KEY);
   stack.defer(() => {
@@ -319,5 +324,58 @@ describe("PDF annotations in the reader", () => {
     await expect
       .element(page.getByRole("button", { name: "Use this version" }))
       .not.toBeInTheDocument();
+  });
+
+  it("asks which source a quote cites when two share the PDF, then remembers it", async () => {
+    await using fixture = await setup(
+      [savedNote("Key passage")],
+      [],
+      [
+        { sourceId: "src_ch1", title: "Chapter 1", citationKey: "doe2024a" },
+        { sourceId: "src_ch2", title: "Chapter 2", citationKey: "doe2024b" },
+      ],
+    );
+    await vi.waitFor(() => expect(paintedText("note")).toBe(QUOTE));
+    using copied = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const openNote = async () => {
+      const range = document.createRange();
+      const node = textNode(fixture.container, QUOTE);
+      range.setStart(node, node.data.indexOf(QUOTE));
+      range.setEnd(node, node.data.indexOf(QUOTE) + QUOTE.length);
+      const box = range.getBoundingClientRect();
+      await act(async () =>
+        node.parentElement!.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            button: 0,
+            clientX: box.left + box.width / 2,
+            clientY: box.top + box.height / 2,
+          }),
+        ),
+      );
+      await expect.element(page.getByRole("textbox", { name: "Note" })).toBeVisible();
+    };
+    const choices = page.getByRole("group", { name: "Source to cite" });
+    const quote = page.getByRole("button", { name: "Quote in my document" });
+
+    // Nothing is cited until a source is picked; Cancel quotes nothing.
+    await openNote();
+    await userEvent.click(quote);
+    await expect.element(choices).toBeVisible();
+    await userEvent.click(choices.getByRole("button", { name: "Cancel" }));
+    await expect.element(choices).not.toBeInTheDocument();
+    expect(copied).not.toHaveBeenCalled();
+
+    await userEvent.click(quote);
+    await userEvent.click(choices.getByRole("button", { name: /Chapter 2/ }));
+    await vi.waitFor(() => expect(copied).toHaveBeenCalledTimes(1));
+    expect(copied.mock.calls[0]![0]).toContain("[@doe2024b, p. 2]");
+
+    // The second quote from this PDF cites the same source without asking.
+    await openNote();
+    await expect.element(page.getByText("Quotes cite Chapter 2")).toBeVisible();
+    await userEvent.click(quote);
+    await vi.waitFor(() => expect(copied).toHaveBeenCalledTimes(2));
+    expect(copied.mock.calls[1]![0]).toContain("[@doe2024b, p. 2]");
   });
 });
