@@ -25,8 +25,12 @@ import { runScientLibraryMove } from "./libraryMove.ts";
 import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import type { ScientSourceRecord } from "./model.ts";
 import {
+  deleteScientSourcesPermanently,
+  deleteTrashedScientSource,
   importScientSource,
+  inspectScientLibrarySources,
   listScientSourceRecords,
+  listScientSourceTrash,
   removeScientSource,
   readScientSourceRecord,
   readScientSourceTrashEntries,
@@ -1199,5 +1203,57 @@ describe("library merge engine", () => {
       [mergeId, "undone"],
     ]);
     expect(await liveIds(library)).toHaveLength(6);
+  });
+
+  it("keeps a merged-away copy out of the Trash a person sees, until the merged paper is deleted", async () => {
+    const { root, library } = await newLibrary();
+    const doi = { identifiers: [{ scheme: "doi" as const, value: "10.1000/same" }] };
+    await seed(root, [
+      record("source_keep", doi),
+      record("source_copy", doi),
+      record("source_other", { title: "Another paper" }),
+    ]);
+    const merged = await mergeScientLibrarySources({
+      library,
+      sourceIds: ["source_keep", "source_copy"],
+    });
+    if (merged.outcome !== "merged") throw new Error(`Not merged: ${merged.outcome}`);
+    const merge = merged.merge;
+    await removeScientSource({ root: library, sourceId: "source_other", expectedRevision: 1 });
+
+    // Only the removed paper is in the Trash; emptying it leaves the merge's Undo intact.
+    const listed = async () =>
+      (await listScientSourceTrash(library)).entries.map((entry) => entry.sourceId);
+    expect(await listed()).toEqual(["source_other"]);
+    expect(await inspectScientLibrarySources(library)).toMatchObject({ trashedCount: 1 });
+    expect(await deleteScientSourcesPermanently({ root: library })).toMatchObject({
+      deletedSourceIds: ["source_other"],
+    });
+    expect(await inspectScientLibrarySources(library)).not.toHaveProperty("trashedCount");
+    expect(await undoScientLibraryMerge({ library, mergeId: merge.mergeId })).toMatchObject({
+      outcome: "undone",
+    });
+
+    // Merged again, the copy goes with the merged paper when that is deleted for good.
+    const again = await mergeScientLibrarySources({
+      library,
+      sourceIds: ["source_keep", "source_copy"],
+    });
+    if (again.outcome !== "merged") throw new Error(`Not merged: ${again.outcome}`);
+    const kept = again.survivor;
+    await removeScientSource({
+      root: library,
+      sourceId: kept.sourceId,
+      expectedRevision: kept.revision,
+    });
+    expect(await listed()).toEqual([kept.sourceId]);
+    expect(await readScientSourceTrashEntries(library)).toHaveLength(2);
+    const deleted = await deleteTrashedScientSource({
+      root: library,
+      sourceId: kept.sourceId,
+      expectedRevision: kept.revision,
+    });
+    expect(deleted).toMatchObject({ outcome: "deleted" });
+    expect(await readScientSourceTrashEntries(library)).toEqual([]);
   });
 });
