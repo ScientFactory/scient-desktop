@@ -389,6 +389,16 @@ describe("Library routes on the library backend", () => {
         await vi.waitFor(async () =>
           expect(await libraryRestoreStatus(libraryRoot)).toMatchObject({ state: "ready" }),
         );
+        // Another folder is asked for and refused: the copy that was ready still waits, and
+        // the answer says both.
+        startLibraryRestore(libraryRoot, destination);
+        await vi.waitFor(async () =>
+          expect(await libraryRestoreStatus(libraryRoot)).toMatchObject({
+            state: "ready",
+            sources: 2,
+            refused: { reason: "This folder is not a finished Scient Library backup." },
+          }),
+        );
       });
 
       // The next start of the server puts it in place, and keeps the Library that was there.

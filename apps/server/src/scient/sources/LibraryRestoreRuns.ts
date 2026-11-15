@@ -40,6 +40,8 @@ function notPrepared(result: Exclude<ScientLibraryRestorePrepared, { outcome: "r
       return "This folder is not a finished Scient Library backup.";
     case "unsupported":
       return "This backup was made by a later version of Scient. Update Scient, then restore it.";
+    case "unsafe-paths":
+      return `This backup lists a file Scient will not write on this computer (${result.file}). Nothing was restored.`;
     case "damaged":
       return `The backup is damaged: ${result.file} is missing, changed or does not belong. Nothing was restored.`;
     case "busy":
@@ -58,12 +60,17 @@ export async function libraryRestoreStatus(
   const waiting = await readScientLibraryRestorePending(libraryRoot).catch(() => null);
   if (waiting) {
     const problem = problems.get(libraryRoot);
+    // A request made since that failed left this copy waiting; both are said.
+    const last = ended.get(libraryRoot);
     return {
       state: "ready",
       backupCreatedAt: waiting.backupCreatedAt,
       sources: waiting.counts.sources,
       pdfs: waiting.counts.pdfs,
       ...(problem === undefined ? {} : { problem }),
+      ...(last?.state === "failed"
+        ? { refused: { failedAt: last.failedAt, reason: last.reason } }
+        : {}),
     };
   }
   return ended.get(libraryRoot) ?? { state: "none" };
@@ -97,6 +104,7 @@ export async function cancelLibraryRestore(libraryRoot: string): Promise<void> {
   if (preparing.has(libraryRoot)) return;
   await cancelScientLibraryRestore(libraryRoot);
   problems.delete(libraryRoot);
+  ended.delete(libraryRoot);
 }
 
 function remember(libraryRoot: string, finished: ScientLibraryRestoreFinished): void {
