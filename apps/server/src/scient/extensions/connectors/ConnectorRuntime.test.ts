@@ -124,6 +124,8 @@ interface FakeVendor {
   exchange: Gate;
   /** Tokens the MCP endpoint refuses (even if valid); each refusal passes `refusing` first. */
   refusedTokens: Set<string>;
+  /** Tokens answered with HTTP 403. */
+  forbiddenTokens: Set<string>;
   refusing: Gate;
   refreshCount: number;
   registrations: Array<Record<string, unknown>>;
@@ -215,6 +217,7 @@ const handleMcp = async (
       response.end();
       return;
     }
+    if (vendor.forbiddenTokens.has(token)) return json(response, 403, { error: "forbidden" });
     vendor.upstream.push({
       path: request.url ?? "",
       method: request.method ?? "",
@@ -456,6 +459,7 @@ const resetVendor = (base: string): FakeVendor => ({
   refresh: { gate: undefined, arrived: undefined },
   exchange: { gate: undefined, arrived: undefined },
   refusedTokens: new Set(),
+  forbiddenTokens: new Set(),
   refusing: { gate: undefined, arrived: undefined },
   refreshCount: 0,
   registrations: [],
@@ -2327,6 +2331,61 @@ describe("connector disconnect", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live.each([
+    { status: 401, says: "rejected the credential stored in Scient" },
+    { status: 403, says: "answered with HTTP 403" },
+  ] as const)(
+    "keeps discovery failing when the service refuses a key it accepted before ($status)",
+    ({ status, says }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        vendor.validTokens.add("entered-secret-value");
+        const added = yield* harness.runtime.add({
+          target: { type: "url", url: `${vendor.base}/secure/mcp` },
+          credential: { type: "entered", strategy: "bearer", value: "entered-secret-value" },
+        });
+        const connectorId = added.connector.connectorId;
+        harness.delivered.add(connectorId);
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 1, method: "tools/list" }),
+          ),
+        ).toMatchObject({ id: 1, result: { tools: [{ name: "search" }] } });
+
+        if (status === 401) vendor.validTokens.delete("entered-secret-value");
+        else vendor.forbiddenTokens.add("entered-secret-value");
+        // regression: a refused stored key met the empty server, so discovery reported success.
+        const refused = { code: -32001, message: expect.stringContaining(says) };
+        expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toEqual({
+          jsonrpc: "2.0",
+          id: 2,
+          error: refused,
+        });
+        expect(
+          yield* readJson(
+            yield* harness.proxy(connectorId, { jsonrpc: "2.0", id: 3, method: "tools/list" }),
+          ),
+        ).toEqual({ jsonrpc: "2.0", id: 3, error: refused });
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live.each(["refresh refused", "replay refused"] as const)(
+    "fails discovery when the service refuses the sign-in (%s)",
+    (refusal) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const connectorId = yield* harness.connectSecure();
+        vendor.validTokens.delete("vendor-access-token-1");
+        if (refusal === "refresh refused") vendor.refreshMode = "invalid_grant";
+        else vendor.refusedTokens.add("vendor-access-token-2");
+        expect(yield* readJson(yield* harness.proxy(connectorId, initialize(2)))).toMatchObject({
+          id: 2,
+          error: { code: -32001, message: expect.stringContaining("no longer connected") },
+        });
+        expect((yield* harness.runtime.list()).connectors[0]?.status).toBe("needs-auth");
+      }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("cancels an in-flight refresh so nothing is sent or kept after removal", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -2805,6 +2864,23 @@ describe("GitHub with Source Control's account", () => {
           auth: { account: "octo" },
         });
       }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("fails discovery when GitHub refuses every token Source Control has", () =>
+    Effect.gen(function* () {
+      vendor.validTokens.add(OCTO_TOKEN);
+      const github = fakeSourceControl({ [OCTO_TOKEN]: "octo" });
+      const harness = yield* makeHarness({ github: github.service });
+      const connector = yield* connectGitHub(harness);
+      vendor.refusedTokens.add(OCTO_TOKEN);
+      expect(
+        yield* readJson(yield* harness.proxy(connector.connectorId, initialize(1))),
+      ).toMatchObject({
+        id: 1,
+        error: { code: -32001, message: expect.stringContaining("refused Source Control") },
+      });
+      expect(github.state.invalidated).toEqual([OCTO_TOKEN]);
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("sends the credential only to GitHub's own MCP server", () =>

@@ -15,7 +15,7 @@ import { agentStatusOf } from "../../extensions/connectors/agentStatus.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey, cardEndedNote } from "./accountAdd.ts";
+import { askForAccountKey, cardEndedNote, withCardAllowance } from "./accountAdd.ts";
 import { authorize } from "./accountUse.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
@@ -179,4 +179,4 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
         missing,
         message: `${connector.displayName} is set up and restarted. Call its tool again.`,
       };
-});
+}, withCardAllowance);

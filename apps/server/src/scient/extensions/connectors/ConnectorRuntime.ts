@@ -184,7 +184,19 @@ type Credential =
       readonly borrowed?: SourceControlCredential;
     }
   | { readonly type: "lost"; readonly message: string }
-  | { readonly type: "failed"; readonly message: string };
+  | { readonly type: "failed"; readonly message: string }
+  | CredentialRejected;
+
+/**
+ * The service (or its authorization server) refused the credential for good: the person has to
+ * fix it, so every request fails, discovery too. Only benign unavailability meets the empty server.
+ */
+type CredentialRejected = {
+  readonly type: "rejected";
+  readonly message: string;
+  /** A refused exchange whose body is still open, disposed of without waiting. */
+  readonly response?: Response;
+};
 
 type SendOutcome =
   | {
@@ -196,12 +208,13 @@ type SendOutcome =
     }
   | { readonly type: "lost"; readonly message: string }
   | { readonly type: "failed"; readonly message: string }
-  | { readonly type: "rejected"; readonly response: Response; readonly message: string };
+  | CredentialRejected;
 
 type RefreshOutcome =
   | { readonly type: "ok"; readonly session: ConnectorOAuthSession }
   | { readonly type: "transient"; readonly session: ConnectorOAuthSession }
-  | { readonly type: "lost"; readonly message: string };
+  | { readonly type: "lost"; readonly message: string }
+  | CredentialRejected;
 
 class ConnectorUpstreamError extends Schema.TaggedError<ConnectorUpstreamError>()(
   "ConnectorUpstreamError",
@@ -1073,9 +1086,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         if (Exit.isSuccess(refreshed)) return yield* commitRefresh(record, entry, refreshed.value);
         const failure = Option.getOrUndefined(Exit.findErrorOption(refreshed))?.cause;
         if (isGrantLost(failure)) {
-          return yield* loseGrant(
+          const lost = yield* loseGrant(
             "The sign-in expired or was revoked. Sign in again to reconnect.",
           );
+          return { type: "rejected", message: lost.message } satisfies RefreshOutcome;
         }
         yield* Effect.logWarning("connector token refresh failed; keeping the connection", {
           connectorId: record.connectorId,
@@ -1171,7 +1185,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           session.refreshToken !== undefined
         ) {
           const refreshed = yield* refreshSession(record, session.accessToken);
-          if (refreshed.type === "lost") return refreshed satisfies Credential;
+          if (refreshed.type === "lost" || refreshed.type === "rejected") {
+            return refreshed satisfies Credential;
+          }
           session = refreshed.session;
         }
         return {
@@ -1199,14 +1215,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     ) => Effect.Effect<Exit.Exit<Response, ConnectorUpstreamError>>,
     scope?: McpInvocationScope,
   ) {
+    const message = `GitHub refused Source Control's credential for ${auth.account}. Check the sign-in in Settings → Source Control.`;
     const rejected = Effect.gen(function* () {
-      const message = `GitHub refused Source Control's credential for ${auth.account}. Check the sign-in in Settings → Source Control.`;
       yield* markStatus(record, "connected", message);
-      return { type: "failed", message } satisfies SendOutcome;
+      return { type: "rejected", message } satisfies SendOutcome;
     });
     if (Option.isNone(github) || refused.borrowed === undefined) return yield* rejected;
     yield* github.value.invalidate(auth.host, refused.borrowed);
     const next: Credential = yield* credentialFor(record, scope);
+    // Source Control has no other token for the account (and has said so): the refusal stands.
+    if (next.type === "lost" && isLive(record.connectorId)) {
+      return { type: "rejected", message } satisfies SendOutcome;
+    }
     if (next.type !== "ok") return next satisfies SendOutcome;
     if (!isLive(record.connectorId)) {
       return { type: "lost", message: lostGrantMessage(record) } satisfies SendOutcome;
@@ -1312,12 +1332,14 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     if (record.auth.type !== "oauth") {
       yield* markStatus(record, "connected", "The service rejected the stored credential.");
       return {
-        type: "failed",
+        type: "rejected",
         message: `${record.displayName} rejected the credential stored in Scient. Ask the user to update it in Scient Settings → Extensions.`,
       } satisfies SendOutcome;
     }
     const refreshed = yield* refreshSession(record, credential.accessToken);
-    if (refreshed.type === "lost") return refreshed satisfies SendOutcome;
+    if (refreshed.type === "lost" || refreshed.type === "rejected") {
+      return refreshed satisfies SendOutcome;
+    }
     if (refreshed.type === "transient") {
       return {
         type: "failed",
@@ -1342,7 +1364,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         refreshed.session.grantId,
         "The service no longer accepts this sign-in.",
       );
-      return gone;
+      return { type: "rejected", message: lostGrantMessage(record) } satisfies SendOutcome;
     }
     return {
       type: "response",
@@ -2126,7 +2148,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         applied.push(...outcome.secrets);
         return outcome.response;
       }
-      const outcome = await run(
+      const outcome: SendOutcome = await run(
         sendAuthorized(
           record,
           {
@@ -2143,8 +2165,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         return outcome.response;
       }
       if (outcome.type === "rejected") {
-        void outcome.response.body?.cancel().catch(() => undefined);
-        throw new ConnectorUnavailableError({ kind: "failed", message: outcome.message });
+        void outcome.response?.body?.cancel().catch(() => undefined);
+        // A refused sign-in reads as needing sign-in; a refused key names what refused it.
+        throw new ConnectorUnavailableError({
+          kind: record.auth.type === "oauth" ? "lost" : "failed",
+          message: outcome.message,
+        });
       }
       throw new ConnectorUnavailableError({ kind: outcome.type, message: outcome.message });
     };
@@ -2439,16 +2465,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             ).pipe(Effect.onInterrupt(() => release));
       if (outcome.type !== "response") {
         yield* release;
-        if (outcome.type === "rejected") {
+        if (outcome.type === "rejected" && outcome.response !== undefined) {
+          const refused = outcome.response;
           // release aborts the socket before best-effort disposal. A vendor may leave its
           // 401 body open; the agent's auth error must not wait for EOF or cancellation.
           yield* Effect.sync(() => {
-            void outcome.response.body?.cancel().catch(() => undefined);
+            void refused.body?.cancel().catch(() => undefined);
           });
         }
         yield* recordToolUse(outcome.type === "lost" ? "denied" : "allowed", "error");
-        // A rejected credential is the user's to fix, so the agent's session hears it fail;
-        // a lost grant or a failed transport meets the empty server.
+        // A refused key, Source Control token or sign-in is the user's to fix, so the agent's
+        // session hears it fail; a connector that is gone or a failed transport meets the empty
+        // server.
         return outcome.type === "rejected"
           ? credentialRefusal(request, outcome.message)
           : connectorUnavailableResponse(request, outcome.message);
@@ -2478,15 +2506,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
       const streamed = contentType.includes("text/event-stream");
       if (!response.ok || !(streamed || contentType.includes("application/json"))) {
+        const message = response.ok
+          ? `${record.displayName} did not answer like an MCP server.`
+          : `${record.displayName} answered with HTTP ${response.status}.`;
+        // A hosted service forbade the credential Scient sent: discovery must hear it fail.
+        const refused =
+          response.status === 403 &&
+          record.local === undefined &&
+          outcome.secrets.some((secret) => secret !== undefined);
         return yield* settle(
-          refusal(
-            request,
-            response.ok
-              ? `${record.displayName} did not answer like an MCP server.`
-              : `${record.displayName} answered with HTTP ${response.status}.`,
-            502,
-            "connector_error",
-          ),
+          refused
+            ? credentialRefusal(request, message)
+            : refusal(request, message, 502, "connector_error"),
         );
       }
       const headers: Record<string, string> = {

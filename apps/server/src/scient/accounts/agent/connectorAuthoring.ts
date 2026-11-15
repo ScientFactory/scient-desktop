@@ -31,7 +31,7 @@ import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
-import { askForAccountKey, askInCard, cardEndedNote } from "./accountAdd.ts";
+import { askForAccountKey, askInCard, cardEndedNote, withCardAllowance } from "./accountAdd.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
 
@@ -191,6 +191,9 @@ const addAsks = Effect.gen(function* () {
             reason: `Skip this if the app has no client secret.`,
             notKept,
           });
+          // Declining is the user's "no secret"; a card that timed out or closed is no answer.
+          if (secret.status === "timed_out" || secret.status === "cancelled")
+            return { problem: cardProblem(secret.status) };
           return {
             clientId: id.value,
             ...(secret.status === "saved" ? { clientSecret: secret.value } : {}),
@@ -210,7 +213,7 @@ export const addConnector = Effect.fn("AccountsAgent.connectorAdd")(function* (
     location: yield* callerLocation,
     asks: yield* addAsks,
   }).pipe(Effect.mapError(toAccountsError));
-});
+}, withCardAllowance);
 
 /**
  * Opens a sign-in page in this chat's browser as the user's own tab, ready for them: no agent
