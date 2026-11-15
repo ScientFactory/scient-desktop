@@ -220,6 +220,23 @@ describe("a deliberate link", () => {
       actor: "user",
     });
 
+    // regression: review H1-e-1 finding 2, an unrelated review's damaged snapshot stopped Unlink.
+    const unrelated = await changeScientLibraryReview({
+      projectRoot: project,
+      library,
+      change: { action: "create-review", title: "An unrelated review" },
+      actor: "user",
+    });
+    const damaged = NodePath.join(
+      project,
+      ".scient",
+      "library",
+      "reviews",
+      `${unrelated.reviewId}.works.json`,
+    );
+    await NodeFSP.rm(damaged, { force: true });
+    await NodeFSP.mkdir(damaged);
+
     await unlinkScientProjectSourceRestoringCopies({ ...repair, actor: "agent" });
     expect(await entry()).toMatchObject({
       title: "Screened only",

@@ -1019,17 +1019,29 @@ export async function refreshScientLibraryReviewSnapshot(input: {
   });
 }
 
+/** The live reviews that name the source: the only snapshots a link or its Undo reads. */
+async function reviewsNaming(
+  folder: ScientReviewFolder,
+  projectSourceId: string,
+): Promise<ReadonlyArray<string>> {
+  return (await readAllReviews(folder)).reviews.flatMap((review) =>
+    review.deletedAt === undefined && scientReviewNamedIds(review).includes(projectSourceId)
+      ? [review.reviewId]
+      : [],
+  );
+}
+
 /** For linking a source on purpose (`projectSourceLink.ts`). The caller holds the reviews lock. */
 export const scientLibraryReviewsInternals = {
   /** Each review's saved copy of the source exactly as stored, by review ID. */
   async readEntryCopies(root: string, projectSourceId: string): Promise<Record<string, unknown>> {
     const folder = libraryFolder(root);
     const copies: Record<string, unknown> = {};
-    for (const review of (await readAllReviews(folder)).reviews) {
-      const stored = (await readSnapshotState(folder, review.reviewId, "read")).entries.get(
+    for (const reviewId of await reviewsNaming(folder, projectSourceId)) {
+      const stored = (await readSnapshotState(folder, reviewId, "read")).entries.get(
         projectSourceId,
       );
-      if (stored) copies[review.reviewId] = encodeWork(stored.work, stored.extra);
+      if (stored) copies[reviewId] = encodeWork(stored.work, stored.extra);
     }
     return copies;
   },
@@ -1050,7 +1062,7 @@ export const scientLibraryReviewsInternals = {
       : undefined;
     const fallback = Object.values(kept)[0] ?? (fromPin && { ...fromPin, capturedRevision: 1 });
     const folder = libraryFolder(root);
-    for (const { reviewId } of (await readAllReviews(folder)).reviews) {
+    for (const reviewId of await reviewsNaming(folder, projectSourceId)) {
       const state = await readSnapshotState(folder, reviewId, "write");
       const raw = kept[reviewId] ?? fallback;
       if (!state.entries.has(projectSourceId) || raw === undefined) continue;

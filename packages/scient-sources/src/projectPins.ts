@@ -1041,23 +1041,24 @@ export async function listScientProjectPinnedWorks(input: {
   const aliases = library ? await readScientLibraryAliases(library) : new Map();
   const unmerged = scientUnmergedSourceIds(aliases);
   // What the next refresh will write for a removed, unmerged source, read here without writing.
+  const ownIds = pins.map((pin, index) => {
+    const resolution = resolutions[index];
+    const ownId = resolveScientLibraryAlias(aliases, pin.sourceId);
+    return resolution?.kind === "unresolved" &&
+      resolution.reason === "removed" &&
+      unmerged.has(ownId)
+      ? ownId
+      : undefined;
+  });
   const removed =
-    library &&
-    pins.some(
-      (pin, index) =>
-        resolutions[index]?.kind === "unresolved" &&
-        unmerged.has(resolveScientLibraryAlias(aliases, pin.sourceId)),
-    )
+    library && ownIds.some((ownId) => ownId !== undefined)
       ? await readScientRemovedLibraryRecords(library)
       : new Map<string, ScientSourceRecord>();
   return pins.map((stored, index) => {
     const resolution = resolutions[index];
     const found = resolution?.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
-    const ownId = resolveScientLibraryAlias(aliases, stored.sourceId);
-    const own =
-      resolution?.kind === "unresolved" && resolution.reason === "removed" && unmerged.has(ownId)
-        ? removed.get(ownId)
-        : undefined;
+    const ownId = ownIds[index];
+    const own = ownId === undefined ? undefined : removed.get(ownId);
     const pin = own ? { ...stored, work: unmergedSourceWork(stored.work, own) } : stored;
     const projectNote = pin.note ?? null;
     const incomplete = !scientPinWorkIsComplete(pin.work);

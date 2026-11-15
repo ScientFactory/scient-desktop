@@ -623,6 +623,13 @@ describe("records the Library holds apart from a source", () => {
     await undoScientLibraryMerge({ library, mergeId: merged.merge.mergeId });
 
     expect(await refreshed()).not.toHaveProperty("work.pages");
+    // Deleted for good: this key's ID is the other computer's, so its copy is left alone and
+    // stays incomplete; the fuller managed entry is still kept.
+    await trash(library, hydrated.sourceId);
+    await deleteScientSourcesPermanently({ root: library, sourceIds: [hydrated.sourceId] });
+    const [read] = await listScientProjectPinnedWorks({ projectRoot: project, library });
+    expect(read).toMatchObject({ from: "snapshot", incompleteSnapshot: true });
+    expect(await refreshed()).not.toHaveProperty("work.pages");
   });
 
   // regression: review H1-b-1 finding 3, a copy of the source itself was replaced when it differed.
