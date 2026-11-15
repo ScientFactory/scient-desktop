@@ -21,10 +21,10 @@ export const SCIENT_RELEASE_NOTES = [
           "Sign in to Scient on your computer, then reach its projects, files and agents from another device or at app.scientfactory.com, without opening ports or setting up a VPN. Keep Scient running on the computer you want to reach.",
       },
       {
-        id: "guest-links-0629",
-        title: "Bring someone into the conversation",
+        id: "invite-people-0629",
+        title: "Invite people to a conversation",
         description:
-          "Choose Share with guest from a conversation’s menu to share it live in a guest’s browser, even if they do not use Scient. They can suggest messages and attach files; you choose what reaches the agent. Guest links are in beta, expire after 24 hours, and can be stopped at any time.",
+          "Choose Share in a conversation to invite people with a link. They follow it live in their browser, even without Scient, and talk with you there. Their messages reach the agent only when someone who can use the agent sends them on. Choose whether each person can chat or also use the agent, for 1, 7 or 30 days, and manage everyone from People. Guest links are in beta.",
       },
       {
         id: "voice-0629",
