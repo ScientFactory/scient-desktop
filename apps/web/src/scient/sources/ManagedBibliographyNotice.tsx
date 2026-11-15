@@ -1,6 +1,19 @@
 import type { ScientManagedBibliographyFileStatus } from "@t3tools/contracts";
 
 import { Button } from "../../components/ui/button";
+import type { SourcesActivityItem } from "./sourcesFeedback";
+
+interface ManagedBibliographyProps {
+  readonly files: ReadonlyArray<ScientManagedBibliographyFileStatus>;
+  readonly replacing: boolean;
+  readonly onResolve: (
+    name: ScientManagedBibliographyFileStatus["name"],
+    action: "replace" | "import",
+  ) => void;
+}
+
+const needsAttention = (file: ScientManagedBibliographyFileStatus) =>
+  file.state === "edited" || file.state === "unmanaged" || (file.kept?.length ?? 0) > 0;
 
 function changeSummary(file: ScientManagedBibliographyFileStatus): string {
   const changes = file.changes;
@@ -22,18 +35,9 @@ function keptSummary(file: ScientManagedBibliographyFileStatus, failed: boolean)
     : `Earlier text of ${file.name} is kept in ${kept.join(", ")}; delete ${them} once you no longer need ${them}.`;
 }
 
-/** Shown only when a managed bibliography file needs a decision. */
-export function ManagedBibliographyNotice(props: {
-  readonly files: ReadonlyArray<ScientManagedBibliographyFileStatus>;
-  readonly replacing: boolean;
-  readonly onResolve: (
-    name: ScientManagedBibliographyFileStatus["name"],
-    action: "replace" | "import",
-  ) => void;
-}) {
-  const attention = props.files.filter(
-    (file) => file.state === "edited" || file.state === "unmanaged" || (file.kept?.length ?? 0) > 0,
-  );
+/** Each managed bibliography file that needs a decision, or whose earlier text is kept. */
+function ManagedBibliographyNotice(props: ManagedBibliographyProps) {
+  const attention = props.files.filter(needsAttention);
   if (attention.length === 0) return null;
   const replaceButton = (file: ScientManagedBibliographyFileStatus) => (
     <Button
@@ -46,7 +50,7 @@ export function ManagedBibliographyNotice(props: {
     </Button>
   );
   return (
-    <div className="mx-3 mt-3 space-y-2 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+    <div className="space-y-2 text-xs text-muted-foreground">
       {attention.map((file) => {
         // An edited file with nothing to compare is one a failed write moved aside.
         const failed =
@@ -88,4 +92,26 @@ export function ManagedBibliographyNotice(props: {
       })}
     </div>
   );
+}
+
+/**
+ * An edited file waits for the person's choice until resolved; a file Scient did not write, or
+ * earlier text kept beside one, is worth knowing until the file or its kept copies change.
+ */
+export function managedBibliographyActivity(
+  props: ManagedBibliographyProps,
+): SourcesActivityItem | null {
+  const attention = props.files.filter(needsAttention);
+  if (attention.length === 0) return null;
+  const edited = attention.some((file) => file.state === "edited");
+  return {
+    key: "managed-bibliography",
+    tone: edited ? "decision" : "advisory",
+    label: edited
+      ? "A bibliography file was edited outside Scient"
+      : attention.some((file) => file.state === "unmanaged")
+        ? "A bibliography file was not written by Scient"
+        : "Earlier bibliography text is kept",
+    body: <ManagedBibliographyNotice {...props} />,
+  };
 }

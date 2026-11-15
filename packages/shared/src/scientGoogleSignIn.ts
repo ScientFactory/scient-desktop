@@ -1,13 +1,12 @@
 import { parseUrl } from "./url.ts";
 
 /**
- * Google refuses sign-in inside an embedded browser ("This browser or app may not be secure"), on
- * every platform. Scient's browser can still use a Google session made elsewhere, so only Google's
- * sign-in pages are recognized here, never its apps or its session upkeep (`ListAccounts`,
- * `CheckCookie`, `RotateCookies`…).
+ * Google decides each sign-in in an embedded browser itself: some go through, others end on its
+ * refusal ("This browser or app may not be secure"). Only Google's sign-in pages are recognized
+ * here, never its apps or its session upkeep (`ListAccounts`, `CheckCookie`, `RotateCookies`…).
  */
 export type GoogleSignInPage =
-  /** Asks for an account, a password, a passkey or a second step: never works in Scient's browser. */
+  /** Asks for an account, a password, a passkey or a second step. */
   | "credentials"
   /** Passes a signed-in session on (account chooser, a Google app's bounce, "Continue with
    *  Google"); without a session Google moves on to its credential pages. */
@@ -45,19 +44,6 @@ export function isGoogleOAuthPage(raw: string) {
   const path = googleAccountsPath(raw);
   return path !== null && OAUTH.test(path);
 }
-
-/**
- * Cookies that hold a Google sign-in, on `.google.com` and on accounts.google.com itself. Their
- * presence is a hint, not proof: only Google can say whether it still accepts them.
- */
-export const GOOGLE_SESSION_COOKIE_NAMES: ReadonlySet<string> = new Set([
-  "SID",
-  "__Secure-1PSID",
-  "__Secure-3PSID",
-  "LSID",
-  "__Host-1PLSID",
-  "__Host-3PLSID",
-]);
 
 /** Where the person can sign in again: a safe https origin, never a URL carrying OAuth state. */
 export function signInRestartUrl(raw: string | null | undefined): string | null {

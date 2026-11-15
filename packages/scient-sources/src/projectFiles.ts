@@ -31,6 +31,9 @@ function insideScientStorage(root: string, path: string): boolean {
  * project after symlinks are followed, and outside any `.scient` folder unless
  * `allowScientStorage` is set. Messages never contain absolute paths.
  */
+/** The largest PDF annotation file a reader accepts; every writer of one stays under it. */
+export const SCIENT_ANNOTATION_FILE_MAX_BYTES = 32 * 1024 * 1024;
+
 export async function resolveScientProjectFile(
   root: string,
   relativePath: string,

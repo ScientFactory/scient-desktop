@@ -60,6 +60,23 @@ const BoundedIdentifiers = Schema.Array(ScientSourceIdentifier).pipe(
 );
 const BoundedTags = Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(1_000)));
 
+/**
+ * Creator roles whose list stops short of the work's real list (BibTeX's `and others`): the
+ * names given are the first ones, and a citation ends that role's names with "et al.".
+ */
+export const ScientSourceIncompleteCreatorRoles = Schema.Array(NonEmptyString).pipe(
+  Schema.check(Schema.isMaxLength(16)),
+);
+
+/** Whether `role` is listed incomplete; roles compare as creator types do, without case. */
+export function scientCreatorRoleIncomplete(
+  roles: ReadonlyArray<string> | undefined,
+  role: string,
+): boolean {
+  const wanted = role.toLowerCase();
+  return roles?.some((entry) => entry.toLowerCase() === wanted) ?? false;
+}
+
 export const ScientSourceAbstractSection = Schema.Struct({
   title: NullableText,
   paragraphs: Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(256))),
@@ -204,6 +221,7 @@ export const ScientSourceRecord = Schema.Struct({
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
   creators: Schema.Array(ScientSourceCreator),
+  incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
   issuedRaw: NullableText,
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: Schema.Array(ScientSourceIdentifier),
@@ -334,6 +352,8 @@ export const ScientSourceEditableMetadata = Schema.Struct({
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
   creators: BoundedCreators,
+  /** Omitted means keep the current marks; given, it replaces them (empty clears them). */
+  incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
   issuedRaw: NullableText,
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: BoundedIdentifiers,
@@ -363,8 +383,24 @@ export const ScientSourceZoteroSync = Schema.Struct({
   itemVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   syncedAt: NonEmptyString,
   metadata: ScientSourceEditableMetadata,
+  /** The text Scient last wrote into the source's note from Zotero's notes. */
   note: Schema.NullOr(Schema.String),
+  /**
+   * Zotero's notes as it wrote them: each by key with the sha256 of its HTML, and the HTML while
+   * the notes fit 1,000,000 characters; absent when last read before they were kept.
+   */
+  notes: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        itemKey: NonEmptyString,
+        sha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+        html: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
   attachmentKeys: Schema.Array(NonEmptyString),
+  /** Each Zotero file's PDF here, by sha256; absent when imported before it was kept. */
+  pdfs: Schema.optionalKey(Schema.Record(NonEmptyString, NonEmptyString)),
 });
 export type ScientSourceZoteroSync = typeof ScientSourceZoteroSync.Type;
 
@@ -382,6 +418,7 @@ export const ScientSourceCandidate = Schema.Struct({
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
   creators: Schema.Array(ScientSourceCreator),
+  incompleteCreatorRoles: Schema.optionalKey(ScientSourceIncompleteCreatorRoles),
   issuedRaw: NullableText,
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: Schema.Array(ScientSourceIdentifier),
@@ -786,11 +823,13 @@ export const ScientSourceNotBrought = Schema.Struct({
     "link",
     /** PDFs not copied; `name`: `over-limit` or `unavailable`. */
     "pdf",
-    /** The notes together were longer than a note may be and were cut. */
+    /** The notes together were longer than a note may be and were cut; `original`: Zotero's HTML of some was not kept. */
     "note-cut",
-    /** Notes whose links, headings, tables, images or code became plain text. */
+    /** Notes whose formatting became plain text: imports made before notes came as Markdown. */
     "note-formatting",
-    /** Highlights and comments made on a PDF. */
+    /** Images in notes, which are not carried. */
+    "note-images",
+    /** Highlights and comments: `unplaced` (kept, not on the page), `no-file`, `later` (not saved), `too-long`; unnamed before. */
     "highlights",
     /** Links to related items. */
     "related",
@@ -812,6 +851,17 @@ export const ScientSourceNotBrought = Schema.Struct({
 });
 export type ScientSourceNotBrought = typeof ScientSourceNotBrought.Type;
 
+/**
+ * What became of one key a reference file cites a work by. `added`: this project cites the work
+ * by it from now on; `cited`: it did already. `taken`: it already cites another source here, which
+ * keeps it. `library`: a My Library import, which writes nothing in a project.
+ */
+export const ScientSourceItemCitationKey = Schema.Struct({
+  citationKey: NonEmptyString,
+  outcome: Schema.Literals(["added", "cited", "taken", "library"]),
+});
+export type ScientSourceItemCitationKey = typeof ScientSourceItemCitationKey.Type;
+
 export const ScientSourceOperationItem = Schema.Struct({
   itemKey: NonEmptyString,
   allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
@@ -825,6 +875,14 @@ export const ScientSourceOperationItem = Schema.Struct({
   notBrought: Schema.optionalKey(
     Schema.Array(ScientSourceNotBrought).check(Schema.isMaxLength(80)),
   ),
+  /** A reference-file entry's keys, its own first, then those of later entries for the same work. */
+  citationKeys: Schema.optionalKey(
+    Schema.Array(ScientSourceItemCitationKey).check(Schema.isMaxLength(50)),
+  ),
+  /** The key this project cites the work by when none of the file's keys could be used. */
+  projectKey: Schema.optionalKey(NonEmptyString),
+  /** An author list the file ended with "and others": filled in from its DOI, or kept short. */
+  authorList: Schema.optionalKey(Schema.Literals(["completed", "incomplete"])),
 });
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 
@@ -979,6 +1037,8 @@ export const ScientSourceZoteroRefreshItem = Schema.Struct({
   addedPdfCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   conflicts: Schema.Array(ScientSourceZoteroConflict),
   message: NullableText,
+  /** Highlights it could not bring: `highlights` named `unplaced`, `no-file` or `too-long`. */
+  notBrought: Schema.optionalKey(Schema.Array(ScientSourceNotBrought)),
 });
 export type ScientSourceZoteroRefreshItem = typeof ScientSourceZoteroRefreshItem.Type;
 

@@ -10,21 +10,25 @@ import {
   isScientLibraryLocation,
   type ScientSourceStoreLocation,
 } from "@scientfactory/scient-sources/library-root";
-import { assertScientProjectDirectory } from "@scientfactory/scient-sources/project-files";
+import {
+  assertScientProjectDirectory,
+  SCIENT_ANNOTATION_FILE_MAX_BYTES,
+} from "@scientfactory/scient-sources/project-files";
 import {
   SCIENT_ANNOTATIONS_DIRECTORY,
   ScientAnnotationActor,
   ScientAnnotationNote,
   ScientPdfAnnotation,
+  ScientUnplacedAnnotation,
   type ScientAnnotationAlternative,
   type ScientAnnotationCommand,
   type ScientAnnotationMutationResult,
   type ScientPdfAnnotation as ScientPdfAnnotationType,
+  type ScientUnplacedAnnotation as ScientUnplacedAnnotationType,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 export const MAX_ANNOTATIONS_PER_PDF = 5_000;
-const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_HISTORY_PER_ANNOTATION = 10;
 const MAX_SEEN_PATHS = 16;
 const MAX_LISTED_FILES = 10_000;
@@ -75,6 +79,8 @@ export const ScientAnnotationFile = Schema.Struct({
   paths: Schema.Array(ProjectPathHint),
   annotations: Schema.Array(ScientPdfAnnotation),
   history: Schema.Array(AnnotationHistoryEntry),
+  /** Another program's highlights and comments that could not be placed on a page here. */
+  unplaced: Schema.optionalKey(Schema.Array(ScientUnplacedAnnotation)),
 });
 export type ScientAnnotationFile = typeof ScientAnnotationFile.Type;
 
@@ -192,7 +198,11 @@ export function applyAnnotationCommand(
     };
   }
 
-  if (!current) return unchanged("not-found", null);
+  if (!current) {
+    return command.action === "remove" || command.action === "restore"
+      ? applyUnplacedCommand(file, command, now)
+      : unchanged("not-found", null);
+  }
   if (command.expectedRevision !== current.revision) return unchanged("stale", current);
   const revised = { revision: current.revision + 1, updatedAt: now, updatedBy: actor };
 
@@ -230,6 +240,93 @@ export function applyAnnotationCommand(
       return replace({ ...current, ...revised, ...target }, "updated");
     }
   }
+}
+
+/** Removes or brings back one that is not placed on the page; it has no other change. */
+function applyUnplacedCommand(
+  file: ScientAnnotationFile,
+  command: Extract<ScientAnnotationCommand, { readonly action: "remove" | "restore" }>,
+  now: string,
+): AnnotationCommandOutcome {
+  const entry = file.unplaced?.find((candidate) => candidate.annotationId === command.annotationId);
+  const unchanged = (outcome: ScientAnnotationMutationResult["outcome"]) => ({
+    file,
+    changed: false,
+    result: { outcome, annotation: null, ...(entry ? { unplaced: entry } : {}) },
+  });
+  if (!entry) return unchanged("not-found");
+  if (command.expectedRevision !== entry.revision) return unchanged("stale");
+  const removing = command.action === "remove";
+  if ((entry.deletedAt !== null) === removing) return unchanged("unchanged");
+  const next = { ...entry, revision: entry.revision + 1, deletedAt: removing ? now : null };
+  return {
+    file: {
+      ...file,
+      unplaced: (file.unplaced ?? []).map((candidate) => (candidate === entry ? next : candidate)),
+    },
+    changed: true,
+    result: { outcome: removing ? "removed" : "restored", annotation: null, unplaced: next },
+  };
+}
+
+/** A highlight another program held, already placed on this PDF's text. */
+export interface ImportedAnnotation {
+  readonly annotationId: string;
+  readonly anchor: ScientPdfAnnotationType["anchor"];
+  readonly note: string;
+  readonly color?: string;
+  readonly underline?: true;
+  /** When the person made it there. */
+  readonly at: string;
+}
+
+/**
+ * Adds another program's highlights to a PDF's file, each once: an ID the file already has,
+ * placed or not, live or removed, is left as it is, so one removed here never comes back.
+ * Pure; `added` is how many of each kind are new.
+ */
+function addImportedAnnotations(
+  file: ScientAnnotationFile,
+  placed: ReadonlyArray<ImportedAnnotation>,
+  unplaced: ReadonlyArray<ScientUnplacedAnnotationType>,
+): {
+  readonly file: ScientAnnotationFile;
+  readonly added: { readonly placed: number; readonly unplaced: number };
+} {
+  const known = new Set(
+    [...file.annotations, ...(file.unplaced ?? [])].map((entry) => entry.annotationId),
+  );
+  const fresh = <A extends { readonly annotationId: string }>(entries: ReadonlyArray<A>) =>
+    entries.filter((entry) => !known.has(entry.annotationId) && known.add(entry.annotationId));
+  const newPlaced = fresh(placed);
+  const newUnplaced = fresh(unplaced);
+  if (newPlaced.length === 0 && newUnplaced.length === 0) {
+    return { file, added: { placed: 0, unplaced: 0 } };
+  }
+  return {
+    file: {
+      ...file,
+      annotations: [
+        ...file.annotations,
+        ...newPlaced.map((entry): ScientPdfAnnotationType => ({
+          annotationId: entry.annotationId,
+          revision: 1,
+          anchor: entry.anchor,
+          highlighted: true,
+          note: normalizeNote(entry.note),
+          ...(entry.color ? { color: entry.color } : {}),
+          ...(entry.underline ? { underline: true } : {}),
+          createdAt: entry.at,
+          createdBy: "user",
+          updatedAt: entry.at,
+          updatedBy: "user",
+          deletedAt: null,
+        })),
+      ],
+      ...(newUnplaced.length > 0 ? { unplaced: [...(file.unplaced ?? []), ...newUnplaced] } : {}),
+    },
+    added: { placed: newPlaced.length, unplaced: newUnplaced.length },
+  };
 }
 
 function rememberAnnotationPath(
@@ -290,7 +387,7 @@ async function readFileAt(
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new Error(`${NodePath.basename(filePath)} is not a safe regular file.`);
   }
-  if (stats.size > MAX_FILE_BYTES) {
+  if (stats.size > SCIENT_ANNOTATION_FILE_MAX_BYTES) {
     throw new Error(`${NodePath.basename(filePath)} exceeds the safe size limit.`);
   }
   const value: unknown = JSON.parse(await NodeFSP.readFile(filePath, "utf8"));
@@ -307,9 +404,11 @@ async function readFileAt(
 async function writeFileAt(home: ScientAnnotationHome, file: ScientAnnotationFile): Promise<void> {
   const filePath = annotationFilePath(home, file.material.sha256);
   const serialized = `${JSON.stringify(file, null, 2)}\n`;
-  if (Buffer.byteLength(serialized, "utf8") > MAX_FILE_BYTES) {
+  if (Buffer.byteLength(serialized, "utf8") > SCIENT_ANNOTATION_FILE_MAX_BYTES) {
     throw new Error("The PDF has too many annotations to save.");
   }
+  // Every writer comes here: a file the reader would refuse hides all of the PDF's annotations.
+  decodeFile(JSON.parse(serialized));
   await assertScientProjectDirectory(homeRoot(home), NodePath.dirname(filePath), { create: true });
   const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;
@@ -351,6 +450,28 @@ export async function readScientAnnotationFile(
   sha256: string,
 ): Promise<ScientAnnotationFile | null> {
   return readFileAt(home, sha256);
+}
+
+/** Writes another program's highlights for one PDF, under the same locks as every change. */
+export async function importScientAnnotations(input: {
+  readonly canonicalRoot: ScientAnnotationHome;
+  readonly material: PdfMaterial;
+  readonly placed: ReadonlyArray<ImportedAnnotation>;
+  readonly unplaced: ReadonlyArray<ScientUnplacedAnnotationType>;
+}): Promise<{ readonly placed: number; readonly unplaced: number }> {
+  const home = input.canonicalRoot;
+  const write = () =>
+    withLock(annotationFilePath(home, input.material.sha256), async () => {
+      const existing = await readFileAt(home, input.material.sha256, input.material.byteLength);
+      const outcome = addImportedAnnotations(
+        existing ?? emptyFile(input.material),
+        input.placed,
+        input.unplaced,
+      );
+      if (outcome.added.placed + outcome.added.unplaced > 0) await writeFileAt(home, outcome.file);
+      return outcome.added;
+    });
+  return isScientLibraryLocation(home) ? withScientLibraryLock(home.root, write) : write();
 }
 
 /** In the library, a write holds the library lock like every other library writer. */

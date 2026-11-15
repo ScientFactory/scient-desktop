@@ -8,7 +8,11 @@ import {
   registerScientLibraryInstance,
   type ScientLibraryLocation,
 } from "@scientfactory/scient-sources/library-root";
-import { pinScientLibrarySource } from "@scientfactory/scient-sources/project-pins";
+import {
+  bindScientProjectCitationKeys,
+  pinScientLibrarySource,
+  type ScientCitationKeyBinding,
+} from "@scientfactory/scient-sources/project-pins";
 
 import { syncPinnedBibliography } from "./ManagedBibliography.ts";
 
@@ -54,6 +58,48 @@ export async function pinLibraryImport(input: {
       actor: input.actor,
     });
   }
+}
+
+/**
+ * Binds the keys a reference file cites a library record by in the import's project; with no
+ * keys, pins it as `pinLibraryImport` does. Null when the import's project folder is gone.
+ */
+export async function bindLibraryImportKeys(input: {
+  readonly library: ScientLibraryLocation;
+  readonly instanceId: string;
+  readonly sourceId: string;
+  readonly citationKeys: ReadonlyArray<string>;
+  readonly actor: ScientSourceActor;
+}): Promise<{
+  readonly citationKeys: ReadonlyArray<ScientCitationKeyBinding>;
+  readonly projectKey?: string;
+} | null> {
+  const projectRoot = await pinInstanceRoot(input.library, input.instanceId);
+  if (!projectRoot) return null;
+  if (input.citationKeys.length === 0) {
+    const pinned = await pinScientLibrarySource({
+      projectRoot,
+      library: input.library,
+      sourceId: input.sourceId,
+      actor: input.actor,
+    });
+    if (pinned.outcome === "not-found") return null;
+    const outcome = pinned.outcome === "pinned" ? ("added" as const) : ("cited" as const);
+    return { citationKeys: [{ citationKey: pinned.pin.citationKey, outcome }] };
+  }
+  const bound = await bindScientProjectCitationKeys({
+    projectRoot,
+    library: input.library,
+    sourceId: input.sourceId,
+    citationKeys: input.citationKeys,
+    actor: input.actor,
+  });
+  return bound.outcome === "not-found"
+    ? null
+    : {
+        citationKeys: bound.bindings,
+        ...(bound.projectKey ? { projectKey: bound.projectKey } : {}),
+      };
 }
 
 /** Builds the import's project bibliography from its pins, once the import has settled. */

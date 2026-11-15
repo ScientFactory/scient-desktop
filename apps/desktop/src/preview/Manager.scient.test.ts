@@ -395,9 +395,10 @@ describe("PreviewManager and Google's sign-in", () => {
   const SITE = "https://www.overleaf.com/login?next=/project";
   const OAUTH = "https://accounts.google.com/o/oauth2/v2/auth?client_id=x&state=secret";
   const IDENTIFIER = "https://accounts.google.com/v3/signin/identifier";
+  const REJECTED = "https://accounts.google.com/v3/signin/rejected";
 
   effectIt.effect(
-    "explains a sign-in Google redirected to credentials and restarts at the site",
+    "lets Google's sign-in load, then explains its refusal and restarts at the site",
     () =>
       withManager((manager) =>
         Effect.gen(function* () {
@@ -416,34 +417,39 @@ describe("PreviewManager and Google's sign-in", () => {
           yield* manager.createTab("tab_1");
           yield* manager.registerWebview("tab_1", 41);
 
-          // A stale session let the site's OAuth page through; Google then asked for credentials.
+          // The site's OAuth page goes on to Google's sign-in, which loads for Google to decide.
           emit("did-start-navigation", { url: OAUTH, isMainFrame: true, isSameDocument: false });
           emit("did-redirect-navigation", { url: IDENTIFIER, isMainFrame: true });
-          emit("did-fail-load", {}, -20, "ERR_BLOCKED_BY_CLIENT", IDENTIFIER, true);
+          emit("did-navigate", {}, IDENTIFIER, 200, "OK");
+          emit("did-frame-navigate", {}, IDENTIFIER, 200, "OK", false, 1, 2);
+          expect(yield* Queue.size(blocked)).toBe(0);
+
+          // Google refuses: explained, restarting at the site the sign-in came from.
+          emit("did-start-navigation", { url: REJECTED, isMainFrame: true, isSameDocument: false });
+          emit("did-navigate", {}, REJECTED, 200, "OK");
           expect(yield* Queue.take(blocked)).toEqual({
             tabId: "tab_1",
-            page: "credentials",
+            page: "rejected",
             context: "tab",
             restartUrl: "https://www.overleaf.com/",
-            pageUrl: IDENTIFIER,
+            pageUrl: REJECTED,
           });
-          expect(yield* Queue.take(failures)).toMatch(/Google doesn't allow signing in/);
 
-          // Any other failure keeps Chromium's own description and reports nothing.
+          // A failed load keeps Chromium's own description and reports nothing.
           emit("did-fail-load", {}, -105, "ERR_NAME_NOT_RESOLVED", OAUTH, true);
           expect(yield* Queue.take(failures)).toBe("ERR_NAME_NOT_RESOLVED");
           expect(yield* Queue.size(blocked)).toBe(0);
 
-          // A sign-in frame in the page is explained over it; the page itself stays.
-          emit("did-fail-load", {}, -20, "ERR_BLOCKED_BY_CLIENT", IDENTIFIER, false);
+          // A frame Google refused is explained over the page holding it.
+          emit("did-frame-navigate", {}, REJECTED, 200, "OK", false, 1, 2);
           expect(yield* Queue.take(blocked)).toEqual(
-            expect.objectContaining({ context: "frame", pageUrl: SITE }),
+            expect.objectContaining({ page: "rejected", context: "frame", pageUrl: SITE }),
           );
         }),
       ),
   );
 
-  effectIt.effect("closes a popup whose Google sign-in was stopped and tells its tab", () =>
+  effectIt.effect("closes a popup Google refused and tells its tab", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const window = makeAppWindow(7);
@@ -467,10 +473,12 @@ describe("PreviewManager and Google's sign-in", () => {
           },
         };
         emit("did-create-window", popup);
-        popupListeners.get("did-fail-load")?.({}, -20, "ERR_BLOCKED_BY_CLIENT", OAUTH, true);
+        popupListeners.get("did-navigate")?.({}, IDENTIFIER, 200, "OK");
+        expect(popup.close).not.toHaveBeenCalled();
+        popupListeners.get("did-navigate")?.({}, REJECTED, 200, "OK");
         expect(yield* Queue.take(blocked)).toEqual({
           tabId: "tab_1",
-          page: "transit",
+          page: "rejected",
           context: "popup",
           restartUrl: "https://www.overleaf.com/",
           pageUrl: SITE,

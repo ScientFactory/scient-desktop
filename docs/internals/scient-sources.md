@@ -1003,7 +1003,8 @@ paths use the same environment authority for people and agents.
 The tool-use eval runs these tools on a real Library made for each case
 (`evals/mcp-tool-use/cases/scient-sources.ndjson`, `scientSources.ts`) and
 grades what the Library holds afterwards, not only which tools were called.
-`scientSources.test.ts` runs every case with a scripted model in CI, except the
+`scientSources.test.ts` runs every case with a scripted model in CI, once as
+asked and once for each wrong outcome the case must reject, except the
 503-reference Zotero import, which runs every night in
 `.github/workflows/scient-library-deep-tests.yml`. A change to a tool's
 description, inputs or result is run on those cases with a model before and
@@ -1066,13 +1067,32 @@ its state.
   from a library ID or a project source ID (see above).
 
 The web (`useScientSources.ts`) sends `scope` after the person picks the
-Library view. **This project / All Library** is always above the list when the
-overview has `scopes`, including empty projects and read-only sessions.
-**Choose from Library** in an empty project opens its nonempty Library.
-Collections only filter within the selected scope. A pin this Library lacks
+Library view. **This project / My Library** is always above the list when the
+overview has `scopes`, including empty projects and read-only sessions; the
+labels are `LIBRARY_LABELS.scopes`, while the scope values stay `project` and
+`library`. **Choose from Library** in an empty project opens its nonempty Library;
+the empty list's words (`emptySourcesLabel`) say how to add sources, never how
+to recover them. Collections only filter within the selected scope. A pin this Library lacks
 keeps its **Not in this Library** warning; routine membership and added-time
 labels live on hover or in details. The review screen uses the review's
 `records` when present.
+
+**Header and menus.** The header holds the university slot (`UniversityCrest`
+in `accounts/University.tsx`: the crest when a university is saved, **Sign in**
+beside it when its sign-in lapsed, a quiet **Connect your university** that
+opens `UniversityPicker` otherwise; nothing for a session without account
+write permission), **Import sources**, **Activity** and **⋯**. Import sources
+holds every intake, including `ImportPackageSubmenu` from `ProjectPackageMenu.tsx`.
+`AskLibraryButton` sits beside the scope toggle. `SourcesHeaderMenu` groups the
+rest with separators: research (Check references, Systematic reviews, Possible
+duplicates, missing PDFs, Refresh from Zotero when sources came from Zotero),
+output (Citation style, Export, whose last group is `SaveProjectPackageItem`
+because a package is always the whole project), records (Recent changes, Trash)
+and one **Backup and recovery** submenu (backup, restore, join, then
+`RecoverPreMoveItem` and move back). A submenu repeats no title its item already
+says; Export's group label stays because it adds the scope and count.
+**Package imports** is a section at the end of `RecentChangesDialog`, opening
+`PackageImportsDialog` (Undo only for a session that may change the Library).
 
 ### Moving a project into the library
 
@@ -1257,7 +1277,8 @@ version has, or one in both whose database, query, date, result count, notes
 or set of records differ; each side carries its record count and how many of
 them the other side's entry lacks. Two entries the copies logged separately
 have different search IDs and are two one-sided rows, as Combine keeps both. A
-record row is a record only one version has. The title, the question, the
+record row is a record only one version has. Whether the review is deleted
+(`deleted`, compared by presence of `deletedAt`), the title, the question, the
 exclusion reasons, duplicate marks with distinct pairs, and each record's
 latest retrieval outcome are compared whole and named in `alsoDiffering`,
 without rows. The answer has the counts of everything and one page of 100
@@ -1435,10 +1456,10 @@ including after Undo. Receipt files are read independently: `packageImportDiagno
 names skipped unreadable files. Live-paper enrichment is best effort and reports
 unreadable record or alias files separately, preserving the historical row.
 These listing diagnostics do not relax Undo's authoritative receipt and version
-checks. Recover → Package imports reads that list on every open
+checks. Recent changes → Package imports reads that list on every open
 and after Undo; Undo rechecks the receipt and each project's addition at apply.
 The panel reports the retained paper count and
-**Show them** selects All Library with an explicit source-ID filter and a
+**Show them** selects My Library with an explicit source-ID filter and a
 **Show all** control; other list filters and selections are cleared first.
 
 #### Lock holds, progress and one move per project (5e-1)
@@ -1508,7 +1529,8 @@ dismiss it with `scient_sources_organize`.
 `conflictVersions` (when above zero) and `combineReport`.
 `systematicReviewConflicts` (read) returns `{ current, versions,
 combineReport }`, and with `differencesOf: { conflictId, offset }` also
-`differences` (null when they cannot be read). `systematicReviewConflict` (operate) takes
+`differences` (null when they cannot be read), from the same read of the two
+files as `currentRevision` and the summaries (`readScientReviewVersions`). `systematicReviewConflict` (operate) takes
 `{ root, reviewId, change }`, with `change` `{ action: "resolve", conflictId,
 pick }` or `{ action: "dismiss-report" }`. In library mode
 `scient_sources_systematic_reviews` lists `conflicts` and `combineReport` on a
@@ -1542,6 +1564,13 @@ library's copy when the library has those bytes. The move back joins the
 library's annotation file for each PDF it restored into the project's file, in
 the hold that publishes the restored store; the library keeps its copy. A
 project that is not moved behaves as before.
+
+**Notes are Markdown.** The read view renders a note with `ChatMarkdown`
+(line breaks kept, raw HTML off). The editor is Lexical with bold and italic
+only; `noteMarkdownForEditor` and `noteMarkdownFromEditor` (`SourceNote.tsx`)
+escape the note before Lexical reads it and unescape what Lexical writes,
+because Lexical escapes `` ` ``, `~`, `_` and `\` in all text on every
+change, which would rewrite the rest of a Markdown note at the first edit.
 
 **Two notes.** In library mode a source has the project note (on the pin) and
 the person's own note (on the library record). `note` keeps meaning the project
@@ -1605,10 +1634,11 @@ duplicates at **Merged**, where each merge explains the values it kept. A write 
 when it has finished." (`scientSourcesErrorMessage`, and the reader's highlight
 toast).
 
-**Recovery** lives in "More Library actions" > "Recover": "Recover sources
-from before the move" calls `restore-pre-move`, "Keep this project's sources
-in its folder" explains the archive and calls `move-back`, and "Save a current
-package" exports a current handoff. Package import has its own menu.
+**Recovery** lives in "More Library actions" > "Backup and recovery": "Recover
+sources from before the move" calls `restore-pre-move`, and "Keep this
+project's sources in its folder", shown only while a move back is possible,
+explains the archive and calls `move-back`. A current handoff is saved from
+Export ("Save a project package…"); package import is under Import sources.
 
 **Move back** is offered on a `done` or
 `cleanup-pending` project to a session holding operate, after a confirmation.
@@ -1634,8 +1664,11 @@ other version the picker then reads the first page of differences
 (`differencesOf`) and shows the counts as one sentence above the choices and
 the rows below them, in the two-sided layout the Library's join differences
 use (`Sides.tsx`; words in `reviewVersionLabels.ts`); "Show more" reads the
-next page and, if another version is in force by then, reads everything
-again. The choices
+next page. Every page, the first included, carries the revision it was read
+against; one that differs from the revision the picker holds makes it read
+everything again. A version that deleted the review says when in its summary,
+and the differences name `deleted`, so a deleted version is never described as
+the same as a live one. The choices
 are off until the versions and their differences have been read after the
 picker opened and after each choice; differences that cannot be read are said
 in one sentence and do not block the choice. The picker's read names the version in force by a hash of its file
@@ -2443,7 +2476,11 @@ Retraction Watch database
 the Library on this computer, so no service learns which works the Library
 holds; the request carries no contact email. Asking the registry for every
 source each week was rejected for that reason and for its cost (one request a
-source). A `304` records the check and nothing else. The answer is read as it
+source). The request is conditional only while the Library's DOIs and PMIDs are
+the ones the last whole read matched (`covered`, a hash of their sorted keys
+from `scientLibraryNoticeCoverage`): an unchanged file says nothing about a
+paper added or restored since, so any other set asks for the whole file. A
+`304` to a conditional request records the check and nothing else. The answer is read as it
 arrives (`retractionWatchReader` in `libraryNoticeWatch.ts`) and only the rows
 of the Library's papers are kept, by DOI or PMID of the original paper; nothing
 is stored on disk. The file's kinds are Retraction, Expression of concern and
@@ -2481,7 +2518,8 @@ pass's other writes; a source edited meanwhile answers `stale` and is matched
 the next week. The Trash is not checked.
 
 **Told once.** `notice-watch.json` in the Library holds the time of the last
-successful check, the file's `ETag`, and one entry per source and kind for
+successful check, the file's `ETag` and the papers its read matched
+(`covered`), and one entry per source and kind for
 what the check did there (`added` or `withdrawn`, when, and `dismissed`). The
 overview carries the entries not yet dismissed, for sources still held, as
 `noticeChanges`, whatever the scope; the panel shows them as one line with
@@ -3106,10 +3144,26 @@ change returns the current record. Removal is a tombstone that restore undoes,
 and the last ten revisions of each annotation are kept so `revert` can bring
 an earlier note back as a new revision. Each record credits `createdBy` and
 `updatedBy` (`user` or `agent`). A file that does not decode is never written
-over and is reported, not hidden, in listings. Writes are serialized per PDF
-inside the server process, like the Sources store. On the library backend,
-highlights on library PDFs live in the library (see "Highlights, the two notes
-and reading status").
+over and is reported, not hidden, in listings; every write decodes the file it
+is about to publish with the reader's own schema and size limit first, so no
+writer can leave a file that hides the PDF's other annotations. Writes are
+serialized per PDF inside the server process, like the Sources store. On the
+library backend, highlights on library PDFs live in the library (see
+"Highlights, the two notes and reading status").
+
+A highlight may carry `color` (`#rrggbb`) and `underline`, kept from the
+reader it was made in (a Zotero import); the reader paints one Custom
+Highlight for each colour and kind in use, and no control changes them. A
+file's optional `unplaced` list holds another reader's highlights and
+comments that could not be placed on a page (`ScientUnplacedAnnotation`:
+kind, page, quote, comment, colour, revision, tombstone); `remove` and
+`restore` work on them by revision, the source's annotations result lists the
+live ones by page, and the details panel shows them under the PDF's
+highlights. `addImportedAnnotations` adds another reader's highlights once: an
+ID the file has, placed or not, live or removed, is never written again. The
+move into the Library and back (`mergeAnnotationFiles`, `annotationsCovered`)
+and a project package (`joinAnnotationFiles`) join `unplaced` by ID, the
+higher revision winning (`joinUnplaced`).
 
 A Source PDF's attachment preview names it to the reader by its project
 locator `.scient/sources/<attachment path>` on both backends; after the move
@@ -3154,13 +3208,17 @@ same two functions.
 - A `.docx` is read by `WordFile.ts` on the server (the zip and XML readers
   the server already has, no pandoc): the main part named by the package, its
   footnotes, endnotes, styles and custom properties, each XML part at most
-  32 MB uncompressed, pictures never. It returns plain data (paragraphs in
+  32 MB uncompressed, pictures never. An archive of more than 10,000 members is
+  refused as too large before any is read (a Word file holds a few dozen parts
+  and one per picture), and only the XML parts are kept from the listing. It
+  returns plain data (paragraphs in
   order, field codes, content-control tags, and whether the file has tracked
   changes or comments); `wordReferences.ts` in the package interprets it.
   Fields are tracked by their begin, separate and end marks across runs and
   paragraphs, so a code Word split and a bibliography spanning paragraphs read
-  whole; deleted and moved-away text and a text box's fallback copy are
-  skipped. Comments, headers and footers are not read.
+  whole; everything inside a tracked deletion (`w:del`: text, fields, content
+  controls, bookmarks), moved-away text and a text box's fallback copy are
+  skipped, while the result still says the file has tracked changes. Comments, headers and footers are not read.
 - Citations a reference manager inserted are read from their data: Zotero's
   `ADDIN ZOTERO_ITEM CSL_CITATION` field (or, in bookmark mode, the code kept
   in the custom properties `<bookmark>_1`, `_2`… of each `ZOTERO_BREF_`
@@ -3168,8 +3226,19 @@ same two functions.
   Mendeley Cite's content control tagged `MENDELEY_CITATION_v3_<base64>`, and
   EndNote's `ADDIN EN.CITE` record in the code or, base64, in the field's
   `w:fldData` (the nested `EN.CITE.DATA` is the same data and is skipped).
-  Each distinct work is one reference with the details the document holds,
-  matched with a Library record by Zotero item key or work-level identifier;
+  Each distinct work is one reference with the details the document holds.
+  Works are told apart by the manager's own ID (Zotero's and Mendeley
+  Desktop's address, Mendeley Cite's item ID, EndNote's database and record
+  number); a work without one by its DOI, else by all its details, never by
+  title and year alone (Mendeley Desktop's `ITEM-n` is the citation's
+  numbering and is left out). A work is linked to the one Library record its
+  Zotero item and its DOI or PMID point to: the item by library and key
+  together (a zotero.org user library is the bare user ID in both, a group
+  `groups/<id>`; Zotero on this computer reports a synced user's ID too and
+  `0` before sync, while an unsynced document names its library
+  `users/local/<key>`, a key Scient does not keep, so such items are linked by
+  DOI or PMID only). A work several records answer to, or whose DOI or PMID a
+  record it points to contradicts, is linked to none and named in a note;
   Zotero's `ZOTERO_BIBL` code gives the works left out of the list
   (`omitted`) and the count added without a citation (`uncited`). Without such
   citations the text is read against the list under the last reference
@@ -3240,14 +3309,16 @@ an agent.
 - `placeScientSourceCollections` is how a tree kept elsewhere arrives (Zotero,
   another Library, a project package). It takes the whole outside tree and
   the collections wanted, and in one locked change finds or makes each with
-  the ones above it: the live collection with the outside collection's ID;
-  else a live one with its name under the same parent that no other outside
-  collection has taken; else a new one with that ID. The whole tree is
+  the ones above it: the live collection with the outside collection's ID, or
+  one that remembers it (`outsideIds`); else a live one with its name under the
+  same parent that no other outside collection has taken; else a new one with
+  that ID. A collection found by name remembers the outside ID, so a rename or
+  a move here does not lose it. The whole tree is
   matched on every call in one order, so which same-named sibling has a
   collection made by hand does not depend on what was wanted. A collection
   the person deleted here is left out, or with `remake` made again as a new
-  collection with a new ID beside it, so the deleted one keeps its members and
-  can still be restored (later calls find the new one by name). An outside
+  collection with a new ID beside it that remembers the outside ID, so the
+  deleted one keeps its members and can still be restored. An outside
   collection under a deleted one that is not made again is made under it. One
   that cannot be made (500 collections, ten levels, a 200-character name)
   comes back with the reason.
@@ -3518,8 +3589,21 @@ merely not running, so the product does not invent that distinction.
 Library pagination advances by the number of raw Zotero items received, even
 when notes, annotations and attachments are filtered from the Scient view.
 Import re-fetches each selected item with all its children immediately before
-storing it. Child notes (HTML) become the source note as plain text with
-Markdown bold and italic; every stored or linked PDF is copied (the first with
+storing it. Child notes (HTML) become the source note as Markdown
+(`ZoteroNoteMarkdown.ts`, a pure converter over `parse5`): headings, links,
+lists, quotes, tables, code, bold, italic and strikethrough; an embedded
+citation and Zotero's math as their text; text escaped so a typed `*` or `#`
+stays a character; images left out and counted. Several notes are one note,
+each under a `##` heading that is its first line, ordered by that line as
+Zotero's own list is. A note holds 100,000 characters: blocks are added while
+they fit and the rest is left out and listed (`note-cut`). The notes as
+Zotero wrote them go into the source's Zotero file (`notes`, by item key,
+without the bytes of embedded images): every note's sha256, and its HTML while
+the notes fit 1,000,000 characters by whole notes; a note past that keeps only
+its digest and is listed (`note-cut` named `original`). A backup, a restore and
+a join carry them; a project package does not, and neither does a note given
+to a source that was already here.
+Every stored or linked PDF is copied (the first with
 the record, the rest attached), and a PDF Zotero cannot provide is skipped
 rather than failing the item. zotero.org PDFs are streamed to a temporary file
 that is removed after import. Identifiers Zotero keeps in Extra (PMID, PMCID,
@@ -3527,15 +3611,59 @@ arXiv, DOI for types without a DOI field) and the citation key (Zotero's field,
 then Better BibTeX's `Citation Key:` line, then Better BibTeX's JSON-RPC) are
 read; S2's key rules keep it.
 
+**Highlights and comments.** Zotero keeps them as annotation items under a
+file. zotero.org counts them on the file (`meta.numChildren`) and lists them
+as its children, so one request is made for each file that has some. Zotero
+on this computer counts none and lists only notes and files as children; a
+search by the reference's key (`/items?itemKey=<key>&itemType=annotation`)
+reaches its files' annotations, one request for each reference that has a
+file. `readZoteroItemWithChildren` adds them to the children, and
+`zoteroItemMaterial` reads them (`annotations`: kind, page from
+`annotationPosition`, text, comment, colour). For each PDF copied, the
+import places them on the record's PDF (`bringZoteroAnnotations` and the pure
+`placeZoteroAnnotations`, `ZoteroAnnotations.ts`): a highlight or underline
+whose text `anchorPdfQuote` finds once on its page becomes a highlight
+(`ann_zotero_user_<id>_<key>` or `ann_zotero_group_<id>_<key>`, from the
+library of the source's Zotero link: a key is unique only in its library, and
+the link keeps the library as it was at import, so Zotero here signing in to
+sync, which turns its `0` into the user ID, does not bring each highlight
+twice; by the user, at Zotero's date, the comment as its note, colour and
+underline kept). One found more than once there is not placed:
+Zotero's sort index counts characters in its own reading of the page, which
+nothing ties to Scient's. Everything else is kept in the PDF's `unplaced`
+list, whole: a comment longer than a highlight's note (8,000 characters)
+goes there too, and one whose quote or comment is longer than that list
+holds (100,000 characters) is not brought and is counted as `highlights`
+named `too-long`. The source's Zotero file keeps which PDF
+here each Zotero file with highlights is (`pdfs`, attachment key to sha256,
+hashed before the import lets the copy go), so a refresh brings new ones onto
+the same PDF; a PDF not in it (imported before, or without highlights then)
+is learnt at the refresh that finds some on it, by reading that file from
+Zotero once more and hashing it.
+Highlights are written last, after the Zotero file, so a failure leaves the
+rest saved: "not brought" counts them as `highlights` named `later`, and a
+refresh retries.
+A refresh that adds some lists `highlights` among its `changedFields`, and
+its item's `notBrought` says, as an import's does, how many it added without
+placing (`unplaced`), how many are on a Zotero file with no PDF here
+(`no-file`: a PDF removed here is not attached again for them) and how many
+were too long to keep (`too-long`); the refresh dialog lists them under "Not
+brought from Zotero" (`notBroughtBySource`, shared with the import summary),
+and the agent's refresh result lists such a source even when nothing changed.
+
 Zotero collections are intake scopes when browsing, and arrive as a tree. A
 Zotero collection's ID here is a hash of its Zotero library and key
-(`zoteroCollectionId`), so every import, part and restart finds the same
-collection with no stored map. When a scoped import begins, the scope's
-collections are placed (`makeZoteroScopeCollections`: the chosen collection,
-its subcollections when included, the ones above them; empty ones too)
-without remaking what the person deleted here. Each imported item then joins
-the collection of every Zotero collection it is in, with `remake`, so a
-deleted one comes back only for a reference filed in it. A collection problem
+(`zoteroCollectionId`; the library as the collection reports it,
+`zoteroLibraryId`: `groups/<id>`, or the user ID, which Zotero on this
+computer gives only when it is signed in to sync and otherwise reports as
+`0`), so every import, part and restart finds the same collection with no
+stored map, and two accounts' collections stay apart. When a scoped import
+begins, the scope's collections are placed (`makeZoteroScopeCollections`: the
+chosen collection, its subcollections when included, the ones above them;
+empty ones too) without remaking what the person deleted here. Each imported
+item then joins the collection of every Zotero collection it is in, with
+`remake`, so a deleted one comes back only for a reference filed in it. A
+collection problem
 never fails the import: what could not be made or filled is a `collection`
 entry of "not brought" (`unmade` on the operation, `unfiled` on the item, or
 `unread` when Zotero did not list its collections). A refresh reads details,
@@ -3636,17 +3764,20 @@ and fields read elsewhere). `zoteroItemMaterial` turns the second into entries
 a count) and adds what else an
 item holds that does not come: related
 items, automatic tags (brought as ordinary tags), files that are not PDFs,
-link attachments, PDFs past the tenth, notes with formatting that is lost or
-that are cut, and the highlights on each PDF (the attachment's
-`meta.numChildren`; they are not fetched). The import adds PDFs Zotero could
-not hand over and stores the entries on the operation's item; a scoped
+link attachments, PDFs past the tenth, images in notes, notes that are cut,
+and the highlights on files that are not copied (`highlights`, name
+`no-file`). The import adds PDFs Zotero could not hand over, with their
+highlights (`no-file`), and the highlights it kept without a place on the
+page (`unplaced`), and stores the entries on the operation's item; a scoped
 import also counts the notes and files in the scope that belong to no
 reference (each once, also when filed in two collections) and stores them
 on the operation, or says that Zotero could not be asked
 (`alone-uncounted`), never zero. `summarizeNotBrought` adds one line for the
 references a Zotero import skipped because the same work was already here
 under another origin, by its identifier or its PDF (`already-here`): nothing
-of Zotero's copy was looked at. A possible match is not in that line; the
+of Zotero's copy was taken, except that a certain match (one source) whose
+source here has no note receives Zotero's notes as its note
+(`addNoteToSourceAlreadyHere`). A possible match is not in that line; the
 summary asks the person to review those.
 `summarizeNotBrought`
 and `notBroughtName` (`packages/scient-sources/src/notBrought.ts`) add them up
@@ -3729,11 +3860,24 @@ a field Zotero changed is taken unless it was edited here (field provenance
 conflict. A conflict keeps its old merge base, so it is reported again until
 the user takes Zotero's value (`useZotero`) or keeps theirs (`keepLocal`).
 Empty Zotero values never clear a field; tags merge as additions and removals;
-notes follow the same rule as fields; new PDFs (by attachment key) are
+new PDFs (by attachment key) are
 attached; the record's Zotero item version is updated; an item gone from Zotero
 is reported and left alone. Without a sync file (sources imported before this
 existed), every difference counts as a Zotero change. The citation key is never
 changed by a refresh.
+
+The note has its own rule, because the text here is a conversion of Zotero's
+HTML. The base holds `note`, the text Scient last wrote from Zotero, and
+`notes`, the digest of each of Zotero's notes. The note is untouched when it
+equals `base.note` (with no base: when it is empty or equals the plain text an
+earlier import would have made, `legacyNote`). Zotero changed when its notes'
+digests differ from `base.notes` (whether or not their HTML was kept) and its
+Markdown from `base.note`; for a base without `notes`,
+when `legacyNote` differs from `base.note`. An untouched note takes Zotero's
+Markdown, which is also how an earlier import's plain text becomes Markdown;
+an edited one is kept, and reported only when Zotero changed. An open clash
+keeps its base, and with no base stores `note: null`, never the note here,
+which would read as untouched at the next refresh and be replaced.
 
 Send to Zotero (`ZoteroWrite.ts`) is one way and needs the zotero.org key with
 write access. A source without a Zotero item is created with a write token
@@ -3748,7 +3892,10 @@ the citation key and identifiers without a Zotero field.
 With `pdfs` (the panel's **Include PDF**, off when the panel opens and held in
 `useZoteroSync`; the agent's `pdfs` input) each PDF of a source whose item was
 created, updated or found unchanged is sent by `sendPdfs` after the item's
-attachments are read once. A stored attachment with the PDF's MD5 means Zotero
+attachments are read once. One `sendPdfs` runs at a time for each Zotero item
+in the server process (`oneSendPerItem`, keyed by library and item key): two
+overlapping Sends would both read no attachment and each make one. A Send from
+another computer is not kept out. A stored attachment with the PDF's MD5 means Zotero
 has it (`in-zotero`). A `linked_file` attachment with the same file name (its
 `filename`, or the last part of its `path`) is not uploaded over: Zotero keeps
 only a path for it, so the name is all there is to compare. A personal library
@@ -3936,7 +4083,7 @@ labels can show a different number.
 The skill text lives in both `built-ins/references/SKILL.md` and its embedded
 copy in `BuiltInSkillSources.ts`; a test keeps them identical.
 
-The Library menu's **Ask the Library** puts the same rules, as the tested
+The Library's **Ask the Library** button (`AskLibraryButton`, beside the scope toggle) puts the same rules, as the tested
 sentence (`ASK_LIBRARY_PROMPT` in `apps/web/src/scient/sources/askLibrary.ts`),
 at the start of the open thread's draft through the composer handle's
 `insertTextAtStart`. It never sends, keeps the draft that was there, and does

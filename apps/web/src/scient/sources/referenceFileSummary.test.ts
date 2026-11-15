@@ -1,12 +1,15 @@
+import type { ScientSourceImportOperation } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isReferenceFileName, summarizeReferenceFileReport } from "./referenceFileSummary";
+import { isReferenceFileName, referenceFileNotes } from "./referenceFileSummary";
+
+type Item = ScientSourceImportOperation["items"][number];
 
 const report = {
   format: "bibtex" as const,
   entryCount: 10,
-  importCount: 6,
-  alreadyInLibrary: 4,
+  importCount: 10,
+  alreadyInLibrary: 0,
   remaining: 0,
   unreadableCount: 0,
   unreadable: [],
@@ -14,63 +17,75 @@ const report = {
   withoutCitationKey: 0,
 };
 
-describe("reference file import summary", () => {
-  it("says nothing when every entry came in", () => {
-    expect(summarizeReferenceFileReport("a.bib", report)).toBeNull();
-  });
+const imported = (itemKey: string, fields: Partial<Item> = {}): Item => ({
+  itemKey,
+  state: "imported",
+  sourceId: `source_${itemKey}`,
+  message: null,
+  ...fields,
+});
 
-  it("says when the file had no references", () => {
-    expect(summarizeReferenceFileReport("a.bib", { ...report, entryCount: 0 })?.title).toBe(
-      "No references found in a.bib",
-    );
-  });
-
-  it("offers to continue a large file", () => {
-    expect(summarizeReferenceFileReport("a.bib", { ...report, remaining: 240 })).toEqual({
-      title: "More references in a.bib",
-      lines: ["6 of 246 new references were imported. Import the file again for the rest."],
-      hasDetails: false,
-      canContinue: true,
+describe("what a reference file import says went otherwise", () => {
+  it("says nothing when every entry came in as the file says", () => {
+    expect(referenceFileNotes({ report, items: [imported("a")] })).toEqual({
+      notes: [],
+      details: [],
     });
   });
 
-  it("lists unreadable entries and the most common fields not kept", () => {
-    const fields = ["file", "address", "urldate", "edition", "series"].map((field, index) => ({
-      field,
-      entryCount: 10 - index,
-      citationKeys: ["a"],
-    }));
+  it("names a key this project already uses and the key the work got instead", () => {
+    const items = [
+      imported("a", {
+        citationKeys: [{ citationKey: "smith2020", outcome: "taken" }],
+        projectKey: "smith2020a",
+      }),
+    ];
     expect(
-      summarizeReferenceFileReport("a.bib", {
+      referenceFileNotes({
+        report,
+        items,
+        sourceTitle: (id) => (id === "source_a" ? "Tidal heating of Io" : null),
+      }).notes,
+    ).toEqual([
+      "smith2020 already cites another source in this project, which keeps it; this project cites Tidal heating of Io as smith2020a",
+    ]);
+  });
+
+  it("says nothing of an author list for a work that was already present", () => {
+    const notes = referenceFileNotes({
+      report: { ...report, incompleteAuthors: [{ sourceKey: "a", label: "a2021", named: 3 }] },
+      items: [{ ...imported("a"), state: "skipped", duplicateKind: "same-identifier" }],
+    }).notes;
+    expect(notes).toEqual([]);
+  });
+
+  it("counts unreadable entries, PDFs not attached and fields not kept, and lists each", () => {
+    const { notes, details } = referenceFileNotes({
+      report: {
         ...report,
         unreadableCount: 1,
         unreadable: [{ line: 7, citationKey: "broken", reason: "This entry could not be read." }],
-        notKept: fields,
-      }),
-    ).toEqual({
-      title: "Not everything in a.bib came in",
-      lines: [
-        "1 entry could not be read.",
-        "Fields not kept: file (10), address (9), urldate (8), edition (7), and 1 more.",
-      ],
-      hasDetails: true,
-      canContinue: false,
+        notKept: [
+          { field: "file", reason: "not found", entryCount: 2, citationKeys: ["a", "b"] },
+          { field: "file", reason: "not a PDF", entryCount: 1, citationKeys: ["c"] },
+          { field: "address", entryCount: 9, citationKeys: ["a", "b", "c", "d", "e"] },
+        ],
+        remaining: 240,
+      },
+      items: [],
     });
-  });
-
-  it("counts a linked-file field once across its reasons", () => {
-    const linked = (reason: string, entryCount: number) => ({
-      field: "file",
-      reason,
-      entryCount,
-      citationKeys: ["a"],
-    });
-    expect(
-      summarizeReferenceFileReport("a.bib", {
-        ...report,
-        notKept: [linked("not found", 2), linked("not a PDF", 1)],
-      })?.lines,
-    ).toEqual(["Fields not kept: file (3)."]);
+    expect(notes).toEqual([
+      "1 entry could not be read",
+      "3 linked PDFs were not attached",
+      "Fields not kept: address (9)",
+      "240 more new references in the file are not imported yet",
+    ]);
+    expect(details).toEqual([
+      "Line 7 · broken: This entry could not be read.",
+      "PDF not attached (not found): a, b",
+      "PDF not attached (not a PDF): c",
+      "address not kept: a, b, c, d, e and 4 more",
+    ]);
   });
 
   it.each([
@@ -78,6 +93,8 @@ describe("reference file import summary", () => {
     ["export.ris", true],
     ["zotero.json", true],
     ["endnote.xml", true],
+    // regression: a dropped RIS or BibTeX .txt went through PDF intake
+    ["pubmed-export.txt", true],
     ["paper.pdf", false],
   ])("recognises %s as a reference file: %s", (name, expected) => {
     expect(isReferenceFileName(name)).toBe(expected);

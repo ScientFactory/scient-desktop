@@ -462,7 +462,7 @@ function entryFromRaw(raw: RawBibtexEntry, index: number): BibliographyEntry {
     if (value === undefined) continue;
     const { creators, truncated } = parseBibtexNames(value, role);
     builder.addCreators(creators, name);
-    if (truncated) builder.notKeep(`${name} (“and others”)`);
+    if (truncated) builder.markIncomplete(role);
     use(name);
   }
 
@@ -710,7 +710,11 @@ function bibtexNames(item: BibliographyExportItem, roles: ReadonlySet<string>): 
     const single = creator.familyName ?? creator.givenName;
     return single ? [`{${encodeLatex(single)}}`] : [];
   });
-  return names.length > 0 ? names.join(" and ") : null;
+  if (names.length === 0) return null;
+  const incomplete = item.record.incompleteCreatorRoles?.some((role) =>
+    roles.has(role.toLowerCase()),
+  );
+  return incomplete ? `${names.join(" and ")} and others` : names.join(" and ");
 }
 
 function identifierValues(item: BibliographyExportItem, scheme: string): string[] {

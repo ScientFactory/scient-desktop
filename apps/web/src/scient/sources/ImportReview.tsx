@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { ScrollArea } from "../../components/ui/scroll-area";
-import { PanelHeader, SourceErrorBanner } from "./PanelChrome";
+import { SOURCES_COLUMN, PanelHeader, SourceErrorBanner } from "./PanelChrome";
 import type { useScientSources } from "./useScientSources";
 
 function candidateMetadataSummary(
@@ -97,31 +97,35 @@ export function ImportReview(props: {
       {props.error ? (
         <SourceErrorBanner message={props.error} onDismiss={props.onDismissError} />
       ) : null}
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        <span>
-          {itemKeys.length > 0
-            ? localFiles
-              ? `${itemKeys.length} PDF${itemKeys.length === 1 ? "" : "s"} ready`
-              : `${itemKeys.length} of ${selectedCount} selected ${selectedCount === 1 ? "reference is" : "references are"} ready to import`
-            : localFiles
-              ? "Nothing new to add"
-              : "Nothing new to import"}
-        </span>
-        {localFiles && itemKeys.length > 0 ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={props.busy || props.readOnly}
-            aria-busy={props.busy}
-            onClick={() => props.onImport(itemKeys, overrideKeys)}
-          >
-            {props.busy ? <LoaderCircle className="animate-spin" /> : <Download />}
-            {localActionLabel}
-          </Button>
-        ) : null}
+      <div className="shrink-0 border-b border-border bg-muted/30">
+        <div
+          className={`${SOURCES_COLUMN} flex items-center justify-between gap-3 px-3 py-2 text-xs text-muted-foreground`}
+        >
+          <span>
+            {itemKeys.length > 0
+              ? localFiles
+                ? `${itemKeys.length} PDF${itemKeys.length === 1 ? "" : "s"} ready`
+                : `${itemKeys.length} of ${selectedCount} selected ${selectedCount === 1 ? "reference is" : "references are"} ready to import`
+              : localFiles
+                ? "Nothing new to add"
+                : "Nothing new to import"}
+          </span>
+          {localFiles && itemKeys.length > 0 ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={props.busy || props.readOnly}
+              aria-busy={props.busy}
+              onClick={() => props.onImport(itemKeys, overrideKeys)}
+            >
+              {props.busy ? <LoaderCircle className="animate-spin" /> : <Download />}
+              {localActionLabel}
+            </Button>
+          ) : null}
+        </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <div className="divide-y divide-border">
+        <div className={`${SOURCES_COLUMN} divide-y divide-border`}>
           {props.preflight.items.map((item) => {
             const itemKey = item.candidate.sourceKey;
             const possibleMatch = item.duplicate.kind === "possible-metadata-match";

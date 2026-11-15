@@ -7,8 +7,6 @@ import { PreviewHostWindows } from "../scient/multiWindow/previewHostWindows.ts"
 // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
 import type { DesktopPreviewSignInBlockedEvent } from "@t3tools/contracts";
 import {
-  BLOCKED_GOOGLE_SIGN_IN_DESCRIPTION,
-  blockedSignIn,
   followTabSignIn,
   type TabSignIn,
   watchSignInPopup,
@@ -1315,13 +1313,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     const sync = () => runFork(syncState(true));
     const syncNavigation = () => runFork(syncState(false, true));
-    // SCIENT-FORK:START — Scient Browser: Google's refusal can arrive without a page load.
-    const syncInPageNavigation = (_event: unknown, url: string, isMainFrame: boolean) => {
-      const rejected = isMainFrame ? (signIn?.rejectedInPage(url) ?? null) : null;
-      if (rejected) runFork(emitSignInBlocked({ tabId, ...rejected }));
-      runFork(syncState(false));
-    };
-    // SCIENT-FORK:END
+    const syncInPageNavigation = () => runFork(syncState(false));
     const restoreRecordingCursor = () =>
       runFork(
         Effect.gen(function* () {
@@ -1445,17 +1437,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       validatedUrl: string,
       isMainFrame: boolean,
     ): void => {
-      // SCIENT-FORK:START — Scient Browser: a frame's Google sign-in is explained over its page.
-      const frame =
-        !isMainFrame && !wc.isDestroyed() ? signIn?.blockedFrame(code, validatedUrl) : null;
-      if (frame) runFork(emitSignInBlocked({ tabId, ...frame }));
-      // SCIENT-FORK:END
       if (code === -3 || !isMainFrame || wc.isDestroyed()) return;
       const url = validatedUrl || wc.getURL();
-      // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
-      const blocked = signIn?.blocked(code, url) ?? null;
-      const reason = blocked ? BLOCKED_GOOGLE_SIGN_IN_DESCRIPTION : description;
-      // SCIENT-FORK:END
       runFork(
         Effect.gen(function* () {
           const updatedAt = yield* currentIso;
@@ -1476,7 +1459,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 url,
                 title: wc.getTitle(),
                 code,
-                description: reason,
+                description,
               },
               updatedAt,
             };
@@ -1490,12 +1473,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           if (current?.webContentsId !== wc.id || current.navStatus !== next.value.navStatus)
             return;
           if (current.serverTab) {
-            browserHost.loadFailed(current.serverTab, { url, code, description: reason });
+            browserHost.loadFailed(current.serverTab, { url, code, description });
           }
           yield* emitIfCurrent(tabId, next.value);
-          // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
-          if (blocked) yield* emitSignInBlocked({ tabId, ...blocked });
-          // SCIENT-FORK:END
         }),
       );
     };
@@ -1766,7 +1746,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         detachPasskeys = passkeys.attachGuest(wc);
         // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
         signIn?.dispose();
-        signIn = followTabSignIn(wc);
+        signIn = followTabSignIn(wc, (event) => runFork(emitSignInBlocked({ tabId, ...event })));
         // SCIENT-FORK:END
         wc.setWindowOpenHandler((details) => {
           const action = previewWindowOpenAction(details);
@@ -2143,12 +2123,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
     runFork(restoreControlSession(tabId, wc));
     yield* emitIfCurrent(tabId, registered);
-    // SCIENT-FORK:START — Scient Browser: a sign-in stopped before the tab was registered.
-    if (registered.navStatus.kind === "LoadFailed") {
-      const blocked = blockedSignIn(registered.navStatus.code, registered.navStatus.url);
-      if (blocked) yield* emitSignInBlocked({ tabId, ...blocked });
-    }
-    // SCIENT-FORK:END
     // Ownership checks dropped pre-attach audibility events; reconcile through the event path.
     yield* syncTabAudible(tabId, wc, yield* readAudible);
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () => {
@@ -2196,9 +2170,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       guestLoadFailures.set(webContentsId, {
         url,
         code,
-        // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
-        description: blockedSignIn(code, url) ? BLOCKED_GOOGLE_SIGN_IN_DESCRIPTION : description,
-        // SCIENT-FORK:END
+        description,
       });
     });
     wc.once("destroyed", () => {

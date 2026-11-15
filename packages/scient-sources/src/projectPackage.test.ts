@@ -826,6 +826,36 @@ describe("importing a project package", () => {
     expect(notesOf(ahead).current).toMatchObject({ note: "there", revision: 3 });
   });
 
+  it("joins Zotero highlights kept without a place on the page by ID, the later revision winning", () => {
+    const kept = (annotationId: string, revision: number, deletedAt: string | null) => ({
+      annotationId,
+      revision,
+      quote: "A passage",
+      deletedAt,
+    });
+    const file = (unplaced: ReadonlyArray<object>) => ({
+      formatVersion: 1,
+      material: { sha256: "0".repeat(64), byteLength: 1 },
+      paths: [],
+      annotations: [],
+      history: [],
+      unplaced,
+    });
+    const removedHere = kept("ann_zotero_AAAA2345", 2, "2026-11-12T00:00:00.000Z");
+
+    const joined = scientProjectPackageInternals.joinAnnotationFiles(
+      file([removedHere, kept("ann_zotero_BBBB2345", 1, null)]),
+      file([kept("ann_zotero_AAAA2345", 1, null), kept("ann_zotero_CCCC2345", 1, null)]),
+      "2026-11-13T00:00:00.000Z",
+    );
+
+    expect(joined.file["unplaced"]).toEqual([
+      removedHere,
+      kept("ann_zotero_BBBB2345", 1, null),
+      kept("ann_zotero_CCCC2345", 1, null),
+    ]);
+  });
+
   it("carries a retraction notice and a structured abstract as brought, not checked here", async () => {
     const { base, mine, source } = await setup();
     const paper = await add(mine, "paper", {

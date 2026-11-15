@@ -16,6 +16,7 @@ import { parse, type DefaultTreeAdapterMap } from "parse5";
 import { getDomain } from "tldts";
 
 import { withRegistryContact } from "./metadataHttp.ts";
+import { createSerialRequestLane } from "./NcbiRequestLane.ts";
 
 const ICON_REQUEST_TIMEOUT_MS = 2_000;
 const MAX_ICON_BYTES = 128 * 1024;
@@ -23,11 +24,14 @@ const MAX_ICON_DOCUMENT_BYTES = 512 * 1024;
 const MAX_CROSSREF_BYTES = 512 * 1024;
 const MAX_REDIRECTS = 3;
 const MAX_DECLARED_ICON_ATTEMPTS = 2;
-const ICON_DISCOVERY_VERSION = 2;
+const ICON_DISCOVERY_VERSION = 3;
 const SUCCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const FAILURE_TTL_MS = 6 * 60 * 60 * 1_000;
 const USER_AGENT =
   "Scient/0.0 (https://github.com/ScientFactory/scient-desktop; journal icon resolution)";
+
+// Crossref answers 429 to parallel lookups, as a list of rows asks for its icons at once.
+const runWithCrossrefLimit = createSerialRequestLane({ minimumStartIntervalMs: 200 });
 
 const blockedAddresses = new NodeNet.BlockList();
 for (const [network, prefix] of [
@@ -83,7 +87,7 @@ type IconFormat = {
 type DownloadedIcon = IconFormat & { readonly bytes: Uint8Array };
 
 type CacheMetadata = IconFormat & {
-  readonly discoveryVersion: 1 | 2;
+  readonly discoveryVersion: number;
   readonly resolvedAt: string;
   readonly sourceHost: string;
 };
@@ -102,10 +106,26 @@ export interface JournalIconMaterial {
   readonly journalTitle: string;
 }
 
+type HopResponse = {
+  readonly status: number;
+  readonly location: string | null;
+  readonly body: Buffer;
+  /** The body stopped at maxBytes; the rest was not read. */
+  readonly truncated?: boolean;
+};
+
+/** One HTTPS exchange that never follows redirects; the default pins a verified public address. */
+export type PublicHttpsHop = (input: {
+  readonly url: URL;
+  readonly accept: string;
+  readonly maxBytes: number;
+}) => Promise<HopResponse>;
+
 export interface JournalIconResolverOptions {
   readonly now?: () => Date;
   readonly resolveLandingUrl?: (record: ScientSourceRecord) => Promise<URL | null>;
   readonly downloadIcon?: (landingUrl: URL) => Promise<DownloadedIcon | null>;
+  readonly httpsHop?: PublicHttpsHop;
 }
 
 const failedUntil = new Map<string, number>();
@@ -193,83 +213,93 @@ async function resolvePublicAddress(
   return { address: selected.address, family: selected.family };
 }
 
-async function requestPublicHttps(
-  url: URL,
-  maxBytes: number,
-  redirects = 0,
-  accept = "image/avif,image/webp,image/png,image/jpeg,image/gif,image/x-icon,application/json;q=0.8,*/*;q=0.1",
-): Promise<Buffer> {
-  if (url.protocol !== "https:" || (url.port && url.port !== "443")) {
-    throw new Error("Journal icon requests must use standard HTTPS.");
-  }
-  if (redirects > MAX_REDIRECTS) throw new Error("The icon request redirected too many times.");
+const IMAGE_ACCEPT = "image/avif,image/webp,image/png,image/jpeg,image/gif,image/x-icon,*/*;q=0.1";
+const HTML_ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1";
+
+const publicHttpsHop: PublicHttpsHop = async ({ url, accept, maxBytes }) => {
   const target = await resolvePublicAddress(url);
-  return new Promise((resolve, reject) => {
-    const request = NodeHttps.request(
-      {
-        protocol: "https:",
-        hostname: target.address,
-        family: target.family,
-        port: 443,
-        method: "GET",
-        path: `${url.pathname}${url.search}`,
-        servername: url.hostname,
-        headers: {
-          Accept: accept,
-          Host: url.host,
-          "User-Agent": USER_AGENT,
-        },
+  const { promise, resolve, reject } = Promise.withResolvers<HopResponse>();
+  const request = NodeHttps.request(
+    {
+      protocol: "https:",
+      hostname: target.address,
+      family: target.family,
+      port: 443,
+      method: "GET",
+      path: `${url.pathname}${url.search}`,
+      servername: url.hostname,
+      headers: {
+        Accept: accept,
+        Host: url.host,
+        "User-Agent": USER_AGENT,
       },
-      (response) => {
-        const status = response.statusCode ?? 0;
-        const location = response.headers.location;
-        if (status >= 300 && status < 400 && location) {
-          response.resume();
-          let redirected: URL;
-          try {
-            redirected = new URL(location, url);
-          } catch (cause) {
-            reject(cause);
-            return;
-          }
-          void requestPublicHttps(redirected, maxBytes, redirects + 1, accept).then(
-            resolve,
-            reject,
-          );
-          return;
-        }
-        if (status < 200 || status >= 300) {
-          response.resume();
-          reject(new Error(`The icon host returned HTTP ${status}.`));
-          return;
-        }
-        const declaredLength = Number(response.headers["content-length"]);
-        if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-          response.resume();
-          reject(new Error("The icon response was too large."));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        let byteLength = 0;
-        response.on("aborted", () => reject(new Error("The icon response was interrupted.")));
-        response.on("error", reject);
-        response.on("data", (chunk: Buffer) => {
-          byteLength += chunk.byteLength;
-          if (byteLength > maxBytes) {
-            request.destroy(new Error("The icon response was too large."));
-            return;
-          }
-          chunks.push(chunk);
+    },
+    (response) => {
+      const status = response.statusCode ?? 0;
+      const location = response.headers.location ?? null;
+      if (status < 200 || status >= 300) {
+        response.resume();
+        resolve({ status, location, body: Buffer.alloc(0) });
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let byteLength = 0;
+      response.on("aborted", () => reject(new Error("The icon response was interrupted.")));
+      response.on("error", reject);
+      response.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        byteLength += chunk.byteLength;
+        if (byteLength <= maxBytes) return;
+        resolve({
+          status,
+          location,
+          body: Buffer.concat(chunks).subarray(0, maxBytes),
+          truncated: true,
         });
-        response.on("end", () => resolve(Buffer.concat(chunks)));
-      },
-    );
-    request.setTimeout(ICON_REQUEST_TIMEOUT_MS, () => {
-      request.destroy(new Error("The icon request timed out."));
-    });
-    request.on("error", reject);
-    request.end();
+        request.destroy();
+      });
+      response.on("end", () => resolve({ status, location, body: Buffer.concat(chunks) }));
+    },
+  );
+  request.setTimeout(ICON_REQUEST_TIMEOUT_MS, () => {
+    request.destroy(new Error("The icon request timed out."));
   });
+  request.on("error", reject);
+  request.end();
+  return promise;
+};
+
+/**
+ * Follows at most MAX_REDIRECTS standard-HTTPS redirects; returns the final address with the
+ * body. A longer body is refused, or with `partial` kept up to maxBytes.
+ */
+async function requestPublicHttps(input: {
+  readonly url: URL;
+  readonly maxBytes: number;
+  readonly accept: string;
+  readonly hop: PublicHttpsHop;
+  readonly partial?: boolean;
+}): Promise<{ readonly url: URL; readonly body: Buffer }> {
+  let url = input.url;
+  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+    if (url.protocol !== "https:" || (url.port && url.port !== "443")) {
+      throw new Error("Journal icon requests must use standard HTTPS.");
+    }
+    const response = await input.hop({ url, accept: input.accept, maxBytes: input.maxBytes });
+    if (response.status >= 300 && response.status < 400 && response.location) {
+      url = new URL(response.location, url);
+      continue;
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`The icon host returned HTTP ${response.status}.`);
+    }
+    const tooLong = response.truncated === true || response.body.byteLength > input.maxBytes;
+    if (tooLong && !input.partial) {
+      throw new Error("The icon response was too large.");
+    }
+    return { url, body: tooLong ? response.body.subarray(0, input.maxBytes) : response.body };
+  }
+  throw new Error("The icon request redirected too many times.");
 }
 
 function inspectIcon(bytes: Uint8Array): IconFormat | null {
@@ -424,51 +454,92 @@ function preferredIcon(
   return candidateSize > currentSize ? candidate : current;
 }
 
-async function downloadRasterIcon(url: URL): Promise<DownloadedIcon | null> {
+async function downloadRasterIcon(url: URL, hop: PublicHttpsHop): Promise<DownloadedIcon | null> {
   try {
-    const response = await requestPublicHttps(url, MAX_ICON_BYTES);
-    const format = inspectIcon(response);
-    return format ? { ...format, bytes: response } : null;
+    const { body } = await requestPublicHttps({
+      url,
+      maxBytes: MAX_ICON_BYTES,
+      accept: IMAGE_ACCEPT,
+      hop,
+    });
+    const format = inspectIcon(body);
+    return format ? { ...format, bytes: body } : null;
   } catch {
     return null;
   }
 }
 
-async function defaultResolveLandingUrl(record: ScientSourceRecord): Promise<URL | null> {
+async function defaultResolveLandingUrl(
+  record: ScientSourceRecord,
+  hop: PublicHttpsHop,
+): Promise<URL | null> {
   const direct = parseEligiblePublicUrl(record.url);
   if (direct) return direct;
   const doi = sourceDoi(record);
   if (!doi) return null;
   try {
     const encodedDoi = doi.split("/").map(encodeURIComponent).join("/");
-    const response = await requestPublicHttps(
-      withRegistryContact(new URL(`https://api.crossref.org/works/${encodedDoi}`)),
-      MAX_CROSSREF_BYTES,
-      0,
-      "application/json",
+    const { body } = await runWithCrossrefLimit(() =>
+      requestPublicHttps({
+        url: withRegistryContact(new URL(`https://api.crossref.org/works/${encodedDoi}`)),
+        maxBytes: MAX_CROSSREF_BYTES,
+        accept: "application/json",
+        hop,
+      }),
     );
-    return crossrefLandingUrl(JSON.parse(response.toString("utf8")) as unknown);
+    return crossrefLandingUrl(JSON.parse(body.toString("utf8")) as unknown);
   } catch {
     return null;
   }
 }
 
-async function defaultDownloadIcon(landingUrl: URL): Promise<DownloadedIcon | null> {
-  const conventionalIcon = downloadRasterIcon(new URL("/favicon.ico", landingUrl.origin));
-  const rootUrl = publisherRootUrl(landingUrl);
-  const candidates = requestPublicHttps(
-    rootUrl,
-    MAX_ICON_DOCUMENT_BYTES,
-    0,
-    "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
-  )
-    .then((html) => extractDeclaredIconCandidates(html.toString("utf8"), rootUrl))
-    .catch(() => []);
-  let best = await conventionalIcon;
-  for (const candidate of (await candidates).slice(0, MAX_DECLARED_ICON_ATTEMPTS)) {
-    best = preferredIcon(best, await downloadRasterIcon(candidate.url));
+/** Icons declared by a document, resolved against its address after redirects. */
+async function declaredIconsOf(
+  url: URL,
+  hop: PublicHttpsHop,
+): Promise<{ readonly url: URL; readonly candidates: readonly DeclaredIconCandidate[] } | null> {
+  try {
+    // The icons are named in the head; a long article page is read only that far.
+    const document = await requestPublicHttps({
+      url,
+      maxBytes: MAX_ICON_DOCUMENT_BYTES,
+      accept: HTML_ACCEPT,
+      hop,
+      partial: true,
+    });
+    return {
+      url: document.url,
+      candidates: extractDeclaredIconCandidates(document.body.toString("utf8"), document.url),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function largestDeclaredIcon(
+  candidates: readonly DeclaredIconCandidate[],
+  hop: PublicHttpsHop,
+): Promise<DownloadedIcon | null> {
+  let best: DownloadedIcon | null = null;
+  for (const candidate of candidates.slice(0, MAX_DECLARED_ICON_ATTEMPTS)) {
+    best = preferredIcon(best, await downloadRasterIcon(candidate.url, hop));
   }
   return best;
+}
+
+async function defaultDownloadIcon(
+  landingUrl: URL,
+  hop: PublicHttpsHop,
+): Promise<DownloadedIcon | null> {
+  // The article page names the journal's icons; publisher homepages often hide behind identity redirects.
+  const article = await declaredIconsOf(landingUrl, hop);
+  const articleIcon = await largestDeclaredIcon(article?.candidates ?? [], hop);
+  if (articleIcon) return articleIcon;
+  const siteUrl = article?.url ?? landingUrl;
+  const conventionalIcon = downloadRasterIcon(new URL("/favicon.ico", siteUrl.origin), hop);
+  const root = declaredIconsOf(publisherRootUrl(siteUrl), hop);
+  const best = await conventionalIcon;
+  return preferredIcon(best, await largestDeclaredIcon((await root)?.candidates ?? [], hop));
 }
 
 function cacheKey(record: ScientSourceRecord, landingUrl: URL): string {
@@ -502,7 +573,8 @@ function validCacheMetadata(value: unknown): CacheMetadata | null {
   const mediaType = candidate?.mediaType;
   const resolvedAt = candidate?.resolvedAt;
   const sourceHost = candidate?.sourceHost;
-  const discoveryVersion = candidate?.discoveryVersion === ICON_DISCOVERY_VERSION ? 2 : 1;
+  const discoveryVersion =
+    typeof candidate?.discoveryVersion === "number" ? candidate.discoveryVersion : 1;
   if (
     (extension !== "gif" &&
       extension !== "ico" &&
@@ -591,8 +663,10 @@ async function resolveUncached(input: {
 }): Promise<JournalIconMaterial | null> {
   const journalTitle = input.record.containerTitle?.trim();
   if (!journalTitle || input.record.type !== "article") return null;
-  const resolveLandingUrl = input.options.resolveLandingUrl ?? defaultResolveLandingUrl;
-  const downloadIcon = input.options.downloadIcon ?? defaultDownloadIcon;
+  const hop = input.options.httpsHop ?? publicHttpsHop;
+  const resolveLandingUrl =
+    input.options.resolveLandingUrl ?? ((record) => defaultResolveLandingUrl(record, hop));
+  const downloadIcon = input.options.downloadIcon ?? ((url) => defaultDownloadIcon(url, hop));
   const landingUrl = await resolveLandingUrl(input.record);
   if (!landingUrl) return null;
   const key = cacheKey(input.record, landingUrl);
@@ -608,7 +682,8 @@ async function resolveUncached(input: {
     const { fresh: _fresh, ...material } = cached;
     return material;
   }
-  const failureKey = `${input.cacheRoot}\0${key}`;
+  // A negative result from an older discovery algorithm must not hide what this one finds.
+  const failureKey = `v${ICON_DISCOVERY_VERSION}\0${input.cacheRoot}\0${key}`;
   if ((failedUntil.get(failureKey) ?? 0) > now.getTime()) {
     if (!cached) return null;
     const { fresh: _fresh, ...material } = cached;
@@ -666,4 +741,5 @@ export const journalIconResolverInternals = {
   preferredIcon,
   publicAddress,
   publisherRootUrl,
+  requestPublicHttps,
 };

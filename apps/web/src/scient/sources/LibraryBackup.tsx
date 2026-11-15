@@ -8,8 +8,8 @@ import type {
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
-import { toastManager } from "../../components/ui/toast";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { randomUUID } from "../../lib/utils";
 import { changeLibraryRestore, organizeScientSources, readLibraryBackupStatus } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import {
@@ -25,85 +25,157 @@ import {
   restoreRefusedLabel,
   restoredLabel,
 } from "./libraryBackupLabels";
+import type { SourcesActivityItem, SourcesResultContent } from "./sourcesFeedback";
 
 const ASK_AGAIN_MS = 1_000;
 
+type CopyKind = "backup" | "join" | "restore";
+
+/** How a backup, an addition from another Library or a restore ended, said once per window. */
+export interface LibraryCopyEnding {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly kind: CopyKind;
+  /** The result-slot operation that started it in this window; null for one seen running. */
+  readonly operationId: string | null;
+  readonly failed: boolean;
+  readonly title: string;
+  readonly description: string;
+}
+
 /**
- * Environments whose backup this window started or saw running. Kept outside the panel, so the
- * end is announced once in this window also after a switch to another project or a reopened panel.
+ * What this window started or saw running, by environment and kind, with the operation that
+ * started it. Kept outside the panel, so the end is said once in this window also after a switch
+ * to another project or a reopened panel.
  */
-const following = new Set<EnvironmentId>();
-/** The same for adding from another Library. */
-const followingJoin = new Set<EnvironmentId>();
+const following = new Map<string, string | null>();
 /** How restores ended that this window has already said, by environment and restore. */
 const said = new Set<string>();
 
-function sayHowBackupEnded(environmentId: EnvironmentId, backup: ScientSourcesBackupStatus) {
-  if (backup.state === "running") {
-    following.add(environmentId);
-    return;
-  }
-  if (!following.delete(environmentId)) return;
-  if (backup.state === "done") {
-    toastManager.add({
-      type: "success",
-      title: BACKUP_LABELS.done,
-      description: backupDoneLabel(backup),
-    });
-  } else if (backup.state === "failed") {
-    toastManager.add({ type: "error", title: BACKUP_LABELS.failed, description: backup.reason });
-  }
+const followKey = (environmentId: EnvironmentId, kind: CopyKind) => `${environmentId}\0${kind}`;
+
+/** Marks work as followed; a later status that shows it ended is then said. */
+function follow(environmentId: EnvironmentId, kind: CopyKind, operationId: string | null) {
+  const key = followKey(environmentId, kind);
+  if (operationId !== null || !following.has(key)) following.set(key, operationId);
 }
 
-function sayHowJoinEnded(environmentId: EnvironmentId, join: ScientSourcesJoinStatus) {
-  if (join.state === "running") {
-    followingJoin.add(environmentId);
-    return;
+/** The operation that followed work of this kind, removed; undefined when none did. */
+function stopFollowing(environmentId: EnvironmentId, kind: CopyKind): string | null | undefined {
+  const key = followKey(environmentId, kind);
+  if (!following.has(key)) return undefined;
+  const operationId = following.get(key) ?? null;
+  following.delete(key);
+  return operationId;
+}
+
+function backupEnding(
+  environmentId: EnvironmentId,
+  backup: ScientSourcesBackupStatus,
+): LibraryCopyEnding | null {
+  if (backup.state === "running") {
+    follow(environmentId, "backup", null);
+    return null;
   }
-  if (!followingJoin.delete(environmentId)) return;
+  if (backup.state === "none") return null;
+  const operationId = stopFollowing(environmentId, "backup");
+  if (operationId === undefined) return null;
+  const ending = { key: `backup\0${backup.finishedAt}`, environmentId, kind: "backup" as const };
+  return backup.state === "done"
+    ? {
+        ...ending,
+        operationId,
+        failed: false,
+        title: BACKUP_LABELS.done,
+        description: backupDoneLabel(backup),
+      }
+    : {
+        ...ending,
+        operationId,
+        failed: true,
+        title: BACKUP_LABELS.failed,
+        description: backup.reason,
+      };
+}
+
+function joinEnding(
+  environmentId: EnvironmentId,
+  join: ScientSourcesJoinStatus,
+): LibraryCopyEnding | null {
+  if (join.state === "running") {
+    follow(environmentId, "join", null);
+    return null;
+  }
+  if (join.state === "none") return null;
+  const operationId = stopFollowing(environmentId, "join");
+  if (operationId === undefined) return null;
   if (join.state === "done") {
-    toastManager.add({
-      type: "success",
+    return {
+      key: `join\0${join.joinId}`,
+      environmentId,
+      kind: "join",
+      operationId,
+      failed: false,
       title: join.added > 0 ? JOIN_LABELS.done : JOIN_LABELS.nothingNew,
       description: joinDoneLabel(join),
-    });
-  } else if (join.state === "failed") {
-    // Some sources may have arrived before it failed: say so, not "nothing was added".
-    toastManager.add({
-      type: "error",
-      title: join.added > 0 ? JOIN_LABELS.stopped : JOIN_LABELS.failed,
-      description: join.added > 0 ? joinStoppedLabel(join) : join.reason,
-    });
+    };
   }
+  // Some sources may have arrived before it failed: say so, not "nothing was added".
+  return {
+    key: `join\0${join.failedAt}`,
+    environmentId,
+    kind: "join",
+    operationId,
+    failed: true,
+    title: join.added > 0 ? JOIN_LABELS.stopped : JOIN_LABELS.failed,
+    description: join.added > 0 ? joinStoppedLabel(join) : join.reason,
+  };
 }
 
 /** A restore ends at a start of Scient, so no window saw it running: each says it once. */
-function sayHowRestoreEnded(environmentId: EnvironmentId, restore: ScientSourcesRestoreStatus) {
+function restoreEnding(
+  environmentId: EnvironmentId,
+  restore: ScientSourcesRestoreStatus,
+): LibraryCopyEnding | null {
   const once = (id: string) => {
     const key = `${environmentId}\0${id}`;
     if (said.has(key)) return false;
     said.add(key);
     return true;
   };
+  const ending = (id: string, failed: boolean, title: string, description: string) =>
+    once(id)
+      ? {
+          key: `restore\0${id}`,
+          environmentId,
+          kind: "restore" as const,
+          operationId: stopFollowing(environmentId, "restore") ?? null,
+          failed,
+          title,
+          description,
+        }
+      : null;
   if (restore.state === "restored") {
-    if (!once(restore.restoreId)) return;
-    toastManager.add({
-      type: "success",
-      title: restore.putBack ? RESTORE_LABELS.putBack : RESTORE_LABELS.restored,
-      description: restoredLabel(restore),
-    });
-  } else if (restore.state === "failed") {
-    if (!once(restore.failedAt)) return;
-    toastManager.add({ type: "error", title: RESTORE_LABELS.failed, description: restore.reason });
-  } else if (restore.state === "ready" && restore.refused) {
-    // Another backup was asked for and refused; the one that was ready still waits.
-    if (!once(restore.refused.failedAt)) return;
-    toastManager.add({
-      type: "error",
-      title: RESTORE_LABELS.failed,
-      description: restoreRefusedLabel(restore) ?? restore.refused.reason,
-    });
+    return ending(
+      restore.restoreId,
+      false,
+      restore.putBack ? RESTORE_LABELS.putBack : RESTORE_LABELS.restored,
+      restoredLabel(restore),
+    );
   }
+  if (restore.state === "failed") {
+    return ending(restore.failedAt, true, RESTORE_LABELS.failed, restore.reason);
+  }
+  if (restore.state === "ready" && restore.refused) {
+    // Another backup was asked for and refused; the one that was ready still waits.
+    return ending(
+      restore.refused.failedAt,
+      true,
+      RESTORE_LABELS.failed,
+      restoreRefusedLabel(restore) ?? restore.refused.reason,
+    );
+  }
+  return null;
 }
 
 const NOTHING: ScientSourcesLibraryCopies = {
@@ -113,10 +185,9 @@ const NOTHING: ScientSourcesLibraryCopies = {
 };
 
 /**
- * The Library's backup and restore on this environment. A backup is started into a chosen
- * folder and followed until it ends. A restore is prepared from a chosen backup folder; its
- * copy then waits for the next start of Scient, and can be cancelled until then. Both run on in
- * the server, so a panel that opens meanwhile shows them too.
+ * The Library's backup, restore and addition from another Library on this environment. Each runs
+ * on in the server, so a panel that opens meanwhile shows it too; a ready restore waits for the
+ * next start of Scient. How each ended goes to `onEnded`, or waits in `endings` until dismissed.
  */
 export function useLibraryBackup(input: {
   readonly environmentId: EnvironmentId;
@@ -125,12 +196,15 @@ export function useLibraryBackup(input: {
   readonly enabled: boolean;
   /** Called when adding from another Library has put new sources in this one. */
   readonly onAdded?: () => void;
+  /** Return true when the ending was shown as the current result; it is then not kept. */
+  readonly onEnded?: (ending: LibraryCopyEnding) => boolean;
 }) {
   const context = `${input.environmentId}\0${input.root}`;
   const [reading, setReading] = useState<{
     readonly context: string;
     readonly copies: ScientSourcesLibraryCopies;
   } | null>(null);
+  const [endings, setEndings] = useState<ReadonlyArray<LibraryCopyEnding>>([]);
   const copies = input.enabled && reading?.context === context ? reading.copies : null;
   const working =
     copies?.backup.state === "running" ||
@@ -142,6 +216,11 @@ export function useLibraryBackup(input: {
   const asking = useRef<string | null>(null);
   /** The context the panel shows now; an answer for another one (a project left) is dropped. */
   const shown = useStableCallback(() => (input.enabled ? context : null));
+
+  const report = useStableCallback((ending: LibraryCopyEnding | null) => {
+    if (!ending || input.onEnded?.(ending)) return;
+    setEndings((previous) => [...previous.filter((item) => item.key !== ending.key), ending]);
+  });
 
   const show = (asked: string, next: Partial<ScientSourcesLibraryCopies>) => {
     if (shown() !== asked) return false;
@@ -159,12 +238,14 @@ export function useLibraryBackup(input: {
     if (asking.current === asked) asking.current = null;
     // A failed read changes nothing: the last answer stands and the timer asks again.
     if (!next || !show(asked, next)) return;
-    sayHowBackupEnded(input.environmentId, next.backup);
-    sayHowRestoreEnded(input.environmentId, next.restore);
-    const ended = next.join.state !== "running" && followingJoin.has(input.environmentId);
-    sayHowJoinEnded(input.environmentId, next.join);
+    report(backupEnding(input.environmentId, next.backup));
+    report(restoreEnding(input.environmentId, next.restore));
+    const join = joinEnding(input.environmentId, next.join);
+    report(join);
     // New sources are in the Library, also when it stopped part way: the list is read again.
-    if (ended && next.join.state !== "none" && next.join.added > 0) input.onAdded?.();
+    if (join && next.join.state !== "running" && next.join.state !== "none") {
+      if (next.join.added > 0) input.onAdded?.();
+    }
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the backup's and the restore's status from the environment server when the panel opens on a Library
@@ -179,25 +260,33 @@ export function useLibraryBackup(input: {
     return () => window.clearInterval(timer);
   }, [working, unread, context, load]);
 
-  const failed = (title: string) => (cause: unknown) => {
-    toastManager.add({
-      type: "error",
+  /** A request that was refused never ran: said at once, as how the person's action ended. */
+  const failed = (kind: CopyKind, title: string, operationId: string | null) => (cause: unknown) =>
+    report({
+      key: randomUUID(),
+      environmentId: input.environmentId,
+      kind,
+      operationId,
+      failed: true,
       title,
       description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
     });
-  };
 
-  const start = (inFolder: string) => {
+  /** `operationId` names the result-slot operation the backup's ending belongs to. */
+  const start = (inFolder: string, operationId: string | null = null) => {
     const asked = context;
     return organizeScientSources(input.environmentId, {
       root: input.root,
       change: { action: "back-up-library", inFolder },
-    }).then(() => {
-      // The server said it runs; shown at once, so the timer asks even if the next read fails.
-      following.add(input.environmentId);
-      show(asked, { backup: { state: "running", done: 0, total: 0 } });
-      return load(asked);
-    }, failed(BACKUP_LABELS.failed));
+    }).then(
+      () => {
+        // The server said it runs; shown at once, so the timer asks even if the next read fails.
+        follow(input.environmentId, "backup", operationId);
+        show(asked, { backup: { state: "running", done: 0, total: 0 } });
+        return load(asked);
+      },
+      failed("backup", BACKUP_LABELS.failed, operationId),
+    );
   };
 
   const changeRestore = (
@@ -205,27 +294,32 @@ export function useLibraryBackup(input: {
       | { action: "prepare"; fromFolder: string }
       | { action: "put-back"; folder: string }
       | { action: "cancel"; restoreId?: string },
+    operationId: string | null,
   ) => {
     const asked = context;
+    if (change.action !== "cancel") follow(input.environmentId, "restore", operationId);
     return changeLibraryRestore(input.environmentId, { root: input.root, change }).then(
       (restore) => {
         show(asked, { restore });
-        sayHowRestoreEnded(input.environmentId, restore);
+        report(restoreEnding(input.environmentId, restore));
       },
-      failed(RESTORE_LABELS.failed),
+      failed("restore", RESTORE_LABELS.failed, operationId),
     );
   };
 
-  const addFrom = (fromFolder: string) => {
+  const addFrom = (fromFolder: string, operationId: string | null = null) => {
     const asked = context;
     return organizeScientSources(input.environmentId, {
       root: input.root,
       change: { action: "add-from-library", fromFolder },
-    }).then(() => {
-      followingJoin.add(input.environmentId);
-      show(asked, { join: { state: "running", done: 0, total: 0 } });
-      return load(asked);
-    }, failed(JOIN_LABELS.failed));
+    }).then(
+      () => {
+        follow(input.environmentId, "join", operationId);
+        show(asked, { join: { state: "running", done: 0, total: 0 } });
+        return load(asked);
+      },
+      failed("join", JOIN_LABELS.failed, operationId),
+    );
   };
 
   // Cancel names the restore this window shows: one another window chose since is not dropped.
@@ -238,24 +332,35 @@ export function useLibraryBackup(input: {
     line: copies ? backupRunningLabel(copies.backup) : null,
     start,
     restoreLine: copies ? restoreLine(copies.restore) : null,
+    /** True while a copy waits for the next start of Scient, or one is part way through. */
+    restoreWaits: copies?.restore.state === "ready",
     /** Offered while a checked copy waits for the next start. */
     cancelRestore:
       waiting === null
         ? undefined
         : () =>
-            changeRestore({
-              action: "cancel",
-              ...(waiting.restoreId ? { restoreId: waiting.restoreId } : {}),
-            }),
-    restoreFrom: (fromFolder: string) => changeRestore({ action: "prepare", fromFolder }),
+            changeRestore(
+              {
+                action: "cancel",
+                ...(waiting.restoreId ? { restoreId: waiting.restoreId } : {}),
+              },
+              null,
+            ),
+    restoreFrom: (fromFolder: string, operationId: string | null = null) =>
+      changeRestore({ action: "prepare", fromFolder }, operationId),
     /** Puts a Library a restore kept back in the Library's place at the next start. */
-    putBack: (folder: string) => changeRestore({ action: "put-back", folder }),
+    putBack: (folder: string, operationId: string | null = null) =>
+      changeRestore({ action: "put-back", folder }, operationId),
+    /** Endings no result slot took, on this environment, until the person dismisses them. */
+    endings: endings.filter((ending) => ending.environmentId === input.environmentId),
+    acknowledgeEnding: (key: string) =>
+      setEndings((previous) => previous.filter((ending) => ending.key !== key)),
   };
 }
 
-/** One line beside the store notices while a backup runs, and one while a restore is on its way. */
-export function LibraryBackupNotice(props: {
-  readonly line: string | null;
+/** A backup's, an addition's or a restore's running line; a waiting restore offers Cancel. */
+function LibraryBackupNotice(props: {
+  readonly line?: string | null;
   readonly joinLine?: string | null;
   readonly restoreLine?: string | null;
   readonly onCancelRestore?: (() => void) | undefined;
@@ -263,23 +368,17 @@ export function LibraryBackupNotice(props: {
   return (
     <>
       {props.line ? (
-        <div
-          role="status"
-          className="mx-3 mt-2 text-xs break-words text-muted-foreground tabular-nums"
-        >
+        <div role="status" className="text-xs break-words text-muted-foreground tabular-nums">
           {props.line}
         </div>
       ) : null}
       {props.joinLine ? (
-        <div
-          role="status"
-          className="mx-3 mt-2 text-xs break-words text-muted-foreground tabular-nums"
-        >
+        <div role="status" className="text-xs break-words text-muted-foreground tabular-nums">
           {props.joinLine}
         </div>
       ) : null}
       {props.restoreLine ? (
-        <div className="mx-3 mt-2 flex items-start gap-2 text-xs text-muted-foreground">
+        <div className="flex items-start gap-2 text-xs text-muted-foreground">
           <div role="status" className="min-w-0 flex-1 break-words tabular-nums">
             {props.restoreLine}
           </div>
@@ -292,4 +391,80 @@ export function LibraryBackupNotice(props: {
       ) : null}
     </>
   );
+}
+
+/** An ending in the result slot: the title, and the details in Activity. */
+export function libraryCopyEndingResult(ending: LibraryCopyEnding): SourcesResultContent {
+  return {
+    tone: ending.failed ? "error" : "success",
+    summary: `${ending.title}. ${ending.description}`,
+    details: <p>{ending.description}</p>,
+  };
+}
+
+/** What `libraryBackupActivity` reads; `useLibraryBackup`'s answer has it. */
+export interface LibraryBackupActivityInput {
+  readonly line: string | null;
+  readonly joinLine: string | null;
+  readonly restoreLine: string | null;
+  readonly restoreWaits: boolean;
+  readonly cancelRestore: (() => void) | undefined;
+  readonly endings: ReadonlyArray<LibraryCopyEnding>;
+  readonly acknowledgeEnding: (key: string) => void;
+}
+
+/** The backup's, addition's and restore's running work, waiting restore and unseen endings. */
+export function libraryBackupActivity(
+  backup: LibraryBackupActivityInput,
+): ReadonlyArray<SourcesActivityItem> {
+  const items: SourcesActivityItem[] = [];
+  if (backup.line) {
+    items.push({
+      key: "library-backup",
+      tone: "running",
+      label: "Backing up the Library",
+      body: <LibraryBackupNotice line={backup.line} />,
+    });
+  }
+  if (backup.joinLine) {
+    items.push({
+      key: "library-join",
+      tone: "running",
+      label: "Adding from another Library",
+      body: <LibraryBackupNotice joinLine={backup.joinLine} />,
+    });
+  }
+  if (backup.restoreLine) {
+    items.push({
+      key: "library-restore",
+      // A ready copy needs the person to restart Scient, or to cancel it.
+      tone: backup.restoreWaits ? "decision" : "running",
+      label: backup.restoreWaits ? "A restore waits for the next start" : "Checking a backup",
+      body: (
+        <LibraryBackupNotice
+          restoreLine={backup.restoreLine}
+          onCancelRestore={backup.cancelRestore}
+        />
+      ),
+    });
+  }
+  for (const ending of backup.endings) {
+    items.push({
+      key: ending.key,
+      tone: ending.failed ? "error" : "advisory",
+      label: ending.title,
+      body: (
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">{ending.title}</p>
+            <p className="text-muted-foreground">{ending.description}</p>
+          </div>
+          <Button size="xs" variant="ghost" onClick={() => backup.acknowledgeEnding(ending.key)}>
+            Dismiss
+          </Button>
+        </div>
+      ),
+    });
+  }
+  return items;
 }

@@ -2,7 +2,6 @@ import {
   ScientSourceZoteroRefreshField,
   editableMetadataFromRecord,
   normalizeScientSourceEditableMetadata,
-  type ScientSourceCandidate,
   type ScientSourceCreator,
   type ScientSourceEditableMetadata,
   type ScientSourceFieldProvenance,
@@ -12,6 +11,8 @@ import {
   type ScientSourceZoteroSync,
   scientSourceMoreLabel,
 } from "@scientfactory/scient-sources";
+
+import type { ZoteroItemMaterial, ZoteroNoteOriginal } from "./ZoteroItems.ts";
 
 const ZOTERO_REFRESH_FIELDS = ScientSourceZoteroRefreshField.literals;
 type ZoteroRefreshField = ScientSourceZoteroRefreshField;
@@ -34,7 +35,12 @@ export interface ZoteroRefreshPlan {
   readonly note: { readonly value: string | null } | null;
   readonly conflicts: ReadonlyArray<ZoteroFieldConflict>;
   /** The merge base to store: Zotero's values, except for conflicts still open. */
-  readonly base: { readonly metadata: ScientSourceEditableMetadata; readonly note: string | null };
+  readonly base: {
+    readonly metadata: ScientSourceEditableMetadata;
+    readonly note: string | null;
+    /** Zotero's notes as it wrote them; absent while a clash on an earlier import's note is open. */
+    readonly notes?: ReadonlyArray<ZoteroNoteOriginal>;
+  };
 }
 
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
@@ -153,7 +159,7 @@ function mergeTags(input: {
 export function planZoteroRefresh(input: {
   readonly record: ScientSourceRecord;
   readonly base: ScientSourceZoteroSync | null;
-  readonly zotero: { readonly candidate: ScientSourceCandidate; readonly note: string | null };
+  readonly zotero: Pick<ZoteroItemMaterial, "candidate" | "note" | "notes" | "legacyNote">;
   readonly choices?: ZoteroRefreshChoices;
 }): ZoteroRefreshPlan {
   const { citationKey: _key, ...local } = normalizeScientSourceEditableMetadata(
@@ -232,13 +238,30 @@ export function planZoteroRefresh(input: {
 
   const localNote = input.record.note ?? null;
   const zoteroNote = input.zotero.note;
-  const baseNote = input.base ? input.base.note : undefined;
+  const { legacyNote } = input.zotero;
   let note: { readonly value: string | null } | null = null;
-  let storedBaseNote = zoteroNote;
-  if (!same(localNote, zoteroNote) && zoteroNote !== null) {
-    const zoteroChanged = baseNote === undefined || baseNote !== zoteroNote;
-    const noteEditedHere = baseNote === undefined ? localNote !== null : localNote !== baseNote;
-    if (useZotero.has("note") || (zoteroChanged && !noteEditedHere)) {
+  let planBase: ZoteroRefreshPlan["base"] = {
+    metadata: baseMetadata as ScientSourceEditableMetadata,
+    note: zoteroNote,
+    notes: input.zotero.notes,
+  };
+  if (zoteroNote !== null && localNote !== zoteroNote) {
+    // Untouched: still the text Scient last wrote from Zotero. Without a base that is an
+    // earlier import's plain text, or no note at all.
+    const untouched = input.base
+      ? localNote === input.base.note
+      : localNote === null || localNote === legacyNote;
+    // Asked of Zotero's own HTML, never of a conversion: a better converter is not a change.
+    // By digest, which every note has even when its HTML was too long to keep.
+    const digests = (notes: ReadonlyArray<{ readonly itemKey: string; readonly sha256: string }>) =>
+      notes.map(({ itemKey, sha256 }) => `${itemKey}:${sha256}`);
+    const zoteroChanged = !input.base
+      ? true
+      : input.base.notes
+        ? !same(digests(input.base.notes), digests(input.zotero.notes)) &&
+          zoteroNote !== input.base.note
+        : legacyNote !== input.base.note;
+    if (useZotero.has("note") || untouched) {
       note = { value: zoteroNote };
     } else if (zoteroChanged && !keepLocal.has("note")) {
       conflicts.push({
@@ -246,7 +269,13 @@ export function planZoteroRefresh(input: {
         local: displayZoteroFieldValue("note", localNote),
         zotero: displayZoteroFieldValue("note", zoteroNote),
       });
-      storedBaseNote = baseNote ?? localNote;
+      // Left as it was, so the clash is reported again; never the note here, which would
+      // read as untouched next time and be replaced.
+      planBase = {
+        metadata: planBase.metadata,
+        note: input.base ? input.base.note : null,
+        ...(input.base?.notes ? { notes: input.base.notes } : {}),
+      };
     }
   }
 
@@ -256,10 +285,7 @@ export function planZoteroRefresh(input: {
     takenMore: new Set(more.taken),
     note,
     conflicts,
-    base: {
-      metadata: baseMetadata as ScientSourceEditableMetadata,
-      note: storedBaseNote,
-    },
+    base: planBase,
   };
 }
 

@@ -812,7 +812,12 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("advanceImport", (args) =>
           route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) =>
             advanceSourceImport(
-              { ...args.payload, ...(library ? { root: library.library } : {}), zotero },
+              {
+                ...args.payload,
+                ...(library ? { root: library.library } : {}),
+                zotero,
+                resolveIdentifier: keyed.resolveIdentifier,
+              },
               observeImport,
             ),
           ),

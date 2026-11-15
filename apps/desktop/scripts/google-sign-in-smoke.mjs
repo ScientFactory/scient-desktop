@@ -1,7 +1,6 @@
-// Google's sign-in pages stopped in real Electron, with the production guard and recovery modules.
-// Nothing reaches Google: accounts.google.com resolves to a local HTTPS stand-in, every other host
-// but localhost fails to resolve, and the stand-in's test certificate is trusted only by this
-// process's own sessions. No user data, profile or account is touched.
+// Google's sign-in in a real Electron <webview> tab with the production recovery module: pages
+// load, only the refusal is explained. accounts.google.com resolves to a local HTTPS stand-in and
+// every other host but localhost fails to resolve, so nothing reaches Google or a user profile.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -76,8 +75,9 @@ async function withTimeout(promise, describeStep) {
 }
 
 /**
- * Loads `url` and answers with its main-frame failure code, or 0 once it finished there. Events of
- * the previous load (an error page finishing late) arrive before this navigation starts.
+ * Loads `url` and answers with its main-frame failure code and the page it ended on, or code 0
+ * once a page finished loading after Google's redirects. Events of the previous load arrive before
+ * this navigation starts.
  */
 async function load(contents, url) {
   const { promise, resolve } = Promise.withResolvers();
@@ -89,7 +89,7 @@ async function load(contents, url) {
     if (started && isMainFrame && code !== -3) done({ code, url: failedUrl });
   };
   const finished = () => {
-    if (started && contents.getURL() === url) done({ code: 0, url });
+    if (started) done({ code: 0, url: contents.getURL() });
   };
   const done = (outcome) => {
     contents.off("did-start-navigation", start);
@@ -104,18 +104,6 @@ async function load(contents, url) {
   return withTimeout(promise, `loading ${url}`);
 }
 
-/** The next frame (not the page itself) that fails to load in `contents`. */
-function nextFrameFailure(contents) {
-  const { promise, resolve } = Promise.withResolvers();
-  const failed = (_event, code, _description, url, isMainFrame) => {
-    if (isMainFrame || code === -3) return;
-    contents.off("did-fail-load", failed);
-    resolve({ code, url });
-  };
-  contents.on("did-fail-load", failed);
-  return withTimeout(promise, "a frame to fail");
-}
-
 async function run() {
   const state = process.env[STATE_ENV];
   NodeAssert.ok(state, `Missing ${STATE_ENV}`);
@@ -124,8 +112,6 @@ async function run() {
   app.on("window-all-closed", () => {});
   await app.whenReady();
 
-  const { guardGoogleSignIn, BLOCKED_BY_CLIENT } =
-    await import("../src/scient/browser/googleSignInGuard.ts");
   const { followTabSignIn, watchSignInPopup } =
     await import("../src/scient/browser/googleSignInRecovery.ts");
 
@@ -134,34 +120,40 @@ async function run() {
     cert: NodeFS.readFileSync(NodePath.join(FIXTURES, "localhost-cert.pem")),
   };
 
-  // Google's stand-in. Each arrival is a request that would have reached Google; every page it
-  // serves runs a script that reports back, so a page that ran is told from one that was stopped.
-  const arrivals = [];
-  const waiters = new Map();
-  const arrived = (path) => arrivals.filter((arrival) => arrival === path).length;
-  const nextArrival = (path) => {
+  // Google's stand-in. Every page it serves runs a script that reports back, so a page that loaded
+  // and ran is told from one that was stopped.
+  const ran = [];
+  const ranWaiters = new Map();
+  const nextRun = (path) => {
     const { promise, resolve } = Promise.withResolvers();
-    waiters.set(path, [...(waiters.get(path) ?? []), resolve]);
-    return withTimeout(promise, `a request for ${path} to reach Google's stand-in`);
+    ranWaiters.set(path, [...(ranWaiters.get(path) ?? []), resolve]);
+    return withTimeout(promise, `Google's ${path} page to load and run`);
   };
   const google = NodeHttps.createServer(tls, (request, response) => {
-    const { pathname } = new URL(request.url, "https://accounts.google.com");
-    arrivals.push(pathname);
-    for (const resolve of waiters.get(pathname) ?? []) resolve();
-    waiters.delete(pathname);
+    const { pathname, searchParams } = new URL(request.url, "https://accounts.google.com");
     if (pathname.startsWith("/o/oauth2/")) {
-      // As Google does when its session is gone: on to the credential pages.
+      // As Google does without a session: on to the credential pages.
       response.writeHead(302, { location: "https://accounts.google.com/v3/signin/identifier" });
       response.end();
       return;
     }
     if (pathname === "/ran") {
+      const page = searchParams.get("page");
+      ran.push(page);
+      for (const resolve of ranWaiters.get(page) ?? []) resolve();
+      ranWaiters.delete(page);
       response.writeHead(204);
       response.end();
       return;
     }
+    // `?refuse` refuses without a new page load, as Google's sign-in pages sometimes do.
+    const refuse = searchParams.has("refuse")
+      ? `history.pushState(null, "", "/v3/signin/rejected");`
+      : "";
     response.writeHead(200, { "content-type": "text/html" });
-    response.end(`<!doctype html><title>Google</title><script>fetch("/ran")</script>`);
+    response.end(
+      `<!doctype html><title>Google</title><script>fetch("/ran?page=" + encodeURIComponent(location.pathname));${refuse}</script>`,
+    );
   });
   await new Promise((resolve) => google.listen(googlePort, "127.0.0.1", resolve));
 
@@ -185,27 +177,55 @@ async function run() {
   const siteOrigin = `https://localhost:${site.address().port}`;
   const siteRestart = `${siteOrigin}/`;
 
-  const trustFixtures = (partition) => {
-    const browserSession = electronSession.fromPartition(partition);
-    browserSession.setCertificateVerifyProc(({ hostname }, callback) =>
+  const PARTITION = "scient-google-sign-in-smoke";
+  electronSession
+    .fromPartition(PARTITION)
+    .setCertificateVerifyProc(({ hostname }, callback) =>
       callback(hostname === "accounts.google.com" || hostname === "localhost" ? 0 : -2),
     );
-    return browserSession;
-  };
-  const windowIn = (browserSession) =>
-    new BrowserWindow({
-      show: false,
-      webPreferences: { session: browserSession, contextIsolation: true, sandbox: true },
-    });
 
-  const IDENTIFIER = "https://accounts.google.com/v3/signin/identifier";
-  const OAUTH = "https://accounts.google.com/o/oauth2/v2/auth?client_id=smoke";
-  const unguardedWindow = windowIn(trustFixtures("scient-google-sign-in-smoke-unguarded"));
-  const guarded = trustFixtures("scient-google-sign-in-smoke");
-  guardGoogleSignIn(guarded);
-  const window = windowIn(guarded);
-  const tab = window.webContents;
-  const signIn = followTabSignIn(tab);
+  // The tab: a <webview> guest in an app window, as Scient's browser panel hosts its tabs.
+  const host = new BrowserWindow({
+    show: false,
+    webPreferences: { contextIsolation: true, sandbox: true, webviewTag: true },
+  });
+  const attached = new Promise((resolve) =>
+    host.webContents.once("did-attach-webview", (_event, guest) => resolve(guest)),
+  );
+  await host.loadURL(
+    `data:text/html,${encodeURIComponent(
+      `<!doctype html><webview partition="${PARTITION}" allowpopups src="about:blank" style="width:800px;height:600px"></webview>`,
+    )}`,
+  );
+  const tab = await withTimeout(attached, "the <webview> tab to attach");
+  NodeAssert.equal(tab.getType(), "webview");
+
+  const reports = [];
+  let reportWaiter = null;
+  const report = (event) => {
+    reports.push(event);
+    reportWaiter?.(event);
+    reportWaiter = null;
+  };
+  const nextReport = () =>
+    withTimeout(
+      new Promise((resolve) => {
+        reportWaiter = resolve;
+      }),
+      "Google's refusal to be reported",
+    );
+  const signIn = followTabSignIn(tab, report);
+  // What the tab did, printed when a phase fails: platforms differ in navigation events.
+  const trace = [];
+  for (const name of ["did-start-navigation", "did-redirect-navigation", "did-navigate"]) {
+    tab.on(name, (first, url) => {
+      const details = typeof url === "string" ? { url, isMainFrame: true } : first;
+      if (!details.isMainFrame) return;
+      trace.push(`${name} ${details.url} (showing ${tab.getURL()})`);
+    });
+  }
+
+  tab.setWindowOpenHandler(() => ({ action: "allow" }));
   let popupCreated = null;
   tab.on("did-create-window", (popup) => {
     // Watched as it opens, as the Manager does, so nothing it does is missed.
@@ -213,172 +233,143 @@ async function run() {
     popupCreated?.({ popup, reported });
     popupCreated = null;
   });
-  const nextPopupReport = async (script) => {
-    const created = new Promise((resolve) => {
-      popupCreated = resolve;
-    });
-    await tab.executeJavaScript(script, true);
-    const { popup, reported } = await withTimeout(created, "a popup to open");
-    const report = await withTimeout(reported, "the popup's sign-in to be stopped");
-    await withTimeout(
-      new Promise((resolve) => (popup.isDestroyed() ? resolve() : popup.once("closed", resolve))),
-      "the stopped popup to close",
-    );
-    return report;
+
+  const IDENTIFIER = "https://accounts.google.com/v3/signin/identifier";
+  const CHOOSER = "https://accounts.google.com/v3/signin/accountchooser";
+  const PASSWORD = "https://accounts.google.com/v3/signin/challenge/pwd";
+  const REJECTED = "https://accounts.google.com/v3/signin/rejected";
+  const OAUTH = "https://accounts.google.com/o/oauth2/v2/auth?client_id=smoke";
+
+  /** Loads one of Google's sign-in pages in the tab and checks it loaded and ran. */
+  const loadsAndRuns = async (url) => {
+    const path = new URL(url).pathname;
+    const pageRan = nextRun(path);
+    const outcome = await load(tab, url);
+    NodeAssert.equal(outcome.code, 0, `${path} didn't load`);
+    await pageRan;
+    return outcome;
   };
 
-  let phase = "the stand-in, without the guard (control)";
+  let phase = "Google's sign-in pages in a tab, which load for Google to decide";
   try {
-    // Without the guard the credential page loads and its script runs: what the guard must stop.
-    const ran = nextArrival("/ran");
-    NodeAssert.equal((await load(unguardedWindow.webContents, IDENTIFIER)).code, 0);
-    await ran;
-    unguardedWindow.destroy();
-    arrivals.length = 0;
+    for (const url of [IDENTIFIER, CHOOSER, PASSWORD]) await loadsAndRuns(url);
 
-    phase = "a tab opening Google's sign-in, with no Google session";
-    const credentials = await load(tab, IDENTIFIER);
-    NodeAssert.equal(credentials.code, BLOCKED_BY_CLIENT);
-    NodeAssert.deepEqual(signIn.blocked(credentials.code, credentials.url), {
-      page: "credentials",
-      context: "tab",
-      restartUrl: null,
-      pageUrl: IDENTIFIER,
-    });
-
-    phase = "a site redirecting the tab to Continue with Google";
-    NodeAssert.equal((await load(tab, `${siteOrigin}/`)).code, 0);
+    phase = "a site sending the tab to Continue with Google, which Google lets through";
+    NodeAssert.equal((await load(tab, siteRestart)).code, 0);
+    const identifierRan = nextRun("/v3/signin/identifier");
     const redirected = await load(tab, `${siteOrigin}/redirect?to=${encodeURIComponent(OAUTH)}`);
-    NodeAssert.equal(redirected.code, BLOCKED_BY_CLIENT);
-    NodeAssert.deepEqual(signIn.blocked(redirected.code, redirected.url), {
-      page: "transit",
+    NodeAssert.deepEqual(redirected, { code: 0, url: IDENTIFIER });
+    await identifierRan;
+    NodeAssert.deepEqual(reports, [], "a sign-in page Google didn't refuse was reported");
+
+    phase = "Google refusing that site's Continue with Google";
+    let reported = nextReport();
+    await loadsAndRuns(REJECTED);
+    NodeAssert.deepEqual(await reported, {
+      page: "rejected",
       context: "tab",
       restartUrl: siteRestart,
-      pageUrl: OAUTH,
+      pageUrl: REJECTED,
     });
 
-    phase = "a page opening Continue with Google in a popup";
-    NodeAssert.equal((await load(tab, `${siteOrigin}/`)).code, 0);
-    NodeAssert.deepEqual(
-      await nextPopupReport(`window.open(${JSON.stringify(OAUTH)}, "_blank", "popup"); 0`),
-      { page: "transit", context: "popup", restartUrl: siteRestart, pageUrl: `${siteOrigin}/` },
-    );
+    phase = "Google refusing its own sign-in without a page load";
+    NodeAssert.equal((await load(tab, siteRestart)).code, 0);
+    reported = nextReport();
+    await loadsAndRuns(`${IDENTIFIER}?refuse`);
+    NodeAssert.deepEqual(await reported, {
+      page: "rejected",
+      context: "tab",
+      restartUrl: null,
+      pageUrl: REJECTED,
+    });
 
-    phase = "a blank popup sent to Google's sign-in afterwards";
-    NodeAssert.equal(
-      (
-        await nextPopupReport(
-          `window.open("about:blank", "_blank", "popup").location = "https://accounts.google.com/AddSession"; 0`,
-        )
-      ).page,
-      "credentials",
-    );
-
-    phase = "a frame sent to Google's sign-in";
-    let frameFailed = nextFrameFailure(tab);
-    const framePage = `${siteOrigin}/?frame=${encodeURIComponent(IDENTIFIER)}`;
+    phase = "Google refusing a frame's sign-in";
+    const framePage = `${siteOrigin}/?frame=${encodeURIComponent(REJECTED)}`;
+    reported = nextReport();
     NodeAssert.equal((await load(tab, framePage)).code, 0);
-    let frame = await frameFailed;
-    NodeAssert.deepEqual(signIn.blockedFrame(frame.code, frame.url), {
-      page: "credentials",
+    NodeAssert.deepEqual(await reported, {
+      page: "rejected",
       context: "frame",
       restartUrl: siteRestart,
       pageUrl: framePage,
     });
-    NodeAssert.deepEqual(arrivals, [], "a stopped sign-in page reached Google");
 
-    phase = "a frame passing a session on, which Google sends to its sign-in";
-    frameFailed = nextFrameFailure(tab);
-    const probe = nextArrival("/o/oauth2/v2/auth");
-    const probePage = `${siteOrigin}/?frame=${encodeURIComponent(`${OAUTH}&prompt=none`)}`;
-    NodeAssert.equal((await load(tab, probePage)).code, 0);
-    await probe;
-    frame = await frameFailed;
-    NodeAssert.equal(signIn.blockedFrame(frame.code, frame.url)?.page, "credentials");
-    NodeAssert.equal(arrived("/v3/signin/identifier"), 0, "the frame's sign-in page loaded");
-
-    phase = "Google's session upkeep, which is never stopped";
-    const upkeep = await load(tab, "https://accounts.google.com/ListAccounts?gpsia=1");
-    NodeAssert.equal(upkeep.code, 0, "session upkeep was stopped");
-    NodeAssert.equal(arrived("/ListAccounts"), 1);
-
-    phase = "a profile holding a Google session";
-    await guarded.cookies.set({
-      url: "https://accounts.google.com/",
-      name: "__Secure-1PSID",
-      value: "smoke",
-      secure: true,
+    phase = "a popup's Continue with Google, which stays open until Google refuses";
+    NodeAssert.equal((await load(tab, siteRestart)).code, 0);
+    const created = new Promise((resolve) => {
+      popupCreated = resolve;
     });
-    const chooserRan = nextArrival("/ran");
-    const chooser = await load(tab, "https://accounts.google.com/AccountChooser");
-    NodeAssert.equal(chooser.code, 0, "a signed-in profile's chooser was stopped");
-    await chooserRan;
-
-    phase = "a stale session: Continue with Google goes through, Google asks for credentials";
-    NodeAssert.equal((await load(tab, `${siteOrigin}/`)).code, 0);
-    const passed = nextArrival("/o/oauth2/v2/auth");
-    const stale = await load(tab, OAUTH);
-    await passed;
-    NodeAssert.equal(stale.code, BLOCKED_BY_CLIENT);
-    NodeAssert.deepEqual(signIn.blocked(stale.code, stale.url), {
-      page: "credentials",
-      context: "tab",
+    await tab.executeJavaScript(
+      `window.open(${JSON.stringify(OAUTH)}, "_blank", "popup"); 0`,
+      true,
+    );
+    const { popup, reported: popupReported } = await withTimeout(created, "a popup to open");
+    const popupContents = popup.webContents;
+    if (popupContents.getURL() !== IDENTIFIER) {
+      await withTimeout(
+        new Promise((resolve) => {
+          const finished = () => {
+            if (popupContents.getURL() !== IDENTIFIER) return;
+            popupContents.off("did-finish-load", finished);
+            resolve();
+          };
+          popupContents.on("did-finish-load", finished);
+        }),
+        "the popup to reach Google's sign-in",
+      );
+    }
+    NodeAssert.equal(popup.isDestroyed(), false, "a popup Google didn't refuse was closed");
+    void popupContents.loadURL(REJECTED).catch(() => undefined);
+    NodeAssert.deepEqual(await withTimeout(popupReported, "the popup's refusal"), {
+      page: "rejected",
+      context: "popup",
       restartUrl: siteRestart,
-      pageUrl: IDENTIFIER,
+      pageUrl: siteRestart,
     });
-    const password = await load(tab, "https://accounts.google.com/v3/signin/challenge/pwd");
-    NodeAssert.equal(password.code, BLOCKED_BY_CLIENT, "a credential page loaded with a session");
-    NodeAssert.equal(
-      arrivals.filter((path) => path.startsWith("/v3/signin")).length,
-      0,
-      "a stopped credential page reached Google",
+    await withTimeout(
+      new Promise((resolve) => (popup.isDestroyed() ? resolve() : popup.once("closed", resolve))),
+      "the refused popup to close",
     );
 
-    phase = "a passkey on another site, which the guard leaves alone";
-    NodeAssert.equal((await load(tab, `${siteOrigin}/`)).code, 0);
-    tab.debugger.attach("1.3");
-    try {
-      await tab.debugger.sendCommand("WebAuthn.enable");
-      await tab.debugger.sendCommand("WebAuthn.addVirtualAuthenticator", {
-        options: {
-          protocol: "ctap2",
-          transport: "internal",
-          hasResidentKey: true,
-          hasUserVerification: true,
-          isUserVerified: true,
-        },
-      });
-      const ceremony = await withTimeout(
-        tab.executeJavaScript(
-          `(async () => {
-            const challenge = crypto.getRandomValues(new Uint8Array(32));
-            const created = await navigator.credentials.create({ publicKey: {
-              challenge, rp: { name: "Smoke", id: "localhost" },
-              user: { id: new Uint8Array([1]), name: "smoke", displayName: "Smoke" },
-              pubKeyCredParams: [{ type: "public-key", alg: -7 }],
-              authenticatorSelection: { residentKey: "required", userVerification: "required" },
-            } });
-            const got = await navigator.credentials.get({ publicKey: {
-              challenge, rpId: "localhost", userVerification: "required",
-              allowCredentials: [{ type: "public-key", id: created.rawId }],
-            } });
-            return created.type + " " + got.type;
-          })()`,
-          true,
-        ),
-        "a passkey ceremony",
-      );
-      NodeAssert.equal(ceremony, "public-key public-key");
-    } finally {
-      tab.debugger.detach();
-    }
+    phase = "a popup whose frame Google refused, which stays open";
+    NodeAssert.equal((await load(tab, siteRestart)).code, 0);
+    const framed = new Promise((resolve) => {
+      popupCreated = resolve;
+    });
+    const popupFrame = `${siteOrigin}/?frame=${encodeURIComponent(REJECTED)}`;
+    await tab.executeJavaScript(
+      `window.open(${JSON.stringify(popupFrame)}, "_blank", "popup"); 0`,
+      true,
+    );
+    const framedPopup = await withTimeout(framed, "a popup to open");
+    NodeAssert.deepEqual(await withTimeout(framedPopup.reported, "the popup frame's refusal"), {
+      page: "rejected",
+      context: "frame",
+      restartUrl: siteRestart,
+      pageUrl: siteRestart,
+    });
+    NodeAssert.equal(framedPopup.popup.isDestroyed(), false, "the popup closed for its frame");
+    framedPopup.popup.destroy();
+
+    phase = "a tab already showing Google's refusal when it is first followed";
+    await loadsAndRuns(REJECTED);
+    const late = [];
+    followTabSignIn(tab, (event) => late.push(event)).dispose();
+    NodeAssert.deepEqual(late, [
+      { page: "rejected", context: "tab", restartUrl: null, pageUrl: REJECTED },
+    ]);
+
+    phase = "Google's session upkeep, never reported";
+    const before = reports.length;
+    NodeAssert.equal((await load(tab, "https://accounts.google.com/ListAccounts?gpsia=1")).code, 0);
+    NodeAssert.equal(reports.length, before);
     console.log("[scient-google-sign-in-smoke] passed");
   } catch (error) {
+    console.error(`[scient-google-sign-in-smoke] tab events:\n${trace.join("\n")}`);
     throw new Error(`Failed during ${phase}`, { cause: error });
   } finally {
     signIn.dispose();
-    if (!unguardedWindow.isDestroyed()) unguardedWindow.destroy();
-    window.destroy();
+    host.destroy();
     google.close();
     site.close();
   }

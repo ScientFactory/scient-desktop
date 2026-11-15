@@ -1,4 +1,5 @@
 export const SOURCE_PROFILES = "scient:accounts:source-profiles";
+export const BROWSER_CONNECTION = "scient:accounts:browser-connection";
 export const SIGNED_IN_SITES = "scient:accounts:signed-in-sites";
 export const SIGN_OUT_SITE = "scient:accounts:sign-out-site";
 export const FILL = "scient:accounts:fill";

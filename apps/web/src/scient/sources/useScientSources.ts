@@ -135,36 +135,35 @@ export function useScientSources(input: {
     };
   }, [input.environmentId, input.root]);
 
+  /** Rejects on failure; the failure is also kept as `overviewError`, apart from action errors. */
   const refreshOverview = useStableCallback(async () => {
     // The overview lane is independent of imports: live-refresh repeats this
     // call while a durable import runs, and neither may starve the other.
     const request = nextOverviewRequestToken();
     dispatch({ type: "overviewRequestStarted", request });
-    const next = await readScientSources(
+    return await readScientSources(
       input.environmentId,
       input.root,
       inLibraryView() ? "library" : undefined,
+    ).then(
+      (next) => {
+        if (isCurrentContext() && overviewRequestRef.current === request) {
+          dispatch({ type: "overviewArrived", request, overview: next });
+        }
+        return next;
+      },
+      (cause: unknown) => {
+        if (isCurrentContext())
+          dispatch({ type: "overviewFailed", request, error: message(cause) });
+        throw cause;
+      },
     );
-    if (isCurrentContext() && overviewRequestRef.current === request) {
-      dispatch({ type: "overviewArrived", request, overview: next });
-    }
-    return next;
   });
 
-  const reloadOverview = async () => {
-    dispatch({ type: "busyChanged", busy: true });
-    dispatch({ type: "errorCleared" });
-    return await (async () => {
-      return await refreshOverview();
-    })()
-      .catch(async (cause) => {
-        if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
-        return null;
-      })
-      .finally(() => {
-        if (isCurrentContext()) dispatch({ type: "busyChanged", busy: false });
-      });
-  };
+  /** A read: it shows as `overviewLoading`, never as `busy`, and leaves action errors alone. */
+  const reloadOverview = () => refreshOverview().catch(() => null);
+  /** After a change, the list is read again; a failed read is already `overviewError`. */
+  const refreshAfterChange = () => refreshOverview().catch(() => undefined);
 
   const acceptSourceRecord = (record: ScientSourceDetailResult) => {
     dispatch({ type: "sourceRecordAccepted", record });
@@ -235,7 +234,7 @@ export function useScientSources(input: {
     expectedRevision: number,
     options: { readonly refresh?: boolean } = {},
   ) => {
-    dispatch({ type: "busyChanged", busy: true });
+    dispatch({ type: "removalStarted" });
     dispatch({ type: "errorCleared" });
     return await (async () => {
       const result = await removeScientSource(input.environmentId, {
@@ -246,11 +245,7 @@ export function useScientSources(input: {
       if (isCurrentContext() && result.outcome !== "stale") {
         dispatch({ type: "sourceRemoved", sourceId });
       }
-      if (isCurrentContext() && options.refresh !== false) {
-        await refreshOverview().catch((cause: unknown) =>
-          dispatch({ type: "errorArrived", error: message(cause) }),
-        );
-      }
+      if (isCurrentContext() && options.refresh !== false) await refreshAfterChange();
       return result;
     })()
       .catch(async (cause) => {
@@ -259,7 +254,7 @@ export function useScientSources(input: {
         throw new Error(safeMessage, { cause });
       })
       .finally(() => {
-        if (isCurrentContext()) dispatch({ type: "busyChanged", busy: false });
+        if (isCurrentContext()) dispatch({ type: "removalSettled" });
       });
   };
 
@@ -289,9 +284,7 @@ export function useScientSources(input: {
       overviewRequest: nextOverviewRequestToken(),
       zoteroRequest: nextZoteroRequestToken(),
     });
-    void refreshOverview().catch((cause) => {
-      if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
-    });
+    void refreshAfterChange();
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the module-level source context when the context key changes
   useEffect(() => {
@@ -355,7 +348,6 @@ export function useScientSources(input: {
     // The Zotero browse lane is independent of imports and overview loads.
     const request = nextZoteroRequestToken();
     dispatch({ type: "zoteroRequestStarted", request });
-    dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
     return await (async () => {
       const page = await readZoteroLibrary(input.environmentId, {
@@ -376,9 +368,7 @@ export function useScientSources(input: {
         }
       })
       .finally(() => {
-        if (isCurrentContext() && zoteroRequestRef.current === request) {
-          dispatch({ type: "busyChanged", busy: false });
-        }
+        if (isCurrentContext()) dispatch({ type: "zoteroRequestSettled", request });
       });
   };
 
@@ -518,9 +508,7 @@ export function useScientSources(input: {
       const next = await runZoteroScope(request, begin, shown);
       if (isCurrentRequest(request)) {
         dispatch({ type: "operationArrived", request, operation: next });
-        await refreshOverview().catch((cause: unknown) =>
-          dispatch({ type: "errorArrived", error: message(cause) }),
-        );
+        await refreshAfterChange();
       }
       return importOutcomeFromOperation({ operation: next, revealSingleSource: false });
     })()
@@ -635,9 +623,7 @@ export function useScientSources(input: {
       });
       if (isCurrentRequest(request)) {
         dispatch({ type: "operationArrived", request, operation: next });
-        await refreshOverview().catch((cause: unknown) =>
-          dispatch({ type: "errorArrived", error: message(cause) }),
-        );
+        await refreshAfterChange();
       }
       return {
         report: begun.report,
@@ -721,9 +707,7 @@ export function useScientSources(input: {
 
     if (isCurrentRequest(options.request)) {
       dispatch({ type: "operationArrived", request: options.request, operation: next });
-      await refreshOverview().catch((cause: unknown) =>
-        dispatch({ type: "errorArrived", error: message(cause) }),
-      );
+      await refreshAfterChange();
     }
     return importOutcomeFromOperation({
       operation: next,
@@ -780,9 +764,7 @@ export function useScientSources(input: {
       if (isCurrentRequest(options.request)) {
         dispatch({ type: "importPreparationChanged", preparation: null });
         dispatch({ type: "zoteroLibraryClosed" });
-        await refreshOverview().catch((cause: unknown) =>
-          dispatch({ type: "errorArrived", error: message(cause) }),
-        );
+        await refreshAfterChange();
       }
       return {
         kind: "already-present",
@@ -1003,7 +985,7 @@ export function useScientSources(input: {
           : next;
       if (isCurrentRequest(request)) {
         dispatch({ type: "operationArrived", request, operation: last });
-        await refreshOverview();
+        await refreshAfterChange();
       }
     })()
       .catch(async (cause) => {
@@ -1052,7 +1034,7 @@ export function useScientSources(input: {
         // A stopped part of a large import stays shown with the parts before it.
         dispatch({ type: "operationArrived", request, operation: wholeRun(cancelled) });
         dispatch({ type: "zoteroLibraryClosed" });
-        await refreshOverview();
+        await refreshAfterChange();
       }
     })()
       .catch(async (cause) => {
@@ -1111,8 +1093,18 @@ export function useScientSources(input: {
       });
   };
 
+  const zoteroLoading = state.zoteroRequest !== state.zoteroSettled;
   return {
-    busy: state.busy,
+    /** Any change or Zotero browse runs; reading the list does not count. */
+    busy: state.busy || state.removals > 0 || zoteroLoading,
+    /** An import (preparing, running, cancelled or retried here); the Import button's own work. */
+    importing: state.busy,
+    /** A Zotero page is being read. */
+    zoteroLoading,
+    /** The list is being read; a read never sets `busy`. */
+    overviewLoading: state.overviewRequest !== state.overviewSettled,
+    /** The newest list read failed; with no `overview` yet, the Library could not be loaded. */
+    overviewError: state.overviewError,
     checkingZotero: state.checkingZotero,
     cancelling: state.cancelling,
     error: state.error,
@@ -1168,6 +1160,7 @@ export function useScientSources(input: {
     },
     removeSource,
     clearError: () => dispatch({ type: "errorCleared" }),
+    clearOverviewError: () => dispatch({ type: "overviewErrorCleared" }),
     clearOperationSummary: () => dispatch({ type: "operationCleared" }),
     closeZoteroStatus: () => dispatch({ type: "zoteroStatusDismissed" }),
     closeLibrary: () => dispatch({ type: "zoteroLibraryClosed" }),

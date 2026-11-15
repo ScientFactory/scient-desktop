@@ -10,7 +10,7 @@ import type {
  * `libraryLabels.test.ts` keeps "pin" out of every one of them.
  */
 export const LIBRARY_LABELS = {
-  scopes: { project: "This project", library: "All Library" } satisfies Record<
+  scopes: { project: "This project", library: "My Library" } satisfies Record<
     ScientSourcesScope,
     string
   >,
@@ -83,12 +83,33 @@ export function libraryCopyProblemLabel(problem: ScientSourceIdentityProblem | u
 
 const sources = (count: number) => (count === 1 ? "1 source" : `${count} sources`);
 
+/**
+ * The empty list's title and how to fill it. `listed` is absent on a server without a personal
+ * Library. When My Library has sources, the panel adds Choose from Library itself.
+ */
+export function emptySourcesLabel(listed: ScientSourcesScope | undefined): {
+  readonly title: string;
+  readonly description: string;
+} {
+  if (listed === "library") {
+    return {
+      title: "No sources in My Library",
+      description: "Import PDFs, a reference file or sources from Zotero to build your Library.",
+    };
+  }
+  return {
+    title: listed === "project" ? "No sources in this project" : "No sources yet",
+    description:
+      "Import PDFs, a reference file or sources from Zotero to add them to this project.",
+  };
+}
+
 /** Under the panel's title when the Library shown is another computer's, named as the app names it. */
 export function libraryElsewhereLabel(computer: string): string {
   return `On ${computer}`;
 }
 
-/** An import or add started from "All" brings sources into the Library only. */
+/** An import or add started from My Library brings sources into the Library only. */
 export function inLibraryNotProjectLabel(count: number): string {
   return count === 1
     ? "It is in your Library, not in this project."

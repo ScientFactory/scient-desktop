@@ -92,6 +92,8 @@ export const ScientReviewVersionSummary = Schema.Struct({
   title: Schema.String,
   updatedAt: NonEmptyString,
   updatedBy: ScientSourceActor,
+  /** When this version deleted the review; choosing it removes the review from the lists. */
+  deletedAt: Schema.optionalKey(NonEmptyString),
   searches: Count,
   records: Count,
   /** Decisions in force, both stages together, and when the latest was made. */
@@ -158,9 +160,16 @@ export const ScientReviewVersionDifferences = Schema.Struct({
   decisions: Schema.Struct({ differing: Count, ...OneSidedCounts.fields }),
   searches: Schema.Struct({ differing: Count, ...OneSidedCounts.fields }),
   records: OneSidedCounts,
-  /** Parts of a review that differ and have no rows. */
+  /** Parts of a review that differ and have no rows; `deleted`: one version deleted the review. */
   alsoDiffering: Schema.Array(
-    Schema.Literals(["title", "question", "exclusion-reasons", "duplicates", "retrieval"]),
+    Schema.Literals([
+      "deleted",
+      "title",
+      "question",
+      "exclusion-reasons",
+      "duplicates",
+      "retrieval",
+    ]),
   ),
   /** Decisions that differ, searches, decisions in one version only, then records. */
   rows: Schema.Array(ScientReviewVersionDifference),

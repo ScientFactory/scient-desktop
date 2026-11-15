@@ -41,6 +41,8 @@ import {
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
   type ScientSourceImportOperation,
+  type ScientSourceItemCitationKey,
+  scientCreatorRoleIncomplete,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   zoteroGroupIdOfLibrary,
   type ScientSourceOrigin,
@@ -48,7 +50,6 @@ import {
   type ScientSourceVerification,
   type ZoteroConnection,
   type ZoteroConnectionStatus,
-  type ZoteroCollection,
   type ZoteroImportScope,
   zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
@@ -118,13 +119,19 @@ import {
   countZoteroScopeStandalone,
   getZoteroItemWith,
   listZoteroCollectionsWith,
+  listZoteroLibraryCollections,
   listZoteroLibraryWith,
   listZoteroScopeItemKeysWith,
   readZoteroAttachmentFiles,
   readZoteroItemMaterial,
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
-import { ZOTERO_PDFS_PER_ITEM, zoteroDescendantCollectionKeys } from "./ZoteroItems.ts";
+import {
+  addNotBrought,
+  ZOTERO_PDFS_PER_ITEM,
+  zoteroDescendantCollectionKeys,
+  type ZoteroLibraryCollection,
+} from "./ZoteroItems.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import {
@@ -133,6 +140,7 @@ import {
   type ManagedBibliographyFileName,
 } from "./ManagedBibliography.ts";
 import {
+  bindLibraryImportKeys,
   libraryImportPinInstance,
   pinLibraryImport,
   syncLibraryImportBibliography,
@@ -140,12 +148,14 @@ import {
 import { canonicalScientSourceLocation, scientSourceStoreKey } from "./SourcesBackend.ts";
 import {
   beginBibliographyFileImport,
+  completeFileAuthorList,
   discardBibliographyFileImport,
   fileImportVerification,
   getBibliographyFileImportMaterial,
   readBibliographyFile,
   resolveProjectBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
+import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
 import { recordZoteroSync } from "./ZoteroSync.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 import {
@@ -1297,7 +1307,6 @@ async function beginZoteroRunPart(input: {
           root: input.root,
           transport,
           scope: input.scope,
-          groupId: input.groupId,
           actor: input.actor ?? "user",
         })
       : 0;
@@ -1390,26 +1399,38 @@ export async function discardLocalPdfSources(input: {
   return { discarded: keys.length };
 }
 
-/** A Zotero collection's ID here: the same on every import, so it is found again, not doubled. */
-function zoteroCollectionId(groupId: string | undefined, collectionKey: string): string {
+/**
+ * A Zotero collection's ID here: the same on every import from its library, so it is found
+ * again, not doubled. The library is part of it, as a key is unique only there.
+ */
+function zoteroCollectionId(libraryId: string, collectionKey: string): string {
   const digest = NodeCrypto.createHash("sha256")
-    .update(`zotero\0${groupId ?? ""}\0${collectionKey}`)
+    .update(`zotero\0${libraryId}\0${collectionKey}`)
     .digest("hex");
   return `collection_${digest.slice(0, 32)}`;
 }
 
-/** Zotero's collections as the Library places them: each under the ID it has here. */
+/** Zotero's collections as the Library places them, by Zotero key: each under its ID here. */
 function zoteroCollectionTree(
-  collections: ReadonlyArray<ZoteroCollection>,
-  groupId: string | undefined,
-): ReadonlyArray<ScientSourceOutsideCollection> {
-  return collections.map((collection) => ({
-    collectionId: zoteroCollectionId(groupId, collection.key),
-    name: collection.name,
-    ...(collection.parentCollectionKey
-      ? { parentCollectionId: zoteroCollectionId(groupId, collection.parentCollectionKey) }
-      : {}),
-  }));
+  collections: ReadonlyArray<ZoteroLibraryCollection>,
+): ReadonlyMap<string, ScientSourceOutsideCollection> {
+  return new Map(
+    collections.map((collection) => [
+      collection.key,
+      {
+        collectionId: zoteroCollectionId(collection.libraryId, collection.key),
+        name: collection.name,
+        ...(collection.parentCollectionKey
+          ? {
+              parentCollectionId: zoteroCollectionId(
+                collection.libraryId,
+                collection.parentCollectionKey,
+              ),
+            }
+          : {}),
+      },
+    ]),
+  );
 }
 
 /**
@@ -1421,12 +1442,10 @@ async function makeZoteroScopeCollections(input: {
   readonly root: ScientSourceStoreLocation;
   readonly transport: ZoteroTransport;
   readonly scope: ZoteroImportScope;
-  readonly groupId: string | undefined;
   readonly actor: "user" | "agent";
 }): Promise<number | null> {
-  const listed = await listZoteroCollectionsWith(input.transport).catch(() => null);
-  if (!listed) return null;
-  const { collections } = listed;
+  const collections = await listZoteroLibraryCollections(input.transport).catch(() => null);
+  if (!collections) return null;
   const { scope } = input;
   const keys =
     scope.kind === "library"
@@ -1434,10 +1453,11 @@ async function makeZoteroScopeCollections(input: {
       : scope.includeSubcollections
         ? zoteroDescendantCollectionKeys(scope.collectionKey, collections)
         : [scope.collectionKey];
+  const tree = zoteroCollectionTree(collections);
   return placeScientSourceCollections({
     root: input.root,
-    tree: zoteroCollectionTree(collections, input.groupId),
-    wanted: keys.map((key) => zoteroCollectionId(input.groupId, key)),
+    tree: [...tree.values()],
+    wanted: keys.flatMap((key) => tree.get(key)?.collectionId ?? []),
     remake: false,
     actor: input.actor,
   }).then(
@@ -1448,7 +1468,7 @@ async function makeZoteroScopeCollections(input: {
 
 const zoteroCollectionTrees = new Map<
   string,
-  Promise<ReadonlyArray<ScientSourceOutsideCollection>>
+  Promise<ReadonlyMap<string, ScientSourceOutsideCollection>>
 >();
 
 /**
@@ -1464,24 +1484,22 @@ async function addToZoteroCollections(input: {
   readonly collectionKeys: ReadonlyArray<string>;
 }): Promise<number> {
   if (input.collectionKeys.length === 0) return 0;
-  const groupId = input.operation.zoteroGroupId;
   const cacheKey = `${scientSourceStoreKey(input.root)}\0${input.operation.operationId}`;
   let tree = zoteroCollectionTrees.get(cacheKey);
   if (!tree) {
-    tree = listZoteroCollectionsWith(input.transport).then((result) =>
-      zoteroCollectionTree(result.collections, groupId),
-    );
+    tree = listZoteroLibraryCollections(input.transport).then(zoteroCollectionTree);
     if (zoteroCollectionTrees.size >= 8) zoteroCollectionTrees.clear();
     zoteroCollectionTrees.set(cacheKey, tree);
     // A listing that failed is asked again for the next item.
     tree.catch(() => zoteroCollectionTrees.delete(cacheKey));
   }
-  const wanted = input.collectionKeys.map((key) => zoteroCollectionId(groupId, key));
   let filed = 0;
   try {
+    const nodes = await tree;
+    const wanted = input.collectionKeys.flatMap((key) => nodes.get(key)?.collectionId ?? []);
     const placed = await placeScientSourceCollections({
       root: input.root,
-      tree: await tree,
+      tree: [...nodes.values()],
       wanted,
       remake: true,
       actor: input.operation.actor,
@@ -1500,21 +1518,40 @@ async function addToZoteroCollections(input: {
   } catch {
     // Counted below with the rest that could not be filed.
   }
-  return wanted.length - filed;
+  return input.collectionKeys.length - filed;
 }
 
-/** A reference-file entry, with the PDFs its file names attached like any other PDF. */
+/** What a reference-file item brings besides its source: its keys, and how its author list ended. */
+interface FileItemOutcome {
+  readonly citationKeys: ReadonlyArray<string>;
+  readonly authorList?: "completed" | "incomplete";
+}
+
+/**
+ * A reference-file entry, with the PDFs its file names attached like any other PDF and an author
+ * list the file cut short filled in from its DOI where the registry corroborates it.
+ */
 async function importFileOperationItem(input: {
   readonly root: ScientSourceStoreLocation;
   readonly operation: ScientSourceImportOperation;
   readonly itemKey: string;
   readonly allowPossibleMetadataMatch: boolean;
+  readonly resolveIdentifier: ResolveSourceIdentifier | undefined;
 }) {
-  const { candidate, pdfs } = await getBibliographyFileImportMaterial(
+  const material = await getBibliographyFileImportMaterial(
     input.root,
     input.operation.operationId,
     input.itemKey,
   );
+  const { pdfs, citationKeys } = material;
+  // Only a new work is completed: a work the Library has keeps its record as it is.
+  const completed =
+    scientCreatorRoleIncomplete(material.candidate.incompleteCreatorRoles, "author") &&
+    (await assessScientSourceIntake({ root: input.root, candidate: material.candidate })).kind ===
+      "new"
+      ? await completeFileAuthorList(material.candidate, input.resolveIdentifier)
+      : null;
+  const candidate = completed?.candidate ?? material.candidate;
   const [primary, ...extra] = pdfs;
   const result = await importScientSourceOperationItem({
     root: input.root,
@@ -1533,8 +1570,12 @@ async function importFileOperationItem(input: {
     ...(primary ? { pdfPath: primary.path } : {}),
     allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
   });
+  const file: FileItemOutcome = {
+    citationKeys,
+    ...(completed && result.outcome === "imported" ? { authorList: completed.authorList } : {}),
+  };
   let record = result.record;
-  if (result.outcome !== "imported") return result;
+  if (result.outcome !== "imported") return { ...result, file };
   for (const pdf of extra) {
     if (!record) break;
     const attached = await attachScientSourcePdf({
@@ -1547,7 +1588,34 @@ async function importFileOperationItem(input: {
     });
     record = attached.record;
   }
-  return { ...result, record };
+  return { ...result, record, file };
+}
+
+/**
+ * A Zotero item skipped because its reference is certainly here already, under another
+ * origin, still gives its notes when the source here has no note. Anything more would be a
+ * merge (whose note, whose PDF), which is the person's to decide.
+ */
+async function addNoteToSourceAlreadyHere(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly duplicate: ScientSourceDuplicateAssessment;
+  readonly note: string | null;
+  readonly actor: ScientSourceActor;
+}): Promise<boolean> {
+  const { kind, matchingSourceIds } = input.duplicate;
+  const sourceId = matchingSourceIds[0];
+  if (!input.note || !sourceId || matchingSourceIds.length !== 1) return false;
+  if (kind !== "same-identifier" && kind !== "same-pdf") return false;
+  const record = await readScientSourceRecord(input.root, sourceId);
+  if (!record || record.note?.trim()) return false;
+  const updated = await updateScientSourceNote({
+    root: input.root,
+    sourceId,
+    expectedRevision: record.revision,
+    note: input.note,
+    actor: input.actor,
+  });
+  return updated.outcome === "updated";
 }
 
 async function importZoteroOperationItem(input: {
@@ -1591,11 +1659,24 @@ async function importZoteroOperationItem(input: {
       record = attached.record;
     }
     if (result.outcome === "imported" && record) {
+      // Which PDF here each Zotero file with highlights is, before its copy goes.
+      const highlighted = new Set(material.annotations.map((entry) => entry.attachmentKey));
+      const pdfs = new Map(
+        await Promise.all(
+          files
+            .filter((file) => highlighted.has(file.attachmentKey))
+            .map(
+              async (file) =>
+                [file.attachmentKey, (await inspectScientSourcePdf(file.path)).sha256] as const,
+            ),
+        ),
+      );
       await recordZoteroSync({
         root: input.root,
         record,
         material,
         attachmentKeys: files.map((file) => file.attachmentKey),
+        pdfs: Object.fromEntries(pdfs),
       });
       const unfiled = await addToZoteroCollections({
         root: input.root,
@@ -1604,18 +1685,37 @@ async function importZoteroOperationItem(input: {
         sourceId: record.sourceId,
         collectionKeys: material.collectionKeys,
       });
+      // Those on a PDF past the tenth or on another file are in `material.notBrought` already.
+      const copied = new Set(material.pdfs.slice(0, ZOTERO_PDFS_PER_ITEM).map((pdf) => pdf.key));
+      const onCopied = material.annotations.filter((annotation) =>
+        copied.has(annotation.attachmentKey),
+      );
+      const highlights = await bringZoteroAnnotations({
+        root: input.root,
+        record,
+        annotations: onCopied,
+        pdfs,
+        now: new Date().toISOString(),
+      }).catch(() => null);
       // A PDF Zotero has and could not hand over (a linked file read over the web, a file
-      // that is gone) is said with the rest of what did not come.
+      // that is gone) is said with the rest of what did not come, and so are its highlights.
       const unavailable = Math.min(material.pdfs.length, ZOTERO_PDFS_PER_ITEM) - files.length;
-      const notBrought = [
-        ...material.notBrought,
-        ...(unavailable > 0
-          ? [{ kind: "pdf" as const, name: "unavailable", count: unavailable }]
-          : []),
-        ...(unfiled > 0 ? [{ kind: "collection" as const, name: "unfiled", count: unfiled }] : []),
-      ];
+      const notBrought = [...material.notBrought];
+      addNotBrought(notBrought, "pdf", unavailable, "unavailable");
+      addNotBrought(notBrought, "collection", unfiled, "unfiled");
+      addNotBrought(notBrought, "highlights", highlights?.unplaced ?? 0, "unplaced");
+      addNotBrought(notBrought, "highlights", highlights?.elsewhere ?? 0, "no-file");
+      addNotBrought(notBrought, "highlights", highlights?.tooLong ?? 0, "too-long");
+      addNotBrought(notBrought, "highlights", highlights ? 0 : onCopied.length, "later");
       return { ...result, record, notBrought };
     }
+    // The import's "already here" line says such a reference may have taken Zotero's note.
+    await addNoteToSourceAlreadyHere({
+      root: input.root,
+      duplicate: result.duplicate,
+      note: material.note,
+      actor: input.operation.actor,
+    });
     return { ...result, record };
   } finally {
     await Promise.all(files.map((file) => file.release().catch(() => undefined)));
@@ -1656,6 +1756,8 @@ export async function advanceSourceImport(
     readonly root: ScientSourceStoreLocation;
     readonly operationId: string;
     readonly zotero?: ZoteroAccess;
+    /** Fills in a reference-file author list that ends in "and others" from its DOI; none: kept short. */
+    readonly resolveIdentifier?: ResolveSourceIdentifier;
   },
   observer?: SourceImportObserver,
 ) {
@@ -1667,6 +1769,7 @@ export async function advanceSourceImport(
     const pending = operation.items.find((item) => item.state === "pending");
     if (!pending) return operation;
     try {
+      const fileItem: { outcome: FileItemOutcome | null } = { outcome: null };
       const result = await observeSourceImport(
         observer,
         async () => {
@@ -1680,12 +1783,15 @@ export async function advanceSourceImport(
             });
           }
           if (operation.adapter === "file") {
-            return importFileOperationItem({
+            const imported = await importFileOperationItem({
               root,
               operation,
               itemKey: pending.itemKey,
               allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
+              resolveIdentifier: input.resolveIdentifier,
             });
+            fileItem.outcome = imported.file;
+            return imported;
           }
           const { candidate, pdfPath, expectedPdf } = await getLocalPdfImportMaterial(
             root,
@@ -1706,13 +1812,32 @@ export async function advanceSourceImport(
       );
       // Pinned before the item is recorded, so a crash in between pins it when the item runs again.
       const pinned = importedOrSameWork(result);
-      if (operation.pinInstanceId && isScientLibraryLocation(root) && pinned) {
-        await pinLibraryImport({
-          library: root,
-          instanceId: operation.pinInstanceId,
-          sourceIds: [pinned],
+      const file = fileItem.outcome;
+      const pin =
+        operation.pinInstanceId && isScientLibraryLocation(root)
+          ? { library: root, instanceId: operation.pinInstanceId }
+          : null;
+      let keys: {
+        readonly citationKeys: ReadonlyArray<ScientSourceItemCitationKey>;
+        readonly projectKey?: string;
+      } | null = null;
+      if (pin && pinned && file) {
+        keys = await bindLibraryImportKeys({
+          ...pin,
+          sourceId: pinned,
+          citationKeys: file.citationKeys,
           actor: operation.actor,
         });
+      } else if (pin && pinned) {
+        await pinLibraryImport({ ...pin, sourceIds: [pinned], actor: operation.actor });
+      } else if (file && pinned && isScientLibraryLocation(root)) {
+        // A My Library import writes nothing in a project; the keys are kept for the receipt.
+        keys = {
+          citationKeys: file.citationKeys.map((citationKey) => ({
+            citationKey,
+            outcome: "library" as const,
+          })),
+        };
       }
       const updated = await updateSourceImportOperationItem({
         root,
@@ -1725,6 +1850,9 @@ export async function advanceSourceImport(
         ...("notBrought" in result && Array.isArray(result.notBrought)
           ? { notBrought: result.notBrought }
           : {}),
+        ...(keys ? { citationKeys: keys.citationKeys } : {}),
+        ...(keys?.projectKey ? { projectKey: keys.projectKey } : {}),
+        ...(file?.authorList ? { authorList: file.authorList } : {}),
       });
       if (operation.adapter === "local-files") {
         await discardLocalPdfImportMaterial(root, pending.itemKey);
@@ -1856,7 +1984,9 @@ export async function syncManagedBibliographyWithImports(
 
 /** Begins a reference-file import and runs it to the end, for callers without a progress view. */
 export async function importBibliographyFile(
-  input: Parameters<typeof beginBibliographyFileImport>[0],
+  input: Parameters<typeof beginBibliographyFileImport>[0] & {
+    readonly resolveIdentifier?: ResolveSourceIdentifier;
+  },
   observer?: SourceImportObserver,
 ) {
   const begun = await beginBibliographyFileImport(input);
@@ -1866,7 +1996,11 @@ export async function importBibliographyFile(
     operation.items.some((item) => item.state === "pending")
   ) {
     operation = await advanceSourceImport(
-      { root: input.root, operationId: operation.operationId },
+      {
+        root: input.root,
+        operationId: operation.operationId,
+        ...(input.resolveIdentifier ? { resolveIdentifier: input.resolveIdentifier } : {}),
+      },
       observer,
     );
   }

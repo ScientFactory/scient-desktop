@@ -1,25 +1,35 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This test exercises the real project filesystem boundary.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
+  detachScientSourcePdf,
   listScientSourceRecords,
   readScientSourceRecord,
+  readScientSourceZoteroSync,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 import { editableMetadataFromRecord } from "@scientfactory/scient-sources";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { advanceSourceImport, beginZoteroScopedImport } from "./ScientSourcesCoordinator.ts";
 import {
+  mutateScientAnnotations,
+  readScientAnnotationFile,
+} from "../annotations/annotationStore.ts";
+import { readerAnchor, textPdf } from "../annotations/annotationTestUtils.ts";
+import {
   fakeZoteroAccess,
   fakeZoteroAccessWithGroup,
   fakeZoteroTransport,
   zoteroGroupItem,
   zoteroItem,
+  type FakeZoteroLibrary,
 } from "./Zotero.testkit.ts";
 import type { ZoteroRawItem } from "./ZoteroItems.ts";
 import { refreshZoteroSources } from "./ZoteroSync.ts";
@@ -35,11 +45,12 @@ afterEach(async () => {
 async function importedFromZotero(
   item: ZoteroRawItem,
   children: ReadonlyArray<ZoteroRawItem> = [],
+  more: Omit<FakeZoteroLibrary, "items"> = {},
 ) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-zotero-refresh-"));
   roots.push(root);
   await initializeScientProject({ root });
-  const library = { items: new Map([[item.key, { item, children }]]) };
+  const library = { items: new Map([[item.key, { item, children }]]), ...more };
   const zotero = fakeZoteroAccess(fakeZoteroTransport(library));
   await beginZoteroScopedImport({
     root,
@@ -47,10 +58,10 @@ async function importedFromZotero(
     scope: { kind: "library" },
     zotero,
   });
-  await advanceSourceImport({ root, operationId: "import", zotero });
+  const operation = await advanceSourceImport({ root, operationId: "import", zotero });
   const [record] = await listScientSourceRecords(root);
   if (!record) throw new Error("The fixture source was not imported.");
-  return { root, library, zotero, record };
+  return { root, library, zotero, record, operation };
 }
 
 const original = zoteroItem("ABCD2345", {
@@ -394,6 +405,119 @@ describe("Zotero refresh", () => {
     expect((await readScientSourceRecord(root, record.sourceId))?.note ?? null).toBeNull();
   });
 
+  // The same Zotero note, as an import wrote it before notes became Markdown and as it is now.
+  const noteHtml = '<h1>Aims</h1><p>See <a href="https://example.org">the errata</a>.</p>';
+  const earlierText = "Aims\n\nSee the errata.";
+  const markdown = "# Aims\n\nSee [the errata](https://example.org).";
+  const revisedHtml = "<h1>Aims</h1><p>Revised in Zotero.</p>";
+  const revisedMarkdown = "# Aims\n\nRevised in Zotero.";
+  const kept = (html: string) => ({
+    itemKey: "NOTE2345",
+    sha256: NodeCrypto.createHash("sha256").update(html).digest("hex"),
+    html,
+  });
+
+  it.each([
+    // [the import, edited here, changed in Zotero] → the note after, and whether it clashes
+    { imported: "earlier", edited: false, changed: false, note: markdown, clash: false },
+    { imported: "earlier", edited: true, changed: false, note: "My own words", clash: false },
+    { imported: "earlier", edited: false, changed: true, note: revisedMarkdown, clash: false },
+    { imported: "earlier", edited: true, changed: true, note: "My own words", clash: true },
+    { imported: "before-bases", edited: false, changed: false, note: markdown, clash: false },
+    // With no base nothing tells an earlier import's text from an edit once Zotero changed.
+    { imported: "before-bases", edited: false, changed: true, note: earlierText, clash: true },
+    { imported: "before-bases", edited: true, changed: false, note: "My own words", clash: true },
+    { imported: "before-bases", edited: true, changed: true, note: "My own words", clash: true },
+    { imported: "now", edited: false, changed: false, note: markdown, clash: false },
+    { imported: "now", edited: true, changed: false, note: "My own words", clash: false },
+    { imported: "now", edited: false, changed: true, note: revisedMarkdown, clash: false },
+    { imported: "now", edited: true, changed: true, note: "My own words", clash: true },
+    // Only a colour changed in Zotero, which Markdown does not show: nothing to choose between.
+    { imported: "now", edited: true, changed: "colour", note: "My own words", clash: false },
+  ] as const)(
+    "refreshes the note of a source imported $imported (edited here: $edited, changed in Zotero: $changed)",
+    async ({ imported, edited, changed, note, clash }) => {
+      const { root, library, zotero, record } = await importedFromZotero(original, [
+        zoteroItem("NOTE2345", { itemType: "note", note: noteHtml }),
+      ]);
+      const { sourceId } = record;
+      const setNote = async (text: string) => {
+        const current = await readScientSourceRecord(root, sourceId);
+        await updateScientSourceNote({
+          root,
+          sourceId,
+          expectedRevision: current?.revision ?? 0,
+          note: text,
+        });
+      };
+      if (imported !== "now") {
+        // As the earlier import left it: plain text in the note, and no HTML kept.
+        await setNote(earlierText);
+        const base = await readScientSourceZoteroSync(root, sourceId);
+        if (!base) throw new Error("The import wrote no base.");
+        const { notes: _notes, ...earlier } = base;
+        if (imported === "earlier") {
+          await writeScientSourceZoteroSync(root, { ...earlier, note: earlierText });
+        } else {
+          await NodeFSP.rm(
+            NodePath.join(root, ".scient", "sources", "sync", "zotero", `${sourceId}.json`),
+          );
+        }
+      }
+      if (edited) await setNote("My own words");
+      const zoteroHtml =
+        changed === "colour"
+          ? noteHtml.replace("<h1>", '<h1 style="color: red">')
+          : changed
+            ? revisedHtml
+            : noteHtml;
+      library.items.set("ABCD2345", {
+        item: original,
+        children: [zoteroItem("NOTE2345", { itemType: "note", note: zoteroHtml })],
+      });
+
+      // Twice: a clash stays a clash, and nothing changes the second time.
+      for (const _round of [1, 2]) {
+        const result = await refreshZoteroSources({ root, actor: "user", zotero });
+        expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(
+          clash ? ["note"] : [],
+        );
+        expect((await readScientSourceRecord(root, sourceId))?.note).toBe(note);
+      }
+      // Zotero's own HTML is kept from the first refresh on; an open clash keeps the base it had.
+      expect((await readScientSourceZoteroSync(root, sourceId))?.notes).toEqual(
+        clash ? (imported === "now" ? [kept(noteHtml)] : undefined) : [kept(zoteroHtml)],
+      );
+    },
+  );
+
+  it("says a note too long to keep as Zotero wrote it, and still sees it change in Zotero", async () => {
+    // Formatting makes the HTML pass what is kept while the note itself is short.
+    const long = (letter: string) =>
+      `<p>${`<span style="color: #ff2020">${letter}</span>`.repeat(40_000)}</p>`;
+    const { root, library, zotero, record, operation } = await importedFromZotero(original, [
+      zoteroItem("NOTE2345", { itemType: "note", note: long("a") }),
+    ]);
+    expect(operation.items[0]?.notBrought).toEqual([
+      { kind: "note-cut", name: "original", count: 1 },
+    ]);
+    await updateScientSourceNote({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      note: "My own words",
+    });
+    library.items.set("ABCD2345", {
+      item: original,
+      children: [zoteroItem("NOTE2345", { itemType: "note", note: long("b") })],
+    });
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("My own words");
+  });
+
   it("leaves a source alone when its item is gone from Zotero", async () => {
     const { root, library, zotero, record } = await importedFromZotero(original);
     library.items.delete("ABCD2345");
@@ -435,5 +559,206 @@ describe("Zotero refresh", () => {
       itemVersion: 4,
     });
     expect(result.items.map((item) => item.outcome)).toEqual(["updated"]);
+  });
+
+  // Constructed in Zotero's documented item format: public libraries do not hand out the PDFs.
+  const mark = (key: string, text: string, parentItem = "PDFA2345", comment = `On ${key}`) =>
+    zoteroItem(key, {
+      itemType: "annotation",
+      parentItem,
+      annotationType: "highlight",
+      annotationText: text,
+      annotationComment: comment,
+      annotationColor: "#FF6666",
+      annotationPosition: JSON.stringify({ pageIndex: 0, rects: [[72, 700, 300, 712]] }),
+      dateAdded: "2024-01-24T04:36:20Z",
+    });
+
+  async function withHighlightedPdf(annotations: ReadonlyArray<ZoteroRawItem>) {
+    const folder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-zotero-pdf-"));
+    roots.push(folder);
+    const pdfPath = NodePath.join(folder, "paper.pdf");
+    await NodeFSP.writeFile(pdfPath, textPdf([["Results were strong in the first trial."]]));
+    const onFiles = new Map<string, ReadonlyArray<ZoteroRawItem>>([
+      ["PDFA2345", annotations],
+      ["EPUB2345", [mark("EPUBMARK", "On the book", "EPUB2345")]],
+    ]);
+    const imported = await importedFromZotero(
+      original,
+      [
+        zoteroItem("PDFA2345", {
+          itemType: "attachment",
+          contentType: "application/pdf",
+          filename: "paper.pdf",
+        }),
+        zoteroItem("EPUB2345", {
+          itemType: "attachment",
+          contentType: "application/epub+zip",
+          filename: "paper.epub",
+        }),
+      ],
+      { files: new Map([["PDFA2345", pdfPath]]), annotations: onFiles },
+    );
+    const home = await NodeFSP.realpath(imported.root);
+    const [pdf] = imported.record.attachments;
+    if (!pdf) throw new Error("The PDF was not imported.");
+    const material = { sha256: pdf.sha256, byteLength: pdf.byteLength };
+    const addInZotero = (entry: ZoteroRawItem) =>
+      onFiles.set("PDFA2345", [...(onFiles.get("PDFA2345") ?? []), entry]);
+    const marks = async () => {
+      const file = await readScientAnnotationFile(home, pdf.sha256);
+      return {
+        placed: file?.annotations.map((entry) => ({
+          id: entry.annotationId,
+          note: entry.note,
+          color: entry.color,
+          by: entry.createdBy,
+          at: entry.createdAt,
+          removed: entry.deletedAt !== null,
+        })),
+        unplaced: file?.unplaced?.map((entry) => [entry.annotationId, entry.quote, entry.comment]),
+      };
+    };
+    return { ...imported, home, material, marks, addInZotero, onFiles };
+  }
+
+  it("places Zotero's highlights on the PDF, keeps the others in its list, and brings each once", async () => {
+    const { root, zotero, operation, home, material, marks, addInZotero } =
+      await withHighlightedPdf([
+        mark("HIGH2345", "strong in the first"),
+        mark("GONE2345", "Not in the text"),
+      ]);
+    const placed = {
+      id: "ann_zotero_user_0_HIGH2345",
+      note: "On HIGH2345",
+      color: "#ff6666",
+      by: "user",
+      at: "2024-01-24T04:36:20Z",
+      removed: false,
+    };
+    const kept = [["ann_zotero_user_0_GONE2345", "Not in the text", "On GONE2345"]];
+    expect(await marks()).toEqual({ placed: [placed], unplaced: kept });
+    expect(operation.items[0]?.notBrought).toEqual(
+      expect.arrayContaining([
+        { kind: "highlights", name: "unplaced", count: 1 },
+        { kind: "highlights", name: "no-file", count: 1 },
+      ]),
+    );
+
+    // Removed here, and a new one made in Zotero: a refresh brings the new one only.
+    await mutateScientAnnotations({
+      canonicalRoot: home,
+      material,
+      relativePath: null,
+      command: { action: "remove", annotationId: placed.id, expectedRevision: 1 },
+      actor: "user",
+      now: "2026-11-15T10:00:00.000Z",
+    });
+    addInZotero(mark("NEWW2345", "Results were"));
+    const first = await refreshZoteroSources({ root, actor: "user", zotero });
+    const second = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect([first.items[0]?.changedFields, second.items[0]?.changedFields]).toEqual([
+      ["highlights"],
+      [],
+    ]);
+    expect(await marks()).toEqual({
+      placed: [
+        { ...placed, removed: true },
+        { ...placed, id: "ann_zotero_user_0_NEWW2345", note: "On NEWW2345" },
+      ],
+      unplaced: kept,
+    });
+  });
+
+  it("brings the highlights of a source imported before Scient knew which PDF here is Zotero's", async () => {
+    const { root, zotero, record, marks, addInZotero } = await withHighlightedPdf([]);
+    const base = await readScientSourceZoteroSync(root, record.sourceId);
+    if (!base) throw new Error("The import wrote no base.");
+    const { pdfs: _pdfs, ...earlier } = base;
+    await writeScientSourceZoteroSync(root, earlier);
+    addInZotero(mark("HIGH2345", "strong in the first"));
+
+    await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect((await marks()).placed?.map((entry) => entry.id)).toEqual([
+      "ann_zotero_user_0_HIGH2345",
+    ]);
+  });
+
+  it("brings a highlight once when Zotero here signed in to sync after the import", async () => {
+    const highlight = mark("HIGH2345", "strong in the first");
+    const { root, zotero, marks, onFiles } = await withHighlightedPdf([highlight]);
+    // Signed in, Zotero here names My Library by the user's ID instead of 0.
+    onFiles.set("PDFA2345", [{ ...highlight, library: { type: "user", id: 475425 } }]);
+
+    await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect((await marks()).placed?.map((entry) => entry.id)).toEqual([
+      "ann_zotero_user_0_HIGH2345",
+    ]);
+  });
+
+  it("keeps a long Zotero comment whole beside the person's own highlights, and says what it could not keep", async () => {
+    const { root, zotero, home, material, addInZotero } = await withHighlightedPdf([]);
+    const mine = await mutateScientAnnotations({
+      canonicalRoot: home,
+      material,
+      relativePath: null,
+      command: {
+        action: "create",
+        annotationId: "ann_00000001",
+        anchor: readerAnchor({
+          text: "Results were strong in the first trial.",
+          quote: "first trial",
+        }),
+        highlighted: true,
+        note: "Mine",
+      },
+      actor: "user",
+      now: "2026-11-15T10:00:00.000Z",
+    });
+    // Past what a highlight's note holds, and past what the list of the others holds.
+    const long = "x".repeat(8_001);
+    addInZotero(mark("LONG2345", "strong in the first", "PDFA2345", long));
+    addInZotero(mark("HUGE2345", "strong in the first", "PDFA2345", "x".repeat(100_001)));
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    const file = await readScientAnnotationFile(home, material.sha256);
+    expect(file?.annotations).toEqual([mine.annotation]);
+    expect(file?.unplaced?.map((entry) => [entry.annotationId, entry.comment])).toEqual([
+      ["ann_zotero_user_0_LONG2345", long],
+    ]);
+    // Said in the refresh's result, as an import says it; the book's highlight is on no PDF.
+    expect(result.items[0]?.notBrought).toEqual([
+      { kind: "highlights", name: "unplaced", count: 1 },
+      { kind: "highlights", name: "no-file", count: 1 },
+      { kind: "highlights", name: "too-long", count: 1 },
+    ]);
+  });
+
+  it("says which highlights it could not bring when their PDF was removed here, and leaves it removed", async () => {
+    const { root, zotero, record, addInZotero } = await withHighlightedPdf([
+      mark("HIGH2345", "strong in the first"),
+    ]);
+    const [pdf] = record.attachments;
+    await detachScientSourcePdf({
+      root,
+      sourceId: record.sourceId,
+      attachmentId: pdf!.attachmentId,
+      expectedRevision: record.revision,
+      actor: "user",
+    });
+    addInZotero(mark("NEWW2345", "Results were"));
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect(result.items[0]).toMatchObject({
+      outcome: "unchanged",
+      addedPdfCount: 0,
+      notBrought: [{ kind: "highlights", name: "no-file", count: 3 }],
+    });
+    expect((await readScientSourceRecord(root, record.sourceId))?.attachments).toEqual([]);
   });
 });

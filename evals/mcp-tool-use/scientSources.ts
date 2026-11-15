@@ -108,14 +108,15 @@ type LibraryWorld = typeof LibraryWorld.Type;
 /**
  * What the Library must look like when the sample ends, against how it started. A source's
  * details are `state` (`live`, `trash`, `merged`, `gone`), its editable metadata (`title`,
- * `tags`, `type`, ...), its further details as `more.<name>`, and its personal `note`.
+ * `tags`, `type`, ...), `authors` as names are written, its further details as `more.<name>`,
+ * and its personal `note`.
  */
 export const LibraryExpect = Schema.Struct({
   /** Details that must have changed, by source name, with their exact new values. Any other change fails. */
   changed: Schema.optional(
     Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown)),
   ),
-  /** Sources the run must add: how many, or the details each one must have. Default: none. */
+  /** Sources the run must add and leave live: how many, or the details each one must have. Default: none. */
   added: Schema.optional(
     Schema.Union([Schema.Int, Schema.Array(Schema.Record(Schema.String, Schema.Unknown))]),
   ),
@@ -132,7 +133,7 @@ export interface LibraryOutcome {
     readonly before: unknown;
     readonly after: unknown;
   }>;
-  /** Sources the run added, as they are at the end. */
+  /** Sources the run added that are live at the end, as they are then. */
   readonly added: ReadonlyArray<SourceState>;
 }
 
@@ -268,6 +269,11 @@ const stateOf = (record: ScientSourceRecord, state: string): SourceState => {
   return {
     state,
     ...details,
+    // Each name as a person writes it, so an expectation need not split a name into its parts.
+    authors: details.creators.map(
+      (creator) =>
+        creator.literalName ?? [creator.givenName, creator.familyName].filter(Boolean).join(" "),
+    ),
     tags: tags.toSorted(),
     note: record.note ?? null,
     ...Object.fromEntries(
@@ -523,7 +529,9 @@ export const makeSourcesLibrary = Effect.fn("evaluateMcpToolUse.makeSourcesLibra
           (left, right) =>
             left.source.localeCompare(right.source) || left.detail.localeCompare(right.detail),
         ),
-      added: [...after].flatMap(([sourceId, state]) => (before.has(sourceId) ? [] : [state])),
+      added: [...after].flatMap(([sourceId, state]) =>
+        before.has(sourceId) || state.state !== "live" ? [] : [state],
+      ),
     };
   });
 

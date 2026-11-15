@@ -1,12 +1,46 @@
 import type { EnvironmentId, ScientSourcesOverviewResult } from "@t3tools/contracts";
-import { BookOpen } from "lucide-react";
+import type { ScientSourceType } from "@scientfactory/scient-sources";
+import {
+  Book,
+  BookOpenText,
+  ClipboardList,
+  CodeXml,
+  Database,
+  File,
+  FileClock,
+  FileText,
+  Globe,
+  GraduationCap,
+  type LucideIcon,
+  Presentation,
+  Projector,
+  ScrollText,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { readScientSourceJournalIcon } from "./client";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 type JournalIcon = Awaited<ReturnType<typeof readScientSourceJournalIcon>>;
+
+/** What kind of source it is, at a glance, until its journal's own icon arrives. */
+const SOURCE_TYPE_ICONS = {
+  article: FileText,
+  preprint: FileClock,
+  book: Book,
+  "book-chapter": BookOpenText,
+  "conference-paper": Presentation,
+  thesis: GraduationCap,
+  report: ClipboardList,
+  dataset: Database,
+  web: Globe,
+  software: CodeXml,
+  presentation: Projector,
+  manuscript: ScrollText,
+  other: File,
+} as const satisfies Readonly<Record<ScientSourceType, LucideIcon>>;
 
 function canResolveJournalIcon(record: SourceRecord): boolean {
   return (
@@ -111,10 +145,11 @@ export function SourceJournalIcon(props: {
     };
   }, [previousIconInput]);
 
+  const TypeIcon = SOURCE_TYPE_ICONS[props.record.type];
   const journalIcon = (
     <span
       ref={containerRef}
-      className="mt-0.5 flex size-4 shrink-0 items-center justify-center"
+      className="flex size-4 shrink-0 items-center justify-center"
       aria-hidden
     >
       {icon && !imageFailed ? (
@@ -127,15 +162,19 @@ export function SourceJournalIcon(props: {
           onError={() => setImageFailed(true)}
         />
       ) : (
-        <BookOpen className="size-4" data-testid="source-generic-icon" />
+        <TypeIcon className="size-4" data-testid="source-generic-icon" />
       )}
     </span>
   );
 
-  return icon && !imageFailed ? (
-    <ScientTooltip content={icon.journalTitle}>{journalIcon}</ScientTooltip>
-  ) : (
-    journalIcon
+  return (
+    <ScientTooltip
+      content={
+        icon && !imageFailed ? icon.journalTitle : SCIENT_SOURCE_TYPE_LABELS[props.record.type]
+      }
+    >
+      {journalIcon}
+    </ScientTooltip>
   );
 }
 

@@ -33,10 +33,9 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import ReactMarkdown from "react-markdown";
-
 import { cn, randomUUID } from "~/lib/utils";
 
+import ChatMarkdown from "../../components/ChatMarkdown";
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScientTooltip } from "../presentation/ScientTooltip";
@@ -48,6 +47,19 @@ const NOTE_MAX_LENGTH = 100_000;
 type NoteStatus = "saved" | "pending" | "saving" | "conflict" | "error";
 const NOTE_EDITOR_SYNC_TAG = "scient-source-note-external-sync";
 const NOTE_MARKDOWN_TRANSFORMERS = [BOLD_ITALIC_STAR, BOLD_STAR, ITALIC_STAR];
+
+/**
+ * Lexical reads `\_`, `` \` ``, `\~` and `\\` as the bare character and writes each such
+ * character back escaped, so one edit would rewrite the Markdown of the whole note. Escaped
+ * on the way in and unescaped on the way out, a note is shown and saved as it was written.
+ */
+function noteMarkdownForEditor(note: string): string {
+  return note.replace(/[\\_`~]/gu, "\\$&");
+}
+
+function noteMarkdownFromEditor(markdown: string): string {
+  return markdown.replace(/\\([\\*_`~])/gu, "$1");
+}
 
 interface SourceNoteFormats {
   readonly bold: boolean;
@@ -282,19 +294,13 @@ function NoteConflict(props: { readonly note: ReturnType<typeof useSourceNoteSta
   );
 }
 
-function NoteStatusLine(props: { readonly status: NoteStatus; readonly error: string | null }) {
-  if (props.error) {
-    return (
-      <p className="text-xs text-destructive" role="alert">
-        {props.error}
-      </p>
-    );
-  }
-  return (
-    <p className="min-h-4 text-xs text-muted-foreground" role="status" aria-live="polite">
-      {props.status === "saving" ? "Saving…" : props.status === "pending" ? "Saving…" : "Saved"}
+/** Notes save as you type, so only a failure earns a line. */
+function NoteError(props: { readonly error: string | null }) {
+  return props.error ? (
+    <p className="text-xs text-destructive" role="alert">
+      {props.error}
     </p>
-  );
+  ) : null;
 }
 
 interface SourceNoteEditorHandle {
@@ -346,7 +352,12 @@ function SourceNoteEditorBridge(props: {
     acceptedValueRef.current = props.value;
     editor.update(
       () => {
-        $convertFromMarkdownString(props.value, NOTE_MARKDOWN_TRANSFORMERS, undefined, true);
+        $convertFromMarkdownString(
+          noteMarkdownForEditor(props.value),
+          NOTE_MARKDOWN_TRANSFORMERS,
+          undefined,
+          true,
+        );
       },
       { tag: NOTE_EDITOR_SYNC_TAG },
     );
@@ -381,14 +392,14 @@ function SourceNoteEditorBridge(props: {
 
   const handleChange = (editorState: EditorState, _editor: unknown, tags: Set<string>) => {
     if (tags.has(NOTE_EDITOR_SYNC_TAG)) return;
-    const next = editorState.read(() =>
-      $convertToMarkdownString(NOTE_MARKDOWN_TRANSFORMERS, undefined, true),
+    const next = noteMarkdownFromEditor(
+      editorState.read(() => $convertToMarkdownString(NOTE_MARKDOWN_TRANSFORMERS, undefined, true)),
     );
     if (next.length > NOTE_MAX_LENGTH) {
       editor.update(
         () => {
           $convertFromMarkdownString(
-            acceptedValueRef.current,
+            noteMarkdownForEditor(acceptedValueRef.current),
             NOTE_MARKDOWN_TRANSFORMERS,
             undefined,
             true,
@@ -420,7 +431,12 @@ function SourceNoteEditor(props: {
   const initialConfig: InitialConfigType = {
     namespace: "ScientSourceNote",
     editorState: () => {
-      $convertFromMarkdownString(props.value, NOTE_MARKDOWN_TRANSFORMERS, undefined, true);
+      $convertFromMarkdownString(
+        noteMarkdownForEditor(props.value),
+        NOTE_MARKDOWN_TRANSFORMERS,
+        undefined,
+        true,
+      );
     },
     onError: (error) => {
       throw error;
@@ -477,29 +493,29 @@ function NotePreview(props: {
   readonly editLabel?: string;
 }) {
   const text = (
-    <div className="text-foreground [&_em]:italic [&_p]:m-0 [&_p]:whitespace-pre-wrap [&_p+_p]:mt-2 [&_strong]:font-semibold">
-      <ReactMarkdown allowedElements={["p", "strong", "em"]} skipHtml>
-        {props.value}
-      </ReactMarkdown>
-    </div>
+    <ChatMarkdown
+      text={props.value}
+      cwd={undefined}
+      lineBreaks
+      parseRawHtml={false}
+      contentDirection="auto"
+    />
   );
-  if (!props.onEdit) {
-    return (
-      <div className="px-2 py-1.5 text-start text-sm" dir="auto">
+  if (!props.onEdit) return <div className="px-2 py-1.5 text-start">{text}</div>;
+  // The button lies behind the note, not around it: a link in the note stays a link, and a
+  // click anywhere else starts editing.
+  return (
+    <div className="relative rounded-md transition-colors hover:bg-accent focus-within:bg-accent">
+      <button
+        type="button"
+        className="absolute inset-0 cursor-text rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        aria-label={props.editLabel ?? "Edit source note"}
+        onClick={props.onEdit}
+      />
+      <div className="pointer-events-none relative px-2 py-1.5 text-start [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
         {text}
       </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className="w-full cursor-text rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      aria-label={props.editLabel ?? "Edit source note"}
-      dir="auto"
-      onClick={props.onEdit}
-    >
-      {text}
-    </button>
+    </div>
   );
 }
 
@@ -775,8 +791,8 @@ export function useSourceNoteControls(props: {
               onFormatChange={handleFormatChange}
               onBlur={() => void note.flush()}
             />
-            <div className="pe-6">
-              <NoteStatusLine status={note.status} error={note.error} />
+            <div className="pe-6 empty:hidden">
+              <NoteError error={note.error} />
             </div>
             <QuickNoteResizeHandle />
           </div>
@@ -789,8 +805,8 @@ export function useSourceNoteControls(props: {
           <h3 id={headingId} className="text-sm font-medium text-foreground">
             {heading}
           </h3>
-          {help}
           <NotePreview value={note.draft} />
+          {help}
         </section>
       ) : null
     ) : (
@@ -803,9 +819,9 @@ export function useSourceNoteControls(props: {
             <ProjectNoteHistory versions={props.history} onRestore={note.restore} />
           ) : null}
         </div>
-        {help}
         <InlineNoteEditor note={note} {...(props.heading ? { label: props.heading } : {})} />
-        <NoteStatusLine status={note.status} error={note.error} />
+        {help}
+        <NoteError error={note.error} />
         <NoteConflict note={note} />
       </section>
     ),

@@ -41,6 +41,7 @@ import {
   useSystematicReviews,
   type SystematicReviews,
 } from "./useSystematicReviews";
+import { SOURCES_COLUMN } from "./PanelChrome";
 
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 type Tab = "records" | "screening" | "prisma";
@@ -696,7 +697,7 @@ export function SystematicReviewsView(props: {
         ) : null}
       </div>
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-4 p-4">
+        <div className={`${SOURCES_COLUMN} space-y-4 p-4`}>
           {reviews.error ? (
             <p className="text-sm text-destructive-foreground">{reviews.error}</p>
           ) : null}

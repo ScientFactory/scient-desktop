@@ -31,6 +31,7 @@ import {
   type ScientReviewWork,
 } from "./libraryReviews.ts";
 import { registerScientLibraryInstance, type ScientLibraryLocation } from "./libraryRoot.ts";
+import { SCIENT_ANNOTATION_FILE_MAX_BYTES } from "./projectFiles.ts";
 import type { ScientSourceActor, ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
 import {
   newScientPackageImportId,
@@ -1162,6 +1163,7 @@ function joinAnnotationFiles(
       ...local,
       paths,
       annotations: [...annotations.values()],
+      ...scientLibraryMoveInternals.joinUnplaced(local, incoming),
       history: [...history.values()],
     },
     conflicts,
@@ -1198,7 +1200,8 @@ async function importAnnotations(
         const next = existing
           ? joinAnnotationFiles(existing, incoming, importedAt)
           : { file: incoming, conflicts: 0 };
-        await atomicWriteJson(target, next.file, MAX_JSON_BYTES);
+        // Over the reader's limit it fails here, rather than hide every highlight of the PDF.
+        await atomicWriteJson(target, next.file, SCIENT_ANNOTATION_FILE_MAX_BYTES);
         conflicts += next.conflicts;
         if (!existing) {
           state.receipt.annotationFiles.push({ path: relative, sha256: (await hashFile(target))! });

@@ -18,7 +18,6 @@ import {
   resolveScientSourceInputPdf,
   sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
-import { readScientSourceFullText } from "@scientfactory/scient-sources/full-text-store";
 import {
   liveScientAnnotations,
   scientAnnotationQuote,
@@ -48,7 +47,7 @@ import {
   type ScientAnnotationHome,
 } from "./annotationStore.ts";
 import { resolveLibrarySourceId } from "../sources/LibraryProjectSources.ts";
-import { extractSourcePdfFileFullText } from "../sources/SourceFullText.ts";
+import { readSourcePdfPageTexts } from "../sources/SourceFullText.ts";
 import {
   canonicalScientSourceLocation,
   resolveScientLibraryStoreAt,
@@ -56,7 +55,7 @@ import {
   type ScientSourcesAccess,
   type ScientSourcesLibraryStore,
 } from "../sources/SourcesBackend.ts";
-import { anchorPdfQuote, type PdfPageText } from "./pdfQuoteAnchor.ts";
+import { anchorPdfQuote } from "./pdfQuoteAnchor.ts";
 
 export class ScientAnnotationsError extends Schema.TaggedError<ScientAnnotationsError>()(
   "ScientAnnotationsError",
@@ -261,27 +260,6 @@ async function sourcePdf(
   };
 }
 
-/** Page texts in the reader's profile: the stored Sources full text when complete, else read now. */
-async function pdfPageTexts(
-  textStore: ScientSourceStoreLocation,
-  pdf: ProjectPdf,
-): Promise<{
-  readonly extractorVersion: string;
-  readonly pages: ReadonlyArray<PdfPageText>;
-} | null> {
-  const stored = await readScientSourceFullText(textStore, pdf.material.sha256).catch(() => null);
-  const text =
-    stored?.outcome === "extracted" && stored.complete
-      ? stored
-      : await extractSourcePdfFileFullText({
-          pdfPath: pdf.absolutePath,
-          sha256: pdf.material.sha256,
-          byteLength: pdf.material.byteLength,
-        });
-  if (text.outcome !== "extracted") return null;
-  return { extractorVersion: text.extractor.version, pages: text.pages };
-}
-
 export interface AnnotatedPdfSummary {
   readonly sha256: string;
   readonly paths: ReadonlyArray<string>;
@@ -458,10 +436,14 @@ export const layer = Layer.succeed(ScientAnnotations, {
           await annotationHome(scope, attachment.sha256),
           attachment.sha256,
         );
+        const unplaced = (file?.unplaced ?? [])
+          .filter((entry) => entry.deletedAt === null)
+          .toSorted((left, right) => (left.page ?? 0) - (right.page ?? 0));
         attachments.push({
           attachmentId: attachment.attachmentId,
           material: { sha256: attachment.sha256, byteLength: attachment.byteLength },
           annotations: liveScientAnnotations(file?.annotations ?? []),
+          ...(unplaced.length > 0 ? { unplaced } : {}),
         });
       }
       return { attachments };
@@ -501,7 +483,7 @@ export const layer = Layer.succeed(ScientAnnotations, {
     return yield* attempt("operation-failed", async () => {
       const { files } = await scopeAnnotationFiles(scope);
       const file = files.find((candidate) =>
-        candidate.annotations.some(
+        [...candidate.annotations, ...(candidate.unplaced ?? [])].some(
           (annotation) => annotation.annotationId === input.command.annotationId,
         ),
       );
@@ -581,7 +563,10 @@ export const layer = Layer.succeed(ScientAnnotations, {
           : await sourcePdf(scope, input.pdf.sourceId, input.pdf.attachmentId);
       if (!pdf) return { outcome: "pdf-not-found" };
       const home = await annotationHome(scope, pdf.material.sha256);
-      const text = await pdfPageTexts(home, pdf);
+      const text = await readSourcePdfPageTexts(home, {
+        pdfPath: pdf.absolutePath,
+        ...pdf.material,
+      });
       if (!text) return { outcome: "quote-not-found" };
       const anchoring = anchorPdfQuote(text.pages, input.quote, text.extractorVersion, input.page);
       switch (anchoring._tag) {

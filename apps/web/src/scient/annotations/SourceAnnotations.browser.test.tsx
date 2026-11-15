@@ -167,4 +167,56 @@ describe("Source highlights and notes", () => {
     });
     await expect.element(page.getByRole("button", { name: /Deep sleep/ })).not.toBeInTheDocument();
   });
+
+  it("lists Zotero's highlights it could not place, and one removed leaves the list", async () => {
+    const { root, onOpenPdf, record } = setup();
+    const kept = {
+      annotationId: "ann_zotero_ABCD2345",
+      revision: 1,
+      kind: "highlight" as const,
+      page: 3,
+      quote: "Sleep spindles rose",
+      comment: "Check the figure",
+      createdAt: "2024-01-24T04:36:20Z",
+      deletedAt: null,
+    };
+    const listed = (unplaced: ReadonlyArray<typeof kept>) => ({
+      attachments: [
+        {
+          attachmentId: "pdf_1",
+          material: { sha256, byteLength: 2_000 },
+          annotations: [],
+          unplaced,
+        },
+      ],
+    });
+    // The server's list: the entry leaves it once removed.
+    let onServer = [kept];
+    client.readSource.mockImplementation(async () => listed(onServer));
+    client.mutate.mockImplementation(async () => {
+      onServer = [];
+      const removed = { ...kept, revision: 2, deletedAt: "2026-11-15T10:00:00.000Z" };
+      return { outcome: "removed", annotation: null, unplaced: removed };
+    });
+    await using _screen = await render(
+      <SourceAnnotations
+        environmentId={environmentId}
+        root={root}
+        record={record}
+        onOpenPdf={onOpenPdf}
+      />,
+    );
+
+    const row = page.getByRole("button", { name: /Sleep spindles rose/ });
+    await expect.element(row).toBeVisible();
+    const [text] = [...document.querySelectorAll("li")].map((entry) => entry.textContent);
+    expect(text).toContain("Check the figure");
+    expect(text).toContain("Page 3");
+    await userEvent.click(page.getByRole("button", { name: "Remove" }));
+
+    expect(client.mutate.mock.calls[0]![1]).toMatchObject({
+      command: { action: "remove", annotationId: "ann_zotero_ABCD2345", expectedRevision: 1 },
+    });
+    await expect.element(row).not.toBeInTheDocument();
+  });
 });

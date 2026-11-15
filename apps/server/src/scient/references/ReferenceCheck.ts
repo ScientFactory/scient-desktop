@@ -29,6 +29,7 @@ import {
   sourceIdentifierLabel,
   sourceIdentifierRegistryName,
   workLevelIdentifierKey,
+  zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
 import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
@@ -582,26 +583,66 @@ function citationBookkeeping(input: {
 const count = (value: number, one: string, many: string) =>
   `${value === 1 ? "One" : value} ${value === 1 ? one : many}`;
 
-/** Finds the Library source a cited work is, by its Zotero item or a work-level identifier. */
+/**
+ * A Zotero item address as a Scient record names it: library and item key. A synced user library
+ * is its zotero.org user ID here and in Scient, a group its group ID; an unsynced Zotero names its
+ * library by a key of that computer, which Scient does not keep, so its items are matched otherwise.
+ */
+function zoteroItemIdentity(address: string): string | null {
+  const match = /^https?:\/\/zotero\.org\/(users|groups)\/(local\/)?(\w+)\/items\/(\w+)$/u.exec(
+    address,
+  );
+  if (!match || match[2]) return null;
+  return `${match[1] === "groups" ? zoteroGroupLibraryId(match[3]!) : match[3]}\0${match[4]}`;
+}
+
+const schemeOf = (identifierKey: string) => identifierKey.slice(0, identifierKey.indexOf(":"));
+
+/**
+ * Finds the one Library source a cited work is, by its Zotero item and by DOI or PMID. A work
+ * that several sources answer to, or whose DOI or PMID a matched source contradicts, is ambiguous
+ * and linked to none.
+ */
 function librarySourceFinder(records: ReadonlyArray<ScientSourceRecord>) {
-  const sources = new Map<string, string>();
+  const byItem = new Map<string, Set<string>>();
+  const byIdentifier = new Map<string, Set<string>>();
+  const identifiersOf = new Map<string, ReadonlySet<string>>();
+  const index = (map: Map<string, Set<string>>, key: string, sourceId: string) =>
+    map.set(key, (map.get(key) ?? new Set()).add(sourceId));
   for (const record of records) {
     for (const reference of record.externalReferences) {
-      if (reference.system === "zotero")
-        sources.set(`zotero:${reference.itemKey}`, record.sourceId);
+      if (reference.system === "zotero") {
+        index(byItem, `${reference.libraryId}\0${reference.itemKey}`, record.sourceId);
+      }
     }
-    for (const identifier of record.identifiers) {
-      const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
-      if (key) sources.set(key, record.sourceId);
-    }
+    const keys = record.identifiers.flatMap(
+      ({ scheme, value }) => workLevelIdentifierKey(scheme, value) ?? [],
+    );
+    identifiersOf.set(record.sourceId, new Set(keys));
+    for (const key of keys) index(byIdentifier, key, record.sourceId);
   }
-  return (workId: string, identifiers: ReadonlyArray<ScientSourceIdentifier>): string | null => {
-    const zoteroItem = /^https?:\/\/zotero\.org\/.*\/items\/(\w+)$/u.exec(workId)?.[1];
-    const keys = [
-      ...(zoteroItem ? [`zotero:${zoteroItem}`] : []),
-      ...identifiers.flatMap(({ scheme, value }) => workLevelIdentifierKey(scheme, value) ?? []),
-    ];
-    return keys.map((key) => sources.get(key)).find((sourceId) => sourceId !== undefined) ?? null;
+  return (
+    workId: string,
+    identifiers: ReadonlyArray<ScientSourceIdentifier>,
+  ): { readonly sourceId: string | null; readonly ambiguous: boolean } => {
+    const claimed = identifiers.flatMap(
+      ({ scheme, value }) => workLevelIdentifierKey(scheme, value) ?? [],
+    );
+    const item = zoteroItemIdentity(workId);
+    const candidates = new Set([
+      ...((item && byItem.get(item)) ?? []),
+      ...claimed.flatMap((key) => [...(byIdentifier.get(key) ?? [])]),
+    ]);
+    const contradicted = [...candidates].some((sourceId) => {
+      const held = [...identifiersOf.get(sourceId)!];
+      return claimed.some(
+        (key) => !held.includes(key) && held.some((other) => schemeOf(other) === schemeOf(key)),
+      );
+    });
+    if (candidates.size === 1 && !contradicted) {
+      return { sourceId: [...candidates][0]!, ambiguous: false };
+    }
+    return { sourceId: null, ambiguous: candidates.size > 0 };
   };
 }
 
@@ -651,6 +692,7 @@ async function collectWordDocument(
   }
 
   const sourceOf = librarySourceFinder(await library().catch(() => []));
+  const ambiguous: Array<string> = [];
   const subjects: Array<Subject> = [];
   const bookkeeping: Array<Placed> = [];
   let unreadable = references.unreadable;
@@ -661,16 +703,18 @@ async function collectWordDocument(
       continue;
     }
     const claimed = cslClaimed(item.value);
+    const link = sourceOf(work.id, claimed.identifiers);
     const subject: Subject = {
       scopeKey: `${file.relativePath}#${work.id}`,
       key: null,
       label: label(claimed.title),
       location: null,
-      sourceId: sourceOf(work.id, claimed.identifiers),
+      sourceId: link.sourceId,
       claimed,
       missing: [],
       fixFor: () => null,
     };
+    if (link.ambiguous) ambiguous.push(`“${subject.label ?? work.id}”`);
     subjects.push(subject);
     if (work.listed) continue;
     bookkeeping.push({
@@ -686,12 +730,17 @@ async function collectWordDocument(
   notes.push(
     "Citations inserted with a reference manager were read. Citations typed by hand were not.",
   );
-  const absent = subjects.filter((subject) => subject.sourceId === null).length;
+  const absent = subjects.filter((subject) => subject.sourceId === null).length - ambiguous.length;
   if (absent > 0) {
     notes.push(
       absent === subjects.length
         ? "None of the cited works is in the Library."
         : `${absent === 1 ? "One" : absent} of the ${subjects.length} cited works ${absent === 1 ? "is" : "are"} not in the Library.`,
+    );
+  }
+  if (ambiguous.length > 0) {
+    notes.push(
+      `${count(ambiguous.length, "cited work was", "cited works were")} not linked to a Library source, because more than one could be meant: ${ambiguous.join(", ")}.`,
     );
   }
   if (!references.hasList) {

@@ -36,6 +36,8 @@ export interface BibliographyEntry {
   readonly customType: string | null;
   readonly title: string | null;
   readonly creators: ReadonlyArray<ScientSourceCreator>;
+  /** Creator roles whose list the file ended with "and others". */
+  readonly incompleteCreatorRoles: ReadonlyArray<string>;
   readonly issuedRaw: string | null;
   readonly issuedYear: number | null;
   readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
@@ -134,6 +136,7 @@ export class BibliographyEntryBuilder {
   private readonly origins: Record<string, string> = {};
   private readonly dropped = new Set<string>();
   private readonly linked: BibliographyLinkedFile[] = [];
+  private readonly incompleteRoles = new Set<string>();
 
   readonly index: number;
   readonly line: number | null;
@@ -225,6 +228,11 @@ export class BibliographyEntryBuilder {
     if (clean) this.notes.push(clean);
   }
 
+  /** The file says this role's list goes on past the names it gives. */
+  markIncomplete(role: string): void {
+    this.incompleteRoles.add(role);
+  }
+
   notKeep(sourceField: string): void {
     this.dropped.add(sourceField);
   }
@@ -250,6 +258,7 @@ export class BibliographyEntryBuilder {
       customType: this.type === "other" ? this.customType : null,
       title: this.get("title"),
       creators: this.creatorList,
+      incompleteCreatorRoles: [...this.incompleteRoles],
       issuedRaw,
       issuedYear: yearFrom(issuedRaw),
       identifiers: this.identifierList,
@@ -291,6 +300,7 @@ export function bibliographyEntryCandidate(input: {
     customType: entry.customType,
     title: entry.title,
     creators: entry.creators,
+    incompleteCreatorRoles: entry.incompleteCreatorRoles,
     issuedRaw: entry.issuedRaw,
     issuedYear: entry.issuedYear,
     identifiers: entry.identifiers,

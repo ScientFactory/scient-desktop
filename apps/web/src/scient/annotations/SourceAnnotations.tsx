@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ScientSourceDetailResult,
   type ScientPdfAnnotation,
+  type ScientUnplacedAnnotation,
 } from "@t3tools/contracts";
 import { TextQuote, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -18,6 +19,7 @@ import { workspacePdfSource } from "../pdf/pdfSource";
 import {
   annotatedPdfKey,
   removeAnnotation,
+  removeUnplacedAnnotation,
   storePdfAnnotations,
   type AnnotatedPdf,
 } from "./annotationState";
@@ -27,6 +29,8 @@ import { quoteInDocument } from "./documentQuoteTargets";
 import { usePdfAnnotations } from "./useDocumentAnnotations";
 
 type SourceAttachment = ScientSourceDetailResult["attachments"][number];
+
+const NO_UNPLACED: ReadonlyArray<ScientUnplacedAnnotation> = [];
 
 /**
  * The highlights and notes on a Source's PDFs, in reading order. Absent when
@@ -44,10 +48,12 @@ export function SourceAnnotations(props: {
 }) {
   const { environmentId, root } = props;
   const sourceId = props.record.sourceId;
-  const [loaded, setLoaded] = useState<{ readonly sourceId: string; readonly ready: boolean }>({
-    sourceId,
-    ready: false,
-  });
+  const [loaded, setLoaded] = useState<{
+    readonly sourceId: string;
+    readonly ready: boolean;
+    /** Highlights another reader held that are not on the page, by PDF. */
+    readonly unplaced: ReadonlyMap<string, ReadonlyArray<ScientUnplacedAnnotation>>;
+  }>({ sourceId, ready: false, unplaced: new Map() });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads this Source's annotations from the server and again when the window returns to the front
   useEffect(() => {
@@ -62,7 +68,16 @@ export function SourceAnnotations(props: {
               attachment.annotations,
             );
           }
-          setLoaded({ sourceId, ready: true });
+          setLoaded({
+            sourceId,
+            ready: true,
+            unplaced: new Map(
+              result.attachments.map((attachment) => [
+                attachment.attachmentId,
+                attachment.unplaced ?? NO_UNPLACED,
+              ]),
+            ),
+          });
         },
         () => undefined,
       );
@@ -81,6 +96,16 @@ export function SourceAnnotations(props: {
   }, [environmentId, root, sourceId]);
 
   if (loaded.sourceId !== sourceId || !loaded.ready) return null;
+  const showChange = (attachmentId: string, next: ScientUnplacedAnnotation) =>
+    setLoaded((current) => ({
+      ...current,
+      unplaced: new Map(current.unplaced).set(
+        attachmentId,
+        (current.unplaced.get(attachmentId) ?? NO_UNPLACED).map((entry) =>
+          entry.annotationId === next.annotationId ? next : entry,
+        ),
+      ),
+    }));
   const pdfs = props.record.attachments.filter((attachment) => attachment.kind === "pdf");
   return (
     <>
@@ -91,9 +116,13 @@ export function SourceAnnotations(props: {
           root={root}
           sourceId={sourceId}
           attachment={attachment}
+          unplaced={(loaded.unplaced.get(attachment.attachmentId) ?? NO_UNPLACED).filter(
+            (entry) => entry.deletedAt === null,
+          )}
           titled={pdfs.length > 1}
           citationKey={props.record.citationKey ?? null}
           onOpenPdf={props.onOpenPdf}
+          onChanged={(next) => showChange(attachment.attachmentId, next)}
         />
       ))}
     </>
@@ -105,6 +134,7 @@ function AttachmentAnnotations(props: {
   readonly root: string;
   readonly sourceId: string;
   readonly attachment: SourceAttachment;
+  readonly unplaced: ReadonlyArray<ScientUnplacedAnnotation>;
   readonly titled: boolean;
   readonly citationKey: string | null;
   readonly onOpenPdf: (input: {
@@ -112,6 +142,7 @@ function AttachmentAnnotations(props: {
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  readonly onChanged: (next: ScientUnplacedAnnotation) => void;
 }) {
   const { attachment, environmentId, root, sourceId } = props;
   const pdf: AnnotatedPdf = {
@@ -121,8 +152,14 @@ function AttachmentAnnotations(props: {
   };
   const annotations = usePdfAnnotations(pdf);
   const canChange = useCanChangeLibrary(environmentId);
-  if (annotations.length === 0) return null;
+  if (annotations.length === 0 && props.unplaced.length === 0) return null;
 
+  const openPdf = () =>
+    props.onOpenPdf({
+      sourceId,
+      attachmentId: attachment.attachmentId,
+      fileName: attachment.fileName,
+    });
   const open = (annotation: ScientPdfAnnotation) => {
     const descriptor = workspacePdfSource({
       environmentId,
@@ -149,11 +186,7 @@ function AttachmentAnnotations(props: {
         }),
       );
     }
-    props.onOpenPdf({
-      sourceId,
-      attachmentId: attachment.attachmentId,
-      fileName: attachment.fileName,
-    });
+    openPdf();
   };
 
   return (
@@ -169,7 +202,10 @@ function AttachmentAnnotations(props: {
               className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
               onClick={() => open(annotation)}
             >
-              <span className="line-clamp-3 border-l-2 border-warning/60 pl-2 text-sm">
+              <span
+                className="line-clamp-3 border-l-2 border-warning/60 pl-2 text-sm"
+                style={annotation.color ? { borderColor: annotation.color } : undefined}
+              >
                 {scientAnnotationQuote(annotation)}
               </span>
               {annotation.note ? (
@@ -214,6 +250,51 @@ function AttachmentAnnotations(props: {
           </li>
         ))}
       </ul>
+      {props.unplaced.length > 0 ? (
+        <>
+          <h4 className="text-xs text-muted-foreground">From Zotero, not placed on the page</h4>
+          <ul className="space-y-1">
+            {props.unplaced.map((entry) => (
+              <li key={entry.annotationId} className="group/row flex items-start gap-1">
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                  onClick={openPdf}
+                >
+                  {entry.quote ? (
+                    <span
+                      className="line-clamp-3 border-l-2 border-warning/60 pl-2 text-sm"
+                      style={entry.color ? { borderColor: entry.color } : undefined}
+                    >
+                      {entry.quote}
+                    </span>
+                  ) : null}
+                  {entry.comment ? (
+                    <span className="mt-1 block whitespace-pre-wrap text-sm text-muted-foreground">
+                      {entry.comment}
+                    </span>
+                  ) : null}
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    {unplacedMeta(entry)}
+                  </span>
+                </button>
+                <ScientTooltip content="Remove">
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost-muted-row"
+                    aria-label="Remove"
+                    disabled={!canChange}
+                    onClick={() => void removeUnplacedAnnotation(pdf, entry, props.onChanged)}
+                  >
+                    <Trash2 />
+                  </Button>
+                </ScientTooltip>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </section>
   );
 }
@@ -222,4 +303,19 @@ function annotationMeta(annotation: ScientPdfAnnotation): string {
   const pages = annotation.anchor.selector.pages.map((page) => page.page);
   const where = pages.length === 1 ? `Page ${pages[0]}` : `Pages ${pages[0]}–${pages.at(-1)}`;
   return annotation.createdBy === "agent" ? `${where} · Added by an agent` : where;
+}
+
+const UNPLACED_KINDS: Readonly<Record<ScientUnplacedAnnotation["kind"], string | null>> = {
+  highlight: null,
+  underline: "Underline",
+  note: "Note on the page",
+  text: "Text on the page",
+  image: "Marked area",
+  ink: "Drawing",
+};
+
+function unplacedMeta(entry: ScientUnplacedAnnotation): string {
+  const kind = UNPLACED_KINDS[entry.kind];
+  const where = entry.page === null ? null : `Page ${entry.page}`;
+  return [where, kind].filter(Boolean).join(" · ");
 }

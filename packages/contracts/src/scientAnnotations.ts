@@ -44,12 +44,19 @@ export const ScientPdfAnnotationAnchor = Schema.Struct({
 );
 export type ScientPdfAnnotationAnchor = typeof ScientPdfAnnotationAnchor.Type;
 
+/** A highlight's own colour, as another reader gave it: `#rrggbb`. */
+const ScientAnnotationColor = Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/u));
+
 export const ScientPdfAnnotation = Schema.Struct({
   annotationId: ScientAnnotationId,
   revision: PositiveInt,
   anchor: ScientPdfAnnotationAnchor,
   highlighted: Schema.Boolean,
   note: ScientAnnotationNote,
+  /** Kept from the reader a highlight was made in; absent for one made here. */
+  color: Schema.optionalKey(ScientAnnotationColor),
+  /** The mark is a line under the text, not a background. */
+  underline: Schema.optionalKey(Schema.Literal(true)),
   createdAt: Timestamp,
   createdBy: ScientAnnotationActor,
   updatedAt: Timestamp,
@@ -57,6 +64,24 @@ export const ScientPdfAnnotation = Schema.Struct({
   deletedAt: Schema.NullOr(Timestamp),
 });
 export type ScientPdfAnnotation = typeof ScientPdfAnnotation.Type;
+
+/**
+ * A highlight or comment another reference manager held for this PDF that could not be put
+ * on its page here: kept with what the person wrote, in the PDF's own list.
+ */
+export const ScientUnplacedAnnotation = Schema.Struct({
+  annotationId: ScientAnnotationId,
+  revision: PositiveInt,
+  kind: Schema.Literals(["highlight", "underline", "note", "text", "image", "ink"]),
+  /** The PDF page it was on, counted from 1; null when the other program did not say. */
+  page: Schema.NullOr(PositiveInt),
+  quote: Schema.String.check(Schema.isMaxLength(100_000)),
+  comment: Schema.String.check(Schema.isMaxLength(100_000)),
+  color: Schema.optionalKey(ScientAnnotationColor),
+  createdAt: Timestamp,
+  deletedAt: Schema.NullOr(Timestamp),
+});
+export type ScientUnplacedAnnotation = typeof ScientUnplacedAnnotation.Type;
 
 export const ScientAnnotationCommand = Schema.Union([
   Schema.Struct({
@@ -107,6 +132,8 @@ export type ScientAnnotationOutcome = typeof ScientAnnotationOutcome.Type;
 export const ScientAnnotationMutationResult = Schema.Struct({
   outcome: ScientAnnotationOutcome,
   annotation: Schema.NullOr(ScientPdfAnnotation),
+  /** Set when the command removed or restored one that is not placed on the page. */
+  unplaced: Schema.optionalKey(ScientUnplacedAnnotation),
 });
 export type ScientAnnotationMutationResult = typeof ScientAnnotationMutationResult.Type;
 
@@ -162,6 +189,8 @@ export const ScientAnnotationsSourceResult = Schema.Struct({
       attachmentId: NonEmptyString,
       material: PdfMaterial,
       annotations: Schema.Array(ScientPdfAnnotation),
+      /** Not placed on the page, in page order; absent when there are none. */
+      unplaced: Schema.optionalKey(Schema.Array(ScientUnplacedAnnotation)),
     }),
   ),
 });

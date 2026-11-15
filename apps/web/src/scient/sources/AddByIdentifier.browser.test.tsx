@@ -75,8 +75,10 @@ it("adds a pasted list, reports what was not added and keeps retryable entries",
     .element(page.getByRole("textbox", { name: "Identifiers to add" }))
     .toHaveValue("arXiv:1706.03762");
 
+  // The source opens behind the dialog, so View closes it.
   await page.getByRole("button", { name: "View" }).click();
   expect(handlers.onOpenSource).toHaveBeenCalledWith("source_old");
+  expect(handlers.onClose).toHaveBeenCalled();
 });
 
 it("closes once every identifier is added", async () => {

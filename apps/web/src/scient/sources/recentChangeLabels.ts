@@ -29,6 +29,10 @@ export const RECENT_CHANGES_LABELS = {
   notBroughtAbout: "What the place it was imported from holds for these sources that did not come:",
   notBroughtNone: "The record of what was not brought is no longer there.",
   showThese: "Show",
+  packageImports: "Package imports",
+  packageImportsAbout:
+    "Project packages imported into this project, each with what it added and what Undo would keep.",
+  openPackageImports: "Show package imports",
 } as const;
 
 const sources = (count: number) => (count === 1 ? "1 source" : `${count.toLocaleString()} sources`);

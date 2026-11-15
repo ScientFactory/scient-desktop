@@ -133,12 +133,23 @@ describe("BrowserImport.writeCookies for Scient Accounts", () => {
   );
 });
 
-const importerOn = Effect.fnUntraced(function* (platform: NodeJS.Platform) {
+const importerOn = Effect.fnUntraced(function* (
+  platform: NodeJS.Platform,
+  remoteDebugging = false,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-import-win-" });
   const environment = { HOME: home, LOCALAPPDATA: `${home}/Local`, APPDATA: `${home}/Roaming` };
   // Installed, by its user-data folder alone: there is no cookie database to read.
-  yield* fileSystem.makeDirectory(`${home}/Local/Google/Chrome/User Data`, { recursive: true });
+  const chrome = `${home}/Local/Google/Chrome/User Data`;
+  yield* fileSystem.makeDirectory(chrome, { recursive: true });
+  yield* fileSystem.writeFileString(
+    `${chrome}/Local State`,
+    JSON.stringify({
+      profile: { info_cache: { Default: { name: "Work" } } },
+      ...(remoteDebugging ? { devtools: { remote_debugging: { "user-enabled": true } } } : {}),
+    }),
+  );
   return yield* BrowserImport.BrowserImport.pipe(
     Effect.provide(
       BrowserImport.layer.pipe(
@@ -174,7 +185,12 @@ describe("Chromium browsers on Windows", () => {
       for (const id of ["edge", "brave", "vivaldi", "opera", "arc", "firefox", "zen", "helium"])
         assert.equal(reason(id), "notInstalled", id);
       assert.equal(reason("safari"), "unsupportedPlatform");
-      assert.deepStrictEqual(sources.find((source) => source.id === "chrome")?.profiles, []);
+      // Its profiles come from its metadata, and the browser itself hands their cookies over.
+      const chrome = sources.find((source) => source.id === "chrome");
+      assert.deepStrictEqual(chrome?.profiles, [{ directory: "Default", name: "Work" }]);
+      assert.deepStrictEqual(chrome?.connection, {
+        settingsUrl: "chrome://inspect/#remote-debugging",
+      });
 
       // The same folders mean nothing on macOS.
       const mac = yield* (yield* importerOn("darwin")).listSources;
@@ -182,17 +198,32 @@ describe("Chromium browsers on Windows", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("refuse an import with the same reason, before any read", () =>
+  it.effect("import through the browser only a listed profile, once remote debugging is on", () =>
     Effect.gen(function* () {
-      const error = yield* (yield* importerOn("win32"))
-        .importCookies({
-          input: { sourceId: "chrome", sourceProfileDirectory: "Default", targetProfileId: "work" },
-          scope: "persist:scient-test",
-          persistent: true,
-        })
-        .pipe(Effect.flip);
-      assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
-      assert.equal(error.reason, "appBoundEncryption");
+      const reason = (importer: BrowserImport.BrowserImport["Service"], directory: string) =>
+        importer
+          .importCookies({
+            input: {
+              sourceId: "chrome",
+              sourceProfileDirectory: directory,
+              targetProfileId: "work",
+            },
+            scope: "persist:scient-test",
+            persistent: true,
+          })
+          .pipe(
+            Effect.flip,
+            Effect.map((error) => {
+              assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
+              return error.reason;
+            }),
+          );
+      const off = yield* importerOn("win32");
+      assert.equal(yield* reason(off, "Profile 9"), "unknownSourceProfile");
+      // Nothing opens while the setting is off; the person learns which one to turn on.
+      assert.equal(yield* reason(off, "Default"), "connectionOff");
+      // On, but with no browser installed to open the profile.
+      assert.equal(yield* reason(yield* importerOn("win32", true), "Default"), "connectionFailed");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

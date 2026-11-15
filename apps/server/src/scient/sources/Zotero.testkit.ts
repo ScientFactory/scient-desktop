@@ -27,6 +27,8 @@ export function zoteroItem(
 
 export interface FakeZoteroLibrary {
   readonly items: Map<string, { item: ZoteroRawItem; children: ReadonlyArray<ZoteroRawItem> }>;
+  /** Highlights and comments, by the key of the file they are on. */
+  readonly annotations?: ReadonlyMap<string, ReadonlyArray<ZoteroRawItem>>;
   readonly files?: ReadonlyMap<string, string>;
   readonly failures?: ReadonlyMap<string, Error>;
   readonly citationKeys?: ReadonlyMap<string, string>;
@@ -35,6 +37,8 @@ export interface FakeZoteroLibrary {
     readonly name: string;
     readonly parent?: string;
   }>;
+  /** The library its collections say they are in; My Library on this computer by default. */
+  readonly library?: ZoteroRawItem["library"];
 }
 
 const json = (value: unknown, total?: number): ZoteroResponse => ({
@@ -59,9 +63,19 @@ export function fakeZoteroTransport(
       if (match?.[1]) {
         const failure = library.failures?.get(match[1]);
         if (failure) throw failure;
+        // zotero.org lists a file's highlights as its children.
+        const onFile = match[2] ? library.annotations?.get(match[1]) : undefined;
+        if (onFile) return json(onFile, onFile.length);
         const entry = library.items.get(match[1]);
         if (!entry) return { status: 404, headers: {}, body: "" };
         return match[2] ? json(entry.children, entry.children.length) : json(entry.item);
+      }
+      const query = new URLSearchParams(path.split("?")[1] ?? "");
+      if (route === "/items" && query.get("itemType") === "annotation") {
+        // Zotero on this computer: a search by an item's key reaches its files' highlights.
+        const files = library.items.get(query.get("itemKey") ?? "")?.children ?? [];
+        const found = files.flatMap((file) => library.annotations?.get(file.key) ?? []);
+        return json(found, found.length);
       }
       if (route === "/items/top") {
         // As Zotero filters: `itemType=note` keeps one type, `-attachment` leaves one out.
@@ -83,6 +97,7 @@ export function fakeZoteroTransport(
       if (route === "/collections") {
         const collections = (library.collections ?? []).map((collection) => ({
           key: collection.key,
+          library: library.library ?? { type: "user", id: 0 },
           data: {
             key: collection.key,
             name: collection.name,

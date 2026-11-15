@@ -230,7 +230,7 @@ describe("the Library's move line", () => {
       .toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Recover", exact: true }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Backup and recovery", exact: true }));
     await userEvent.click(
       page.getByRole("menuitem", { name: "Keep this project's sources in its folder" }),
     );
@@ -277,7 +277,7 @@ describe("the Library's move line", () => {
     mocks.readLibraryMoveStatus.mockRejectedValueOnce(new Error("offline"));
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Recover", exact: true }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Backup and recovery", exact: true }));
     await userEvent.click(
       page.getByRole("menuitem", { name: "Keep this project's sources in its folder" }),
     );
@@ -307,7 +307,7 @@ describe("the Library's move line", () => {
       .toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
-    await userEvent.click(page.getByRole("menuitem", { name: "Recover", exact: true }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Backup and recovery", exact: true }));
     await userEvent.click(
       page.getByRole("menuitem", { name: "Keep this project's sources in its folder" }),
     );

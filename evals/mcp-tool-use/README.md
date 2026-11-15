@@ -304,15 +304,15 @@ After the change, the first reference to a file is an absolute link. The remaini
 | sources-zotero-import-continues         | guard   | A Zotero library of 503 references arrives in full: the second call carries the run ID, and there is no third.                                      |
 | sources-zotero-import-stopped-by-person | guard   | The person presses Stop at the 40th reference of the agent's import. The agent reports the 40 and does not import again.                            |
 | sources-control-zotero-small-import     | control | Three references arrive in one call.                                                                                                                |
-| sources-zotero-not-brought              | guard   | The final answer says that two notes that belong to no reference were not brought.                                                                  |
+| sources-zotero-not-brought              | guard   | The final answer says that two notes that belong to no reference were not brought. Naming them as imported fails.                                   |
 | sources-correct-edition-keeps-details   | guard   | A book's edition is corrected and its place of publication and page count are still there.                                                          |
 | sources-control-correct-title           | control | A title is corrected and nothing else changes.                                                                                                      |
 | sources-not-in-library-no-invention     | guard   | Asked for the citation key of a paper the Library does not hold, the agent says it is not there and adds nothing.                                   |
-| sources-control-add-given-details       | control | A book the person describes is added as described.                                                                                                  |
+| sources-control-add-given-details       | control | A book the person describes is added with the title, author, publisher and year given, and no other author or publisher.                            |
 
 A case with `setup.world.library` gets a real Library and project in a temporary folder, removed when the sample ends. `scientSources.ts` fills it through the stores' own functions (sources by name, some in the Trash, bulk edits made earlier), registers the product's Sources toolkit on an in-process MCP server as the server does, and answers every `scient_sources_*` call from it; such a case cannot mock those tools. Zotero is the server's test Zotero filled from `library.zotero`; with `stoppedAt` the panel's own Stop is sent while that reference is being brought. Identifier registries are reported unreachable. Only these cases list the Sources tools and get the Library paragraph of Scient's system text, so every other case sends the request it sent before.
 
-`expect.library` is the state check. The Library is read before the first model call and after the last, and every difference is recorded by source name and detail: `state` (`live`, `trash`, `merged`, `gone`), each editable field (`title`, `tags`, `type`, ...), further details as `more.<name>`, and the personal `note`. `changed` lists the details that must have changed, with their exact new values; any other change fails the sample. `added` is how many sources the run must add (default none), or a list of details each added source must have. `{}` means the Library must be exactly as it was.
+`expect.library` is the state check. The Library is read before the first model call and after the last, and every difference is recorded by source name and detail: `state` (`live`, `trash`, `merged`, `gone`), each editable field (`title`, `tags`, `type`, ...), `authors` as names are written ("Ingrid Solheim"), further details as `more.<name>`, and the personal `note`. `changed` lists the details that must have changed, with their exact new values; any other change fails the sample. `added` is how many sources the run must add and leave live (default none), or a list of details each one must have; a source added and then removed does not count. `{}` means the Library must be exactly as it was.
 
 ### Run them
 
@@ -352,14 +352,14 @@ Record the first run's passes per case and model in a Results table here, with i
 
 ### Without a model
 
-`scientSources.test.ts` runs every case through the real sample loop with a scripted model in place of the API: once doing what was asked, where every check must pass, and once making the mistake the case guards, where the named checks must fail. It loads the Sources tools through ToolSearch beside the shipped Claude capture, calls the real handlers, and grades the real Library, so it proves everything except what a model would do. It runs in CI with the other grader tests. The 503-reference case would take minutes on a CI runner, so it runs every night in `.github/workflows/scient-library-deep-tests.yml`, and here when asked:
+`scientSources.test.ts` runs every case through the real sample loop with a scripted model in place of the API: once doing what was asked, where every check must pass, and and once for each wrong outcome the case must reject, where the named checks must fail. Wrong outcomes include ones an earlier grader passed: an answer naming the loose notes as imported, a book added with an author and publisher the person did not give, and an import followed by moving one reference to the Trash. It loads the Sources tools through ToolSearch beside the shipped Claude capture, calls the real handlers, and grades the real Library, so it proves everything except what a model would do. It runs in CI with the other grader tests. The 503-reference case would take minutes on a CI runner, so it runs every night in `.github/workflows/scient-library-deep-tests.yml`, and here when asked:
 
 ```sh
 cd evals
 SOURCES_EVAL_LARGE_IMPORT=1 vp test run --config ../vite.config.ts mcp-tool-use/scientSources.test.ts
 ```
 
-A new Sources case needs its two scripted runs in that file; a test fails until it has them.
+A new Sources case needs its scripted runs in that file, the asked one and its wrong outcomes; a test fails until it has them.
 
 Fidelity limits:
 

@@ -79,6 +79,11 @@ still build, sign, package and check their actual release artifacts normally.
   packages before starting a root script, which would reintroduce a whole-repository install.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
+- **Overleaf Windows** (required) and **Overleaf macOS** (advisory): each platform file listed in
+  `.github/scripts/overleaf-platform-tests.cjs` must run without skips. Files run two at a time,
+  each in its own process, rather than the server configuration's one at a time. Neither job
+  restores a dependency store: on these hosted runners restoring the whole-workspace store took
+  longer than installing the server and desktop closures without one.
 
 A fully successful run records a qualification receipt: the exact content it tested (the
 commit's tree) and the comparison base its change gates used, with its repository, workflow,

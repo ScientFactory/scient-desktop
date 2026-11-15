@@ -6,6 +6,13 @@ import type {
 import { AlertCircle, ChevronLeft, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 
+import {
+  Autocomplete,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+  AutocompletePopup,
+} from "../../components/ui/autocomplete";
 import { Button } from "../../components/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "../../components/ui/field";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
@@ -20,6 +27,7 @@ import {
 } from "../../components/ui/select";
 import { cn } from "../../lib/utils";
 import { useSourceEditor } from "./useSourceEditor";
+import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import {
   CITATION_KEY_SYNTAX_MESSAGE,
   SCIENT_SOURCE_MORE_FIELDS,
@@ -31,31 +39,53 @@ type Metadata = ScientSourceMetadataUpdateRequest["metadata"];
 type Creator = Metadata["creators"][number];
 type Identifier = Metadata["identifiers"][number];
 
-const COMMON_SOURCE_TYPES: ReadonlyArray<readonly [Metadata["type"], string]> = [
-  ["article", "Article"],
-  ["preprint", "Preprint"],
-  ["book", "Book"],
-  ["thesis", "Thesis"],
-  ["report", "Report"],
-  ["software", "Software"],
-  ["other", "Other source"],
+const COMMON_SOURCE_TYPES: ReadonlyArray<Metadata["type"]> = [
+  "article",
+  "preprint",
+  "book",
+  "thesis",
+  "report",
+  "software",
+  "other",
 ];
 
-const SOURCE_TYPE_LABELS: Readonly<Record<Metadata["type"], string>> = {
-  article: "Article",
-  preprint: "Preprint",
-  book: "Book",
-  "book-chapter": "Book chapter",
-  "conference-paper": "Conference paper",
-  thesis: "Thesis",
-  report: "Report",
-  dataset: "Dataset",
-  web: "Web source",
-  software: "Software",
-  presentation: "Presentation",
-  manuscript: "Manuscript",
-  other: "Other source",
-};
+/** Creator roles as the source records them (Zotero's spelling), under the words people use. */
+const CREATOR_ROLES: ReadonlyArray<readonly [token: string, label: string]> = [
+  ["author", "Author"],
+  ["editor", "Editor"],
+  ["translator", "Translator"],
+  ["contributor", "Contributor"],
+  ["bookAuthor", "Book author"],
+  ["seriesEditor", "Series editor"],
+  ["reviewedAuthor", "Reviewed author"],
+  ["presenter", "Presenter"],
+  ["programmer", "Programmer"],
+  ["inventor", "Inventor"],
+  ["interviewer", "Interviewer"],
+  ["interviewee", "Interviewee"],
+  ["director", "Director"],
+  ["producer", "Producer"],
+  ["performer", "Performer"],
+  ["artist", "Artist"],
+  ["cartographer", "Cartographer"],
+  ["sponsor", "Sponsor"],
+];
+const CREATOR_ROLE_LABELS = CREATOR_ROLES.map(([, label]) => label);
+
+/** A known role under its name; any other role as it was written. */
+function creatorRoleLabel(token: string): string {
+  const lower = token.toLowerCase();
+  return CREATOR_ROLES.find(([known]) => known.toLowerCase() === lower)?.[1] ?? token;
+}
+
+/** What was typed or picked, as the role to store: a known name or token becomes its token. */
+function creatorRoleFromText(text: string): string {
+  const lower = text.trim().toLowerCase();
+  const known = CREATOR_ROLES.find(
+    ([token, label]) => label.toLowerCase() === lower || token.toLowerCase() === lower,
+  );
+  return known ? known[0] : text;
+}
 
 const INLINE_INPUT_CLASS =
   "block min-h-8 w-full cursor-text rounded-md px-2 py-1.5 text-sm leading-normal outline-none transition-colors placeholder:text-placeholder hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground";
@@ -83,6 +113,7 @@ function metadataFromRecord(record: SourceRecord): Metadata {
     customType: record.customType ?? null,
     title: record.title,
     creators: record.creators,
+    incompleteCreatorRoles: record.incompleteCreatorRoles ?? [],
     issuedRaw: record.issuedRaw,
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
@@ -141,16 +172,12 @@ export function SourceEditor(props: {
   readonly onSaved: (record: SourceRecord) => void;
 }) {
   const originalMetadata = metadataFromRecord(props.record);
-  const sourceTypeOptions = (() => {
-    if (COMMON_SOURCE_TYPES.some(([type]) => type === props.record.type)) {
-      return COMMON_SOURCE_TYPES;
-    }
-    return [
-      ...COMMON_SOURCE_TYPES.slice(0, -1),
-      [props.record.type, SOURCE_TYPE_LABELS[props.record.type]] as const,
-      COMMON_SOURCE_TYPES.at(-1)!,
-    ];
-  })();
+  // An uncommon type the source already has is offered too, before Other source.
+  const sourceTypeItems = (
+    COMMON_SOURCE_TYPES.includes(props.record.type)
+      ? COMMON_SOURCE_TYPES
+      : [...COMMON_SOURCE_TYPES.slice(0, -1), props.record.type, "other" as const]
+  ).map((type) => ({ value: type, label: SCIENT_SOURCE_TYPE_LABELS[type] }));
   const [metadata, setMetadata] = useState<Metadata>(originalMetadata);
   const [yearText, setYearText] = useState(
     originalMetadata.issuedYear === null ? "" : String(originalMetadata.issuedYear),
@@ -297,7 +324,8 @@ export function SourceEditor(props: {
 
       <ScrollArea className="min-h-0 flex-1">
         <form
-          className="space-y-6 p-4"
+          // A form reads best narrower than the Library column.
+          className="mx-auto w-full max-w-[42rem] space-y-6 p-4"
           onSubmit={(event) => {
             event.preventDefault();
             void save();
@@ -339,6 +367,7 @@ export function SourceEditor(props: {
               <FieldLabel>Type</FieldLabel>
               <Select
                 value={metadata.type}
+                items={sourceTypeItems}
                 onValueChange={(type) =>
                   type &&
                   setMetadata((current) => ({
@@ -352,7 +381,7 @@ export function SourceEditor(props: {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectPopup>
-                  {sourceTypeOptions.map(([value, label]) => (
+                  {sourceTypeItems.map(({ value, label }) => (
                     <SelectItem key={value} value={value}>
                       {label}
                     </SelectItem>
@@ -392,6 +421,29 @@ export function SourceEditor(props: {
           </FormSection>
 
           <FormSection title="Creators">
+            {(metadata.incompleteCreatorRoles ?? []).map((role) => (
+              <div key={role} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="min-w-0 flex-1 text-muted-foreground">
+                  The {creatorRoleLabel(role).toLowerCase()} list ends with “and others”, so
+                  references end it with “et al.”.
+                </span>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() =>
+                    setMetadata((current) => ({
+                      ...current,
+                      incompleteCreatorRoles: (current.incompleteCreatorRoles ?? []).filter(
+                        (marked) => marked !== role,
+                      ),
+                    }))
+                  }
+                >
+                  The {creatorRoleLabel(role).toLowerCase()} list is complete
+                </Button>
+              </div>
+            ))}
             {metadata.creators.map((creator, index) => (
               <div
                 key={creatorKeys[index]}
@@ -400,15 +452,34 @@ export function SourceEditor(props: {
                 <div className="grid grid-cols-2 gap-2">
                   <Field invalid={!creator.creatorType.trim()}>
                     <FieldLabel>Role</FieldLabel>
-                    <InlineInput
-                      value={creator.creatorType}
-                      aria-invalid={!creator.creatorType.trim() || undefined}
-                      onChange={(event) => {
+                    <Autocomplete
+                      items={CREATOR_ROLE_LABELS}
+                      mode="none"
+                      openOnInputClick
+                      value={creatorRoleLabel(creator.creatorType)}
+                      onValueChange={(text) => {
                         const creators = [...metadata.creators];
-                        creators[index] = { ...creator, creatorType: event.target.value };
+                        creators[index] = { ...creator, creatorType: creatorRoleFromText(text) };
                         setMetadata((current) => ({ ...current, creators }));
                       }}
-                    />
+                    >
+                      <AutocompleteInput
+                        size="sm"
+                        aria-label="Role"
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-invalid={!creator.creatorType.trim() || undefined}
+                      />
+                      <AutocompletePopup>
+                        <AutocompleteList className="max-h-60">
+                          {CREATOR_ROLE_LABELS.map((label) => (
+                            <AutocompleteItem key={label} value={label}>
+                              {label}
+                            </AutocompleteItem>
+                          ))}
+                        </AutocompleteList>
+                      </AutocompletePopup>
+                    </Autocomplete>
                     {!creator.creatorType.trim() ? (
                       <FieldError match={true}>
                         Enter a creator role, such as author or editor.

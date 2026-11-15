@@ -44,6 +44,7 @@ export function makeDesktopAccountsBridge(
         ipc.removeListener(Channels.ACCOUNTS_OWNER_CHANGED, ask);
       };
     },
+    browserConnection: (sourceId) => ipc.invoke(Channels.BROWSER_CONNECTION, sourceId),
     chromeSignInBrowser: () => ipc.invoke(Channels.CHROME_SIGN_IN_BROWSER),
     chromeSignIn: (input) => ipc.invoke(Channels.CHROME_SIGN_IN, input),
     endChromeSignIn: (keep) => ipc.invoke(Channels.END_CHROME_SIGN_IN, keep),

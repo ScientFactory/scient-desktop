@@ -149,6 +149,7 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     profile: { readonly id: string; readonly name: string },
     url = GOOGLE_SIGN_IN_URL,
     purpose: WindowEvent["purpose"] = "google",
+    onCopied?: () => void,
   ) => {
     if (!accounts?.chromeSignIn || open) return;
     const observation = beginAccountBrowserObservation(environmentId);
@@ -183,6 +184,7 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
     // Google and every row look again at what the window brought.
     window.dispatchEvent(new Event("scient-accounts-session-changed"));
     report(result, profile.name);
+    if (result.outcome === "copied") onCopied?.();
   };
   const dialog = open ? (
     <Dialog
@@ -236,7 +238,9 @@ export function useChromeSignIn(environmentId: EnvironmentId) {
       profile: { readonly id: string; readonly name: string },
       url?: string,
       purpose?: WindowEvent["purpose"],
-    ) => void start(profile, url, purpose),
+      /** Called once the sign-in is in the profile, such as to show the page signed in. */
+      onCopied?: () => void,
+    ) => void start(profile, url, purpose, onCopied),
     dialog,
   };
 }

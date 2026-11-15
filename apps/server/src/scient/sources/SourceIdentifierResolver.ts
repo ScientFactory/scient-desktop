@@ -980,6 +980,8 @@ export function applyResolvedSourceMetadata(
     ...(metadata.type ? { customType: null } : {}),
     title: metadata.title ?? candidate.title,
     creators: supplied.creators ? metadata.creators : candidate.creators,
+    // The registry's list is the work's own; the file's "and others" no longer applies.
+    ...(supplied.creators ? { incompleteCreatorRoles: [] } : {}),
     issuedRaw: metadata.issuedRaw ?? candidate.issuedRaw,
     issuedYear: metadata.issuedYear ?? candidate.issuedYear,
     identifiers,

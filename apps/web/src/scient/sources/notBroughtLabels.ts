@@ -1,5 +1,6 @@
 export {
   notBroughtAmount,
+  notBroughtBySource,
   notBroughtName,
   summarizeNotBrought as notBroughtLines,
 } from "@scientfactory/scient-sources";

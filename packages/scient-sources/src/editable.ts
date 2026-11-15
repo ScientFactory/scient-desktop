@@ -23,6 +23,7 @@ const SCIENT_SOURCE_EDITABLE_FIELDS = [
   "customType",
   "title",
   "creators",
+  "incompleteCreatorRoles",
   "issuedRaw",
   "issuedYear",
   "identifiers",
@@ -79,6 +80,7 @@ export function editableMetadataFromRecord(
     customType: record.customType ?? null,
     title: record.title,
     creators: record.creators,
+    incompleteCreatorRoles: record.incompleteCreatorRoles ?? [],
     issuedRaw: record.issuedRaw,
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
@@ -93,6 +95,17 @@ export function editableMetadataFromRecord(
     tags: record.tags,
     more: record.more ?? {},
   };
+}
+
+/** The marked roles that still have names, each once, in the creators' spelling. */
+function normalizeIncompleteRoles(
+  roles: ReadonlyArray<string>,
+  creators: ReadonlyArray<ScientSourceCreator>,
+): string[] {
+  const named = new Map(
+    creators.map((creator) => [creator.creatorType.toLowerCase(), creator.creatorType]),
+  );
+  return [...new Set(roles.flatMap((role) => named.get(role.trim().toLowerCase()) ?? []))];
 }
 
 export function normalizeScientSourceEditableMetadata(
@@ -117,6 +130,10 @@ export function normalizeScientSourceEditableMetadata(
     tags.push(tag);
   }
 
+  const creators = metadata.creators.flatMap((creator) => {
+    const normalized = normalizeCreator(creator);
+    return normalized ? [normalized] : [];
+  });
   return {
     ...(metadata.citationKey === undefined
       ? {}
@@ -124,10 +141,15 @@ export function normalizeScientSourceEditableMetadata(
     type: metadata.type,
     customType: metadata.type === "other" ? nullableText(metadata.customType) : null,
     title: nullableText(metadata.title),
-    creators: metadata.creators.flatMap((creator) => {
-      const normalized = normalizeCreator(creator);
-      return normalized ? [normalized] : [];
-    }),
+    creators,
+    ...(metadata.incompleteCreatorRoles === undefined
+      ? {}
+      : {
+          incompleteCreatorRoles: normalizeIncompleteRoles(
+            metadata.incompleteCreatorRoles,
+            creators,
+          ),
+        }),
     issuedRaw: nullableText(metadata.issuedRaw),
     issuedYear: metadata.issuedYear,
     identifiers,
@@ -202,12 +224,18 @@ export function changedEditableMetadataFields(
   previous: ScientSourceEditableMetadata,
   next: ScientSourceEditableMetadata,
 ): ReadonlyArray<ScientSourceEditableField> {
-  return SCIENT_SOURCE_EDITABLE_FIELDS.filter(
-    (field) =>
-      !(field === "citationKey" && next.citationKey === undefined) &&
-      !(field === "more" && next.more === undefined) &&
-      JSON.stringify(previous[field] ?? {}) !== JSON.stringify(next[field] ?? {}),
-  );
+  return SCIENT_SOURCE_EDITABLE_FIELDS.filter((field) => {
+    if (field === "citationKey" && next.citationKey === undefined) return false;
+    if (field === "more" && next.more === undefined) return false;
+    if (field === "incompleteCreatorRoles") {
+      return (
+        next.incompleteCreatorRoles !== undefined &&
+        JSON.stringify(previous.incompleteCreatorRoles ?? []) !==
+          JSON.stringify(next.incompleteCreatorRoles)
+      );
+    }
+    return JSON.stringify(previous[field] ?? {}) !== JSON.stringify(next[field] ?? {});
+  });
 }
 
 export function editableMetadataEquals(
@@ -253,16 +281,17 @@ export function applyEditableMetadata(input: {
   const fieldProvenance = input.record.fieldProvenance.filter(
     (entry) => !belongsToChangedField(entry, changedSet) && !moreNames.has(entry.field),
   );
+  // An incomplete list is part of the creators; it has no provenance line of its own.
   fieldProvenance.push(
     ...changed
-      .filter((field) => field !== "more")
+      .filter((field) => field !== "more" && field !== "incompleteCreatorRoles")
       .map((field) => ({ field, origin: actor, sourceField: null })),
     ...[...moreNames].map((field) => ({ field, origin: actor, sourceField: null })),
   );
   const abstractChanged = changedSet.has("abstract");
   const abstract = abstractChanged ? normalizeScientSourceAbstractDocument(next.abstract) : null;
   // The further details are replaced as a whole when given; none left means the part goes.
-  const { more: nextMore, ...nextFields } = next;
+  const { more: nextMore, incompleteCreatorRoles: nextIncomplete, ...nextFields } = next;
   const { more: _currentMore, ...withoutMore } = input.record;
   const kept =
     nextMore === undefined
@@ -270,8 +299,15 @@ export function applyEditableMetadata(input: {
       : Object.keys(nextMore).length > 0
         ? { ...withoutMore, more: nextMore }
         : withoutMore;
+  const { incompleteCreatorRoles: _currentIncomplete, ...withoutIncomplete } = kept;
+  const marked =
+    nextIncomplete === undefined
+      ? kept
+      : nextIncomplete.length > 0
+        ? { ...withoutIncomplete, incompleteCreatorRoles: nextIncomplete }
+        : withoutIncomplete;
   const updated = {
-    ...kept,
+    ...marked,
     ...nextFields,
     revision: input.record.revision + 1,
     fieldProvenance,

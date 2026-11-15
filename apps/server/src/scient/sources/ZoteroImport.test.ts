@@ -15,6 +15,7 @@ import {
 } from "@scientfactory/scient-sources/collections";
 import {
   cancelSourceImportOperation,
+  importScientSource,
   listScientSourceImports,
   listScientSourceRecords,
 } from "@scientfactory/scient-sources/store";
@@ -32,7 +33,8 @@ import {
   zoteroGroupItem,
   zoteroItem,
 } from "./Zotero.testkit.ts";
-import { countZoteroScopeStandalone } from "./ZoteroLibraryReader.ts";
+import { zoteroItemToCandidate } from "./ZoteroItems.ts";
+import { countZoteroScopeStandalone, readZoteroItemMaterial } from "./ZoteroLibraryReader.ts";
 import type { ZoteroWebHttp } from "./ZoteroWebAdapter.ts";
 
 const roots: string[] = [];
@@ -286,6 +288,50 @@ describe("Zotero import", () => {
     ]);
   });
 
+  it("keeps the collections of two personal libraries apart when their keys are the same", async () => {
+    const root = await project();
+    // Two Zotero accounts, each with its own collection under one key.
+    const account = (userId: number, itemKey: string, name: string) =>
+      fakeZoteroAccess(
+        fakeZoteroTransport({
+          items: new Map([
+            [
+              itemKey,
+              {
+                item: zoteroItem(
+                  itemKey,
+                  { title: `Filed in ${name}`, abstractNote: "A.", collections: ["COLL2345"] },
+                  userId,
+                ),
+                children: [],
+              },
+            ],
+          ]),
+          collections: [{ key: "COLL2345", name }],
+          library: { type: "user", id: userId },
+        }),
+      );
+    for (const [operationId, zotero] of [
+      ["first", account(111, "AAAA2345", "Thesis")],
+      ["second", account(222, "BBBB2345", "Teaching")],
+    ] as const) {
+      await beginZoteroScopedImport({ root, operationId, scope: { kind: "library" }, zotero });
+      await advanceSourceImport({ root, operationId, zotero });
+    }
+
+    const titles = new Map(
+      (await listScientSourceRecords(root)).map((record) => [record.sourceId, record.title]),
+    );
+    expect(
+      (await readScientSourcesOrganization(root)).collections
+        .map((entry) => [entry.name, entry.sourceIds.map((sourceId) => titles.get(sourceId))])
+        .toSorted(),
+    ).toEqual([
+      ["Teaching", ["Filed in Teaching"]],
+      ["Thesis", ["Filed in Thesis"]],
+    ]);
+  });
+
   it("lists the collections it could not make instead of dropping them", async () => {
     const root = await project();
     const zotero = fakeZoteroAccess(
@@ -329,6 +375,15 @@ describe("Zotero import", () => {
 
   it("says what Zotero holds for each reference that it did not bring", async () => {
     const root = await project();
+    const mark = (key: string, parentItem: string, annotationComment = "") =>
+      zoteroItem(key, {
+        itemType: "annotation",
+        parentItem,
+        annotationType: "highlight",
+        annotationText: "A passage",
+        annotationComment,
+        annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+      });
     const zotero = fakeZoteroAccess(
       fakeZoteroTransport({
         items: new Map([
@@ -352,7 +407,7 @@ describe("Zotero import", () => {
                 } as object),
               }),
               children: [
-                { ...pdfAttachment("PDFA2345", "book.pdf"), meta: { numChildren: 7 } },
+                pdfAttachment("PDFA2345", "book.pdf"),
                 pdfAttachment("PDFB2345", "not-in-zotero-storage.pdf"),
                 zoteroItem("SNAP2345", {
                   itemType: "attachment",
@@ -377,6 +432,16 @@ describe("Zotero import", () => {
           ],
         ]),
         files: new Map([["PDFA2345", await pdf(root, "book.pdf")]]),
+        // This PDF has no text to place one on; the second PDF and the snapshot do not come.
+        // One comment is longer than anything here holds.
+        annotations: new Map([
+          [
+            "PDFA2345",
+            [mark("MARKA234", "PDFA2345"), mark("MARKA345", "PDFA2345", "x".repeat(100_001))],
+          ],
+          ["PDFB2345", [mark("MARKB234", "PDFB2345"), mark("MARKB345", "PDFB2345")]],
+          ["SNAP2345", [mark("MARKS234", "SNAP2345")]],
+        ]),
       }),
     );
 
@@ -394,15 +459,17 @@ describe("Zotero import", () => {
     expect(operation.items[0]?.notBrought).toEqual([
       { kind: "related", count: 1 },
       { kind: "automatic-tags", count: 1 },
-      { kind: "highlights", count: 7 },
       { kind: "file", name: "text/html", count: 1 },
       { kind: "link", count: 1 },
-      { kind: "note-formatting", count: 1 },
+      { kind: "highlights", name: "no-file", count: 3 },
       { kind: "pdf", name: "unavailable", count: 1 },
+      { kind: "highlights", name: "unplaced", count: 1 },
+      { kind: "highlights", name: "too-long", count: 1 },
     ]);
-    // What it did bring is as before.
+    // What it did bring is as before; the note keeps its link.
     const [record] = await listScientSourceRecords(root);
     expect(record).toMatchObject({
+      note: "See [the errata](https://example.org).",
       title: "A book with an edition",
       publisher: "A Press",
       citationKey: "book2026",
@@ -416,6 +483,60 @@ describe("Zotero import", () => {
       },
     });
     expect(record?.attachments.map((attachment) => attachment.fileName)).toEqual(["book.pdf"]);
+  });
+
+  it("gives the note of a reference that was already here to its source, only when that has none", async () => {
+    const root = await project();
+    // Two sources that did not come from Zotero; Zotero holds the same two works, with notes.
+    const here = (key: string, doi: string, note?: string) =>
+      importScientSource({
+        root,
+        operationId: `here-${key}`,
+        candidate: {
+          ...zoteroItemToCandidate(zoteroItem(key, { title: `Work ${doi}`, DOI: doi })),
+          sourceKey: `file-${key}`,
+          externalReferences: [],
+          ...(note ? { note } : {}),
+        },
+      });
+    await here("AAAA2345", "10.1000/no-note");
+    await here("BBBB2345", "10.1000/own-note", "My own note");
+    const inZotero = (key: string, doi: string) =>
+      [
+        key,
+        {
+          item: zoteroItem(key, { title: `Work ${doi}`, DOI: doi, abstractNote: "A." }),
+          children: [
+            zoteroItem(`N${key.slice(1)}`, {
+              itemType: "note",
+              note: "<p>From <em>Zotero</em></p>",
+            }),
+          ],
+        },
+      ] as const;
+    const zotero = fakeZoteroAccess(
+      fakeZoteroTransport({
+        items: new Map([
+          inZotero("CCCC2345", "10.1000/no-note"),
+          inZotero("DDDD2345", "10.1000/own-note"),
+        ]),
+      }),
+    );
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "here",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "here", zotero });
+    const operation = await advanceSourceImport({ root, operationId: "here", zotero });
+
+    const said = new Map(operation.items.map((item) => [item.itemKey, item]));
+    expect(said.get("CCCC2345")).toMatchObject({ state: "skipped" });
+    expect(said.get("DDDD2345")).toMatchObject({ state: "skipped" });
+    const notes = (await listScientSourceRecords(root)).map((record) => record.note).toSorted();
+    expect(notes).toEqual(["From *Zotero*", "My own note"]);
   });
 
   it("imports a scope too large for one operation as a run of parts, each item once", async () => {
@@ -605,6 +726,7 @@ describe("Zotero import", () => {
         if (path.startsWith("/collections?")) {
           const collection = (key: string, parentCollection: string | false) => ({
             key,
+            library: { type: "user", id: 0 },
             data: { key, name: key, parentCollection },
           });
           return json([collection("TOPC2345", false), collection("SUBC2345", "TOPC2345")], 2);
@@ -755,5 +877,57 @@ describe("Zotero import", () => {
         ["The lab's", "groups/4321"],
       ]),
     );
+  });
+
+  it("reads highlights from zotero.org on each file that has some, and from Zotero here by the reference", async () => {
+    const mark = zoteroItem("MARK2345", {
+      itemType: "annotation",
+      parentItem: "PDFA2345",
+      annotationType: "underline",
+      annotationText: "A passage",
+      annotationColor: "#5FB236",
+      annotationPosition: JSON.stringify({ pageIndex: 2, rects: [] }),
+    });
+    // zotero.org counts a file's highlights; Zotero here counts none.
+    const library = (numChildren: number) => ({
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroItem("ABCD2345"),
+            children: [
+              { ...pdfAttachment("PDFA2345", "a.pdf"), meta: { numChildren } },
+              { ...pdfAttachment("PDFB2345", "b.pdf"), meta: { numChildren: 0 } },
+            ],
+          },
+        ],
+      ]),
+      annotations: new Map([["PDFA2345", [mark]]]),
+    });
+    const web = fakeZoteroTransport(library(1), "web");
+    const local = fakeZoteroTransport(library(0), "local");
+
+    const fromWeb = await readZoteroItemMaterial(web, "ABCD2345");
+    const fromLocal = await readZoteroItemMaterial(local, "ABCD2345");
+
+    const read = {
+      key: "MARK2345",
+      attachmentKey: "PDFA2345",
+      kind: "underline",
+      page: 3,
+      text: "A passage",
+      comment: "",
+      color: "#5fb236",
+      addedAt: null,
+    };
+    expect([fromWeb.annotations, fromLocal.annotations]).toEqual([[read], [read]]);
+    const asked = (requests: ReadonlyArray<string>) =>
+      requests.filter((path) => !path.startsWith("/items/ABCD2345"));
+    expect(asked(web.requests).map((path) => path.split("?")[0])).toEqual([
+      "/items/PDFA2345/children",
+    ]);
+    expect(asked(local.requests)).toEqual([
+      "/items?itemKey=ABCD2345&itemType=annotation&format=json&limit=100&start=0",
+    ]);
   });
 });
