@@ -703,39 +703,35 @@ browser, and scripts get cookies through the browser host.
 
 ## Google sign-in in Scient's browser
 
-Google refuses sign-in inside Scient's browser ("This browser or app may not be secure",
-`/v3/signin/rejected`), even with the page reporting Chrome's identity (Electron 44, 2026-11-04),
-on every platform. On Windows its passkey step came first: Chromium hands WebAuthn to Windows,
-so a person whose Google passkey lives on a phone or in Google Password Manager met the Windows
-Security dialog before the refusal.
+Google decides each sign-in inside Scient's browser itself. Some go through, a password typed in
+the tab included (seen 2026-11-09); others end on its refusal ("This browser or app may not be
+secure", `/v3/signin/rejected`), even with the page reporting Chrome's identity (Electron 44,
+2026-11-04). A profile holding a Google session made elsewhere passes Google's account chooser
+and other sites' "Continue with Google" without asking for anything. So Scient stops none of
+Google's pages: they load as in any browser, and only Google's refusal is explained. From
+2026-11-13 to 2026-11-15 Scient cancelled every recognized sign-in page before it loaded; that
+broke sign-ins Google accepted, and in `<webview>` tabs a cancelled load fires no
+`did-fail-load`, so the explanation never showed.
 
-So every preview partition runs `guardGoogleSignIn` (desktop `scient/browser/googleSignInGuard.ts`,
-pages classified by `@t3tools/shared/scientGoogleSignIn`) on `webRequest.onBeforeRequest`, for
-page and frame loads on accounts.google.com only, redirects included. Credential pages
-(identifier, challenges, `AddSession`) and the refusal page are cancelled before they load, in a
-tab, a popup or a frame. Pages that pass a session on
-(`ServiceLogin`, `AccountChooser`, `/`, OAuth `o/oauth2/auth` and `signin/oauth`) load only when the
-partition holds a Google session cookie (`SID`, `__Secure-1PSID`, `__Secure-3PSID`, `LSID`,
-`__Host-1PLSID`, `__Host-3PLSID`), so a profile with a working Google session keeps its account
-chooser and other sites' "Continue with Google". Cookie presence is only a hint; a stale session
-reaches a credential page and is stopped there. In a frame those pages always load: sites check
-silently with one, and without a session Google redirects the frame to a credential page. Session upkeep (`ListAccounts`, `CheckCookie`,
-`RotateCookies`), sign-out and Google's apps are never touched, nor are other sites' passkeys.
+`followTabSignIn` (desktop `scient/browser/googleSignInRecovery.ts`, pages classified by
+`@t3tools/shared/scientGoogleSignIn`) reports the refusal when it commits in the tab
+(`did-navigate`), arrives without a page load (`did-navigate-in-page`) or commits in a frame
+(`did-frame-navigate`). A popup a page opened (`watchSignInPopup`) closes on the refusal and
+reports to its opener's tab. `PreviewManager` emits each report as
+`DesktopPreviewSignInBlockedEvent`, and the tab shows a notice over Google's refusal, or over the
+page whose popup or frame was refused (`GoogleSignInRecovery.tsx`): **Sign in in a Chrome window**
+into the tab's profile, or **Open in my browser**. Once the window brought the sign-in into the
+profile, the tab opens the site, or Google, again. Each event names the page it is about
+(`pageUrl`: for a popup, the opener's page when the popup opened); once the tab shows another page
+the notice no longer applies. Google's own sign-in starts again at accounts.google.com; another
+site's "Continue with Google" starts again at that site's https origin, never at a Google URL
+carrying OAuth state, because state, PKCE and the opener belong to the refused attempt.
+`followTabSignIn` keeps that origin from the moment the tab enters an OAuth page, across Google's
+redirects. Nothing opens by itself. Server-hosted tabs report nothing.
 
-A cancelled load fails with `ERR_BLOCKED_BY_CLIENT` (-20). `PreviewManager` gives it a
-description an agent can act on and emits `DesktopPreviewSignInBlockedEvent`; a popup a page
-opened (`watchSignInPopup`, desktop `scient/browser/googleSignInRecovery.ts`) closes and reports to
-its opener's tab; a stopped frame reports to the tab holding it. The tab shows the recovery in place
-of the page, or as a notice over the page whose popup or frame was stopped
-(`GoogleSignInRecovery.tsx`): **Sign in in a Chrome window** into the tab's profile, or **Open in my
-browser**. Each event names the page it is about (`pageUrl`: for a popup, the opener's page when
-the popup opened); once the tab shows another page the notice no longer applies. Google's own
-sign-in starts at accounts.google.com; another site's "Continue with Google" starts again at that
-site's https origin, never at a Google URL carrying OAuth state, because state, PKCE and the opener
-belong to the stopped attempt. `followTabSignIn` keeps that origin from the moment the tab enters an
-OAuth page, across Google's redirects, so a stale session sent on to credentials or the refusal
-still starts again at the site. Nothing opens by itself. Server-hosted tabs
-don't run the guard.
+On Windows Chromium hands WebAuthn to Windows, so a person whose Google passkey lives on a phone
+or in Google Password Manager meets the Windows Security dialog; cancelling it leaves Google's
+**Try another way**.
 
 ## Passkeys
 
