@@ -3251,17 +3251,22 @@ them, and a crash leaves at most one per interrupted write.
 
 - `libraryRules.random.test.ts`: seeded random sequences of adds, edits, notes,
   Trash, restore, delete for good, project keys and notes, refreshes, merges
-  and Undos on a Library with three projects, checked after every step. A long
-  hunt: `LIBRARY_RULES_SEEDS=300 LIBRARY_RULES_STEPS=150`.
+  and Undos on a Library with three projects, checked after every step. The
+  default run is 6 seeds of 40 steps; the hunt to make after changing a store:
+  `LIBRARY_RULES_SEEDS=300 LIBRARY_RULES_STEPS=150`.
 - `libraryRules.crash.test.ts`: each action is stopped at its file changes in a
   child process (`libraryWorker.ts`) by a real SIGKILL, plainly or with half of
   a file written, or by a disk that is full from that change on
   (`fileFaults.ts` instruments `node:fs/promises`, including the handles `open`
   returns). A fresh process checks rule 7 before and after recovery, repeats
   the action and checks again; the action also runs once on a volume that
-  refuses hard links. The default run samples each action's changes;
-  `LIBRARY_CRASH_SWEEP=full` runs every one, and is the run to make after
-  changing a store's write order.
+  refuses hard links. The default run is a smoke check sized for CI, where
+  these process-and-flush tests run about eight times slower than on a
+  developer's Mac: four actions (add with a PDF, delete for good, merge, Undo),
+  killed at two changes each, plus the run without hard links.
+  `LIBRARY_CRASH_SWEEP=full` runs every change of all fourteen actions with
+  half-written files, a full disk and a killed recovery; it is the run to make
+  after changing a store's write order (about two minutes on a Mac).
 - `libraryRules.cases.test.ts`: the short sequences those runs found, kept as
   regressions.
 
