@@ -553,8 +553,6 @@ function zoteroPdfAttachments(
 /** A highlight or comment Zotero holds on one of an item's files. */
 export interface ZoteroPdfAnnotation {
   readonly key: string;
-  /** The library it is in, as `zoteroLibraryId` names it: a key is unique only there. */
-  readonly libraryId: string;
   readonly attachmentKey: string;
   readonly kind: ScientUnplacedAnnotation["kind"];
   /** The page, counted from 1; null when Zotero did not say. */
@@ -591,7 +589,6 @@ function zoteroPdfAnnotations(
     return [
       {
         key: child.key,
-        libraryId: zoteroLibraryId(child.library),
         attachmentKey: data.parentItem,
         // A kind Zotero adds later is kept as a comment, with its page and text.
         kind: isAnnotationKind(type) ? type : "note",

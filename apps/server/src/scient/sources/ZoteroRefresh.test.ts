@@ -619,7 +619,7 @@ describe("Zotero refresh", () => {
         unplaced: file?.unplaced?.map((entry) => [entry.annotationId, entry.quote, entry.comment]),
       };
     };
-    return { ...imported, home, material, marks, addInZotero };
+    return { ...imported, home, material, marks, addInZotero, onFiles };
   }
 
   it("places Zotero's highlights on the PDF, keeps the others in its list, and brings each once", async () => {
@@ -678,6 +678,19 @@ describe("Zotero refresh", () => {
     const { pdfs: _pdfs, ...earlier } = base;
     await writeScientSourceZoteroSync(root, earlier);
     addInZotero(mark("HIGH2345", "strong in the first"));
+
+    await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect((await marks()).placed?.map((entry) => entry.id)).toEqual([
+      "ann_zotero_user_0_HIGH2345",
+    ]);
+  });
+
+  it("brings a highlight once when Zotero here signed in to sync after the import", async () => {
+    const highlight = mark("HIGH2345", "strong in the first");
+    const { root, zotero, marks, onFiles } = await withHighlightedPdf([highlight]);
+    // Signed in, Zotero here names My Library by the user's ID instead of 0.
+    onFiles.set("PDFA2345", [{ ...highlight, library: { type: "user", id: 475425 } }]);
 
     await refreshZoteroSources({ root, actor: "user", zotero });
 

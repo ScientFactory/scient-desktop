@@ -32,7 +32,6 @@ const annotation = (
   fields: Partial<ZoteroPdfAnnotation> & Pick<ZoteroPdfAnnotation, "text">,
 ): ZoteroPdfAnnotation => ({
   key,
-  libraryId: "475425",
   attachmentKey: "PDFA2345",
   kind: "highlight",
   page: 1,
@@ -67,6 +66,7 @@ describe("placing Zotero's highlights", () => {
         annotation("GONE2345", { text: "Not in the text", page: 2 }),
         annotation("IMAG2345", { kind: "image", text: "", comment: "Figure 2" }),
       ],
+      "475425",
       text,
       "2026-11-15T09:00:00.000Z",
     );
@@ -99,7 +99,7 @@ describe("placing Zotero's highlights", () => {
         comment,
       ]),
     ).toEqual([
-      ["ann_zotero_user_0_REPT2345", "underline", 1, repeated, ""],
+      ["ann_zotero_user_475425_REPT2345", "underline", 1, repeated, ""],
       ["ann_zotero_user_475425_GONE2345", "highlight", 2, "Not in the text", ""],
       ["ann_zotero_user_475425_IMAG2345", "image", 1, "", "Figure 2"],
     ]);
@@ -108,6 +108,7 @@ describe("placing Zotero's highlights", () => {
   it("keeps every one of a PDF without text, with its page, quote and comment", () => {
     const { placed, unplaced } = placeZoteroAnnotations(
       [annotation("SCAN2345", { text: "strong in the first", comment: "Scanned" })],
+      "475425",
       null,
       "2026-11-15T09:00:00.000Z",
     );
@@ -130,13 +131,17 @@ describe("placing Zotero's highlights", () => {
 
   it("keeps a group's highlight apart from one of My Library with the same key, on one PDF and on two", async () => {
     await using project = await temporaryProject();
-    const mine = annotation("ABCD2345", { text: "strong in the first", comment: "Mine" });
-    const lab = { ...mine, libraryId: "groups/4321", comment: "The lab's" };
-    const bring = (sha256: string, entry: ZoteroPdfAnnotation) =>
+    const mark = annotation("ABCD2345", { text: "strong in the first" });
+    const bring = (sha256: string, libraryId: string, comment: string) =>
       importScientAnnotations({
         canonicalRoot: project.root,
         material: { sha256, byteLength: 100 },
-        ...placeZoteroAnnotations([entry], text, "2026-11-15T09:00:00.000Z"),
+        ...placeZoteroAnnotations(
+          [{ ...mark, comment }],
+          libraryId,
+          text,
+          "2026-11-15T09:00:00.000Z",
+        ),
       });
     const marks = async (sha256: string) =>
       (await readScientAnnotationFile(project.root, sha256))?.annotations.map((entry) => [
@@ -149,10 +154,10 @@ describe("placing Zotero's highlights", () => {
       string,
     ];
 
-    await bring(one, mine);
-    await bring(one, lab);
-    await bring(first, mine);
-    await bring(second, lab);
+    await bring(one, "475425", "Mine");
+    await bring(one, "groups/4321", "The lab's");
+    await bring(first, "475425", "Mine");
+    await bring(second, "groups/4321", "The lab's");
 
     expect(await marks(one)).toEqual([
       ["ann_zotero_user_475425_ABCD2345", "Mine"],

@@ -3577,9 +3577,12 @@ file. `readZoteroItemWithChildren` adds them to the children, and
 import places them on the record's PDF (`bringZoteroAnnotations` and the pure
 `placeZoteroAnnotations`, `ZoteroAnnotations.ts`): a highlight or underline
 whose text `anchorPdfQuote` finds once on its page becomes a highlight
-(`ann_zotero_user_<id>_<key>` or `ann_zotero_group_<id>_<key>`: a key is
-unique only in its library; by the user, at Zotero's date, the comment as its
-note, colour and underline kept). One found more than once there is not placed:
+(`ann_zotero_user_<id>_<key>` or `ann_zotero_group_<id>_<key>`, from the
+library of the source's Zotero link: a key is unique only in its library, and
+the link keeps the library as it was at import, so Zotero here signing in to
+sync, which turns its `0` into the user ID, does not bring each highlight
+twice; by the user, at Zotero's date, the comment as its note, colour and
+underline kept). One found more than once there is not placed:
 Zotero's sort index counts characters in its own reading of the page, which
 nothing ties to Scient's. Everything else is kept in the PDF's `unplaced`
 list, whole: a comment longer than a highlight's note (8,000 characters)
