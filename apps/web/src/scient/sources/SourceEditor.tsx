@@ -324,7 +324,8 @@ export function SourceEditor(props: {
 
       <ScrollArea className="min-h-0 flex-1">
         <form
-          className="space-y-6 p-4"
+          // A form reads best narrower than the Library column.
+          className="mx-auto w-full max-w-[42rem] space-y-6 p-4"
           onSubmit={(event) => {
             event.preventDefault();
             void save();
