@@ -14,6 +14,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
@@ -108,6 +109,17 @@ const readStoredProjects = (baseDir: string) =>
     const projects = yield* ProjectStore.ProjectStoreV2;
     return { projects: yield* projects.listShells() };
   }).pipe(Effect.provide(ProjectStore.layer.pipe(Layer.provide(layerPersistence(baseDir)))));
+
+// Archives a stored project the way the archive command records it.
+const archiveStoredProject = (baseDir: string, projectId: ProjectId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      UPDATE projection_projects
+      SET archived_at = '2026-01-02T00:00:00.000Z'
+      WHERE project_id = ${projectId}
+    `;
+  }).pipe(Effect.provide(layerPersistence(baseDir)));
 
 it.effect("adds, renames, and removes projects through the V2 project CLI domain", () =>
   Effect.gen(function* () {
@@ -234,6 +246,30 @@ const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixt
   assert.isDefined(project);
   return { baseDir, workspaceRoot, project: project! };
 });
+
+it.effect.each([
+  { label: "keeps its title", titleArgs: [], expectedTitle: undefined },
+  { label: "applies --title", titleArgs: ["--title", " Back again "], expectedTitle: "Back again" },
+])(
+  "adding an archived project's folder again unarchives it and $label",
+  ({ titleArgs, expectedTitle }) =>
+    Effect.gen(function* () {
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+      yield* archiveStoredProject(baseDir, project.id);
+
+      yield* runCli(["project", "add", workspaceRoot, ...titleArgs, "--base-dir", baseDir]);
+
+      const projects = (yield* readStoredProjects(baseDir)).projects;
+      assert.deepEqual(
+        projects.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          archivedAt: entry.archivedAt,
+        })),
+        [{ id: project.id, title: expectedTitle ?? project.title, archivedAt: null }],
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+);
 
 const makeThreadPersistenceLayer = (baseDir: string) =>
   Layer.mergeAll(RuntimeLayer.layerEventSink, ProjectionStore.layer, EventStore.layer).pipe(

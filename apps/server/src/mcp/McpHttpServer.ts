@@ -639,6 +639,7 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   const message =
     isPreviewAutomationError(firstFailure) ||
     isPreviewScreenshotSaveError(firstFailure) ||
+    isOrchestratorMcpFailure(firstFailure) ||
     // SCIENT-FORK: an Accounts refusal is server-written guidance too, such as a sign-in under way.
     isAccountsRefusal(firstFailure)
       ? firstFailure.message
@@ -713,17 +714,28 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const snapshot = encodedResult as SnapshotMetadata & {
                 readonly url: string;
                 readonly screenshot: {
-                  readonly mimeType: "image/png";
-                  readonly data: string;
+                  readonly mimeType?: "image/png";
+                  readonly data?: string;
                   readonly width: number;
                   readonly height: number;
                 };
                 readonly fullScreenshot?: { readonly data: string };
               };
               const { screenshot, fullScreenshot, ...page } = snapshot;
-              const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
+              const includeImage = payload?.includeImage === true;
+              const needsPixels = payload?.save === true || includeImage;
+              if (needsPixels && (screenshot.mimeType !== "image/png" || !screenshot.data)) {
+                return yield* new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: "Preview snapshot did not contain requested PNG pixels.",
+                });
+              }
+              const png =
+                needsPixels && screenshot.data
+                  ? new Uint8Array(Buffer.from(screenshot.data, "base64"))
+                  : undefined;
               const screenshotPath =
-                payload?.save === true
+                payload?.save === true && png
                   ? yield* saveScreenshot(
                       snapshot.url,
                       fullScreenshot
@@ -732,7 +744,6 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                     )
                   : undefined;
               // Providers replay images on later requests, and some reject them; include images only when requested.
-              const includeImage = payload?.includeImage === true;
               if (screenshotPath !== undefined && !includeImage) {
                 const saved = {
                   url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
@@ -747,7 +758,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const metadata = {
                 ...page,
                 screenshot: {
-                  mimeType: screenshot.mimeType,
+                  mimeType: "image/png" as const,
                   width: screenshot.width,
                   height: screenshot.height,
                 },
@@ -776,8 +787,8 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                           text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
                         },
                       ]),
-                  ...(includeImage
-                    ? [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]
+                  ...(includeImage && png
+                    ? [{ type: "image" as const, data: png, mimeType: "image/png" as const }]
                     : []),
                 ],
               });

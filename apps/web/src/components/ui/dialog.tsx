@@ -1,10 +1,19 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { useRender } from "@base-ui/react/use-render";
-import { useContext } from "react";
 import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { XIcon } from "lucide-react";
-import { type ComponentProps, createContext, type ReactNode, use, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  type CSSProperties,
+  createContext,
+  type ReactNode,
+  use,
+  useContext,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "~/lib/utils";
+import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
@@ -111,6 +120,7 @@ function DialogPopup({
   showBackdrop = true,
   bottomStickOnMobile = true,
   variant = "default",
+  mediaControlsPlacement = "outside",
   layout = "default",
   padding = "default",
   gap = "default",
@@ -122,6 +132,7 @@ function DialogPopup({
   showBackdrop?: boolean;
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media" | "paper";
+  mediaControlsPlacement?: "inside" | "outside";
   /** Shared layout for large, media-like content viewers. */
   layout?: "default" | "visual";
   padding?: "default" | "none";
@@ -171,6 +182,8 @@ function DialogPopup({
       </DialogPrimitive.Popup>
     ),
   });
+  // macOS has no CSS window-controls overlay, so use the platform titlebar height.
+  const nativeTitlebarHeight = useNativeTitlebarHeight();
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -189,9 +202,17 @@ function DialogPopup({
           !showBackdrop && "pointer-events-none",
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           isViewer &&
-            "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[calc(var(--native-titlebar-height,0px)+1.5rem)]",
+            "z-[60] grid-rows-1 place-items-center px-4 max-[8rem]:px-0 pb-6 pt-[calc(var(--media-dialog-titlebar-height,0px)+1.5rem)] [-webkit-app-region:no-drag]",
+          isViewer &&
+            mediaControlsPlacement === "inside" &&
+            "pt-[min(calc(var(--media-dialog-titlebar-height,0px)+1.5rem),50dvh)]",
           layer === "above-popovers" && "z-[150]",
         )}
+        style={
+          isViewer
+            ? ({ "--media-dialog-titlebar-height": `${nativeTitlebarHeight}px` } as CSSProperties)
+            : undefined
+        }
       >
         {popup}
       </DialogViewport>

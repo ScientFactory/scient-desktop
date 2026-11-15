@@ -91,7 +91,7 @@ import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { parseSideChatCommand, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { type FolderDropTarget, folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
@@ -1282,7 +1282,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     imageCount: composerImages.length + composerFiles.length,
     terminalContexts: composerTerminalContexts,
-    elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
+    elementContextCount:
+      composerPreviewAnnotations.length +
+      composerReviewComments.length +
+      composerThreadContexts.length +
+      composerEnvironmentContexts.length,
   });
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const compactSlashCommandAvailable =
@@ -2646,6 +2650,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerMenuItemsRef,
       activeComposerMenuItemRef,
       setComposerDraftPrompt,
+      setComposerDraftThreadContexts,
+      setComposerDraftEnvironmentContexts,
       setComposerCursor,
       setComposerTrigger,
       setComposerHighlightedItemId,
@@ -4197,7 +4203,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact={isComposerPrimaryActionsCompact}
                       canOperateThread={canOperateThread}
                       pendingAction={pendingPrimaryAction}
-                      isRunning={phase === "running" || phase === "connecting"}
+                      // A side-chat command starts a side chat; it never queues or steers the turn.
+                      isRunning={
+                        (phase === "running" || phase === "connecting") &&
+                        !(props.sideChatAvailable === true && parseSideChatCommand(prompt) !== null)
+                      }
                       canInterrupt={canInterrupt}
                       // SCIENT-FORK:START — visible acknowledgement while cancellation finishes.
                       isStopping={isStopping}

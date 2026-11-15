@@ -1,4 +1,3 @@
-import * as TestClock from "effect/testing/TestClock";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -38,6 +37,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -177,9 +177,9 @@ interface FakePi {
   readonly queueState: (data: Record<string, unknown>) => void;
   readonly setStreaming: (streaming: boolean) => void;
   readonly setCompacting: (compacting: boolean) => void;
-  readonly deferNextState: () => void;
+  readonly deferNextState: (started?: Deferred.Deferred<void>) => void;
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
-  readonly failNextState: () => void;
+  readonly failNextState: (skip?: number) => void;
   readonly failNextThinking: () => void;
   readonly deferNextLifecycle: (
     type: "switch_session" | "new_session" | "fork" | "prompt" | "abort",
@@ -238,8 +238,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   const commandsQueue: Array<unknown> = [];
   const allRequests: Array<PiRpcRecord> = [];
   let deferState = false;
+  let deferredStateStarted: Deferred.Deferred<void> | undefined;
   let deferredStateRequest: PiRpcRecord | undefined;
-  let failState = false;
+  let failStateAfter: number | null = null;
   let entriesFailure: "reject" | "close" | undefined;
   let failThinking = false;
   let vetoSwitch = false;
@@ -309,8 +310,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         if (typeof override?.model === "object" && override.model !== null)
           selectedModel = override.model as Record<string, unknown>;
         if (typeof override?.thinkingLevel === "string") thinkingLevel = override.thinkingLevel;
-        if (failState) {
-          failState = false;
+        if (failStateAfter !== null && failStateAfter-- === 0) {
+          failStateAfter = null;
           return { ...base, success: false, error: "state unavailable" };
         }
         return {
@@ -377,6 +378,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         const cancelled = vetoSwitch;
         vetoSwitch = false;
         if (!cancelled) serviceTier = null;
+        // SCIENT-FORK: this fake keeps its session state, so a switch moves it as Pi's does.
+        if (!cancelled && typeof record["sessionPath"] === "string")
+          sessionFile = record["sessionPath"];
         return { ...base, data: { cancelled } };
       }
       case "get_entries":
@@ -426,6 +430,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         if (record["type"] === "get_state" && deferState) {
           deferState = false;
           deferredStateRequest = record;
+          if (deferredStateStarted !== undefined) {
+            yield* Deferred.succeed(deferredStateStarted, undefined);
+            deferredStateStarted = undefined;
+          }
           continue;
         }
         if (record["type"] === deferredLifecycle) {
@@ -500,8 +508,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     queueMessages: (data) => messagesQueue.push(data),
     queueCommands: (data) => commandsQueue.push(data),
-    deferNextState: () => {
+    deferNextState: (started) => {
       deferState = true;
+      deferredStateStarted = started;
     },
     resolveDeferredState: (data) =>
       Effect.gen(function* () {
@@ -516,8 +525,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
           data,
         });
       }),
-    failNextState: () => {
-      failState = true;
+    failNextState: (skip = 0) => {
+      failStateAfter = skip;
     },
     deferNextLifecycle: (type) => {
       deferredLifecycle = type;
@@ -601,6 +610,7 @@ const openRuntime = Effect.fnUntraced(function* (
   providerSessionId = SESSION_ID,
   forkFake?: FakePi,
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
+  initialNativeThreadId?: string,
   configureMcp?: boolean,
 ) {
   let offeredWork: ProviderContinuationRequests.ProviderContinuationRequest | undefined;
@@ -624,6 +634,7 @@ const openRuntime = Effect.fnUntraced(function* (
     providerSessionId,
     modelSelection: modelSelection(model),
     runtimePolicy,
+    ...(initialNativeThreadId === undefined ? {} : { initialNativeThreadId }),
     ...(configureMcp === undefined ? {} : { configureMcp }),
   });
   offeredWorkByRuntime.set(runtime, () => offeredWork);
@@ -1025,6 +1036,7 @@ describe("PiAdapterV2", () => {
         title: "Continue?",
       });
       yield* takeEvent((event) => event.type === "runtime_request.updated");
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
       fake.vetoNextSwitch();
       const exit = yield* runtime.resumeThread({ providerThread }).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(exit));
@@ -1052,6 +1064,7 @@ describe("PiAdapterV2", () => {
             statusKey: key,
             statusText: key === "lint" ? "Lint clean" : "Watching",
           });
+        fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
         fake.deferNextLifecycle("switch_session");
         const switching = yield* runtime
           .resumeThread({ providerThread })
@@ -1755,7 +1768,7 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("adopts a completed native wake without sending a synthetic prompt", () =>
+  it.effect("adopts a wake during same-file registration without a prompt", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const offers =
@@ -1775,6 +1788,10 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      const reading = yield* Deferred.make<void>();
+      fake.deferNextState(reading);
+      const registering = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* Deferred.await(reading);
       yield* fake.emit({ type: "agent_start" });
       const offer = yield* Queue.take(offers).pipe(
         Effect.raceFirst(
@@ -1790,6 +1807,8 @@ describe("PiAdapterV2", () => {
       assert.equal(offer.providerThreadId, providerThread.id);
       assert.equal(offer.delivery, "adapter_buffered");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* fake.resolveDeferredState(recordedIdleState(FAKE_SESSION_FILE));
+      yield* Fiber.join(registering);
       let dispatchCommitted = false;
       yield* offer.dispatchIfCurrent!(
         Effect.sync(() => {
@@ -2051,14 +2070,29 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      yield* fake.emit({ type: "agent_start" });
-      const offer = yield* Queue.take(offers);
-      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      // SCIENT-FORK: a Scient session refuses another app thread before reading Pi's state, so
+      // the wake races a switch of this thread to another native session instead.
       const otherThread = {
         ...providerThread,
-        appThreadId: ThreadId.make("other-thread"),
         id: ProviderThreadId.make("other-provider-thread"),
+        nativeThreadRef: {
+          driver: PI_PROVIDER,
+          nativeId: "/fake/other-thread-session.jsonl",
+          strength: "strong" as const,
+        },
       };
+      const reading = yield* Deferred.make<void>();
+      fake.deferNextState(reading);
+      const registering = yield* runtime
+        .resumeThread({ providerThread: otherThread })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(reading);
+      yield* fake.emit({ type: "agent_start" });
+      const offer = yield* Queue.take(offers);
+      yield* fake.resolveDeferredState(recordedIdleState("/fake/other-session.jsonl"));
+      assert.equal((yield* Fiber.join(registering))._tag, "Failure");
+      assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
       assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(otherThread));
       const failure = yield* runtime
         .resumeThread({ providerThread: otherThread })
@@ -2408,7 +2442,16 @@ describe("PiAdapterV2", () => {
         // SCIENT-FORK:END
       });
       const fake = yield* makeFakePi;
-      yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, undefined, undefined, false);
+      yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        undefined,
+        undefined,
+        false,
+      );
       const spawn = fake.lastSpawn();
       assert.isUndefined(spawn.env.T3_MCP_URL);
       assert.isUndefined(spawn.env.T3_MCP_BEARER_TOKEN);
@@ -2420,6 +2463,230 @@ describe("PiAdapterV2", () => {
       Effect.scoped,
       Effect.provide(layerTest),
     ),
+  );
+
+  it.effect(
+    "resumes a persisted session at spawn without replacing it or clearing model selection",
+    () =>
+      Effect.gen(function* () {
+        const original = yield* openRuntime(yield* makeFakePi);
+        const persisted = yield* original.runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          undefined,
+          FAKE_SESSION_FILE,
+        );
+        const args = fake.lastSpawn().args;
+        assert.include(args, "--session");
+        assert.equal(args[args.indexOf("--session") + 1], FAKE_SESSION_FILE);
+        assert.notInclude(args, "--no-session");
+        assert.notInclude(args, "--no-extensions");
+        assert.include(args, "--extension");
+
+        // Startup extensions can hold Pi's first reply past the ordinary request deadline.
+        const reading = yield* Deferred.make<void>();
+        fake.deferNextState(reading);
+        const registering = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+            existingProviderThread: persisted,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(reading);
+        yield* TestClock.adjust(Duration.millis(16_820));
+        yield* fake.resolveDeferredState({
+          ...recordedIdleState(FAKE_SESSION_FILE.replace("/--workspace--/", "/--workspace--/./")),
+        });
+        const providerThread = yield* Fiber.join(registering);
+        assert.equal(providerThread.id, persisted.id);
+        assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+        yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
+        assert.equal((yield* fake.takeRequest("prompt"))["message"], "Hello pi");
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+
+        const resumed = yield* runtime.resumeThread({ providerThread });
+        yield* startTurn(runtime, resumed, "anthropic/claude-sonnet", [], "Continue", undefined, 2);
+        assert.equal((yield* fake.takeRequest("prompt"))["message"], "Continue");
+        assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+        // SCIENT-FORK: Scient confirms the selection with set_model on every turn (one per turn).
+        assert.equal(
+          fake.allRequests().filter((request) => request.type === "set_model").length,
+          2,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("creates a fresh session when cold resume is bypassed before registration", () =>
+    Effect.gen(function* () {
+      const original = yield* openRuntime(yield* makeFakePi);
+      const persisted = yield* original.runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        undefined,
+        FAKE_SESSION_FILE,
+      );
+      const fresh = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        existingProviderThread: { ...persisted, nativeThreadRef: null },
+      });
+      assert.equal(fresh.id, persisted.id);
+      assert.notEqual(fresh.nativeThreadRef?.nativeId, persisted.nativeThreadRef?.nativeId);
+      assert.equal(
+        fake.allRequests().filter((request) => request.type === "new_session").length,
+        1,
+      );
+      assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reserves registration during its state read and releases it on interruption", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      const reading = yield* Deferred.make<void>();
+      fake.deferNextState(reading);
+      const registering = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* Deferred.await(reading);
+      const overlappingTurn = yield* startTurn(runtime, providerThread).pipe(Effect.result);
+      assert.equal(overlappingTurn._tag, "Failure", "A turn was accepted during registration");
+      const overlappingResume = yield* runtime.resumeThread({ providerThread }).pipe(Effect.result);
+      assert.equal(overlappingResume._tag, "Failure");
+      yield* fake.resolveDeferredState(recordedIdleState(FAKE_SESSION_FILE));
+      const resumed = yield* Fiber.join(registering);
+
+      const interruptedRead = yield* Deferred.make<void>();
+      fake.deferNextState(interruptedRead);
+      const interrupted = yield* runtime
+        .resumeThread({ providerThread: resumed })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(interruptedRead);
+      yield* Fiber.interrupt(interrupted);
+      yield* fake.resolveDeferredState(recordedIdleState(FAKE_SESSION_FILE));
+      fake.failNextState();
+      const failedRead = yield* runtime
+        .resumeThread({ providerThread: resumed })
+        .pipe(Effect.result);
+      assert.equal(failedRead._tag, "Failure");
+
+      yield* startTurn(runtime, resumed, "anthropic/claude-sonnet", [], "Continue", undefined, 2);
+      assert.equal((yield* fake.takeRequest("prompt"))["message"], "Continue");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+      // SCIENT-FORK: Scient confirms the selection with set_model on every turn (one per turn).
+      assert.equal(fake.allRequests().filter((request) => request.type === "set_model").length, 2);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("respawns on a fresh session when Pi exits on an unusable spawn session", () =>
+    Effect.gen(function* () {
+      const original = yield* openRuntime(yield* makeFakePi);
+      const persisted = yield* original.runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      // A cleared ref takes the new_session path, which must also run the recovery.
+      for (const providerThread of [persisted, { ...persisted, nativeThreadRef: null }]) {
+        const failed = yield* makeFakePi;
+        const replacement = yield* makeFakePi;
+        // The transport fails stdin and events together; awaiting this orders registration after both.
+        const transportDown = yield* Deferred.make<void>();
+        let spawnCount = 0;
+        const fake = {
+          ...replacement,
+          spawner: ChildProcessSpawner.make((command) => {
+            spawnCount++;
+            if (spawnCount > 1) return replacement.spawner.spawn(command);
+            // Exits at once so the transport is already down before registration runs.
+            return failed.spawner.spawn(command).pipe(
+              Effect.map((child) =>
+                ChildProcessSpawner.makeHandle({
+                  ...child,
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                  stdin: child.stdin.pipe(
+                    Sink.ensuring(Deferred.succeed(transportDown, undefined)),
+                  ),
+                }),
+              ),
+            );
+          }),
+        };
+        yield* failed.closeStdout;
+        const { runtime, takeEvent } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          undefined,
+          FAKE_SESSION_FILE,
+        );
+        assert.include(failed.lastSpawn().args, "--session");
+        yield* Deferred.await(transportDown);
+        replacement.queueState({ sessionFile: "/fake/default-session.jsonl" });
+        const resumed = yield* runtime.resumeThread({ providerThread });
+        assert.equal(spawnCount, 2);
+        // SCIENT-FORK: the replacement starts on an owned empty session file, not the rejected one.
+        const replacementArgs = replacement.lastSpawn().args;
+        assert.notEqual(
+          replacementArgs[replacementArgs.indexOf("--session") + 1],
+          FAKE_SESSION_FILE,
+        );
+        assert.include(replacement.lastSpawn().args, "--extension");
+        const switched = replacement.allRequests().find((r) => r.type === "switch_session");
+        if (providerThread.nativeThreadRef === null) {
+          assert.isUndefined(switched);
+          assert.notEqual(resumed.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+        } else {
+          assert.equal(switched?.sessionPath, FAKE_SESSION_FILE);
+          assert.equal(resumed.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+        }
+        yield* startTurn(runtime, resumed);
+        yield* replacement.takeRequest("prompt");
+        yield* replacement.emit({ type: "agent_start" });
+        yield* replacement.emit({ type: "agent_settled" });
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("rejects a resume while a turn is active", () =>
@@ -2475,12 +2742,37 @@ describe("PiAdapterV2", () => {
 
       const otherCwd = yield* sessionAt(`${host.paths.cwd}-original-checkout`);
       forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: FAKE_SESSION_FILE });
       fake.queueState({ sessionFile: forkFile });
       const resumed = yield* runtime.resumeThread({ providerThread: otherCwd });
       const args = forkFake.lastSpawn().args;
       assert.equal(args[args.indexOf("--fork") + 1], otherCwd.nativeThreadRef?.nativeId);
       assert.equal(lastSwitch(), forkFile);
       assert.equal(resumed.nativeThreadRef?.nativeId, forkFile);
+
+      // A cold start may attach only a session recorded in this cwd; others take the fork above.
+      for (const thread of [sameCwd, otherCwd]) {
+        const coldFake = yield* makeFakePi;
+        yield* openRuntime(
+          coldFake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          undefined,
+          thread.nativeThreadRef?.nativeId,
+        );
+        const coldArgs = coldFake.lastSpawn().args;
+        const coldSession = coldArgs.includes("--session")
+          ? coldArgs[coldArgs.indexOf("--session") + 1]
+          : undefined;
+        // SCIENT-FORK: a session from another cwd starts on Scient's owned empty file instead.
+        if (thread === sameCwd) assert.equal(coldSession, sameCwd.nativeThreadRef?.nativeId);
+        else {
+          assert.isDefined(coldSession);
+          assert.notEqual(coldSession, otherCwd.nativeThreadRef?.nativeId);
+        }
+      }
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -2493,8 +2785,10 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
       fake.vetoNextSwitch();
-      yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+      const error = yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+      assert.match(String(error.cause), /cancelled the session switch/);
       const replacement = yield* runtime.ensureThread({
         threadId: THREAD_ID,
         modelSelection: modelSelection("default"),
@@ -2555,6 +2849,7 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
       fake.deferNextLifecycle("switch_session");
       const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
       yield* fake.takeRequest("switch_session");
@@ -2992,7 +3287,13 @@ describe("PiAdapterV2", () => {
         startedAt: null,
         completedAt: null,
       });
+      yield* startTurn(runtime, source, "anthropic/claude-sonnet");
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
       forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: FAKE_SESSION_FILE });
       fake.queueState({ sessionFile: forkFile });
       const target = ThreadId.make("fork-target");
       const forked = yield* runtime.forkThread({
@@ -3022,7 +3323,18 @@ describe("PiAdapterV2", () => {
         fake.allRequests().some((request) => request.type === "fork" || request.type === "clone"),
       );
       const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
-      yield* startTurn(runtime, adopted, "default", [], "Continue", undefined, 1, target);
+      yield* startTurn(
+        runtime,
+        adopted,
+        "anthropic/claude-sonnet",
+        [],
+        "Continue",
+        undefined,
+        1,
+        target,
+      );
+      yield* fake.takeRequest("prompt");
+      assert.equal(fake.allRequests().filter((request) => request.type === "set_model").length, 2);
       yield* fake.emit({ type: "agent_start" });
       yield* fake.emit({ type: "agent_settled" });
       const updated = yield* takeEvent(
@@ -4293,20 +4605,11 @@ describe("PiAdapterV2", () => {
         "Success",
         `rollback on a fresh Pi runtime failed: ${result._tag === "Failure" ? String(result.failure.cause) : ""}`,
       );
+      const args = fake.lastSpawn().args;
+      assert.equal(args[args.indexOf("--session") + 1], sessionFile);
       const requests = fake.allRequests();
-      const switchIndex = requests.findIndex(
-        (request) => request.type === "switch_session" && request.sessionPath === sessionFile,
-      );
-      const forkIndex = requests.findIndex((request) => request.type === "fork");
-      // SCIENT-FORK: Scient launches Pi on the persisted session file, so a fresh runtime confirms
-      // it with get_state instead of switching to it.
-      const boundIndex =
-        switchIndex >= 0
-          ? switchIndex
-          : requests.findIndex((request) => request.type === "get_state");
-      assert.isAtLeast(boundIndex, 0, "fresh runtime never loaded the persisted session");
-      assert.isAbove(forkIndex, boundIndex, "fork ran before loading the persisted session");
-      assert.equal(requests[forkIndex]?.entryId, "u2");
+      assert.isFalse(requests.some((request) => request.type === "switch_session"));
+      assert.equal(requests.find((request) => request.type === "fork")?.entryId, "u2");
       if (result._tag !== "Success") return;
       assert.equal(
         result.success.providerThread.nativeThreadRef?.nativeId,

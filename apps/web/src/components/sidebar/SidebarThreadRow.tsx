@@ -652,7 +652,7 @@ function ThreadRenameInput(props: {
       }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
-      className="min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-sm font-medium text-card-foreground outline-none focus:border-foreground"
+      className="-mx-1 min-w-0 flex-1 rounded-sm bg-card px-1 text-sm font-medium text-card-foreground outline-none ring-1 ring-inset ring-input focus:ring-foreground"
     />
   );
 }
@@ -1245,7 +1245,7 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={sortable?.isDragging} onOpenChange={setTooltipOpen}>
+        <Tooltip disabled={isRenaming || sortable?.isDragging} onOpenChange={setTooltipOpen}>
           <TooltipTrigger
             render={
               <div
@@ -1444,7 +1444,10 @@ const SidebarThreadRowBody = memo(function SidebarThreadRowBody(
         sortable?.isDragging && "relative z-20",
       )}
     >
-      <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging} onOpenChange={setTooltipOpen}>
+      <Tooltip
+        disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging}
+        onOpenChange={setTooltipOpen}
+      >
         <TooltipTrigger
           render={
             <div
