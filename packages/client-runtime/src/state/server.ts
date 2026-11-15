@@ -1565,6 +1565,11 @@ export function createServerEnvironmentAtoms<R, E>(
               { instanceId, cwd, fresh: input.fresh === true },
               result.providers,
               startedProvider,
+              // SCIENT-FORK:START — the reply's inventory generation must still be current.
+              registry
+                .get(configValueAtom(environmentId))
+                ?.providers.find((provider) => provider.instanceId === instanceId),
+              // SCIENT-FORK:END
             ),
           );
         }),

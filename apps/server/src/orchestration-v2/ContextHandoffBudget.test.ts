@@ -1075,7 +1075,11 @@ describe("Scient serialized handoff allowance", () => {
       scientHandoffByteBudget({ ...input, attachments: [image] }),
       Math.max(0, available - 8_192 * 3),
     );
-    assert.equal(scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }), 0);
+    // A small window reserves half of itself for work, not the whole window.
+    assert.equal(
+      scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }),
+      (16_000 - 7_000 - 4 - 8_000) * 3,
+    );
   });
 });
 

@@ -1361,7 +1361,7 @@ describe("AcpRegistryAdapterV2", () => {
       const plainHttp = (authorization: string) => [
         {
           type: "http",
-          name: "t3-code",
+          name: "scient",
           url: endpoint,
           headers: [{ name: "Authorization", value: authorization }],
         },

@@ -76,9 +76,12 @@ export function recordFetchedWorkspaceSnapshot(
   input: { readonly instanceId: ProviderInstanceId; readonly cwd: string; readonly fresh: boolean },
   providers: ServerConfig["providers"],
   configProvider: ServerProviderEntry | undefined,
+  // The config's provider when the reply lands: a reply from a retired inventory never applies,
+  // even when the request started under it.
+  currentProvider: ServerProviderEntry | undefined = configProvider,
 ): ReadonlyArray<FetchedWorkspaceSnapshot> {
   const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-  if (provider?.nativeInventoryGeneration !== configProvider?.nativeInventoryGeneration) {
+  if (provider?.nativeInventoryGeneration !== currentProvider?.nativeInventoryGeneration) {
     return current;
   }
   // A cwd reply leaves out the machine lists, so its basis is the config's, as upstream.

@@ -13,7 +13,8 @@ const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
  * git-annex replaces a linked worktree's `.git` file with a symlink to its admin
  * directory, so its symlinks into `.git/annex` resolve. Git then refuses to remove it.
  */
-const annexedAdminDir = Effect.fn("WorktreeRemoval.annexedAdminDir")(
+// SCIENT-FORK: exported for storage cleanup's isolating move.
+export const annexedAdminDir = Effect.fn("WorktreeRemoval.annexedAdminDir")(
   function* (worktreePath: string) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

@@ -340,7 +340,8 @@ describe("AgentScope service", () => {
         const memoryLimits = () =>
           calls
             .filter(
-              ([, verb, , slice]) => verb === "set-property" && slice === "app-t3code-agents.slice",
+              // SCIENT-FORK: Scient's process-scope identity.
+              ([, verb, , slice]) => verb === "set-property" && slice === "app-scient-agents.slice",
             )
             .map((args) => args.slice(4));
         yield* launch;

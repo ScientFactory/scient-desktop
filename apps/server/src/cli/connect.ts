@@ -191,7 +191,14 @@ function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): Rea
 
 function formatCloudStatus(
   status: CloudCliStatus,
-  commands: { readonly link: string; readonly serviceStatus: string },
+  commands: {
+    readonly link: string;
+    readonly serviceStatus: string;
+    // SCIENT-FORK:START — Scient's offline hint starts the server in the foreground.
+    readonly serve: string;
+    readonly status: string;
+    // SCIENT-FORK:END
+  },
   options?: { readonly json?: boolean },
 ): string {
   if (options?.json) {
@@ -236,7 +243,7 @@ function formatCloudStatus(
         : status.reachability === null
           ? [
               "",
-              "No running server answered, so reachability was not checked. Start Scient (the desktop app or `scient serve`), then run `scient connect status` again.",
+              `No running server answered, so reachability was not checked. Start Scient (the desktop app or \`${commands.serve}\`), then run \`${commands.status}\` again.`,
             ]
           : status.reachability.status === "reachable"
             ? [
@@ -743,6 +750,10 @@ const connectStatusCommand = Command.make("status", {
         const commands = {
           link: yield* resolveHostCliHint("connect link", flags.baseDir),
           serviceStatus: yield* resolveHostCliHint("service status", flags.baseDir),
+          // SCIENT-FORK:START
+          serve: yield* resolveHostCliHint("serve", flags.baseDir),
+          status: yield* resolveHostCliHint("connect status", flags.baseDir),
+          // SCIENT-FORK:END
         };
         yield* Console.log(formatCloudStatus(status, commands, { json: flags.json }));
       }),

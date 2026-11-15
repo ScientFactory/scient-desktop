@@ -60,7 +60,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
-import { isLinkedWorktree, removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
+import { annexedAdminDir, isLinkedWorktree, removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 // SCIENT-FORK:START worktree-lifetime-retention
 import { withoutComputeWorkspaceOwners } from "./scient/compute/ComputeWorkspaceLifetime.ts";
@@ -1057,6 +1057,22 @@ const make = Effect.gen(function* () {
       prefix: ".scient-cleanup-",
     });
     const isolatedPath = path.join(container, "checkout");
+    // `git worktree move` refuses git-annex's symlinked `.git`: move it with a gitdir file,
+    // and give a restored checkout its symlink back so its annexed files resolve.
+    const gitFile = path.join(worktreePath, ".git");
+    const annexed = yield* annexedAdminDir(worktreePath);
+    const restoreAnnexLink = Option.isNone(annexed)
+      ? Effect.void
+      : fs.exists(worktreePath).pipe(
+          Effect.flatMap((kept) =>
+            kept
+              ? fs
+                  .remove(gitFile, { force: true })
+                  .pipe(Effect.andThen(fs.symlink(annexed.value, gitFile)))
+              : Effect.void,
+          ),
+          Effect.ignore,
+        );
     const restore = Effect.gen(function* () {
       if (!(yield* fs.exists(isolatedPath))) return;
       if (yield* fs.exists(worktreePath)) {
@@ -1073,6 +1089,7 @@ const make = Effect.gen(function* () {
         "git worktree move (rollback)",
       );
     }).pipe(
+      Effect.ensuring(restoreAnnexLink),
       Effect.catchCause((cause) =>
         Effect.fail(
           new GitCommandError({
@@ -1086,6 +1103,10 @@ const make = Effect.gen(function* () {
     );
     const removal = Effect.gen(function* () {
       yield* fs.chmod(container, 0o700);
+      if (Option.isSome(annexed))
+        yield* fs
+          .remove(gitFile)
+          .pipe(Effect.andThen(fs.writeFileString(gitFile, `gitdir: ${annexed.value}\n`)));
       yield* cleanupGit(
         repositoryRoot,
         ["worktree", "move", worktreePath, isolatedPath],

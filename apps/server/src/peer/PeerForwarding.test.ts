@@ -729,7 +729,7 @@ it.effect("refuses a launch there above the link's access, naming the link", () 
       yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
 
       // A full-access agent here asks for more than the link allows there.
-      const launchAboveLink = a.call("thread:laptop-full", "t3_thread_launch", {
+      const launchAboveLink = a.call("thread:laptop-full", "scient_thread_launch", {
         environmentId: box.environmentId,
         projectId: boxProject,
         title: "Run the suite there",

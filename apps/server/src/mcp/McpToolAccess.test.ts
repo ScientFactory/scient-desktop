@@ -530,9 +530,13 @@ it.effect.each(["reads_as_caller", "acts_as_caller"] as const)(
     }).pipe(
       Effect.provide(McpToolAccess.HandlersLayer.layer(layerProbeHandlers)),
       Effect.provideService(McpInvocationContext.McpInvocationContext, fullAccessClient),
-      Effect.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
-      // SCIENT-FORK: Scient's handler layers capture the native-owner invocation policy.
-      Effect.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadManagement.ThreadManagementService)({}),
+          // SCIENT-FORK: Scient's handler layers capture the native-owner invocation policy.
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        ),
+      ),
     ),
 );
 

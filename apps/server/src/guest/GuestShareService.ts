@@ -666,11 +666,19 @@ const make = Effect.gen(function* () {
     return item === null ? yield* unavailable : { thread, item };
   });
 
+  // SCIENT-FORK:START — a Scient fork presents its source's items as its own; their
+  // output and pages stay with the item they came from.
+  const sourceOf = (item: OrchestrationV2TurnItem) => ({
+    threadId: item.inheritedFrom?.threadId ?? item.threadId,
+    itemId: item.inheritedFrom?.itemId ?? item.id,
+  });
+  // SCIENT-FORK:END
+
   const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
     const { item } = yield* threadItem(session, itemId);
     if (item.type !== "dynamic_tool") return yield* unavailable;
     const reference = htmlRenderFromToolItem(item);
-    const [attachmentId] = threadHtmlRenderAttachmentIds(item.threadId, [item]);
+    const [attachmentId] = threadHtmlRenderAttachmentIds(sourceOf(item).threadId, [item]);
     const path =
       attachmentId === undefined
         ? null
@@ -708,7 +716,7 @@ const make = Effect.gen(function* () {
   ) {
     const { item } = yield* threadItem(session, itemId);
     if (item.type !== "command_execution") return yield* unavailable;
-    return commandOutputs.subscribe({ threadId: item.threadId, itemId: item.id }).pipe(
+    return commandOutputs.subscribe(sourceOf(item)).pipe(
       // A lost hub stream ends the output; the row reloads it when reopened.
       Stream.catchCause(() => Stream.empty),
       Stream.interruptWhen(untilRevoked(session)),
