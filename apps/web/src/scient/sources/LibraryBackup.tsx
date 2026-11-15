@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   ScientSourcesBackupStatus,
+  ScientSourcesJoinStatus,
   ScientSourcesLibraryCopies,
   ScientSourcesRestoreStatus,
 } from "@t3tools/contracts";
@@ -13,9 +14,12 @@ import { changeLibraryRestore, organizeScientSources, readLibraryBackupStatus } 
 import { scientSourcesErrorMessage } from "./errorMessage";
 import {
   BACKUP_LABELS,
+  JOIN_LABELS,
   RESTORE_LABELS,
   backupDoneLabel,
   backupRunningLabel,
+  joinDoneLabel,
+  joinRunningLabel,
   restoreLine,
   restoreRefusedLabel,
   restoredLabel,
@@ -28,6 +32,8 @@ const ASK_AGAIN_MS = 1_000;
  * end is announced once in this window also after a switch to another project or a reopened panel.
  */
 const following = new Set<EnvironmentId>();
+/** The same for adding from another Library. */
+const followingJoin = new Set<EnvironmentId>();
 /** How restores ended that this window has already said, by environment and restore. */
 const said = new Set<string>();
 
@@ -45,6 +51,23 @@ function sayHowBackupEnded(environmentId: EnvironmentId, backup: ScientSourcesBa
     });
   } else if (backup.state === "failed") {
     toastManager.add({ type: "error", title: BACKUP_LABELS.failed, description: backup.reason });
+  }
+}
+
+function sayHowJoinEnded(environmentId: EnvironmentId, join: ScientSourcesJoinStatus) {
+  if (join.state === "running") {
+    followingJoin.add(environmentId);
+    return;
+  }
+  if (!followingJoin.delete(environmentId)) return;
+  if (join.state === "done") {
+    toastManager.add({
+      type: "success",
+      title: join.added > 0 ? JOIN_LABELS.done : JOIN_LABELS.nothingNew,
+      description: joinDoneLabel(join),
+    });
+  } else if (join.state === "failed") {
+    toastManager.add({ type: "error", title: JOIN_LABELS.failed, description: join.reason });
   }
 }
 
@@ -80,6 +103,7 @@ function sayHowRestoreEnded(environmentId: EnvironmentId, restore: ScientSources
 const NOTHING: ScientSourcesLibraryCopies = {
   backup: { state: "none" },
   restore: { state: "none" },
+  join: { state: "none" },
 };
 
 /**
@@ -93,6 +117,8 @@ export function useLibraryBackup(input: {
   readonly root: string;
   /** False where the Library is not kept (a project that keeps its own sources). */
   readonly enabled: boolean;
+  /** Called when adding from another Library has put new sources in this one. */
+  readonly onAdded?: () => void;
 }) {
   const context = `${input.environmentId}\0${input.root}`;
   const [reading, setReading] = useState<{
@@ -100,7 +126,10 @@ export function useLibraryBackup(input: {
     readonly copies: ScientSourcesLibraryCopies;
   } | null>(null);
   const copies = input.enabled && reading?.context === context ? reading.copies : null;
-  const working = copies?.backup.state === "running" || copies?.restore.state === "preparing";
+  const working =
+    copies?.backup.state === "running" ||
+    copies?.restore.state === "preparing" ||
+    copies?.join.state === "running";
   /** No answer yet for this Library: asked again until one comes. */
   const unread = input.enabled && copies === null;
   /** The context a read is under way for: one read at a time, so a slow one is not restarted. */
@@ -126,6 +155,10 @@ export function useLibraryBackup(input: {
     if (!next || !show(asked, next)) return;
     sayHowBackupEnded(input.environmentId, next.backup);
     sayHowRestoreEnded(input.environmentId, next.restore);
+    const ended = next.join.state !== "running" && followingJoin.has(input.environmentId);
+    sayHowJoinEnded(input.environmentId, next.join);
+    // New sources are in the Library: the list is read again.
+    if (ended && next.join.state === "done" && next.join.added > 0) input.onAdded?.();
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the backup's and the restore's status from the environment server when the panel opens on a Library
@@ -174,7 +207,22 @@ export function useLibraryBackup(input: {
     );
   };
 
+  const addFrom = (fromFolder: string) => {
+    const asked = context;
+    return organizeScientSources(input.environmentId, {
+      root: input.root,
+      change: { action: "add-from-library", fromFolder },
+    }).then(() => {
+      followingJoin.add(input.environmentId);
+      show(asked, { join: { state: "running", done: 0, total: 0 } });
+      return load(asked);
+    }, failed(JOIN_LABELS.failed));
+  };
+
   return {
+    joinLine: copies ? joinRunningLabel(copies.join) : null,
+    /** Adds what a backup, or a Library a restore replaced, holds and this Library lacks. */
+    addFrom,
     line: copies ? backupRunningLabel(copies.backup) : null,
     start,
     restoreLine: copies ? restoreLine(copies.restore) : null,
@@ -188,6 +236,7 @@ export function useLibraryBackup(input: {
 /** One line beside the store notices while a backup runs, and one while a restore is on its way. */
 export function LibraryBackupNotice(props: {
   readonly line: string | null;
+  readonly joinLine?: string | null;
   readonly restoreLine?: string | null;
   readonly onCancelRestore?: (() => void) | undefined;
 }) {
@@ -199,6 +248,14 @@ export function LibraryBackupNotice(props: {
           className="mx-3 mt-2 text-xs break-words text-muted-foreground tabular-nums"
         >
           {props.line}
+        </div>
+      ) : null}
+      {props.joinLine ? (
+        <div
+          role="status"
+          className="mx-3 mt-2 text-xs break-words text-muted-foreground tabular-nums"
+        >
+          {props.joinLine}
         </div>
       ) : null}
       {props.restoreLine ? (

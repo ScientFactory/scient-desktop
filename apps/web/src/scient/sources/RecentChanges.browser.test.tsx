@@ -72,6 +72,7 @@ function setup(listed: ReadonlyArray<ScientSourcesRecentChange> = changes, more 
     onUndoBulkEdit: vi.fn(async () => undefined),
     onShowSources: vi.fn(),
     onChanged: vi.fn(async () => undefined),
+    onAddFromLibrary: vi.fn(async () => undefined),
     onClose: vi.fn(),
   };
 }
@@ -132,6 +133,68 @@ describe("Recent changes", () => {
       root: "/project",
       sourcesOfImport: "op_1",
     });
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the sources of a Library a restore replaced, and Undo of what was added from another", async () => {
+    const kept = "/state/scient/library.replaced-restore_1";
+    const handlers = setup([
+      {
+        kind: "join",
+        id: "join_1",
+        at,
+        by: "user",
+        from: "replaced",
+        backupCreatedAt: null,
+        state: "done",
+        added: 12,
+        different: 3,
+        removedHere: 1,
+        left: 0,
+      },
+      {
+        kind: "restore",
+        id: "restore_1",
+        at,
+        by: "user",
+        backupCreatedAt: "2026-11-10T08:00:00.000Z",
+        sources: 1204,
+        pdfs: 980,
+        kept: { path: kept, sources: 16 },
+      },
+    ]);
+    mocks.organize.mockResolvedValue({
+      outcome: "join-undone",
+      joinUndone: { trashed: 10, left: 2 },
+    });
+    await using _screen = await render(dialog(handlers), { router: false });
+
+    await expect
+      .element(
+        page.getByText(
+          "Added 12 sources from the Library a restore replaced · 3 that both hold left as here · 1 removed here not brought back",
+        ),
+      )
+      .toBeVisible();
+    await expect
+      .element(page.getByText(`The Library that was here (16 sources) is kept in ${kept}`))
+      .toBeVisible();
+
+    await userEvent.click(page.getByRole("button", { name: /^Undo: Added 12 sources/u }));
+    await vi.waitFor(() =>
+      expect(mocks.organize).toHaveBeenCalledWith(environmentId, {
+        root: "/project",
+        change: { action: "undo-join", joinId: "join_1" },
+      }),
+    );
+    await expect
+      .element(page.getByText("2 sources changed since and were left in the Library."))
+      .toBeVisible();
+
+    await userEvent.click(
+      page.getByRole("button", { name: /^Add its sources: Restored the Library/u }),
+    );
+    expect(handlers.onAddFromLibrary).toHaveBeenCalledWith(kept);
     expect(handlers.onClose).toHaveBeenCalledTimes(1);
   });
 

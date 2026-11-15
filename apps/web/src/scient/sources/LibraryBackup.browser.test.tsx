@@ -4,6 +4,7 @@ import "../../index.css";
 import type {
   EnvironmentId,
   ScientSourcesBackupStatus,
+  ScientSourcesJoinStatus,
   ScientSourcesRestoreStatus,
 } from "@t3tools/contracts";
 import { useState } from "react";
@@ -28,9 +29,14 @@ vi.mock("../../components/ui/toast", () => ({ toastManager: { add: mocks.toast }
 
 const environmentId = "environment-1" as EnvironmentId;
 
-function Harness(props: { readonly enabled?: boolean }) {
+function Harness(props: { readonly enabled?: boolean; readonly onAdded?: () => void }) {
   const [root, setRoot] = useState("/project");
-  const backup = useLibraryBackup({ environmentId, root, enabled: props.enabled ?? true });
+  const backup = useLibraryBackup({
+    environmentId,
+    root,
+    enabled: props.enabled ?? true,
+    ...(props.onAdded ? { onAdded: props.onAdded } : {}),
+  });
   return (
     <>
       <button type="button" onClick={() => void backup.start("/Users/ada/Backups")}>
@@ -42,8 +48,12 @@ function Harness(props: { readonly enabled?: boolean }) {
       <button type="button" onClick={() => void backup.restoreFrom("/Users/ada/Backups/One")}>
         Restore
       </button>
+      <button type="button" onClick={() => void backup.addFrom("/Users/ada/Backups/One")}>
+        Add from
+      </button>
       <LibraryBackupNotice
         line={backup.line}
+        joinLine={backup.joinLine}
         restoreLine={backup.restoreLine}
         onCancelRestore={backup.cancelRestore}
       />
@@ -58,6 +68,7 @@ function Harness(props: { readonly enabled?: boolean }) {
 function setup(
   statuses: ReadonlyArray<ScientSourcesBackupStatus | null>,
   restores: ReadonlyArray<ScientSourcesRestoreStatus> = [{ state: "none" }],
+  joins: ReadonlyArray<ScientSourcesJoinStatus> = [{ state: "none" }],
 ) {
   mocks.readLibraryBackupStatus.mockReset();
   mocks.organizeScientSources.mockReset().mockResolvedValue({ outcome: "backup-started" });
@@ -67,9 +78,10 @@ function setup(
   mocks.readLibraryBackupStatus.mockImplementation(async () => {
     const backup = statuses[Math.min(read, statuses.length - 1)]!;
     const restore = restores[Math.min(read, restores.length - 1)]!;
+    const join = joins[Math.min(read, joins.length - 1)]!;
     read += 1;
     if (!backup) throw new Error("The server did not answer.");
-    return { backup, restore };
+    return { backup, restore, join };
   });
 }
 
@@ -322,11 +334,12 @@ describe("backing up the Library from the panel", () => {
     mocks.readLibraryBackupStatus
       .mockImplementationOnce(async () => {
         await held;
-        return { backup: { state: "none" }, restore: { state: "none" } };
+        return { backup: { state: "none" }, restore: { state: "none" }, join: { state: "none" } };
       })
       .mockImplementation(async () => ({
         backup: { state: "running", done: 2, total: 9 },
         restore: { state: "none" },
+        join: { state: "none" },
       }));
     await using screen = await render(<Harness />, { router: false });
     await userEvent.click(screen.getByRole("button", { name: "Other project" }));
@@ -390,6 +403,57 @@ describe("backing up the Library from the panel", () => {
     );
     await expect.element(screen.getByText(/is ready/u)).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+  });
+
+  it("adds from another Library, says nothing here is changed, and says what it did and left", async ({
+    signal,
+  }) => {
+    using _timers = fakeTimers();
+    const onAdded = vi.fn();
+    setup(
+      [{ state: "none" }],
+      [{ state: "none" }],
+      [
+        { state: "none" },
+        { state: "running", done: 40, total: 312 },
+        {
+          state: "done",
+          joinId: "join_1",
+          finishedAt: "2026-11-15T10:00:00.000Z",
+          added: 312,
+          skipped: 0,
+          different: 14,
+          removedHere: 3,
+          removedThere: 1,
+        },
+      ],
+    );
+    await using screen = await render(<Harness onAdded={onAdded} />, { router: false });
+    await vi.waitFor(() => expect(mocks.readLibraryBackupStatus).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByRole("button", { name: "Add from" }));
+    expect(mocks.organizeScientSources).toHaveBeenCalledWith(environmentId, {
+      root: "/project",
+      change: { action: "add-from-library", fromFolder: "/Users/ada/Backups/One" },
+    });
+    await expect
+      .element(
+        screen.getByText(
+          "Adding sources from the other Library: 40 of 312 added. Nothing that is in this Library is changed.",
+        ),
+      )
+      .toBeVisible();
+    await advanceTestClock(signal, 1_000);
+    await vi.waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith({
+        type: "success",
+        title: "Sources added from the other Library",
+        description:
+          "Added 312 sources, each with its versions, note, PDFs and highlights. 14 sources that both Libraries hold differ or may be the same paper and were left as they are here. 3 sources in this Library's Trash or deleted here were not brought back. 1 source removed in the other Library stays here. Recent changes lists this, with Undo.",
+      }),
+    );
+    expect(onAdded).toHaveBeenCalledTimes(1);
+    await expect.element(screen.getByText(/^Adding sources/u)).not.toBeInTheDocument();
   });
 
   it("asks nothing where the Library is not kept", async () => {

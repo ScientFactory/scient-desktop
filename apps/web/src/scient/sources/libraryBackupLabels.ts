@@ -1,4 +1,8 @@
-import type { ScientSourcesBackupStatus, ScientSourcesRestoreStatus } from "@t3tools/contracts";
+import type {
+  ScientSourcesBackupStatus,
+  ScientSourcesJoinStatus,
+  ScientSourcesRestoreStatus,
+} from "@t3tools/contracts";
 
 export const BACKUP_LABELS = {
   menuItem: "Back up the Library…",
@@ -79,4 +83,44 @@ export function restoredLabel(
     ? ` The Library that was here (${count(status.kept.sources)} ${status.kept.sources === 1 ? "source" : "sources"}) is kept in ${status.kept.path}`
     : "";
   return `${holding(status)} from the backup of ${day(status.backupCreatedAt)}. Project folders were not changed.${kept}`;
+}
+
+export const JOIN_LABELS = {
+  menuItem: "Add from another Library…",
+  done: "Sources added from the other Library",
+  nothingNew: "Nothing new in the other Library",
+  failed: "Nothing was added from the other Library",
+} as const;
+
+const sourcesWord = (value: number) => (value === 1 ? "1 source" : `${count(value)} sources`);
+
+/** The one line shown while sources are added. */
+export function joinRunningLabel(status: ScientSourcesJoinStatus): string | null {
+  if (status.state !== "running") return null;
+  const progress =
+    status.total > 0 ? `: ${count(status.done)} of ${count(status.total)} added` : "";
+  return `Adding sources from the other Library${progress}. Nothing that is in this Library is changed.`;
+}
+
+/** What a join did, and what it left alone, in the order a person cares about. */
+export function joinDoneLabel(status: Extract<ScientSourcesJoinStatus, { state: "done" }>): string {
+  const lines = [
+    status.added > 0
+      ? `Added ${sourcesWord(status.added)}, each with its versions, note, PDFs and highlights.`
+      : "Every source of the other Library is already here, or was removed here.",
+    status.different > 0
+      ? `${sourcesWord(status.different)} that both Libraries hold ${status.different === 1 ? "differs or may be the same paper and was" : "differ or may be the same paper and were"} left as ${status.different === 1 ? "it is" : "they are"} here.`
+      : "",
+    status.removedHere > 0
+      ? `${sourcesWord(status.removedHere)} in this Library's Trash or deleted here ${status.removedHere === 1 ? "was" : "were"} not brought back.`
+      : "",
+    status.removedThere > 0
+      ? `${sourcesWord(status.removedThere)} removed in the other Library ${status.removedThere === 1 ? "stays" : "stay"} here.`
+      : "",
+    status.skipped > 0
+      ? `${sourcesWord(status.skipped)} could not be added; adding again tries ${status.skipped === 1 ? "it" : "them"} once more.`
+      : "",
+    status.added > 0 ? "Recent changes lists this, with Undo." : "",
+  ];
+  return lines.filter(Boolean).join(" ");
 }
