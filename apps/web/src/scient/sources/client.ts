@@ -34,6 +34,7 @@ import type {
   ScientSourceSavePageRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesDuplicatesRequest,
+  ScientSourcesLibraryRestoreRequest,
   ScientSourcesOrganizeRequest,
   ScientSourcesReadingStateRequest,
   ScientSourcesScope,
@@ -199,6 +200,13 @@ export function readLibraryMoveStatus(environmentId: EnvironmentId, root: string
   return runtime.runPromise(
     getEnvironmentScientSourcesMoveStatus({ prepared: prepared(environmentId), root }),
   );
+}
+
+export function changeLibraryRestore(
+  environmentId: EnvironmentId,
+  input: ScientSourcesLibraryRestoreRequest,
+) {
+  return runSourcesCommand(sourcesCommands.libraryRestore, environmentId, input);
 }
 
 export function readLibraryBackupStatus(environmentId: EnvironmentId, root: string) {

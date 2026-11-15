@@ -74,8 +74,10 @@ import {
   ScientSourceTrashListing,
   ScientSourcesAdvanceImportRequest,
   ScientSourcesBulkResult,
-  ScientSourcesBackupStatus,
   ScientSourcesBackupStatusRequest,
+  ScientSourcesLibraryCopies,
+  ScientSourcesLibraryRestoreRequest,
+  ScientSourcesRestoreStatus,
   ScientSourcesBulkUpdateRequest,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewChangeResult,
@@ -521,7 +523,15 @@ export function makeScientEnvironmentHttpGroups({
       HttpApiEndpoint.post("backupStatus", "/api/scient/sources/backup/status", {
         headers: OptionalBearerHeaders,
         payload: ScientSourcesBackupStatusRequest,
-        success: ScientSourcesBackupStatus,
+        success: ScientSourcesLibraryCopies,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("libraryRestore", "/api/scient/sources/backup/restore", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesLibraryRestoreRequest,
+        success: ScientSourcesRestoreStatus,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

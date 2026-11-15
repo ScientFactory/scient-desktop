@@ -60,6 +60,10 @@
       "types": "./src/libraryBackup.ts",
       "import": "./src/libraryBackup.ts"
     },
+    "./library-restore": {
+      "types": "./src/libraryRestore.ts",
+      "import": "./src/libraryRestore.ts"
+    },
     "./library-changes": {
       "types": "./src/libraryChanges.ts",
       "import": "./src/libraryChanges.ts"

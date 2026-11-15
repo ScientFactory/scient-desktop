@@ -14,24 +14,43 @@ import {
   withScientLibraryLock,
 } from "./libraryLock.ts";
 import { settleScientLibraryMerges } from "./libraryMerge.ts";
+import { countScientLibraryUnfinishedMoves } from "./libraryMove.ts";
 import { readScientLibraryManifest, type ScientLibraryLocation } from "./libraryRoot.ts";
 import { isNodeError, readBoundedJson, snapshot } from "./storeFiles.ts";
 
-const MANIFEST_FILE = "backup.json";
+export const SCIENT_LIBRARY_BACKUP_MANIFEST_FILE = "backup.json";
 const README_FILE = "README.md";
-const PAYLOAD = "library";
+export const SCIENT_LIBRARY_BACKUP_PAYLOAD = "library";
 const MAX_MANIFEST_BYTES = 256 * 1024 * 1024;
 
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+/** The two names Scient gives a file it is still writing. */
+const TEMPORARY = new RegExp(`(\\.tmp-${UUID}|\\.${UUID}\\.tmp)$`, "u");
+const LOCK = /^(library\.lock|migrations\/[^/]+\/move\.lock)(-journal|-wal|-shm)?$/u;
+
 /**
- * What a backup leaves out, each for a stated reason. Everything else in the Library's folder
- * is kept, also what this version does not know.
+ * What a backup leaves out, each for a stated reason and by its exact place or name: a kept
+ * file whose name merely resembles a lock or a temporary file stays. Everything else in the
+ * Library's folder is kept, also what this version does not know.
  */
 const LEFT_OUT: ReadonlyArray<{ readonly test: (path: string) => boolean; readonly why: string }> =
   [
     { test: (path) => path.startsWith("text/"), why: "extracted text, rebuilt from the PDFs" },
-    { test: (path) => /(^|\/)[^/]*\.lock[^/]*$/u.test(path), why: "locks of a running Scient" },
-    { test: (path) => path.includes(".tmp-"), why: "unfinished temporary files" },
+    {
+      test: (path) => path.startsWith("staging/"),
+      why: "working files of imports that had not finished",
+    },
+    { test: (path) => LOCK.test(path), why: "locks of a running Scient" },
+    {
+      // A move's sealed evidence under `migrations/` is kept byte for byte, whatever its names.
+      test: (path) => !path.startsWith("migrations/") && TEMPORARY.test(path),
+      why: "unfinished temporary files",
+    },
   ];
+
+/** Whether a backup leaves this file of the Library out (slash-separated, from its root). */
+export const scientLibraryBackupLeavesOut = (path: string) =>
+  LEFT_OUT.some((rule) => rule.test(path));
 
 /** What lives in project folders and is therefore not in a Library backup. */
 const NOT_IN_A_LIBRARY = [
@@ -67,7 +86,15 @@ export const ScientLibraryBackupManifest = Schema.Struct({
     bytes: Schema.Int,
   }),
   files: Schema.Array(BackupFile),
-  leftOut: Schema.Array(Schema.String),
+  /** Each reason with the number of files it left out of this backup. */
+  leftOut: Schema.Array(Schema.Struct({ why: Schema.String, files: Schema.Int })),
+  /** Entries that are neither files nor folders (links, sockets): never copied. */
+  skipped: Schema.Array(Schema.String),
+  /**
+   * Projects whose move into or out of the Library had stopped part way. Their sources are
+   * partly still in the project's folder, so not all of them are in this backup.
+   */
+  unfinishedMoves: Schema.Int,
   notInALibrary: Schema.Array(Schema.String),
 });
 export type ScientLibraryBackupManifest = typeof ScientLibraryBackupManifest.Type;
@@ -78,6 +105,9 @@ export type ScientLibraryBackupResult =
       /** The finished backup folder. */
       readonly path: string;
       readonly counts: ScientLibraryBackupManifest["counts"];
+      readonly unfinishedMoves: number;
+      /** Links and other entries that are not files, which a backup never copies. */
+      readonly skipped: number;
     }
   /** A project is moving into or out of the Library right now; its files are in flux. */
   | { readonly outcome: "busy" }
@@ -91,19 +121,26 @@ async function hashOf(filePath: string): Promise<string> {
   return hash.digest("hex");
 }
 
-/** Every regular file under `root`, slash-separated and sorted; links are never followed. */
-async function filesUnder(root: string): Promise<ReadonlyArray<string>> {
-  const found: string[] = [];
+/**
+ * Every regular file under `root`, slash-separated and sorted, and `others`: what is neither a
+ * file nor a folder. Links are never followed.
+ */
+export async function scientLibraryBackupEntries(
+  root: string,
+): Promise<{ readonly files: ReadonlyArray<string>; readonly others: ReadonlyArray<string> }> {
+  const files: string[] = [];
+  const others: string[] = [];
   const walk = async (relative: string): Promise<void> => {
     const directory = relative ? NodePath.join(root, ...relative.split("/")) : root;
     for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
       const path = relative ? `${relative}/${entry.name}` : entry.name;
       if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile()) found.push(path);
+      else if (entry.isFile()) files.push(path);
+      else others.push(path);
     }
   };
   await walk("");
-  return found.toSorted();
+  return { files: files.toSorted(), others: others.toSorted() };
 }
 
 function countsOf(files: ReadonlyArray<typeof BackupFile.Type>) {
@@ -121,6 +158,14 @@ function countsOf(files: ReadonlyArray<typeof BackupFile.Type>) {
 
 function readme(manifest: ScientLibraryBackupManifest): string {
   const { counts } = manifest;
+  const notes = [
+    manifest.skipped.length > 0
+      ? `\nNot copied, because they are links or other entries that are not files:\n${manifest.skipped.map((path) => `- ${path}`).join("\n")}\n`
+      : "",
+    manifest.unfinishedMoves > 0
+      ? `\n${manifest.unfinishedMoves} project(s) had not finished moving into or out of the Library. Their sources are\npartly still in the project's folder, so not all of them are in this backup.\n`
+      : "",
+  ];
   return `# Scient Library backup, ${manifest.createdAt}
 
 This folder is a copy of everything in one Scient Library as it was at that moment:
@@ -137,8 +182,8 @@ Not in this backup, because they are kept elsewhere:
 ${manifest.notInALibrary.map((line) => `- ${line}`).join("\n")}
 
 Left out on purpose:
-${manifest.leftOut.map((line) => `- ${line}`).join("\n")}
-
+${manifest.leftOut.map((rule) => `- ${rule.why} (${rule.files} files)`).join("\n")}
+${notes.join("")}
 An earlier version of a source can name a PDF that the Library no longer had when this copy was
 made; such a PDF is not here either.
 
@@ -156,28 +201,39 @@ async function freeName(parent: string, wanted: string): Promise<string> {
   }
 }
 
-/** Holds every checkout's move lock, or answers `busy` when a move holds one now. */
-async function withNoMoveRunning<A>(
-  libraryRoot: string,
+/** The move lock of every checkout that has a folder under `migrations/`. */
+async function moveLocks(libraryRoot: string): Promise<ReadonlyArray<string>> {
+  const migrations = NodePath.join(libraryRoot, "migrations");
+  if ((await snapshot(migrations)) !== "directory") return [];
+  return (await NodeFSP.readdir(migrations, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => NodePath.join(migrations, entry.name, "move.lock"));
+}
+
+/** Runs holding each of these locks, or answers `busy` when another holder has one now. */
+async function holding<A>(
+  locks: ReadonlyArray<string>,
   run: () => Promise<A>,
 ): Promise<A | "busy"> {
-  const migrations = NodePath.join(libraryRoot, "migrations");
-  const locks =
-    (await snapshot(migrations)) === "directory"
-      ? (await NodeFSP.readdir(migrations, { withFileTypes: true }))
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => NodePath.join(migrations, entry.name, "move.lock"))
-      : [];
-  const hold = (index: number): Promise<A> =>
-    index === locks.length
-      ? run()
-      : withScientFileLock(locks[index]!, () => hold(index + 1), { timeoutMs: 0 });
-  try {
-    return await hold(0);
-  } catch (error) {
-    if (error instanceof ScientLibraryBusyError) return "busy";
-    throw error;
-  }
+  const hold = async (index: number): Promise<A | "busy"> => {
+    if (index === locks.length) return run();
+    let held = false;
+    try {
+      return await withScientFileLock(
+        locks[index]!,
+        () => {
+          held = true;
+          return hold(index + 1);
+        },
+        { timeoutMs: 0 },
+      );
+    } catch (error) {
+      // Only a lock that could not be taken means a move is running; anything else is an error.
+      if (error instanceof ScientLibraryBusyError && !held) return "busy";
+      throw error;
+    }
+  };
+  return hold(0);
 }
 
 /**
@@ -193,6 +249,8 @@ export async function backUpScientLibrary(input: {
   readonly onProgress?: (progress: { readonly done: number; readonly total: number }) => void;
   /** Asked between files; true abandons the backup and removes what was copied. */
   readonly shouldStop?: () => boolean;
+  /** Tests only: runs after the checkouts are listed, before the Library's lock is asked for. */
+  readonly faults?: { readonly beforeLibraryLock?: () => Promise<void> };
 }): Promise<ScientLibraryBackupResult> {
   const libraryRoot = await NodeFSP.realpath(input.library.root);
   const destination = NodePath.isAbsolute(input.destination)
@@ -205,53 +263,72 @@ export async function backUpScientLibrary(input: {
   ) {
     return { outcome: "unsafe-destination" };
   }
-  // Finishes a merge or an Undo a stopped Scient left halfway; it takes the lock itself.
-  await settleScientLibraryMerges(input.library);
   const createdAt = new Date().toISOString();
   const backupId = `backup_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
   const partial = NodePath.join(destination, `.scient-library-backup-${backupId}.partial`);
+  let created = false;
+  /** Removes what this backup wrote; never a folder it did not create. */
+  const discard = async () => {
+    if (created) await NodeFSP.rm(partial, { recursive: true, force: true }).catch(() => undefined);
+  };
 
-  const copied = await withNoMoveRunning(libraryRoot, () =>
+  const lockedFirst = await moveLocks(libraryRoot);
+  await input.faults?.beforeLibraryLock?.();
+  const copied = await holding(lockedFirst, () =>
     withScientLibraryLock(libraryRoot, async () => {
-      const library = await readScientLibraryManifest(libraryRoot);
-      const paths = (await filesUnder(libraryRoot)).filter(
-        (path) => !LEFT_OUT.some((rule) => rule.test(path)),
-      );
-      const files: Array<typeof BackupFile.Type> = [];
-      for (const [index, path] of paths.entries()) {
-        if (input.shouldStop?.()) return "stopped" as const;
-        const from = NodePath.join(libraryRoot, ...path.split("/"));
-        const to = NodePath.join(partial, PAYLOAD, ...path.split("/"));
-        await NodeFSP.mkdir(NodePath.dirname(to), { recursive: true });
-        const hash = NodeCrypto.createHash("sha256");
-        let bytes = 0;
-        await NodeStreamPromises.pipeline(
-          NodeFS.createReadStream(from),
-          async function* (source) {
-            for await (const chunk of source) {
-              hash.update(chunk as Buffer);
-              bytes += (chunk as Buffer).length;
-              yield chunk;
-            }
-          },
-          NodeFS.createWriteStream(to, { flags: "wx", mode: 0o600 }),
-        );
-        const sha256 = hash.digest("hex");
-        if ((await hashOf(to)) !== sha256) {
-          throw new Error(`The copy of ${path} does not match the original.`);
+      // A checkout that began its move since: its lock too, or the copy could split its files.
+      const since = (await moveLocks(libraryRoot)).filter((lock) => !lockedFirst.includes(lock));
+      return holding(since, async () => {
+        // Inside the lock, so no merge can start and stop between this and the copy.
+        await settleScientLibraryMerges(input.library);
+        const library = await readScientLibraryManifest(libraryRoot);
+        const found = await scientLibraryBackupEntries(libraryRoot);
+        const leftOut = LEFT_OUT.map((rule) => ({
+          why: rule.why,
+          files: found.files.filter((path) => rule.test(path)).length,
+        }));
+        const paths = found.files.filter((path) => !scientLibraryBackupLeavesOut(path));
+        const skipped = found.others.filter((path) => !scientLibraryBackupLeavesOut(path));
+        const unfinishedMoves = await countScientLibraryUnfinishedMoves(libraryRoot);
+        // Exclusive, so a folder another backup left under this name is never written into.
+        await NodeFSP.mkdir(partial);
+        created = true;
+        const files: Array<typeof BackupFile.Type> = [];
+        for (const [index, path] of paths.entries()) {
+          if (input.shouldStop?.()) return "stopped" as const;
+          const from = NodePath.join(libraryRoot, ...path.split("/"));
+          const to = NodePath.join(partial, SCIENT_LIBRARY_BACKUP_PAYLOAD, ...path.split("/"));
+          await NodeFSP.mkdir(NodePath.dirname(to), { recursive: true });
+          const hash = NodeCrypto.createHash("sha256");
+          let bytes = 0;
+          await NodeStreamPromises.pipeline(
+            NodeFS.createReadStream(from),
+            async function* (source) {
+              for await (const chunk of source) {
+                hash.update(chunk as Buffer);
+                bytes += (chunk as Buffer).length;
+                yield chunk;
+              }
+            },
+            NodeFS.createWriteStream(to, { flags: "wx", mode: 0o600 }),
+          );
+          const sha256 = hash.digest("hex");
+          if ((await hashOf(to)) !== sha256) {
+            throw new Error(`The copy of ${path} does not match the original.`);
+          }
+          files.push({ path, sha256, bytes });
+          input.onProgress?.({ done: index + 1, total: paths.length });
         }
-        files.push({ path, sha256, bytes });
-        input.onProgress?.({ done: index + 1, total: paths.length });
-      }
-      return { library, files };
+        return { library, files, leftOut, skipped, unfinishedMoves };
+      });
     }),
   ).catch(async (error: unknown) => {
-    await NodeFSP.rm(partial, { recursive: true, force: true }).catch(() => undefined);
+    await discard();
     throw error;
   });
 
   if (copied === "busy" || copied === "stopped") {
-    await NodeFSP.rm(partial, { recursive: true, force: true }).catch(() => undefined);
+    await discard();
     return { outcome: copied };
   }
   const manifest: ScientLibraryBackupManifest = {
@@ -262,22 +339,30 @@ export async function backUpScientLibrary(input: {
     library: { libraryId: copied.library.libraryId, createdAt: copied.library.createdAt },
     counts: countsOf(copied.files),
     files: copied.files,
-    leftOut: LEFT_OUT.map((rule) => rule.why),
+    leftOut: copied.leftOut,
+    skipped: copied.skipped,
+    unfinishedMoves: copied.unfinishedMoves,
     notInALibrary: [...NOT_IN_A_LIBRARY],
   };
   try {
     await NodeFSP.writeFile(NodePath.join(partial, README_FILE), readme(manifest), { flag: "wx" });
     await NodeFSP.writeFile(
-      NodePath.join(partial, MANIFEST_FILE),
+      NodePath.join(partial, SCIENT_LIBRARY_BACKUP_MANIFEST_FILE),
       `${JSON.stringify(manifest, null, 2)}\n`,
       { flag: "wx" },
     );
     const name = await freeName(destination, `Scient Library backup ${stamp(createdAt)}`);
     const path = NodePath.join(destination, name);
     await NodeFSP.rename(partial, path);
-    return { outcome: "backed-up", path, counts: manifest.counts };
+    return {
+      outcome: "backed-up",
+      path,
+      counts: manifest.counts,
+      unfinishedMoves: manifest.unfinishedMoves,
+      skipped: manifest.skipped.length,
+    };
   } catch (error) {
-    await NodeFSP.rm(partial, { recursive: true, force: true }).catch(() => undefined);
+    await discard();
     throw error;
   }
 }
@@ -301,12 +386,12 @@ export type ScientLibraryBackupCheck =
 /** Reads a backup folder against its own manifest: every listed file present and unchanged. */
 export async function checkScientLibraryBackup(folder: string): Promise<ScientLibraryBackupCheck> {
   const manifest = await readBoundedJson(
-    NodePath.join(folder, MANIFEST_FILE),
+    NodePath.join(folder, SCIENT_LIBRARY_BACKUP_MANIFEST_FILE),
     MAX_MANIFEST_BYTES,
     ScientLibraryBackupManifest,
   ).catch(() => null);
   if (!manifest) return { outcome: "not-a-backup" };
-  const payload = NodePath.join(folder, PAYLOAD);
+  const payload = NodePath.join(folder, SCIENT_LIBRARY_BACKUP_PAYLOAD);
   const changed: string[] = [];
   for (const file of manifest.files) {
     const hash = await hashOf(NodePath.join(payload, ...file.path.split("/"))).catch(
@@ -320,7 +405,7 @@ export async function checkScientLibraryBackup(folder: string): Promise<ScientLi
   const listed = new Set(manifest.files.map((file) => file.path));
   const unlisted =
     (await snapshot(payload)) === "directory"
-      ? (await filesUnder(payload)).filter((path) => !listed.has(path))
+      ? (await scientLibraryBackupEntries(payload)).files.filter((path) => !listed.has(path))
       : [];
   return changed.length === 0 && unlisted.length === 0
     ? { outcome: "complete", createdAt: manifest.createdAt, counts: manifest.counts }

@@ -37,6 +37,12 @@ import * as Schema from "effect/Schema";
 import { ServerConfig } from "../../config.ts";
 import { beginBibliographyFileImport } from "./BibliographyFileAdapter.ts";
 import { libraryBackupStatus } from "./LibraryBackupRuns.ts";
+import {
+  cancelLibraryRestore,
+  finishLibraryRestoreAtStart,
+  libraryRestoreStatus,
+  startLibraryRestore,
+} from "./LibraryRestoreRuns.ts";
 import { libraryImportPinInstance } from "./LibraryImportPins.ts";
 import {
   bulkUpdateLibrarySources,
@@ -325,6 +331,76 @@ describe("Library routes on the library backend", () => {
           }),
         );
         expect(await NodeFSP.readdir(destination)).toHaveLength(1);
+      });
+    }),
+  );
+
+  it.effect("copies a backup beside the Library and puts it in place at the next start", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      yield* Effect.promise(() => threeSources(fixture));
+      const store = yield* storeFor(fixture, "write");
+      const destination = NodePath.join(NodePath.dirname(fixture.root), "backups");
+      const libraryRoot = scientLibraryRootFor(fixture.stateDir);
+      const backup = yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(destination);
+        await organizeLibrarySources(store, {
+          change: { action: "back-up-library", inFolder: destination },
+        });
+        const done = await vi.waitFor(() => {
+          const status = libraryBackupStatus(store.library);
+          if (status.state !== "done") throw new Error(`The backup is ${status.state}.`);
+          return status;
+        });
+        // After the backup the Library changes: one more paper is removed.
+        const [live] = await listScientSourceRecords(store.library);
+        await removeScientSource({
+          root: store.library,
+          sourceId: live!.sourceId,
+          expectedRevision: live!.revision,
+        });
+        expect(await listScientSourceRecords(store.library)).toHaveLength(1);
+        return done.path;
+      });
+
+      yield* Effect.promise(async () => {
+        // A folder that is no backup ends with the reason; nothing waits.
+        startLibraryRestore(libraryRoot, destination);
+        await vi.waitFor(async () =>
+          expect(await libraryRestoreStatus(libraryRoot)).toMatchObject({
+            state: "failed",
+            reason: "This folder is not a finished Scient Library backup.",
+          }),
+        );
+
+        startLibraryRestore(libraryRoot, backup);
+        await vi.waitFor(async () =>
+          expect(await libraryRestoreStatus(libraryRoot)).toMatchObject({
+            state: "ready",
+            sources: 2,
+          }),
+        );
+        // Waiting changes nothing, and Cancel drops the copy.
+        expect(await listScientSourceRecords(store.library)).toHaveLength(1);
+        await cancelLibraryRestore(libraryRoot);
+        expect(await libraryRestoreStatus(libraryRoot)).toEqual({ state: "none" });
+
+        startLibraryRestore(libraryRoot, backup);
+        await vi.waitFor(async () =>
+          expect(await libraryRestoreStatus(libraryRoot)).toMatchObject({ state: "ready" }),
+        );
+      });
+
+      // The next start of the server puts it in place, and keeps the Library that was there.
+      yield* finishLibraryRestoreAtStart(fixture.stateDir).pipe(
+        Effect.provideService(ScientSourcesBackend, "library"),
+      );
+      yield* Effect.promise(async () => {
+        const status = await libraryRestoreStatus(libraryRoot);
+        expect(status).toMatchObject({ state: "restored", sources: 2, kept: { sources: 1 } });
+        expect(await listScientSourceRecords(store.library)).toHaveLength(2);
+        if (status.state !== "restored" || !status.kept) throw new Error("Nothing was kept.");
+        expect(await NodeFSP.readdir(NodePath.join(status.kept.path, "records"))).toHaveLength(1);
       });
     }),
   );

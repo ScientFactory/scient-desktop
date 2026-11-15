@@ -19,6 +19,7 @@ import {
 } from "./store.ts";
 
 const fixtures: string[] = [];
+const TEMPORARY_ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 afterEach(async () => {
   await Promise.all(
@@ -90,7 +91,9 @@ async function fixture() {
   // Derived text and a leftover temporary file, which a backup leaves out.
   await NodeFSP.mkdir(NodePath.join(root, "text", "sha256", "ab"), { recursive: true });
   await NodeFSP.writeFile(NodePath.join(root, "text", "sha256", "ab", "x.json"), "{}");
-  await NodeFSP.writeFile(NodePath.join(root, "records", "x.json.tmp-1"), "{");
+  await NodeFSP.writeFile(NodePath.join(root, "records", `x.json.tmp-${TEMPORARY_ID}`), "{");
+  await NodeFSP.mkdir(NodePath.join(root, "staging", "local-files"), { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(root, "staging", "local-files", "upload.pdf"), "%PDF");
   return { base, root, library, destination, kept, removed };
 }
 
@@ -127,7 +130,11 @@ describe("backing up the Library", () => {
     // The payload is the Library's own files, byte for byte, without what is left out.
     const backedUp = await filesIn(NodePath.join(result.path, "library"));
     const kept = (await filesIn(root)).filter(
-      (path) => !path.startsWith("text/") && !path.includes(".lock") && !path.includes(".tmp-"),
+      (path) =>
+        !path.startsWith("text/") &&
+        !path.startsWith("staging/") &&
+        path !== "library.lock" &&
+        !path.endsWith(TEMPORARY_ID),
     );
     expect(backedUp).toEqual(kept);
     expect(backedUp).toEqual(expect.arrayContaining(["library.json", "aliases.json"]));
@@ -146,6 +153,82 @@ describe("backing up the Library", () => {
     // A second backup in the same minute gets its own folder.
     const second = await backUpScientLibrary({ library, destination });
     expect(second.outcome === "backed-up" && second.path).not.toBe(result.path);
+  });
+
+  it("keeps a file whose name only resembles a lock or a temporary file, and counts what it left out", async () => {
+    const { root, library, destination } = await fixture();
+    // Names an import's ID may produce, and a move's sealed evidence with any name at all.
+    await NodeFSP.mkdir(NodePath.join(root, "package-imports"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(root, "package-imports", "run.lockstep.json"), "{}");
+    await NodeFSP.writeFile(NodePath.join(root, "package-imports", "run.tmp-study.json"), "{}");
+    const evidence = NodePath.join(root, "migrations", "instance_1", "archive");
+    await NodeFSP.mkdir(evidence, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(evidence, `old.json.tmp-${TEMPORARY_ID}`), "{}");
+    await NodeFSP.symlink(NodePath.join(root, "library.json"), NodePath.join(root, "a-link"));
+
+    const result = await backUpScientLibrary({ library, destination });
+    if (result.outcome !== "backed-up") throw new Error(`Not backed up: ${result.outcome}`);
+    const backedUp = await filesIn(NodePath.join(result.path, "library"));
+    expect(backedUp).toEqual(
+      expect.arrayContaining([
+        "package-imports/run.lockstep.json",
+        "package-imports/run.tmp-study.json",
+        `migrations/instance_1/archive/old.json.tmp-${TEMPORARY_ID}`,
+      ]),
+    );
+    expect(backedUp).not.toContain("migrations/instance_1/move.lock");
+    expect(result.skipped).toBe(1);
+
+    const manifest = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(result.path, "backup.json"), "utf8"),
+    ) as { leftOut: ReadonlyArray<{ files: number }>; skipped: ReadonlyArray<string> };
+    // Extracted text, import working files, locks (the Library's and the move's), temporaries.
+    expect(manifest.leftOut.map((rule) => rule.files)).toEqual([1, 1, 2, 1]);
+    expect(manifest.skipped).toEqual(["a-link"]);
+    const readme = await NodeFSP.readFile(NodePath.join(result.path, "README.md"), "utf8");
+    expect(readme).toContain("- a-link");
+    expect(await checkScientLibraryBackup(result.path)).toMatchObject({ outcome: "complete" });
+  });
+
+  it("says when a project had not finished moving into the Library", async () => {
+    const { root, library, destination } = await fixture();
+    const journal = (state: string) => ({
+      formatVersion: 1,
+      instanceId: "instance_1",
+      projectId: "project_1",
+      run: 1,
+      runId: "run_1",
+      state,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sources: [],
+      pdfs: [],
+      annotations: [],
+      artifacts: [],
+      cleanup: [],
+      retry: [],
+      merges: { merged: 0, keptDifferent: 0 },
+      reviewConflicts: [],
+      divergedSources: 0,
+      gitTracked: false,
+    });
+    const write = async (instance: string, state: string) => {
+      const directory = NodePath.join(root, "migrations", instance);
+      await NodeFSP.mkdir(directory, { recursive: true });
+      await NodeFSP.writeFile(
+        NodePath.join(directory, "journal.json"),
+        JSON.stringify({ ...journal(state), instanceId: instance }),
+      );
+    };
+    await write("instance_1", "copying");
+    await write("instance_2", "done");
+    await write("instance_3", "moved-back");
+
+    const result = await backUpScientLibrary({ library, destination });
+    if (result.outcome !== "backed-up") throw new Error(`Not backed up: ${result.outcome}`);
+    expect(result.unfinishedMoves).toBe(1);
+    const readme = await NodeFSP.readFile(NodePath.join(result.path, "README.md"), "utf8");
+    expect(readme).toContain("1 project(s) had not finished moving");
   });
 
   it("says which files of a backup changed, are gone or do not belong", async () => {
@@ -187,6 +270,41 @@ describe("backing up the Library", () => {
       ),
     ).toContain("Soil carbon budgets");
     expect(await checkScientLibraryBackup(result.path)).toMatchObject({ outcome: "complete" });
+  });
+
+  it("answers busy when a project began moving after the backup listed the projects", async () => {
+    const { root, library, destination } = await fixture();
+    const gate = () => {
+      let open!: () => void;
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { open, opened };
+    };
+    const moved = gate();
+    let move: Promise<void> | undefined;
+    const result = await backUpScientLibrary({
+      library,
+      destination,
+      faults: {
+        // Another caller's move: it takes its lock in a folder the backup has not seen.
+        beforeLibraryLock: async () => {
+          const moving = NodePath.join(root, "migrations", "instance_late");
+          await NodeFSP.mkdir(moving, { recursive: true });
+          const started = gate();
+          move = withScientFileLock(NodePath.join(moving, "move.lock"), async () => {
+            started.open();
+            await moved.opened;
+          });
+          await started.opened;
+        },
+      },
+    });
+    moved.open();
+    await move;
+
+    expect(result).toEqual({ outcome: "busy" });
+    expect(await NodeFSP.readdir(destination)).toEqual([]);
   });
 
   it("leaves nothing behind when it is stopped, fails, or cannot start", async () => {

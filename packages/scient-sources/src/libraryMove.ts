@@ -486,6 +486,30 @@ async function readJournalAt(directory: string): Promise<ScientLibraryMoveJourna
   return decodeJournal(JSON.parse(bytes.toString("utf8")));
 }
 
+/**
+ * How many checkouts have a move into or out of the Library that stopped part way: their sources
+ * are partly still in the project's folder. A journal that cannot be read counts.
+ */
+export async function countScientLibraryUnfinishedMoves(libraryRoot: string): Promise<number> {
+  const migrations = NodePath.join(libraryRoot, MIGRATIONS_DIRECTORY);
+  const entries = await NodeFSP.readdir(migrations, { withFileTypes: true }).catch(
+    (error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return [];
+      throw error;
+    },
+  );
+  let unfinished = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const state = await readJournalAt(NodePath.join(migrations, entry.name)).then(
+      (journal) => journal?.state ?? null,
+      () => "unreadable" as const,
+    );
+    if (["copying", "prepared", "restoring", "unreadable"].includes(state ?? "")) unfinished += 1;
+  }
+  return unfinished;
+}
+
 async function writeJournal(
   ctx: MoveContext,
   journal: ScientLibraryMoveJournal,

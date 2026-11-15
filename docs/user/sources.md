@@ -493,6 +493,13 @@ that keep a deleted source deleted. The files are the ones Scient itself
 keeps: JSON you can read, and PDFs. A `README.md` in the folder says what is
 in it, and `backup.json` lists every file with its size and checksum.
 
+A few things are left out on purpose, and the README counts them: the text
+Scient extracted from your PDFs (it is made again from the PDFs), working
+files of an import that had not finished, and Scient's own lock and temporary
+files. If a project had not finished moving into your Library when the backup
+was made, some of its sources are still in the project's folder and not in the
+backup; the message at the end says so.
+
 While the backup runs, changes to the Library wait, and the Library says so;
 a change that waits longer than half a minute is refused and can be made
 again afterwards. A large Library with many PDFs can take a few minutes.
@@ -502,9 +509,45 @@ keys, project notes, systematic reviews and citation style live in the
 project's own folder, and so do the sources of a project that has not moved
 into your Library. Your Zotero sign-in is not in it either.
 
-The menu item is offered for a Library on this computer. Restoring a backup
-into Scient is not available yet; the folder is complete and readable without
-it.
+The menu item is offered for a Library on this computer.
+
+## Restore from a backup
+
+Use this on a new computer, or after your Library was lost or damaged, to make
+the Library what a backup holds.
+
+1. Choose **Restore from a backup…** (the same **⋯** menu) and pick the backup
+   folder. Scient checks every file of the backup against its list and copies
+   it beside your Library. Your Library is not changed while this runs.
+2. The Library then says the backup is ready. It takes the Library's place
+   the next time Scient starts, so quit and reopen Scient when you are ready.
+   Until then **Cancel** drops the copy and nothing happens.
+3. After the restart the Library is the backup: every source with its
+   versions, notes, PDFs, highlights, collections, Trash and merges, as they
+   were when the backup was made. Scient says what it restored.
+
+Restoring replaces the whole Library; it does not add the backup to what is
+there. If the Library that was there held anything, for example sources you
+added after the backup, or sources Scient rebuilt from your projects on a new
+computer, it is not deleted: it is kept as a folder beside the Library, and
+the message after the restart says where. Scient never removes that folder.
+
+Your project folders are not changed. A project's citation keys and project
+notes stay as they are, and its sources are found again in the restored
+Library. A source a project cites that the backup does not have (it was added
+later) stays in the project with the details the project saved, without its
+PDF.
+
+Three things to know:
+
+- A backup that is damaged, incomplete, or made by a newer Scient is refused,
+  with the reason, and nothing is copied into place.
+- Extracted PDF text is not in a backup; searching inside PDFs works again as
+  Scient reads them.
+- If you chose **Move back into this project** for a project after the backup
+  was made, the restored Library does not know that, and that project's
+  sources move into the Library again when it is next changed. You can move
+  them back again.
 
 ## Project packages
 

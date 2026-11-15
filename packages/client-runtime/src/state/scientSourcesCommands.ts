@@ -106,6 +106,7 @@ export function createScientSourcesCommands<R, ER>(
     bulkUpdate: command(tags.bulkUpdate, http.bulkUpdateEnvironmentScientSources),
     addByIdentifier: command(tags.addByIdentifier, http.addEnvironmentScientSourcesByIdentifier),
     restore: command(tags.restore, http.restoreEnvironmentScientSource),
+    libraryRestore: command(tags.libraryRestore, http.changeEnvironmentScientLibraryRestore),
     deletePermanently: command(
       tags.deletePermanently,
       http.deleteEnvironmentScientSourcesPermanently,
