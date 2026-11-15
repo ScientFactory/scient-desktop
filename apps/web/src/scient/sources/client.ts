@@ -388,6 +388,8 @@ export function beginZoteroScopeImport(
   input: {
     readonly root: string;
     readonly operationId: string;
+    /** The run whose next part to begin, for a scope too large for one operation. */
+    readonly continueRun?: string;
     readonly scope: ZoteroImportScope;
     readonly connection?: ZoteroConnection;
     readonly groupId?: string;

@@ -30,6 +30,8 @@ export function ImportSummary(props: {
   readonly libraryOnly?: { readonly onAddToProject?: (sourceIds: ReadonlyArray<string>) => void };
   /** Shows the references one thing was not brought for. */
   readonly onShowSources?: (sourceIds: ReadonlyArray<string>, label: string) => void;
+  /** A large Zotero import that stopped before its end: how many remain, and going on. */
+  readonly rest?: { readonly count: number; readonly onImport: () => void };
 }) {
   const [allNotBrought, setAllNotBrought] = useState(false);
   const counts = props.outcome?.counts ?? completedImportCounts(props.operation);
@@ -56,11 +58,17 @@ export function ImportSummary(props: {
     alreadyPresent === 0 &&
     reviewRequired === 0 &&
     notes.length === 0 &&
-    notBrought.length === 0
+    notBrought.length === 0 &&
+    !(props.rest && props.rest.count > 0)
   )
     return null;
+  // A large Zotero import comes in parts; what later parts will bring is said while it runs.
+  const toFollow = running ? (props.operation.run?.remaining ?? 0) : 0;
   const details = running
-    ? [`${importedCount(props.operation)} of ${props.operation.items.length} items processed`]
+    ? [
+        `${importedCount(props.operation)} of ${props.operation.items.length} items processed`,
+        ...(toFollow > 0 ? [`${toFollow.toLocaleString()} more to follow`] : []),
+      ]
     : [
         `${imported} imported`,
         alreadyPresent > 0 ? `${alreadyPresent} already present` : null,
@@ -169,6 +177,11 @@ export function ImportSummary(props: {
                 </div>
               ))}
           </div>
+        ) : null}
+        {!running && props.rest && props.rest.count > 0 ? (
+          <Button className="mt-2" size="xs" variant="outline" onClick={props.rest.onImport}>
+            Import the rest ({props.rest.count.toLocaleString()})
+          </Button>
         ) : null}
         {failed > 0 && props.onRetryFailed ? (
           <Button className="mt-2" size="xs" variant="outline" onClick={props.onRetryFailed}>

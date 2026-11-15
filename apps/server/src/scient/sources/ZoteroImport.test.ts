@@ -5,7 +5,11 @@ import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
-import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import {
+  cancelSourceImportOperation,
+  listScientSourceImports,
+  listScientSourceRecords,
+} from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { advanceSourceImport, beginZoteroScopedImport } from "./ScientSourcesCoordinator.ts";
@@ -16,6 +20,7 @@ import {
   zoteroGroupItem,
   zoteroItem,
 } from "./Zotero.testkit.ts";
+import { countZoteroScopeStandalone } from "./ZoteroLibraryReader.ts";
 import type { ZoteroWebHttp } from "./ZoteroWebAdapter.ts";
 
 const roots: string[] = [];
@@ -270,6 +275,195 @@ describe("Zotero import", () => {
     expect(record?.attachments.map((attachment) => attachment.fileName)).toEqual(["book.pdf"]);
   });
 
+  it("imports a scope too large for one operation as a run of parts, each item once", async () => {
+    const root = await project();
+    // Zotero's key alphabet has no 0, 1 or O.
+    const digits = "23456789ABCDEFGHIJKLMNPQRSTUVWXYZ";
+    const keyOf = (index: number) =>
+      [0, 1, 2]
+        .map((place) => digits[Math.floor(index / digits.length ** place) % digits.length])
+        .toReversed()
+        .join("")
+        .padStart(8, "K");
+    const item = (index: number) =>
+      [
+        keyOf(index),
+        {
+          item: zoteroItem(keyOf(index), {
+            title: `Reference number ${index}`,
+            abstractNote: "A.",
+            creators: [{ creatorType: "author", lastName: `Author${index}` }],
+            date: String(1500 + index),
+          }),
+          children: [],
+        },
+      ] as const;
+    // Parts of 5 here; an operation's own limit is 500.
+    const items = new Map(Array.from({ length: 12 }, (_, index) => item(index)));
+    expect(items.size).toBe(12);
+    const transport = fakeZoteroTransport({ items });
+    const zotero = fakeZoteroAccess(transport);
+    const finish = async (operationId: string) => {
+      let operation = await advanceSourceImport({ root, operationId, zotero });
+      while (operation.state === "running") {
+        operation = await advanceSourceImport({ root, operationId, zotero });
+      }
+      return operation;
+    };
+    const begin = (continueRun?: string) =>
+      beginZoteroScopedImport({
+        root,
+        operationId: continueRun ? "ignored-for-a-later-part" : "run",
+        scope: { kind: "library" },
+        zotero,
+        partSize: 5,
+        ...(continueRun ? { continueRun } : {}),
+      });
+
+    const first = await begin();
+    expect(first).toMatchObject({
+      operationId: "run",
+      run: { runId: "run", part: 1, remaining: 7, scope: { kind: "library" } },
+    });
+    expect(first.items).toHaveLength(5);
+    // Asked again before it ends (an answer was lost): the same part, not a second one.
+    expect((await begin("run")).operationId).toBe("run");
+    expect((await finish("run")).state).toBe("completed");
+
+    const second = await begin("run");
+    expect(second).toMatchObject({ operationId: "run-2", run: { part: 2, remaining: 2 } });
+    expect(second.items).toHaveLength(5);
+    expect(
+      second.items.some((entry) =>
+        first.items.some((earlier) => earlier.itemKey === entry.itemKey),
+      ),
+    ).toBe(false);
+    await finish("run-2");
+    const third = await begin("run");
+    expect(third).toMatchObject({ operationId: "run-3", run: { part: 3, remaining: 0 } });
+    await finish("run-3");
+    expect(await listScientSourceRecords(root)).toHaveLength(12);
+    // Asked to go on when nothing is left: the last part again, and no error.
+    expect(await begin("run")).toMatchObject({ operationId: "run-3", run: { remaining: 0 } });
+    // The parts are one import in the record of what was imported.
+    const imported = async () =>
+      (await listScientSourceImports(root, 10)).map((entry) => [
+        entry.operationId,
+        entry.importedSourceIds.length,
+      ]);
+    expect(await imported()).toEqual([["run", 12]]);
+    // A scope is listed by its keys alone, never by reading every item again for each part.
+    expect(transport.requests.filter((path) => path.startsWith("/items/top?format=json"))).toEqual(
+      [],
+    );
+
+    // Later, three more references in Zotero: a new import brings only those.
+    for (const index of [520, 521, 522]) items.set(...item(index));
+    const later = await beginZoteroScopedImport({
+      root,
+      operationId: "later",
+      scope: { kind: "library" },
+      zotero,
+      partSize: 5,
+    });
+    expect(later.items.map((entry) => entry.itemKey)).toEqual([520, 521, 522].map(keyOf));
+    await finish("later");
+    expect(await imported()).toEqual([
+      ["later", 3],
+      ["run", 12],
+    ]);
+    expect(later.run).toMatchObject({ runId: "later", part: 1, remaining: 0 });
+  });
+
+  it("takes up what a stopped part never reached, and ends quietly when nothing is left", async () => {
+    const root = await project();
+    const keys = ["AAAA2345", "BBBB2345", "CCCC2345", "DDDD2345", "EEEE2345", "FFFF2345"];
+    const items = new Map(
+      keys.map((key, index) => [
+        key,
+        {
+          item: zoteroItem(key, {
+            title: `Stopped reference ${key}`,
+            abstractNote: "A.",
+            creators: [{ creatorType: "author", lastName: `Writer${key}` }],
+            date: String(1600 + index),
+          }),
+          children: [],
+        },
+      ]),
+    );
+    const zotero = fakeZoteroAccess(fakeZoteroTransport({ items }));
+    const begin = (continueRun?: string) =>
+      beginZoteroScopedImport({
+        root,
+        operationId: continueRun ? "ignored" : "stop",
+        scope: { kind: "library" },
+        zotero,
+        partSize: 3,
+        ...(continueRun ? { continueRun } : {}),
+      });
+
+    expect((await begin()).run).toMatchObject({ part: 1, remaining: 3 });
+    // Stopped before anything came: its three are still to come, with the other three.
+    expect((await cancelSourceImportOperation(root, "stop")).run).toMatchObject({ remaining: 6 });
+    const second = await begin("stop");
+    expect(second.items.map((entry) => entry.itemKey)).toEqual(keys.slice(0, 3));
+    expect(second).toMatchObject({ operationId: "stop-2", run: { part: 2, remaining: 3 } });
+    let part = await advanceSourceImport({ root, operationId: "stop-2", zotero });
+    while (part.state === "running") {
+      part = await advanceSourceImport({ root, operationId: "stop-2", zotero });
+    }
+
+    // The other three are deleted in Zotero meanwhile: the import is over, and says so.
+    for (const key of keys.slice(3)) items.delete(key);
+    expect(await begin("stop")).toMatchObject({
+      operationId: "stop-2",
+      state: "completed",
+      run: { remaining: 0 },
+    });
+    const [listed] = await listScientSourceImports(root, 10);
+    expect(listed).toMatchObject({ operationId: "stop", outcome: "completed", failed: 0 });
+    expect(listed?.importedSourceIds).toHaveLength(3);
+
+    await expect(begin("never-begun")).rejects.toThrow("not on record here");
+  });
+
+  it("counts a note filed in two collections once, and says so when Zotero does not answer", async () => {
+    const note = zoteroItem("NOTE2345", { itemType: "note", note: "<p>Ideas</p>" });
+    const json = (value: unknown, total: number) => ({
+      status: 200,
+      headers: { "total-results": String(total) },
+      body: JSON.stringify(value),
+    });
+    const transport = (fails: boolean) => ({
+      connection: "local" as const,
+      attachmentFile: async () => null,
+      get: async (path: string) => {
+        if (path.startsWith("/collections?")) {
+          const collection = (key: string, parentCollection: string | false) => ({
+            key,
+            data: { key, name: key, parentCollection },
+          });
+          return json([collection("TOPC2345", false), collection("SUBC2345", "TOPC2345")], 2);
+        }
+        if (fails) throw new Error("Zotero is busy.");
+        // The same note is filed in the collection and in its subcollection.
+        return { status: 200, headers: {}, body: path.includes("itemType=note") ? note.key : "" };
+      },
+    });
+    const scope = {
+      kind: "collection",
+      collectionKey: "TOPC2345",
+      includeSubcollections: true,
+    } as const;
+    expect(await countZoteroScopeStandalone(transport(false), scope)).toEqual({
+      notes: 1,
+      files: 0,
+    });
+    // Not zero: unknown. The import then says it did not count them.
+    expect(await countZoteroScopeStandalone(transport(true), scope)).toBeNull();
+  });
+
   it("imports metadata when Zotero has no copy of the PDF file", async () => {
     const root = await project();
     const zotero = fakeZoteroAccess(
@@ -305,6 +499,10 @@ describe("Zotero import", () => {
     const http: ZoteroWebHttp = {
       request: async ({ url }) => {
         paths.push(url.pathname);
+        if (url.searchParams.get("format") === "keys") {
+          const references = url.searchParams.get("itemType") === "-attachment";
+          return { status: 200, headers: {}, body: references ? item.key : "" };
+        }
         const body =
           url.pathname === "/keys/current"
             ? { userID: 475425, access: { user: { library: true } } }

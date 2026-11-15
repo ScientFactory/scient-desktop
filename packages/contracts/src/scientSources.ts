@@ -1118,10 +1118,14 @@ const RefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
   Schema.check(Schema.isMaxLength(32)),
 );
 
-/** Without sourceIds, every source imported from Zotero is refreshed. */
+/**
+ * Without sourceIds, every source imported from Zotero is refreshed: with `start`, a batch of
+ * them from that position (the result says where the next begins).
+ */
 export const ScientSourcesZoteroRefreshRequest = Schema.Struct({
   root: NonEmptyString,
   sourceIds: Schema.optionalKey(BoundedSourceIds),
+  start: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   connection: Schema.optionalKey(ZoteroConnection),
   useZotero: Schema.optionalKey(RefreshFields),
   keepLocal: Schema.optionalKey(RefreshFields),
@@ -1155,6 +1159,8 @@ export type ZoteroCollectionsRequest = typeof ZoteroCollectionsRequest.Type;
 export const ZoteroScopedImportRequest = Schema.Struct({
   root: NonEmptyString,
   operationId: NonEmptyString,
+  /** The run to continue: the next part of a scope too large for one operation. */
+  continueRun: Schema.optionalKey(NonEmptyString),
   scope: ZoteroImportScope,
   connection: Schema.optionalKey(ZoteroConnection),
   groupId: Schema.optionalKey(ZoteroGroupId),

@@ -136,12 +136,15 @@ function cslDate(value: unknown): string | null {
   if (!isObject(value)) return null;
   const parts = value["date-parts"];
   if (Array.isArray(parts) && Array.isArray(parts[0])) {
-    const [year, month, day] = (parts[0] as unknown[]).map((part) => stringValue(part));
-    if (year && /^-?\d{1,4}$/u.test(year)) {
+    const written = (parts as unknown[]).slice(0, 2).map((date) => {
+      const [year, month, day] = (Array.isArray(date) ? date : []).map((part) => stringValue(part));
+      if (!year || !/^-?\d{1,4}$/u.test(year)) return null;
       if (!month) return year;
       if (!day) return `${year}-${month.padStart(2, "0")}`;
       return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-    }
+    });
+    // A range keeps both ends, as `start/end`.
+    if (written.every((date) => date !== null)) return written.join("/");
   }
   return stringValue(value["raw"]) ?? stringValue(value["literal"]);
 }
@@ -233,7 +236,7 @@ function entryFromItem(item: JsonObject, index: number): BibliographyEntry {
   const arxivNumber = arxivIn(number);
   const arxiv = arxivIn(archiveId) ?? arxivNumber ?? arxivIn(stringValue(item["URL"]));
   if (arxiv) builder.addIdentifier("arxiv", arxiv, arxivIn(archiveId) ? "archive_location" : "URL");
-  else if (archiveId) builder.notKeep("archive_location");
+  else builder.setMore("archive_location", archiveId, "archive_location");
   // A report's number is its own; elsewhere a number with no issue is the issue.
   if (issue) builder.set("issue", issue, "issue");
   if (number && !arxivNumber) {
@@ -355,16 +358,16 @@ function zoteroTypeOf(record: ScientSourceRecord): string | null {
 }
 
 /**
- * Every creator under the CSL variable its role is cited with. A type's primary role (a
- * program's programmer, a film's director) is its author, as Zotero cites it; a role CSL has
- * no variable for stays in the record and out of the citation.
+ * Every creator under the CSL variable its role is cited with, as Zotero cites it: a film's
+ * director stays its director. Only a type's primary role that CSL has no variable for (a
+ * program's programmer) is its author; any other such role stays out of the citation.
  */
 function cslNamesByVariable(record: ScientSourceRecord): Readonly<Record<string, CslName[]>> {
   const primary = ZOTERO_PRIMARY_ROLE[zoteroTypeOf(record) ?? ""]?.toLowerCase();
   const names: Record<string, CslName[]> = {};
   for (const creator of record.creators) {
     const role = creator.creatorType.toLowerCase();
-    const variable = role === primary ? "author" : ZOTERO_ROLE_CSL[role];
+    const variable = ZOTERO_ROLE_CSL[role] ?? (role === primary ? "author" : undefined);
     const name: CslName | null = creator.literalName
       ? { literal: creator.literalName }
       : creator.familyName || creator.givenName
@@ -383,11 +386,29 @@ function cslMore(record: ScientSourceRecord): Readonly<Record<string, unknown>> 
   return Object.fromEntries(
     Object.entries(record.more ?? {}).flatMap(([name, value]): Array<[string, unknown]> => {
       if (name === "extra") return [];
-      if (scientSourceMoreKind(name) !== "date") return [[name, value]];
-      const date = cslIssued(value, null);
-      return date ? [[name, date]] : [];
+      return [[name, scientSourceMoreKind(name) === "date" ? cslDateFromText(value) : value]];
     }),
   );
+}
+
+/**
+ * A date kept as text, as a CSL date: a plain date or a range of two (`1824/1825`) by its
+ * parts, anything else ("ca. 1890", "Spring 2020") whole as a literal. Never a part of the
+ * text taken for the whole.
+ */
+function cslDateFromText(text: string): Readonly<Record<string, unknown>> {
+  const parts = (value: string) => {
+    const match = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?(?:[T ]\d{2}:\d{2}(?::\d{2})?Z?)?$/u.exec(
+      value.trim(),
+    );
+    return match
+      ? [match[1], match[2], match[3]].flatMap((part) => (part ? [Number(part)] : []))
+      : null;
+  };
+  const dates = text.split("/").map(parts);
+  return dates.length <= 2 && dates.every((date) => date !== null)
+    ? { "date-parts": dates }
+    : { literal: text };
 }
 
 function cslIssued(raw: string | null, year: number | null) {

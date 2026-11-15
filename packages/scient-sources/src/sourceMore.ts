@@ -59,7 +59,7 @@ const KNOWN: ReadonlyMap<string, (typeof SCIENT_SOURCE_MORE_FIELDS)[number]> = n
   SCIENT_SOURCE_MORE_FIELDS.map((field) => [field.name, field]),
 );
 
-const SCIENT_SOURCE_MORE_LIMITS = { entries: 40, value: 2_000, extra: 10_000 } as const;
+const SCIENT_SOURCE_MORE_LIMITS = { value: 2_000, extra: 10_000 } as const;
 
 /** What a person calls one of these details. */
 export const scientSourceMoreLabel = (name: string): string => KNOWN.get(name)?.label ?? name;
@@ -70,25 +70,22 @@ export const isScientSourceMoreName = (name: string): name is ScientSourceMoreNa
 export const scientSourceMoreKind = (name: string): "text" | "date" =>
   KNOWN.get(name)?.kind ?? "text";
 
-/** Whether a whole map is one a record may keep: known names, text that fits, not too many. */
+/** Whether a whole map is one a record may keep: known names, and text that fits. */
 export function isValidScientSourceMore(more: Readonly<Record<string, string>>): boolean {
   const entries = Object.entries(more);
-  return (
-    entries.length <= SCIENT_SOURCE_MORE_LIMITS.entries &&
-    entries.every(
-      ([name, value]) =>
-        KNOWN.has(name) &&
-        value.trim().length > 0 &&
-        value.length <=
-          (name === "extra" ? SCIENT_SOURCE_MORE_LIMITS.extra : SCIENT_SOURCE_MORE_LIMITS.value),
-    )
+  return entries.every(
+    ([name, value]) =>
+      KNOWN.has(name) &&
+      value.trim().length > 0 &&
+      value.length <=
+        (name === "extra" ? SCIENT_SOURCE_MORE_LIMITS.extra : SCIENT_SOURCE_MORE_LIMITS.value),
   );
 }
 
 /**
  * Entries as a record may keep them, in the list's order: trimmed, empty ones dropped.
- * Nothing is ever cut to fit: an entry with an unknown name, or text too long, or one past
- * the limit, is returned in `left` so the caller can say it was not kept.
+ * Nothing is ever cut to fit: an entry with an unknown name, or text too long, is returned
+ * in `left` so the caller can say it was not kept.
  */
 export function normalizeScientSourceMore(input: Readonly<Record<string, string>> | undefined): {
   readonly more: Readonly<Record<string, string>> | null;
@@ -108,7 +105,7 @@ export function normalizeScientSourceMore(input: Readonly<Record<string, string>
     if (value === undefined) continue;
     const limit =
       name === "extra" ? SCIENT_SOURCE_MORE_LIMITS.extra : SCIENT_SOURCE_MORE_LIMITS.value;
-    if (value.length > limit || Object.keys(kept).length >= SCIENT_SOURCE_MORE_LIMITS.entries) {
+    if (value.length > limit) {
       left.push(name);
     } else {
       kept[name] = value;

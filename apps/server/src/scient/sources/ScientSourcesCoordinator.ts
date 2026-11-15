@@ -41,6 +41,8 @@ import {
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
   type ScientSourceImportOperation,
+  SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
+  zoteroGroupIdOfLibrary,
   type ScientSourceOrigin,
   type ScientSourceRecord,
   type ScientSourceVerification,
@@ -91,6 +93,8 @@ import {
   listScientSourceRecords,
   readScientSourceRecord,
   readSourceImportOperation,
+  readSourceImportParts,
+  endSourceImportRun,
   recordScientSourceCheck,
   retryFailedSourceImportOperationItems,
   removeScientSource,
@@ -1168,35 +1172,163 @@ export async function beginZoteroScopedImport(input: {
   readonly zotero?: ZoteroAccess;
   /** Library stores: the project the imported sources are pinned in. */
   readonly pinInto?: string;
+  /** The run whose next part this begins (a scope too large for one operation). */
+  readonly continueRun?: string;
+  /** Tests only: a smaller part than an operation's limit. */
+  readonly partSize?: number;
 }) {
-  const adapter = zoteroAdapter(input.connection);
-  const existing = await readSourceImportOperation(input.root, input.operationId);
-  if (existing) {
-    if (existing.adapter !== adapter || existing.zoteroGroupId !== input.groupId) {
-      throw new Error("This operation ID already belongs to another import adapter.");
-    }
-    return existing;
+  const { zotero, partSize } = input;
+  const shared = { ...(zotero ? { zotero } : {}), ...(partSize ? { partSize } : {}) };
+  if (input.continueRun !== undefined) {
+    return continueZoteroImportRun({ root: input.root, runId: input.continueRun, ...shared });
   }
+  const parts = await readSourceImportParts(input.root, input.operationId);
+  const [begun] = parts;
+  if (
+    begun &&
+    (begun.adapter !== zoteroAdapter(input.connection) || begun.zoteroGroupId !== input.groupId)
+  ) {
+    throw new Error("This operation ID already belongs to another import adapter.");
+  }
+  // Asked again for the same thing (an answer was lost): what it began, as it is now.
+  const latest = parts.at(-1);
+  if (latest) return latest;
+  return beginZoteroRunPart({
+    root: input.root,
+    runId: input.operationId,
+    parts,
+    scope: input.scope,
+    ...(input.connection ? { connection: input.connection } : {}),
+    ...(input.groupId ? { groupId: input.groupId } : {}),
+    ...(input.actor ? { actor: input.actor } : {}),
+    pin: await importPinInstance(input.root, input.pinInto),
+    ...shared,
+  });
+}
+
+/**
+ * Begins the next part of a large Zotero import. What it brings, from which Zotero library
+ * and for which project is on the run's record, so nothing of that is asked again.
+ */
+export async function continueZoteroImportRun(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly runId: string;
+  readonly zotero?: ZoteroAccess;
+  readonly partSize?: number;
+}) {
+  const parts = await readSourceImportParts(input.root, input.runId);
+  const [begun] = parts;
+  const latest = parts.at(-1);
+  if (!begun?.run || !latest) {
+    throw new Error("That import is not on record here any more. Import the collection again.");
+  }
+  // A part is still under way (or the answer to this was lost): that part.
+  if (latest.state === "running") return latest;
+  return beginZoteroRunPart({
+    root: input.root,
+    runId: input.runId,
+    parts,
+    scope: begun.run.scope,
+    ...(begun.adapter === "zotero-web" ? { connection: "web" as const } : {}),
+    ...(begun.zoteroGroupId ? { groupId: begun.zoteroGroupId } : {}),
+    actor: begun.actor,
+    pin: begun.pinInstanceId ? { pinInstanceId: begun.pinInstanceId } : {},
+    ...(input.zotero ? { zotero: input.zotero } : {}),
+    ...(input.partSize ? { partSize: input.partSize } : {}),
+  });
+}
+
+/** One part of a scoped Zotero import: the whole scope when it fits, or what is still to come. */
+async function beginZoteroRunPart(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly runId: string;
+  readonly parts: ReadonlyArray<ScientSourceImportOperation>;
+  readonly scope: ZoteroImportScope;
+  readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
+  readonly actor?: "user" | "agent";
+  readonly pin: { readonly pinInstanceId?: string };
+  readonly zotero?: ZoteroAccess;
+  readonly partSize?: number;
+}) {
+  const { parts, runId } = input;
+  const partSize = input.partSize ?? SCIENT_SOURCE_IMPORT_ITEM_LIMIT;
   const transport = await zoteroTransport(
     input.zotero ?? localOnlyZoteroAccess,
     input.connection,
     input.groupId,
   );
-  const itemKeys = await listZoteroScopeItemKeysWith(transport, input.scope);
-  const alone = await countZoteroScopeStandalone(transport, input.scope);
+  const inScope = await listZoteroScopeItemKeysWith(transport, input.scope);
+  const large = inScope.length > partSize || parts.length > 0;
+  // A large scope comes in parts: each takes what has no source here yet and no earlier part
+  // of the run has handled (imported, skipped as a possible duplicate, or failed).
+  const here = large ? await zoteroItemKeysHere(input.root, input.groupId) : new Set<string>();
+  // An item a stopped part never reached is not handled: a later part takes it.
+  const handled = new Set(
+    parts.flatMap((part) =>
+      part.items.flatMap((item) => (item.state === "pending" ? [] : [item.itemKey])),
+    ),
+  );
+  const rest = inScope.filter((key) => !here.has(key) && !handled.has(key));
+  if (large && rest.length === 0) {
+    // What remained left the scope in Zotero meanwhile: the run is over, and that is no error.
+    const latest = parts.at(-1);
+    if (latest) return endSourceImportRun(input.root, latest.operationId);
+    throw new Error(
+      `Every reference in this Zotero ${input.scope.kind === "library" ? "library" : "collection"} is already in your Library.`,
+    );
+  }
+  const itemKeys = rest.slice(0, partSize);
+  // Said once, with the first part.
+  const alone =
+    parts.length === 0
+      ? await countZoteroScopeStandalone(transport, input.scope)
+      : { notes: 0, files: 0 };
   return createSourceImportOperation({
     root: input.root,
-    operationId: input.operationId,
-    adapter,
+    operationId: parts.length === 0 ? runId : `${runId}-${parts.length + 1}`,
+    adapter: zoteroAdapter(input.connection),
     itemKeys,
-    notBrought: [
-      ...(alone.notes > 0 ? [{ kind: "notes-alone" as const, count: alone.notes }] : []),
-      ...(alone.files > 0 ? [{ kind: "files-alone" as const, count: alone.files }] : []),
-    ],
+    ...(large
+      ? {
+          run: {
+            runId,
+            part: parts.length + 1,
+            remaining: rest.length - itemKeys.length,
+            scope: input.scope,
+          },
+        }
+      : {}),
+    notBrought:
+      alone === null
+        ? [{ kind: "alone-uncounted" as const, count: 1 }]
+        : [
+            ...(alone.notes > 0 ? [{ kind: "notes-alone" as const, count: alone.notes }] : []),
+            ...(alone.files > 0 ? [{ kind: "files-alone" as const, count: alone.files }] : []),
+          ],
     ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
-    ...(await importPinInstance(input.root, input.pinInto)),
+    ...input.pin,
   });
+}
+
+/** The Zotero items of one library (My Library, or a group) that already have a source here. */
+async function zoteroItemKeysHere(
+  root: ScientSourceStoreLocation,
+  groupId: string | undefined,
+): Promise<ReadonlySet<string>> {
+  const keys = new Set<string>();
+  for (const record of await listScientSourceRecords(root)) {
+    for (const reference of record.externalReferences) {
+      if (
+        reference.system === "zotero" &&
+        zoteroGroupIdOfLibrary(reference.libraryId) === (groupId ?? null)
+      ) {
+        keys.add(reference.itemKey);
+      }
+    }
+  }
+  return keys;
 }
 
 export async function uploadLocalPdfSource(input: {

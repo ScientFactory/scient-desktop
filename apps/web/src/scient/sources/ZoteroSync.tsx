@@ -45,7 +45,7 @@ const FIELD_LABELS: Readonly<Record<ScientSourceZoteroRefreshField, string>> = {
 };
 
 type RefreshState =
-  | { readonly phase: "running" }
+  | { readonly phase: "running"; readonly checked?: number; readonly total?: number }
   | { readonly phase: "problem"; readonly message: string }
   | {
       readonly phase: "done";
@@ -96,12 +96,28 @@ export function useZoteroSync(input: {
         return;
       }
       const connection = status.connection ?? "local";
-      const result = await refreshZoteroSources(input.environmentId, {
-        root: input.root,
-        connection,
-      });
-      show({ phase: "done", connection, result });
-      if (result.items.some((item) => item.outcome === "updated")) await input.onChanged();
+      // A large Library is read again in batches, so the dialog can say how far it is.
+      const items: ScientSourceZoteroRefreshResult["items"][number][] = [];
+      for (let start: number | undefined = 0; start !== undefined;) {
+        const batch = await refreshZoteroSources(input.environmentId, {
+          root: input.root,
+          connection,
+          start,
+        });
+        items.push(...batch.items);
+        // Closed meanwhile: what was read stays, and nothing more is asked.
+        if (run.current !== current) break;
+        start = batch.nextStart;
+        if (start !== undefined) {
+          show({
+            phase: "running",
+            checked: items.length,
+            ...(batch.total === undefined ? {} : { total: batch.total }),
+          });
+        }
+      }
+      show({ phase: "done", connection, result: { connection, items } });
+      if (items.some((item) => item.outcome === "updated")) await input.onChanged();
     } catch (cause) {
       show({ phase: "problem", message: errorText(cause) });
     }
@@ -253,7 +269,9 @@ export function ZoteroRefreshDialog(props: {
           <DialogTitle>Refresh from Zotero</DialogTitle>
           <DialogDescription>
             {state?.phase === "running"
-              ? "Reading your Zotero library…"
+              ? state.checked !== undefined && state.total !== undefined
+                ? `Reading your Zotero library… ${state.checked.toLocaleString()} of ${state.total.toLocaleString()} sources checked. Closing stops here; what was read is kept.`
+                : "Reading your Zotero library…"
               : state?.phase === "problem"
                 ? state.message
                 : done

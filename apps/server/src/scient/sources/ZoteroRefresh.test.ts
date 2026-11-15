@@ -79,6 +79,64 @@ async function editHere(
 }
 
 describe("Zotero refresh", () => {
+  it("reads a large Library again in batches, and of a project's sources only Zotero's", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-zotero-refresh-"));
+    roots.push(root);
+    await initializeScientProject({ root });
+    const keys = ["AAAA2345", "BBBB2345", "CCCC2345"];
+    const items = new Map(
+      keys.map((key, index) => [
+        key,
+        {
+          item: zoteroItem(key, {
+            title: `Batch reference ${key}`,
+            abstractNote: "A.",
+            creators: [{ creatorType: "author", lastName: `Writer${key}` }],
+            date: String(1700 + index),
+          }),
+          children: [],
+        },
+      ]),
+    );
+    const zotero = fakeZoteroAccess(fakeZoteroTransport({ items }));
+    await beginZoteroScopedImport({
+      root,
+      operationId: "import",
+      scope: { kind: "library" },
+      zotero,
+    });
+    let operation = await advanceSourceImport({ root, operationId: "import", zotero });
+    while (operation.state === "running") {
+      operation = await advanceSourceImport({ root, operationId: "import", zotero });
+    }
+    const sourceIds = (await listScientSourceRecords(root))
+      .map((record) => record.sourceId)
+      .toSorted();
+    expect(sourceIds).toHaveLength(3);
+
+    const batch = (start: number) =>
+      refreshZoteroSources({ root, actor: "user", zotero, start, batchSize: 2 });
+    const first = await batch(0);
+    expect(first.items.map((item) => item.sourceId)).toEqual(sourceIds.slice(0, 2));
+    expect(first).toMatchObject({ total: 3, nextStart: 2 });
+    const last = await batch(2);
+    expect(last.items.map((item) => item.sourceId)).toEqual(sourceIds.slice(2));
+    expect(last.total).toBe(3);
+    expect(last.nextStart).toBeUndefined();
+
+    // A project's sources: the two of them that came from Zotero, and no failure for others.
+    const among = await refreshZoteroSources({
+      root,
+      actor: "user",
+      zotero,
+      among: [sourceIds[2] ?? "", sourceIds[0] ?? "", "source_not_from_zotero"],
+    });
+    expect(among.items.map((item) => [item.sourceId, item.outcome])).toEqual([
+      [sourceIds[0], "unchanged"],
+      [sourceIds[2], "unchanged"],
+    ]);
+  });
+
   it("takes Zotero's changes and keeps edits made here, reporting the clash", async () => {
     const { root, library, zotero, record } = await importedFromZotero(original);
     await editHere(root, record.sourceId, { title: "My corrected title" });

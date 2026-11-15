@@ -75,7 +75,10 @@ export function fakeZoteroTransport(
                 ? item.data.itemType !== wanted.slice(1)
                 : item.data.itemType === wanted,
           );
-        return json(top, top.length);
+        // A keys-only listing is plain text, one key a line, as Zotero answers it.
+        return new URLSearchParams(path.split("?")[1] ?? "").get("format") === "keys"
+          ? { status: 200, headers: {}, body: top.map((item) => item.key).join("\n") }
+          : json(top, top.length);
       }
       if (route === "/collections") {
         const collections = (library.collections ?? []).map((collection) => ({

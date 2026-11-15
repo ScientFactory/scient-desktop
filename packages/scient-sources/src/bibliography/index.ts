@@ -8,6 +8,7 @@ import {
 import { assessSourceDuplicate, type ScientSourceIntakeExclusions } from "../duplicates.ts";
 import type { ScientSourceCandidate, ScientSourceRecord } from "../model.ts";
 import { normalizePersistentIdentifier } from "../normalize.ts";
+import { scientSourceMoreKind, scientSourceMoreLabel } from "../sourceMore.ts";
 import { scientLibraryIdentityProblem } from "../sourceIdentity.ts";
 import { formatBibtex, parseBibtex } from "./bibtex.ts";
 import { formatCslJson, parseCslJson } from "./cslJson.ts";
@@ -396,6 +397,16 @@ export function exportBibliographyFile(
       }),
     );
     if (entry?.type !== record.type) fields.add("Source type");
+    // A further detail the format has no field for, or a line kept as written.
+    for (const [name, value] of Object.entries(record.more ?? {})) {
+      const back = entry?.more[name];
+      // A date that came back without its time of day is the same date.
+      const same =
+        back === value ||
+        (back !== undefined && scientSourceMoreKind(name) === "date" && value.startsWith(back));
+      if (!same) fields.add(scientSourceMoreLabel(name));
+    }
+    if (entry && entry.creators.length < record.creators.length) fields.add("Some creators");
     for (const field of fields) {
       const summary = lost.get(field) ?? { entryCount: 0, citationKeys: [] };
       summary.entryCount += 1;

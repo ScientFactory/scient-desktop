@@ -1,6 +1,5 @@
 import {
   normalizeImportedCitationKey,
-  SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceCandidate,
   type ZoteroCollection,
   type ZoteroCollectionsResult,
@@ -238,45 +237,97 @@ export async function listZoteroLibraryWith(
   };
 }
 
+/** How many references one import of a scope may reach, over all its parts. */
+const ZOTERO_RUN_ITEM_LIMIT = 100_000;
+
+/** The item paths a scope covers: one, or one for each collection under the chosen one. */
+async function scopeItemPaths(
+  transport: ZoteroTransport,
+  scope: ZoteroImportScope,
+): Promise<ReadonlyArray<string>> {
+  if (scope.kind === "library" || !scope.includeSubcollections) return [scopePath(scope)];
+  const collections = await listAllCollections(transport);
+  if (!collections.some((collection) => collection.key === scope.collectionKey)) {
+    throw new Error("The Zotero collection no longer exists.");
+  }
+  return zoteroDescendantCollectionKeys(scope.collectionKey, collections).map(
+    (key) => `/collections/${key}/items/top`,
+  );
+}
+
+/**
+ * The keys of the items at a path that an item-type filter keeps. Zotero answers a keys-only
+ * listing whole, in one request, so a library of any size is listed without paging.
+ */
+async function readItemKeys(
+  transport: ZoteroTransport,
+  path: string,
+  itemType: string,
+): Promise<ReadonlyArray<string>> {
+  const parameters = new URLSearchParams({
+    format: "keys",
+    itemType,
+    sort: "dateModified",
+    direction: "desc",
+  });
+  const response = await transport.get(`${path}?${parameters.toString()}`);
+  assertZoteroResponse(response);
+  const keys = response.body.split("\n").flatMap((line) => (line.trim() ? [line.trim()] : []));
+  if (!keys.every((key) => /^[A-Z0-9]{8}$/u.test(key))) {
+    throw new Error("Zotero did not return a list of item keys.");
+  }
+  return keys;
+}
+
+/** The distinct keys of one item type over several paths: an item may be filed in two. */
+async function readDistinctItemKeys(
+  transport: ZoteroTransport,
+  paths: ReadonlyArray<string>,
+  itemType: string,
+): Promise<ReadonlySet<string>> {
+  const keys = new Set<string>();
+  for (const path of paths) {
+    for (const key of await readItemKeys(transport, path, itemType)) keys.add(key);
+  }
+  return keys;
+}
+
+/** Every reference of a scope, by key, in Zotero's order; a scope past the limit is refused. */
 export async function listZoteroScopeItemKeysWith(
   transport: ZoteroTransport,
   scope: ZoteroImportScope,
 ): Promise<ReadonlyArray<string>> {
-  const items = await readAllScopedItems(transport, scope, "", SCIENT_SOURCE_IMPORT_ITEM_LIMIT);
-  return [...new Set(items.map((item) => item.key))];
+  const paths = await scopeItemPaths(transport, scope);
+  // Top-level items that are not files, less the notes that stand alone: the references.
+  const notes = await readDistinctItemKeys(transport, paths, "note");
+  const keys = [...(await readDistinctItemKeys(transport, paths, "-attachment"))].filter(
+    (key) => !notes.has(key),
+  );
+  if (keys.length > ZOTERO_RUN_ITEM_LIMIT) {
+    throw new Error(
+      `This Zotero scope contains more than ${ZOTERO_RUN_ITEM_LIMIT.toLocaleString("en-US")} references. Choose a smaller collection.`,
+    );
+  }
+  return keys;
 }
 
 /**
  * Notes and files in a scope that belong to no reference. An import brings references with
- * what hangs on them, so these are passed by; the import says how many. Zero when Zotero
- * cannot be asked (the count is a courtesy, never a reason to fail an import).
+ * what hangs on them, so these are passed by; the import says how many. Null when Zotero
+ * could not be asked: the import goes on and says they were not counted, never zero.
  */
 export async function countZoteroScopeStandalone(
   transport: ZoteroTransport,
   scope: ZoteroImportScope,
-): Promise<{ readonly notes: number; readonly files: number }> {
-  const count = async (path: string, itemType: string) => {
-    const parameters = new URLSearchParams({ format: "json", itemType, limit: "1" });
-    const { response, value } = await getJson(transport, `${path}?${parameters.toString()}`);
-    return totalResults(response, Array.isArray(value) ? value.length : 0);
-  };
+): Promise<{ readonly notes: number; readonly files: number } | null> {
   try {
-    const paths =
-      scope.kind === "collection" && scope.includeSubcollections
-        ? zoteroDescendantCollectionKeys(
-            scope.collectionKey,
-            await listAllCollections(transport),
-          ).map((key) => `/collections/${key}/items/top`)
-        : [scopePath(scope)];
-    let notes = 0;
-    let files = 0;
-    for (const path of paths) {
-      notes += await count(path, "note");
-      files += await count(path, "attachment");
-    }
-    return { notes, files };
+    const paths = await scopeItemPaths(transport, scope);
+    return {
+      notes: (await readDistinctItemKeys(transport, paths, "note")).size,
+      files: (await readDistinctItemKeys(transport, paths, "attachment")).size,
+    };
   } catch {
-    return { notes: 0, files: 0 };
+    return null;
   }
 }
 

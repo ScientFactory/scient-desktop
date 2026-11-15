@@ -798,6 +798,10 @@ export const ScientSourceNotBrought = Schema.Struct({
     "notes-alone",
     /** Files that belong to no reference. */
     "files-alone",
+    /** Zotero could not be asked how many notes and files belong to no reference. */
+    "alone-uncounted",
+    /** References that were already here: nothing of Zotero's copy was taken. */
+    "already-here",
   ]),
   name: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(120))),
   count: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -849,6 +853,19 @@ export const ScientSourceImportOperation = Schema.Struct({
   notBrought: Schema.optionalKey(
     Schema.Array(ScientSourceNotBrought).check(Schema.isMaxLength(20)),
   ),
+  /**
+   * A Zotero scope too large for one operation is imported as a run of them: this is one
+   * part. `remaining` items of the scope come in later parts; `scope` lets a later session
+   * begin the next one.
+   */
+  run: Schema.optionalKey(
+    Schema.Struct({
+      runId: NonEmptyString,
+      part: Schema.Int.check(Schema.isGreaterThan(0)),
+      remaining: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      scope: Schema.suspend(() => ZoteroImportScope),
+    }),
+  ),
 });
 export type ScientSourceImportOperation = typeof ScientSourceImportOperation.Type;
 
@@ -864,6 +881,8 @@ export const ScientSourceImportReceipt = Schema.Struct({
   skippedItemKeys: Schema.Array(NonEmptyString),
   failedItemKeys: Schema.Array(NonEmptyString),
   unprocessedItemKeys: Schema.Array(NonEmptyString),
+  /** A part of a large import: the run it belongs to, so its parts are listed as one import. */
+  runId: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceImportReceipt = typeof ScientSourceImportReceipt.Type;
 
@@ -964,6 +983,10 @@ export type ScientSourceZoteroRefreshItem = typeof ScientSourceZoteroRefreshItem
 export const ScientSourceZoteroRefreshResult = Schema.Struct({
   connection: ZoteroConnection,
   items: Schema.Array(ScientSourceZoteroRefreshItem),
+  /** A batch of a whole-Library refresh: how many sources came from Zotero in all. */
+  total: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Where the next batch begins; absent after the last. */
+  nextStart: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ScientSourceZoteroRefreshResult = typeof ScientSourceZoteroRefreshResult.Type;
 

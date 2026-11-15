@@ -41,6 +41,38 @@ describe("what an import did not bring, in words", () => {
     ]);
   });
 
+  it("says which references were already here, for a Zotero import only, and when Zotero was not asked", () => {
+    const skipped = (
+      sourceId: string,
+      duplicateKind: NonNullable<Item["duplicateKind"]>,
+    ): Item => ({
+      itemKey: `KEY${sourceId}`,
+      state: "skipped",
+      duplicateKind,
+      sourceId,
+      message: null,
+    });
+    const items = [
+      // The same DOI under another origin, and a possible match: nothing of Zotero's copy came.
+      skipped("s1", "same-identifier"),
+      skipped("s2", "possible-metadata-match"),
+      // Imported from this very Zotero item before: nothing new to say.
+      skipped("s3", "same-origin"),
+    ];
+    const lines = summarizeNotBrought({
+      adapter: "zotero",
+      items,
+      notBrought: [{ kind: "alone-uncounted", count: 1 }],
+    });
+    expect(lines.map((line) => [line.kind, notBroughtAmount(line), line.sourceIds])).toEqual([
+      ["already-here", "2 references", ["s1", "s2"]],
+      ["alone-uncounted", "not counted", []],
+    ]);
+    expect(notBroughtName(lines[0]!)).toContain("already in your Library");
+    // A reference file's own report says what it left out; this line is Zotero's.
+    expect(summarizeNotBrought({ adapter: "file", items })).toEqual([]);
+  });
+
   it("names a field Zotero's way when it has no better word, and every kind of thing", () => {
     const name = (kind: Parameters<typeof notBroughtName>[0]["kind"], value: string | null) =>
       notBroughtName({ kind, name: value });

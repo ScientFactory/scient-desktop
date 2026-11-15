@@ -292,7 +292,12 @@ had chosen before it.
 2. In the **Library**, choose **Import sources → Import from Zotero**.
 3. Select **My Library**, one of your Zotero groups, or a specific collection.
 4. Select individual references, import the selected collection, or import the
-   complete library.
+   complete library. A collection or library of any size can be imported: more
+   than 500 references come in parts of 500, one after the other, and the
+   summary counts them as one import and says how many are still to come. If
+   Scient closes in the middle, the import goes on when you open the Library
+   again. If you stop it, **Import the rest** goes on from where it was.
+   Nothing is imported twice, and **Recent changes** lists it as one import.
 
 Scient copies each reference's metadata, tags, child notes (as **My note**)
 and every PDF attachment into your Library, and adds the references to this
@@ -301,6 +306,8 @@ ones beyond a source's main details: edition, place of publication, series,
 number of pages, report number, date accessed and the like are kept under
 the names citations use, so a book is cited with its edition. A field only
 Zotero has a name for, and the lines of Zotero's Extra, are kept as written.
+A line of Extra that names a creator (`editor: Smith || Jane`) adds that
+creator, as it does in Zotero.
 Software, presentations and manuscripts keep their type; a program is cited
 by its programmer, a film by its director, a legal case by its name. A citation key the item
 already has, from Zotero or Better BibTeX, is kept. Each source also joins a
@@ -316,8 +323,11 @@ many references it concerns: highlights and comments on PDFs, files that are
 not PDFs, links
 kept as attachments, PDFs Zotero could not hand over, notes whose links or
 tables became plain text, and notes and files that belong to no reference.
-**Show** on a line shows the references it concerns. All of it is still in
-Zotero. The list is made by comparing what was brought with everything Zotero
+A reference that was already in your Library (the same DOI, or a possible
+match you did not import) is listed too: nothing was taken from Zotero's copy
+of it. **Show** on a line shows the references it concerns. All of it is
+still in Zotero. Zotero's Trash, saved searches and tag colours are not
+looked at. The list is made by comparing what was brought with everything Zotero
 sent, so what is not on it was brought. It stays with the import: in **Recent
 changes**, the import's line has **Not brought** with the same list, also
 after you have dismissed the summary.
@@ -362,7 +372,9 @@ in Zotero stays in your Library. The details under **More details** (edition,
 place of publication and the like) are compared one by one: a new one comes
 in while one you corrected here stays, and one you removed here stays removed
 as long as Zotero's did not change. A source imported before Scient kept
-these details gets them on its next refresh. If Zotero cannot be read (for example it is
+these details gets them on its next refresh. A large Library is read again
+200 sources at a time, and the dialog says how far it is; closing it stops
+there and keeps what was read. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
 leaving it.
 
@@ -377,7 +389,8 @@ program's version); a detail that kind of item has no field for goes to
 Zotero's **Extra**, where Zotero reads it. If the item was changed in Zotero after Scient last read it, nothing is
 overwritten: refresh from Zotero first, then send again. This needs the Zotero
 key in Accounts with write access. Changes are not sent automatically; there is
-no two-way sync.
+no two-way sync. At most 500 sources are sent at a time; with more selected,
+Scient says so and sends nothing.
 
 When your key may write to a group and the group lets you edit its library,
 **Send to Zotero** asks where to send: **My Library** or that group. A source
@@ -506,10 +519,12 @@ sources are. Each source is written under its citation key.
 Project notes stay private unless you turn on **Include notes**. Exported
 BibTeX is UTF-8; words with inner capitals (`DNA`, `mRNA`) are braced so
 styles keep their case.
-Identifiers, the preprint type, and a source's further details (edition,
-place of publication, series and the like) survive in every format. When a format has
-no place for something (for example EndNote XML holds an arXiv ID or a PMID,
-not both), a note after the export names what the file leaves out.
+Identifiers, the preprint type, and most of a source's further details
+(edition, place of publication, series, a report's number and the like) are
+written in every format. When a format has no place for something (for
+example EndNote XML holds an arXiv ID or a PMID, not both; BibTeX has no
+field for a call number), a note after the export names each thing the file
+leaves out.
 
 ## Back up the Library
 
@@ -1277,7 +1292,8 @@ flow still apply to writes. Library tools stay scoped to the current project:
 they do not grant arbitrary host file paths or turn uncertain metadata into
 verified evidence. Agents can browse and import from Zotero, refresh from it
 and send to it with the same rules as you; they change Zotero only when you ask
-them to send. An agent can also read the same **Recent changes** list as you,
+them to send. An agent brings a large collection 500 references at a time and
+goes on until none remain. An agent can also read the same **Recent changes** list as you,
 so you can ask it to undo yesterday's tagging or to restore a paper it removed.
 
 ## Current limits

@@ -283,4 +283,63 @@ describe("Better BibTeX keys", () => {
     });
     expect(candidate.identifiers).toEqual([{ scheme: "pmid", value: "123456" }]);
   });
+
+  it("keeps a second identifier or key in Extra, reads creators from it, and a talk's place", () => {
+    const article = zoteroItemToCandidate({
+      key: "ABCD2345",
+      version: 1,
+      library: { type: "user", id: 0 },
+      data: {
+        key: "ABCD2345",
+        version: 1,
+        itemType: "journalArticle",
+        title: "An article",
+        DOI: "10.1234/current",
+        citationKey: "current2026",
+        extra: [
+          "DOI: 10.1234/earlier",
+          "DOI: 10.1234/CURRENT",
+          "PMID: 111",
+          "PMID: 222",
+          "Citation Key: old2019",
+          "editor: Smith || Jane",
+          "translator: Institute of Translation",
+        ].join("\n"),
+      },
+    });
+    // What the record took leaves Extra; another value for the same thing stays, as written.
+    expect(article.identifiers).toEqual([
+      { scheme: "doi", value: "10.1234/current" },
+      { scheme: "pmid", value: "111" },
+    ]);
+    expect(article.citationKey).toBeUndefined();
+    expect(article.more?.extra).toBe("DOI: 10.1234/earlier\nPMID: 222\nCitation Key: old2019");
+    expect(article.creators).toEqual([
+      { creatorType: "editor", givenName: "Jane", familyName: "Smith", literalName: null },
+      {
+        creatorType: "translator",
+        givenName: null,
+        familyName: null,
+        literalName: "Institute of Translation",
+      },
+    ]);
+
+    const talk = zoteroItemToCandidate({
+      key: "EFGH2345",
+      version: 1,
+      library: { type: "user", id: 0 },
+      data: {
+        key: "EFGH2345",
+        version: 1,
+        itemType: "presentation",
+        title: "A talk",
+        ...({ place: "Boston", meetingName: "Annual Meeting" } as object),
+      },
+    });
+    expect(talk).toMatchObject({
+      type: "presentation",
+      more: { "event-place": "Boston", "event-title": "Annual Meeting" },
+    });
+    expect(talk.more).not.toHaveProperty("publisher-place");
+  });
 });

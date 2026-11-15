@@ -756,7 +756,17 @@ export function formatBibtex(
       const monthName = month ? MONTH_NAMES[Number(month) - 1] : undefined;
       if (monthName) fields.push(["month", monthName]);
       add("volume", record.volume);
-      add("number", record.issue);
+      const more = record.more ?? {};
+      // `number` is a report's own number and a book's number in its series; an issue beside
+      // one of those is written as `issue`, which is how the reader takes them apart again.
+      const ownNumber =
+        record.type === "report"
+          ? more.number
+          : (record.type === "book" || record.type === "book-chapter") && more["collection-title"]
+            ? more["collection-number"]
+            : undefined;
+      add("number", ownNumber ?? record.issue);
+      if (ownNumber) add("issue", record.issue);
       add("pages", record.pages?.replace(/\s*[-–—]+\s*/gu, "--"), (value) => value);
       const publisherField =
         record.type === "thesis"
@@ -765,8 +775,7 @@ export function formatBibtex(
             ? "institution"
             : "publisher";
       add(publisherField, record.publisher);
-      const more = record.more ?? {};
-      // The first BibTeX name of each detail; `number` only where no issue took it.
+      // The first BibTeX name of each detail.
       const written = new Set<string>();
       for (const [name, variable] of BIBTEX_MORE) {
         if (written.has(variable) || !more[variable]) continue;
@@ -775,7 +784,6 @@ export function formatBibtex(
           raw(name, /^\d{4}(?:-\d{2}(?:-\d{2})?)?/u.exec(more[variable])?.[0]);
         } else add(name, more[variable]);
       }
-      if (!record.issue) add("number", more.number ?? more["collection-number"]);
       if (more["event-title"] && record.containerTitle !== more["event-title"]) {
         add("eventtitle", more["event-title"]);
       }

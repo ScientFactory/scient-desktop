@@ -2,6 +2,8 @@
 import * as NodeFSP from "node:fs/promises";
 
 import { notBroughtName } from "@scientfactory/scient-sources";
+import { formatBibliography } from "@scientfactory/scient-sources/bibliography";
+import { scientSourceToCslJson } from "@scientfactory/scient-citations";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -79,11 +81,21 @@ describe("what a Zotero import brings, on real references", () => {
       if (["title", "caseName", "nameOfAct", "subject"].some((name) => entry.item.data[name])) {
         expect(material.candidate.title, `${where}: title`).toBeTruthy();
       }
-      // Creators and tags all arrive; the collections are named for the import to file.
+      // Each field is where the import says it put it, as Zotero has it: not merely somewhere.
+      for (const { field, sourceField } of material.candidate.fieldProvenance) {
+        const raw = sourceField ? entry.item.data[sourceField] : undefined;
+        if (typeof raw !== "string" || field === "abstract" || sourceField === "extra") continue;
+        const arrived = field.startsWith("more.")
+          ? material.candidate.more?.[field.slice("more.".length)]
+          : (material.candidate as unknown as Record<string, unknown>)[field];
+        if (typeof arrived === "string") expect(arrived, `${where}: ${field}`).toBe(raw.trim());
+      }
+      // Creators and tags all arrive, with the creators Extra names after the item's own.
       const creators = (entry.item.data.creators ?? []) as ReadonlyArray<Record<string, string>>;
-      expect(material.candidate.creators, where).toHaveLength(
-        creators.filter((creator) => creator.name || creator.firstName || creator.lastName).length,
-      );
+      const own = creators.filter(
+        (creator) => creator.name || creator.firstName || creator.lastName,
+      ).length;
+      expect(material.candidate.creators.length, where).toBeGreaterThanOrEqual(own);
       const tags = (entry.item.data.tags ?? []) as ReadonlyArray<{ readonly tag: string }>;
       expect(material.candidate.tags, where).toEqual(
         tags.map(({ tag }) => tag.trim()).filter(Boolean),
@@ -107,6 +119,45 @@ describe("what a Zotero import brings, on real references", () => {
       ).toBe(attachments);
       if (notes > 0) expect(material.note, where).toBeTruthy();
     }
+  });
+
+  it("carries a report's number to its citation and to a .bib file, and reads a creator from Extra", async () => {
+    const all = await entries();
+    const report = all.find((entry) => entry.item.data.reportNumber === "ED504790");
+    if (!report) throw new Error("The fixture's report is gone.");
+    const { candidate } = zoteroItemMaterial(
+      decodeZoteroRawItem(report.item),
+      decodeZoteroRawItems(report.children),
+    );
+    expect(candidate).toMatchObject({ type: "report", more: { number: "ED504790" } });
+    const record = {
+      formatVersion: 1 as const,
+      sourceId: "source_report",
+      projectId: "project_1",
+      revision: 1,
+      ...candidate,
+      customType: null,
+      attachments: [],
+      importedAt: "2026-11-15T09:00:00.000Z",
+    };
+    expect(scientSourceToCslJson(record)).toMatchObject({ type: "report", number: "ED504790" });
+    expect(
+      formatBibliography([{ record, citationKey: "report" }], "bibtex", { includeNotes: false }),
+    ).toContain("number = {ED504790}");
+
+    // `interviewer: Mosley || Tonya` in Extra is a creator, as Zotero cites it.
+    const interview = all.find((entry) =>
+      String(entry.item.data.extra ?? "").includes("interviewer: Mosley || Tonya"),
+    );
+    if (!interview) throw new Error("The fixture's interview is gone.");
+    const read = zoteroItemMaterial(decodeZoteroRawItem(interview.item), []).candidate;
+    expect(read.creators).toContainEqual({
+      creatorType: "interviewer",
+      givenName: "Tonya",
+      familyName: "Mosley",
+      literalName: null,
+    });
+    expect(read.more?.extra ?? "").not.toContain("interviewer:");
   });
 
   it("lists what today's import does not bring; this list may only get shorter", async () => {

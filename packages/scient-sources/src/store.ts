@@ -1786,7 +1786,64 @@ export async function readSourceImportOperation(
   return readSourceImportOperationFromPaths(paths, operationId);
 }
 
-/** One finished import of a file, of Zotero items or of PDFs, as its receipt and operation say. */
+/**
+ * The parts of one import, in order. A scope too large for one operation is imported as a
+ * run: the first part has the run's ID and part N is `<runId>-N`, so the parts on disk are
+ * the record of the run. Any other import is its one part.
+ */
+export async function readSourceImportParts(
+  root: ScientSourceStoreLocation,
+  operationId: string,
+): Promise<ReadonlyArray<ScientSourceImportOperation>> {
+  const paths = await sourceStorePaths(root);
+  const first = await readSourceImportOperationFromPaths(paths, operationId);
+  if (!first) return [];
+  const parts = [first];
+  for (let part = 2; first.run; part += 1) {
+    const next = await readSourceImportOperationFromPaths(paths, `${operationId}-${part}`);
+    if (next?.run?.runId !== operationId) break;
+    parts.push(next);
+  }
+  return parts;
+}
+
+/** An import's parts as one: every item, what the first part passed by, the last part's state. */
+export function wholeSourceImport(
+  parts: ReadonlyArray<ScientSourceImportOperation>,
+): ScientSourceImportOperation | null {
+  const [first] = parts;
+  const last = parts.at(-1);
+  if (!first || !last) return null;
+  if (parts.length === 1) return first;
+  const { notBrought: _, ...latest } = last;
+  return {
+    ...latest,
+    operationId: first.operationId,
+    items: parts.flatMap((part) => part.items),
+    ...(first.notBrought ? { notBrought: first.notBrought } : {}),
+  };
+}
+
+/** Records that a run has nothing more to bring (what remained is no longer in the scope). */
+export async function endSourceImportRun(
+  root: ScientSourceStoreLocation,
+  operationId: string,
+): Promise<ScientSourceImportOperation> {
+  const paths = await sourceStorePaths(root);
+  return withStoreLock(paths, operationId, async () => {
+    const operation = await readSourceImportOperationFromPaths(paths, operationId);
+    if (!operation) throw new Error("The source import operation was not found.");
+    if (!operation.run || operation.run.remaining === 0) return operation;
+    const ended = { ...operation, run: { ...operation.run, remaining: 0 } };
+    await atomicWriteJson(operationPath(paths.operations, operationId), ended, MAX_OPERATION_BYTES);
+    return ended;
+  });
+}
+
+/**
+ * One finished import of a file, of Zotero items or of PDFs, as its receipts and operations
+ * say. A large import's parts are one import, under the run's ID.
+ */
 export interface ScientSourceImportSummary {
   readonly operationId: string;
   readonly finishedAt: string;
@@ -1818,39 +1875,56 @@ export async function listScientSourceImports(
       MAX_OPERATION_BYTES,
       ScientSourceImportReceipt,
     ).catch(() => null);
-    if (receipt && receipt.importedSourceIds.length > 0) receipts.push(receipt);
+    if (receipt) receipts.push(receipt);
   }
-  const newest = receipts
+  // The parts of a large import are one import, dated by its latest part.
+  const byImport = new Map<string, ScientSourceImportReceipt[]>();
+  for (const receipt of receipts) {
+    const id = receipt.runId ?? receipt.operationId;
+    byImport.set(id, [...(byImport.get(id) ?? []), receipt]);
+  }
+  const newest = [...byImport]
+    .map(([id, parts]) => ({ id, ...finishedImport(parts) }))
+    .filter((entry) => entry.importedSourceIds.length > 0)
     .toSorted(
       (left, right) =>
-        right.finishedAt.localeCompare(left.finishedAt) ||
-        left.operationId.localeCompare(right.operationId),
+        right.finishedAt.localeCompare(left.finishedAt) || left.id.localeCompare(right.id),
     )
     .slice(0, limit);
   const imports: ScientSourceImportSummary[] = [];
-  for (const receipt of newest) {
-    const summary = await importSummary(paths, receipt);
+  for (const entry of newest) {
+    const summary = await importSummary(root, entry.id, entry);
     if (summary) imports.push(summary);
   }
   return imports;
 }
 
+/** What the receipts of one import add up to; the outcome and the date are its latest part's. */
+function finishedImport(parts: ReadonlyArray<ScientSourceImportReceipt>) {
+  const inOrder = parts.toSorted((left, right) => left.finishedAt.localeCompare(right.finishedAt));
+  const last = inOrder.at(-1);
+  return {
+    finishedAt: last?.finishedAt ?? "",
+    outcome: last?.outcome ?? ("completed" as const),
+    importedSourceIds: inOrder.flatMap((part) => part.importedSourceIds),
+    failed: inOrder.reduce((sum, part) => sum + part.failedItemKeys.length, 0),
+  };
+}
+
 async function importSummary(
-  paths: SourceStorePaths,
-  receipt: ScientSourceImportReceipt,
+  root: ScientSourceStoreLocation,
+  operationId: string,
+  finished: ReturnType<typeof finishedImport>,
 ): Promise<ScientSourceImportSummary | null> {
-  const operation = await readSourceImportOperationFromPaths(paths, receipt.operationId).catch(
-    () => null,
+  const operation = wholeSourceImport(
+    await readSourceImportParts(root, operationId).catch(() => []),
   );
   return operation
     ? {
-        operationId: receipt.operationId,
-        finishedAt: receipt.finishedAt,
+        operationId,
+        ...finished,
         by: operation.actor,
         intake: operation.intake,
-        outcome: receipt.outcome,
-        importedSourceIds: receipt.importedSourceIds,
-        failed: receipt.failedItemKeys.length,
         notBrought: summarizeNotBrought(operation).length,
       }
     : null;
@@ -1863,14 +1937,18 @@ export async function readScientSourceImport(
 ): Promise<ScientSourceImportSummary | null> {
   assertSafeIdentifier(operationId, "Operation ID");
   const paths = await sourceStorePaths(root);
-  const filePath = operationPath(paths.receipts, operationId);
-  if ((await snapshot(filePath)) === "missing") return null;
-  const receipt = await readBoundedJson(
-    filePath,
-    MAX_OPERATION_BYTES,
-    ScientSourceImportReceipt,
-  ).catch(() => null);
-  return receipt ? importSummary(paths, receipt) : null;
+  const receipts: ScientSourceImportReceipt[] = [];
+  for (const part of await readSourceImportParts(root, operationId).catch(() => [])) {
+    const filePath = operationPath(paths.receipts, part.operationId);
+    if ((await snapshot(filePath)) === "missing") continue;
+    const receipt = await readBoundedJson(
+      filePath,
+      MAX_OPERATION_BYTES,
+      ScientSourceImportReceipt,
+    ).catch(() => null);
+    if (receipt) receipts.push(receipt);
+  }
+  return receipts.length > 0 ? importSummary(root, operationId, finishedImport(receipts)) : null;
 }
 
 /** The IDs of the sources in the store now, from the record files' names; reads no record. */
@@ -2020,6 +2098,8 @@ export async function createSourceImportOperation(input: {
   readonly pinInstanceId?: string;
   /** What the place imported from holds that belongs to no item. */
   readonly notBrought?: ReadonlyArray<ScientSourceNotBrought>;
+  /** This operation is one part of a run over a scope too large for one. */
+  readonly run?: NonNullable<ScientSourceImportOperation["run"]>;
 }): Promise<ScientSourceImportOperation> {
   assertSafeIdentifier(input.operationId, "Operation ID");
   if (input.pinInstanceId !== undefined) assertSafeIdentifier(input.pinInstanceId, "Instance ID");
@@ -2101,6 +2181,7 @@ export async function createSourceImportOperation(input: {
       ...(input.notBrought && input.notBrought.length > 0
         ? { notBrought: input.notBrought.slice(0, 20) }
         : {}),
+      ...(input.run ? { run: input.run } : {}),
     };
     await atomicWriteJson(
       operationPath(paths.operations, input.operationId),
@@ -2140,6 +2221,7 @@ async function finishOperationIfSettled(
       item.state === "failed" ? [item.itemKey] : [],
     ),
     unprocessedItemKeys: [],
+    ...(completed.run ? { runId: completed.run.runId } : {}),
   };
   await atomicWriteJson(
     operationPath(paths.operations, completed.operationId),
@@ -2256,10 +2338,15 @@ export async function cancelSourceImportOperation(
     if (!operation) throw new Error("The source import operation was not found.");
     if (operation.state !== "running") return operation;
     const now = new Date().toISOString();
+    // What a stopped part of a run never reached is still to come: a later part takes it.
+    const unreached = operation.items.filter((item) => item.state === "pending").length;
     const cancelled: ScientSourceImportOperation = {
       ...operation,
       state: "cancelled",
       updatedAt: now,
+      ...(operation.run
+        ? { run: { ...operation.run, remaining: operation.run.remaining + unreached } }
+        : {}),
     };
     const receipt: ScientSourceImportReceipt = {
       formatVersion: operation.formatVersion,
@@ -2279,6 +2366,7 @@ export async function cancelSourceImportOperation(
       unprocessedItemKeys: operation.items.flatMap((item) =>
         item.state === "pending" ? [item.itemKey] : [],
       ),
+      ...(operation.run ? { runId: operation.run.runId } : {}),
     };
     await atomicWriteJson(
       operationPath(paths.operations, operationId),
