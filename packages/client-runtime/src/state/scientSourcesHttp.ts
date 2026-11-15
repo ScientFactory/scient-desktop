@@ -21,6 +21,7 @@ import type {
   ScientSourcesMoveStatusRequest,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewConflictRequest,
+  ScientSystematicReviewConflictsRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
   ScientSourcesExportRequest,
@@ -617,7 +618,9 @@ export const changeEnvironmentScientSystematicReview = Effect.fn(
 
 export const listEnvironmentScientSystematicReviewConflicts = Effect.fn(
   "clientRuntime.state.listEnvironmentScientSystematicReviewConflicts",
-)(function* (input: { readonly prepared: PreparedConnection } & ScientSystematicReviewRequest) {
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientSystematicReviewConflictsRequest,
+) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   const { prepared, ...payload } = input;

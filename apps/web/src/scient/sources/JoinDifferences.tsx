@@ -31,42 +31,11 @@ import {
   takeProblem,
 } from "./joinDifferenceLabels";
 import { settleAfter } from "./settleAfter";
+import { Sides } from "./Sides";
 
 type Take = Extract<ScientSourcesLibraryOrganizeAction, { action: "take-from-library" }>["take"];
 
 const errorMessage = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
-
-/** Two values side by side: this Library's, and the other's. */
-function Sides(props: {
-  readonly label: string;
-  readonly other: string;
-  readonly here: string;
-  readonly otherName: string;
-  readonly children?: React.ReactNode;
-}) {
-  return (
-    <div className="mt-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium">{props.label}</p>
-        {props.children}
-      </div>
-      <dl className="mt-1 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-        <div className="min-w-0">
-          <dt className="text-muted-foreground">{JOIN_DIFFERENCES_LABELS.here}</dt>
-          <dd className="break-words whitespace-pre-wrap">
-            {props.here || JOIN_DIFFERENCES_LABELS.none}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-muted-foreground">{props.otherName}</dt>
-          <dd className="break-words whitespace-pre-wrap">
-            {props.other || JOIN_DIFFERENCES_LABELS.none}
-          </dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
 
 interface Page {
   readonly offset: number;
@@ -262,7 +231,13 @@ export function JoinDifferencesDialog(props: {
                     </div>
                   ) : null}
                   {other && here && row.parts.includes("note") ? (
-                    <Sides label="Note" here={here.note} other={other.note} otherName={otherName}>
+                    <Sides
+                      label="Note"
+                      here={here.note}
+                      other={other.note}
+                      hereName={JOIN_DIFFERENCES_LABELS.here}
+                      otherName={otherName}
+                    >
                       {offer ? (
                         <Button
                           size="xs"
@@ -310,6 +285,7 @@ export function JoinDifferencesDialog(props: {
                       label="Tags"
                       here={here.tags.join(", ")}
                       other={other.tags.join(", ")}
+                      hereName={JOIN_DIFFERENCES_LABELS.here}
                       otherName={otherName}
                     />
                   ) : null}
@@ -335,6 +311,7 @@ export function JoinDifferencesDialog(props: {
                       label={detail.field}
                       here={detail.here}
                       other={detail.other}
+                      hereName={JOIN_DIFFERENCES_LABELS.here}
                       otherName={otherName}
                     />
                   ))}

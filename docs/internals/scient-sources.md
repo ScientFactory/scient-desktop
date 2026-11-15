@@ -1234,6 +1234,28 @@ summarizes the version in force and each other version for the picker: title,
 who changed it last and when, searches, records, decisions in force and the
 latest decision's date.
 
+**Differences between two versions** (`scientReviewVersionDifferences`, read
+from the two files by `readScientReviewVersionDifferences`): the version in
+force (`here`) against one other version, joined by the IDs Combine joins
+them by, source IDs and search IDs. A decision row is a record and stage whose
+decision in force differs in decision, reason or note, or that only one
+version has decided (a decision one version reopened counts); who decided and
+when is carried but is not a difference. A search row is a search only one
+version has, or one in both whose database, query, date, result count, notes
+or set of records differ; each side carries its record count and how many of
+them the other side's entry lacks. Two entries the copies logged separately
+have different search IDs and are two one-sided rows, as Combine keeps both. A
+record row is a record only one version has. The title, the question, the
+exclusion reasons, duplicate marks with distinct pairs, and each record's
+latest retrieval outcome are compared whole and named in `alsoDiffering`,
+without rows. The answer has the counts of everything and one page of 100
+rows from `offset`: decisions that differ, searches, one-sided decisions,
+one-sided records; `nextOffset` is null on the last page. Titles come from
+the copies of the sources' details saved with each version, the one in force
+first, so the list needs neither the Library nor the folder the other version
+came from. It is null when either file is missing or does not decode. Nothing
+is written.
+
 **Git.** `libraryMoveGitTracked` runs `git ls-files -z -- .scient/sources`
 through `GitVcsDriver` before the first cleanup. Tracked files are deleted from
 the working tree like any other and left for the person to commit;
@@ -1472,13 +1494,16 @@ dismiss it with `scient_sources_organize`.
 **Review conflicts on the wire.** `systematicReview` carries
 `conflictVersions` (when above zero) and `combineReport`.
 `systematicReviewConflicts` (read) returns `{ current, versions,
-combineReport }`. `systematicReviewConflict` (operate) takes
+combineReport }`, and with `differencesOf: { conflictId, offset }` also
+`differences` (null when they cannot be read). `systematicReviewConflict` (operate) takes
 `{ root, reviewId, change }`, with `change` `{ action: "resolve", conflictId,
 pick }` or `{ action: "dismiss-report" }`. In library mode
 `scient_sources_systematic_reviews` lists `conflicts` and `combineReport` on a
-review, and `scient_sources_systematic_review_update` takes `resolve-conflict`
-and `dismiss-combine-report`. The library tool list is 112,261 bytes; the
-project list is unchanged.
+review, and with `differencesOf` (a `conflictId` and an optional `offset`)
+answers with `differences` in place of the review, or `not-found` when that
+version is gone. `scient_sources_systematic_review_update` takes
+`resolve-conflict` and `dismiss-combine-report`. These inputs are in the
+Library's tool list only; the project list is unchanged.
 
 **The v1 record-change listener** (`startManagedBibliographySync`) skips a
 root that is the personal library (`library.json` and no project file).
@@ -1591,9 +1616,16 @@ it into the library again.
 review has another version from a copy of this project.", which opens a picker
 read fresh from `systematicReviewConflicts`: the version in force and each
 other version side by side, with "Keep this version", "Use the other" and
-"Combine" (`systematicReviewConflict`, its own command and grant). The choices
-are off until the versions have been read after the picker opened and after
-each choice. The picker's read names the version in force by a hash of its file
+"Combine" (`systematicReviewConflict`, its own command and grant). For each
+other version the picker then reads the first page of differences
+(`differencesOf`) and shows the counts as one sentence above the choices and
+the rows below them, in the two-sided layout the Library's join differences
+use (`Sides.tsx`; words in `reviewVersionLabels.ts`); "Show more" reads the
+next page and, if another version is in force by then, reads everything
+again. The choices
+are off until the versions and their differences have been read after the
+picker opened and after each choice; differences that cannot be read are said
+in one sentence and do not block the choice. The picker's read names the version in force by a hash of its file
 (`currentRevision`; two versions can share an `updatedAt`), and the pick sends
 it back; if another version is in force by then, the server changes nothing and
 answers `version-changed`, and the picker says so and reads again. The agent

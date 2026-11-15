@@ -47,6 +47,7 @@ import {
   dismissScientReviewCombineReport,
   readScientReviewCombineReport,
   readScientReviewVersions,
+  readScientReviewVersionDifferences,
   resolveScientReviewConflict,
 } from "@scientfactory/scient-sources/library-review-conflicts";
 import {
@@ -99,6 +100,7 @@ import {
   type ScientSourcesPinRepairAction,
   type ScientSourcesScope,
   type ScientSystematicReviewConflictChange,
+  type ScientSystematicReviewConflictsRequest,
   type ScientSystematicReviewRecord,
   type ScientSystematicReviewResult,
 } from "@t3tools/contracts";
@@ -1508,13 +1510,23 @@ export async function libraryReview(
  * The review's other versions from copies of this project, for the picker, and Combine's report
  * until it is dismissed. Reads the project folder only.
  */
-export async function libraryReviewConflicts(store: Store, input: { readonly reviewId: string }) {
+export async function libraryReviewConflicts(
+  store: Store,
+  input: Omit<ScientSystematicReviewConflictsRequest, "root">,
+) {
   const at = { projectRoot: store.root, reviewId: input.reviewId };
   const [{ currentRevision, ...versions }, combineReport] = await Promise.all([
     readScientReviewVersions(at),
     readScientReviewCombineReport(at),
   ]);
-  return { ...versions, ...(currentRevision ? { currentRevision } : {}), combineReport };
+  return {
+    ...versions,
+    ...(currentRevision ? { currentRevision } : {}),
+    combineReport,
+    ...(input.differencesOf
+      ? { differences: await readScientReviewVersionDifferences({ ...at, ...input.differencesOf }) }
+      : {}),
+  };
 }
 
 /** The pick between two versions of a review, or dismissing Combine's report. */
