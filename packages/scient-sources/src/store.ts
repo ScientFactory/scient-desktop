@@ -1351,22 +1351,31 @@ async function readKeptRevisions(
 }
 
 /**
- * The tags a live source had at each revision after `revision`, oldest first and ending with
- * now; null when the source is gone or a revision in between is no longer kept.
+ * A live source as it was at each revision after `revision`, oldest first and ending with now;
+ * null when the source is gone or a revision in between is no longer kept or cannot be read.
+ * Only the revisions in between are read.
  */
-export async function readScientSourceTagsAfter(
+export async function readScientSourceRecordsAfter(
   root: ScientSourceStoreLocation,
   sourceId: string,
   revision: number,
-): Promise<ReadonlyArray<ReadonlyArray<string>> | null> {
+): Promise<ReadonlyArray<ScientSourceRecord> | null> {
   const paths = await sourceStorePaths(root);
   const current = await readScientSourceRecordIfPresent(paths, sourceId);
   if (!current) return null;
-  const between = (await readKeptRevisions(paths, sourceId))
-    .filter((record) => record.revision > revision && record.revision < current.revision)
-    .toSorted((left, right) => left.revision - right.revision);
-  if (between.length !== Math.max(0, current.revision - revision - 1)) return null;
-  return [...between, current].map((record) => record.tags);
+  const wanted = (await sourceHistoryRevisions(paths, sourceId)).filter(
+    (kept) => kept > revision && kept < current.revision,
+  );
+  if (wanted.length !== Math.max(0, current.revision - revision - 1)) return null;
+  const between: ScientSourceRecord[] = [];
+  for (const kept of wanted) {
+    const record = await readBoundedSourceRecord(sourceHistoryPath(paths, sourceId, kept)).catch(
+      () => null,
+    );
+    if (!record || record.sourceId !== sourceId || record.revision !== kept) return null;
+    between.push(record);
+  }
+  return [...between, current];
 }
 
 /** The kept revisions of a live source, newest first, including the current one. */

@@ -679,6 +679,108 @@ describe("Scient source collections", () => {
       left: 1,
     });
   });
+  it("leaves a type that was changed away and back after the bulk edit", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const setType = async (sourceId: string, type: ScientSourceType) => {
+      const record = await readScientSourceRecord(root, sourceId);
+      await updateScientSourceMetadata({
+        root,
+        sourceId,
+        expectedRevision: record!.revision,
+        metadata: { ...editableMetadataFromRecord(record!), type },
+        actor: "user",
+      });
+    };
+    const type = async (sourceId: string) => (await readScientSourceRecord(root, sourceId))?.type;
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, type: "report" },
+      actor: "user",
+    });
+    await setType(first, "book");
+    await setType(first, "report");
+
+    const undone = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: bulk.undo?.batchId ?? "" },
+      actor: "user",
+    });
+    expect(await type(first)).toBe("report");
+    expect(await type(second)).toBe("article");
+    expect(undone.conflicts).toEqual([
+      {
+        sourceId: first,
+        message: "Its type was changed after the bulk edit, so the newer type was kept.",
+      },
+    ]);
+  });
+  // regression: review U1-b-1, the retry found the restore done and forgot what it had kept.
+  it("remembers what an Undo kept when it stopped before marking the source done", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const first = sourceIds[0] ?? "";
+    const edit = async (fields: {
+      readonly type?: ScientSourceType;
+      readonly tags?: ReadonlyArray<string>;
+    }) => {
+      const record = await readScientSourceRecord(root, first);
+      await updateScientSourceMetadata({
+        root,
+        sourceId: first,
+        expectedRevision: record!.revision,
+        metadata: { ...editableMetadataFromRecord(record!), ...fields },
+        actor: "user",
+      });
+    };
+    const now = async () => {
+      const record = await readScientSourceRecord(root, first);
+      return [record?.type, record?.tags];
+    };
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["RCT"], type: "report" },
+      actor: "user",
+    });
+    await edit({ tags: [] });
+    await edit({ tags: ["RCT"] });
+    const undo = () =>
+      bulkUpdateScientSources({
+        root,
+        change: { undoBatchId: bulk.undo?.batchId ?? "" },
+        actor: "user",
+      });
+
+    // The type is put back and the tag kept; the write that marks the source done fails.
+    failNextReceiptWrite(async () => (await now())[0] === "article");
+    await undo().catch(() => undefined);
+    expect(await now()).toEqual(["article", ["RCT"]]);
+    await undo();
+    expect((await listScientSourcesBulkEdits(root, 10))[0]).toMatchObject({
+      undone: true,
+      left: 1,
+    });
+  });
+  it("does not call an edit incomplete because its first request changed nothing", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const tag = (sourceId: string, partNumber: number) =>
+      bulkUpdateScientSources({
+        root,
+        change: {
+          sourceIds: [sourceId],
+          removeTags: ["Absent"],
+          ...(partNumber === 2 ? { addTags: ["RCT"] } : {}),
+        },
+        actor: "user",
+        partOf: "edit_one",
+        partNumber,
+      });
+    await tag(first, 1);
+    await tag(second, 2);
+    expect(await listScientSourcesBulkEdits(root, 10)).toMatchObject([
+      { sourceIds: [second], parts: [{ sourceCount: 1 }], partsMissing: false },
+    ]);
+  });
   it("changes nothing when the bulk edit receipt folder is unsafe", async () => {
     const { root, sourceIds } = await project(["First"]);
     const collectionId =

@@ -2478,11 +2478,15 @@ narrowed to an import's sources.
   panel sends Undo only for those that are not.
 - **What an Undo left.** An entry Undo leaves as it was gets `kept` in the
   same receipt write that marks it done, and the list counts those, so a
-  finished Undo with conflicts is not listed as plainly undone. Undo leaves a
-  tag whose presence on the source changed after the bulk edit
-  (`readScientSourceTagsAfter` reads the source's kept revisions; when one in
-  between is gone, every tag of the edit is left) and a type changed since.
-  Collection membership has no per-member history and is undone by value.
+  finished Undo with conflicts is not listed as plainly undone; the mark is
+  written with the restore intention, before the source, so a retry after a
+  stop still has it. Undo leaves a tag whose presence on the source changed
+  after the bulk edit, and a type that changed after it, even when it changed
+  back (`readScientSourceRecordsAfter` reads only the source's revisions in
+  between; when one is gone, or the entry has no revision, the edit's tags and
+  type on that source are all left). Collection membership has no per-member
+  history and is undone by value. A request of a named edit keeps its receipt
+  even when it changed nothing, so its number still counts.
 - **Merges** are found through `aliases.json` (one file) and only the listed
   merges' receipts are read; a pair merged, undone and merged again is listed
   once, by its latest merge.
