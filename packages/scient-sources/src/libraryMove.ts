@@ -1077,6 +1077,21 @@ function annotationFile(value: unknown, sha256: string): JsonObject | null {
   return value;
 }
 
+const unplacedOf = (file: JsonObject): unknown[] =>
+  Array.isArray(file["unplaced"]) ? file["unplaced"] : [];
+
+/** Another program's highlights not placed on the page join by ID; the higher revision wins. */
+function joinUnplaced(kept: JsonObject, incoming: JsonObject): JsonObject {
+  const entries = new Map<string, JsonObject>();
+  for (const entry of [...unplacedOf(kept), ...unplacedOf(incoming)]) {
+    if (!isObject(entry)) continue;
+    const id = String(entry["annotationId"]);
+    const known = entries.get(id);
+    if (!known || Number(entry["revision"]) > Number(known["revision"])) entries.set(id, entry);
+  }
+  return entries.size > 0 ? { unplaced: [...entries.values()] } : {};
+}
+
 /** Highlights and PDF notes join by annotation ID; for one ID the higher revision wins. */
 function mergeAnnotationFiles(library: JsonObject, incoming: JsonObject): JsonObject {
   const annotations = new Map<string, JsonObject>();
@@ -1108,6 +1123,7 @@ function mergeAnnotationFiles(library: JsonObject, incoming: JsonObject): JsonOb
     ...library,
     paths,
     annotations: [...annotations.values()],
+    ...joinUnplaced(library, incoming),
     history: [...history.values()],
   };
 }
@@ -1115,10 +1131,10 @@ function mergeAnnotationFiles(library: JsonObject, incoming: JsonObject): JsonOb
 /** Whether every annotation of the v1 file is in the library file at the same or a later revision. */
 function annotationsCovered(library: JsonObject, incoming: JsonObject): boolean {
   const kept = new Map<string, number>();
-  for (const entry of library["annotations"] as unknown[]) {
+  for (const entry of [...(library["annotations"] as unknown[]), ...unplacedOf(library)]) {
     if (isObject(entry)) kept.set(String(entry["annotationId"]), Number(entry["revision"]));
   }
-  return (incoming["annotations"] as unknown[]).every(
+  return [...(incoming["annotations"] as unknown[]), ...unplacedOf(incoming)].every(
     (entry) =>
       !isObject(entry) ||
       (kept.get(String(entry["annotationId"])) ?? -1) >= Number(entry["revision"]),
@@ -2837,6 +2853,7 @@ export async function dismissScientLibraryMoveSummary(input: {
 
 export const scientLibraryMoveInternals = {
   annotationFile,
+  joinUnplaced,
   mergeAnnotationFiles,
   migrationDirectory: (libraryRoot: string, instanceId: string) =>
     migrationDirectory({ libraryRoot, instanceId }),

@@ -107,6 +107,29 @@ describe("applyAnnotationCommand", () => {
     });
   });
 
+  it("removes and brings back a highlight kept without a place on the page, by its revision", () => {
+    const kept = {
+      annotationId: "ann_zotero_ABCD2345",
+      revision: 1,
+      kind: "highlight" as const,
+      page: 3,
+      quote: "A passage",
+      comment: "Mine",
+      createdAt: "2024-01-24T04:36:20Z",
+      deletedAt: null,
+    };
+    const command = (action: "remove" | "restore", expectedRevision: number) =>
+      ({ action, annotationId: kept.annotationId, expectedRevision }) as const;
+    const removed = apply({ ...emptyFile(), unplaced: [kept] }, command("remove", 1));
+    expect(removed.result).toMatchObject({
+      outcome: "removed",
+      unplaced: { revision: 2, deletedAt: "2026-11-10T12:00:00.000Z" },
+    });
+    expect(apply(removed.file, command("restore", 1)).result.outcome).toBe("stale");
+    const restored = apply(removed.file, command("restore", 2));
+    expect(restored.file.unplaced).toEqual([{ ...kept, revision: 3 }]);
+  });
+
   it("reverts to an earlier revision as a new revision and keeps a bounded history", () => {
     let file = apply(emptyFile(), create("ann_00000001", "first")).file;
     for (let revision = 1; revision <= 12; revision += 1) {

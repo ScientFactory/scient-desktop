@@ -1157,6 +1157,7 @@ function joinAnnotationFiles(
       ...local,
       paths,
       annotations: [...annotations.values()],
+      ...scientLibraryMoveInternals.joinUnplaced(local, incoming),
       history: [...history.values()],
     },
     conflicts,
