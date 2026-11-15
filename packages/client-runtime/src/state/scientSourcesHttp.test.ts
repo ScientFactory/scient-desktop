@@ -11,6 +11,7 @@ import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/
 import { layerRemoteHttpClient } from "../rpc/http.ts";
 import {
   beginEnvironmentZoteroScopedImport,
+  bulkUpdateEnvironmentScientSources,
   updateEnvironmentScientSourceNote,
 } from "./scientSourcesHttp.ts";
 
@@ -122,5 +123,27 @@ it.effect("asks for the next part of a large Zotero import by its run, as it was
     expect(part.run?.part).toBe(2);
     // Nothing of a first request is invented: the run alone says what to go on with.
     expect(bodies).toEqual([{ root: "/project", continueRun: "run", retryFailed: true }]);
+  }),
+);
+
+it.effect("sends an edit's part with the name that makes its parts one edit", () =>
+  Effect.gen(function* () {
+    const bodies: unknown[] = [];
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(await new Request(input, init).json());
+      return new Response(null, { status: 500 });
+    }) satisfies typeof fetch;
+    const request = {
+      root: "/project",
+      change: { sourceIds: ["source_test"], addTags: ["methods"] },
+      partOf: "edit_1",
+      partNumber: 2,
+    };
+    // The answer does not matter here: only what was asked.
+    yield* bulkUpdateEnvironmentScientSources({ prepared, ...request }).pipe(
+      Effect.provide(layerRemoteHttpClient(fetchFn)),
+      Effect.exit,
+    );
+    expect(bodies).toEqual([request]);
   }),
 );

@@ -1224,7 +1224,7 @@ export const ScientSourcesLocalPdfUploadResult = Schema.Struct({
 });
 export type ScientSourcesLocalPdfUploadResult = typeof ScientSourcesLocalPdfUploadResult.Type;
 
-export const ScientSourcesFileImportRequest = Schema.Struct({
+const fileImportParts = {
   root: NonEmptyString,
   operationId: NonEmptyString,
   file: Multipart.SingleFileSchema,
@@ -1232,9 +1232,11 @@ export const ScientSourcesFileImportRequest = Schema.Struct({
   sourcePath: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_096))),
   /** "false" from the Library view; a multipart field is text. */
   pin: Schema.optionalKey(Schema.Literals(["true", "false"])),
-}).pipe(
+};
+export const ScientSourcesFileImportRequest = Schema.Struct(fileImportParts).pipe(
   HttpApiSchema.asMultipart({
-    maxParts: 4,
+    // Every part may be sent at once: from the Library view on this computer, all are.
+    maxParts: Object.keys(fileImportParts).length,
     maxFieldSize: 16 * 1024,
     maxFileSize: 32 * 1024 * 1024,
     maxTotalSize: 32 * 1024 * 1024 + 64 * 1024,

@@ -58,7 +58,10 @@ export function ReferenceCheckDialog(props: {
   const [target, setTarget] = useState(
     props.initialTarget.kind === "library" ? LIBRARY : props.initialTarget.path,
   );
-  const [documents, setDocuments] = useState<ReadonlyArray<string>>([]);
+  const [documents, setDocuments] = useState<{
+    readonly paths: ReadonlyArray<string>;
+    readonly truncated: boolean;
+  }>({ paths: [], truncated: false });
   const [report, setReport] = useState<ScientReferenceCheckReport | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,8 +97,8 @@ export function ReferenceCheckDialog(props: {
     started.current = true;
     void run(target);
     void readReferenceDocuments(environmentId, root).then(
-      (result) => setDocuments(result.paths),
-      () => setDocuments([]),
+      (result) => setDocuments(result),
+      () => setDocuments({ paths: [], truncated: false }),
     );
   }, [environmentId, root, run, target]);
 
@@ -256,7 +259,7 @@ export function ReferenceCheckDialog(props: {
                 <SelectValue>{(value: string | null) => targetLabel(value ?? LIBRARY)}</SelectValue>
               </SelectTrigger>
               <SelectPopup alignItemWithTrigger={false}>
-                {[LIBRARY, ...documents.filter((path) => path !== LIBRARY)].map((option) => (
+                {[LIBRARY, ...documents.paths.filter((path) => path !== LIBRARY)].map((option) => (
                   <SelectItem hideIndicator key={option} value={option}>
                     {targetLabel(option)}
                   </SelectItem>
@@ -267,6 +270,12 @@ export function ReferenceCheckDialog(props: {
               {running ? "Checking…" : "Check"}
             </Button>
           </div>
+          {documents.truncated ? (
+            <p className="text-muted-foreground mt-1 text-xs">
+              Only the first {documents.paths.length} documents are listed. To check another, choose
+              Check references in that document's menu.
+            </p>
+          ) : null}
           <div className="mt-3 min-h-10" role="status">
             {running && !report ? (
               <p className="text-muted-foreground text-sm">Checking references…</p>
