@@ -486,11 +486,9 @@ export type ScientCitationKeyBinding = {
 };
 
 /**
- * Binds keys a manuscript already uses to a library source, each exactly as given: a key the
- * project does not use yet gets a pin of its own, even when the source has another key here; a key
- * that cites the source already is left alone; a key that cites another source is `taken` and stays
- * with it. When none of the keys cites the source, it is pinned as `pinScientLibrarySource` pins it,
- * and `projectKey` is the key it got. Never renames a pin or touches a note.
+ * Binds a manuscript's keys to a library source as given: an unused key gets its own pin, a key
+ * citing another source stays with it (`taken`). With no key bound, the source is pinned as
+ * `pinScientLibrarySource` would and `projectKey` names its key. Never renames a pin or edits a note.
  */
 export async function bindScientProjectCitationKeys(input: {
   readonly projectRoot: string;

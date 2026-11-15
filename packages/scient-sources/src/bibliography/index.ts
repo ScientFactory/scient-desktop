@@ -366,7 +366,7 @@ export function planBibliographyImport(input: {
   }
   const fresh = works.filter((work) => work.kind === "new");
   const present = works.filter((work) => work.kind === "present");
-  const staged = [...fresh.slice(0, input.limit)];
+  const staged = fresh.slice(0, input.limit);
   staged.push(...present.slice(0, Math.max(0, input.limit - staged.length)));
   const stagedPresent = staged.length - Math.min(fresh.length, input.limit);
   const presentPastBatch = present.slice(stagedPresent);
