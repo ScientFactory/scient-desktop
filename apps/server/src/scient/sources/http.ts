@@ -116,6 +116,12 @@ import {
 import { readLibraryMoveStatus } from "./LibraryMove.ts";
 import { setLibraryReadingState } from "./LibraryProjectSources.ts";
 import {
+  listCitationKeys,
+  listProjectCitationKeys,
+  listProjectSourceUses,
+  listSourceUses,
+} from "./SourceUses.ts";
+import {
   resolveScientLibraryStoreAt,
   ScientSourcesBackend,
   type ScientSourcesLibraryStore,
@@ -610,6 +616,29 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                   : Promise.resolve({ changes: [], more: false }),
             );
           }),
+        )
+        .handle("sourceUses", (args) =>
+          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
+            library
+              ? listSourceUses({
+                  root: library.root,
+                  library: library.exists ? library.library : null,
+                  sourceId: args.payload.sourceId,
+                })
+              : listProjectSourceUses(args.payload),
+          ),
+        )
+        .handle("sourceCitationKeys", (args) =>
+          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
+            library
+              ? listCitationKeys({
+                  root: library.root,
+                  library: library.exists ? library.library : null,
+                  path: args.payload.path,
+                  keys: args.payload.keys,
+                })
+              : listProjectCitationKeys(args.payload),
+          ),
         )
         .handle("trash", (args) =>
           Effect.gen(function* () {

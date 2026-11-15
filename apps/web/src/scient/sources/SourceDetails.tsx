@@ -780,6 +780,8 @@ export function SourceDetails(props: {
   }) => void;
   /** The Source's highlights and notes, shown after its reference. */
   readonly annotations?: ReactNode;
+  /** Where this project's documents cite the Source, shown after its highlights. */
+  readonly uses?: ReactNode;
 }) {
   const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
@@ -1235,6 +1237,8 @@ export function SourceDetails(props: {
                 />
 
                 {props.annotations}
+
+                {props.uses}
 
                 {showsPersonalNote ? (
                   <div className="@container/source-notes">

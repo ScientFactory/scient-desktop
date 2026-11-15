@@ -33,6 +33,8 @@ import type {
   ScientSourcesPermanentDeletionRequest,
   ScientSourcesPreflightRequest,
   ScientSourcesReadingStateRequest,
+  ScientSourceUsesRequest,
+  ScientSourceCitationKeysRequest,
   ScientSourcesRecentChangesRequest,
   ScientSourcesRetryImportRequest,
   ScientSourcesTrashRequest,
@@ -320,6 +322,44 @@ export const listEnvironmentScientSourceRecentChanges = Effect.fn(
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) => client.recentChanges({ headers, payload }),
+  });
+});
+
+export const listEnvironmentScientSourceUses = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientSourceUses",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceUsesRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.sourceUses(),
+    // Reads every Markdown and LaTeX document of the project.
+    timeoutMs: METADATA_REFRESH_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.sourceUses({ headers, payload }),
+  });
+});
+
+export const readEnvironmentScientCitationKeys = Effect.fn(
+  "clientRuntime.state.readEnvironmentScientCitationKeys",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceCitationKeysRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.sourceCitationKeys(),
+    // Reads the document's bibliographies and, for LaTeX, every LaTeX file of the project.
+    timeoutMs: METADATA_REFRESH_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.sourceCitationKeys({ headers, payload }),
   });
 });
 

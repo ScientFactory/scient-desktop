@@ -50,7 +50,7 @@ export function maskLatexComments(text: string): string {
 }
 
 /** Where the parser found `\cite`-family commands; comments and verbatim text have none. */
-function latexCiteOffsets(text: string): ReadonlyArray<number> {
+export function latexCiteOffsets(text: string): ReadonlyArray<number> {
   const offsets: number[] = [];
   const visit = (nodes: unknown) => {
     if (!Array.isArray(nodes)) return;

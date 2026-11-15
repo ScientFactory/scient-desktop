@@ -16,6 +16,8 @@ import {
   preflightEnvironmentZoteroImport,
   listEnvironmentScientSourceRevisions,
   listEnvironmentScientSourceRecentChanges,
+  listEnvironmentScientSourceUses,
+  readEnvironmentScientCitationKeys,
   listEnvironmentScientSourceTrash,
   exportEnvironmentScientSources,
   readEnvironmentScientCitationStyles,
@@ -50,6 +52,8 @@ import type {
   ScientSourceRevisionsRequest,
   ScientSourcesPermanentDeletionRequest,
   ScientSourcesRecentChangesRequest,
+  ScientSourceUsesRequest,
+  ScientSourceCitationKeysRequest,
   ScientSourcesTrashRequest,
   ScientSourcesZoteroRefreshRequest,
   ScientSourcesZoteroSendRequest,
@@ -247,6 +251,22 @@ export function readScientSourceRecentChanges(
 ) {
   return runtime.runPromise(
     listEnvironmentScientSourceRecentChanges({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function readScientSourceUses(environmentId: EnvironmentId, input: ScientSourceUsesRequest) {
+  return runtime.runPromise(
+    listEnvironmentScientSourceUses({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+/** What a document's citation keys name, read with that document's bibliographies. */
+export function readScientCitationKeys(
+  environmentId: EnvironmentId,
+  input: ScientSourceCitationKeysRequest,
+) {
+  return runtime.runPromise(
+    readEnvironmentScientCitationKeys({ prepared: prepared(environmentId), ...input }),
   );
 }
 

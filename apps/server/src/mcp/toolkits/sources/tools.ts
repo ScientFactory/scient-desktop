@@ -15,6 +15,7 @@ import {
   ScientSourceAttachmentRetrieval,
   ScientSourceOrigin,
   ScientSourceRevisionSummary,
+  ScientSourceUses,
   ScientSourceType,
   ScientSourceVerification,
   ScientSourceZoteroRefreshField,
@@ -274,6 +275,8 @@ export const ScientSourceAgentDetail = Schema.Struct({
   ),
   readingStatus: Schema.optionalKey(ReadingStatus),
   starred: Schema.optionalKey(Schema.Boolean),
+  /** With uses: where this project's Markdown and LaTeX documents cite it. */
+  uses: Schema.optionalKey(ScientSourceUses),
 });
 
 type SourcesBackendMode = "project" | "library";
@@ -332,11 +335,15 @@ const ScientSourcesListTool = sourcesListTool("project");
 
 const sourceGetTool = (mode: SourcesBackendMode) =>
   Tool.make("scient_sources_get", {
-    description: `Read one Source: metadata, revision, provenance, attachments and kept revisions (newest first, with who saved each and what changed). Abstracts over 50,000 characters are cut (abstractTruncated).${mode === "project" ? "" : " Several pins of it (alsoCitedAs): citationKey picks whose project note and history."}`,
+    description: `Read one Source: metadata, revision, provenance, attachments and kept revisions (newest first, with who saved each and what changed). Abstracts over 50,000 characters are cut (abstractTruncated).${mode === "project" ? "" : " Several pins of it (alsoCitedAs): citationKey picks whose project note and history."} uses: also list where this project's documents cite it.`,
     parameters:
       mode === "project"
-        ? Schema.Struct({ sourceId: NonEmptyString })
-        : Schema.Struct({ sourceId: NonEmptyString, citationKey: Schema.optionalKey(CitationKey) }),
+        ? Schema.Struct({ sourceId: NonEmptyString, uses: Schema.optionalKey(Schema.Boolean) })
+        : Schema.Struct({
+            sourceId: NonEmptyString,
+            citationKey: Schema.optionalKey(CitationKey),
+            uses: Schema.optionalKey(Schema.Boolean),
+          }),
     success: ScientSourceAgentDetail,
     failure: ScientSourcesToolError,
     dependencies,

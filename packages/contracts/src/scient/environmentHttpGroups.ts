@@ -71,6 +71,10 @@ import {
   ScientSourcesRecentChangesRequest,
   ScientSourcesTrashRequest,
   ScientLibraryRecentChanges,
+  ScientSourceUsesRequest,
+  ScientSourceUses,
+  ScientSourceCitationKeysRequest,
+  ScientSourceCitationKeys,
   ScientSourceTrashListing,
   ScientSourcesAdvanceImportRequest,
   ScientSourcesBulkResult,
@@ -449,6 +453,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesRecentChangesRequest,
         success: ScientLibraryRecentChanges,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("sourceUses", "/api/scient/sources/source-uses", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceUsesRequest,
+        success: ScientSourceUses,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("sourceCitationKeys", "/api/scient/sources/citation-keys", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceCitationKeysRequest,
+        success: ScientSourceCitationKeys,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
