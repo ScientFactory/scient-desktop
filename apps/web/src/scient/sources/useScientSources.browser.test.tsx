@@ -67,7 +67,10 @@ interface HookProbe {
   clearOperationSummary: () => void;
   preflight: ScientSourcesPreflightResult | null;
   busy: boolean;
+  importing: boolean;
+  overviewLoading: boolean;
   error: string | null;
+  overviewError: string | null;
   reloadOverview: () => Promise<unknown>;
   previewImport: (itemKeys: ReadonlyArray<string>) => Promise<unknown>;
   importReferenceFile: ReturnType<typeof useScientSources>["importReferenceFile"];
@@ -395,6 +398,75 @@ describe("useScientSources mounted behavior", () => {
         "project-b",
       ]);
       expect(probe.current.busy).toBe(false);
+    });
+  });
+
+  it("reads the list without marking work busy, and a read cannot end an import's busy", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    const read = Promise.withResolvers<ScientSourcesOverviewResult>();
+    const preflight = Promise.withResolvers<ScientSourcesPreflightResult>();
+    mocks.readScientSources
+      .mockResolvedValueOnce(overviewWith(["one"]))
+      .mockImplementationOnce(() => read.promise)
+      .mockResolvedValue(overviewWith(["one"]));
+    mocks.preflightZoteroItems.mockImplementationOnce(() => preflight.promise);
+
+    await withMountedHook(_fixture, async (probe) => {
+      let reload: Promise<unknown> | undefined;
+      await act(async () => {
+        reload = probe.current.selectScope("library");
+      });
+      expect(probe.current.overviewLoading).toBe(true);
+      expect(probe.current.busy).toBe(false);
+      expect(probe.current.importing).toBe(false);
+
+      let preview: Promise<unknown> | undefined;
+      await act(async () => {
+        preview = probe.current.previewImport(["zotero-item-1"]);
+      });
+      expect(probe.current.importing).toBe(true);
+      await act(async () => {
+        read.resolve(overviewWith(["one", "two"]));
+        await reload;
+      });
+      expect(probe.current.overviewLoading).toBe(false);
+      expect(probe.current.importing).toBe(true);
+      expect(probe.current.busy).toBe(true);
+
+      await act(async () => {
+        preflight.resolve({ items: [] });
+        await preview;
+      });
+      expect(probe.current.importing).toBe(false);
+      expect(probe.current.busy).toBe(false);
+    });
+  });
+
+  it("keeps an action's error when a later read of the list fails", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    mocks.readScientSources
+      .mockResolvedValueOnce(overviewWith(["one"]))
+      .mockRejectedValueOnce(new Error("The server did not answer."));
+    mocks.preflightZoteroItems.mockRejectedValueOnce(new Error("Zotero is closed."));
+
+    await withMountedHook(_fixture, async (probe) => {
+      await act(async () => {
+        await probe.current.previewImport(["zotero-item-1"]);
+      });
+      const actionError = probe.current.error;
+      expect(actionError).not.toBeNull();
+      await act(async () => {
+        await probe.current.reloadOverview();
+      });
+      expect(probe.current.error).toBe(actionError);
+      expect(probe.current.overviewError).not.toBeNull();
+      expect(probe.current.overviewLoading).toBe(false);
+      // The list on screen stays; only its freshness is in doubt.
+      expect(probe.current.overview?.records.map((record) => record.sourceId)).toEqual(["one"]);
     });
   });
 });

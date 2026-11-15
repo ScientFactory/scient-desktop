@@ -5,15 +5,25 @@ import {
   type ScientSourceIdentifierAddItem,
 } from "@scientfactory/scient-sources";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { LoaderCircle, X } from "lucide-react";
-import { useState } from "react";
+import { LoaderCircle } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../../components/ui/dialog";
 import { Textarea } from "../../components/ui/textarea";
 import { addScientSourcesByIdentifier } from "./client";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { settleAfter } from "./settleAfter";
+import type { SourcesResultContent } from "./sourcesFeedback";
 
 function reason(item: ScientSourceIdentifierAddItem): string {
   const registry = item.identifier ? sourceIdentifierRegistryName(item.identifier) : null;
@@ -35,9 +45,25 @@ function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
+/** What an addition did, for the result slot; null when nothing was added. */
+export function identifierAddResult(
+  results: ReadonlyArray<ScientSourceIdentifierAddItem>,
+  options: { readonly detail?: string; readonly actions?: ReactNode } = {},
+): SourcesResultContent | null {
+  const added = results.filter((item) => item.outcome === "imported").length;
+  if (added === 0) return null;
+  const title = added === 1 ? "Added 1 source" : `Added ${added} sources`;
+  return {
+    tone: "success",
+    summary: options.detail ? `${title}. ${options.detail}` : `${title}.`,
+    ...(options.actions ? { actions: options.actions } : {}),
+  };
+}
+
 /**
- * One input for adding sources by DOI, PMID, arXiv ID or ISBN. A pasted list adds one
- * source per identifier; entries that could not be added stay listed with the reason.
+ * A dialog for adding sources by DOI, PMID, arXiv ID or ISBN. A pasted list adds one source per
+ * identifier; it closes when all were added, and otherwise lists the rest with the reason and
+ * keeps those worth trying again in the box.
  */
 export function AddByIdentifier(props: {
   readonly environmentId: EnvironmentId;
@@ -104,76 +130,86 @@ export function AddByIdentifier(props: {
 
   const added = results?.filter((item) => item.outcome === "imported").length ?? 0;
   return (
-    <div className="m-3 rounded-lg border border-border bg-muted/30 p-3">
-      <Textarea
-        aria-label="Identifiers to add"
-        placeholder="Paste DOIs, PMIDs, arXiv IDs or ISBNs, one per line"
-        rows={3}
-        size="sm"
-        value={text}
-        disabled={adding}
-        autoFocus
-        onChange={(event) => setText(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault();
-            void add();
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            props.onClose();
-          }
-        }}
-      />
-      <div className="mt-2 flex min-h-6 items-center gap-1">
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{hint}</span>
-        <Button size="xs" variant="ghost" onClick={props.onClose}>
-          Cancel
-        </Button>
-        <Button size="xs" disabled={!canAdd} onClick={() => void add()}>
-          {adding ? <LoaderCircle className="animate-spin" /> : null}
-          {adding ? "Adding…" : readable > 1 ? `Add ${readable}` : "Add"}
-        </Button>
-      </div>
-      {error ? <div className="mt-2 text-xs text-destructive">{error}</div> : null}
-      {results ? (
-        <div className="mt-3 border-t border-border pt-2" aria-live="polite">
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1 text-sm font-medium">
-              {added > 0 ? `Added ${added} of ${results.length}` : "Nothing added"}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !adding) props.onClose();
+      }}
+    >
+      <DialogPopup className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Add by identifier</DialogTitle>
+          <DialogDescription>
+            Paste DOIs, PMIDs, arXiv IDs or ISBNs, one per line. Each becomes one source.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <Textarea
+            aria-label="Identifiers to add"
+            placeholder="10.1038/nature14539"
+            rows={4}
+            size="sm"
+            value={text}
+            disabled={adding}
+            autoFocus
+            onChange={(event) => setText(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void add();
+              }
+            }}
+          />
+          <div className="min-h-4 text-xs text-muted-foreground">{hint}</div>
+          {error ? (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+          {results ? (
+            <div aria-live="polite">
+              <div className="text-sm font-medium">
+                {added > 0 ? `Added ${added} of ${results.length}` : "Nothing added"}
+              </div>
+              <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                {results
+                  .filter((item) => item.outcome !== "imported")
+                  .map((item) => (
+                    <li key={item.input} className="flex min-h-6 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="text-foreground">{item.input}</span>
+                        {" · "}
+                        {reason(item)}
+                      </span>
+                      {item.outcome === "duplicate" && item.sourceId ? (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => {
+                            if (!item.sourceId) return;
+                            props.onOpenSource(item.sourceId);
+                            props.onClose();
+                          }}
+                        >
+                          View
+                        </Button>
+                      ) : null}
+                    </li>
+                  ))}
+              </ul>
             </div>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Dismiss results"
-              onClick={() => setResults(null)}
-            >
-              <X />
-            </Button>
-          </div>
-          <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-            {results
-              .filter((item) => item.outcome !== "imported")
-              .map((item) => (
-                <li key={item.input} className="flex min-h-6 items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate">
-                    <span className="text-foreground">{item.input}</span>
-                    {" · "}
-                    {reason(item)}
-                  </span>
-                  {item.outcome === "duplicate" && item.sourceId ? (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => item.sourceId && props.onOpenSource(item.sourceId)}
-                    >
-                      View
-                    </Button>
-                  ) : null}
-                </li>
-              ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
+          ) : null}
+        </DialogPanel>
+        <DialogFooter>
+          <Button variant="ghost" disabled={adding} onClick={props.onClose}>
+            {results ? "Close" : "Cancel"}
+          </Button>
+          <Button disabled={!canAdd} onClick={() => void add()}>
+            {adding ? <LoaderCircle className="animate-spin" /> : null}
+            {adding ? "Adding…" : readable > 1 ? `Add ${readable}` : "Add"}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }

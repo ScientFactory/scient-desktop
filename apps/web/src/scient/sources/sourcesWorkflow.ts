@@ -30,7 +30,10 @@ export type ImportPreparation =
 export interface SourcesWorkflowState {
   readonly request: number;
   readonly overviewRequest: number;
+  /** The newest overview read that answered or failed; behind `overviewRequest` while one runs. */
+  readonly overviewSettled: number;
   readonly zoteroRequest: number;
+  readonly zoteroSettled: number;
   readonly overview: ScientSourcesOverviewResult | null;
   readonly sourceDetails: Readonly<Record<string, ScientSourceDetailResult>>;
   readonly zoteroStatus: ZoteroConnectionStatus | null;
@@ -42,19 +45,27 @@ export interface SourcesWorkflowState {
   readonly preflight: ScientSourcesPreflightResult | null;
   readonly preflightAdapter: "zotero" | "local-files" | null;
   readonly operation: ScientSourceImportOperation | null;
+  /** An import, its review, cancel or retry runs. Reads never set it. */
   readonly busy: boolean;
+  /** Removals under way; counted, so one ending cannot release another. */
+  readonly removals: number;
   readonly importPreparation: ImportPreparation | null;
   readonly checkingZotero: boolean;
   readonly zoteroCheckFeedback: string | null;
   readonly cancelling: boolean;
+  /** The failure of an action the person took. */
   readonly error: string | null;
+  /** The newest overview read's failure; kept apart so a refresh cannot erase an action's error. */
+  readonly overviewError: string | null;
   readonly readingOverrides: Readonly<Record<string, ReadingOverride>>;
 }
 
 export const initialSourcesWorkflowState: SourcesWorkflowState = {
   request: 0,
   overviewRequest: 0,
+  overviewSettled: 0,
   zoteroRequest: 0,
+  zoteroSettled: 0,
   overview: null,
   sourceDetails: {},
   zoteroStatus: null,
@@ -66,11 +77,13 @@ export const initialSourcesWorkflowState: SourcesWorkflowState = {
   preflightAdapter: null,
   operation: null,
   busy: false,
+  removals: 0,
   importPreparation: null,
   checkingZotero: false,
   zoteroCheckFeedback: null,
   cancelling: false,
   error: null,
+  overviewError: null,
   readingOverrides: {},
 };
 
@@ -83,7 +96,10 @@ export type SourcesWorkflowAction =
     }
   | { readonly type: "requestStarted"; readonly request: number }
   | { readonly type: "overviewRequestStarted"; readonly request: number }
+  | { readonly type: "overviewFailed"; readonly request: number; readonly error: string }
+  | { readonly type: "overviewErrorCleared" }
   | { readonly type: "zoteroRequestStarted"; readonly request: number }
+  | { readonly type: "zoteroRequestSettled"; readonly request: number }
   | {
       readonly type: "overviewArrived";
       readonly request: number;
@@ -143,6 +159,8 @@ export type SourcesWorkflowAction =
       readonly clearPreflight?: boolean;
     }
   | { readonly type: "busyChanged"; readonly busy: boolean }
+  | { readonly type: "removalStarted" }
+  | { readonly type: "removalSettled" }
   | { readonly type: "cancellingChanged"; readonly cancelling: boolean }
   | { readonly type: "checkingZoteroChanged"; readonly checking: boolean }
   | { readonly type: "errorArrived"; readonly error: string | null }
@@ -355,15 +373,25 @@ export function sourcesWorkflowReducer(
         ...initialSourcesWorkflowState,
         request: action.request,
         overviewRequest: action.overviewRequest,
+        overviewSettled: action.overviewRequest,
         zoteroRequest: action.zoteroRequest,
+        zoteroSettled: action.zoteroRequest,
       };
     }
     case "requestStarted":
       return { ...state, request: action.request };
     case "overviewRequestStarted":
       return { ...state, overviewRequest: action.request };
+    case "overviewFailed":
+      if (action.request !== state.overviewRequest) return state;
+      return { ...state, overviewSettled: action.request, overviewError: action.error };
+    case "overviewErrorCleared":
+      return { ...state, overviewError: null };
     case "zoteroRequestStarted":
       return { ...state, zoteroRequest: action.request };
+    case "zoteroRequestSettled":
+      if (action.request !== state.zoteroRequest) return state;
+      return { ...state, zoteroSettled: action.request };
     case "overviewArrived": {
       // Only the newest overview load wins; import progress and Zotero
       // browsing run on their own lanes and are unaffected by this check.
@@ -383,6 +411,8 @@ export function sourcesWorkflowReducer(
       return {
         ...state,
         overview,
+        overviewSettled: action.request,
+        overviewError: null,
         sourceDetails: pruneSourceDetails(state.sourceDetails, overview),
         operation: overview.activeOperation ?? state.operation,
         readingOverrides: Object.fromEntries(
@@ -535,6 +565,10 @@ export function sourcesWorkflowReducer(
     }
     case "busyChanged":
       return { ...state, busy: action.busy };
+    case "removalStarted":
+      return { ...state, removals: state.removals + 1 };
+    case "removalSettled":
+      return { ...state, removals: Math.max(0, state.removals - 1) };
     case "cancellingChanged":
       return { ...state, cancelling: action.cancelling };
     case "checkingZoteroChanged":
