@@ -322,7 +322,8 @@ collection you already have here with the same name in the same place (one
 you made, or one from an earlier import) is used, not doubled, and a later
 import finds every collection again even after you renamed or moved it here.
 A collection you deleted here is not made again by a later import, unless
-that import brings a reference that is filed in it. References that were
+that import brings a reference that is filed in it; then a new one is made, and
+the one you deleted can still be brought back. References that were
 already in your Library are not filed again.
 
 When the import ends it lists, under **Not brought from Zotero**, everything

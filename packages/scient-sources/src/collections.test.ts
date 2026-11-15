@@ -324,7 +324,7 @@ describe("Scient source collections", () => {
     ).toBe(thesis);
   });
 
-  it("places a tree from elsewhere: same-named siblings stay two, and a deleted one is not made again unasked", async () => {
+  it("places a tree from elsewhere: same-named siblings stay two, and a deleted one is never taken over", async () => {
     const { root } = await project([]);
     const byHand = await createScientSourceCollection({ root, name: "Thesis", actor: "user" });
     const node = (collectionId: string, name: string, parentCollectionId?: string) => ({
@@ -337,6 +337,7 @@ describe("Scient source collections", () => {
       node("collection_b", "thesis"),
       node("collection_c", "Chapter 2", "collection_b"),
       node("collection_d", "x".repeat(201)),
+      node("collection_e", "Chapter 3", "collection_b"),
     ];
     const place = (wanted: ReadonlyArray<string>, remake = false) =>
       placeScientSourceCollections({ root, tree, wanted, remake, actor: "user" });
@@ -367,11 +368,21 @@ describe("Scient source collections", () => {
     expect(await shape()).toEqual(placed);
 
     await deleteScientSourceCollection({ root, collectionId: "collection_b", actor: "user" });
-    expect([...(await place(["collection_b"])).keys()]).toEqual([]);
-    expect((await place(["collection_b"], true)).get("collection_b")).toMatchObject({
-      created: true,
-    });
-    expect(await shape()).toEqual(placed);
+    // Not made again unasked; a new one under it goes under it, as Chapter 2 is.
+    const again = await place(["collection_b", "collection_e"]);
+    expect(again.has("collection_b")).toBe(false);
+    expect(again.get("collection_e")?.collection?.parentCollectionId).toBe("collection_b");
+    const remade = (await place(["collection_b"], true)).get("collection_b")?.collection;
+    expect(remade?.collectionId).not.toBe("collection_b");
+    // The deleted one still comes back with what is under it.
+    await restoreScientSourceCollection({ root, collectionId: "collection_b", actor: "user" });
+    expect(await shape()).toEqual(
+      new Map([
+        ...placed,
+        ["collection_e", ["Chapter 3", "collection_b"]],
+        [remade!.collectionId, ["thesis", null]],
+      ]),
+    );
   });
 
   it("adds and removes members and reports an unknown collection", async () => {

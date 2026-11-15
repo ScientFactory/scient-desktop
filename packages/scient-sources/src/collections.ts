@@ -544,7 +544,9 @@ export type ScientSourcePlacedCollection =
  * Finds or makes here the wanted collections of a tree kept elsewhere, each with the ones
  * above it: the live one with its ID, else a live one with its name under the same parent
  * that no other collection of the tree has, else a new one with its ID. One the person
- * deleted here is made again only with `remake`; otherwise it is left out of the answer.
+ * deleted here is left out of the answer, or with `remake` made again beside it under a new
+ * ID, so the deleted one keeps its sources and can still be restored. A collection under a
+ * deleted one that is not made again goes under it, as one the person had there would.
  */
 export function placeScientSourceCollections(input: {
   readonly root: ScientSourceStoreLocation;
@@ -606,17 +608,17 @@ export function placeScientSourceCollections(input: {
         const make = (): ScientSourcePlacedCollection | null => {
           const found = here.get(node.collectionId);
           if (found) return { collection: found, created: false };
-          if (byId.has(node.collectionId) && !input.remake) return null;
+          const deleted = byId.has(node.collectionId);
+          if (deleted && !input.remake) return null;
           const parent = parentOf(node);
           const above = parent ? place(parent) : undefined;
-          if (above === null) return null;
           if (above && !above.collection) {
             return { collection: null, why: "The collection above it could not be made here." };
           }
+          const parentHere =
+            above === null && parent ? byId.get(parent.collectionId) : above?.collection;
           const name = node.name.trim();
-          const levels = above?.collection
-            ? collectionsAbove(byId, above.collection).length + 2
-            : 1;
+          const levels = parentHere ? collectionsAbove(byId, parentHere).length + 2 : 1;
           const why = !name
             ? "It has no name."
             : name.length > SCIENT_SOURCE_NAME_LIMIT
@@ -628,9 +630,9 @@ export function placeScientSourceCollections(input: {
                   : null;
           if (why) return { collection: null, why };
           const collection: ScientSourceCollection = {
-            collectionId: node.collectionId,
+            collectionId: deleted ? newId("collection") : node.collectionId,
             name,
-            ...(above?.collection ? { parentCollectionId: above.collection.collectionId } : {}),
+            ...(parentHere ? { parentCollectionId: parentHere.collectionId } : {}),
             sourceIds: [],
             createdAt: now,
             updatedAt: now,
@@ -652,18 +654,11 @@ export function placeScientSourceCollections(input: {
         const node = outside.get(collectionId);
         if (node) place(node);
       }
-      const remade = new Set(added.map((collection) => collection.collectionId));
       return {
         document:
           added.length === 0
             ? null
-            : {
-                ...document,
-                collections: [
-                  ...document.collections.filter((entry) => !remade.has(entry.collectionId)),
-                  ...added,
-                ],
-              },
+            : { ...document, collections: [...document.collections, ...added] },
         result,
       };
     },

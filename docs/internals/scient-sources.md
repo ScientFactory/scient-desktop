@@ -3106,9 +3106,12 @@ an agent.
   collection has taken; else a new one with that ID. The whole tree is
   matched on every call in one order, so which same-named sibling has a
   collection made by hand does not depend on what was wanted. A collection
-  the person deleted here is made again only with `remake`. One that cannot
-  be made (500 collections, ten levels, a 200-character name) comes back with
-  the reason.
+  the person deleted here is left out, or with `remake` made again as a new
+  collection with a new ID beside it, so the deleted one keeps its members and
+  can still be restored (later calls find the new one by name). An outside
+  collection under a deleted one that is not made again is made under it. One
+  that cannot be made (500 collections, ten levels, a 200-character name)
+  comes back with the reason.
 - Every change goes through `organizeScientSources` (one action union shared by
   the `organize` HTTP endpoint and `scient_sources_organize`) under one write
   lock, credited with `updatedBy`.
