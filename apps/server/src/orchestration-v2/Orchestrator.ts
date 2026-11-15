@@ -85,6 +85,8 @@ import {
   ThreadLinkedPullRequest,
   ThreadId,
   TurnItemId,
+  // SCIENT-FORK: thread rooms.
+  type RoomAuthor,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
@@ -204,6 +206,22 @@ import {
   decideGuestShareCommand,
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
+// SCIENT-FORK:START — thread rooms.
+import {
+  activeParticipant,
+  decideOwnerRoomAction,
+  decideRoomMessageSend,
+  decideServerRoomAction,
+  guestDirectSend,
+  roleCanUseAgent,
+  ROOM_FAILURE,
+  roomAfterVisit,
+  roomAnchorRunOrdinal,
+  roomItemAfterCancelledSend,
+  roomMessageItemId,
+  withoutRoomAttribution,
+} from "../scient/room/threadRoomDecider.ts";
+// SCIENT-FORK:END
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { queuedSourcePlanIsUsable, sourcePlanFingerprint } from "./SourcePlan.ts";
@@ -717,6 +735,10 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.guest-share.close":
     case "thread.guest-message.submit":
     case "thread.guest-message.dismiss":
+    // SCIENT-FORK: thread rooms.
+    case "thread.room":
+    case "thread.room.server":
+    case "thread.room.guest-dispatch":
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -2137,6 +2159,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         ]),
   ];
+
+  /** The parent records `planDelegatedCompletionDelivery` reads for one task: its run, and the queued wake's message, run and tasks. */
+  const readDelegatedCompletionPlanRecords =
+    /* The delegated task operation that calls this owns the span. */
+    Effect.fnUntraced(function* (parentThreadId: ThreadId, task: OrchestrationV2Subagent) {
+      const {
+        thread,
+        runs: [parentRun],
+      } = yield* projectionStore.getThreadRecords(parentThreadId, ["runs"], {
+        runIds: task.runId === null ? [] : [task.runId],
+      });
+      const delivery = parentRun?.delegatedCompletion?.delivery;
+      if (delivery == null) return { thread, parentRun, runs: [], messages: [], subagents: [] };
+      const { messages } = yield* projectionStore.getThreadRecords(parentThreadId, ["messages"], {
+        messageIds: [delivery.messageId],
+        // SCIENT-FORK: Scient completion wakes may be system messages.
+        messageRoles: ["user", "system"],
+      });
+      const deliveryRunId = messages[0]?.runId;
+      const { runs, subagents } = yield* projectionStore.getThreadRecords(
+        parentThreadId,
+        ["runs", "subagents"],
+        {
+          runIds: deliveryRunId == null ? [] : [deliveryRunId],
+          subagentIds: [...delivery.taskIds, task.id],
+        },
+      );
+      return { thread, parentRun, runs, messages, subagents };
+    });
 
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -3609,6 +3660,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const delayMs = continuationStartRetryDelayMs(run, projection);
     if (delayMs === undefined) return;
     const commandId = CommandId.make(`command:restart-continuation-retry:${run.id}`);
+    // A start retry is not a crash: carry the crash budget forward unchanged.
+    const previous =
+      run.restartContinuationOfRunId === undefined
+        ? undefined
+        : Option.getOrUndefined(
+            yield* effectOutbox.get(
+              `effect:restart-continuation:${run.restartContinuationOfRunId}`,
+            ),
+          )?.request;
+    const processLossCount =
+      previous?.type === "provider-runtime.continue" ? previous.processLossCount : undefined;
     yield* writeSystemEvents(
       [],
       [
@@ -3616,7 +3678,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           id: `effect:restart-continuation:${run.id}`,
           commandId,
           threadId,
-          request: { type: "provider-runtime.continue", sourceRunId: run.id },
+          request: {
+            type: "provider-runtime.continue",
+            sourceRunId: run.id,
+            ...(processLossCount === undefined ? {} : { processLossCount }),
+          },
           availableAt: DateTime.add(yield* DateTime.now, { milliseconds: delayMs }),
         },
       ],
@@ -4225,6 +4291,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: {
         lastVisitedAt: movesForward ? visitedAt.value : thread.lastVisitedAt,
         ...(opens ? { opens } : {}),
+        // SCIENT-FORK: opening the thread is seeing what people wrote in its room.
+        ...(thread.room == null ? {} : { room: roomAfterVisit(thread) }),
       },
     });
   });
@@ -4424,6 +4492,222 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
     return decided.success;
   });
+
+  // SCIENT-FORK:START — thread rooms (scient/room/threadRoomDecider.ts).
+  // Commands the room service built for a guest, with who sends them; never from a client.
+  const roomGuestCommands = new WeakMap<object, RoomAuthor>();
+
+  // `ownOnly` for an item the command changes: a fork shows its source's room messages, and
+  // writing one would move the source's row into the fork.
+  const readRoomItem = (
+    command: OrchestrationV2ServerCommand,
+    itemId: TurnItemId,
+    ownOnly = true,
+  ) =>
+    projectionStore
+      .getTurnItem({ threadId: commandThreadId(command), itemId, ownOnly })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: commandThreadId(command), cause }),
+        ),
+      );
+
+  const roomDispatchError = (command: OrchestrationV2ServerCommand, cause: string) =>
+    new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause,
+    });
+
+  const emitRoomAttachmentCleanup = (
+    command: { readonly commandId: CommandId; readonly threadId: ThreadId },
+    attachmentIds: ReadonlyArray<string>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) =>
+    attachmentIds.length === 0
+      ? Effect.void
+      : Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:room-attachment.cleanup`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: { type: "attachment.cleanup", attachmentIds: [...attachmentIds] },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+
+  const dispatchThreadRoom = Effect.fn("orchestrationV2.dispatch.threadRoom")(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.room" | "thread.room.server" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const projection = yield* loadProjectionForCommand(command, ["runs"]);
+    const thread = projection.thread;
+    if (thread.deletedAt !== null) {
+      return yield* roomDispatchError(command, `Thread ${command.threadId} is deleted.`);
+    }
+    const action = command.action;
+    const target =
+      "itemId" in action
+        ? yield* readRoomItem(command, action.itemId)
+        : "replyTo" in action && action.replyTo !== undefined
+          ? // A reply only quotes its target, which may be one the fork shows.
+            yield* readRoomItem(command, action.replyTo, false)
+          : null;
+    // Also an item a fork shows: a post under its id would take the source's row.
+    const messageExists =
+      "roomMessageId" in action
+        ? (yield* readRoomItem(command, roomMessageItemId(action.roomMessageId), false)) !== null
+        : false;
+    const now = yield* DateTime.now;
+    const input = {
+      thread,
+      now,
+      anchorRunOrdinal: roomAnchorRunOrdinal(projection.runs),
+      target,
+      messageExists,
+    };
+    const decided =
+      command.type === "thread.room"
+        ? decideOwnerRoomAction({ ...input, action: command.action })
+        : decideServerRoomAction({ ...input, action: command.action });
+    if (Result.isFailure(decided)) return yield* roomDispatchError(command, decided.failure);
+    const event = emit(events, command);
+    if (decided.success.thread !== null) {
+      yield* event({
+        // Not a metadata change: no relay publication or pull request refresh.
+        type: "thread.guest-share-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: decided.success.thread,
+      });
+    }
+    for (const item of decided.success.items) {
+      yield* event({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: item,
+      });
+    }
+    yield* emitRoomAttachmentCleanup(command, decided.success.releasedAttachmentIds, effects);
+  });
+
+  /**
+   * A guest's send runs as the message it becomes, under the same lock, after the room checks the
+   * guest may send to the agent.
+   */
+  const roomGuestDispatchCommand = Effect.fn("orchestrationV2.dispatch.roomGuestCommand")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.room.guest-dispatch" }
+      >,
+    ) {
+      const { thread } = yield* loadProjectionForCommand(command, []);
+      const now = yield* DateTime.now;
+      const room = thread.room ?? null;
+      const participant = activeParticipant(room, command.participantId, now);
+      if (thread.archivedAt !== null || thread.deletedAt !== null || room === null) {
+        return yield* roomDispatchError(command, ROOM_FAILURE.closed);
+      }
+      if (participant === null) return yield* roomDispatchError(command, ROOM_FAILURE.notMember);
+      if (!roleCanUseAgent(participant.role)) {
+        return yield* roomDispatchError(command, ROOM_FAILURE.role);
+      }
+      if (command.send.type === "stop") {
+        return {
+          type: "thread.stop" as const,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          reason: `Stopped by guest ${participant.name}.`,
+        };
+      }
+      const base = {
+        type: "message.dispatch" as const,
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: command.messageId,
+        dispatchMode: { type: "queue_after_active" as const },
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+      };
+      const dispatched: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }> =
+        command.send.type === "room-message"
+          ? { ...base, text: "", attachments: [], roomItemId: command.send.itemId }
+          : {
+              ...base,
+              ...guestDirectSend({
+                room,
+                participant,
+                messageId: command.messageId,
+                text: command.send.text,
+                now,
+              }),
+              attachments: [...command.send.attachments],
+            };
+      roomGuestCommands.set(dispatched, {
+        kind: "guest",
+        participantId: participant.id,
+        name: participant.name,
+      });
+      return dispatched;
+    },
+  );
+
+  /** Records the send on the room message; the agent gets the words the server builds. */
+  const emitRoomMessageSent = Effect.fn("orchestrationV2.dispatch.roomMessageSent")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    roomItemId: TurnItemId,
+    thread: OrchestrationV2AppThread,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const now = yield* DateTime.now;
+    const decided = decideRoomMessageSend({
+      thread,
+      item: yield* readRoomItem(command, roomItemId),
+      sentBy: roomGuestCommands.get(command) ?? { kind: "owner" },
+      messageId: command.messageId,
+      now,
+    });
+    if (Result.isFailure(decided)) return yield* roomDispatchError(command, decided.failure);
+    // Emitted before the message so the send and the record commit together.
+    if (decided.success.thread !== null) {
+      yield* emit(
+        events,
+        command,
+      )({
+        // Not a metadata change: no relay publication or pull request refresh.
+        type: "thread.guest-share-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: decided.success.thread,
+      });
+    }
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: decided.success.item,
+    });
+    return {
+      ...command,
+      text: decided.success.text,
+      attachments: [...decided.success.attachments],
+      context: decided.success.context,
+    };
+  });
+  // SCIENT-FORK:END
 
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
@@ -4653,7 +4937,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Option.isNone(project) ||
         project.value.deletedAt !== null ||
         project.value.workspaceRoot !== command.expected.workspaceRoot ||
-        currentSequence > command.snapshotSequence ||
+        // A replacement rewrites pullRequests, which the expected fields do not capture.
+        (command.linkedPullRequest !== undefined && currentSequence > command.snapshotSequence) ||
         thread.projectId !== command.projectId ||
         thread.branch !== command.expected.branch ||
         thread.worktreePath !== command.expected.worktreePath ||
@@ -5042,6 +5327,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             archivedAt: now,
             titleRegeneration: null,
             guestShare: null,
+            // SCIENT-FORK: archiving ends the room; its messages stay in the thread.
+            room: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             updatedAt: now,
           };
@@ -5426,6 +5713,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       passed: existing.endedWatch.passed,
                       passedChecks: existing.endedWatch.passedChecks,
                       conflicting: existing.endedWatch.conflicting,
+                      rebaseRequired: existing.endedWatch.rebaseRequired,
                     }),
                     awaitingBaseline: existing.endedWatch
                       ? existing.endedWatch.awaitingBaseline
@@ -10054,19 +10342,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
       const parentProjection = yield* projectionStore
-        .getThreadRecords(
-          command.parentThreadId,
-          ["runs", "nodes", "providerThreads", "providerTurns", "attempts"],
-          // The parent node must belong to the active run, whose nodes this keeps.
-          { omitSettledLeafNodes: true },
-        )
+        .getRunProviderRecords(command.parentThreadId, command.parentRunId, command.parentNodeId)
         .pipe(
           Effect.mapError(
-            (cause) =>
-              new OrchestratorProjectionError({
-                threadId: command.parentThreadId,
-                cause,
-              }),
+            (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
           ),
         );
       const parentRun = parentProjection.runs.find(
@@ -12351,6 +12630,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     yield* emitQueuedRunCancellation({ command, events, projection, run: queuedRun, now });
     const emitEvent = emit(events, command);
+    // SCIENT-FORK:START — a cancelled room send shows as cancelled on its room message.
+    const roomItemId = queuedMessage?.context?.room?.itemId;
+    if (roomItemId !== undefined && queuedMessage !== undefined) {
+      const roomItem = yield* readRoomItem(command, roomItemId);
+      const cancelled =
+        roomItem === null ? null : roomItemAfterCancelledSend(roomItem, queuedMessage.id, now);
+      if (cancelled !== null) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: cancelled,
+        });
+      }
+    }
+    // SCIENT-FORK:END
     const guest = queuedMessage?.context?.guest;
     if (guest !== undefined) {
       const thread = guestShareAfterCancelledSend(projection.thread, guest, now);
@@ -12412,7 +12708,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     // The agent text and the shown text of a guest message must stay the guest's words.
-    if (queuedMessage.context?.guest !== undefined) {
+    // SCIENT-FORK: so must a message sent from a room, whose shown words are the post's.
+    if (queuedMessage.context?.guest !== undefined || queuedMessage.context?.room !== undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -13297,17 +13594,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     threadId: ThreadId,
     runId: RunId,
   ) =>
-    projectionStore
-      .getThreadRecords(threadId, ["turnItems", "runs", "attempts", "providerTurns"], {
-        turnItemTypes: ["run_interrupt_request"],
-        turnItemRunIds: [runId],
-      })
-      .pipe(
-        // SCIENT-FORK:START — one Stop policy for steering and continuation callers.
-        Effect.map((projection) => hasCurrentRunStop(projection, runId)),
-        // SCIENT-FORK:END
-        mapDispatchError(command),
-      );
+    projectionStore.hasRunInterruptRequest(threadId, runId).pipe(
+      // SCIENT-FORK:START — one Stop policy for steering and continuation callers: a Stop
+      // fences only its own attempt and native turn, so a recorded one is read in full.
+      Effect.flatMap((requested) =>
+        requested
+          ? projectionStore
+              .getThreadRecords(threadId, ["turnItems", "runs", "attempts", "providerTurns"], {
+                turnItemTypes: ["run_interrupt_request"],
+                turnItemRunIds: [runId],
+              })
+              .pipe(Effect.map((projection) => hasCurrentRunStop(projection, runId)))
+          : Effect.succeed(false),
+      ),
+      // SCIENT-FORK:END
+      mapDispatchError(command),
+    );
 
   const markStoppedRun = Effect.fnUntraced(function* (input: {
     readonly command: Extract<
@@ -15321,7 +15623,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   )(function* (input: {
     readonly parentProjection: Pick<
       OrchestrationV2ThreadProjection,
-      "thread" | "messages" | "runs" | "subagents" | "providerTurns"
+      "thread" | "messages" | "runs" | "subagents"
     >;
     readonly parentRun: OrchestrationV2Run | undefined;
     readonly task: OrchestrationV2Subagent;
@@ -15591,7 +15893,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const parent = yield* projectionStore.getThreadRecords(
           childControls.thread.lineage.parentThreadId,
           ["nodes", "turnItems"],
-          { turnItemTypes: ["subagent"] },
+          { nodeIds: [task.id], turnItemNodeIds: [task.id], turnItemTypes: ["subagent"] },
         );
         const now = yield* DateTime.now;
         const scope = {
@@ -15683,21 +15985,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         turnItems: childResult.turnItems,
       };
       const parentThreadId = childControls.thread.lineage.parentThreadId;
-      const parentProjection = yield* projectionStore.getThreadRecords(
+      // The task's node and turn item share its id.
+      const parentTask = yield* projectionStore.getThreadRecords(
         parentThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "nodes",
-          "turnItems",
-          "contextTransfers",
-        ],
-        { turnItemTypes: ["subagent"], messageRoles: ["user", "system"] },
+        ["subagents", "nodes", "turnItems"],
+        {
+          subagentIds: [options.task.id],
+          nodeIds: [options.task.id],
+          turnItemNodeIds: [options.task.id],
+          turnItemTypes: ["subagent"],
+        },
       );
-      const task = parentProjection.subagents.find(
+      const task = parentTask.subagents.find(
         (candidate) =>
           candidate.id === options.task.id &&
           candidate.origin === "app_owned" &&
@@ -15709,7 +16008,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A cancelled task's completed run ends it interrupted.
       const cancelled = task.cancelledRunId === childRun.id;
       if (cancelled && terminalStatus === "completed") outcome = terminalStatus = "interrupted";
-      const existingResultTransfer = parentProjection.contextTransfers.find(
+      // Every result the child sent is among its own transfers, far fewer than the parent's.
+      const childTransfers = yield* projectionStore.getThreadRecords(childThreadId, [
+        "contextTransfers",
+      ]);
+      const existingResultTransfer = childTransfers.contextTransfers.find(
         (transfer) =>
           transfer.type === "subagent_result" &&
           transfer.sourceThreadId === childThreadId &&
@@ -15723,12 +16026,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
-      const parentRun =
-        task.runId === null
-          ? undefined
-          : parentProjection.runs.find((candidate) => candidate.id === task.runId);
-      const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
-      const parentTurnItem = parentProjection.turnItems.find(
+      const { parentRun, ...parentProjection } = yield* readDelegatedCompletionPlanRecords(
+        parentThreadId,
+        task,
+      );
+      const parentNode = parentTask.nodes.find((candidate) => candidate.id === task.id);
+      const parentTurnItem = parentTask.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
       const updatedTask: OrchestrationV2Subagent = {
@@ -15878,8 +16181,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     )
       return;
     const progress = delegatedTaskProgress(childControls);
-    const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
-      "subagents",
+    // Each task of this child names it, so the parent's other tasks stay unread.
+    const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+      subagentChildThreadIds: [childThreadId],
+    });
+    const { contextTransfers } = yield* projectionStore.getThreadRecords(childThreadId, [
       "contextTransfers",
     ]);
     for (const task of parent.subagents) {
@@ -15891,9 +16197,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (task.id === childControls.thread.forkedFrom.nodeId &&
           (cancelled ? progress.state === "working" : progress.state !== "result_available")) ||
         (task.result !== null &&
-          parent.contextTransfers.some(
+          contextTransfers.some(
             (transfer) =>
-              transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === childThreadId &&
+              transfer.targetThreadId === parentThreadId,
           ))
       )
         continue;
@@ -16187,6 +16495,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       | undefined;
     let updateDelegatedCompletionOnlyRunId: RunId | undefined;
+    // SCIENT-FORK:START — a guest's send to the agent is decided as the message it becomes.
+    if (command.type === "thread.room.guest-dispatch") {
+      return yield* dispatchOnce(yield* roomGuestDispatchCommand(command), sideChatIds);
+    }
+    // SCIENT-FORK:END
     switch (command.type) {
       case "droid-steer.admission":
         yield* dispatchDroidSteerAdmission(command, events, effects);
@@ -16343,6 +16656,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
         break;
+      // SCIENT-FORK:START — thread rooms.
+      case "thread.room":
+      case "thread.room.server":
+        yield* dispatchThreadRoom(command, events, effects);
+        break;
+      // SCIENT-FORK:END
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
@@ -16385,9 +16704,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.guestMessageId === undefined
             ? undefined
             : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
+        // SCIENT-FORK:START — a room message sent to the agent; a guest's own send keeps its words.
+        const roomSend =
+          command.roomItemId === undefined
+            ? undefined
+            : yield* emitRoomMessageSent(command, command.roomItemId, thread, events);
+        const guestBuilt = roomGuestCommands.has(command) ? command : undefined;
+        // SCIENT-FORK:END
         const dispatched =
           guestSend === undefined
-            ? withoutGuestAttribution(command)
+            ? (roomSend ?? guestBuilt ?? withoutRoomAttribution(withoutGuestAttribution(command)))
             : {
                 ...command,
                 text: guestSend.text,
@@ -16769,6 +17095,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.pull-request-watch.checks-reopen" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
+          // SCIENT-FORK: a guest's Stop, like the owner's, may find nothing to stop.
+          (command.type === "thread.room.guest-dispatch" && command.send.type === "stop") ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
@@ -17075,6 +17403,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
+    // SCIENT-FORK: a guest's send to the agent keeps its place among messages the same way.
+    if (command.type === "thread.room.guest-dispatch")
+      return yield* messageIntake.withLock(command.threadId, dispatch);
     // Answering a message-mode question can also start a follow-up.
     return yield* command.type === "runtime-request.respond"
       ? withSubagentParentLock(command.threadId, dispatch)
@@ -17453,7 +17784,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       input.parentThreadId,
       Effect.gen(function* () {
         const { subagents } = yield* projectionStore
-          .getThreadRecords(input.parentThreadId, ["subagents"])
+          .getThreadRecords(input.parentThreadId, ["subagents"], { subagentIds: [input.taskId] })
           .pipe(mapDispatchError(command));
         const task = subagents.find(
           (candidate) =>

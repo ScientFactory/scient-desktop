@@ -21,14 +21,13 @@ export function shareMenuItems(
         icon: "user-plus",
         children: [
           { id: "share-link", label: "Link…" },
-          { id: "share-guest", label: "Invite a guest…" },
+          { id: "share-guest", label: "Invite people…" },
         ],
       },
     ];
   }
   if (canShareLink) return [{ id: "share-link", label: "Share link…", icon: "link" }];
-  if (canShareWithGuest)
-    return [{ id: "share-guest", label: "Share with guest", icon: "user-plus" }];
+  if (canShareWithGuest) return [{ id: "share-guest", label: "Invite people…", icon: "user-plus" }];
   return [];
 }
 

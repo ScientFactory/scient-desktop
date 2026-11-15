@@ -104,6 +104,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverGetStorageCleanupReport]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.peerLinksList]: AuthAccessReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
 
@@ -363,6 +364,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.editorsFlushResolve]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushRespond]: AuthFilesystemWriteScope,
   [WS_METHODS.editorsFlushLeave]: AuthFilesystemWriteScope,
+  // SCIENT-FORK: who has a thread's room open; invites are guarded with the client scopes.
+  [WS_METHODS.threadRoomPresence]: AuthOrchestrationReadScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — a voice call drives the thread's agent like a sent message.
   [WS_METHODS.liveVoiceCall]: AuthOrchestrationOperateScope,

@@ -458,6 +458,10 @@ export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
   }
 });
 
+/** What remains of one capture's deadline for the work after its own commit, such as submodules. */
+export const remainingCheckpointCaptureMs = (startedAtMs: number, nowMs: number) =>
+  Math.max(0, CHECKPOINT_CAPTURE_TIMEOUT_MS - (nowMs - startedAtMs));
+
 /** Closes the staging scope and bounds the whole capture. */
 export const scopedCheckpointCapture =
   (operation: string, cwd: string) =>

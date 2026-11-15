@@ -12,6 +12,7 @@ import type {
 import {
   type ChatAttachment,
   CommandId,
+  isDelegatedAppThread,
   isListedThreadLineage,
   MessageId,
   OrchestrationV2StopWorkflowError,
@@ -748,7 +749,8 @@ const make = Effect.gen(function* () {
         threadId: projection.thread.id,
         title: projection.thread.title,
         updatedAt: projection.updatedAt,
-        items: projection.visibleTurnItems,
+        // SCIENT-FORK: what people said to each other in a room never reaches an agent.
+        items: projection.visibleTurnItems.filter((row) => row.item.type !== "room_message"),
       };
       let sizeBytes = Buffer.byteLength(
         threadTranscriptHeader(yield* environment.getEnvironmentId, transcript),
@@ -796,6 +798,18 @@ const make = Effect.gen(function* () {
               projectId: projection.thread.projectId,
               commandId: command.commandId,
               instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+            }),
+          ),
+        );
+      // SCIENT-FORK: a guest's send to the agent starts a turn on the thread's provider.
+      case "thread.room.guest-dispatch":
+        if (command.send.type === "stop") return Effect.void;
+        return orchestrator.getThreadRecords(command.threadId, []).pipe(
+          Effect.flatMap((projection) =>
+            assertProviderInstanceEnabled({
+              projectId: projection.thread.projectId,
+              commandId: command.commandId,
+              instanceId: projection.thread.modelSelection.instanceId,
             }),
           ),
         );
@@ -888,7 +902,7 @@ const make = Effect.gen(function* () {
           .filter((thread) =>
             input.includeSubagents
               ? thread.lineage.sideChat !== true
-              : isListedThreadLineage(thread.lineage),
+              : isListedThreadLineage(thread.lineage) && !isDelegatedAppThread(thread),
           )
           .toSorted(
             (left, right) =>
@@ -1177,7 +1191,25 @@ const make = Effect.gen(function* () {
         )
       )
         return true;
-      const following = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
+      const later = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
+      const cancelledMessageIds = later
+        .filter((candidate) => candidate.status === "cancelled")
+        .map((candidate) => candidate.userMessageId);
+      // Send now cancels a queued run and moves its message into the running turn.
+      const steeredMessageIds =
+        cancelledMessageIds.length === 0
+          ? new Set()
+          : new Set(
+              (yield* getProjectThreadRecords(input, ["messages"], {
+                messageIds: cancelledMessageIds,
+              })).messages
+                .filter((message) => message.runId === run.id)
+                .map((message) => message.id),
+            );
+      const following = later.filter(
+        (candidate) =>
+          candidate.status !== "cancelled" || !steeredMessageIds.has(candidate.userMessageId),
+      );
       if (following.length > 0) {
         const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
           messageRunIds: following.map((candidate) => candidate.id),

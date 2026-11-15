@@ -11,14 +11,14 @@ export const SCIENT_PRODUCT_NAME = "Scient";
  * no longer matches upstream text fails the agent-copy test.
  */
 export const SCIENT_AGENT_COPY_DIFFERENCES: ReadonlyArray<readonly [string, string]> = [
-  // Scient offers no T3 Connect tunnel.
+  // Scient offers no T3 Connect tunnel; a webhook needs the environment's own public URL.
   [
-    "No `webhookUrl`: T3 Connect remote access is off.",
-    "No `webhookUrl`: this environment has no public URL; the user must make one reachable, such as with Tailscale or their own HTTPS proxy.",
+    "only creation returns it, with T3 Connect and run permission.",
+    "only creation returns it, given run permission and a public URL for this environment, such as through Tailscale or the user's own HTTPS proxy.",
   ],
   [
-    "Absent: no T3 Connect tunnel. The user must enable T3 Connect remote access.",
-    "Absent: this environment has no public URL; the user must make one reachable, such as with Tailscale or their own HTTPS proxy.",
+    "Creation may omit it without T3 Connect remote access or run permission.",
+    "Creation may omit it without run permission or a public URL for this environment.",
   ],
   // A thread credential reaches only its own project's threads.
   [

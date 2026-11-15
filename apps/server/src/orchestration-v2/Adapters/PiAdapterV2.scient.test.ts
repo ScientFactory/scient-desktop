@@ -2311,6 +2311,9 @@ describe("PiAdapterV2 restored upstream cases", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      // Pi is attached to another file, so the resume must switch (T3 keeps an attached file).
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
+      fake.queueState({ sessionFile: FAKE_SESSION_FILE });
       fake.deferNextLifecycle("switch_session");
       const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
       const request = yield* fake.takeRequest("switch_session");
@@ -2339,6 +2342,8 @@ describe("PiAdapterV2 restored upstream cases", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      // Pi is attached to another file, so the resume must switch (T3 keeps an attached file).
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
       fake.deferNextLifecycle("switch_session");
       const resumed = yield* runtime
         .resumeThread({ providerThread })

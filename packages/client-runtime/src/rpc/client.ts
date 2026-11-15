@@ -85,6 +85,8 @@ export type EnvironmentSubscriptionRpcTag =
   // SCIENT-FORK:START — Scient Connect on the desktop's own computer.
   | typeof WS_METHODS.scientConnectStatus
   // SCIENT-FORK:END
+  // SCIENT-FORK: who has a thread's room open.
+  | typeof WS_METHODS.threadRoomPresence
   | typeof WS_METHODS.filesystemSubscribeFileChanges
   | typeof WS_METHODS.projectsSubscribeFileChanges
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes

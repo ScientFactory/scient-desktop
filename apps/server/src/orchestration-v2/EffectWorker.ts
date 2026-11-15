@@ -4,7 +4,7 @@ import {
   isDroidSteerDeferred,
   isDroidSteerUncertain,
 } from "./Adapters/DroidSteerSafety.ts";
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, type RunAttemptId, type RunId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -63,6 +63,7 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
 ) {}
 
 const isProviderRunInterruptError = Schema.is(ProviderTurnControlService.ProviderRunInterruptError);
+const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
 
 /**
  * Do not apply this to `provider-turn.restart`: that compound effect also runs
@@ -81,6 +82,19 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
     /treating as already stopped/i.test(errorText)
   );
 }
+
+// Keep an owner for starting runs when persistence or restart cleanup fails.
+const ownsStartingRun = (effectType: EffectOutbox.OrchestrationEffectV2["request"]["type"]) =>
+  effectType === "provider-turn.start" || effectType === "provider-turn.restart";
+
+const cannotSettleRun = (cause: Cause.Cause<unknown>) =>
+  Cause.findErrorOption(cause).pipe(
+    Option.exists(
+      (error) =>
+        isOrchestrationEffectExecutionError(error) &&
+        ProviderTurnStartService.isProviderTurnStartRunStateMissingError(error.cause),
+    ),
+  );
 
 export interface OrchestrationEffectExecutorV2Shape {
   readonly execute: (
@@ -126,6 +140,52 @@ export const layerExecutor: Layer.Layer<
     const settings = yield* ServerSettings.ServerSettingsService;
     // SCIENT-FORK: conversation-fork outbox effects.
     const scientForkEffects = yield* makeScientForkEffects;
+    const startRun = (
+      effect: EffectOutbox.OrchestrationEffectV2,
+      runId: RunId,
+      willRetry: boolean,
+      // SCIENT-FORK: a queued start can name the attempt it was admitted for.
+      expectedAttemptId?: RunAttemptId,
+    ) =>
+      providerTurnStart
+        .start({
+          threadId: effect.threadId,
+          runId,
+          willRetry,
+          ...(expectedAttemptId === undefined ? {} : { expectedAttemptId }),
+        })
+        .pipe(
+          Effect.catchCauseIf(
+            (cause) => !willRetry && !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning(
+                "Last run start attempt failed",
+                { effectId: effect.id, effectType: effect.request.type, runId },
+                cause,
+              ).pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+                    // A failed read cannot identify the attempt. Keep retry ownership
+                    // rather than settling whichever attempt happens to be current.
+                    if (
+                      !ProviderTurnStartService.isProviderTurnStartError(failure) ||
+                      failure.attemptId === undefined ||
+                      failure.rootNodeId === undefined
+                    ) {
+                      return Effect.failCause(cause);
+                    }
+                    return providerTurnStart.failStartingRun({
+                      threadId: effect.threadId,
+                      runId,
+                      attemptId: failure.attemptId,
+                      rootNodeId: failure.rootNodeId,
+                    });
+                  }),
+                ),
+              ),
+          ),
+        );
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
@@ -146,7 +206,13 @@ export const layerExecutor: Layer.Layer<
           // SCIENT-FORK:END
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
+            return continueRestartedRun({
+              threadId: effect.threadId,
+              sourceRunId,
+              ...(effect.request.processLossCount === undefined
+                ? {}
+                : { processLossCount: effect.request.processLossCount }),
+            }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
               Effect.tapError(() =>
@@ -203,25 +269,21 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           case "provider-turn.start":
-            return providerTurnStart
-              .start({
-                threadId: effect.threadId,
-                runId: effect.request.runId,
-                willRetry,
-                ...(effect.request.expectedAttemptId === undefined
-                  ? {}
-                  : { expectedAttemptId: effect.request.expectedAttemptId }),
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+            return startRun(
+              effect,
+              effect.request.runId,
+              willRetry,
+              effect.request.expectedAttemptId,
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-run.interrupt": {
             const request = effect.request;
             return providerTurnControl
@@ -640,11 +702,8 @@ export const layerExecutor: Layer.Layer<
                       : Effect.void,
                 ),
                 Effect.andThen(
-                  providerTurnStart.start({
-                    threadId: effect.threadId,
-                    runId: effect.request.runId,
-                    willRetry,
-                  }),
+                  // Failed interruption or detach must not report the old process stopped.
+                  startRun(effect, effect.request.runId, willRetry),
                 ),
                 Effect.mapError(
                   (cause) =>
@@ -1177,6 +1236,7 @@ export const layerWithOptions = (
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
             : uncertainDroidSteer ||
                 (effect.attemptCount >= maxAttempts &&
+                  (!ownsStartingRun(effect.request.type) || cannotSettleRun(exit.cause)) &&
                   !awaitingNativeReceipt &&
                   // SCIENT-FORK:START checkpoint-capture-final-attempt
                   !checkpointSettlementPending &&

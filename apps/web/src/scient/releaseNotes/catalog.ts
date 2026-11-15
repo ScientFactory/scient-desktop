@@ -9,6 +9,70 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.29",
+    publishedAt: "2026-11-15",
+    format: "paragraphs",
+    headline: "Connect your computers. Talk with your agent.",
+    highlights: [
+      {
+        id: "scient-connect-0629",
+        title: "Reach your computers with Scient Connect",
+        description:
+          "Sign in to Scient on your computer, then reach its projects, files and agents from another device or at app.scientfactory.com, without opening ports or setting up a VPN. Keep Scient running on the computer you want to reach.",
+      },
+      {
+        id: "guest-links-0629",
+        title: "Bring someone into the conversation",
+        description:
+          "Choose Share with guest from a conversation’s menu to share it live in a guest’s browser, even if they do not use Scient. They can suggest messages and attach files; you choose what reaches the agent. Guest links are in beta, expire after 24 hours, and can be stopped at any time.",
+      },
+      {
+        id: "voice-0629",
+        title: "Talk with Scient Agent, or dictate with ChatGPT",
+        description:
+          "The waveform button in the composer starts a spoken conversation with Scient Agent. Say what you want done and hear its replies as it works, even in a new conversation. In Voice settings, choose ChatGPT to dictate without downloading a speech model; those recordings are sent to OpenAI and kept there for 30 days. Both need a ChatGPT sign-in in Scient Agent.",
+      },
+      {
+        id: "account-apps-0629",
+        title: "Connect a service once, for every agent",
+        description:
+          "Connect Gmail, Google Calendar, Google Drive and other services from Settings → Extensions. Each agent uses them through an account you already have: Claude through claude.ai, Codex and Scient Agent through ChatGPT. Each service has one row that shows which of your agents can use it.",
+      },
+      {
+        id: "connector-agents-0629",
+        title: "Choose which agents get your tools",
+        description:
+          "When you add a connector, choose which agents may use it, as well as which projects, and change that later on its page. Installed lists your connectors, apps and plugins once each and shows who can use them. Discover keeps each agent’s store separate, and Most used adds Playwright, Vercel, Cloudflare and Telegram.",
+      },
+      {
+        id: "agent-connectors-0629",
+        title: "Ask an agent to make or fix a connector",
+        description:
+          "Need a tool for a service or website you use? Choose Make a connector in Extensions and describe it. Your agent builds it, tests it and adds it. A connector that stops working offers Fix with an agent. Connectors can use saved sign-ins and keys from Accounts, and you can export your copy or undo the last change.",
+      },
+      {
+        id: "plan-goal-0629",
+        title: "Plan first, set a goal, and keep going",
+        description:
+          "Pick /plan and Scient Agent drafts a plan for you to approve before it changes anything. Give it a goal with /goal and it works across turns; a chip in the composer shows progress, with pause and resume. Usage shows Scient Agent’s limits and reset times. When an account runs out, continue with another signed-in account, and work resumes when the limit resets.",
+      },
+      {
+        id: "agent-rows-images-0629",
+        title: "See what Scient Agent does, and make images",
+        description:
+          "Commands, file changes and web searches appear as clear rows with their output, diffs and sources, and a subagent’s steps show in its own thread. Scient Agent can create and edit pictures with a connected ChatGPT or Google Antigravity account; they appear in the conversation and are saved as files. Edit from here can rewind newly recorded turns.",
+      },
+      {
+        id: "workspace-0629",
+        title: "A smoother workspace for larger projects",
+        description:
+          "Very large folders open without freezing the Files panel. Compute finds saved figures from the files a run writes, without scanning the whole project. Agents recover from tool calls that cannot work instead of repeating them, and failed Antigravity and Droid turns say why. Background process cleanup and storage handling improve reliability in long sessions.",
+      },
+    ],
+    alsoIncluded:
+      "Overleaf sync gives clearer results and recovery messages. Updates you start restart Scient at once only when no local work is running. Scient Agent installs and updates in the background, and interrupted downloads resume. Computer control works right after you grant access on macOS. Themes support custom CSS. Browser tools, chat scrolling and model selection receive further fixes.",
+  },
+  {
     version: "0.6.28",
     publishedAt: "2026-11-10",
     format: "paragraphs",

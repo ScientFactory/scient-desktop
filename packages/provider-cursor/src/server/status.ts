@@ -46,7 +46,6 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
   if (!cursorSettings.enabled) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
-      slashCommands: [COMPACT_SLASH_COMMAND],
       enabled: false,
       checkedAt,
       models,
@@ -62,10 +61,10 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
 
   return buildServerProvider({
     presentation: CURSOR_PRESENTATION,
-    slashCommands: [COMPACT_SLASH_COMMAND],
     enabled: true,
     checkedAt,
     models,
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version: null,
@@ -218,7 +217,6 @@ export function buildCursorProviderSnapshot(input: {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
     presentation: CURSOR_PRESENTATION,
-    slashCommands: [COMPACT_SLASH_COMMAND],
     enabled: input.cursorSettings.enabled,
     checkedAt: input.checkedAt,
     models: providerModelsFromSettings(
@@ -226,6 +224,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version: input.parsed.version,

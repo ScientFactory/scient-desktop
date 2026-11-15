@@ -53,6 +53,7 @@ import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as SpawnWorker from "./process/SpawnWorker.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
@@ -190,6 +191,8 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as GuestHttp from "./guest/http.ts";
+// SCIENT-FORK: thread room guest routes.
+import * as ThreadRoomHttp from "./scient/room/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
@@ -398,6 +401,9 @@ const layerRelayClient = Layer.unwrap(
   }),
 ).pipe(Layer.provide(ManagedPolicy.layer));
 
+// NodeServices and NodeHttpServer each output Node's own spawner, so each is followed by this one.
+const layerSpawner = SpawnWorker.layerServer.pipe(Layer.provide(NodeServices.layer));
+
 const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -434,7 +440,7 @@ const layerHttpServer = Layer.unwrap(
         // `threshold` when context takeover is disabled).
         websocket: { perMessageDeflate: true },
       },
-    );
+    ).pipe(Layer.merge(layerSpawner));
   }),
 ).pipe(
   Layer.provide(ManagedPolicy.layer),
@@ -444,7 +450,7 @@ const layerHttpServer = Layer.unwrap(
 
 const layerPlatformServices = DocumentText.layer.pipe(
   Layer.provideMerge(NonBlockingSpawner.layer),
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner)),
 );
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
@@ -947,6 +953,8 @@ export const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
+    // SCIENT-FORK: thread room guest routes.
+    ThreadRoomHttp.layer,
     DeviceHubProxy.layer,
     // SCIENT-FORK:START — Scient Extensions: connector proxy (session-token authority) and sign-in callback (state authority).
     ConnectorProxyRoute.layer,
@@ -1513,6 +1521,6 @@ const layerMakeServer = Layer.unwrap(
 ).pipe(Layer.provide(ProcessRunner.layer));
 
 export const runServer = Layer.launch(
-  // For the layers above whose spawner requirement is met by the caller's runtime.
-  layerMakeServer.pipe(Layer.provide(NonBlockingSpawner.layer)),
+  // For the layers above whose spawner requirement is not met by one of them.
+  layerMakeServer.pipe(Layer.provide(NonBlockingSpawner.layer.pipe(Layer.provide(layerSpawner)))),
 );

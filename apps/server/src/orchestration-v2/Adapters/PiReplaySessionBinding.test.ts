@@ -25,6 +25,13 @@ const root = "/owned/pi/sessions";
 const actualFile = `${root}/owned.jsonl`;
 const recordedFile = "/pi-sessions/session-1.jsonl";
 const args = ["--mode", "rpc", "--model", "provider/model", "--extension", "<any>"];
+// Pi binds its owned session right after `--mode rpc`.
+const withSession = (base: ReadonlyArray<string>, file: string) => [
+  ...base.slice(0, 2),
+  "--session",
+  file,
+  ...base.slice(2),
+];
 function transcript(): Array<ProviderReplayEntry> {
   return [
     { type: "expect_outbound", label: "process_start", frame: { type: "process_start", args } },
@@ -66,7 +73,7 @@ function transcript(): Array<ProviderReplayEntry> {
 const launch = (ordinal = 1, file = actualFile) => ({
   ordinal,
   cwd: "/workspace",
-  args: [...args.slice(0, -1), "/actual-extension", "--session", file],
+  args: withSession([...args.slice(0, -1), "/actual-extension"], file),
 });
 describe("Pi recorded session identity binding", () => {
   it("preserves original bytes, non-session arguments, ids and process ordinal while binding one owned file across reopen", () => {
@@ -78,7 +85,7 @@ describe("Pi recorded session identity binding", () => {
     assert.deepEqual(initial.entries[0], {
       type: "expect_outbound",
       label: "process_start",
-      frame: { type: "process_start", args: [...args, "--session", actualFile] },
+      frame: { type: "process_start", args: withSession(args, actualFile) },
     });
     assert.deepEqual(initial.entries[2], {
       type: "emit_inbound",
@@ -100,7 +107,7 @@ describe("Pi recorded session identity binding", () => {
     assert.deepEqual(reopened.entries[3], {
       type: "expect_outbound",
       label: "process_start@p2",
-      frame: { type: "process_start", args: [...args, "--session", actualFile] },
+      frame: { type: "process_start", args: withSession(args, actualFile) },
     });
     assert.equal(JSON.stringify(recorded), original);
   });
@@ -111,19 +118,19 @@ describe("Pi recorded session identity binding", () => {
       const input = launch();
       switch (condition) {
         case "missing":
-          input.args.splice(-2);
+          input.args.splice(2, 2);
           break;
         case "duplicate":
           input.args.unshift("--session", actualFile);
           break;
         case "foreign":
-          input.args[input.args.length - 1] = "/foreign/owned.jsonl";
+          input.args[3] = "/foreign/owned.jsonl";
           break;
         case "noncanonical":
-          input.args[input.args.length - 1] = `${root}/../sessions/owned.jsonl`;
+          input.args[3] = `${root}/../sessions/owned.jsonl`;
           break;
         case "changed-arg":
-          input.args[3] = "different/model";
+          input.args[5] = "different/model";
           break;
         case "reordered":
           [input.args[0], input.args[1]] = [input.args[1]!, input.args[0]!];
@@ -270,7 +277,7 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
         const bound = binding.bind({
           ordinal: 1,
           cwd: "/workspace",
-          args: [...recordedArgs.slice(0, -1), "/owned/extension.ts", "--session", actualFile],
+          args: withSession([...recordedArgs.slice(0, -1), "/owned/extension.ts"], actualFile),
         });
         const confirmation = bound.entries[48]!;
         if (
@@ -288,7 +295,7 @@ describe("Pi simple recorded settle-tail reconciliation", () => {
             binding.bind({
               ordinal: 2,
               cwd: "/foreign",
-              args: [...recordedArgs.slice(0, -1), "/owned/extension.ts", "--session", actualFile],
+              args: withSession([...recordedArgs.slice(0, -1), "/owned/extension.ts"], actualFile),
             }),
           /workspace/,
         );
@@ -661,6 +668,30 @@ describe("Pi pinned native read schedules", () => {
 });
 
 describe("Pi current bound-launch fixture proof", () => {
+  it.effect("retains a rollback's switch to the session its fork already attached", () =>
+    Effect.gen(function* () {
+      const raw = NodeFS.readFileSync(
+        new URL("../testkit/fixtures/thread_rollback/pi_transcript.ndjson", import.meta.url),
+        "utf8",
+      );
+      const original = yield* decodeProviderReplayNdjson(raw);
+      const adapted = reconcilePiBoundLaunchProtocol(original);
+      assert.deepEqual(
+        adapted.historicalRPCFrames.map((entry) =>
+          entry.type === "runtime_exit" ? null : entry.label,
+        ),
+        ["switch_session", "response:switch_session"],
+      );
+      assert.isFalse(
+        adapted.entries.some(
+          (entry) =>
+            entry.type === "expect_outbound" &&
+            Predicate.isObject(entry.frame) &&
+            entry.frame.type === "switch_session",
+        ),
+      );
+    }),
+  );
   it.effect.each(
     ["provider_thread_resume", "thread_rollback_after_stop"].map((scenario) => ({
       caseTitle: `retains ${scenario} historical RPC bytes while requiring current same-session confirmation`,
@@ -675,7 +706,11 @@ describe("Pi current bound-launch fixture proof", () => {
       const original = yield* decodeProviderReplayNdjson(raw);
       const before = structuredClone(original);
       const adapted = reconcilePiBoundLaunchProtocol(original);
-      assert.lengthOf(adapted.historicalRPCFrames, 2);
+      // The after-stop rollback also switched to the file its `fork` had already attached.
+      const reopened = ["switch_session@p2", "response:switch_session@p2"];
+      const historicalLabels =
+        scenario === "thread_rollback_after_stop" ? [...reopened, ...reopened] : reopened;
+      assert.lengthOf(adapted.historicalRPCFrames, historicalLabels.length);
       const scheduled = reconcilePiRecordedSchedules(original);
       for (const entry of original.entries)
         assert.equal(
@@ -692,7 +727,7 @@ describe("Pi current bound-launch fixture proof", () => {
         adapted.historicalRPCFrames.map((entry) =>
           entry.type === "runtime_exit" ? null : entry.label,
         ),
-        ["switch_session@p2", "response:switch_session@p2"],
+        historicalLabels,
       );
       const declared = declarePiReplaySessionFiles(adapted.entries, root);
       const first = declared.expectedFile(recordedFile);
@@ -715,7 +750,7 @@ describe("Pi current bound-launch fixture proof", () => {
         const launchArgs = start.frame.args.map((arg) =>
           arg === "<any>" ? "/actual-extension" : arg,
         );
-        assert.equal(launchArgs.at(-1), first);
+        assert.equal(launchArgs[3], first);
         binding.bind({ ordinal: index + 1, cwd: "/workspace", args: launchArgs });
       }
       const wrong = structuredClone(original.entries);
@@ -773,11 +808,10 @@ describe("Pi current bound-launch fixture proof", () => {
           label: `process_start${suffix}`,
           frame: {
             type: "process_start",
-            args: [
-              ...args,
-              "--session",
+            args: withSession(
+              args,
               ordinal === 2 && condition === "wrong-file" ? `${root}/foreign.jsonl` : expected,
-            ],
+            ),
           },
         });
         evidence.observed.push({

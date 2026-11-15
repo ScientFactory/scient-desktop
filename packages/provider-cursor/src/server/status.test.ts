@@ -14,11 +14,13 @@ import { describe, expect, it } from "vite-plus/test";
 import type { CursorSettings } from "../settings.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 
 import {
   buildCursorCapabilitiesFromSdkModel,
   buildCursorDiscoveredModelsFromSdk,
   buildCursorProviderSnapshot,
+  buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
 } from "./status.ts";
 import { makeCursorCommandCatalog } from "./commandCatalog.ts";
@@ -401,6 +403,21 @@ describe("Cursor command catalog", () => {
   );
 });
 
+describe("buildInitialCursorProviderSnapshot", () => {
+  effectIt.effect.each([true, false])(
+    "advertises manual compaction only when enabled (%s)",
+    (enabled) =>
+      Effect.gen(function* () {
+        const provider = yield* buildInitialCursorProviderSnapshot({
+          ...baseCursorSettings,
+          enabled,
+        });
+
+        expect(provider.slashCommands).toEqual(enabled ? [COMPACT_SLASH_COMMAND] : []);
+      }),
+  );
+});
+
 describe("buildCursorProviderSnapshot", () => {
   it("downgrades ready status to warning when ACP model discovery times out", () => {
     expect(
@@ -466,6 +483,7 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor SDK model discovery returned no built-in models.",
       models: [],
+      slashCommands: [COMPACT_SLASH_COMMAND],
       supportsConversationRollback: false,
     });
   });
@@ -549,6 +567,7 @@ describe("checkCursorProviderStatus", () => {
 
       expect(provider).toMatchObject({
         status: "ready",
+        slashCommands: [COMPACT_SLASH_COMMAND],
         auth: {
           status: "authenticated",
           type: "api-key",

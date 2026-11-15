@@ -211,6 +211,7 @@ import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
+import { ThreadRoomBar } from "./ThreadRoomBar";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -1684,6 +1685,11 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       maxHeight={pendingUserInputMaxHeight}
                     />
+                    <ThreadRoomBar
+                      threadRef={props.selectedThreadDetailRef}
+                      canOperateThread={props.canOperateThread}
+                    />
+                    {/* A guest link opened before the room keeps its own controls. */}
                     <ThreadGuestShareBar
                       threadRef={props.selectedThreadDetailRef}
                       canOperateThread={props.canOperateThread}
@@ -1899,6 +1905,10 @@ function ThreadDetailBody(
                         serverConfig={props.serverConfig}
                         queueCount={props.selectedThreadQueueCount}
                         activeThreadBusy={props.activeThreadBusy}
+                        redirectsApproval={
+                          props.activePendingApprovals.length > 0 &&
+                          props.activePendingUserInput === null
+                        }
                         canStopThread={props.canStopThread}
                         environmentId={props.environmentId}
                         projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
