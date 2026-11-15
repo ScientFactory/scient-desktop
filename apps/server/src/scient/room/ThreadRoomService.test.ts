@@ -32,6 +32,7 @@ import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapter
 import * as ResourceCleanupService from "../../orchestration-v2/ResourceCleanupService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as DocumentText from "../../provider/DocumentText.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
@@ -79,6 +80,7 @@ const layerConnect = Layer.mock(CloudManagedEndpointRuntime)({
     pid: 1,
     readyConnections: 1,
     hostname: value,
+    origin: null,
     protocol: "http2",
   })),
 });
@@ -154,6 +156,7 @@ const layerTest = ThreadRoomService.layer.pipe(
   Layer.provide(layerConnect),
   Layer.provideMerge(layerAnalytics),
   Layer.provide(ServerSecretStore.layer),
+  Layer.provide(DocumentText.layer),
   Layer.provideMerge(layerConfig),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
@@ -283,4 +286,29 @@ it.effect("streams the room and ends it for a removed guest", () =>
     assert.deepEqual(views, ["discuss", "watch"]);
     assert.deepEqual(received.at(-1), { type: "ended", reason: "removed" });
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("extracts the text of a document a guest attaches, for the agent to read", () =>
+  Effect.gen(function* () {
+    const { rooms, invite } = yield* openRoom;
+    const { token } = yield* rooms.join({
+      credential: (yield* invite("discuss")).credential,
+      name: "Dana",
+    });
+    const fileSystem = yield* FileSystem.FileSystem;
+    const upload = `${yield* fileSystem.makeTempDirectoryScoped()}/0`;
+    yield* fileSystem.writeFile(upload, new TextEncoder().encode(String.raw`{\rtf1 Available}`));
+    yield* rooms.post(token, { text: "My notes", to: "people" }, [
+      { name: "notes.rtf", contentType: "application/rtf", path: upload },
+    ]);
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const extracted = (yield* fileSystem.readDirectory(attachmentsDir, { recursive: true })).filter(
+      (entry) => entry.endsWith(".rtf.txt"),
+    );
+    assert.lengthOf(extracted, 1);
+    assert.equal(
+      yield* fileSystem.readFileString(`${attachmentsDir}/${extracted[0]}`),
+      "Available",
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );

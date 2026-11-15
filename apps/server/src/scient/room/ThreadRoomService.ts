@@ -73,6 +73,7 @@ import {
   projectTurnItemForWire,
   threadStreamEventItem,
 } from "../../orchestration-v2/WireProjection.ts";
+import * as DocumentText from "../../provider/DocumentText.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
@@ -259,6 +260,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const random = yield* SecureRandom.SecureRandom;
   const analytics = yield* AnalyticsService.AnalyticsService;
+  const documents = yield* DocumentText.DocumentText;
   const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
 
   const randomId = random.randomBytes(ID_BYTES).pipe(Effect.map(base64UrlEncode), Effect.orDie);
@@ -474,7 +476,12 @@ const make = Effect.gen(function* () {
         const path = resolveAttachmentPath({ attachmentsDir, attachment });
         return path === null
           ? Effect.void
-          : fileSystem.remove(path, { force: true }).pipe(Effect.ignore);
+          : fileSystem
+              .remove(path, { force: true })
+              .pipe(
+                Effect.andThen(fileSystem.remove(`${path}.txt`, { force: true })),
+                Effect.ignore,
+              );
       },
       { discard: true },
     );
@@ -516,6 +523,8 @@ const make = Effect.gen(function* () {
           yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
           yield* fileSystem.copyFile(uploads[index]!.path, path);
           stored.push(attachment);
+          // Agents read a document through its extracted text, as for the owner's uploads.
+          yield* documents.ensure(path);
         }).pipe(Effect.mapError(() => uploadFailed)),
       { discard: true },
     ).pipe(Effect.onError(() => removeStored(stored)));

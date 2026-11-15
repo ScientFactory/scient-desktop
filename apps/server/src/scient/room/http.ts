@@ -181,7 +181,7 @@ const UPLOAD_LIMITS = Multipart.limitsServices({
   fieldMimeTypes: [],
 });
 
-const readPost = Effect.gen(function* () {
+export const readPost = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (!request.headers["content-type"]?.startsWith("multipart/form-data")) {
     const body = yield* readJson.pipe(Effect.flatMap(decodePost), Effect.option);
@@ -201,8 +201,10 @@ const readPost = Effect.gen(function* () {
         }),
     ),
   );
+  const text = parts.text ?? "";
   const fields = yield* decodePost({
-    text: parts.text ?? "",
+    // Form data sends every line break as CRLF; the textarea gave the guest LF.
+    text: typeof text === "string" ? text.replaceAll("\r\n", "\n") : text,
     to: parts.to,
     ...(typeof parts.replyTo === "string" && parts.replyTo !== ""
       ? { replyTo: parts.replyTo }

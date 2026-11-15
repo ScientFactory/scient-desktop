@@ -53,6 +53,10 @@ import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
+import {
+  ScientConnectReadiness,
+  useScientConnectInviteReady,
+} from "~/scient/connect/ScientConnectReadiness";
 import { RoomFaces } from "./RoomFaces";
 
 const DURATION_LABEL: Record<RoomAccessDuration, string> = {
@@ -133,6 +137,8 @@ function ShareDialog({
   const [duration, setDuration] = useState<RoomAccessDuration>("week");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Invites wait until this computer's Scient Connect is set up.
+  const connectReady = useScientConnectInviteReady(threadRef.environmentId);
 
   // One step: the invite is made and its link copied, ready to paste to the person.
   const createInvite = async () => {
@@ -155,7 +161,8 @@ function ShareDialog({
           <DialogTitle>Share</DialogTitle>
           <DialogDescription>Each link lets one person follow this thread live.</DialogDescription>
         </DialogHeader>
-        <DialogPanel>
+        <DialogPanel spacing="compact">
+          <ScientConnectReadiness environmentId={threadRef.environmentId} onLeave={onClose} />
           <div className="flex items-center gap-2">
             <RolePicker label="Permission" size="sm" value={role} onChange={setRole} />
             <Select
@@ -177,7 +184,7 @@ function ShareDialog({
               size="sm"
               variant="outline"
               className="ms-auto shrink-0"
-              disabled={!canInvite || creating}
+              disabled={!canInvite || creating || !connectReady}
               onClick={() => void createInvite()}
             >
               {isCopied ? <CheckIcon /> : <CopyIcon />}
@@ -193,7 +200,7 @@ function ShareDialog({
             </Button>
           </div>
           {error !== null ? (
-            <p role="alert" className="mt-2 text-destructive text-xs">
+            <p role="alert" className="text-destructive text-xs">
               {error}
             </p>
           ) : null}
