@@ -183,11 +183,12 @@ not move it again on its own.
 **A review with another version.** If a copy of the project (for example one
 pulled from git) changed a systematic review differently, the review shows
 "This review has another version from a copy of this project." Choose **Show
-versions** on that line to see both versions side by side: who changed each one last, and their searches,
-records and decisions. Under them Scient says what differs, counts first: the
+versions** on that line to see both versions side by side: who changed each one last, when one was
+deleted, and their searches, records and decisions. Under them Scient says what differs, counts first: the
 decisions that differ, and the decisions, searches and records only one version
-has. If the title, the question, the exclusion reasons, the records marked as
-duplicates or the full-text retrieval records differ, it names them. Below the
+has. If one version deleted the review, or the title, the question, the
+exclusion reasons, the records marked as duplicates or the full-text retrieval
+records differ, it names them. Below the
 choices, each difference is listed with both versions' side: for a record the
 two decided differently, each decision with its reason, its date, whether an
 agent made it, and its note; for a search, its details and how many records
@@ -893,7 +894,8 @@ sent anywhere. A paper with a notice it does not show yet gets it, as a change
 in the paper's **History**, and one line above the Library list says what was
 found, for example "The weekly check found: 1 paper was retracted." Choose
 **Show** to list those papers and **Dismiss** when you have seen them; a
-notice is announced once. If Retraction Watch lists a retracted paper as
+notice is announced once. A paper you add or restore is checked at the next
+weekly check, even when the list has not changed since the last one. If Retraction Watch lists a retracted paper as
 reinstated, its retraction is removed and the line says so.
 
 The weekly check finds retractions reliably. It finds an expression of
@@ -1311,8 +1313,13 @@ what is read.
 - **Citations inserted with Zotero, Mendeley or EndNote** carry the cited works'
   details inside the document. Scient reads those details, not the text Word
   shows, looks each work up by its DOI or PMID, and names it in the results by
-  its title. A work is matched with your Library by its Zotero item, DOI or
-  PMID; the results say how many cited works are not in the Library. A work
+  its title. Two works that share a title and year are checked as two. A work
+  is matched with your Library by its Zotero item in the same Zotero library,
+  or by its DOI or PMID; the results say how many cited works are not in the
+  Library. A work that could be more than one of your sources, or whose DOI or
+  PMID differs from the source its Zotero item names, is not matched with any,
+  and the results name it. A citation from a Zotero that was never synced with
+  zotero.org is matched by DOI or PMID only. A work
   Zotero's bibliography editor left out of the list is reported, and works it
   added to the list without a citation are counted. In such a document,
   citations typed by hand are not read.
@@ -1323,7 +1330,8 @@ what is read.
   cited**). A DOI, PMID, arXiv ID or ISBN written in an entry is looked up.
 
 The body text, tables, text boxes, footnotes and endnotes are read. Tracked
-changes are read as if accepted, and the results say so. Comments, headers and
+changes are read as if accepted, and the results say so: a citation deleted
+with tracked changes is not checked. Comments, headers and
 footers are not read; the results say so when the document has comments.
 Findings in a Word document have no line to open and no fix to apply: correct
 the citation in Word, or in your reference manager, and check again. Older

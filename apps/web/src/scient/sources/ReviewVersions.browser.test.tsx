@@ -231,6 +231,34 @@ describe("versions of a review from a copy of the project", () => {
     await expect.element(page.getByRole("button", { name: "Keep this version" })).toBeEnabled();
   });
 
+  it("reads everything again when the differences were read against another version in force", async () => {
+    setup(true);
+    // Another version came into force between the read of the versions and of their differences.
+    const changed = { ...versions, currentRevision: "fedcba9876543210" };
+    mocks.readSystematicReviewConflicts
+      .mockResolvedValueOnce(versions)
+      .mockResolvedValue({ ...changed, differences: differences([decidedDifferently], null) });
+    await using screen = await render(view(), { router: false });
+
+    await userEvent.click(screen.getByRole("button", { name: versionsLine }));
+    await expect.element(page.getByText("Early goal-directed therapy")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Keep this version" })).toBeEnabled();
+    await userEvent.click(page.getByRole("button", { name: "Keep this version" }));
+
+    await vi.waitFor(() =>
+      expect(mocks.changeSystematicReviewConflict).toHaveBeenCalledWith(environmentId, {
+        root: "/project",
+        reviewId: "review_1",
+        change: {
+          action: "resolve",
+          conflictId: "conflict_a",
+          pick: "keep",
+          currentRevision: changed.currentRevision,
+        },
+      }),
+    );
+  });
+
   it("shows the versions without the choices to a session that cannot change the Library", async () => {
     setup(false);
     await using screen = await render(view(), { router: false });

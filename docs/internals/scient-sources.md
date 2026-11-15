@@ -1003,7 +1003,8 @@ paths use the same environment authority for people and agents.
 The tool-use eval runs these tools on a real Library made for each case
 (`evals/mcp-tool-use/cases/scient-sources.ndjson`, `scientSources.ts`) and
 grades what the Library holds afterwards, not only which tools were called.
-`scientSources.test.ts` runs every case with a scripted model in CI, except the
+`scientSources.test.ts` runs every case with a scripted model in CI, once as
+asked and once for each wrong outcome the case must reject, except the
 503-reference Zotero import, which runs every night in
 `.github/workflows/scient-library-deep-tests.yml`. A change to a tool's
 description, inputs or result is run on those cases with a model before and
@@ -1257,7 +1258,8 @@ version has, or one in both whose database, query, date, result count, notes
 or set of records differ; each side carries its record count and how many of
 them the other side's entry lacks. Two entries the copies logged separately
 have different search IDs and are two one-sided rows, as Combine keeps both. A
-record row is a record only one version has. The title, the question, the
+record row is a record only one version has. Whether the review is deleted
+(`deleted`, compared by presence of `deletedAt`), the title, the question, the
 exclusion reasons, duplicate marks with distinct pairs, and each record's
 latest retrieval outcome are compared whole and named in `alsoDiffering`,
 without rows. The answer has the counts of everything and one page of 100
@@ -1508,7 +1510,8 @@ dismiss it with `scient_sources_organize`.
 `conflictVersions` (when above zero) and `combineReport`.
 `systematicReviewConflicts` (read) returns `{ current, versions,
 combineReport }`, and with `differencesOf: { conflictId, offset }` also
-`differences` (null when they cannot be read). `systematicReviewConflict` (operate) takes
+`differences` (null when they cannot be read), from the same read of the two
+files as `currentRevision` and the summaries (`readScientReviewVersions`). `systematicReviewConflict` (operate) takes
 `{ root, reviewId, change }`, with `change` `{ action: "resolve", conflictId,
 pick }` or `{ action: "dismiss-report" }`. In library mode
 `scient_sources_systematic_reviews` lists `conflicts` and `combineReport` on a
@@ -1641,8 +1644,11 @@ other version the picker then reads the first page of differences
 (`differencesOf`) and shows the counts as one sentence above the choices and
 the rows below them, in the two-sided layout the Library's join differences
 use (`Sides.tsx`; words in `reviewVersionLabels.ts`); "Show more" reads the
-next page and, if another version is in force by then, reads everything
-again. The choices
+next page. Every page, the first included, carries the revision it was read
+against; one that differs from the revision the picker holds makes it read
+everything again. A version that deleted the review says when in its summary,
+and the differences name `deleted`, so a deleted version is never described as
+the same as a live one. The choices
 are off until the versions and their differences have been read after the
 picker opened and after each choice; differences that cannot be read are said
 in one sentence and do not block the choice. The picker's read names the version in force by a hash of its file
@@ -2450,7 +2456,11 @@ Retraction Watch database
 the Library on this computer, so no service learns which works the Library
 holds; the request carries no contact email. Asking the registry for every
 source each week was rejected for that reason and for its cost (one request a
-source). A `304` records the check and nothing else. The answer is read as it
+source). The request is conditional only while the Library's DOIs and PMIDs are
+the ones the last whole read matched (`covered`, a hash of their sorted keys
+from `scientLibraryNoticeCoverage`): an unchanged file says nothing about a
+paper added or restored since, so any other set asks for the whole file. A
+`304` to a conditional request records the check and nothing else. The answer is read as it
 arrives (`retractionWatchReader` in `libraryNoticeWatch.ts`) and only the rows
 of the Library's papers are kept, by DOI or PMID of the original paper; nothing
 is stored on disk. The file's kinds are Retraction, Expression of concern and
@@ -2488,7 +2498,8 @@ pass's other writes; a source edited meanwhile answers `stale` and is matched
 the next week. The Trash is not checked.
 
 **Told once.** `notice-watch.json` in the Library holds the time of the last
-successful check, the file's `ETag`, and one entry per source and kind for
+successful check, the file's `ETag` and the papers its read matched
+(`covered`), and one entry per source and kind for
 what the check did there (`added` or `withdrawn`, when, and `dismissed`). The
 overview carries the entries not yet dismissed, for sources still held, as
 `noticeChanges`, whatever the scope; the panel shows them as one line with
@@ -3175,13 +3186,17 @@ same two functions.
 - A `.docx` is read by `WordFile.ts` on the server (the zip and XML readers
   the server already has, no pandoc): the main part named by the package, its
   footnotes, endnotes, styles and custom properties, each XML part at most
-  32 MB uncompressed, pictures never. It returns plain data (paragraphs in
+  32 MB uncompressed, pictures never. An archive of more than 10,000 members is
+  refused as too large before any is read (a Word file holds a few dozen parts
+  and one per picture), and only the XML parts are kept from the listing. It
+  returns plain data (paragraphs in
   order, field codes, content-control tags, and whether the file has tracked
   changes or comments); `wordReferences.ts` in the package interprets it.
   Fields are tracked by their begin, separate and end marks across runs and
   paragraphs, so a code Word split and a bibliography spanning paragraphs read
-  whole; deleted and moved-away text and a text box's fallback copy are
-  skipped. Comments, headers and footers are not read.
+  whole; everything inside a tracked deletion (`w:del`: text, fields, content
+  controls, bookmarks), moved-away text and a text box's fallback copy are
+  skipped, while the result still says the file has tracked changes. Comments, headers and footers are not read.
 - Citations a reference manager inserted are read from their data: Zotero's
   `ADDIN ZOTERO_ITEM CSL_CITATION` field (or, in bookmark mode, the code kept
   in the custom properties `<bookmark>_1`, `_2`… of each `ZOTERO_BREF_`
@@ -3189,8 +3204,19 @@ same two functions.
   Mendeley Cite's content control tagged `MENDELEY_CITATION_v3_<base64>`, and
   EndNote's `ADDIN EN.CITE` record in the code or, base64, in the field's
   `w:fldData` (the nested `EN.CITE.DATA` is the same data and is skipped).
-  Each distinct work is one reference with the details the document holds,
-  matched with a Library record by Zotero item key or work-level identifier;
+  Each distinct work is one reference with the details the document holds.
+  Works are told apart by the manager's own ID (Zotero's and Mendeley
+  Desktop's address, Mendeley Cite's item ID, EndNote's database and record
+  number); a work without one by its DOI, else by all its details, never by
+  title and year alone (Mendeley Desktop's `ITEM-n` is the citation's
+  numbering and is left out). A work is linked to the one Library record its
+  Zotero item and its DOI or PMID point to: the item by library and key
+  together (a zotero.org user library is the bare user ID in both, a group
+  `groups/<id>`; Zotero on this computer reports a synced user's ID too and
+  `0` before sync, while an unsynced document names its library
+  `users/local/<key>`, a key Scient does not keep, so such items are linked by
+  DOI or PMID only). A work several records answer to, or whose DOI or PMID a
+  record it points to contradicts, is linked to none and named in a note;
   Zotero's `ZOTERO_BIBL` code gives the works left out of the list
   (`omitted`) and the count added without a citation (`uncited`). Without such
   citations the text is read against the list under the last reference

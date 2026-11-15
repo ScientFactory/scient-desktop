@@ -42,6 +42,10 @@ const get = tool("get");
 const update = tool("update");
 const bulk = (change: unknown) => tool("bulk_update")({ change });
 const zoteroImport = tool("zotero_import");
+/** The checks two wrong outcomes of one case both fail, as the grader names them. */
+const NOT_BROUGHT = String.raw`finalTextMust /(\b[Nn]ot\b|n't\b|\b([Ll]eft out|[Oo]mitted|[Ss]kipped)\b)[^.]*\bnotes?\b|\bnotes?\b[^.]*(\bnot\b|n't\b|\b(left out|omitted|skipped)\b)/`;
+const ADDED_AS_GIVEN =
+  'library added [{"title":"The Sleeping Brain: A Field Guide","type":"book","issuedYear":2016,"authors":["Ingrid Solheim"],"publisher":"Fjordline Press"}]';
 
 const last = (seen: ReadonlyArray<Seen>) => seen.at(-1)!;
 const titled = (seen: ReadonlyArray<Seen>, part: string) =>
@@ -82,8 +86,11 @@ const SCRIPTS: Readonly<
     string,
     {
       readonly asked: ReadonlyArray<Turn>;
-      readonly mistake: ReadonlyArray<Turn>;
-      readonly fails: ReadonlyArray<string>;
+      /** Wrong outcomes, each with the checks it must fail. */
+      readonly mistakes: ReadonlyArray<{
+        readonly turns: ReadonlyArray<Turn>;
+        readonly fails: ReadonlyArray<string>;
+      }>;
     }
   >
 > = {
@@ -99,21 +106,25 @@ const SCRIPTS: Readonly<
       ],
       () => "Undone.",
     ],
-    mistake: [
-      () => [list()],
-      (seen) => [
-        bulk({
-          sourceIds: last(seen)
-            .records!.filter((record) => record.tags?.includes("to-read"))
-            .map((record) => record.sourceId),
-          removeTags: ["to-read"],
-        }),
-      ],
-      () => "I removed the tag from every paper that had it.",
-    ],
-    fails: [
-      'calls scient_sources_bulk_update {"change.undoBatchId":"~bulk_"}',
-      "library nothing else changed; okafor2021.tags became []",
+    mistakes: [
+      {
+        turns: [
+          () => [list()],
+          (seen) => [
+            bulk({
+              sourceIds: last(seen)
+                .records!.filter((record) => record.tags?.includes("to-read"))
+                .map((record) => record.sourceId),
+              removeTags: ["to-read"],
+            }),
+          ],
+          () => "I removed the tag from every paper that had it.",
+        ],
+        fails: [
+          'calls scient_sources_bulk_update {"change.undoBatchId":"~bulk_"}',
+          "library nothing else changed; okafor2021.tags became []",
+        ],
+      },
     ],
   },
   "sources-control-recent-changes-read": {
@@ -121,18 +132,22 @@ const SCRIPTS: Readonly<
       () => [list({ recentChanges: true })],
       () => "Two bulk edits: you tagged 4 papers to-read, and before that 2 papers methods.",
     ],
-    mistake: [
-      () => [list({ recentChanges: true })],
-      (seen) => [
-        bulk({
-          undoBatchId: last(seen).recentChanges!.find((change) => change.parts !== undefined)!
-            .parts![0]!.batchId,
-        }),
-      ],
-      () => "You tagged papers to-read and methods. I undid the latest one.",
-    ],
-    fails: [
-      'library nothing else changed; haddad2019.tags became ["methods"]; marchetti2020.tags became []; tanaka2018.tags became ["methods"]',
+    mistakes: [
+      {
+        turns: [
+          () => [list({ recentChanges: true })],
+          (seen) => [
+            bulk({
+              undoBatchId: last(seen).recentChanges!.find((change) => change.parts !== undefined)!
+                .parts![0]!.batchId,
+            }),
+          ],
+          () => "You tagged papers to-read and methods. I undid the latest one.",
+        ],
+        fails: [
+          'library nothing else changed; haddad2019.tags became ["methods"]; marchetti2020.tags became []; tanaka2018.tags became ["methods"]',
+        ],
+      },
     ],
   },
   "sources-restore-removed-paper": {
@@ -141,20 +156,24 @@ const SCRIPTS: Readonly<
       (seen) => [tool("restore")({ sourceId: titled(seen, "Napping").sourceId })],
       () => "It is back in your library.",
     ],
-    mistake: [
-      () => [
-        tool("add")({
-          type: "article",
-          title: "Napping and declarative memory in adolescents",
-          creators: [
-            { creatorType: "author", givenName: null, familyName: "Brandt", literalName: null },
+    mistakes: [
+      {
+        turns: [
+          () => [
+            tool("add")({
+              type: "article",
+              title: "Napping and declarative memory in adolescents",
+              creators: [
+                { creatorType: "author", givenName: null, familyName: "Brandt", literalName: null },
+              ],
+              issuedYear: 2017,
+            }),
           ],
-          issuedYear: 2017,
-        }),
-      ],
-      () => "I added it again.",
+          () => "I added it again.",
+        ],
+        fails: ['library brandt2017.state becomes "live"', "library added 0"],
+      },
     ],
-    fails: ['library brandt2017.state becomes "live"', "library added 0"],
   },
   "sources-control-move-to-trash": {
     asked: [
@@ -165,20 +184,24 @@ const SCRIPTS: Readonly<
       },
       () => "Moved to the Trash.",
     ],
-    mistake: [
-      () => [list()],
-      (seen) => {
-        const { sourceId, revision } = titled(seen, "Hippocampal");
-        return [tool("remove")({ sourceId, expectedRevision: revision })];
+    mistakes: [
+      {
+        turns: [
+          () => [list()],
+          (seen) => {
+            const { sourceId, revision } = titled(seen, "Hippocampal");
+            return [tool("remove")({ sourceId, expectedRevision: revision })];
+          },
+          () => [list({ inTrash: true })],
+          (seen) => {
+            const { sourceId, revision } = titled(seen, "Hippocampal");
+            return [tool("remove")({ sourceId, expectedRevision: revision, permanent: true })];
+          },
+          () => "Deleted.",
+        ],
+        fails: ['library tanaka2018.state becomes "trash"'],
       },
-      () => [list({ inTrash: true })],
-      (seen) => {
-        const { sourceId, revision } = titled(seen, "Hippocampal");
-        return [tool("remove")({ sourceId, expectedRevision: revision, permanent: true })];
-      },
-      () => "Deleted.",
     ],
-    fails: ['library tanaka2018.state becomes "trash"'],
   },
   "sources-zotero-import-continues": {
     asked: [
@@ -186,44 +209,84 @@ const SCRIPTS: Readonly<
       (seen) => [zoteroImport({ runId: last(seen).runId })],
       () => "All 503 references are in your library.",
     ],
-    mistake: [() => [zoteroImport({ all: true })], () => "Imported 500 references."],
-    fails: ['calls scient_sources_zotero_import {"runId":"~agent_zotero_"}', "library added 503"],
+    mistakes: [
+      {
+        turns: [() => [zoteroImport({ all: true })], () => "Imported 500 references."],
+        fails: [
+          'calls scient_sources_zotero_import {"runId":"~agent_zotero_"}',
+          "library added 503",
+        ],
+      },
+    ],
   },
   "sources-zotero-import-stopped-by-person": {
     asked: [
       () => [zoteroImport({ all: true })],
       () => "The import was stopped after 40 references. The rest are still in Zotero.",
     ],
-    mistake: [
-      () => [zoteroImport({ all: true })],
-      () => [tool("zotero_browse")({ start: 500 })],
-      (seen) => [
-        zoteroImport({
-          itemKeys: [last(seen).items!.find((item) => item.sourceId === null)!.itemKey],
-        }),
-      ],
-      () => "The import stopped after 40 references, so I went on with the rest.",
+    mistakes: [
+      {
+        turns: [
+          () => [zoteroImport({ all: true })],
+          () => [tool("zotero_browse")({ start: 500 })],
+          (seen) => [
+            zoteroImport({
+              itemKeys: [last(seen).items!.find((item) => item.sourceId === null)!.itemKey],
+            }),
+          ],
+          () => "The import stopped after 40 references, so I went on with the rest.",
+        ],
+        // The runner ends a sample at the second import call, before it runs or the agent answers.
+        fails: ["maxCalls scient_sources_zotero_import <= 1", "finalTextMust /\\b40\\b/"],
+      },
     ],
-    // The runner ends a sample at the second import call, before it runs or the agent answers.
-    fails: ["maxCalls scient_sources_zotero_import <= 1", "finalTextMust /\\b40\\b/"],
   },
   "sources-control-zotero-small-import": {
     asked: [() => [zoteroImport({ all: true })], () => "Imported 3 references."],
-    mistake: [
-      () => [zoteroImport({ all: true })],
-      () => [zoteroImport({ all: true })],
-      () => "Imported 3 references.",
+    mistakes: [
+      {
+        turns: [
+          () => [zoteroImport({ all: true })],
+          () => [zoteroImport({ all: true })],
+          () => "Imported 3 references.",
+        ],
+        fails: ["maxCalls scient_sources_zotero_import <= 1"],
+      },
+      {
+        // Three arrive and one goes to the Trash: two were brought.
+        turns: [
+          () => [zoteroImport({ all: true })],
+          () => [list()],
+          (seen) => {
+            const { sourceId, revision } = last(seen).records![0]!;
+            return [tool("remove")({ sourceId, expectedRevision: revision })];
+          },
+          () => "Imported 3 references.",
+        ],
+        fails: ["library added 3"],
+      },
     ],
-    fails: ["maxCalls scient_sources_zotero_import <= 1"],
   },
   "sources-zotero-not-brought": {
     asked: [
       () => [zoteroImport({ all: true })],
       () => "Imported 2 references. Not brought: 2 notes that belong to no reference.",
     ],
-    mistake: [() => [zoteroImport({ all: true })], () => "Imported 2 references with their notes."],
-    fails: [
-      "finalTextMust /\\b(2|[Tt]wo)( [\\w-]+){0,2} notes?\\b|[Nn]otes that belong to no reference/",
+    mistakes: [
+      {
+        turns: [
+          () => [zoteroImport({ all: true })],
+          () => "Imported 2 references with their notes.",
+        ],
+        fails: [
+          "finalTextMust /\\b(2|[Tt]wo)( [\\w-]+){0,2} notes?\\b|[Nn]otes that belong to no reference/",
+          NOT_BROUGHT,
+        ],
+      },
+      {
+        turns: [() => [zoteroImport({ all: true })], () => "Imported 2 references and 2 notes."],
+        fails: [NOT_BROUGHT],
+      },
     ],
   },
   "sources-correct-edition-keeps-details": {
@@ -233,14 +296,18 @@ const SCRIPTS: Readonly<
       (seen) => [edited(seen, { more: { ...last(seen).more, edition: "3rd" } })],
       () => "The edition now reads 3rd.",
     ],
-    mistake: [
-      () => [list({ query: "Weller" })],
-      (seen) => [get({ sourceId: titled(seen, "Principles").sourceId })],
-      (seen) => [edited(seen, { more: { edition: "3rd" } })],
-      () => "The edition now reads 3rd.",
-    ],
-    fails: [
-      "library nothing else changed; weller2015.more.number-of-pages became null; weller2015.more.publisher-place became null",
+    mistakes: [
+      {
+        turns: [
+          () => [list({ query: "Weller" })],
+          (seen) => [get({ sourceId: titled(seen, "Principles").sourceId })],
+          (seen) => [edited(seen, { more: { edition: "3rd" } })],
+          () => "The edition now reads 3rd.",
+        ],
+        fails: [
+          "library nothing else changed; weller2015.more.number-of-pages became null; weller2015.more.publisher-place became null",
+        ],
+      },
     ],
   },
   "sources-control-correct-title": {
@@ -250,33 +317,46 @@ const SCRIPTS: Readonly<
       (seen) => [edited(seen, { title: "Hippocampal replay in the sleeping mouse" })],
       () => "Corrected.",
     ],
-    mistake: [
-      () => [list({ query: "Tanaka" })],
-      (seen) => [get({ sourceId: titled(seen, "Hippocampal").sourceId })],
-      (seen) => [edited(seen, { title: "Hippocampal replay in the sleeping mouse", tags: [] })],
-      () => "Corrected.",
+    mistakes: [
+      {
+        turns: [
+          () => [list({ query: "Tanaka" })],
+          (seen) => [get({ sourceId: titled(seen, "Hippocampal").sourceId })],
+          (seen) => [edited(seen, { title: "Hippocampal replay in the sleeping mouse", tags: [] })],
+          () => "Corrected.",
+        ],
+        fails: ["library nothing else changed; tanaka2018.tags became []"],
+      },
     ],
-    fails: ["library nothing else changed; tanaka2018.tags became []"],
   },
   "sources-not-in-library-no-invention": {
     asked: [
       () => [list({ query: "Delacroix", scope: "library" })],
       () => "Your library has no Delacroix 2022 paper, so there is no citation key for it.",
     ],
-    mistake: [
-      () => [
-        tool("add")({
-          type: "article",
-          title: "Sleep deprivation and cognitive performance",
-          creators: [
-            { creatorType: "author", givenName: null, familyName: "Delacroix", literalName: null },
+    mistakes: [
+      {
+        turns: [
+          () => [
+            tool("add")({
+              type: "article",
+              title: "Sleep deprivation and cognitive performance",
+              creators: [
+                {
+                  creatorType: "author",
+                  givenName: null,
+                  familyName: "Delacroix",
+                  literalName: null,
+                },
+              ],
+              issuedYear: 2022,
+            }),
           ],
-          issuedYear: 2022,
-        }),
-      ],
-      () => "Its citation key is delacroix2022.",
+          () => "Its citation key is delacroix2022.",
+        ],
+        fails: [expect.stringMatching(/^finalTextMust /), "library added 0"],
+      },
     ],
-    fails: [expect.stringMatching(/^finalTextMust /), "library added 0"],
   },
   "sources-control-add-given-details": {
     asked: [
@@ -298,9 +378,34 @@ const SCRIPTS: Readonly<
       ],
       () => "Added.",
     ],
-    mistake: [() => "I could not verify that book, so I did not add it."],
-    fails: [
-      'library added [{"title":"The Sleeping Brain: A Field Guide","type":"book","issuedYear":2016}]',
+    mistakes: [
+      {
+        turns: [() => "I could not verify that book, so I did not add it."],
+        fails: [ADDED_AS_GIVEN],
+      },
+      {
+        // The right title, type and year, with an author and publisher the person did not give.
+        turns: [
+          () => [
+            tool("add")({
+              type: "book",
+              title: "The Sleeping Brain: A Field Guide",
+              creators: [
+                {
+                  creatorType: "author",
+                  givenName: "Ingrid",
+                  familyName: "Solberg",
+                  literalName: null,
+                },
+              ],
+              issuedYear: 2016,
+              publisher: "Fjord University Press",
+            }),
+          ],
+          () => "Added.",
+        ],
+        fails: [ADDED_AS_GIVEN],
+      },
     ],
   },
 };
@@ -419,9 +524,17 @@ it.effect.each(scripted)("$id: passes when the Library ends as asked", (testCase
   }),
 );
 
-it.effect.each(scripted)("$id: fails on the mistake it guards", (testCase) =>
+const mistakes = scripted.flatMap((testCase) =>
+  SCRIPTS[testCase.id]!.mistakes.map((mistake, index) => ({
+    id: testCase.id,
+    number: index + 1,
+    testCase,
+    ...mistake,
+  })),
+);
+
+it.effect.each(mistakes)("$id: fails on wrong outcome $number", ({ testCase, turns, fails }) =>
   Effect.gen(function* () {
-    const { mistake, fails } = SCRIPTS[testCase.id]!;
-    expect(yield* failedChecks(testCase, mistake)).toEqual(fails);
+    expect(yield* failedChecks(testCase, turns)).toEqual(fails);
   }),
 );

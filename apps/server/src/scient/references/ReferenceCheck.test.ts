@@ -582,6 +582,16 @@ const article = (id: string, family: string, title: string, year: string, doi?: 
   issued: { "date-parts": [[year]] },
   ...(doi ? { DOI: doi } : {}),
 });
+// Mendeley Cite keeps the citation as base64 in a content control's tag, without padding.
+const mendeleyCiteControl = (itemData: Readonly<Record<string, unknown>>, shown: string) =>
+  `<w:sdt><w:sdtPr><w:tag w:val="MENDELEY_CITATION_v3_${Buffer.from(
+    JSON.stringify({
+      citationID: "MENDELEY_CITATION_1de18c13",
+      citationItems: [{ id: itemData.id, itemData }],
+    }),
+  )
+    .toString("base64")
+    .replace(/=+$/u, "")}"/></w:sdtPr><w:sdtContent>${shown}</w:sdtContent></w:sdt>`;
 
 describe("checkReferences on a Word document", () => {
   it("reads the works a reference manager's citations carry, wherever Word keeps them", async () => {
@@ -595,7 +605,7 @@ describe("checkReferences on a Word document", () => {
       externalReferences: [
         {
           system: "zotero",
-          libraryId: "users/40613",
+          libraryId: "40613",
           itemKey: "EIZFK2E5",
           itemVersion: 3,
           rawItemType: "journalArticle",
@@ -609,27 +619,18 @@ describe("checkReferences on a Word document", () => {
       "2020",
       "10.1000/smith",
     );
-    const ghost = zoteroCitation([
-      article("GHOST001", "Roe", "A study that was never published", "2020", "10.1000/missing"),
-    ]);
+    const roe = article(
+      "GHOST001",
+      "Roe",
+      "A study that was never published",
+      "2020",
+      "10.1000/missing",
+    );
+    const ghost = zoteroCitation([roe]);
     const bookmarkCode = `ZOTERO_ITEM CSL_CITATION ${JSON.stringify({ citationItems: [{ id: 6, uris: ["http://zotero.org/users/40613/items/EIZFK2E5"], itemData: article("6", "Doe", "Sleep in shift workers", "2019", "10.1000/wrong") }] })}`;
     const endNote = Buffer.from(
       `<EndNote><Cite><Author>Wakefield</Author><Year>1998</Year><RecNum>4</RecNum><record><rec-number>4</rec-number><contributors><authors><author>Wakefield, A.</author></authors></contributors><titles><title>Vaccines and autism</title><secondary-title>The Lancet</secondary-title></titles><dates><year>1998</year></dates><electronic-resource-num>10.1000/retracted</electronic-resource-num></record></Cite></EndNote>`,
     ).toString("base64");
-    // Mendeley Cite keeps the citation as base64 in a content control's tag, without padding.
-    const mendeleyCite = `MENDELEY_CITATION_v3_${Buffer.from(
-      JSON.stringify({
-        citationID: "MENDELEY_CITATION_1de18c13",
-        citationItems: [
-          {
-            id: "f3a0c1d2",
-            itemData: { ...article("f3a0c1d2", "Ng", "Handbook of sleep", "2010"), type: "book" },
-          },
-        ],
-      }),
-    )
-      .toString("base64")
-      .replace(/=+$/u, "")}`;
     const property = (name: string, value: string) =>
       `<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="${name}"><vt:lpwstr>${escapeXml(value)}</vt:lpwstr></property>`;
     await fixture.write(
@@ -640,15 +641,16 @@ describe("checkReferences on a Word document", () => {
             run("Light matters ") +
               field(zoteroCitation([smith]), run("(Smith, 2020)")) +
               fieldMark("end") +
-              // A citation deleted or moved away with tracked changes is no longer here.
-              `<w:del w:id="1" w:author="B" w:date="2026-11-01T10:00:00Z">${fieldMark("begin")}<w:r><w:delInstrText xml:space="preserve">${escapeXml(ghost)}</w:delInstrText></w:r>${fieldMark("separate")}<w:r><w:delText>(Roe, 2020)</w:delText></w:r>${fieldMark("end")}</w:del>` +
+              // A citation deleted or moved away with tracked changes is no longer here, whether
+              // a field, a content control or a Zotero bookmark.
+              `<w:del w:id="1" w:author="B" w:date="2026-11-01T10:00:00Z">${fieldMark("begin")}<w:r><w:delInstrText xml:space="preserve">${escapeXml(ghost)}</w:delInstrText></w:r>${fieldMark("separate")}<w:r><w:delText>(Roe, 2020)</w:delText></w:r>${fieldMark("end")}${mendeleyCiteControl(roe, "<w:r><w:delText>(Roe, 2020)</w:delText></w:r>")}<w:bookmarkStart w:id="3" w:name="ZOTERO_BREF_deletedRoe01"/><w:r><w:delText>(Roe, 2020)</w:delText></w:r><w:bookmarkEnd w:id="3"/></w:del>` +
               `<w:moveFrom w:id="2" w:author="B" w:date="2026-11-01T10:00:00Z">${field(ghost, run("(Roe, 2020)"))}${fieldMark("end")}</w:moveFrom>` +
               run(" and again ") +
               field(zoteroCitation([smith]), run("(Smith, 2020)")) +
               fieldMark("end"),
           ),
           paragraph(
-            `<w:bookmarkStart w:id="0" w:name="ZOTERO_BREF_Jx3kq8mZ1aPl"/>${run("(Doe, 2019)")}<w:bookmarkEnd w:id="0"/><w:sdt><w:sdtPr><w:tag w:val="${mendeleyCite}"/></w:sdtPr><w:sdtContent>${run(" (Ng, 2010)")}</w:sdtContent></w:sdt><w:r><w:footnoteReference w:id="2"/></w:r>`,
+            `<w:bookmarkStart w:id="0" w:name="ZOTERO_BREF_Jx3kq8mZ1aPl"/>${run("(Doe, 2019)")}<w:bookmarkEnd w:id="0"/>${mendeleyCiteControl({ ...article("f3a0c1d2", "Ng", "Handbook of sleep", "2010"), type: "book" }, run(" (Ng, 2010)"))}<w:r><w:footnoteReference w:id="2"/></w:r>`,
           ),
           // Zotero's list is one field across its paragraphs, with a link field inside it.
           paragraph(
@@ -669,7 +671,7 @@ describe("checkReferences on a Word document", () => {
           `${fieldMark("begin", endNote)}<w:r><w:instrText xml:space="preserve"> ADDIN EN.CITE </w:instrText></w:r>${fieldMark("begin", endNote)}<w:r><w:instrText xml:space="preserve"> ADDIN EN.CITE.DATA </w:instrText></w:r>${fieldMark("end")}${fieldMark("separate")}${run("(Wakefield, 1998)")}${fieldMark("end")}`,
         )}</w:footnote></w:footnotes>`,
         "word/comments.xml": `<w:comments ${WORD_NS}><w:comment w:id="0" w:author="B">${paragraph(run("Cite (Nobody, 1999) here?"))}</w:comment></w:comments>`,
-        "docProps/custom.xml": `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">${property("ZOTERO_BREF_Jx3kq8mZ1aPl_1", bookmarkCode.slice(0, 255))}${property("ZOTERO_BREF_Jx3kq8mZ1aPl_2", bookmarkCode.slice(255))}</Properties>`,
+        "docProps/custom.xml": `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">${property("ZOTERO_BREF_Jx3kq8mZ1aPl_1", bookmarkCode.slice(0, 255))}${property("ZOTERO_BREF_Jx3kq8mZ1aPl_2", bookmarkCode.slice(255))}${property("ZOTERO_BREF_deletedRoe01_1", ghost.trim())}</Properties>`,
       }),
     );
     const library = await listScientSourceRecords(fixture.root);
@@ -717,6 +719,111 @@ describe("checkReferences on a Word document", () => {
     expect(library).toHaveLength(2);
   });
 
+  it("keeps cited works apart that share a title and a year", async () => {
+    await using fixture = await project();
+    const editorial = (id: string, family: string) => article(id, family, "Editorial", "2020");
+    // Mendeley Cite names a work by its item ID; a citation without one, by all its details.
+    const withoutId = (family: string) =>
+      field(
+        ` ADDIN CSL_CITATION ${JSON.stringify({ citationItems: [{ id: "ITEM-1", itemData: editorial("ITEM-1", family) }] })} `,
+        run(` (${family}, 2020)`),
+      ) + fieldMark("end");
+    await fixture.write(
+      "editorials.docx",
+      await wordFile({
+        "word/document.xml": `<w:document ${WORD_NS}><w:body>${paragraph(
+          mendeleyCiteControl(editorial("4c1e0a3b", "Abe"), run("(Abe, 2020)")) +
+            mendeleyCiteControl(editorial("9d2f7c61", "Bly"), run(" (Bly, 2020)")) +
+            mendeleyCiteControl(editorial("4c1e0a3b", "Abe"), run(" (Abe, 2020)")) +
+            withoutId("Cho") +
+            withoutId("Dee") +
+            withoutId("Cho"),
+        )}</w:body></w:document>`,
+      }),
+    );
+
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "editorials.docx" } },
+      { resolveIdentifiers: registry(works), now },
+    );
+
+    expect(report).toMatchObject({ references: 4, citations: 6, noIdentifier: 4 });
+  });
+
+  it("links a cited Zotero item to the Library source of the same library, and never guesses", async () => {
+    await using fixture = await project();
+    const zotero = (libraryId: string, itemKey: string) => ({
+      system: "zotero" as const,
+      libraryId,
+      itemKey,
+      itemVersion: 1,
+      rawItemType: "journalArticle",
+    });
+    const held = async (title: string, changes: Partial<LibraryCandidate>) =>
+      addLibrarySource(fixture.root, { sourceKey: title, title, identifiers: [], ...changes });
+    await addLibrarySource(fixture.root);
+    await held("Feeding behaviour of reef fish", {
+      identifiers: [{ scheme: "doi", value: "10.1000/reef" }],
+      externalReferences: [zotero("22", "ABCDEFGH")],
+    });
+    await held("Handbook of sleep", { externalReferences: [zotero("groups/11", "GROUPKEY")] });
+    await held("Vaccines and autism", {
+      identifiers: [{ scheme: "doi", value: "10.1000/retracted" }],
+      externalReferences: [zotero("40613", "CONTRA01")],
+    });
+    await held("Twin study, first copy", { externalReferences: [zotero("40613", "TWICE001")] });
+    await held("Twin study, second copy", { externalReferences: [zotero("40613", "TWICE001")] });
+    const cite = (address: string, itemData: Readonly<Record<string, unknown>>) =>
+      field(
+        ` ADDIN ZOTERO_ITEM CSL_CITATION ${JSON.stringify({ citationItems: [{ id: 1, uris: [address], itemData }] })} `,
+        run("(cited)"),
+      ) + fieldMark("end");
+    await fixture.write(
+      "draft.docx",
+      await wordFile({
+        "word/document.xml": `<w:document ${WORD_NS}><w:body>${paragraph(
+          // The same item key in another library is another item; the DOI finds the source.
+          cite(
+            "http://zotero.org/groups/11/items/ABCDEFGH",
+            article("1", "Smith", "The effect of light on sleep", "2020", "10.1000/smith"),
+          ) +
+            cite(
+              "http://zotero.org/groups/11/items/GROUPKEY",
+              article("2", "Ng", "Handbook of sleep", "2010"),
+            ) +
+            // The item's source has another DOI than the citation.
+            cite(
+              "http://zotero.org/users/40613/items/CONTRA01",
+              article("3", "Roe", "A study that was never published", "2020", "10.1000/missing"),
+            ) +
+            cite(
+              "http://zotero.org/users/40613/items/TWICE001",
+              article("4", "Lee", "Twin study", "2018"),
+            ),
+        )}</w:body></w:document>`,
+      }),
+    );
+    const library = await listScientSourceRecords(fixture.root);
+    const inLibrary = (title: string) => library.find((record) => record.title === title)!.sourceId;
+
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "draft.docx" } },
+      { resolveIdentifiers: registry(works), now },
+    );
+
+    expect(report.ledger.map(({ label, sourceId }) => [label, sourceId])).toEqual([
+      ["The effect of light on sleep", inLibrary("The effect of light on sleep")],
+      ["Handbook of sleep", inLibrary("Handbook of sleep")],
+      ["A study that was never published", null],
+      ["Twin study", null],
+    ]);
+    expect(report.notes).toEqual([
+      "Citations inserted with a reference manager were read. Citations typed by hand were not.",
+      "2 cited works were not linked to a Library source, because more than one could be meant: “A study that was never published”, “Twin study”.",
+      "The document has no reference list made by the reference manager.",
+    ]);
+  });
+
   it("reads typed citations against the reference list of a document without a reference manager", async () => {
     await using fixture = await project();
     const superscript = '<w:vertAlign w:val="superscript"/>';
@@ -762,18 +869,31 @@ describe("checkReferences on a Word document", () => {
     expect(report.findings.every((finding) => finding.location === null)).toBe(true);
   });
 
-  it("lists Word documents to check and says when a file is not one", async () => {
+  it("lists Word documents to check and says when a file is not one or is too large", async () => {
     await using fixture = await project();
     await fixture.write("paper.docx", "This is not a Word file.");
     await fixture.write("~$paper.docx", "Word's lock file");
+    // Small and valid, but with more members than any Word file: refused before they are read.
+    await fixture.write(
+      "many.docx",
+      await wordFile({
+        "word/document.xml": `<w:document ${WORD_NS}><w:body>${paragraph(run("Text."))}</w:body></w:document>`,
+        ...Object.fromEntries(
+          Array.from({ length: 10_000 }, (_, index) => [`word/media/image${index}.png`, ""]),
+        ),
+      }),
+    );
 
     const listed = (await listReferenceDocuments(fixture.root)).paths;
-    expect(listed.filter((path) => path.endsWith(".docx"))).toEqual(["paper.docx"]);
-    await expect(
+    expect(listed.filter((path) => path.endsWith(".docx"))).toEqual(["many.docx", "paper.docx"]);
+    const check = (path: string) =>
       checkReferences(
-        { root: fixture.root, target: { kind: "file", path: "paper.docx" } },
+        { root: fixture.root, target: { kind: "file", path } },
         { resolveIdentifiers: registry(works), now },
-      ),
-    ).rejects.toThrow("paper.docx could not be read as a Word document.");
+      );
+    await expect(check("paper.docx")).rejects.toThrow(
+      "paper.docx could not be read as a Word document.",
+    );
+    await expect(check("many.docx")).rejects.toThrow("many.docx is too large to check.");
   });
 });

@@ -45,6 +45,11 @@ function VersionSummary(props: { readonly heading: string; readonly version: Ver
             Changed {reviewDate(version.updatedAt)}{" "}
             {version.updatedBy === "agent" ? "by an agent" : "by you"}
           </p>
+          {version.deletedAt ? (
+            <p className="text-xs text-muted-foreground tabular-nums">
+              Deleted {reviewDate(version.deletedAt)}
+            </p>
+          ) : null}
           <p className="text-xs text-muted-foreground tabular-nums">
             {plural(version.searches, "search", "searches")} ·{" "}
             {plural(version.records, "record", "records")} ·{" "}
@@ -249,6 +254,8 @@ export function ReviewVersionsLine(props: {
         .readConflicts(props.reviewId, { conflictId: version.conflictId!, offset: 0 })
         .catch(() => null);
       if (read !== latestRead.current) return;
+      // Read against another version in force than the one the choices would name: read again.
+      if (page && page.currentRevision !== next.currentRevision) return load();
       pages.set(version.conflictId!, page?.differences ?? null);
     }
     setDifferences(pages);

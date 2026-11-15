@@ -51,7 +51,6 @@ import {
   dismissScientReviewCombineReport,
   readScientReviewCombineReport,
   readScientReviewVersions,
-  readScientReviewVersionDifferences,
   resolveScientReviewConflict,
 } from "@scientfactory/scient-sources/library-review-conflicts";
 import {
@@ -1518,8 +1517,9 @@ export async function libraryReview(
 }
 
 /**
- * The review's other versions from copies of this project, for the picker, and Combine's report
- * until it is dismissed. Reads the project folder only.
+ * The review's other versions from copies of this project, for the picker, with a page of what
+ * differs from one when asked, and Combine's report until it is dismissed. Reads the project
+ * folder only.
  */
 export async function libraryReviewConflicts(
   store: Store,
@@ -1527,17 +1527,10 @@ export async function libraryReviewConflicts(
 ) {
   const at = { projectRoot: store.root, reviewId: input.reviewId };
   const [{ currentRevision, ...versions }, combineReport] = await Promise.all([
-    readScientReviewVersions(at),
+    readScientReviewVersions({ ...at, ...input }),
     readScientReviewCombineReport(at),
   ]);
-  return {
-    ...versions,
-    ...(currentRevision ? { currentRevision } : {}),
-    combineReport,
-    ...(input.differencesOf
-      ? { differences: await readScientReviewVersionDifferences({ ...at, ...input.differencesOf }) }
-      : {}),
-  };
+  return { ...versions, ...(currentRevision ? { currentRevision } : {}), combineReport };
 }
 
 /** The pick between two versions of a review, or dismissing Combine's report. */

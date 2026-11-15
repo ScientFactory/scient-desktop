@@ -37,43 +37,50 @@ async function setup(identifier: { readonly scheme: string; readonly value: stri
   const root = NodePath.join(base, "scient", "library");
   await ensureScientLibrary(root);
   const library = scientLibraryLocation(root);
-  const imported = await importScientSource({
-    root: library,
-    operationId: NodeCrypto.randomUUID(),
-    candidate: {
-      sourceKey: "held",
-      type: "article",
-      customType: null,
-      title: "Regulation of Wnt/beta-catenin pathway by cPLA2alpha and PPARdelta",
-      creators: [],
-      issuedRaw: "2008",
-      issuedYear: 2008,
-      identifiers: [identifier],
-      abstract: null,
-      containerTitle: null,
-      publisher: null,
-      volume: null,
-      issue: null,
-      pages: null,
-      language: null,
-      url: null,
-      tags: [],
-      externalReferences: [],
-      fieldProvenance: [],
-      pdfAvailable: false,
-      pdfFileName: null,
-      pdfAttachmentCount: 0,
-    },
-  });
-  const sourceId = imported.record?.sourceId;
-  if (!sourceId) throw new Error("Expected an imported record.");
+  /** Adds a paper to the Library; the answer reads its editorial state. */
+  const add = async (held: typeof identifier) => {
+    const imported = await importScientSource({
+      root: library,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        sourceKey: "held",
+        type: "article",
+        customType: null,
+        title: "Regulation of Wnt/beta-catenin pathway by cPLA2alpha and PPARdelta",
+        creators: [],
+        issuedRaw: "2008",
+        issuedYear: 2008,
+        identifiers: [held],
+        abstract: null,
+        containerTitle: null,
+        publisher: null,
+        volume: null,
+        issue: null,
+        pages: null,
+        language: null,
+        url: null,
+        tags: [],
+        externalReferences: [],
+        fieldProvenance: [],
+        pdfAvailable: false,
+        pdfFileName: null,
+        pdfAttachmentCount: 0,
+      },
+      allowPossibleMetadataMatch: true,
+    });
+    const sourceId = imported.record?.sourceId;
+    if (!sourceId) throw new Error("Expected an imported record.");
+    return async () => (await readScientSourceRecord(library, sourceId))?.editorialStatus?.state;
+  };
+  const state = await add(identifier);
   const asked: Array<Readonly<Record<string, string>>> = [];
   let clock = Date.parse("2026-11-15T10:00:00.000Z");
   return {
     library,
     asked,
+    add,
     later: (ms: number) => (clock += ms),
-    state: async () => (await readScientSourceRecord(library, sourceId))?.editorialStatus?.state,
+    state,
     run: (answer: () => Response | Promise<Response>) =>
       runLibraryNoticeWatch({
         library,
@@ -106,6 +113,23 @@ describe("the weekly notice check", () => {
     later(6 * HOUR);
     expect(await run(theFile)).toBe("not-due");
     expect(asked).toHaveLength(2);
+  });
+
+  it("asks for the whole file when the Library holds a paper the last read did not cover", async () => {
+    const { asked, add, later, run } = await setup({ scheme: "doi", value: "10.1000/not-listed" });
+    expect(await run(theFile)).toBe("checked");
+
+    const added = await add({ scheme: "doi", value: "10.1002/jcb.21852" });
+    later(WEEK);
+    // The file is as it was: asked whether it changed, the server would say it had not.
+    const unlessUnchanged = () =>
+      asked.at(-1)?.["If-None-Match"] ? new Response(null, { status: 304 }) : theFile();
+    expect(await run(unlessUnchanged)).toBe("checked");
+    expect(asked[1]).not.toHaveProperty("If-None-Match");
+    expect(await added()).toBe("retracted");
+
+    later(WEEK);
+    expect(await run(unlessUnchanged)).toBe("unchanged");
   });
 
   it.each([

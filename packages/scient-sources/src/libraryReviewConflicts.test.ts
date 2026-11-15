@@ -196,6 +196,8 @@ describe("differences between two versions of a review", () => {
         base,
         review({
           ...base,
+          // Deleted on the laptop: choosing that version takes the review out of the lists.
+          deletedAt: "2026-11-03T00:00:00.000Z",
           title: "Sepsis trials, laptop",
           question: "Does early treatment help?",
           exclusionReasons: ["Wrong population"],
@@ -213,7 +215,14 @@ describe("differences between two versions of a review", () => {
         }),
       ),
     ).toMatchObject({
-      alsoDiffering: ["title", "question", "exclusion-reasons", "duplicates", "retrieval"],
+      alsoDiffering: [
+        "deleted",
+        "title",
+        "question",
+        "exclusion-reasons",
+        "duplicates",
+        "retrieval",
+      ],
       rows: [],
     });
     expect(

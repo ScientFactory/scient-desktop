@@ -105,15 +105,23 @@ interface Cited {
   readonly item: Readonly<Record<string, unknown>>;
 }
 
+/** A work without the manager's ID: by DOI, else by every detail, so look-alikes stay apart. */
 function identityOf(item: Readonly<Record<string, unknown>>): string {
   const doi = text(item.DOI);
   if (doi) return `doi:${doi.toLowerCase()}`;
-  const issued = isRecord(item.issued) ? JSON.stringify(item.issued) : "";
-  return `${text(item.title)?.toLowerCase() ?? JSON.stringify(item)}|${issued}`;
+  // Mendeley Desktop numbers a citation's items ITEM-1, ITEM-2: not the work's.
+  const { id: _id, ...details } = item;
+  return `details:${JSON.stringify(details)}`;
 }
 
-/** The works of one CSL citation, as Zotero and Mendeley store it; null for one without details. */
-function cslWorks(citation: Record<string, unknown> | null): ReadonlyArray<Cited | null> {
+/**
+ * The works of one CSL citation, as Zotero and Mendeley store it; null for one without details.
+ * Zotero and Mendeley Desktop name a work by its address, Mendeley Cite by its item ID.
+ */
+function cslWorks(
+  citation: Record<string, unknown> | null,
+  mendeleyCite: boolean,
+): ReadonlyArray<Cited | null> {
   const items = Array.isArray(citation?.citationItems) ? citation.citationItems : [];
   if (items.length === 0) return [null];
   return items.map((entry: unknown) => {
@@ -122,7 +130,12 @@ function cslWorks(citation: Record<string, unknown> | null): ReadonlyArray<Cited
     const addresses = Array.isArray(listed)
       ? listed.filter((address): address is string => typeof address === "string")
       : [];
-    return { id: addresses[0] ?? identityOf(entry.itemData), addresses, item: entry.itemData };
+    const itemId = mendeleyCite ? text(entry.id) : null;
+    return {
+      id: addresses[0] ?? (itemId ? `mendeley:${itemId}` : identityOf(entry.itemData)),
+      addresses,
+      item: entry.itemData,
+    };
   });
 }
 
@@ -211,10 +224,10 @@ const OTHER_LIST =
 function citedBy(code: WordCode): ReadonlyArray<Cited | null> | null {
   const { instruction } = code;
   const csl = CSL_CITATION.exec(instruction);
-  if (csl) return cslWorks(jsonObject(instruction.slice(csl[0].length)));
+  if (csl) return cslWorks(jsonObject(instruction.slice(csl[0].length)), false);
   if (MENDELEY_CITE.test(instruction)) {
     const stored = base64Text(instruction.replace(MENDELEY_CITE, ""));
-    return cslWorks(stored === null ? null : jsonObject(stored));
+    return cslWorks(stored === null ? null : jsonObject(stored), true);
   }
   return ENDNOTE_CITATION.test(instruction) ? endNoteWorks(code) : null;
 }

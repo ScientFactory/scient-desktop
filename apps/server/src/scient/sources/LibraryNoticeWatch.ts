@@ -3,6 +3,7 @@ import {
   readScientLibraryNoticeWatch,
   recordScientLibraryNoticeCheck,
   retractionWatchReader,
+  scientLibraryNoticeCoverage,
   scientLibraryWatchedIdentifiers,
 } from "@scientfactory/scient-sources/library-notice-watch";
 import type { ScientLibraryLocation } from "@scientfactory/scient-sources/library-root";
@@ -38,11 +39,13 @@ export async function runLibraryNoticeWatch(input: {
   if (last && now.getTime() - Date.parse(last.checkedAt) < CHECK_EVERY_MS) return "not-due";
   const wanted = await scientLibraryWatchedIdentifiers(input.library);
   if (wanted.size === 0) return "nothing-to-check";
+  // "Unchanged" covers only the papers the last whole read matched; any other asks for the file.
+  const etag = last?.covered === scientLibraryNoticeCoverage(wanted) ? last.etag : undefined;
 
   const response = await (input.fetch ?? fetch)(RETRACTION_WATCH_FILE, {
     headers: {
       "User-Agent": METADATA_USER_AGENT,
-      ...(last?.etag ? { "If-None-Match": last.etag } : {}),
+      ...(etag ? { "If-None-Match": etag } : {}),
     },
     signal: AbortSignal.any([
       AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
@@ -50,7 +53,7 @@ export async function runLibraryNoticeWatch(input: {
     ]),
   });
   const checkedAt = now.toISOString();
-  if (response.status === 304) {
+  if (response.status === 304 && etag) {
     await recordScientLibraryNoticeCheck({
       library: input.library,
       found: null,
