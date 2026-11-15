@@ -96,4 +96,27 @@ describe("the words of a recent change", () => {
       }),
     ).toBe("Import stopped: imported 10 sources from Zotero · 2 failed · 7 in the Library now");
   });
+
+  it("says what a restore brought back and where the Library it replaced is kept", () => {
+    const restore: ScientSourcesRecentChange = {
+      kind: "restore",
+      id: "restore_1",
+      at,
+      by: "user",
+      backupCreatedAt: "2026-11-10T08:00:00.000Z",
+      sources: 1204,
+      pdfs: 980,
+      kept: { path: "/state/scient/library.replaced-restore_1", sources: 4 },
+    };
+    const day = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
+      new Date(restore.backupCreatedAt),
+    );
+    expect(recentChangeSentence(restore)).toBe(
+      `Restored the Library from the backup of ${day}: 1,204 sources`,
+    );
+    expect(recentChangeState(restore)).toBe(
+      "The Library that was here (4 sources) is kept in /state/scient/library.replaced-restore_1",
+    );
+    expect(recentChangeState({ ...restore, kept: null })).toBe("Nothing was kept from before");
+  });
 });

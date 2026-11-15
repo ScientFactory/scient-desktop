@@ -143,6 +143,9 @@ export function RecentChangesDialog(props: {
             );
           },
         };
+      // Never offered: a restore's row always shows its state instead.
+      case "restore":
+        return { label: "", run: () => undefined };
       case "trash":
         return {
           label: RECENT_CHANGES_LABELS.restore,
@@ -211,7 +214,7 @@ export function RecentChangesDialog(props: {
                       </p>
                     </div>
                     {state ? (
-                      <span className="max-w-56 shrink-0 text-right text-xs text-muted-foreground">
+                      <span className="max-w-56 shrink-0 text-right text-xs break-words text-muted-foreground">
                         {state}
                       </span>
                     ) : offered.always || props.canChange ? (

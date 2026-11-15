@@ -2560,15 +2560,18 @@ parity gap).
 
 A restore never changes a live Library. `prepareScientLibraryRestore`
 (`libraryRestore.ts`) reads `backup.json` (a later format is `unsupported`),
-refuses paths that would leave the Library, collide when case is ignored, or
-name something a backup leaves out, refuses a payload that holds anything
-unlisted, then copies every file into `<library>.restoring-<restoreId>/`
-beside the Library, hashing the bytes as they pass and flushing each file; a
-file that is gone or differs ends it as `damaged` with that file's name and
-removes the copy. It adds the restore to the copy's `restores.json` (restore
-ID, backup ID, when), and last writes the intent `<library>.restore.json`.
-A second request replaces a waiting copy; `cancelScientLibraryRestore` drops
-it. All three hold `<library>.restore.lock`.
+refuses with `unsafe-paths` and the first offending name a list that would
+leave the Library, collide when case or Unicode form is ignored, use a name
+Windows cannot create, name something a backup leaves out, or lack
+`library.json`; refuses a payload that holds anything unlisted; then copies
+every file into `<library>.restoring-<restoreId>/` beside the Library,
+hashing the bytes as they pass and flushing each file. A file that is gone or
+differs ends it as `damaged` with that file's name and removes the copy. It
+adds the restore to the copy's `restores.json` (restore ID, backup ID, who,
+counts, when), and last writes the intent `<library>.restore.json`. A second
+request that succeeds replaces a waiting copy; one that fails leaves it
+waiting. `cancelScientLibraryRestore` drops it. All three hold
+`<library>.restore.lock`.
 
 `finishScientLibraryRestore` puts the copy in place and is called once, at the
 server's start, right after the server owns its data folder
@@ -2577,43 +2580,72 @@ request, background job, cache or second server exists then, so nothing has to
 be drained. With nothing of a restore beside the Library it returns without
 taking a lock. Otherwise, by what is on disk:
 
-| Intent | Copy | Library                                         | Then                                                                                           |
-| ------ | ---- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| none   | –    | –                                               | remove copies nothing waits for, and replaced Libraries that are unused                        |
-| yes    | yes  | present                                         | rename the Library to `<library>.replaced-<restoreId>`, rename the copy to the Library, commit |
-| yes    | yes  | absent                                          | rename the copy to the Library, commit                                                         |
-| yes    | no   | present, its `restores.json` names this restore | already swapped: commit                                                                        |
-| yes    | no   | otherwise                                       | the copy is gone: put a Library this restore moved aside back, remove the intent, `failed`     |
+| Intent | Copy | Library                                         | Then                                                                                                                             |
+| ------ | ---- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| none   | –    | –                                               | remove copies nothing waits for, and replaced Libraries that are unused                                                          |
+| yes    | yes  | present                                         | write `replaced` into the intent, rename the Library to `<library>.replaced-<restoreId>`, rename the copy to the Library, commit |
+| yes    | yes  | absent                                          | rename the copy to the Library, commit                                                                                           |
+| yes    | no   | present, its `restores.json` names this restore | already swapped: commit                                                                                                          |
+| yes    | no   | otherwise                                       | the copy is gone: put the Library this restore moved aside back, remove the intent, `failed`                                     |
 
-Commit removes the intent, then removes the replaced Library only if it is
-unused (`scientLibraryUnused`: absent, or holding only `library.json`,
-`instances.json`, what a backup leaves out, and folders of those; anything
-else, also something unknown or a link, means it is kept). A kept one is
-reported with its path and source count and is never removed by Scient. A
-rename that fails (a file held open on Windows) leaves the intent, puts the
-Library back if it was already aside, and is tried again at the next start.
-Every step can be repeated; the tests stop the finish after each rename and
-run it again.
+Commit first writes, into the restored Library's own `restores.json`, when the
+restore finished and, if the replaced Library is not unused, its folder and
+source count; then removes the intent; then removes the replaced Library only
+if it is unused (`scientLibraryUnused`: absent, or holding only
+`library.json`, `instances.json`, what a backup leaves out, and folders of
+those; anything else, also something unknown or a link outside `text/` and
+`staging/`, means it is kept). A kept one is never removed by Scient. Because
+the record is written before the intent goes, a start killed at any later
+point still leaves it; "Recent changes" lists each restore from that file
+(kind `restore`, no action) with the kept folder while it exists.
+
+Between the two renames there is no Library. A rename that fails (a file held
+open on Windows) leaves the intent; if the first failed nothing moved, and if
+the second failed the Library is put back. If putting it back fails too, or a
+start is killed between the renames, the Library stays aside under the name
+the intent records, and `ensureScientLibrary` refuses to make a new Library
+there (`ScientLibraryRestoreUnfinishedError`: "Restart Scient to finish it"),
+so no empty Library can shadow the real one; the next start finishes one way
+or the other. A copy that merely waits does not block anything. Every step
+can be repeated; the tests stop the finish after each step and run it again.
 
 The replaced Library is kept rather than refused because a new computer's
 Library is never empty for long: resolving a project's pins with write access
 rebuilds its sources there from the project's saved details (`resolvedBy:
 hydrated`). After the restore the project's pins name the restored records
-directly, and the rebuilt copies stay in the kept folder.
+directly, and the rebuilt copies stay in the kept folder. Two limits follow
+from restoring an older state under newer projects, both left for the join of
+two Libraries (F2b): a source pinned after the backup is rebuilt in the
+restored Library from the project's saved details, without its PDF, note or
+versions (they are in the kept folder); and a deliberate link made after the
+backup is not in the restored Library's map, so if the record's details no
+longer match the project's saved ones the pin is rebuilt as a second record.
 
 The server (`LibraryRestoreRuns.ts`) runs one preparation at a time, reports
 `preparing`, `ready` (from the intent file, with the last start's problem if
-it could not finish), and for the rest of its run how the last restore ended.
+it could not finish, and with a later request that was refused while this
+copy still waits), and for the rest of its run how the last restore ended.
 The `libraryRestore` endpoint (operate scope) takes `prepare` and `cancel`
 and, unlike `organize`, resolves no store: it never creates the Library or
 moves the open project into it. `backupStatus` answers both the backup and
-the restore. The panel shows the waiting copy with Cancel and says once per
-window how a restore ended. Scient does not restart itself. Agents have no
+the restore. The panel shows the waiting copy with Cancel, says once per
+window how a restore ended, asks again until the first answer comes, and
+drops an answer that arrives for a project it has left. Scient does not restart itself. Agents have no
 action for it yet (a recorded parity gap).
 
-Known limit: a move back made after the backup was taken is not known to the
-restored Library, so that project moves in again
-(`reviews/sources-improve-20261115/DECISIONS.md`).
+A "Move back into this project" chosen after the backup was made is recorded
+only in the Library the restore replaces. Commit carries it over first
+(`carryScientLibraryMoveBacks` in `libraryMove.ts`): for each checkout the
+replaced Library records as `moved-back`, whose project is still at its folder
+with the same project ID and still has its own store, the restored Library
+gets that journal (under its own instance ID for the checkout, registering one
+if needed) and the saved result its status line reads; a journal it replaces
+is kept as `journal.before-<restoreId>.json`. This runs before the first move
+pass, so the project is not moved in again. Only `moved-back` is carried: it
+is the one state no code path leaves, so nothing executable is transplanted.
+Where the Library that knew the decision is gone (another computer, a lost
+disk), the restored Library's older journal stands and the project moves in
+again at its next change.
 
 ## Citing
 

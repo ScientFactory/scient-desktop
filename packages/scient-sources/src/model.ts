@@ -501,7 +501,8 @@ const RecentChangeBase = { at: NonEmptyString, by: ScientSourceActor };
 
 /**
  * One recorded change to the Library that can still be taken back or looked at: a bulk edit, a
- * merge, an import, or a source in the Trash. Source IDs are the Library's.
+ * merge, an import, a source in the Trash, or a restore from a backup. Source IDs are the
+ * Library's.
  */
 export const ScientLibraryRecentChange = Schema.Union([
   Schema.Struct({
@@ -562,6 +563,18 @@ export const ScientLibraryRecentChange = Schema.Union([
     ...RecentChangeBase,
     title: Schema.NullOr(Schema.String),
     revision: Schema.Int,
+  }),
+  /** A backup took the Library's place. It has no Undo; it says where the old Library is. */
+  Schema.Struct({
+    kind: Schema.Literal("restore"),
+    /** The restore ID. */
+    id: NonEmptyString,
+    ...RecentChangeBase,
+    backupCreatedAt: NonEmptyString,
+    sources: Schema.Int,
+    pdfs: Schema.Int,
+    /** The replaced Library's folder and source count, while that folder is still there. */
+    kept: Schema.NullOr(Schema.Struct({ path: NonEmptyString, sources: Schema.Int })),
   }),
 ]);
 export type ScientLibraryRecentChange = typeof ScientLibraryRecentChange.Type;

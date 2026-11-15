@@ -91,8 +91,8 @@ export const ScientLibraryBackupManifest = Schema.Struct({
   /** Entries that are neither files nor folders (links, sockets): never copied. */
   skipped: Schema.Array(Schema.String),
   /**
-   * Projects whose move into or out of the Library had stopped part way. Their sources are
-   * partly still in the project's folder, so not all of them are in this backup.
+   * Projects whose move into or out of the Library had stopped part way. Some of their
+   * sources may be only in the project's folder, so that folder is to be kept too.
    */
   unfinishedMoves: Schema.Int,
   notInALibrary: Schema.Array(Schema.String),
@@ -163,7 +163,7 @@ function readme(manifest: ScientLibraryBackupManifest): string {
       ? `\nNot copied, because they are links or other entries that are not files:\n${manifest.skipped.map((path) => `- ${path}`).join("\n")}\n`
       : "",
     manifest.unfinishedMoves > 0
-      ? `\n${manifest.unfinishedMoves} project(s) had not finished moving into or out of the Library. Their sources are\npartly still in the project's folder, so not all of them are in this backup.\n`
+      ? `\n${manifest.unfinishedMoves} project(s) had not finished moving into or out of the Library. Keep those project\nfolders too: some of their sources may be only there.\n`
       : "",
   ];
   return `# Scient Library backup, ${manifest.createdAt}

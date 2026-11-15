@@ -88,11 +88,49 @@ export async function readScientLibraryManifest(root: string): Promise<ScientLib
   return manifest;
 }
 
+/** Beside the Library's folder: the copy of a backup that waits for the next start. */
+export const SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX = ".restore.json";
+
+// @effect-diagnostics-next-line extendsNativeError:off - The source stores are Promise-based; callers catch native errors.
+class ScientLibraryRestoreUnfinishedError extends Error {
+  constructor() {
+    super("Restoring the Library from a backup did not finish. Restart Scient to finish it.");
+    this.name = "ScientLibraryRestoreUnfinishedError";
+  }
+}
+
+/**
+ * A restore moved the Library aside and neither its copy nor the Library is in place yet (both
+ * renames failed, or a start was killed between them). No new Library may be made here: the
+ * real one is beside it, and the next start finishes. The restore names that folder in its
+ * intent (`replaced`) before it moves the Library.
+ */
+async function restoreHalfWay(root: string): Promise<boolean> {
+  if ((await snapshot(root)) !== "missing") return false;
+  const parent = await NodeFSP.realpath(NodePath.dirname(root)).catch(() => null);
+  if (parent === null) return false;
+  const intent: unknown = await NodeFSP.readFile(
+    `${NodePath.join(parent, NodePath.basename(root))}${SCIENT_LIBRARY_RESTORE_INTENT_SUFFIX}`,
+    "utf8",
+  ).then(
+    (text) => JSON.parse(text) as unknown,
+    () => null,
+  );
+  const replaced =
+    typeof intent === "object" && intent !== null && "replaced" in intent ? intent.replaced : null;
+  return (
+    typeof replaced === "string" &&
+    NodePath.basename(replaced) === replaced &&
+    (await snapshot(NodePath.join(parent, replaced))) === "directory"
+  );
+}
+
 /**
  * Creates the library folder and its `library.json` once; later calls return the existing one.
  * The manifest is published with an exclusive create, so two processes agree on one library ID.
  */
 export async function ensureScientLibrary(root: string): Promise<ScientLibraryManifest> {
+  if (await restoreHalfWay(root)) throw new ScientLibraryRestoreUnfinishedError();
   await ensureDirectory(root);
   const canonicalRoot = await NodeFSP.realpath(root);
   const existing = await readManifestFile(canonicalRoot);
