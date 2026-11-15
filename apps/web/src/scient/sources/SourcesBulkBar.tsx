@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   BookmarkCheckIcon,
+  Columns3Icon,
   FolderIcon,
   FolderMinus,
   FolderPlus,
@@ -32,9 +33,11 @@ import {
   MenuTrigger,
 } from "../../components/ui/menu";
 import { toastManager } from "../../components/ui/toast";
+import { useComposerHandleContext } from "../../composerHandleContext";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { restoreScientSource } from "./client";
 import { collectionIndent, orderedCollections } from "./collectionTree";
+import { compareSourcesInsertion } from "./compareSources";
 import {
   LIBRARY_LABELS,
   someAlsoInOtherProjectsLabel,
@@ -122,6 +125,67 @@ const READING_ACTIONS: ReadonlyArray<{
   { label: LIBRARY_LABELS.star, change: { starred: true } },
   { label: LIBRARY_LABELS.removeStar, change: { starred: false } },
 ];
+
+const COMPARE = "Compare";
+
+/**
+ * Puts a request to compare the selected sources at the start of the chat draft, with the caret
+ * after `Question: `; it never sends.
+ */
+function CompareSourcesButton(props: { readonly records: ReadonlyArray<SourceSummary> }) {
+  const composer = useComposerHandleContext();
+  const compare = () => {
+    const handle = composer?.current;
+    const draft = handle?.getSendContext();
+    if (handle && draft && !draft.answeringPendingUserInput) {
+      const insertion = compareSourcesInsertion(draft.prompt, props.records);
+      if (insertion.kind === "present") return handle.focusAtEnd();
+      if (insertion.kind === "other-request") {
+        toastManager.add({
+          type: "error",
+          title: "Your draft already asks to compare other sources",
+          description: "Send or clear that request, then try again.",
+        });
+        return;
+      }
+      if (handle.insertTextAtStart?.(insertion.text)) {
+        if (insertion.listed < props.records.length) {
+          toastManager.add({
+            type: "info",
+            title: `Only the first ${insertion.listed} sources are in the request`,
+            description: `You selected ${props.records.length}. Compare a few at a time.`,
+          });
+        }
+        return;
+      }
+    }
+    toastManager.add({
+      type: "error",
+      title: "Couldn't add to the chat",
+      description: draft?.answeringPendingUserInput
+        ? "Answer the agent's question first, then try again."
+        : "The chat isn't ready for text right now.",
+    });
+  };
+  return (
+    <ScientTooltip content={composer === null ? "Open a chat to compare these sources." : COMPARE}>
+      {/* A disabled button gets no pointer events, so the tooltip hangs on its wrapper. */}
+      <span className="inline-flex">
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          aria-label={`${COMPARE} ${props.records.length} selected sources`}
+          disabled={composer === null}
+          onClick={compare}
+        >
+          <Columns3Icon />
+          <span className="@max-[24rem]/bulk:hidden">{COMPARE}</span>
+        </Button>
+      </span>
+    </ScientTooltip>
+  );
+}
 
 /** What a personal Library adds to the bar; a project server never passes it. */
 export interface SourcesBulkLibrary {
@@ -216,6 +280,7 @@ export function SourcesBulkBar(props: {
           {count > 0 || !progress ? `${count.toLocaleString()} selected` : null}
         </span>
         <div className="flex flex-wrap items-center gap-1 @max-[30rem]/bulk:order-1 @max-[30rem]/bulk:basis-full">
+          {count >= 2 ? <CompareSourcesButton records={selected} /> : null}
           <Menu>
             <MenuTrigger
               render={
