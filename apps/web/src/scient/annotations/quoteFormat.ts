@@ -8,20 +8,48 @@ export interface DocumentQuote {
   readonly quote: string;
   /** PDF page numbers, in order. */
   readonly pages: ReadonlyArray<number>;
+  /**
+   * The printed page labels of `pages`, in the same order, when the PDF defines them
+   * (a journal article's "1121"); the citation names these instead of the numbers.
+   */
+  readonly pageLabels?: ReadonlyArray<string> | null;
   /** The Library key to cite, when the PDF belongs to a Source that has one. */
   readonly citationKey: string | null;
   readonly fileName: string;
 }
 
+/**
+ * The printed labels of PDF pages, from the document's label list (pdf.js
+ * `getPageLabels()`, one entry per page). Null when the PDF has none or one of
+ * these pages lacks one, so the citation keeps the page numbers throughout.
+ */
+export function quotePageLabels(
+  pages: ReadonlyArray<number>,
+  documentLabels: ReadonlyArray<string> | null,
+): ReadonlyArray<string> | null {
+  if (!documentLabels || pages.length === 0) return null;
+  const labels: string[] = [];
+  for (const page of pages) {
+    const label = documentLabels[page - 1]?.trim();
+    if (!label) return null;
+    labels.push(label);
+  }
+  return labels;
+}
+
 /** The passage as one line of prose: PDF line breaks become spaces and split words rejoin. */
-function quoteProse(quote: string): string {
+export function quoteProse(quote: string): string {
   return quote
     .replace(/(\p{L})[-\xAD]\n(\p{L})/gu, "$1$2")
     .replace(/\s+/gu, " ")
     .trim();
 }
 
-function pageLocator(pages: ReadonlyArray<number>, separator: string): string {
+function pageLocator(input: DocumentQuote, separator: string): string {
+  const pages =
+    input.pageLabels && input.pageLabels.length === input.pages.length
+      ? input.pageLabels
+      : input.pages.map(String);
   const first = pages[0];
   const last = pages.at(-1);
   if (first === undefined || last === undefined) return "";
@@ -38,7 +66,7 @@ export function markdownQuote(input: DocumentQuote): {
   readonly markdown: string;
 } {
   const text = quoteProse(input.quote);
-  const locator = pageLocator(input.pages, " ");
+  const locator = pageLocator(input, " ");
   const citation = input.citationKey
     ? `@${input.citationKey}${locator ? `, ${locator}` : ""}`
     : null;
@@ -67,10 +95,10 @@ export function latexQuote(input: DocumentQuote): {
   readonly cite: { readonly key: string; readonly raw: string } | null;
 } {
   const prose = quoteProse(input.quote);
-  const locator = pageLocator(input.pages, "~");
+  const locator = pageLocator(input, "~");
   if (!input.citationKey) {
     return {
-      text: `“${prose}” (${input.fileName}${locator ? `, ${pageLocator(input.pages, " ")}` : ""})`,
+      text: `“${prose}” (${input.fileName}${locator ? `, ${pageLocator(input, " ")}` : ""})`,
       cite: null,
     };
   }

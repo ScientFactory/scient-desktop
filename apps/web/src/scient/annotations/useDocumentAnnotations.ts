@@ -14,6 +14,7 @@ import {
   type AnnotatedPdf,
 } from "./annotationState";
 import { readDocumentAnnotations } from "./client";
+import { NO_QUOTE_CITATION, resolveQuoteCitation, type QuoteCitation } from "./quoteCitation";
 
 interface DocumentTarget {
   readonly environmentId: EnvironmentId;
@@ -53,8 +54,8 @@ export function usePdfAnnotations(pdf: AnnotatedPdf | null): ReadonlyArray<Scien
 export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
   readonly pdf: AnnotatedPdf | null;
   readonly annotations: ReadonlyArray<ScientPdfAnnotation>;
-  /** The Library key a quote from this PDF cites, when it belongs to a Source that has one. */
-  readonly citationKey: string | null;
+  /** Whom a quote from this PDF cites, among the Library sources that have it attached. */
+  readonly citation: QuoteCitation;
   /** Another computer's versions of these annotations, from a project package. */
   readonly alternatives: ReadonlyArray<ScientAnnotationAlternative>;
 } {
@@ -66,7 +67,7 @@ export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
   const [loaded, setLoaded] = useState<{
     readonly key: string;
     readonly pdf: AnnotatedPdf;
-    readonly citationKey: string | null;
+    readonly citation: QuoteCitation;
     readonly alternatives: ReadonlyArray<ScientAnnotationAlternative>;
   } | null>(null);
   const originSourceId =
@@ -89,19 +90,16 @@ export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
             material: result.material,
           };
           storePdfAnnotations(annotatedPdfKey(pdf), result.annotations);
-          const keyed = (result.sources ?? []).filter((entry) => entry.citationKey);
-          const citationKey =
-            (keyed.find((entry) => entry.sourceId === originSourceId) ?? keyed[0])?.citationKey ??
-            null;
+          const citation = resolveQuoteCitation(result.sources ?? [], originSourceId);
           const alternatives = result.alternatives ?? NO_ALTERNATIVES;
           setLoaded((previous) =>
             previous?.key === targetKey &&
-            previous.citationKey === citationKey &&
+            JSON.stringify(previous.citation) === JSON.stringify(citation) &&
             previous.pdf.material.sha256 === pdf.material.sha256 &&
             previous.pdf.material.byteLength === pdf.material.byteLength &&
             JSON.stringify(previous.alternatives) === JSON.stringify(alternatives)
               ? previous
-              : { key: targetKey, pdf, citationKey, alternatives },
+              : { key: targetKey, pdf, citation, alternatives },
           );
         },
         () => undefined,
@@ -125,7 +123,7 @@ export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
   return {
     pdf,
     annotations: usePdfAnnotations(pdf),
-    citationKey: current?.citationKey ?? null,
+    citation: current?.citation ?? NO_QUOTE_CITATION,
     alternatives: current?.alternatives ?? NO_ALTERNATIVES,
   };
 }

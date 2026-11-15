@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { latexInlineCommandSource } from "../latex/latexVisualDocument";
 import { scientMarkdownParser } from "../markdownEditor/prosemirror/schema";
-import { latexQuote, markdownQuote } from "./quoteFormat";
+import { latexQuote, markdownQuote, quotePageLabels } from "./quoteFormat";
 
 const passage = {
   quote: "Deep sleep doubled re-\ncall in\nmice.",
@@ -39,6 +39,31 @@ describe("quotes for documents", () => {
       text: "“Deep sleep doubled recall in mice.” (sleep.pdf, p. 4)",
       cite: null,
     });
+  });
+
+  it("cites the printed page when the PDF labels its pages", () => {
+    // A journal article whose ten PDF pages are printed 1121 to 1130.
+    const journal = Array.from({ length: 10 }, (_, index) => String(1121 + index));
+    const pages = [3, 4];
+    const labelled = { ...passage, pages, pageLabels: quotePageLabels(pages, journal) };
+    expect(markdownQuote(labelled).reference).toBe("[@smith2024sleep, pp. 1123–1124]");
+    expect(latexQuote(labelled).cite?.raw).toBe("\\cite[pp.~1123–1124]{smith2024sleep}");
+    expect(markdownQuote({ ...labelled, citationKey: null }).reference).toBe(
+      "(sleep.pdf, pp. 1123–1124)",
+    );
+    const front = ["i", "ii", "iii", "1", "2"];
+    expect(
+      markdownQuote({ ...passage, pages: [2], pageLabels: quotePageLabels([2], front) }).reference,
+    ).toBe("[@smith2024sleep, p. ii]");
+  });
+
+  it("keeps the PDF page numbers when the PDF has no labels for every quoted page", () => {
+    expect(quotePageLabels([4], null)).toBeNull();
+    expect(quotePageLabels([2, 3], ["i", "ii", ""])).toBeNull();
+    expect(quotePageLabels([4], ["i", "ii"])).toBeNull();
+    const unlabelled = { ...passage, pageLabels: quotePageLabels([4], null) };
+    expect(markdownQuote(unlabelled).reference).toBe("[@smith2024sleep, p. 4]");
+    expect(latexQuote(unlabelled).cite?.raw).toBe("\\cite[p.~4]{smith2024sleep}");
   });
 
   it("keeps math and citation syntax in a passage literal in Markdown", () => {
