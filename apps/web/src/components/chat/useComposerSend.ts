@@ -863,7 +863,11 @@ export function useComposerSend(input: ComposerSendInput) {
             prompt: promptForSend,
             imageCount: composerImages.length + effectiveComposerFiles.length,
             terminalContexts: effectiveComposerTerminalContexts,
-            elementContextCount: composerPreviewAnnotations.length + effectiveReviewComments.length,
+            elementContextCount:
+              composerPreviewAnnotations.length +
+              effectiveReviewComments.length +
+              composerThreadContexts.length +
+              composerEnvironmentContexts.length,
           });
           const standaloneForkCommand =
             !directAnnotation &&

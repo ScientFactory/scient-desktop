@@ -3849,10 +3849,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               // SCIENT-FORK:START — native conversations persist their original rules across
               // process replacement. Install this turn's captured authority before prompting.
-              // A continuation sends no prompt: its wake already runs on this process under the
-              // rules confirmed here, and applyPermissionRules below still writes a changed policy.
-              if (!continuation) {
-                const permission = openCodePermissionRules(turnInput.runtimePolicy);
+              // A continuation sends no prompt: its wake already runs on this process, so it
+              // rewrites, and confirms, only rules that differ from those confirmed there.
+              const permission = openCodePermissionRules(turnInput.runtimePolicy);
+              const confirmedHere =
+                continuation &&
+                permission.length === state.permission.length &&
+                permission.every((rule, index) =>
+                  permissionRuleEquals(rule, state.permission[index]!),
+                );
+              if (!confirmedHere) {
                 yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
                   client.session.update({ sessionID: sessionId, permission }, { signal }),
                 );

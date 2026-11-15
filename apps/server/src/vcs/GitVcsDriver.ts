@@ -3,6 +3,7 @@ import * as NodeBuffer from "node:buffer";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -43,6 +44,7 @@ import {
   makeCheckpointSizeCheck,
   prepareCheckpointStagingRepo,
   publishStagedCheckpoint,
+  remainingCheckpointCaptureMs,
   scopedCheckpointCapture,
 } from "./ScientCheckpointCapture.ts";
 // SCIENT-FORK:START — checkpoint repositories get server-owned Git upkeep.
@@ -1138,6 +1140,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+      // SCIENT-FORK: submodule captures below share this capture's deadline.
+      const captureStartedAt = yield* Clock.currentTimeMillis;
       // Scratch split-index writes can expire sharedindex files still used by the real index.
       const indexConfig = [
         "-c",
@@ -1717,6 +1721,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           .exists(path.join(topLevel, ".gitmodules"))
           .pipe(Effect.orElseSucceed(() => true)));
       if (!hasSubmodules) return;
+      // SCIENT-FORK:START — the whole capture, submodules included, keeps one deadline.
+      const submoduleBudgetMs = remainingCheckpointCaptureMs(
+        captureStartedAt,
+        yield* Clock.currentTimeMillis,
+      );
+      // SCIENT-FORK:END
       // A submodule that cannot be captured drops its ref, so restore leaves it alone.
       yield* listSubmodules(input.cwd).pipe(
         Effect.flatMap((submodules) =>
@@ -1742,6 +1752,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         Effect.catch((cause) =>
           Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }),
         ),
+        // SCIENT-FORK:START — submodules past the deadline keep no ref, so restore skips them.
+        Effect.timeoutOrElse({
+          duration: submoduleBudgetMs,
+          orElse: () =>
+            Effect.logWarning("submodule checkpoint capture timed out", { cwd: input.cwd }),
+        }),
+        // SCIENT-FORK:END
       );
     }),
 

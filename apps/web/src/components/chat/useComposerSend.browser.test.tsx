@@ -44,6 +44,9 @@ import * as imageCompression from "../../lib/imageCompression";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { composerSubmissionMatchesDraft } from "../../scient/threadQueue/submission";
 import { toastManager } from "../ui/toast";
+import { formatInlineContextReference } from "../../lib/composerContextReferences";
+import { threadContextReference } from "../../lib/composerContextRecords";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 const bindings = vi.hoisted(() => ({
   command: vi.fn<
@@ -980,6 +983,23 @@ describe("mounted composer send admission owner", () => {
       expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
     },
   );
+
+  // Send is enabled for a composer that holds only a thread context, so the send must go.
+  it("sends a message whose only content is an attached thread", async () => {
+    await using fixture = await setup();
+    const attached = threadContextRecord(
+      scopeThreadRef(fixture.input.environmentId, ThreadId.make("attached")),
+      "Attached",
+    );
+    const prompt = formatInlineContextReference(threadContextReference(attached));
+    useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+    fixture.context = { ...fixture.context, prompt, threadContexts: [attached] };
+    await fixture.send();
+    expect(
+      fixture.command,
+      JSON.stringify(vi.mocked(fixture.input.setThreadError).mock.calls),
+    ).toHaveBeenCalledTimes(1);
+  });
 
   it("sends a direct steer without consuming the unrelated composer draft or files", async () => {
     await using fixture = await setup();
