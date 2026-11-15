@@ -364,6 +364,7 @@ const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStrea
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
+let requestedThreadIds: ThreadId[] = [];
 let acceptCommands = false;
 let holdCommand: (command: OrchestrationV2Command) => boolean = () => false;
 let pendingDispatches: Array<{
@@ -420,6 +421,7 @@ const handlers: Record<string, (input: never) => unknown> = {
       { kind: "synchronized" },
     ]),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
+    requestedThreadIds.push(input.threadId);
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;
     return subscribe<OrchestrationV2ThreadStreamItem>(
@@ -522,6 +524,7 @@ export function installFakeEnvironment(
     keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
   dispatched = [];
+  requestedThreadIds = [];
   acceptCommands = options?.acceptCommands === true;
   holdCommand = options?.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
@@ -547,6 +550,7 @@ export function installFakeEnvironment(
       threads = [];
       baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
       dispatched = [];
+      requestedThreadIds = [];
       acceptCommands = false;
       holdCommand = () => false;
       pendingDispatches = [];
@@ -573,6 +577,11 @@ export async function rejectPendingCommand(message: string): Promise<void> {
 /** Commands the app dispatched to the environment, oldest first. */
 export function dispatchedCommands(): ReadonlyArray<OrchestrationV2Command> {
   return dispatched;
+}
+
+/** Thread ids the app asked to load over the socket, oldest first, including unknown ones. */
+export function requestedThreadSubscriptions(): ReadonlyArray<ThreadId> {
+  return requestedThreadIds;
 }
 
 type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>["event"];

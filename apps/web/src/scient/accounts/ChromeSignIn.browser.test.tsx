@@ -32,13 +32,18 @@ const environmentId = EnvironmentId.make("synthetic");
 const work = { id: "profile-work", name: "Work" };
 const main = { id: DEFAULT_BROWSER_PROFILE_ID, name: "Main" };
 
-function Harness(props: { profile: typeof work; url?: string; purpose?: "google" | "site" }) {
+function Harness(props: {
+  profile: typeof work;
+  url?: string;
+  purpose?: "google" | "site";
+  onCopied?: () => void;
+}) {
   const chromeSignIn = useChromeSignIn(environmentId);
   return (
     <>
       <button
         type="button"
-        onClick={() => chromeSignIn.start(props.profile, props.url, props.purpose)}
+        onClick={() => chromeSignIn.start(props.profile, props.url, props.purpose, props.onCopied)}
       >
         Start
       </button>
@@ -120,6 +125,21 @@ it("never reports a copy Google refused or couldn't be asked about as a success"
       "browser_window",
       expect.objectContaining({ context: "consent" }),
     );
+  }
+});
+
+it("tells its caller once a sign-in is in the profile, and only then", async () => {
+  for (const [result, called] of [
+    [{ outcome: "copied", browser: "Edge", sites: ["overleaf.com"] }, true],
+    [{ outcome: "cancelled", browser: "Edge" }, false],
+    [{ outcome: "nothing", browser: "Edge" }, false],
+  ] as const) {
+    using f = setup();
+    const onCopied = vi.fn();
+    await using _screen = await render(<Harness profile={work} onCopied={onCopied} />);
+    await page.getByRole("button", { name: "Start" }).click();
+    await finish(f, result);
+    expect(onCopied).toHaveBeenCalledTimes(called ? 1 : 0);
   }
 });
 

@@ -116,15 +116,16 @@ row, with its own chip for Source Control and for the GitHub connector.
 
 ### Google
 
-Google doesn't allow signing in inside the browsers built into apps, Scient's included, on any
-computer. So when a tab reaches Google's sign-in, or a site's **Continue with Google** opens it,
-Scient stops Google's sign-in pages it recognizes before they load, and the tab offers two ways
-that work:
+Google decides each sign-in inside the browsers built into apps, Scient's included. It may
+let you sign in in the tab as usual, or refuse with "This browser or app may not be
+secure". When it refuses, in the tab or in a window a site's **Continue with Google** opened,
+Scient explains over the page and offers two ways that work:
 
 - **Sign in in a Chrome window** opens a small window of your own Chrome, Edge, Brave or Chromium,
   with a separate profile that is deleted afterwards. Sign in there and click **Done** (on Linux,
-  close the window); the tab's profile gets the sign-in. For **Continue with Google**, the window
-  opens the site you were on: press **Continue with Google** there again.
+  close the window); the tab's profile gets the sign-in and the tab opens the page again, signed
+  in. For **Continue with Google**, the window opens the site you were on: press **Continue with
+  Google** there again.
 - **Open in my browser** opens Google, or the site you were on, in your usual browser, and you
   carry on there. Nothing comes back into Scient's profile.
 
