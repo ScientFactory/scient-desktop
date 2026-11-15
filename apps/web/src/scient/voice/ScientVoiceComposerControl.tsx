@@ -224,15 +224,18 @@ function VoiceModelSetupPicker({
             );
           })}
         </div>
-        <Button
-          className="justify-start"
-          render={<Link to="/settings/voice" />}
-          size="compact"
-          variant="ghost-muted"
-        >
-          <SlidersHorizontalIcon className="text-current" />
-          Manage
-        </Button>
+        {/* Inset like the options above, so its hover never touches the popup's corner. */}
+        <div className="px-2 pb-2">
+          <Button
+            className="justify-start"
+            render={<Link to="/settings/voice" />}
+            size="compact"
+            variant="ghost-muted"
+          >
+            <SlidersHorizontalIcon className="text-current" />
+            Manage
+          </Button>
+        </div>
       </PopoverPopup>
     </Popover>
   );
