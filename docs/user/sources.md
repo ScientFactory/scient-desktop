@@ -555,6 +555,44 @@ Three things to know:
   not known, and the project's sources move into the Library again when it is
   next changed; you can move them back again.
 
+## Add from another Library
+
+Use this to bring into your Library the sources another Library has: the one a
+restore replaced, or the Library on your other computer.
+
+Choose **Add from another Library…** (the **⋯** menu at the top of the
+Library) and pick a backup folder made with **Back up the Library…**. For the
+Library a restore replaced you do not need to find a folder: **Recent
+changes** shows the restore with **Add its sources**.
+
+Scient then adds the sources that are new to this Library, each one whole:
+its details and earlier versions, your personal note, read and star, PDFs,
+highlights, and the collections it was in. It runs in the background and the
+Library says how far it is.
+
+It never changes a source that is already in your Library. Sources that both
+Libraries hold and that differ, for example a note you wrote on the other
+computer, are counted in the message at the end and left as they are here. So
+are papers that may be the same one entered twice: they are not added a second
+time. A source you moved to the Trash or deleted here is not brought back.
+
+You can add from the same backup again, or from a newer one, as often as you
+like: what is already here is skipped.
+
+**Undo** is in **Recent changes**. It moves the sources that were added to the
+Trash, but only those that are still exactly as they arrived; one you have
+since edited, read, starred or merged stays.
+
+To keep two computers in step by hand:
+
+- If you work on one at a time, back up there and **Restore from a backup…**
+  here. That makes this Library exactly the other one.
+- If you added sources on both, back up one and **Add from another Library…**
+  on the other. Then back that one up and restore it on the first.
+
+Only a backup folder, or a Library that a restore set aside, can be added
+from. A Library that another Scient is using cannot; back it up there first.
+
 ## Project packages
 
 A project package is a folder with everything this project uses from your
