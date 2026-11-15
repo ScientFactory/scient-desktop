@@ -33,16 +33,17 @@ interface SourcesListItem {
   readonly divided: boolean;
 }
 
-/** A section's name and count, on one line; space, not a line, parts it from the one before. */
+/** A section's name and count with a thin line running on, as over the cards. */
 function SourcesSectionHeading(props: { readonly section: ScientSourceSection }) {
   return (
     <h3
-      className={`flex items-center gap-1.5 px-3 pb-1 text-xs font-normal text-muted-foreground ${props.section.start === 0 ? "pt-3" : "pt-9"}`}
+      className={`mx-3 flex items-center gap-1.5 pb-1 text-xs font-normal text-muted-foreground ${props.section.start === 0 ? "pt-3" : "pt-6"}`}
     >
       <ScientTooltip content={props.section.label}>
         <span className="truncate font-medium text-foreground">{props.section.label}</span>
       </ScientTooltip>
       <span className="shrink-0 tabular-nums">{props.section.count.toLocaleString()}</span>
+      <span aria-hidden className="h-px min-w-3 flex-1 bg-border" />
     </h3>
   );
 }

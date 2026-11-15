@@ -141,9 +141,6 @@ export function UniversityPicker({
           if (!query && guess) find(guess);
         }}
       />
-      <p className="px-2 text-xs text-muted-foreground">
-        You sign in in Main, so every conversation can use it.
-      </p>
       {found.map((university) => (
         <button
           key={university.entityId}
