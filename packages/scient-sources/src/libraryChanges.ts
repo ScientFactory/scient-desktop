@@ -10,8 +10,9 @@ import {
   listScientSourceIds,
   listScientSourceImports,
   readScientSourceImport,
-  readSourceImportOperation,
+  readSourceImportParts,
   readScientSourcesRemovedByPerson,
+  wholeSourceImport,
 } from "./store.ts";
 
 /** The imported sources that are in the Library now; a merged one is the source that kept it. */
@@ -50,11 +51,12 @@ export async function listScientLibraryImportNotBrought(
   library: ScientLibraryLocation,
   operationId: string,
 ): Promise<NonNullable<ScientLibraryRecentChanges["importNotBrought"]>> {
-  const [operation, present, aliases] = await Promise.all([
-    readSourceImportOperation(library, operationId),
+  const [parts, present, aliases] = await Promise.all([
+    readSourceImportParts(library, operationId),
     listScientSourceIds(library),
     readScientLibraryAliases(library),
   ]);
+  const operation = wholeSourceImport(parts);
   return operation
     ? summarizeNotBrought(operation).map((line) => ({
         what: notBroughtName(line),

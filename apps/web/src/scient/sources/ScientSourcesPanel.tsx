@@ -1634,6 +1634,14 @@ export function ScientSourcesPanel(props: {
           onCancel={() => void sources.cancelImport()}
           cancelling={sources.cancelling}
           {...(scopes ? { onShowSources: showPackageSources } : {})}
+          {...(canChange && sources.zoteroRunRemaining > 0
+            ? {
+                rest: {
+                  count: sources.zoteroRunRemaining,
+                  onImport: () => void sources.importZoteroRest(),
+                },
+              }
+            : {})}
           {...(scopes && !sources.operation.pinInstanceId
             ? {
                 libraryOnly: canChangeProject

@@ -21,6 +21,7 @@ import {
   advanceSourceImport,
   beginZoteroImport,
   beginZoteroScopedImport,
+  continueZoteroImportRun,
   inspectZoteroConnection,
   listZoteroCollections,
   listZoteroLibrary,
@@ -221,6 +222,8 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
     readonly collectionKey?: string;
     readonly includeSubcollections?: boolean;
     readonly all?: boolean;
+    /** Goes on with a collection or library too large for one call. */
+    readonly runId?: string;
     readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
     /** Library mode: false brings the items into the library without pinning them here. */
     readonly pin?: boolean;
@@ -229,49 +232,53 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
       input.itemKeys !== undefined,
       input.collectionKey !== undefined,
       input.all === true,
+      input.runId !== undefined,
     ];
     if (choices.filter(Boolean).length !== 1) {
       return yield* new ScientSourcesToolError({
         code: "operation-failed",
-        message: "Pass exactly one of itemKeys, collectionKey or all.",
+        message: "Pass exactly one of itemKeys, collectionKey, all or runId.",
       });
     }
     const { store, root, zotero } = yield* agentZotero();
-    const connection = yield* readyConnection(zotero, input.connection);
-    const operationId = `agent_zotero_${NodeCrypto.randomUUID()}`;
-    const itemKeys = input.itemKeys;
+    const { runId, itemKeys } = input;
+    // A run's own record says which Zotero library it reads and how.
+    const connection =
+      runId === undefined ? yield* readyConnection(zotero, input.connection) : undefined;
     const library = input.library ? { groupId: input.library } : {};
     const pin = store.kind === "library" && input.pin !== false ? { pinInto: store.root } : {};
-    yield* zoteroAttempt(() =>
-      itemKeys
-        ? beginZoteroImport({
-            root,
-            operationId,
-            itemKeys,
-            possibleMetadataMatchOverrides: (input.possibleMetadataMatchOverrides ?? []).filter(
-              (key) => itemKeys.includes(key),
-            ),
-            connection,
-            ...library,
-            actor: "agent",
-            ...pin,
-          })
-        : beginZoteroScopedImport({
-            root,
-            operationId,
-            scope: input.collectionKey
-              ? {
-                  kind: "collection",
-                  collectionKey: input.collectionKey,
-                  includeSubcollections: input.includeSubcollections ?? false,
-                }
-              : { kind: "library" },
-            connection,
-            ...library,
-            actor: "agent",
-            zotero,
-            ...pin,
-          }),
+    const { operationId } = yield* zoteroAttempt(() =>
+      runId !== undefined
+        ? continueZoteroImportRun({ root, runId, zotero })
+        : itemKeys
+          ? beginZoteroImport({
+              root,
+              operationId: `agent_zotero_${NodeCrypto.randomUUID()}`,
+              itemKeys,
+              possibleMetadataMatchOverrides: (input.possibleMetadataMatchOverrides ?? []).filter(
+                (key) => itemKeys.includes(key),
+              ),
+              ...(connection ? { connection } : {}),
+              ...library,
+              actor: "agent",
+              ...pin,
+            })
+          : beginZoteroScopedImport({
+              root,
+              operationId: `agent_zotero_${NodeCrypto.randomUUID()}`,
+              scope: input.collectionKey
+                ? {
+                    kind: "collection",
+                    collectionKey: input.collectionKey,
+                    includeSubcollections: input.includeSubcollections ?? false,
+                  }
+                : { kind: "library" },
+              ...(connection ? { connection } : {}),
+              ...library,
+              actor: "agent",
+              zotero,
+              ...pin,
+            }),
     );
     const observeImport = yield* makeSourceImportAnalytics("agent");
     const operation = yield* zoteroAttempt(async () => {
@@ -306,6 +313,9 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
         ...(item.note ? { note: item.note } : {}),
       })),
       ...(notBrought.length > 0 ? { notBrought } : {}),
+      ...(operation.run && operation.run.remaining > 0
+        ? { remaining: operation.run.remaining, runId: operation.run.runId }
+        : {}),
     };
   },
 );
@@ -319,10 +329,12 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
   }) {
     const { store, root, zotero } = yield* agentZotero();
     const sourceIds = yield* librarySourceIds(store, input.sourceIds);
+    // Named sources are refreshed as asked; otherwise every Zotero source (of this project).
+    const which = !sourceIds ? {} : input.sourceIds ? { sourceIds } : { among: sourceIds };
     const result = yield* zoteroAttempt(() =>
       refreshZoteroSources({
         root,
-        ...(sourceIds ? { sourceIds } : {}),
+        ...which,
         ...(input.connection ? { connection: input.connection } : {}),
         choices: {
           useZotero: new Set(input.useZotero ?? []),

@@ -976,6 +976,9 @@ export const ScientSourcesZoteroImportResult = Schema.Struct({
   notBrought: Schema.optionalKey(
     Schema.Array(Schema.Struct({ what: Schema.String, amount: Schema.String })),
   ),
+  /** A collection or library larger than one call: how many are still to come, and its run. */
+  remaining: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  runId: Schema.optionalKey(NonEmptyString),
 });
 
 /** Library mode: intake from a project pins what it brings in unless this is false. */
@@ -992,6 +995,7 @@ const zoteroImportParameters = {
   collectionKey: Schema.optionalKey(ZoteroItemKey),
   includeSubcollections: Schema.optionalKey(Schema.Boolean),
   all: Schema.optionalKey(Schema.Boolean),
+  runId: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(120)))),
   possibleMetadataMatchOverrides: Schema.optionalKey(
     Schema.Array(ZoteroItemKey).pipe(Schema.check(Schema.isMaxLength(500))),
   ),
@@ -1000,7 +1004,7 @@ const zoteroImportParameters = {
 const zoteroImportTool = (mode: SourcesBackendMode) =>
   Tool.make("scient_sources_zotero_import", {
     description:
-      "Import from the user's Zotero library after the user asks: itemKeys, a collectionKey or all, with notes, tags, PDFs and citation keys. Already imported: skipped (same-origin); possible-metadata-match: skipped unless in possibleMetadataMatchOverrides. At most 500 per call.",
+      "Import from the user's Zotero library after the user asks: itemKeys, a collectionKey or all, with notes, tags, PDFs and citation keys. Already imported: skipped (same-origin); possible-metadata-match: skipped unless in possibleMetadataMatchOverrides. At most 500 per call; if the result has remaining, call again with only its runId.",
     parameters:
       mode === "project"
         ? Schema.Struct(zoteroImportParameters)

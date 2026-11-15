@@ -116,4 +116,42 @@ describe("what an import says it did not bring", () => {
     );
     await expect.element(page.getByText("Import complete")).not.toBeInTheDocument();
   });
+
+  it("says how many references of a large Zotero import are still to come, and goes on after a stop", async () => {
+    const run = { runId: "run", part: 1, remaining: 4612, scope: { kind: "library" as const } };
+    const pending: Item = { itemKey: "ITEM2", state: "pending", sourceId: null, message: null };
+    const running = await render(
+      <ImportSummary
+        operation={{ ...operation([imported(1, []), pending], "running"), run }}
+        outcome={null}
+        onDismiss={() => undefined}
+        onCancel={() => undefined}
+        cancelling={false}
+      />,
+      { router: false },
+    );
+    await expect
+      .element(page.getByText("1 of 2 items processed · 4,612 more to follow"))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: /^Import the rest/u }))
+      .not.toBeInTheDocument();
+    await running.unmount();
+
+    // Stopped, or Scient was closed: the rest is offered, with how many.
+    const onImport = vi.fn();
+    await using _screen = await render(
+      <ImportSummary
+        operation={{ ...operation([imported(1, []), pending], "cancelled"), run }}
+        outcome={null}
+        onDismiss={() => undefined}
+        onCancel={() => undefined}
+        cancelling={false}
+        rest={{ count: 4613, onImport }}
+      />,
+      { router: false },
+    );
+    await userEvent.click(page.getByRole("button", { name: "Import the rest (4,613)" }));
+    expect(onImport).toHaveBeenCalledTimes(1);
+  });
 });

@@ -367,7 +367,9 @@ export function formatEndnoteXml(
         : "",
       element("pages", record.pages),
       element("volume", record.volume),
-      element("number", record.issue ?? more.number),
+      // A report's own number is `number`; its issue, if it has one too, is written apart.
+      element("number", record.type === "report" ? (more.number ?? record.issue) : record.issue),
+      record.type === "report" && more.number ? element("issue", record.issue) : "",
       record.tags.length > 0
         ? `<keywords>${record.tags.map((tag) => element("keyword", tag)).join("")}</keywords>`
         : "",

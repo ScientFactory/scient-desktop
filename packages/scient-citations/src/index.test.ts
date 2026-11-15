@@ -298,11 +298,13 @@ describe("the details a source has beyond its own fields, in citations", () => {
       ],
       publisher: "Island Alive",
     });
-    // A Zotero type name is the type, not a genre; its director is cited as the author.
+    // A Zotero type name is the type, not a genre; its director is cited as its director,
+    // as Zotero does (a style then says "Director"), not turned into an author.
     expect(scientSourceToCslJson(film)).toMatchObject({
       type: "motion_picture",
-      author: [{ family: "Reggio", given: "Godfrey" }],
+      director: [{ family: "Reggio", given: "Godfrey" }],
     });
+    expect(scientSourceToCslJson(film)).not.toHaveProperty("author");
     expect(scientSourceToCslJson(film)).not.toHaveProperty("genre");
     // A type a person named themselves is still its genre.
     expect(
@@ -322,5 +324,17 @@ describe("the details a source has beyond its own fields, in citations", () => {
       "original-date": { literal: "ca. 1890" },
     });
     expect(csl).not.toHaveProperty("extra");
+    // A range keeps both ends; text that only begins with a year is not cut down to it.
+    expect(
+      scientSourceToCslJson(
+        source({ more: { "original-date": "1824/1825", "event-date": "2020-05" } }),
+      ),
+    ).toMatchObject({
+      "original-date": { "date-parts": [[1824], [1825]] },
+      "event-date": { "date-parts": [[2020, 5]] },
+    });
+    expect(
+      scientSourceToCslJson(source({ more: { "original-date": "1824 or 1825" } })),
+    ).toMatchObject({ "original-date": { literal: "1824 or 1825" } });
   });
 });

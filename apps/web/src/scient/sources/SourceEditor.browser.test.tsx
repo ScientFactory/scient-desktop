@@ -80,4 +80,24 @@ describe("the editor's further details", () => {
     });
     expect(mocks.update.mock.calls[0]?.[1].metadata.more).not.toHaveProperty("publisher-place");
   });
+
+  it("saves when a detail's text was erased: the blank row is a detail removed", async () => {
+    mocks.update.mockReset().mockResolvedValue({ outcome: "updated", record });
+    await using _screen = await render(
+      <SourceEditor
+        environmentId={EnvironmentId.make("environment_test")}
+        root="/project"
+        record={record}
+        onCancel={() => undefined}
+        onRefreshed={() => undefined}
+        onSaved={() => undefined}
+      />,
+      { router: false },
+    );
+    await userEvent.fill(page.getByRole("textbox", { name: "Place of publication" }), "   ");
+    await userEvent.click(page.getByRole("button", { name: "Save", exact: true }));
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1));
+    // Not sent as an empty entry, which the server would refuse.
+    expect(mocks.update.mock.calls[0]?.[1].metadata.more).toEqual({});
+  });
 });

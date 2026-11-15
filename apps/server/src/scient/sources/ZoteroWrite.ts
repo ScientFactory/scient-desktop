@@ -7,7 +7,12 @@ import {
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
 
-import { zoteroExtraLineTarget, type ZoteroRawItem } from "./ZoteroItems.ts";
+import {
+  PLACE_IS_EVENT,
+  zoteroExtraLineTarget,
+  zoteroExtraLines,
+  type ZoteroRawItem,
+} from "./ZoteroItems.ts";
 
 const ITEM_TYPE_FOR: Readonly<Record<ScientSourceType, string>> = {
   article: "journalArticle",
@@ -112,9 +117,6 @@ function identifier(record: ScientSourceRecord, scheme: string): string | null {
   );
 }
 
-const lineName = (line: string) =>
-  /^\s*([A-Za-z][A-Za-z0-9 _-]{0,60}?)\s*:\s*\S/u.exec(line)?.[1]?.toLowerCase().trim();
-
 /** The item's own field for a general Zotero field: itself, or the type's name for it. */
 function fieldFor(fields: ReadonlySet<string>, general: string): string | undefined {
   if (fields.has(general)) return general;
@@ -169,22 +171,22 @@ export function zoteroDataFromRecord(input: {
   for (const [name, value] of Object.entries(record.more ?? {})) {
     if (name === "extra") continue;
     written.add(name);
-    const placed = Object.entries(ZOTERO_FIELD_TARGET).some(
-      ([general, target]) => "more" in target && target.more === name && set(general, value),
-    );
+    // A talk's or a recording's place is its event's place in Zotero too.
+    const placed =
+      (name === "event-place" && PLACE_IS_EVENT.has(input.itemType) && set("place", value)) ||
+      Object.entries(ZOTERO_FIELD_TARGET).some(
+        ([general, target]) => "more" in target && target.more === name && set(general, value),
+      );
     if (!placed) extraFromMore.push(`${name}: ${value}`);
   }
   // Lines kept as written: one that names a field this type has goes back to that field.
-  for (const line of (record.more?.extra ?? "").split(/\r?\n/u)) {
-    if (!line.trim()) continue;
-    const name = lineName(line);
+  for (const { line, name, value } of zoteroExtraLines(record.more?.extra)) {
     const field =
       name === undefined
         ? undefined
         : [...fields].find((entry) => entry.toLowerCase() === name.replace(/[\s_-]+/gu, ""));
-    const value = line.slice(line.indexOf(":") + 1).trim();
     if (field && field !== "extra" && data[field] === undefined && value) data[field] = value;
-    else extraFromMore.push(line.trim());
+    else extraFromMore.push(line);
   }
 
   if (fields.has("extra")) {
@@ -209,11 +211,11 @@ export function zoteroDataFromRecord(input: {
     const said = new Set(ours);
     // A line of Zotero's that Scient has no value for stays, so sending never deletes it; one
     // that names a detail written above (to its field or as a line) is replaced by it.
-    const kept = (input.existingExtra ?? "").split(/\r?\n/u).filter((line) => {
-      if (!line.trim() || said.has(line.trim())) return false;
-      if (supplied.has(MANAGED_EXTRA.exec(line)?.[1]?.toLowerCase() ?? "")) return false;
-      const target = zoteroExtraLineTarget(lineName(line) ?? "");
-      return !(target && "more" in target && written.has(target.more));
+    const kept = zoteroExtraLines(input.existingExtra).flatMap(({ line, name }) => {
+      if (said.has(line)) return [];
+      if (supplied.has(MANAGED_EXTRA.exec(line)?.[1]?.toLowerCase() ?? "")) return [];
+      const target = zoteroExtraLineTarget(name ?? "");
+      return target && "more" in target && written.has(target.more) ? [] : [line];
     });
     const extra = [...ours, ...kept].join("\n");
     if (extra) data.extra = extra;

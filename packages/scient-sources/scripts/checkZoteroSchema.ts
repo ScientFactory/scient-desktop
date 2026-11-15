@@ -64,6 +64,34 @@ for (const [csl, zoteroTypes] of Object.entries(schema.csl.types)) {
     if (ZOTERO_TYPE_CSL[zoteroType] !== csl) differs(`${zoteroType} is CSL ${csl}`);
   }
 }
+// Where each field goes: the CSL variable Zotero names, under Scient's name for it.
+const RENAMED: Readonly<Record<string, string>> = {
+  journalAbbreviation: "container-title-short",
+  shortTitle: "title-short",
+};
+const TYPED: Readonly<Record<string, string>> = {
+  title: "title",
+  issuedRaw: "issued",
+  abstract: "abstract",
+  containerTitle: "container-title",
+  publisher: "publisher",
+  volume: "volume",
+  issue: "issue",
+  pages: "page",
+  language: "language",
+  url: "URL",
+};
+for (const [csl, fields] of [
+  ...Object.entries(schema.csl.fields.text),
+  ...Object.entries(schema.csl.fields.date).map(([name, field]) => [name, [field]] as const),
+]) {
+  for (const field of fields) {
+    const target = ZOTERO_FIELD_TARGET[field];
+    if (!target) continue;
+    const ours = "typed" in target ? TYPED[target.typed] : target.more;
+    if (ours !== (RENAMED[csl] ?? csl)) differs(`${field} is CSL ${csl}; here: ${ours}`);
+  }
+}
 for (const [role, csl] of Object.entries(schema.csl.names)) {
   if (ZOTERO_ROLE_CSL[role.toLowerCase()] !== csl) differs(`role ${role} is CSL ${csl}`);
 }

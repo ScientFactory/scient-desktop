@@ -156,6 +156,10 @@ export function SourceEditor(props: {
     originalMetadata.issuedYear === null ? "" : String(originalMetadata.issuedYear),
   );
   const more = metadata.more ?? {};
+  // A row left blank is a detail removed: it is not sent, so it cannot fail the save.
+  const filledMore = Object.fromEntries(
+    Object.entries(more).flatMap(([name, value]) => (value.trim() ? [[name, value.trim()]] : [])),
+  );
   /** Sets one of the further details; null takes its row away. */
   const setMore = (name: string, value: string | null) =>
     setMetadata((current) => {
@@ -182,6 +186,7 @@ export function SourceEditor(props: {
     ...metadata,
     issuedYear: yearText.trim() ? Number.parseInt(yearText, 10) : null,
     tags: tagsFromText(tagsText),
+    more: filledMore,
   };
   const dirty = metadataKey(effectiveMetadata) !== metadataKey(originalMetadata);
   const invalidYear =

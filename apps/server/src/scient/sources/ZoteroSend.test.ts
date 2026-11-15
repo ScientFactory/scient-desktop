@@ -74,6 +74,19 @@ const TEMPLATES: Readonly<
     ],
     roles: ["author", "counsel", "contributor"],
   },
+  presentation: {
+    fields: [
+      "title",
+      "abstractNote",
+      "presentationType",
+      "date",
+      "place",
+      "meetingName",
+      "url",
+      "extra",
+    ],
+    roles: ["presenter", "contributor"],
+  },
   computerProgram: {
     fields: [
       "title",
@@ -426,6 +439,32 @@ describe("Send to Zotero", () => {
         { creatorType: "programmer", lastName: "Bolker" },
       ],
     });
+  });
+
+  it("sends a talk's place of the event to Zotero's place, where Zotero keeps it", async () => {
+    const { root, sourceId } = await sourceInScient({
+      type: "presentation",
+      title: "A talk",
+      containerTitle: null,
+      volume: null,
+      pages: null,
+      identifiers: [],
+      creators: [
+        { creatorType: "presenter", givenName: "Ada", familyName: "Lovelace", literalName: null },
+      ],
+      more: { "event-place": "Boston", "event-title": "Annual Meeting", genre: "Keynote" },
+      note: undefined as never,
+    });
+    const org = zoteroOrg();
+    await sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
+    const created = org.items.get("NEWA2345")?.data as Record<string, unknown>;
+    expect(created).toMatchObject({
+      itemType: "presentation",
+      place: "Boston",
+      meetingName: "Annual Meeting",
+      presentationType: "Keynote",
+    });
+    expect(String(created.extra ?? "")).not.toContain("event-place");
   });
 
   it("still sends the main details when zotero.org does not say what a type accepts", async () => {

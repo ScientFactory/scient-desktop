@@ -92,6 +92,10 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
       return "Notes that belong to no reference";
     case "files-alone":
       return "Files that belong to no reference";
+    case "alone-uncounted":
+      return "Notes and files that belong to no reference: Zotero did not say how many";
+    case "already-here":
+      return "References that were already in your Library: nothing was taken from Zotero's copy (its notes, files and details)";
   }
 }
 
@@ -104,6 +108,8 @@ export function notBroughtAmount(line: NotBroughtLine): string {
   if (line.kind === "notes-alone" || line.kind === "files-alone") {
     return line.count.toLocaleString();
   }
+  if (line.kind === "alone-uncounted") return "not counted";
+  if (line.kind === "already-here") return references(line.count);
   // A field or a line is there once per reference, so the references are the count.
   if (line.kind === "field" || line.kind === "extra" || line.kind === "note-cut") {
     return references(on);
@@ -116,9 +122,17 @@ export function notBroughtAmount(line: NotBroughtLine): string {
  * belongs to no reference comes last.
  */
 export function summarizeNotBrought(
-  operation: Pick<ScientSourceImportOperation, "items" | "notBrought">,
+  operation: Pick<ScientSourceImportOperation, "items" | "notBrought"> &
+    Partial<Pick<ScientSourceImportOperation, "adapter">>,
 ): ReadonlyArray<NotBroughtLine> {
   const lines = new Map<string, { line: NotBroughtLine; sourceIds: Set<string> }>();
+  const alreadyHere = operation.items.filter(
+    (item) =>
+      item.state === "skipped" &&
+      item.duplicateKind !== undefined &&
+      item.duplicateKind !== "same-origin" &&
+      item.duplicateKind !== "new",
+  );
   for (const item of operation.items) {
     if (item.state !== "imported" || !item.sourceId) continue;
     for (const entry of item.notBrought ?? []) {
@@ -140,6 +154,18 @@ export function summarizeNotBrought(
           right.sourceIds.length - left.sourceIds.length ||
           notBroughtName(left).localeCompare(notBroughtName(right)),
       ),
+    // A Zotero item that was already here under another origin (the same DOI, a possible
+    // match) was skipped whole: what Zotero holds for it was not looked at.
+    ...(operation.adapter?.startsWith("zotero") && alreadyHere.length > 0
+      ? [
+          {
+            kind: "already-here" as const,
+            name: null,
+            count: alreadyHere.length,
+            sourceIds: [...new Set(alreadyHere.flatMap((item) => item.sourceId ?? []))],
+          },
+        ]
+      : []),
     ...(operation.notBrought ?? []).map((entry) => ({
       kind: entry.kind,
       name: entry.name ?? null,

@@ -747,12 +747,15 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             AuthOrchestrationOperateScope,
             args.payload.root,
             async (library) => {
-              const sourceIds = library
-                ? await libraryZoteroSourceIds(library, args.payload.sourceIds)
-                : args.payload.sourceIds;
+              // Asked for by name, or every Zotero source of the project.
+              const { start } = args.payload;
+              const named = args.payload.sourceIds;
+              const ids = library ? await libraryZoteroSourceIds(library, named) : named;
+              const which = !ids ? {} : named ? { sourceIds: ids } : { among: ids };
               const result = await refreshZoteroSources({
                 root: library ? library.library : args.payload.root,
-                ...(sourceIds ? { sourceIds } : {}),
+                ...which,
+                ...(start === undefined ? {} : { start }),
                 ...(args.payload.connection ? { connection: args.payload.connection } : {}),
                 choices: {
                   useZotero: new Set(args.payload.useZotero ?? []),

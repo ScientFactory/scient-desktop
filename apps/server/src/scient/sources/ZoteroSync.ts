@@ -52,6 +52,8 @@ import {
 } from "./ZoteroWrite.ts";
 
 const MAX_REFRESH_SOURCES = 500;
+/** How many sources one request of a whole-Library refresh reads again from Zotero. */
+const REFRESH_BATCH_SOURCES = 200;
 
 /** Zotero item keys are per library; local "0" and the zotero.org user ID name the same one. */
 function zoteroReference(
@@ -286,24 +288,41 @@ async function refreshOne(input: {
   };
 }
 
-/** Brings Zotero's changes into imported sources, keeping edits made here. */
+/**
+ * Brings Zotero's changes into imported sources, keeping edits made here. `sourceIds` are
+ * refreshed as asked. Without them, every source that came from Zotero is (of `among`, when a
+ * project's sources are meant); with `start`, a batch of those from that position, and the
+ * result says how many there are and where the next batch begins.
+ */
 export async function refreshZoteroSources(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceIds?: ReadonlyArray<string>;
+  readonly among?: ReadonlyArray<string>;
+  readonly start?: number;
+  /** Tests only: a smaller batch. */
+  readonly batchSize?: number;
   readonly connection?: ZoteroConnection;
   readonly actor: ScientSourceActor;
   readonly choices?: ZoteroRefreshChoices;
   readonly zotero: ZoteroAccess;
 }): Promise<ScientSourceZoteroRefreshResult> {
+  const byIds = async (sourceIds: ReadonlyArray<string>) =>
+    (
+      await Promise.all(
+        [...new Set(sourceIds)].map((sourceId) => readScientSourceRecord(input.root, sourceId)),
+      )
+    ).flatMap((record) => (record ? [record] : []));
+  const fromZotero = input.sourceIds
+    ? null
+    : (input.among ? await byIds(input.among) : await listScientSourceRecords(input.root))
+        .filter((record) => zoteroReference(record))
+        .toSorted((left, right) => left.sourceId.localeCompare(right.sourceId));
+  const { start } = input;
   const records = input.sourceIds
-    ? (
-        await Promise.all(
-          [...new Set(input.sourceIds)].map((sourceId) =>
-            readScientSourceRecord(input.root, sourceId),
-          ),
-        )
-      ).flatMap((record) => (record ? [record] : []))
-    : (await listScientSourceRecords(input.root)).filter((record) => zoteroReference(record));
+    ? await byIds(input.sourceIds)
+    : start === undefined
+      ? (fromZotero ?? [])
+      : (fromZotero ?? []).slice(start, start + (input.batchSize ?? REFRESH_BATCH_SOURCES));
   if (records.length > MAX_REFRESH_SOURCES) {
     throw new Error(`Refresh at most ${MAX_REFRESH_SOURCES} sources at a time.`);
   }
@@ -344,7 +363,14 @@ export async function refreshZoteroSources(input: {
       });
     }
   }
-  return { connection, items };
+  if (!fromZotero || start === undefined) return { connection, items };
+  const nextStart = start + records.length;
+  return {
+    connection,
+    items,
+    total: fromZotero.length,
+    ...(nextStart < fromZotero.length ? { nextStart } : {}),
+  };
 }
 
 const CHANGED_IN_ZOTERO =
@@ -495,7 +521,12 @@ export async function sendSourcesToZotero(input: {
     );
   }
   const items: ScientSourceZoteroSendItem[] = [];
-  for (const sourceId of [...new Set(input.sourceIds)].slice(0, MAX_REFRESH_SOURCES)) {
+  const sourceIds = [...new Set(input.sourceIds)];
+  // Said, not cut: a list past the limit used to lose its tail without a word.
+  if (sourceIds.length > MAX_REFRESH_SOURCES) {
+    throw new Error(`Send at most ${MAX_REFRESH_SOURCES} sources at a time.`);
+  }
+  for (const sourceId of sourceIds) {
     const record = await readScientSourceRecord(input.root, sourceId);
     if (!record) {
       items.push({

@@ -15,6 +15,7 @@ import {
   type ZoteroTypedTarget,
   ZOTERO_BASE_FIELD,
   ZOTERO_FIELD_TARGET,
+  ZOTERO_ROLE_CSL,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 
@@ -188,18 +189,59 @@ const EXTRA_FIELDS: Readonly<Record<string, string>> = {
  */
 function zoteroExtraFields(extra: string | undefined): Readonly<Record<string, string>> {
   const fields: Record<string, string> = {};
-  for (const line of (extra ?? "").split(/\r?\n/u)) {
-    const match = /^\s*([A-Za-z][A-Za-z ]*?)\s*:\s*(\S.*?)\s*$/u.exec(line);
-    const name = match?.[1] ? EXTRA_FIELDS[match[1].toLowerCase()] : undefined;
-    if (name && match?.[2] && !(name in fields)) fields[name] = match[2];
+  for (const { name, value } of zoteroExtraLines(extra)) {
+    const field = name === undefined ? undefined : EXTRA_FIELDS[name];
+    if (field && value && !(field in fields)) fields[field] = value;
   }
   return fields;
+}
+
+/**
+ * The lines of Zotero's Extra, each with the name and value of a `Name: value` line (the
+ * name in lower case), or neither for free text. The one reader of Extra: the import and
+ * Send both go through it.
+ */
+export function zoteroExtraLines(extra: string | undefined): ReadonlyArray<{
+  readonly line: string;
+  readonly name?: string;
+  readonly value?: string;
+}> {
+  return (extra ?? "").split(/\r?\n/u).flatMap((raw) => {
+    const line = raw.trim();
+    if (!line) return [];
+    const match = /^([A-Za-z][A-Za-z0-9 _-]{0,60}?)\s*:\s*(\S.*)$/u.exec(line);
+    return match?.[1] && match[2]
+      ? [{ line, name: match[1].toLowerCase().trim(), value: match[2].trim() }]
+      : [{ line }];
+  });
 }
 
 /** The Better BibTeX or Zotero citation key the item carries itself, if any. */
 function zoteroCitationKey(data: ZoteroRawItem["data"]): string | null {
   return normalizeImportedCitationKey(data.citationKey) ?? citationKeyFromZoteroExtra(data.extra);
 }
+
+/** Zotero's creator roles a line of Extra may name, by the role or its CSL variable. */
+const ROLE_BY_EXTRA_NAME: ReadonlyMap<string, string> = new Map([
+  ...Object.entries(ZOTERO_ROLE_CSL).map(([role, csl]) => [csl, role] as const),
+  ...Object.keys(ZOTERO_ROLE_CSL).map((role) => [role, role] as const),
+]);
+/** The roles as Zotero spells them, for the ones whose name has an inner capital. */
+const ROLE_SPELLING: Readonly<Record<string, string>> = {
+  bookauthor: "bookAuthor",
+  castmember: "castMember",
+  executiveproducer: "executiveProducer",
+  originalcreator: "originalCreator",
+  reviewedauthor: "reviewedAuthor",
+  seriescreator: "seriesCreator",
+  serieseditor: "seriesEditor",
+};
+/** Types whose place is where the event was, not where a publisher is. */
+export const PLACE_IS_EVENT: ReadonlySet<string> = new Set([
+  "presentation",
+  "audioRecording",
+  "videoRecording",
+]);
 
 /** A Zotero field name as a person may write it in Extra: `Original Date`, `original-date`. */
 const squeezed = (name: string) => name.toLowerCase().replace(/[\s_-]+/gu, "");
@@ -247,6 +289,8 @@ function zoteroBibliographic(item: ZoteroRawItem): {
   readonly lost: ReadonlyArray<string>;
   /** Lines of Extra that could not be kept (too long together), by name. */
   readonly extraLost: ReadonlyArray<string>;
+  /** Creators Extra names (`editor: Smith || Jane`), as Zotero cites them. */
+  readonly creators: ReadonlyArray<ScientSourceCreator>;
 } {
   const fields = fieldsOf(item);
   const typed: Partial<Record<ZoteroTypedTarget, string>> = {};
@@ -265,7 +309,12 @@ function zoteroBibliographic(item: ZoteroRawItem): {
   for (const name of names) {
     const value = text(fields[name]);
     if (!value || FIELDS_NOT_CONTENT.has(name) || IDENTIFIER_FIELDS.has(name)) continue;
-    const target = ZOTERO_FIELD_TARGET[ZOTERO_BASE_FIELD[name] ?? name];
+    const general = ZOTERO_BASE_FIELD[name] ?? name;
+    // A talk's or a recording's place is where it happened.
+    const target =
+      general === "place" && PLACE_IS_EVENT.has(item.data.itemType)
+        ? { more: "event-place" as const }
+        : ZOTERO_FIELD_TARGET[general];
     if (target && "typed" in target && typed[target.typed] === undefined) {
       typed[target.typed] = value;
       from.set(target.typed, name);
@@ -281,17 +330,40 @@ function zoteroBibliographic(item: ZoteroRawItem): {
     (name) =>
       `${name.replace(/([a-z0-9])([A-Z])/gu, "$1 $2").replace(/^./u, (first) => first.toUpperCase())}: ${text(fields[name])}`,
   );
-  for (const line of (fields.extra ?? "").split(/\r?\n/u)) {
-    const match = /^\s*([A-Za-z][A-Za-z0-9 _-]{0,60}?)\s*:\s*(\S.*?)\s*$/u.exec(line);
-    const name = match?.[1]?.toLowerCase().trim();
-    const value = match?.[2];
-    if (!line.trim()) continue;
+  const creators: ScientSourceCreator[] = [];
+  const keptIdentifiers = identifiers(item.data);
+  const keptKey = zoteroCitationKey(item.data);
+  for (const { line, name, value } of zoteroExtraLines(fields.extra)) {
     if (name === undefined || value === undefined) {
-      extraKept.push(line.trim());
+      extraKept.push(line);
       continue;
     }
-    // Read elsewhere: identifiers and the citation key.
-    if (name in EXTRA_FIELDS || name === "citation key" || name === "issn" || name === "isbn") {
+    // An identifier or a citation key the record took leaves Extra; another value for the
+    // same thing (an earlier DOI, a second PMID) is kept as written, never dropped.
+    const scheme = EXTRA_FIELDS[name];
+    if (scheme !== undefined) {
+      const taken = keptIdentifiers.some(
+        (identifier) =>
+          identifier.scheme === scheme && identifier.value.toLowerCase() === value.toLowerCase(),
+      );
+      if (!taken) extraKept.push(line);
+      continue;
+    }
+    if (name === "citation key") {
+      if (normalizeImportedCitationKey(value) !== keptKey) extraKept.push(line);
+      continue;
+    }
+    // A creator, as Zotero reads one from Extra: `editor: Family || Given`, or one name.
+    const role =
+      ROLE_BY_EXTRA_NAME.get(name.replace(/\s+/gu, "-")) ?? ROLE_BY_EXTRA_NAME.get(squeezed(name));
+    if (role !== undefined) {
+      const [family, given] = value.split("||").map((part) => part.trim());
+      creators.push({
+        creatorType: ROLE_SPELLING[role] ?? role,
+        givenName: given || null,
+        familyName: given === undefined ? null : family || null,
+        literalName: given === undefined ? (family ?? value) : null,
+      });
       continue;
     }
     const target = zoteroExtraLineTarget(name);
@@ -303,7 +375,7 @@ function zoteroBibliographic(item: ZoteroRawItem): {
       from.set(`more.${target.more}`, "extra");
     } else {
       // No place of its own, or the item's field already fills it: kept as written.
-      extraKept.push(line.trim());
+      extraKept.push(line);
     }
   }
   if (extraKept.length > 0) more.extra = extraKept.join("\n");
@@ -321,7 +393,7 @@ function zoteroBibliographic(item: ZoteroRawItem): {
   if (!normalized.left.includes("extra")) {
     for (const name of asLines) from.set(`more.extra:${name}`, name);
   }
-  return { typed, more: normalized.more, from, lost, extraLost };
+  return { typed, more: normalized.more, from, lost, extraLost, creators };
 }
 
 function identifierEntries(
@@ -367,7 +439,7 @@ function provenance(
 export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate {
   const data = raw.data;
   const type = scientSourceTypeFromZotero(data.itemType);
-  const { typed, more, from } = zoteroBibliographic(raw);
+  const { typed, more, from, creators: fromExtra } = zoteroBibliographic(raw);
   const abstract = normalizeScientSourceAbstractDocument(typed.abstract);
   return {
     sourceKey: raw.key,
@@ -377,10 +449,13 @@ export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate
     // present an unexplained, invalid "Other source" with its type discarded.
     customType: type === "other" ? text(data.itemType) : null,
     title: typed.title ?? null,
-    creators: (data.creators ?? []).flatMap((value) => {
-      const normalized = creator(value);
-      return normalized ? [normalized] : [];
-    }),
+    creators: [
+      ...(data.creators ?? []).flatMap((value) => {
+        const normalized = creator(value);
+        return normalized ? [normalized] : [];
+      }),
+      ...fromExtra,
+    ],
     issuedRaw: typed.issuedRaw ?? null,
     issuedYear: publicationYear(typed.issuedRaw),
     identifiers: identifiers(data),

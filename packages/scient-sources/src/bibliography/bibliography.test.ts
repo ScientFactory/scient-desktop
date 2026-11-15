@@ -501,9 +501,10 @@ describe("export", () => {
         title: "Global tuberculosis report",
         containerTitle: null,
         volume: null,
-        issue: null,
         pages: null,
         identifiers: [],
+        // A report with a number of its own and an issue: neither takes the other's place.
+        issue: "2",
         more: { number: "WHO/UCN/TB/2024.3", genre: "Technical report" },
       });
       const text = formatBibliography(
@@ -518,9 +519,34 @@ describe("export", () => {
       expect(unreadable).toEqual([]);
       // Every format has a field for each of these; none is reported as not kept.
       expect(entries[0]).toMatchObject({ type: "book", more: book.more, notKept: [] });
-      expect(entries[1]).toMatchObject({ type: "report", more: report.more, notKept: [] });
+      expect(entries[1]).toMatchObject({
+        type: "report",
+        issue: "2",
+        more: report.more,
+        notKept: [],
+      });
     },
   );
+
+  it("names every further detail a format could not carry", () => {
+    const kept = decodeRecord({
+      ...record,
+      more: {
+        edition: "2",
+        archive_location: "Box 12, folder 3",
+        "original-date": "1824/1825",
+        extra: "tex.ids: oldkey",
+      },
+    });
+    const lost = (format: BibliographyFormat) =>
+      exportBibliographyFile([{ record: kept, citationKey: "k" }], format, {
+        includeNotes: false,
+      }).notKept.map((entry) => entry.field);
+    // CSL-JSON has a variable for each but the lines kept as written.
+    expect(lost("csl-json")).toEqual(["Extra"]);
+    expect(lost("bibtex")).toEqual(expect.arrayContaining(["Extra", "Location in archive"]));
+    expect(lost("bibtex")).not.toContain("Edition");
+  });
 
   it("reads a program, slides and a manuscript as what they are", () => {
     const types = (text: string, format: BibliographyFormat) =>
