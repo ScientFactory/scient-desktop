@@ -48,7 +48,6 @@ import {
   type ScientSourceVerification,
   type ZoteroConnection,
   type ZoteroConnectionStatus,
-  type ZoteroCollection,
   type ZoteroImportScope,
   zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
@@ -118,6 +117,7 @@ import {
   countZoteroScopeStandalone,
   getZoteroItemWith,
   listZoteroCollectionsWith,
+  listZoteroLibraryCollections,
   listZoteroLibraryWith,
   listZoteroScopeItemKeysWith,
   readZoteroAttachmentFiles,
@@ -128,6 +128,7 @@ import {
   addNotBrought,
   ZOTERO_PDFS_PER_ITEM,
   zoteroDescendantCollectionKeys,
+  type ZoteroLibraryCollection,
 } from "./ZoteroItems.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
@@ -1302,7 +1303,6 @@ async function beginZoteroRunPart(input: {
           root: input.root,
           transport,
           scope: input.scope,
-          groupId: input.groupId,
           actor: input.actor ?? "user",
         })
       : 0;
@@ -1395,26 +1395,38 @@ export async function discardLocalPdfSources(input: {
   return { discarded: keys.length };
 }
 
-/** A Zotero collection's ID here: the same on every import, so it is found again, not doubled. */
-function zoteroCollectionId(groupId: string | undefined, collectionKey: string): string {
+/**
+ * A Zotero collection's ID here: the same on every import from its library, so it is found
+ * again, not doubled. The library is part of it, as a key is unique only there.
+ */
+function zoteroCollectionId(libraryId: string, collectionKey: string): string {
   const digest = NodeCrypto.createHash("sha256")
-    .update(`zotero\0${groupId ?? ""}\0${collectionKey}`)
+    .update(`zotero\0${libraryId}\0${collectionKey}`)
     .digest("hex");
   return `collection_${digest.slice(0, 32)}`;
 }
 
-/** Zotero's collections as the Library places them: each under the ID it has here. */
+/** Zotero's collections as the Library places them, by Zotero key: each under its ID here. */
 function zoteroCollectionTree(
-  collections: ReadonlyArray<ZoteroCollection>,
-  groupId: string | undefined,
-): ReadonlyArray<ScientSourceOutsideCollection> {
-  return collections.map((collection) => ({
-    collectionId: zoteroCollectionId(groupId, collection.key),
-    name: collection.name,
-    ...(collection.parentCollectionKey
-      ? { parentCollectionId: zoteroCollectionId(groupId, collection.parentCollectionKey) }
-      : {}),
-  }));
+  collections: ReadonlyArray<ZoteroLibraryCollection>,
+): ReadonlyMap<string, ScientSourceOutsideCollection> {
+  return new Map(
+    collections.map((collection) => [
+      collection.key,
+      {
+        collectionId: zoteroCollectionId(collection.libraryId, collection.key),
+        name: collection.name,
+        ...(collection.parentCollectionKey
+          ? {
+              parentCollectionId: zoteroCollectionId(
+                collection.libraryId,
+                collection.parentCollectionKey,
+              ),
+            }
+          : {}),
+      },
+    ]),
+  );
 }
 
 /**
@@ -1426,12 +1438,10 @@ async function makeZoteroScopeCollections(input: {
   readonly root: ScientSourceStoreLocation;
   readonly transport: ZoteroTransport;
   readonly scope: ZoteroImportScope;
-  readonly groupId: string | undefined;
   readonly actor: "user" | "agent";
 }): Promise<number | null> {
-  const listed = await listZoteroCollectionsWith(input.transport).catch(() => null);
-  if (!listed) return null;
-  const { collections } = listed;
+  const collections = await listZoteroLibraryCollections(input.transport).catch(() => null);
+  if (!collections) return null;
   const { scope } = input;
   const keys =
     scope.kind === "library"
@@ -1439,10 +1449,11 @@ async function makeZoteroScopeCollections(input: {
       : scope.includeSubcollections
         ? zoteroDescendantCollectionKeys(scope.collectionKey, collections)
         : [scope.collectionKey];
+  const tree = zoteroCollectionTree(collections);
   return placeScientSourceCollections({
     root: input.root,
-    tree: zoteroCollectionTree(collections, input.groupId),
-    wanted: keys.map((key) => zoteroCollectionId(input.groupId, key)),
+    tree: [...tree.values()],
+    wanted: keys.flatMap((key) => tree.get(key)?.collectionId ?? []),
     remake: false,
     actor: input.actor,
   }).then(
@@ -1453,7 +1464,7 @@ async function makeZoteroScopeCollections(input: {
 
 const zoteroCollectionTrees = new Map<
   string,
-  Promise<ReadonlyArray<ScientSourceOutsideCollection>>
+  Promise<ReadonlyMap<string, ScientSourceOutsideCollection>>
 >();
 
 /**
@@ -1469,24 +1480,22 @@ async function addToZoteroCollections(input: {
   readonly collectionKeys: ReadonlyArray<string>;
 }): Promise<number> {
   if (input.collectionKeys.length === 0) return 0;
-  const groupId = input.operation.zoteroGroupId;
   const cacheKey = `${scientSourceStoreKey(input.root)}\0${input.operation.operationId}`;
   let tree = zoteroCollectionTrees.get(cacheKey);
   if (!tree) {
-    tree = listZoteroCollectionsWith(input.transport).then((result) =>
-      zoteroCollectionTree(result.collections, groupId),
-    );
+    tree = listZoteroLibraryCollections(input.transport).then(zoteroCollectionTree);
     if (zoteroCollectionTrees.size >= 8) zoteroCollectionTrees.clear();
     zoteroCollectionTrees.set(cacheKey, tree);
     // A listing that failed is asked again for the next item.
     tree.catch(() => zoteroCollectionTrees.delete(cacheKey));
   }
-  const wanted = input.collectionKeys.map((key) => zoteroCollectionId(groupId, key));
   let filed = 0;
   try {
+    const nodes = await tree;
+    const wanted = input.collectionKeys.flatMap((key) => nodes.get(key)?.collectionId ?? []);
     const placed = await placeScientSourceCollections({
       root: input.root,
-      tree: await tree,
+      tree: [...nodes.values()],
       wanted,
       remake: true,
       actor: input.operation.actor,
@@ -1505,7 +1514,7 @@ async function addToZoteroCollections(input: {
   } catch {
     // Counted below with the rest that could not be filed.
   }
-  return wanted.length - filed;
+  return input.collectionKeys.length - filed;
 }
 
 /** A reference-file entry, with the PDFs its file names attached like any other PDF. */

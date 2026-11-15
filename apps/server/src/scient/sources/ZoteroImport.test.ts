@@ -288,6 +288,50 @@ describe("Zotero import", () => {
     ]);
   });
 
+  it("keeps the collections of two personal libraries apart when their keys are the same", async () => {
+    const root = await project();
+    // Two Zotero accounts, each with its own collection under one key.
+    const account = (userId: number, itemKey: string, name: string) =>
+      fakeZoteroAccess(
+        fakeZoteroTransport({
+          items: new Map([
+            [
+              itemKey,
+              {
+                item: zoteroItem(
+                  itemKey,
+                  { title: `Filed in ${name}`, abstractNote: "A.", collections: ["COLL2345"] },
+                  userId,
+                ),
+                children: [],
+              },
+            ],
+          ]),
+          collections: [{ key: "COLL2345", name }],
+          library: { type: "user", id: userId },
+        }),
+      );
+    for (const [operationId, zotero] of [
+      ["first", account(111, "AAAA2345", "Thesis")],
+      ["second", account(222, "BBBB2345", "Teaching")],
+    ] as const) {
+      await beginZoteroScopedImport({ root, operationId, scope: { kind: "library" }, zotero });
+      await advanceSourceImport({ root, operationId, zotero });
+    }
+
+    const titles = new Map(
+      (await listScientSourceRecords(root)).map((record) => [record.sourceId, record.title]),
+    );
+    expect(
+      (await readScientSourcesOrganization(root)).collections
+        .map((entry) => [entry.name, entry.sourceIds.map((sourceId) => titles.get(sourceId))])
+        .toSorted(),
+    ).toEqual([
+      ["Teaching", ["Filed in Teaching"]],
+      ["Thesis", ["Filed in Thesis"]],
+    ]);
+  });
+
   it("lists the collections it could not make instead of dropping them", async () => {
     const root = await project();
     const zotero = fakeZoteroAccess(
@@ -682,6 +726,7 @@ describe("Zotero import", () => {
         if (path.startsWith("/collections?")) {
           const collection = (key: string, parentCollection: string | false) => ({
             key,
+            library: { type: "user", id: 0 },
             data: { key, name: key, parentCollection },
           });
           return json([collection("TOPC2345", false), collection("SUBC2345", "TOPC2345")], 2);

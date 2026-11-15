@@ -154,6 +154,7 @@ export const decodeZoteroRawItems = (value: unknown): ReadonlyArray<ZoteroRawIte
 
 const ZoteroRawCollection = Schema.Struct({
   key: Schema.String,
+  library: ZoteroRawLibrary,
   data: Schema.Struct({
     key: Schema.String,
     name: Schema.String,
@@ -165,12 +166,18 @@ export const decodeZoteroRawCollections = Schema.decodeUnknownSync(
 );
 type ZoteroRawCollection = typeof ZoteroRawCollection.Type;
 
-export function collectionFromRaw(raw: ZoteroRawCollection): ZoteroCollection {
+/** A collection with its library, as `zoteroLibraryId` names it: a key is unique only there. */
+export interface ZoteroLibraryCollection extends ZoteroCollection {
+  readonly libraryId: string;
+}
+
+export function collectionFromRaw(raw: ZoteroRawCollection): ZoteroLibraryCollection {
   const parent = raw.data.parentCollection;
   return {
     key: raw.data.key || raw.key,
     name: raw.data.name.trim() || "Untitled collection",
     parentCollectionKey: typeof parent === "string" && parent.trim() ? parent : null,
+    libraryId: zoteroLibraryId(raw.library),
   };
 }
 

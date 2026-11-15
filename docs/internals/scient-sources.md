@@ -3600,13 +3600,17 @@ and the agent's refresh result lists such a source even when nothing changed.
 
 Zotero collections are intake scopes when browsing, and arrive as a tree. A
 Zotero collection's ID here is a hash of its Zotero library and key
-(`zoteroCollectionId`), so every import, part and restart finds the same
-collection with no stored map. When a scoped import begins, the scope's
-collections are placed (`makeZoteroScopeCollections`: the chosen collection,
-its subcollections when included, the ones above them; empty ones too)
-without remaking what the person deleted here. Each imported item then joins
-the collection of every Zotero collection it is in, with `remake`, so a
-deleted one comes back only for a reference filed in it. A collection problem
+(`zoteroCollectionId`; the library as the collection reports it,
+`zoteroLibraryId`: `groups/<id>`, or the user ID, which Zotero on this
+computer gives only when it is signed in to sync and otherwise reports as
+`0`), so every import, part and restart finds the same collection with no
+stored map, and two accounts' collections stay apart. When a scoped import
+begins, the scope's collections are placed (`makeZoteroScopeCollections`: the
+chosen collection, its subcollections when included, the ones above them;
+empty ones too) without remaking what the person deleted here. Each imported
+item then joins the collection of every Zotero collection it is in, with
+`remake`, so a deleted one comes back only for a reference filed in it. A
+collection problem
 never fails the import: what could not be made or filled is a `collection`
 entry of "not brought" (`unmade` on the operation, `unfiled` on the item, or
 `unread` when Zotero did not list its collections). A refresh reads details,
