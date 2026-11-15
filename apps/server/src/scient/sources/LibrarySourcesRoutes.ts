@@ -1053,7 +1053,11 @@ export async function revertLibrarySource(
 
 export async function bulkUpdateLibrarySources(
   store: Store,
-  input: { readonly change: ScientSourcesBulkRequestChange; readonly partOf?: string },
+  input: {
+    readonly change: ScientSourcesBulkRequestChange;
+    readonly partOf?: string;
+    readonly partNumber?: number;
+  },
 ) {
   const change =
     "sourceIds" in input.change
@@ -1074,6 +1078,7 @@ export async function bulkUpdateLibrarySources(
     change,
     actor: ACTOR,
     ...(input.partOf ? { partOf: input.partOf } : {}),
+    ...(input.partNumber !== undefined ? { partNumber: input.partNumber } : {}),
   });
   if (changesSnapshots) {
     await afterChange(

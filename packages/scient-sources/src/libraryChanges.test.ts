@@ -4,7 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { bulkUpdateScientSources } from "./collections.ts";
 import {
@@ -25,6 +25,7 @@ import {
 const fixtures: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -68,6 +69,10 @@ describe("the Library's recent changes", () => {
     const root = NodePath.join(base, "scient", "library");
     await ensureScientLibrary(root);
     const library = scientLibraryLocation(root);
+    // The order asserted below is by time: a clock set after the import moves a second per change.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.UTC(2100, 0, 1);
+    const later = () => vi.setSystemTime((clock += 1000));
 
     // An import of two sources from a reference file, by an agent.
     const operationId = NodeCrypto.randomUUID();
@@ -108,18 +113,21 @@ describe("the Library's recent changes", () => {
     ).record!;
 
     // The first import's paper is merged into a later copy, the other is tagged, then removed.
+    later();
     const merged = await mergeScientLibrarySources({
       library,
       sourceIds: [other.sourceId, sleep],
       survivorId: other.sourceId,
     });
     if (merged.outcome !== "merged") throw new Error(`Not merged: ${merged.outcome}`);
+    later();
     const tagged = await bulkUpdateScientSources({
       root: library,
       change: { sourceIds: [soil, other.sourceId], addTags: ["Screened"] },
       actor: "user",
     });
     const soilNow = tagged.sources.find((entry) => entry.sourceId === soil)!;
+    later();
     await removeScientSource({
       root: library,
       sourceId: soil,

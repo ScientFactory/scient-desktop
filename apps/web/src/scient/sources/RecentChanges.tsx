@@ -102,8 +102,16 @@ export function RecentChangesDialog(props: {
       case "bulk-edit":
         return {
           label: RECENT_CHANGES_LABELS.undo,
-          // The panel says what was undone and what was left; the row then shows it too.
-          run: () => act(() => props.onUndoBulkEdit(change.parts.toReversed()).then(() => null)),
+          // Only what is not undone yet, in the edit's order: the panel undoes the newest part
+          // first and says what was undone and what was left; the row then shows it too.
+          run: () =>
+            act(() =>
+              props
+                .onUndoBulkEdit(
+                  change.parts.flatMap(({ undone, ...part }) => (undone ? [] : [part])),
+                )
+                .then(() => null),
+            ),
         };
       case "merge":
         return {
@@ -166,6 +174,19 @@ export function RecentChangesDialog(props: {
               {notice}
             </p>
           ) : null}
+          {listed !== null && error ? (
+            <p role="alert" className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
+              {RECENT_CHANGES_LABELS.reloadFailed}
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={working}
+                onClick={() => void load({ root, limit })}
+              >
+                {RECENT_CHANGES_LABELS.tryAgain}
+              </Button>
+            </p>
+          ) : null}
           {listed === null ? (
             <p role={error ? "alert" : "status"} className="text-sm text-muted-foreground">
               {error ? RECENT_CHANGES_LABELS.loadFailed : RECENT_CHANGES_LABELS.loading}
@@ -220,6 +241,8 @@ export function RecentChangesDialog(props: {
             >
               {RECENT_CHANGES_LABELS.showOlder}
             </Button>
+          ) : listed?.more ? (
+            <p className="mt-3 text-xs text-muted-foreground">{RECENT_CHANGES_LABELS.noOlder}</p>
           ) : null}
         </DialogPanel>
       </DialogPopup>

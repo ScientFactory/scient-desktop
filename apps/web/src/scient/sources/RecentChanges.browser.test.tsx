@@ -28,9 +28,10 @@ const changes: ReadonlyArray<ScientSourcesRecentChange> = [
     at,
     by: "user",
     parts: [
-      { batchId: "bulk_1", sourceCount: 100 },
-      { batchId: "bulk_2", sourceCount: 20 },
+      { batchId: "bulk_1", sourceCount: 100, undone: false },
+      { batchId: "bulk_2", sourceCount: 20, undone: false },
     ],
+    partsMissing: false,
     sourceCount: 120,
     tagsAdded: ["RCT"],
     tagsRemoved: [],
@@ -95,12 +96,13 @@ describe("Recent changes", () => {
       .toBeVisible();
     expect(mocks.read).toHaveBeenCalledWith(environmentId, { root: "/project", limit: 50 });
 
-    // A bulk edit sent in two requests is undone newest first, through the panel.
+    // A bulk edit sent in two requests goes to the panel's Undo in the edit's own order;
+    // that Undo takes the newest part first (bulkParts.test.ts).
     await userEvent.click(page.getByRole("button", { name: /^Undo: Added the tag RCT/u }));
     await vi.waitFor(() =>
       expect(handlers.onUndoBulkEdit).toHaveBeenCalledWith([
-        { batchId: "bulk_2", sourceCount: 20 },
         { batchId: "bulk_1", sourceCount: 100 },
+        { batchId: "bulk_2", sourceCount: 20 },
       ]),
     );
     await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
@@ -150,6 +152,48 @@ describe("Recent changes", () => {
     await expect
       .element(page.getByText("The other source is no longer in the Trash", { exact: false }))
       .toBeVisible();
+  });
+
+  it("undoes only what is left of an edit that was partly undone", async () => {
+    const edit = changes[1] as Extract<ScientSourcesRecentChange, { kind: "bulk-edit" }>;
+    const handlers = setup([
+      {
+        ...edit,
+        parts: [
+          { batchId: "bulk_1", sourceCount: 100, undone: false },
+          { batchId: "bulk_2", sourceCount: 20, undone: true },
+        ],
+      },
+    ]);
+    await using _screen = await render(dialog(handlers), { router: false });
+
+    await userEvent.click(page.getByRole("button", { name: /^Undo: Added the tag RCT/u }));
+    await vi.waitFor(() =>
+      expect(handlers.onUndoBulkEdit).toHaveBeenCalledWith([
+        { batchId: "bulk_1", sourceCount: 100 },
+      ]),
+    );
+  });
+
+  it("says when the list could not be read again after an action, and reads it on request", async () => {
+    const handlers = setup();
+    await using _screen = await render(dialog(handlers), { router: false });
+    await expect.element(page.getByText("Added the tag RCT: 120 sources")).toBeVisible();
+
+    mocks.read.mockRejectedValueOnce(new Error("offline"));
+    await userEvent.click(page.getByRole("button", { name: /^Restore: Moved/u }));
+    await expect
+      .element(page.getByText("The list could not be read again", { exact: false }))
+      .toBeVisible();
+    // The rows stay, as they were when last read.
+    await expect.element(page.getByText("Added the tag RCT: 120 sources")).toBeVisible();
+
+    mocks.read.mockResolvedValue({ changes: changes.slice(1), more: false });
+    await userEvent.click(page.getByRole("button", { name: "Try again" }));
+    await expect.element(page.getByRole("button", { name: /^Restore/u })).not.toBeInTheDocument();
+    await expect
+      .element(page.getByText("The list could not be read again", { exact: false }))
+      .not.toBeInTheDocument();
   });
 
   it("shows a read-only session the changes without Undo or Restore, and older ones on request", async () => {

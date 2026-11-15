@@ -6,6 +6,7 @@ import type { ScientLibraryRecentChange, ScientLibraryRecentChanges } from "./mo
 import {
   listScientSourceIds,
   listScientSourceImports,
+  readScientSourceImport,
   readScientSourcesRemovedByPerson,
 } from "./store.ts";
 
@@ -29,12 +30,11 @@ export async function listScientLibraryImportSources(
   library: ScientLibraryLocation,
   operationId: string,
 ): Promise<ReadonlyArray<string>> {
-  const [imports, present, aliases] = await Promise.all([
-    listScientSourceImports(library, Number.MAX_SAFE_INTEGER),
+  const [found, present, aliases] = await Promise.all([
+    readScientSourceImport(library, operationId),
     listScientSourceIds(library),
     readScientLibraryAliases(library),
   ]);
-  const found = imports.find((entry) => entry.operationId === operationId);
   return found ? availableNow(found.importedSourceIds, aliases, present) : [];
 }
 
@@ -74,6 +74,7 @@ export async function listScientLibraryRecentChanges(
       at: edit.at,
       by: edit.by,
       parts: edit.parts,
+      partsMissing: edit.partsMissing,
       sourceCount: edit.sourceIds.length,
       tagsAdded: edit.tagsAdded,
       tagsRemoved: edit.tagsRemoved,
@@ -115,6 +116,12 @@ export async function listScientLibraryRecentChanges(
       title: entry.record.title,
       revision: entry.record.revision,
     })),
-  ].toSorted((left, right) => (left.at < right.at ? 1 : -1));
+    // Newest first; changes of the same instant keep one fixed order.
+  ].toSorted(
+    (left, right) =>
+      right.at.localeCompare(left.at) ||
+      left.kind.localeCompare(right.kind) ||
+      left.id.localeCompare(right.id),
+  );
   return { changes: changes.slice(0, limit), more: changes.length > limit };
 }

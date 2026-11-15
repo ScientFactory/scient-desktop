@@ -336,11 +336,11 @@ export function useSourcesOrganize(input: {
       () =>
         runParts({
           parts: parts.map((part) => part.sourceIds),
-          send: (sourceIds) =>
+          send: (sourceIds, index) =>
             bulkUpdateScientSources(input.environmentId, {
               root: input.root,
               change: { ...change, sourceIds },
-              ...(parts.length > 1 ? { partOf } : {}),
+              ...(parts.length > 1 ? { partOf, partNumber: index + 1 } : {}),
             }),
           isLost: isLostAnswerError,
           onProgress: showDone,

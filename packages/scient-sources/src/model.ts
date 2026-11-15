@@ -509,7 +509,11 @@ export const ScientLibraryRecentChange = Schema.Union([
     /** The newest request's batch ID; `parts` has every request of the edit, oldest first. */
     id: NonEmptyString,
     ...RecentChangeBase,
-    parts: Schema.Array(Schema.Struct({ batchId: NonEmptyString, sourceCount: Schema.Int })),
+    parts: Schema.Array(
+      Schema.Struct({ batchId: NonEmptyString, sourceCount: Schema.Int, undone: Schema.Boolean }),
+    ),
+    /** The oldest requests of the edit are no longer kept; the counts are of what remains. */
+    partsMissing: Schema.Boolean,
     sourceCount: Schema.Int,
     tagsAdded: Schema.Array(Schema.String),
     tagsRemoved: Schema.Array(Schema.String),

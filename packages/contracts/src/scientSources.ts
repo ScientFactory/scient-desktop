@@ -799,8 +799,10 @@ export type ScientSourcesMoveStatus = typeof ScientSourcesMoveStatus.Type;
 export const ScientSourcesBulkUpdateRequest = Schema.Struct({
   root: NonEmptyString,
   change: ScientSourcesBulkRequestChange,
-  /** The same value on every request of one edit sent in parts, so it is listed as one. */
+  /** The same name on every request of one edit sent in parts, so it is listed as one. */
   partOf: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(80))),
+  /** Which request of that edit this is, from 1. */
+  partNumber: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 });
 export type ScientSourcesBulkUpdateRequest = typeof ScientSourcesBulkUpdateRequest.Type;
 export const ScientSourcesAddByIdentifierRequest = Schema.Struct({

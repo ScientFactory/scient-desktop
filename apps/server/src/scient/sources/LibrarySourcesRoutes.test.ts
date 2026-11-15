@@ -24,7 +24,7 @@ import {
   removeScientSource,
   updateScientSourceNote,
 } from "@scientfactory/scient-sources/store";
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import {
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateResult,
@@ -64,6 +64,7 @@ const fixtures: string[] = [];
 const ada = { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null };
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -244,14 +245,22 @@ describe("Library routes on the library backend", () => {
       const fixture = yield* Effect.promise(setup);
       const { a, b, c } = yield* Effect.promise(() => threeSources(fixture));
       const store = yield* storeFor(fixture, "write");
-      const tag = (sourceIds: ReadonlyArray<string>) =>
+      const tag = (sourceIds: ReadonlyArray<string>, partNumber: number) =>
         bulkUpdateLibrarySources(store, {
           change: { sourceIds: [...sourceIds], addTags: ["Screened"] },
           partOf: "edit_one",
+          partNumber,
         });
       yield* Effect.promise(async () => {
-        await tag([a.sourceId]);
-        await tag([b.sourceId]);
+        // The list is ordered by time: a clock set after the fixture moves a second per change.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        let clock = Date.UTC(2100, 0, 1);
+        const later = () => vi.setSystemTime((clock += 1000));
+        later();
+        await tag([a.sourceId], 1);
+        later();
+        await tag([b.sourceId], 2);
+        later();
         const removed = await removeLibrarySource(store, {
           sourceId: a.sourceId,
           expectedRevision: a.revision + 1,
@@ -274,6 +283,7 @@ describe("Library routes on the library backend", () => {
           { kind: "trash", id: c.sourceId, title: "Fluid balance" },
         ]);
         expect((await libraryRecentChanges(store, { limit: 1 })).more).toBe(true);
+        vi.useRealTimers();
       });
     }),
   );

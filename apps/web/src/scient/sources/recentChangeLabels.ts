@@ -11,6 +11,9 @@ export const RECENT_CHANGES_LABELS = {
   none: "No recorded changes yet.",
   loading: "Reading changes…",
   loadFailed: "The changes could not be read. Close and open this again to retry.",
+  reloadFailed: "The list could not be read again, so it may be out of date.",
+  tryAgain: "Try again",
+  noOlder: "Older changes are not shown here: the list holds the newest 400.",
   undo: "Undo",
   restore: "Restore",
   showSources: "Show sources",
@@ -55,7 +58,11 @@ function bulkEditSentence(change: Extract<ScientSourcesRecentChange, { kind: "bu
     ]),
   ];
   const what = parts.length > 0 ? parts.join(", ") : "edited";
-  return `${what[0]!.toUpperCase()}${what.slice(1)}: ${sources(change.sourceCount)}`;
+  const sentence = `${what[0]!.toUpperCase()}${what.slice(1)}: ${sources(change.sourceCount)}`;
+  // Only the latest 250 requests are kept, so an old, large edit can have lost its first ones.
+  return change.partsMissing
+    ? `${sentence} (the rest of a larger edit; its earlier part is no longer on record)`
+    : sentence;
 }
 
 /** One sentence for the change. */

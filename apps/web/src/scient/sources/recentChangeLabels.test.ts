@@ -9,7 +9,8 @@ const bulk: Extract<ScientSourcesRecentChange, { kind: "bulk-edit" }> = {
   id: "bulk_1",
   at,
   by: "user",
-  parts: [{ batchId: "bulk_1", sourceCount: 40 }],
+  parts: [{ batchId: "bulk_1", sourceCount: 40, undone: false }],
+  partsMissing: false,
   sourceCount: 40,
   tagsAdded: ["RCT"],
   tagsRemoved: [],
@@ -47,6 +48,12 @@ describe("the words of a recent change", () => {
       }),
     ).toBe(
       "Added 2 tags, removed the tag old, changed the type, added to the collection Methods, removed from a deleted collection: 1 source",
+    );
+  });
+
+  it("says when the first requests of an old, large edit are no longer on record", () => {
+    expect(recentChangeSentence({ ...bulk, partsMissing: true })).toBe(
+      "Added the tag RCT: 40 sources (the rest of a larger edit; its earlier part is no longer on record)",
     );
   });
 

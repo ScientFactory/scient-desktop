@@ -996,7 +996,10 @@ export async function listScientLibraryRecentMerges(
 > {
   const paths = await libraryPaths(library);
   const newest = [...(await readLibraryAliasesAt(paths.root)).values()]
-    .toSorted((left, right) => (left.mergedAt < right.mergedAt ? 1 : -1))
+    .toSorted(
+      (left, right) =>
+        right.mergedAt.localeCompare(left.mergedAt) || left.mergeId.localeCompare(right.mergeId),
+    )
     .slice(0, limit);
   const trashed = await trashFileNames(paths);
   const listed = [];
