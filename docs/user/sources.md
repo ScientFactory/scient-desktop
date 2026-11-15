@@ -411,6 +411,21 @@ sent to a library other than the one it came from gets a new item there and is
 linked to it from then on. Scient refuses to send to a group the key can only
 read.
 
+For a source with a PDF, **Send to Zotero** also offers **Include PDF**. It is
+off when the Sources panel opens and stays as you set it while the panel is
+open. With it on, each PDF the Zotero item does not already have is uploaded
+to Zotero's file storage and attached to the item; a PDF Zotero already has
+(the same file) is not sent again. The message after sending says for each PDF
+whether it was added, was already there, or was not sent and why: the key in
+Accounts does not allow files (on zotero.org, give the key access to files),
+the group does not let the key add files, your Zotero storage is full, or
+zotero.org could not be reached (send again to finish; Scient fills the same
+attachment rather than making a second one). When Zotero links to a file of
+the same name on your computer, Scient does not upload a second copy. The
+details are sent either way. Highlights and comments are not sent. Files go to
+Zotero's own storage even if you sync your Zotero files with WebDAV, and count
+towards that storage.
+
 Long imports can continue in the background. Completed items remain saved, and
 an interrupted import can resume when the Library reopens. An item that is
 already in your Library, by the rule in [Possible duplicates](#possible-duplicates),

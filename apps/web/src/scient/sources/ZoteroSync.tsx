@@ -64,6 +64,8 @@ export function useZoteroSync(input: {
   const [refresh, setRefresh] = useState<RefreshState | null>(null);
   const [resolving, setResolving] = useState<string | null>(null);
   const [writableGroups, setWritableGroups] = useState<ReadonlyArray<ZoteroGroup>>([]);
+  // "With PDF" in the Send menu: off when the panel opens, then as the person left it.
+  const [sendPdfs, setSendPdfs] = useState(false);
   const groupsRequested = useRef(false);
   // A refresh still running when the dialog closes must not reopen it.
   const run = useRef(0);
@@ -189,14 +191,24 @@ export function useZoteroSync(input: {
           root: input.root,
           sourceIds: [sourceId],
           ...(groupId ? { groupId } : {}),
+          ...(sendPdfs ? { pdfs: true } : {}),
         })
       ).items;
       if (item?.outcome === "created" || item?.outcome === "updated") await input.onChanged();
+      const pdfLines = (item?.pdfs ?? []).map((pdf) =>
+        pdf.outcome === "sent"
+          ? `“${pdf.fileName}” was added.`
+          : pdf.outcome === "in-zotero"
+            ? `Zotero already has “${pdf.fileName}”.`
+            : [`“${pdf.fileName}” was not sent.`, pdf.message ?? ""].join(" ").trim(),
+      );
+      const description = [item?.message ?? "", ...pdfLines].join(" ").trim();
       toastManager.add({
         type:
-          item?.outcome === "created" ||
-          item?.outcome === "updated" ||
-          item?.outcome === "unchanged"
+          (item?.outcome === "created" ||
+            item?.outcome === "updated" ||
+            item?.outcome === "unchanged") &&
+          !item.pdfs?.some((pdf) => pdf.outcome === "not-sent")
             ? "success"
             : "warning",
         title:
@@ -207,7 +219,7 @@ export function useZoteroSync(input: {
               : item?.outcome === "unchanged"
                 ? "Zotero already has this source"
                 : "Not sent to Zotero",
-        description: item?.message ?? undefined,
+        description: description || undefined,
       });
     } catch (cause) {
       toastManager.add({
@@ -228,6 +240,8 @@ export function useZoteroSync(input: {
       setRefresh(null);
     },
     sendToZotero,
+    sendPdfs,
+    setSendPdfs,
     writableGroups,
     loadWritableGroups,
   };
