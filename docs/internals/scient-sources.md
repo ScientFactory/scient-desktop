@@ -3850,6 +3850,17 @@ them, and a crash leaves at most one per interrupted write.
 - `libraryRules.cases.test.ts`: the short sequences those runs found, kept as
   regressions.
 
+The long forms (`LIBRARY_RULES_SEEDS=300 LIBRARY_RULES_STEPS=150` and
+`LIBRARY_CRASH_SWEEP=full`) run on main in
+`.github/workflows/scient-library-deep-tests.yml`: every night on Linux, every
+Monday on macOS and Windows, and on all three when started by hand. They run on
+no pull request and are no required check. On Windows only the random hunt
+runs: a process that kills itself there is not reported as killed by a signal,
+which is how the crash test knows its worker stopped where it should. GitHub
+reports a failed run to the person who added the workflow or last changed its
+schedule. Each failure names its seed or its part of the sweep, with the
+command that runs that one again on a developer's computer.
+
 This is bounded coverage of process death on one machine's file system, not a
 proof of every schedule and not a power-cut test.
 
