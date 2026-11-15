@@ -779,16 +779,22 @@ who made each one (you or an agent) and what can be done about it now:
 
 - **A bulk change:** what it did and to how many sources, with **Undo**. A
   change that was sent in several parts is one line and is undone as one. Undo
-  leaves a source that changed since as it is and says how many it left; the
-  line then reads "Undone; _N_ changed since and were left".
+  does not reverse what you decided later: a tag that was added to a paper or
+  removed from it after the bulk change stays as it is, and so does a type
+  that was changed since. The line then reads "Undone; _N_ changed since and
+  were left". Collections keep no record of when each paper joined, so Undo of
+  a collection change puts back the members the bulk change added or removed
+  wherever they still are. When only the later parts of an old, large change
+  are still on record, the line says so and Undo covers those.
 - **A merge:** the two papers, with **Undo**, or why it can no longer be
-  undone.
+  undone. A pair that was merged, undone and merged again is listed once.
 - **An import** from Zotero, a reference file or PDF files: how many sources it
   brought, and how many of them are in the Library now if some were merged or
   removed since. **Show sources** lists them.
 - **A source in the Trash**, with **Restore**.
 
-This is not a full history. Edits to one paper are in that paper's **History**.
+This is not a full history, and it shows the 400 newest changes at most. Edits
+to one paper are in that paper's **History**.
 Changes to reading status and stars, and removals from a project, are not
 recorded. A restored source leaves the Trash and this list. Package imports,
 the move of a project into your Library and "not duplicates" decisions stay

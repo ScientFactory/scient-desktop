@@ -2466,10 +2466,19 @@ narrowed to an import's sources.
 
 - **Bulk edits** come from `listScientSourcesBulkEdits`. A selection larger
   than one request is sent in parts of 100, one receipt each; the panel gives
-  every request of one edit the same `partOf`, stored in the receipt, and the
-  list groups by it. Receipts written before `partOf` list one per request.
-  `left` on a receipt counts what an Undo left as it was, so a finished Undo
-  with conflicts is not listed as plainly undone.
+  every request of one edit the same `partOf` and its `partNumber`, stored in
+  the receipt, and the list groups by actor and `partOf`. Receipts without
+  `partOf` list one per request. The newest 250 receipts are kept, so an old
+  edit can lose its first requests: a group whose lowest number is above 1 is
+  listed as `partsMissing`. Each part carries whether it is undone, and the
+  panel sends Undo only for those that are not.
+- **What an Undo left.** An entry Undo leaves as it was gets `kept` in the
+  same receipt write that marks it done, and the list counts those, so a
+  finished Undo with conflicts is not listed as plainly undone. Undo leaves a
+  tag whose presence on the source changed after the bulk edit
+  (`readScientSourceTagsAfter` reads the source's kept revisions; when one in
+  between is gone, every tag of the edit is left) and a type changed since.
+  Collection membership has no per-member history and is undone by value.
 - **Merges** are found through `aliases.json` (one file) and only the listed
   merges' receipts are read; a pair merged, undone and merged again is listed
   once, by its latest merge.
@@ -3254,7 +3263,9 @@ single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
 an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a named test. No gaps are left.
+`libraryParity.test.ts` lists each gap as a named test. One gap stands: the
+Recent changes list (`scientSources.recentChanges`), whose agent side waits for
+a new input on the list tool.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is
@@ -3296,8 +3307,9 @@ apart from the stores (`libraryModel.ts`).
    other; doing the action again finishes it.
 
 Limits, by design: an import keeps the items it finished; importing a deleted
-paper again on purpose brings it back; Undo keeps newer edits and stops being
-available once the Trash is emptied; history is bounded (50 revisions per
+paper again on purpose brings it back; a merge's Undo keeps newer edits and
+ends when the merged paper, or the merged copy by name, is deleted for good
+(emptying the Trash does not end it); history is bounded (50 revisions per
 source, 20 project note versions and the first).
 
 **What a write guarantees.** JSON and PDF files are written to a temporary
