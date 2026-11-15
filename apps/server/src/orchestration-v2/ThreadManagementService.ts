@@ -376,11 +376,12 @@ export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<Thre
       case "failed":
         return "Failed to update the awaited background work.";
       case "unmatched":
+        // SCIENT-FORK:START — background-wait recovery: a refusal names the tasks that do run.
         return (
           "None of these IDs is running background work on this thread, so this request registers no wait for them. If the task already finished, read its output now. Otherwise pass the task ID of a background command or Monitor you started. Subagent, Agent tool, and delegate_task IDs don't go here." +
-          // SCIENT-FORK: background-wait recovery: a refusal names the tasks that do run.
           runningBackgroundTasksHint(this.running ?? [])
         );
+      // SCIENT-FORK:END
     }
   }
 }
@@ -526,8 +527,9 @@ export interface ThreadManagementServiceShape {
     {
       readonly matched: ReadonlyArray<string>;
       readonly unmatched: ReadonlyArray<string>;
-      // SCIENT-FORK: background-wait recovery: finished ids need no wait.
+      // SCIENT-FORK:START — background-wait recovery: finished ids need no wait.
       readonly settled?: ReadonlyArray<string>;
+      // SCIENT-FORK:END
     },
     ThreadManagementBackgroundWaitError
   >;
@@ -1648,11 +1650,12 @@ const make = Effect.gen(function* () {
         reason: "unsupported",
       });
     }
-    // SCIENT-FORK: background-wait recovery: finished ids and the live roster.
     const {
       matched,
+      // SCIENT-FORK:START — background-wait recovery: finished ids and the live roster.
       settled = [],
       running = [],
+      // SCIENT-FORK:END
     } = yield* runtime.value
       .awaitBackgroundTasks({ providerThread, taskIds: input.taskIds, awaited: input.awaited })
       .pipe(

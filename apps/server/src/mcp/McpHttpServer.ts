@@ -1347,8 +1347,9 @@ const withToolAnalytics =
               ? {
                   settings: {
                     ...handoffSettings(tool, args, result?.structuredContent),
-                    // SCIENT-FORK: a refused delegation reports the target it asked for.
+                    // SCIENT-FORK:START — a refused delegation reports the target it asked for.
                     ...refusedDelegateTarget(tool, args, outcome, providers),
+                    // SCIENT-FORK:END
                   },
                 }
               : {}),

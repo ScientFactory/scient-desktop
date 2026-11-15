@@ -212,8 +212,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
-          // SCIENT-FORK: background-wait recovery: offer the wait tool only where it works.
+          // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
           backgroundWait: request.backgroundWait === true,
+          // SCIENT-FORK:END
         },
         client: undefined,
         // SCIENT-FORK:START — the caller's explicit grant is the whole grant; no base

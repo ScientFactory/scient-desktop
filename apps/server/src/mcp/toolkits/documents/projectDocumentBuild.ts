@@ -81,10 +81,9 @@ const relativeInside = (root: string, candidate: string, path: Path.Path): strin
     : undefined;
 
 /**
- * A requested project path as project-relative text. Relative input is returned as given; an
- * absolute path is accepted only inside the project, compared with the root as bound and as
- * resolved (macOS `/var` is `/private/var`), keeping the last component as written so a link
- * stays the link. Undefined means the path is not inside this project.
+ * Project-relative text for a requested path, or undefined outside the project. An absolute path
+ * is compared with the root as bound and as resolved (macOS `/var` is `/private/var`) through its
+ * nearest existing ancestor; the components after it stay as written, so a link stays the link.
  */
 export const projectRelativePath = Effect.fn("ProjectDocumentBuild.projectRelativePath")(function* (
   roots: ReadonlyArray<string>,
@@ -99,9 +98,15 @@ export const projectRelativePath = Effect.fn("ProjectDocumentBuild.projectRelati
     const relative = relativeInside(root, requestedPath, path);
     if (relative !== undefined) return relative;
   }
-  const parent = yield* fileSystem.realPath(path.dirname(requestedPath)).pipe(Effect.option);
-  if (Option.isNone(parent)) return undefined;
-  const resolved = path.join(parent.value, path.basename(requestedPath));
+  let ancestor = path.dirname(requestedPath);
+  let canonicalAncestor = yield* fileSystem.realPath(ancestor).pipe(Effect.option);
+  while (Option.isNone(canonicalAncestor)) {
+    const next = path.dirname(ancestor);
+    if (next === ancestor) return undefined;
+    ancestor = next;
+    canonicalAncestor = yield* fileSystem.realPath(ancestor).pipe(Effect.option);
+  }
+  const resolved = path.join(canonicalAncestor.value, path.relative(ancestor, requestedPath));
   for (const root of roots) {
     const relative = relativeInside(root, resolved, path);
     if (relative !== undefined) return relative;

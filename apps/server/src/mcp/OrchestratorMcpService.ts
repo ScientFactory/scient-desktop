@@ -1282,8 +1282,9 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(project.defaultModelSelection);
   const secretRequests = yield* SecretRequests.SecretRequests;
-  // SCIENT-FORK: ID recovery: a task miss names the thread that owns the task.
+  // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
   const projectionSql = Option.getOrUndefined(yield* Effect.serviceOption(SqlClient.SqlClient));
+  // SCIENT-FORK:END
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1707,8 +1708,7 @@ const make = Effect.gen(function* () {
     }
 
     const inheritedSelection = input.parent.thread.modelSelection;
-    // SCIENT-FORK:START — delegate target recovery: resolves and checks the requested model,
-    // replacing T3's later requireAdvertisedModel call.
+    // SCIENT-FORK:START — delegate target recovery: the same model without its account prefix.
     const requestedModel =
       input.target?.model === undefined
         ? undefined
@@ -1725,6 +1725,7 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
+    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
@@ -1779,23 +1780,30 @@ const make = Effect.gen(function* () {
         : yield* findDelegatedTaskOwner(projectionSql, taskId);
     if (owner === undefined || owner.threadId === scope.thread.threadId)
       return yield* failure("task_not_found", message);
-    const [caller, ownerShell] = yield* Effect.all([
-      threadManagement.getThreadShell(scope.thread.threadId),
-      threadManagement.getThreadShell(owner.threadId),
-    ]).pipe(Effect.orElseSucceed(() => [null, null] as const));
-    if (
-      caller === null ||
-      ownerShell === null ||
-      ownerShell.deletedAt !== null ||
-      ownerShell.projectId !== caller.projectId
-    )
-      return yield* failure("task_not_found", message);
+    const shellOrNull = (threadId: ThreadId) =>
+      threadManagement.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    const caller = yield* shellOrNull(scope.thread.threadId);
+    // Owner and child move between projects independently, so each is checked on its own.
+    const readable = Effect.fn("OrchestratorMcpService.taskNotFound.readable")(function* (
+      threadId: ThreadId | null,
+    ) {
+      if (caller === null || threadId === null) return undefined;
+      const shell = yield* shellOrNull(threadId);
+      return shell !== null && shell.deletedAt === null && shell.projectId === caller.projectId
+        ? shell
+        : undefined;
+    });
+    const ownerShell = yield* readable(owner.threadId);
+    if (ownerShell === undefined) return yield* failure("task_not_found", message);
+    const childShell = yield* readable(owner.childThreadId);
     return yield* failure(
       "task_not_found",
       message +
         delegatedTaskOwnerHint(
           threadLinkFor(scope, ownerShell.id, ownerShell.title),
-          owner.childThreadId === null ? undefined : threadLinkFor(scope, owner.childThreadId),
+          childShell === undefined
+            ? undefined
+            : threadLinkFor(scope, childShell.id, childShell.title),
         ),
     );
   });
@@ -1819,8 +1827,9 @@ const make = Effect.gen(function* () {
         candidate.threadId === scope.thread.threadId,
     );
     if (task === undefined || (task.childThreadId === null && task.remoteChild === undefined)) {
-      // SCIENT-FORK: ID recovery: a task miss names the thread that owns the task.
+      // SCIENT-FORK:START — ID recovery: a task miss names the thread that owns the task.
       return yield* taskNotFound(scope, taskId);
+      // SCIENT-FORK:END
     }
     if (task.childThreadId === null) {
       return yield* readRemoteTask(scope, task, waitTimedOut, acknowledgeTerminal);

@@ -77,8 +77,9 @@ const threadMetadataDependencies = [
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    // SCIENT-FORK: delegate target recovery: only listed, runnable pairs work.
+    // SCIENT-FORK:START — delegate target recovery: only listed, runnable pairs work.
     "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Use a model `id` with its own `providerInstanceId`, where `canRunChildTask` is true.",
+  // SCIENT-FORK:END
   parameters: OrchestratorMcpCapabilitiesInput,
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
@@ -146,8 +147,9 @@ const WorkflowStopTool = Tool.make("scient_workflow_stop", {
 
 const BackgroundWaitTool = Tool.make("scient_background_wait", {
   description:
-    // SCIENT-FORK: background-wait recovery: the ID exists only once the start result returns.
+    // SCIENT-FORK:START — background-wait recovery: the ID exists only once the start result returns.
     "Keep this thread in Working while background work runs. In a later response than the start, pass the ID its result shows: `taskIds: [id]`. Not for work left running (dev server, watcher). `waiting=false` clears. Doesn't stop tasks.",
+  // SCIENT-FORK:END
   parameters: Schema.Struct({
     taskIds: Schema.Array(TrimmedNonEmptyString).check(
       Schema.isMinLength(1),
@@ -174,8 +176,9 @@ const BackgroundWaitTool = Tool.make("scient_background_wait", {
   // Only marks which tasks keep the thread Working; Claude Plan mode blocks tools without this.
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  // SCIENT-FORK: background-wait recovery: offer the wait tool only where it works.
+  // SCIENT-FORK:START — background-wait recovery: offer the wait tool only where it works.
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.shownWithBackgroundWait);
+// SCIENT-FORK:END
 
 const ScheduleTaskTool = Tool.make("schedule_task", {
   description:

@@ -660,8 +660,8 @@ describe("Scient PDF build handler", () => {
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-pdf-absolute-"));
       yield* Effect.promise(() => writeHtml(root));
-      // macOS temp folders are /var/… as agents see them and /private/var/… once resolved.
-      const spelled = root.replace(/^\/private(?=\/var\/)/u, "");
+      // macOS temp folders are /var/… or /tmp/… as agents see them, /private/… once resolved.
+      const spelled = root.replace(/^\/private(?=\/(?:var|tmp)\/)/u, "");
       const projectId = ProjectId.make("project-pdf-absolute");
       const threadId = ThreadId.make("thread-pdf-absolute");
       const query = makeQuery({

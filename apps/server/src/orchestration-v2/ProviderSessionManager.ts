@@ -989,8 +989,9 @@ export const layerWithOptions = (
                 resolved.thread.providerInstanceId === providerInstanceId &&
                 // A credential issued while the lineage read failed is replaced once it works.
                 (resolved.thread.subagent === true) === subagent &&
-                // SCIENT-FORK: background-wait recovery: the credential records wait support.
+                // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
                 (resolved.thread.backgroundWait === true) === backgroundWait &&
+                // SCIENT-FORK:END
                 // Reuse binds the whole explicit policy, including owned Scient operations.
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
@@ -1054,8 +1055,9 @@ export const layerWithOptions = (
               browserToolsAvailable,
               capabilities,
               subagent,
-              // SCIENT-FORK: background-wait recovery: the credential records wait support.
+              // SCIENT-FORK:START — background-wait recovery: the credential records wait support.
               backgroundWait,
+              // SCIENT-FORK:END
               ...(capabilities.has("skills:read")
                 ? {
                     skillScope: {

@@ -228,18 +228,44 @@ describe("OrchestratorMcpService delegate target recovery", () => {
 });
 
 describe("OrchestratorMcpService task ID recovery", () => {
-  it.effect.each([
-    { name: "names its owner in the same project", ownerProject: projectId, hinted: true },
+  const otherProject = ProjectId.make("project:other");
+  const cases: ReadonlyArray<{
+    readonly name: string;
+    readonly owner: ProjectId;
+    readonly child: ProjectId;
+    readonly childDeleted?: true;
+    readonly hint: "both" | "owner" | "none";
+  }> = [
+    { name: "names its owner and child", owner: projectId, child: projectId, hint: "both" },
     {
-      name: "says nothing about a task in another project",
-      ownerProject: ProjectId.make("project:other"),
-      hinted: false,
+      name: "hides an owner in another project",
+      owner: otherProject,
+      child: projectId,
+      hint: "none",
     },
-  ])("a task_status miss $name", ({ ownerProject, hinted }) =>
+    { name: "hides a child moved away", owner: projectId, child: otherProject, hint: "owner" },
+    {
+      name: "hides a deleted child",
+      owner: projectId,
+      child: projectId,
+      childDeleted: true,
+      hint: "owner",
+    },
+  ];
+  it.effect.each(
+    (["task_status", "task_cancel"] as const).flatMap((tool) =>
+      cases.map((testCase) => ({ tool, ...testCase })),
+    ),
+  )("a $tool miss $name", ({ tool, owner, child, childDeleted, hint }) =>
     Effect.gen(function* () {
       const ownerThreadId = ThreadId.make("thread:g5-owner");
-      const shell = (id: ThreadId, project: ProjectId, title: string) =>
-        ({ id, projectId: project, title, deletedAt: null }) as never;
+      const shell = (id: ThreadId, project: ProjectId, title: string, deleted = false) =>
+        ({
+          id,
+          projectId: project,
+          title,
+          deletedAt: deleted ? "2026-11-15T00:00:00.000Z" : null,
+        }) as never;
       const layer = serviceLayer({
         providers: [provider(codexInstanceId, "codex", ["gpt-5.4"])],
         threads: {
@@ -247,8 +273,10 @@ describe("OrchestratorMcpService task ID recovery", () => {
           getThreadShell: (threadId) =>
             Effect.succeed(
               threadId === ownerThreadId
-                ? shell(ownerThreadId, ownerProject, "Owner")
-                : shell(parentThreadId, projectId, "Parent"),
+                ? shell(ownerThreadId, owner, "Owner")
+                : threadId === childThreadId
+                  ? shell(childThreadId, child, "Child", childDeleted === true)
+                  : shell(parentThreadId, projectId, "Parent"),
             ),
         },
       });
@@ -258,11 +286,13 @@ describe("OrchestratorMcpService task ID recovery", () => {
           (subagent_id, thread_id, parent_node_id, provider, child_thread_id, origin, status, updated_at, payload_json)
           VALUES (${taskId}, ${ownerThreadId}, 'node:g5-owner-root', 'codex', ${childThreadId}, 'app_owned', 'running', '2026-11-15T00:00:00.000Z', '{}')`;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        return yield* Effect.flip(service.taskStatus(scope, taskId));
+        return tool === "task_status"
+          ? yield* Effect.flip(service.taskStatus(scope, taskId))
+          : yield* Effect.flip(service.cancelTask(scope, { taskId }));
       }).pipe(Effect.provide(layer));
       assert.equal(error.code, "task_not_found");
-      assert.equal(error.message.includes("only that thread can read or cancel it"), hinted);
-      assert.equal(error.message.includes(childThreadId), hinted);
+      assert.equal(error.message.includes(ownerThreadId), hint !== "none", error.message);
+      assert.equal(error.message.includes(childThreadId), hint === "both", error.message);
     }),
   );
 });

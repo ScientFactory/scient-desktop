@@ -5985,8 +5985,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     instanceId: adapterOptions.instanceId,
     driver: CLAUDE_PROVIDER,
     mcpSessionInjection: true,
-    // SCIENT-FORK: background-wait recovery: sessions implement awaitBackgroundTasks.
+    // SCIENT-FORK:START — background-wait recovery: sessions implement awaitBackgroundTasks.
     backgroundWait: Effect.succeed(true),
+    // SCIENT-FORK:END
     getCapabilities: Effect.fn("ClaudeAdapterV2.getCapabilities")(function () {
       return Effect.succeed(ClaudeProviderCapabilitiesV2);
     }),
@@ -10678,12 +10679,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.nativeThreadId,
               message.task_id,
             );
-            // SCIENT-FORK: background-wait recovery: a registration after this reads as finished.
+            // SCIENT-FORK:START — background-wait recovery: a registration after this reads as finished.
             rememberSettledBackgroundTask(
               settledBackgroundTasks,
               message.task_id,
               input.nativeThreadId,
             );
+            // SCIENT-FORK:END
             yield* clearTaskIdFromNativeThreadSet(
               wakeEligibleBackgroundTasksByNativeThread,
               input.nativeThreadId,
@@ -15168,8 +15170,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 nativeThreadId,
                 active?.nativeThreadId === nativeThreadId ? active : null,
               );
-              // SCIENT-FORK: background-wait recovery: report finished ids beside the matched ones.
+              // SCIENT-FORK:START — background-wait recovery: report finished ids beside the matched ones.
               return waitOutcome;
+              // SCIENT-FORK:END
             },
             (effect) => sdkMessageLock.withPermits(1)(effect),
           ),

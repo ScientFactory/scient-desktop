@@ -1043,8 +1043,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     };
 
     const shellInfo = new Map<string, Shell.Info>();
-    // SCIENT-FORK: background-wait recovery: shell id → thread state it finished on.
+    // SCIENT-FORK:START — background-wait recovery: shell id → thread state it finished on.
     const settledShells = new Map<string, ThreadState>();
+    // SCIENT-FORK:END
     const shells = new Map<
       string,
       {
@@ -1833,8 +1834,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     ) {
       const shell = shells.get(id);
       if (shell === undefined) return;
-      // SCIENT-FORK: background-wait recovery: a registration after this reads as finished.
+      // SCIENT-FORK:START — background-wait recovery: a registration after this reads as finished.
       if (status !== "running") rememberSettledBackgroundTask(settledShells, id, shell.state);
+      // SCIENT-FORK:END
       if (shell.turn === undefined || shell.toolId === undefined || shell.tool === undefined) {
         const updatedAt = yield* DateTime.now;
         yield* emit({
@@ -4432,8 +4434,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         // SCIENT-FORK:END
         mcpAvailable
           ? agentCopy(
-              // SCIENT-FORK: background-wait recovery: the ID exists only once the start result returns.
+              // SCIENT-FORK:START — background-wait recovery: the ID exists only once the start result returns.
               "To wait for a background shell you started (tests, a build), call `t3_background_wait` with `taskIds: [id]` in a later response, once the start result shows the shell ID, before you end your turn. Do not mark work you leave running, or PRs.",
+              // SCIENT-FORK:END
             )
           : undefined,
       ]
@@ -5297,8 +5300,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             shell.awaited = awaited;
             yield* syncRosterAncestors(shell.state);
           }
-          // SCIENT-FORK: background-wait recovery: report finished ids beside the matched ones.
+          // SCIENT-FORK:START — background-wait recovery: report finished ids beside the matched ones.
           return waitOutcome;
+          // SCIENT-FORK:END
         },
         (effect) => effect.pipe(lock.withPermit),
       ),
@@ -5576,8 +5580,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     instanceId,
     driver,
     mcpSessionInjection: options.mcpSessionInjection === true,
-    // SCIENT-FORK: background-wait recovery: sessions implement awaitBackgroundTasks.
+    // SCIENT-FORK:START — background-wait recovery: sessions implement awaitBackgroundTasks.
     backgroundWait: Effect.succeed(true),
+    // SCIENT-FORK:END
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
       return Effect.succeed({
         ...OpenCode2ProviderCapabilities,

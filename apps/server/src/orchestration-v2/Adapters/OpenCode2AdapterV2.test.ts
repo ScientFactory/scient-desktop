@@ -767,10 +767,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           buildOpenCodeRuntimeGuidance(external ? undefined : capabilities),
           buildScientRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
           buildScientOrchestrationSystemPrompt(!external),
+          // SCIENT-FORK:START — background-wait recovery: the ID exists only once the start result returns.
           external
             ? undefined
-            : // SCIENT-FORK: background-wait recovery: the ID exists only once the start result returns.
-              "To wait for a background shell you started (tests, a build), call `scient_background_wait` with `taskIds: [id]` in a later response, once the start result shows the shell ID, before you end your turn. Do not mark work you leave running, or PRs.",
+            : "To wait for a background shell you started (tests, a build), call `scient_background_wait` with `taskIds: [id]` in a later response, once the start result shows the shell ID, before you end your turn. Do not mark work you leave running, or PRs.",
+          // SCIENT-FORK:END
         ]
           .filter(Boolean)
           .join("\n\n");
@@ -1474,8 +1475,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             taskIds: [shellID],
             awaited: true,
           }),
-          // SCIENT-FORK: background-wait recovery: a finished shell reads as settled.
+          // SCIENT-FORK:START — background-wait recovery: a finished shell reads as settled.
           { matched: [], settled: [shellID] },
+          // SCIENT-FORK:END
         );
         assert.deepInclude(items.filter((i) => i.type === "command_execution").at(-1), {
           type: "command_execution",
@@ -1638,8 +1640,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           taskIds: [id, "sh_other"],
           awaited: true,
         }),
-        // SCIENT-FORK: background-wait recovery: a finished shell reads as settled.
+        // SCIENT-FORK:START — background-wait recovery: a finished shell reads as settled.
         discovery === "settled" ? { matched: [], settled: [id] } : { matched: [id] },
+        // SCIENT-FORK:END
       );
       assert.equal(
         yield* runtime.hasPendingBackgroundWorkForThread!(thread),

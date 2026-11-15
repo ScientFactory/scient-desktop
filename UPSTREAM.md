@@ -2348,7 +2348,7 @@ same behaviour (the upstream issue draft is in the analytics-failures review fol
   capabilities description no longer promises that any catalog model works. `t3_thread_launch`
   keeps T3's exact-model check and message.
 - **IDs.** `task_status` and `task_cancel` misses name the owning thread and its child, from
-  `orchestration_v2_projection_subagents`, only when that thread is in the caller's project
+  `orchestration_v2_projection_subagents`, each only when it is in the caller's project
   (`DelegatedTaskOwner.ts`). The task and thread inputs say which ID they take.
 
 When T3 ships any of these, take its version and delete the matching seam, helper and test.
