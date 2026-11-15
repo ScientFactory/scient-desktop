@@ -1478,6 +1478,10 @@ export function ScientSourcesPanel(props: {
                       void pickBackupFolder()
                         .catch(() => null)
                         .then((folder) => (folder ? backup.start(folder) : undefined)),
+                    onRestore: () =>
+                      void pickBackupFolder()
+                        .catch(() => null)
+                        .then((folder) => (folder ? backup.restoreFrom(folder) : undefined)),
                   }
                 : {})}
               onOpenSource={setSelectedSourceId}
@@ -1519,7 +1523,11 @@ export function ScientSourcesPanel(props: {
         move={move}
         {...(scopes ? { onReview: () => setShowingDuplicates("merged") } : {})}
       />
-      <LibraryBackupNotice line={backup.line} />
+      <LibraryBackupNotice
+        line={backup.line}
+        restoreLine={backup.restoreLine}
+        onCancelRestore={backup.cancelRestore}
+      />
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
       {showingRecentChanges ? (
         <RecentChangesDialog
