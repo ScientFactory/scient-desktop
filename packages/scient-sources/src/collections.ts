@@ -924,9 +924,11 @@ async function updateBulkFields(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceIds: ReadonlyArray<string>;
   readonly actor: ScientSourceActor;
+  /** `revision` is the one the computed fields would replace. */
   readonly compute: (
     sourceId: string,
     current: BulkFields,
+    revision: number,
   ) => { readonly next: BulkFields; readonly conflicts?: ReadonlyArray<string> };
   readonly beforeWrite?: (planned: ReadonlyArray<PlannedBulkFields>) => Promise<void>;
 }): Promise<ReadonlyArray<BulkFieldsUpdate>> {
@@ -950,7 +952,11 @@ async function updateBulkFields(input: {
         continue;
       }
       const current = normalizeScientSourceEditableMetadata(editableMetadataFromRecord(record));
-      const { next: fields, conflicts = [] } = input.compute(sourceId, bulkFields(current));
+      const { next: fields, conflicts = [] } = input.compute(
+        sourceId,
+        bulkFields(current),
+        record.revision,
+      );
       const next = normalizeScientSourceEditableMetadata({ ...current, ...fields });
       if (editableMetadataEquals(current, next)) {
         results.set(sourceId, {
@@ -1722,7 +1728,7 @@ async function undoBulkUpdate(input: {
       root: paths.location,
       sourceIds: toWrite.map(([, entry]) => entry.sourceId),
       actor: input.actor,
-      compute: (sourceId, current) => {
+      compute: (sourceId, current, revision) => {
         const { before, after } = receipt.sources[indexBySource.get(sourceId)!]!;
         const typeChanged = before.type !== after.type || before.customType !== after.customType;
         const beforeKeys = new Set(before.tags.map(scientSourceTagKey));
@@ -1731,13 +1737,17 @@ async function undoBulkUpdate(input: {
         const removed = before.tags.filter((tag) => !afterKeys.has(scientSourceTagKey(tag)));
         const isType = (fields: BulkFields) =>
           current.type === fields.type && current.customType === fields.customType;
-        const since = later.get(sourceId);
+        // Evidence read for another revision says nothing about this one: an edit that landed
+        // since is treated as a later decision on everything the bulk edit touched.
+        const since = revision === revisionNow.get(sourceId) ? later.get(sourceId) : "unknown";
         const typeDecidedSince = since === "unknown" || since?.type === true;
         const typeKept = typeChanged && !isType(before) && (typeDecidedSince || !isType(after));
         const decidedSince = (tag: string) =>
           since === "unknown" || since?.tags.has(scientSourceTagKey(tag)) === true;
         const tagsKept = [...added, ...removed].some(decidedSince);
+        // Decided anew on each attempt, so a retry's flag is the retry's.
         if (typeKept || tagsKept) keeping.add(sourceId);
+        else keeping.delete(sourceId);
         const restoresType = typeChanged && !typeDecidedSince && isType(after);
         return {
           next: {

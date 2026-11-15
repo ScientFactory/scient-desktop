@@ -104,6 +104,7 @@ import {
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
+import { libraryBackupStatus } from "./LibraryBackupRuns.ts";
 import { readLibraryMoveStatus } from "./LibraryMove.ts";
 import { setLibraryReadingState } from "./LibraryProjectSources.ts";
 import {
@@ -493,6 +494,18 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               root: args.payload.root,
               library: scientLibraryLocation(scientLibraryRootFor(config.stateDir)),
             });
+          }),
+        )
+        .handle("backupStatus", (args) =>
+          Effect.gen(function* () {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            if ((yield* ScientSourcesBackend) === "project") return { state: "none" } as const;
+            const config = yield* ServerConfig.ServerConfig;
+            // Reads only: this server's own record of its backups.
+            return libraryBackupStatus(
+              scientLibraryLocation(scientLibraryRootFor(config.stateDir)),
+            );
           }),
         )
         .handle("systematicReviewChange", (args) =>

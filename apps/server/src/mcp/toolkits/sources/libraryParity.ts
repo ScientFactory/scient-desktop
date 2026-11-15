@@ -150,6 +150,8 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "list-package-imports": ["list-package-imports"],
   // Agents find package folders with their own file tools.
   "list-packages": [],
+  // Not for agents yet: it needs a new action on the organize tool, with its evals.
+  "back-up-library": [],
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */
@@ -166,11 +168,8 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
   },
   "scientSources.fullTextSearch": tool("scient_sources_search"),
   "scientSources.journalIcon": { kind: "display", reason: "Serves a journal's icon for display." },
-  "scientSources.recentChanges": {
-    kind: "gap",
-    reason:
-      "Agents list merges and the Trash with scient_sources_list; past bulk edits and imports need a new list input, which waits for the tool-text evals.",
-  },
+  // The Library's list tool takes `recentChanges`, as it takes `duplicates`.
+  "scientSources.recentChanges": tool("scient_sources_list"),
   "scientSources.trash": tool("scient_sources_list", "inTrash"),
   "scientSources.systematicReviews": tool("scient_sources_systematic_reviews"),
   "scientSources.systematicReview": tool("scient_sources_systematic_reviews", "reviewId"),
@@ -178,6 +177,11 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
   // Library mode only: the list tool's duplicates.
   "scientSources.duplicates": tool("scient_sources_list"),
   "scientSources.moveStatus": tool("scient_sources_list"),
+  "scientSources.backupStatus": {
+    kind: "gap",
+    reason:
+      "An agent cannot start or watch a Library backup yet; it needs a new action on the organize tool, with its evals.",
+  },
   "scientSources.revisions": tool("scient_sources_get"),
   "scientSources.zoteroStatus": tool("scient_sources_zotero_browse"),
   "scientSources.zoteroLibrary": tool("scient_sources_zotero_browse"),

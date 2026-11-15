@@ -135,6 +135,7 @@ import type { ResolveSourceIdentifier } from "./SourceIdentifierResolver.ts";
 import { scheduleSourceCategorization } from "./SourceCategories.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 import type { ScientSourcesLibraryStore } from "./SourcesBackend.ts";
+import { startLibraryBackup } from "./LibraryBackupRuns.ts";
 
 type Store = ScientSourcesLibraryStore;
 
@@ -1107,6 +1108,7 @@ export const isLibraryOrganizeAction = (
   change.action === "list-packages" ||
   change.action === "list-package-imports" ||
   change.action === "import-package" ||
+  change.action === "back-up-library" ||
   change.action === "undo-import" ||
   isPinRepairAction(change);
 
@@ -1246,6 +1248,9 @@ export async function organizeLibrarySources(
       return listLibraryProjectPackages(store);
     case "import-package":
       return importLibraryProjectPackage(store, change, ACTOR);
+    case "back-up-library":
+      // The backup itself refuses a folder that is not absolute, missing or inside the Library.
+      return startLibraryBackup(store.library, change.inFolder);
     case "undo-import":
       return undoLibraryProjectPackageImport(store, change, ACTOR);
   }

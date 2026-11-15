@@ -8,6 +8,7 @@ import {
   MessageCircleQuestionIcon,
   MoreHorizontal,
   PenLine,
+  HardDriveDownload,
   History,
   Trash2,
 } from "lucide-react";
@@ -26,6 +27,7 @@ import { toastManager } from "../../components/ui/toast";
 import { useComposerHandleContext } from "../../composerHandleContext";
 import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
 import { askLibraryInsertion } from "./askLibrary";
+import { BACKUP_LABELS } from "./libraryBackupLabels";
 import { RECENT_CHANGES_LABELS } from "./recentChangeLabels";
 import { CitationStylePicker } from "./CitationStylePicker";
 import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
@@ -61,6 +63,8 @@ export function SourcesHeaderMenu(props: {
   readonly onShowPackageSources?: (sourceIds: ReadonlyArray<string>) => void;
   /** Present only on a personal Library. */
   readonly onOpenRecentChanges?: () => void;
+  /** Present only where a folder on the Library's computer can be chosen. */
+  readonly onBackUp?: () => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [importsOpen, setImportsOpen] = useState(false);
@@ -191,6 +195,12 @@ export function SourcesHeaderMenu(props: {
             <MenuItem onClick={props.onOpenRecentChanges}>
               <History />
               {RECENT_CHANGES_LABELS.menuItem}
+            </MenuItem>
+          ) : null}
+          {props.onBackUp ? (
+            <MenuItem onClick={props.onBackUp}>
+              <HardDriveDownload />
+              {BACKUP_LABELS.menuItem}
             </MenuItem>
           ) : null}
           {props.trashedCount > 0 ? (

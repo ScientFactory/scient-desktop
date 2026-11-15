@@ -760,6 +760,54 @@ describe("Scient source collections", () => {
       left: 1,
     });
   });
+  // regression: review U1-c-1, Undo judged a source on versions read before a later edit landed.
+  it("keeps the edit's values on a source that was edited while Undo was reading its versions", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const first = sourceIds[0] ?? "";
+    const edit = async (fields: {
+      readonly type?: ScientSourceType;
+      readonly tags?: ReadonlyArray<string>;
+    }) => {
+      const record = await readScientSourceRecord(root, first);
+      await updateScientSourceMetadata({
+        root,
+        sourceId: first,
+        expectedRevision: record!.revision,
+        metadata: { ...editableMetadataFromRecord(record!), ...fields },
+        actor: "user",
+      });
+    };
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, type: "report" },
+      actor: "user",
+    });
+    // Two unrelated edits, so Undo has a version in between to read.
+    await edit({ tags: ["One"] });
+    await edit({ tags: ["One", "Two"] });
+    // While Undo reads that version, the type is changed away and back.
+    let landed = false;
+    NodeFS.promises.readFile = (async (...args: Parameters<typeof originalReadFile>) => {
+      if (!landed && String(args[0]).includes(`${NodePath.sep}history${NodePath.sep}`)) {
+        landed = true;
+        NodeFS.promises.readFile = originalReadFile;
+        NodeModule.syncBuiltinESMExports();
+        await edit({ type: "book" });
+        await edit({ type: "report" });
+      }
+      return originalReadFile(...args);
+    }) as typeof originalReadFile;
+    NodeModule.syncBuiltinESMExports();
+
+    const undone = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: bulk.undo?.batchId ?? "" },
+      actor: "user",
+    });
+    expect(landed).toBe(true);
+    expect((await readScientSourceRecord(root, first))?.type).toBe("report");
+    expect(undone.conflicts?.map((conflict) => conflict.sourceId)).toEqual([first]);
+  });
   it("does not call an edit incomplete because its first request changed nothing", async () => {
     const { root, sourceIds } = await project(["First", "Second"]);
     const [first, second] = sourceIds as [string, string];

@@ -67,6 +67,7 @@ import {
 } from "../systematicReviews/handlers.ts";
 import {
   addScientSourceForInvocation,
+  bulkUpdateScientSourcesForInvocation,
   checkScientSourceQuotesForInvocation,
   citeScientSourcesForInvocation,
   getScientSourceForInvocation,
@@ -1114,6 +1115,42 @@ describe("Sources tools on the library backend", () => {
       const listed = yield* run(listScientSourcesForInvocation({ inTrash: true }), fixture);
       expect(listed.records.map((record) => record.sourceId)).toEqual([other.sourceId]);
       expect(listed.total).toBe(1);
+    }),
+  );
+
+  it.effect("an agent finds a past bulk edit in the recent changes and undoes it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const first = yield* addSource(fixture, "Tagged trial one", "10.1000/recent-one");
+      const second = yield* addSource(fixture, "Tagged trial two", "10.1000/recent-two");
+      yield* run(
+        bulkUpdateScientSourcesForInvocation({
+          change: { sourceIds: [first.sourceId!, second.sourceId!], addTags: ["RCT"] },
+        }),
+        fixture,
+      );
+
+      const listed = yield* run(listScientSourcesForInvocation({ recentChanges: true }), fixture);
+      const edit = listed.recentChanges?.find((change) => change.kind === "bulk-edit");
+      if (edit?.kind !== "bulk-edit") throw new Error("Expected the bulk edit to be listed.");
+      expect(edit).toMatchObject({
+        by: "agent",
+        tagsAdded: ["RCT"],
+        sourceCount: 2,
+        undone: false,
+      });
+
+      for (const part of edit.parts.toReversed()) {
+        yield* run(
+          bulkUpdateScientSourcesForInvocation({ change: { undoBatchId: part.batchId } }),
+          fixture,
+        );
+      }
+      const after = yield* run(listScientSourcesForInvocation({ recentChanges: true }), fixture);
+      expect(after.recentChanges?.find((change) => change.id === edit.id)).toMatchObject({
+        undone: true,
+        left: 0,
+      });
     }),
   );
 

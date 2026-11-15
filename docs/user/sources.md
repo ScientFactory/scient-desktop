@@ -249,10 +249,10 @@ again, and you can still merge them or mark them as not duplicates. A project
 that cites the copy you brought back cites that paper again, never the kept
 one, also after you remove the copy: the project then cites it from its own
 saved citation details. Those saved details become exactly that paper's
-again. If they held a value the paper's Library record does not have (for
-example an abstract a systematic review imported while the two were merged),
-the earlier details are kept in the project folder under
-`.scient/library/displaced/`, where you or an agent can read them. If Scient stopped in the middle of a merge or an Undo,
+again. If they said anything else while the two were merged (for example an
+abstract a systematic review imported), the earlier details are kept, once,
+in the project folder under `.scient/library/displaced/`, where you or an
+agent can read them. A project package does not include them. If Scient stopped in the middle of a merge or an Undo,
 it finishes it the next time it opens your Library. After a
 project moves into your Library, its summary line offers **Review** when some
 merges kept different values.
@@ -480,6 +480,31 @@ styles keep their case.
 Identifiers and the preprint type survive in every format. When a format has
 no place for something (for example EndNote XML holds an arXiv ID or a PMID,
 not both), a note after the export names what the file leaves out.
+
+## Back up the Library
+
+Choose **Back up the Library…** (in the **⋯** menu at the top of the Library)
+and pick a folder. Scient writes a new folder there, named "Scient Library
+backup" with the date and time: a copy of everything in your Library as it is
+at that moment. It holds your sources with their versions, personal notes,
+reading status and stars, PDFs, highlights, collections and saved searches,
+the Trash, merges with their Undo, "not duplicates" decisions, and the markers
+that keep a deleted source deleted. The files are the ones Scient itself
+keeps: JSON you can read, and PDFs. A `README.md` in the folder says what is
+in it, and `backup.json` lists every file with its size and checksum.
+
+While the backup runs, changes to the Library wait, and the Library says so;
+a change that waits longer than half a minute is refused and can be made
+again afterwards. A large Library with many PDFs can take a few minutes.
+
+A Library backup is not a backup of your projects. Each project's citation
+keys, project notes, systematic reviews and citation style live in the
+project's own folder, and so do the sources of a project that has not moved
+into your Library. Your Zotero sign-in is not in it either.
+
+The menu item is offered for a Library on this computer. Restoring a backup
+into Scient is not available yet; the folder is complete and readable without
+it.
 
 ## Project packages
 
@@ -1069,7 +1094,8 @@ flow still apply to writes. Library tools stay scoped to the current project:
 they do not grant arbitrary host file paths or turn uncertain metadata into
 verified evidence. Agents can browse and import from Zotero, refresh from it
 and send to it with the same rules as you; they change Zotero only when you ask
-them to send.
+them to send. An agent can also read the same **Recent changes** list as you,
+so you can ask it to undo yesterday's tagging or to restore a paper it removed.
 
 ## Current limits
 

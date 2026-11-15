@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
+import { checkScientLibraryBackup } from "@scientfactory/scient-sources/library-backup";
 import { changeScientLibraryReview } from "@scientfactory/scient-sources/library-reviews";
 import {
   ensureScientLibrary,
@@ -35,6 +36,7 @@ import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../../config.ts";
 import { beginBibliographyFileImport } from "./BibliographyFileAdapter.ts";
+import { libraryBackupStatus } from "./LibraryBackupRuns.ts";
 import { libraryImportPinInstance } from "./LibraryImportPins.ts";
 import {
   bulkUpdateLibrarySources,
@@ -284,6 +286,45 @@ describe("Library routes on the library backend", () => {
         ]);
         expect((await libraryRecentChanges(store, { limit: 1 })).more).toBe(true);
         vi.useRealTimers();
+      });
+    }),
+  );
+
+  it.effect("backs up the Library in the background and reports how it ended", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      yield* Effect.promise(() => threeSources(fixture));
+      const store = yield* storeFor(fixture, "write");
+      const destination = NodePath.join(NodePath.dirname(fixture.root), "backups");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(destination);
+        expect(libraryBackupStatus(store.library)).toEqual({ state: "none" });
+        const backUp = (inFolder: string) =>
+          organizeLibrarySources(store, { change: { action: "back-up-library", inFolder } });
+
+        expect(await backUp(destination)).toEqual({ outcome: "backup-started" });
+        // One at a time: a second request while it runs starts nothing.
+        expect(await backUp(destination)).toEqual({ outcome: "backup-running" });
+        const done = await vi.waitFor(() => {
+          const status = libraryBackupStatus(store.library);
+          if (status.state !== "done") throw new Error(`The backup is ${status.state}.`);
+          return status;
+        });
+        expect(done).toMatchObject({ sources: 2, pdfs: 0 });
+        expect(await NodeFSP.readdir(destination)).toEqual([NodePath.basename(done.path)]);
+        expect(await checkScientLibraryBackup(done.path)).toMatchObject({ outcome: "complete" });
+
+        // A folder that is not there ends the next one with the reason, and leaves nothing.
+        expect(await backUp(NodePath.join(destination, "missing"))).toEqual({
+          outcome: "backup-started",
+        });
+        await vi.waitFor(() =>
+          expect(libraryBackupStatus(store.library)).toMatchObject({
+            state: "failed",
+            reason: "Choose a folder that exists and is not inside the Library.",
+          }),
+        );
+        expect(await NodeFSP.readdir(destination)).toHaveLength(1);
       });
     }),
   );

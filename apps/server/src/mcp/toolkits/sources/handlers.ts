@@ -163,6 +163,7 @@ import {
   bothInLibrary,
   libraryDuplicates,
   libraryMergeReceipt,
+  libraryRecentChanges,
   libraryPinMatches,
   isPinRepairAction,
   repairLibraryPin,
@@ -529,10 +530,25 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly allMerges?: boolean;
     readonly revision?: string;
     readonly mergeId?: string;
+    readonly recentChanges?: boolean;
   }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     const library = store.kind === "library" ? store : null;
+    if (input.recentChanges) {
+      if (!library) {
+        return yield* toolError("operation-failed", "Recent changes need the personal Library.");
+      }
+      const listed = yield* attempt(() =>
+        libraryRecentChanges(library, { limit: input.limit ?? 50 }),
+      );
+      return {
+        records: [],
+        total: listed.changes.length,
+        nextOffset: null,
+        recentChanges: listed.changes,
+      };
+    }
     if (input.duplicates || input.mergeId !== undefined) {
       if (!library) {
         return yield* toolError(

@@ -647,12 +647,16 @@ sources in `<project>/.scient/library/pins.json`:
   live and for a removed source, so the bibliography never cites the stale
   snapshot before the refresh; a review read gives an unmerged record no
   abstract from its snapshot. Any other removed pin keeps its
-  snapshot untouched. What a copy knew and the record that replaces it does
-  not (a field with a value in the copy and none in the record) is kept
-  before the replacement in `.scient/library/displaced/project.json`, and a
-  review entry's in `displaced/reviews.json` (`projectDisplacedCopies.ts`:
-  the copy as it was, who held it, the fields lost; newest 200 per file;
-  nothing reads them back on its own). Limits: a pin whose ID is another computer's and
+  snapshot untouched. The copy a key or a review held is kept before the first
+  whole replacement after an Undo, when its content differs from the record
+  in any field (`projectDisplacedCopies.ts`): the copy as it was, who held
+  it, the Undo's time and the fields that differ, in
+  `.scient/library/displaced/project.json` for keys and
+  `displaced/reviews/<review-id>.json` for a review. One copy per holder,
+  source and Undo, so a retry or a later edit of the paper adds none; no cap;
+  a file that cannot be read is moved aside under a dated name; a failed keep
+  stops the replacement. Nothing reads them back on its own, and a project
+  package does not carry them. Limits: a pin whose ID is another computer's and
   was matched here by its data is not repaired after removal; a source merged
   again and unmerged again marks only its latest pair. A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not
@@ -2502,9 +2506,43 @@ of 100 sources and 200 imports of 500: about 90 ms for the first page and a
 9 KB answer. Reading every merge receipt and Trash entry instead took 0.4 to
 1.0 s, and sending each import's IDs made the answer almost 1 MB.
 
-Agents have no tool for this list yet (`libraryParity.ts` records the gap):
-they list merges and the Trash, and get a bulk edit's batch ID when they make
-it, but cannot list past bulk edits or imports.
+Agents read the same list with `scient_sources_list` and `recentChanges: true`
+(Library mode), and act on a row with the tools they already have: a bulk
+edit's parts are undone newest first with `scient_sources_bulk_update` and
+each `batchId`, a merge with `undo-merge`, a Trash entry with
+`scient_sources_restore`. The input added 165 bytes to the tool list
+(121,112 measured); no model eval covers it yet, because the tool-use eval
+does not load the Sources tools.
+
+## Library backup
+
+`backUpScientLibrary` (`libraryBackup.ts`) copies the Library's folder into
+`<destination>/Scient Library backup <date time>/library/`, with `backup.json`
+(format version, backup ID, the Library's ID, counts, every file with size and
+SHA-256, what was left out and why) and a README. It first settles interrupted
+merges, then holds every checkout's move lock (answering `busy` when a move
+holds one) and the Library's write lock for the whole copy, because deleting a
+source for good collects PDFs that no live or trashed record names. Every
+regular file is kept, also ones this version does not know, except `text/`
+(rebuilt from PDFs), lock files and temporary files; links are not followed.
+Each copy is hashed against what was read, the folder is built under a hidden
+`.partial` name and renamed once the manifest is written, and a stop or a
+failure removes it. The callbacks run inside the lock and must only report.
+`checkScientLibraryBackup` reads a folder against its manifest: files changed,
+gone, or not listed.
+
+The server runs one backup at a time in the background (`LibraryBackupRuns.ts`,
+organize `back-up-library` with an absolute `inFolder`) and keeps how the last
+one ended until the next starts or the server stops; `backupStatus` (read
+scope) reports none, running with files done and total, done with the folder
+and counts, or failed with the reason. The panel (`LibraryBackup.tsx`) offers
+the menu item where this computer's folder dialog can choose the folder, asks
+the status each second while one runs, and announces the end of a backup it
+saw running. Library writes wait on the lock meanwhile (30 s, then
+`ScientLibraryBusyError`). Agents have no action for it yet (a recorded
+parity gap). Restore is not built: it needs a barrier outside the swapped
+folder and a recoverable swap, designed on its own
+(`reviews/sources-improve-20261115/DECISIONS.md`).
 
 ## Citing
 
@@ -3271,9 +3309,8 @@ single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
 an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a named test. One gap stands: the
-Recent changes list (`scientSources.recentChanges`), whose agent side waits for
-a new input on the list tool.
+`libraryParity.test.ts` lists each gap as a named test. One gap stands: an
+agent cannot start or watch a Library backup.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is

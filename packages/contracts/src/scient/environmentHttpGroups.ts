@@ -74,6 +74,8 @@ import {
   ScientSourceTrashListing,
   ScientSourcesAdvanceImportRequest,
   ScientSourcesBulkResult,
+  ScientSourcesBackupStatus,
+  ScientSourcesBackupStatusRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewChangeResult,
@@ -512,6 +514,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesMoveStatusRequest,
         success: ScientSourcesMoveStatus,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("backupStatus", "/api/scient/sources/backup/status", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesBackupStatusRequest,
+        success: ScientSourcesBackupStatus,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

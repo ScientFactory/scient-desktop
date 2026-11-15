@@ -90,11 +90,18 @@ export function resolveScientLibraryAlias(aliases: ScientLibraryAliases, sourceI
  * since a copy refreshed while the merge stood may hold the other one's values.
  */
 export function scientUnmergedSourceIds(aliases: ScientLibraryAliases): ReadonlySet<string> {
-  const unmerged = new Set<string>();
+  return new Set(scientUnmergedSince(aliases).keys());
+}
+
+/** The same sources, each with the time of the latest Undo that separated it. */
+export function scientUnmergedSince(aliases: ScientLibraryAliases): ReadonlyMap<string, string> {
+  const since = new Map<string, string>();
   for (const alias of aliases.values()) {
     if (alias.undoneAt === undefined) continue;
-    unmerged.add(alias.sourceId);
-    unmerged.add(alias.survivorId);
+    for (const sourceId of [alias.sourceId, alias.survivorId]) {
+      const known = since.get(sourceId);
+      if (known === undefined || known < alias.undoneAt) since.set(sourceId, alias.undoneAt);
+    }
   }
-  return unmerged;
+  return since;
 }
