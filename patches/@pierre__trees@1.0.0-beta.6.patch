@@ -1,5 +1,5 @@
 diff --git a/dist/render/FileTreeView.js b/dist/render/FileTreeView.js
-index 7d3b818c43a7621ab9170da32b180232ed3c9472..da05d2683a747b954ee1ab04de2a115f03bf1088 100644
+index 7d3b818c43a7621ab9170da32b180232ed3c9472..1fa0ec750b6a6860f02c51c7712287c01ef1cbff 100644
 --- a/dist/render/FileTreeView.js
 +++ b/dist/render/FileTreeView.js
 @@ -17,6 +17,30 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
@@ -55,3 +55,64 @@ index 7d3b818c43a7621ab9170da32b180232ed3c9472..da05d2683a747b954ee1ab04de2a115f
  		}),
  		decorationLaneEnabled ? /* @__PURE__ */ jsx("div", {
  			"data-item-section": "decoration",
+@@ -419,7 +439,8 @@ function renderStyledRow(frame, row, key, options = {}) {
+ 		ariaLabel: `Rename ${getFileTreeRowAriaLabel(row)}`,
+ 		isFlattened: row.isFlattened,
+ 		value: renamingValue,
+-		onBlur: () => {
++		onBlur: (event) => {
++			if (frame.keepsRenameThroughRender?.(event.currentTarget)) return;
+ 			renameView.commit();
+ 		},
+ 		onInput: (event) => {
+@@ -513,6 +534,11 @@ function renderStyledRow(frame, row, key, options = {}) {
+ 		children: rowContent
+ 	});
+ }
++function takeRefValue(ref) {
++	const blurred = ref.current;
++	ref.current = null;
++	return blurred;
++}
+ function renderRangeChildren(frame, range, hiddenRowPaths) {
+ 	if (range.end < range.start) return [];
+ 	return frame.controller.getVisibleRows(range.start, range.end).filter((row) => !hiddenRowPaths.has(getFileTreeRowPath(row))).map((row, slotIndex) => renderStyledRow(frame, row, range.start + slotIndex));
+@@ -524,6 +550,30 @@ function FileTreeView({ composition, controller, gitStatusByPath, ignoredGitDire
+ 	const isScrollingRef = useRef(false);
+ 	const listRef = useRef(null);
+ 	const renameInputRef = useRef(null);
++	// SCIENT-FORK: a row the render moves or replaces blurs its name field; naming goes on
++	// after the render instead of committing the name typed so far.
++	const renderingRowsRef = useRef(false);
++	const renameBlurredByRenderRef = useRef(null);
++	renderingRowsRef.current = true;
++	const keepsRenameThroughRender = useCallback((input) => {
++		if (!renderingRowsRef.current) return false;
++		renameBlurredByRenderRef.current = {
++			start: input.selectionStart,
++			end: input.selectionEnd,
++			direction: input.selectionDirection
++		};
++		return true;
++	}, []);
++	useLayoutEffect(() => {
++		renderingRowsRef.current = false;
++		const blurred = takeRefValue(renameBlurredByRenderRef);
++		const input = renameInputRef.current;
++		if (blurred == null || input == null || !input.isConnected) return;
++		if (input.getRootNode().activeElement === input) return;
++		if (!focusElement(input)) return;
++		const end = input.value.length;
++		input.setSelectionRange(Math.min(blurred.start ?? end, end), Math.min(blurred.end ?? end, end), blurred.direction ?? "none");
++	});
+ 	const rootRef = useRef(null);
+ 	const scrollRef = useRef(null);
+ 	const searchInputRef = useRef(null);
+@@ -1756,6 +1806,7 @@ function FileTreeView({ composition, controller, gitStatusByPath, ignoredGitDire
+ 		onRowClick: handleRowClick,
+ 		openContextMenuForRow,
+ 		registerButton: registerRowButton,
++		keepsRenameThroughRender,
+ 		registerRenameInput,
+ 		renameView,
+ 		renderDecorationForRow,

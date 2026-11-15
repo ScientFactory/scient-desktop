@@ -264,6 +264,8 @@ patchedDependencies:
   # cover folded files and collapsed context (onRevealSearchMatch). Scient adds external edits
   # that keep undo history, first-keystroke selection, and unmounts without an instance.
   "@pierre/diffs@1.7.0-beta.3": patches/@pierre__diffs@1.7.0-beta.3.patch
+  # Keeps Hebrew and Arabic file names in reading order, and keeps a name field focused (and
+  # uncommitted) when a listing moves or replaces its row.
   "@pierre/trees@1.0.0-beta.6": patches/@pierre__trees@1.0.0-beta.6.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
