@@ -688,9 +688,13 @@ Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`,
   `http_<status>` for an agent without kinds. The OMP host names its own outcomes:
   `process_exit`, `prompt_result_timeout`, `drain_busy`, `idle_confirmation_failed`,
   `command_rejected`, `command_timeout` and `rpc_failed`. A retry the host stops after it never
-  resumed is `retry_stalled` unless the provider gave a code; an out-of-memory kill is `oom_kill`.
+  resumed is `retry_stalled` unless the provider gave a code; an out-of-memory kill is `oom_kill`;
+  an ACP agent that sent nothing until the inactivity watchdog stopped it is `prompt_inactivity`.
   Claude result subtypes and process exits, `api_error_<status>`, and Codex error variants and
-  ChatGPT sharing codes come from those adapters.
+  ChatGPT sharing codes come from those adapters. Antigravity reports Google's RPC status (with
+  `httpStatus`), `mcp_load_failed` when a tool server failed to start and aborted the turn, and
+  `harness_error` for another harness error; Droid reports its turn-end reason
+  (`model_usage_exhausted`, `model_rate_limited`, …) and `no_active_subscription`.
   [`failureCodes.ts`](../../packages/scient-analytics/src/failureCodes.ts) lists each
   provider's known codes, ChatGPT sharing codes included by name, and the contract itself drops
   anything else, since a code that only looks like an identifier may be free text a provider sent.

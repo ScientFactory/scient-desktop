@@ -1715,6 +1715,33 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
       ),
   );
 
+  it.effect("classifies Droid's turn-end reason and keeps its session id out of the failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const error = {
+          code: -32603,
+          message: "Internal error: Agent turn ended: model_usage_exhausted",
+          data: { sessionId: "fixture-native-session", reason: "model_usage_exhausted" },
+        };
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt(message) { fail(message, ${encodeJson(error)}); }`,
+        });
+        yield* h.send(1, "full-access");
+        const terminal = yield* h.terminal;
+        assert.equal(terminal.status, "failed");
+        if (terminal.status === "failed") {
+          assert.deepEqual(terminal.failure, {
+            class: "usage_limit",
+            message: "Your Droid usage limit for this model is used up.",
+            code: "model_usage_exhausted",
+            retryable: true,
+          });
+        }
+        assert.notInclude(JSON.stringify(h.recorded), "fixture-native-session");
+      }),
+    ),
+  );
+
   it.effect("does not blame Factory for a custom model selected as Droid's native default", () =>
     Effect.scoped(
       Effect.gen(function* () {
