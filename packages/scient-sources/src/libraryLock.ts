@@ -22,7 +22,7 @@ const heldFiles = new Map<string, NodeSqlite.DatabaseSync>();
 // @effect-diagnostics-next-line extendsNativeError:off - The source stores are Promise-based; callers catch native errors.
 export class ScientLibraryBusyError extends Error {
   constructor() {
-    super("The library is busy in another Scient process. Try again in a moment.");
+    super("The Library is busy. Try again shortly.");
     this.name = "ScientLibraryBusyError";
   }
 }

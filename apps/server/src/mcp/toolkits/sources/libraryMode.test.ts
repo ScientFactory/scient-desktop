@@ -19,6 +19,7 @@ import {
   markScientLibrarySourcesDistinct,
   mergeScientLibrarySources,
 } from "@scientfactory/scient-sources/library-merge";
+import { bulkUpdateScientSources } from "@scientfactory/scient-sources/collections";
 import {
   pinScientLibrarySource,
   readScientProjectPins,
@@ -1143,6 +1144,54 @@ describe("Sources tools on the library backend", () => {
       for (const part of edit.parts.toReversed()) {
         yield* run(
           bulkUpdateScientSourcesForInvocation({ change: { undoBatchId: part.batchId } }),
+          fixture,
+        );
+      }
+      const after = yield* run(listScientSourcesForInvocation({ recentChanges: true }), fixture);
+      expect(after.recentChanges?.find((change) => change.id === edit.id)).toMatchObject({
+        undone: true,
+        left: 0,
+      });
+    }),
+  );
+
+  it.effect("an agent undoes only the unfinished parts of an edit a person sent in parts", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const first = yield* addSource(fixture, "Parted trial one", "10.1000/parted-one");
+      const second = yield* addSource(fixture, "Parted trial two", "10.1000/parted-two");
+      const part = (sourceId: string, partNumber: number) =>
+        Effect.promise(() =>
+          bulkUpdateScientSources({
+            root: fixture.library,
+            change: { sourceIds: [sourceId], addTags: ["Cohort"] },
+            actor: "user",
+            partOf: "edit-in-parts",
+            partNumber,
+          }),
+        );
+      yield* part(first.sourceId!, 1);
+      const last = yield* part(second.sourceId!, 2);
+      const lastBatchId = last.undo?.batchId;
+      if (!lastBatchId) throw new Error("Expected a batch to undo.");
+      // The person undid the second part and stopped there.
+      yield* Effect.promise(() =>
+        bulkUpdateScientSources({
+          root: fixture.library,
+          change: { undoBatchId: lastBatchId },
+          actor: "user",
+        }),
+      );
+
+      const listed = yield* run(listScientSourcesForInvocation({ recentChanges: true }), fixture);
+      const edit = listed.recentChanges?.find((change) => change.kind === "bulk-edit");
+      if (edit?.kind !== "bulk-edit") throw new Error("Expected the bulk edit to be listed.");
+      expect(edit).toMatchObject({ by: "user", undone: false });
+      expect(edit.parts.map((entry) => entry.undone)).toEqual([false, true]);
+
+      for (const entry of edit.parts.toReversed().filter((entry) => !entry.undone)) {
+        yield* run(
+          bulkUpdateScientSourcesForInvocation({ change: { undoBatchId: entry.batchId } }),
           fixture,
         );
       }

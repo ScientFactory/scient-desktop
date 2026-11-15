@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 
 import { deleteScientSourceCollection } from "./collections.ts";
+import { withScientLibraryLock } from "./libraryLock.ts";
 import type { ScientLibraryLocation } from "./libraryRoot.ts";
 import { ScientSourceActor } from "./model.ts";
 import {
@@ -112,7 +113,10 @@ export async function writeScientProjectPackageReceipt(
   library: ScientLibraryLocation,
   receipt: ScientProjectPackageReceipt,
 ): Promise<void> {
-  await atomicWriteJson(receiptPath(library, receipt.importId), receipt, MAX_RECEIPT_BYTES);
+  // Under the Library's lock like every other kept file, so a backup never copies around it.
+  await withScientLibraryLock(library.root, () =>
+    atomicWriteJson(receiptPath(library, receipt.importId), receipt, MAX_RECEIPT_BYTES),
+  );
 }
 
 async function readScientProjectPackageReceipt(
