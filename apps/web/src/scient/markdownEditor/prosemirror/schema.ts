@@ -14,7 +14,7 @@ import type {
   NodeSpec,
   SchemaSpec,
 } from "prosemirror-model";
-import { Schema } from "prosemirror-model";
+import { Fragment, Mark, Schema } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 
 import {
@@ -68,6 +68,51 @@ type InternalMarkdownSerializerStateConstructor = new (
 const InternalMarkdownSerializerState =
   MarkdownSerializerState as unknown as InternalMarkdownSerializerStateConstructor;
 
+/**
+ * Whitespace is not styled content. A space or line break where the set of styles changes carries
+ * no style: `**`, `*`, `~~` and `<span>` cannot start or end on it, so the writer would put it
+ * outside the tag anyway, and a space between two styled words would otherwise take the styles
+ * open around it. Both the writer and the round-trip guard use this one form.
+ */
+export function unstyleBoundaryWhitespace(block: ProseMirrorNode): Fragment {
+  const children: ProseMirrorNode[] = [];
+  block.forEach((child) => children.push(child));
+  const unstyled: ProseMirrorNode[] = [];
+  children.forEach((child, index) => {
+    const sameBefore = Mark.sameSet(child.marks, children[index - 1]?.marks ?? Mark.none);
+    const sameAfter = Mark.sameSet(child.marks, children[index + 1]?.marks ?? Mark.none);
+    if (child.type.name === "hard_break") {
+      unstyled.push(sameBefore && sameAfter ? child : child.mark(Mark.none));
+      return;
+    }
+    if (!child.isText || (sameBefore && sameAfter)) {
+      unstyled.push(child);
+      return;
+    }
+    const text = child.text ?? "";
+    const lead = sameBefore ? 0 : (/^\s*/u.exec(text)?.[0].length ?? 0);
+    const tail = sameAfter ? 0 : (/\s*$/u.exec(text.slice(lead))?.[0].length ?? 0);
+    for (const [from, to, marks] of [
+      [0, lead, Mark.none],
+      [lead, text.length - tail, child.marks],
+      [text.length - tail, text.length, Mark.none],
+    ] as const) {
+      if (from < to) unstyled.push(child.cut(from, to).mark(marks));
+    }
+  });
+  return Fragment.fromArray(unstyled);
+}
+
+/** The same document with `unstyleBoundaryWhitespace` applied to every paragraph and heading. */
+function withUnstyledBoundaryWhitespace(node: ProseMirrorNode): ProseMirrorNode {
+  if (["paragraph", "heading"].includes(node.type.name))
+    return node.copy(unstyleBoundaryWhitespace(node));
+  if (node.isLeaf || node.isTextblock) return node;
+  const children: ProseMirrorNode[] = [];
+  node.forEach((child) => children.push(withUnstyledBoundaryWhitespace(child)));
+  return node.copy(Fragment.fromArray(children));
+}
+
 class ScientMarkdownSerializer extends MarkdownSerializer {
   override serialize(
     content: ProseMirrorNode,
@@ -86,7 +131,7 @@ class ScientMarkdownSerializer extends MarkdownSerializer {
       escapeMarkdown(text, startOfLine)
         .replace(/(?<!\\)\\\[/gu, "&#91;")
         .replace(/(?<!\\)\\\]/gu, "&#93;");
-    state.renderContent(content);
+    state.renderContent(withUnstyledBoundaryWhitespace(content));
     return state.out;
   }
 }

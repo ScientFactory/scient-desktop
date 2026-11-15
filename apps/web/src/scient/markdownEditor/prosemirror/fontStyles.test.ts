@@ -7,6 +7,7 @@ import {
   type ScientMarkdownCommand,
 } from "./commands";
 import { scientMarkdownSchema } from "./schema";
+import { selectionMarkValue } from "./selectionMarkValue";
 import { ScientProseMirrorSession } from "./session";
 
 function open(source: string) {
@@ -232,5 +233,148 @@ describe("Markdown font size and family", () => {
     expect(parseRule("font_family")(attribute("Arial"))).toEqual({ family: "Arial" });
     expect(parseRule("font_family")(attribute("Comic Sans MS"))).toBe(false);
     expect(parseRule("font_family")(attribute('Arial" onmouseover="alert(1)'))).toBe(false);
+  });
+});
+
+/** Insert text at a text offset of the first paragraph, as typing does (it inherits the marks). */
+function type(session: ScientProseMirrorSession, offset: number, text: string) {
+  session.applyTransaction(session.state.tr.insertText(text, 1 + offset), "user");
+}
+
+describe("Whitespace is not styled content", () => {
+  it("accepts a space typed after a sized word and keeps typing unchanged", () => {
+    const session = open("un bien mot\n");
+    select(session, 3, 7);
+    run(session, "font-size-14");
+    type(session, 7, " ");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe('un <span style="font-size:14pt">bien</span>  mot\n');
+    // The editor still shows the typed space with the size, so typing on continues in it.
+    expect(markedText(session, "font_size")).toEqual(["bien "]);
+  });
+
+  it("accepts a space typed after a bold word", () => {
+    const session = open("a **b** c\n");
+    type(session, 3, " ");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe("a **b**  c\n");
+  });
+
+  it("accepts italic over two sizes", () => {
+    const session = open("aa bb cc\n");
+    select(session, 0, 2);
+    run(session, "font-size-14");
+    select(session, 3, 5);
+    run(session, "font-size-20");
+    select(session, 1, 4);
+    run(session, "italic");
+    expect(session.pendingWriteback).toBeNull();
+    expect(open(session.session.draftSource).session.draftSource).toBe(session.session.draftSource);
+  });
+
+  it("accepts removing bold from the last word of a bold phrase", () => {
+    const session = open("**one two**\n");
+    select(session, 4, 7);
+    run(session, "bold");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe("**one** two\n");
+  });
+
+  it("accepts another size on the text after a sized line break", () => {
+    const session = open("one  \ntwo three\n");
+    select(session, 0, 13);
+    run(session, "font-size-14");
+    select(session, 4, 9);
+    run(session, "font-size-20");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe(
+      '<span style="font-size:14pt">one</span>\\\n<span style="font-size:20pt">two t</span><span style="font-size:14pt">hree</span>\n',
+    );
+  });
+
+  it("accepts a size on two bold words separated by a plain space", () => {
+    const session = open("**a** **b**\n");
+    select(session, 0, 3);
+    run(session, "font-size-14");
+    expect(session.pendingWriteback).toBeNull();
+    expect(open(session.session.draftSource).session.draftSource).toBe(session.session.draftSource);
+    expect(markedText(open(session.session.draftSource), "font_size")).toEqual(["a", "b"]);
+  });
+
+  it("moves an edge space out of a tag when the paragraph is edited", () => {
+    const session = open('a <span style="font-size:14pt"> two</span> b\n');
+    select(session, 3, 6);
+    run(session, "font-size-20");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe('a  <span style="font-size:20pt">two</span> b\n');
+  });
+
+  it("leaves the bytes of an untouched paragraph with edge spaces in its tag", () => {
+    const source = 'a <span style="font-size:14pt"> two </span> b\n\nsecond\n';
+    const session = open(source);
+    session.applyTransaction(
+      session.state.tr.insertText("X", session.state.doc.content.size - 1),
+      "user",
+    );
+    expect(session.session.draftSource).toBe(source.replace("second", "secondX"));
+  });
+
+  it("applies a size around inline code, never to the code itself", () => {
+    const session = open("aa `bb` cc\n");
+    select(session, 0, 8);
+    run(session, "font-size-14");
+    expect(session.pendingWriteback).toBeNull();
+    // The spaces beside the code keep the size on screen; the file writes them outside the tag.
+    expect(markedText(session, "font_size")).toEqual(["aa ", " cc"]);
+    expect(session.session.draftSource).toContain("`bb`");
+    expect(session.session.draftSource).not.toMatch(/<span[^>]*>`/u);
+  });
+
+  it("does not set a typing size or font inside inline code", () => {
+    const session = open("aa `bb` cc\n");
+    select(session, 4, 4);
+    run(session, "font-size-14");
+    expect(session.state.storedMarks).toBeNull();
+  });
+});
+
+describe("Size and font shown for a selection", () => {
+  it("ignores the spaces between words sized one by one", () => {
+    const session = open("one two three\n");
+    for (const [from, to] of [
+      [0, 3],
+      [4, 7],
+      [8, 13],
+    ] as const) {
+      select(session, from, to);
+      run(session, "font-size-14");
+    }
+    select(session, 0, 13);
+    expect(selectionMarkValue<number>(session.state, "font_size", "size", "number")).toEqual({
+      value: 14,
+      mixed: false,
+    });
+  });
+
+  it("still reports a selection that mixes two sizes", () => {
+    const session = open("one two\n");
+    select(session, 0, 3);
+    run(session, "font-size-14");
+    select(session, 4, 7);
+    run(session, "font-size-20");
+    select(session, 0, 7);
+    expect(selectionMarkValue<number>(session.state, "font_size", "size", "number")).toEqual({
+      value: null,
+      mixed: true,
+    });
+  });
+
+  it("shows no size for a selection of spaces only", () => {
+    const session = open("a   b\n");
+    select(session, 1, 4);
+    expect(selectionMarkValue<number>(session.state, "font_size", "size", "number")).toEqual({
+      value: null,
+      mixed: false,
+    });
   });
 });

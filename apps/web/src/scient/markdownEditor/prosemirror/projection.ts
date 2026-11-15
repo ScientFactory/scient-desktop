@@ -4,7 +4,7 @@ import {
   type MarkdownSourceBlock,
   type MarkdownSourceLedger,
 } from "@scientfactory/scient-markdown";
-import type { Node as ProseMirrorNode } from "prosemirror-model";
+import { Fragment, type Node as ProseMirrorNode } from "prosemirror-model";
 
 import { findScientBackslashMathSpans } from "~/scient/math/scientMathText";
 import { makeFaithfulMarkdownParse } from "./faithfulParse";
@@ -12,6 +12,7 @@ import {
   scientMarkdownParser,
   scientMarkdownSchema,
   scientMarkdownSerializer,
+  unstyleBoundaryWhitespace,
   withMarkdownSourceId,
 } from "./schema";
 
@@ -580,6 +581,31 @@ export function projectScientMarkdownSource(
   return { source: output, blockRanges };
 }
 
+/**
+ * The inline content of a paragraph or heading as the file can state it: whitespace carries no
+ * style at a style boundary (`unstyleBoundaryWhitespace`), and spaces at the ends of the block
+ * and next to a line break are dropped (Markdown ignores them).
+ */
+function fileInlineContent(block: ProseMirrorNode): Fragment {
+  const joined: ProseMirrorNode[] = [];
+  unstyleBoundaryWhitespace(block).forEach((child) => joined.push(child));
+  const trimmed: ProseMirrorNode[] = [];
+  joined.forEach((child, index) => {
+    if (!child.isText) {
+      trimmed.push(child);
+      return;
+    }
+    let text = child.text ?? "";
+    if (index === 0 || joined[index - 1]?.type.name === "hard_break")
+      text = text.replace(/^[ \t]+/u, "");
+    if (index === joined.length - 1 || joined[index + 1]?.type.name === "hard_break")
+      text = text.replace(/[ \t]+$/u, "");
+    if (text !== "")
+      trimmed.push(text === child.text ? child : child.type.schema.text(text, child.marks));
+  });
+  return Fragment.fromArray(trimmed);
+}
+
 function hasSameWritebackContent(before: ProseMirrorNode, after: ProseMirrorNode): boolean {
   const metadata = new Set([
     "sourceId",
@@ -588,7 +614,13 @@ function hasSameWritebackContent(before: ProseMirrorNode, after: ProseMirrorNode
     "referenceHref",
     "referenceTitle",
   ]);
-  const canonical = (node: ProseMirrorNode, trimEnd = false, trimStart = false): unknown => {
+  const canonical = (original: ProseMirrorNode): unknown => {
+    // A table cell keeps its edge spaces in the file (`&#32;`), so only its styles are unified.
+    const node = ["paragraph", "heading"].includes(original.type.name)
+      ? original.copy(fileInlineContent(original))
+      : ["table_cell", "table_header"].includes(original.type.name)
+        ? original.copy(unstyleBoundaryWhitespace(original))
+        : original;
     const attrs = Object.fromEntries(
       Object.entries(node.attrs).filter(
         ([name]) =>
@@ -597,29 +629,17 @@ function hasSameWritebackContent(before: ProseMirrorNode, after: ProseMirrorNode
       ),
     );
     if (node.type.name === "image") attrs.alt = attrs.alt ?? "";
-    const children = Array.from({ length: node.childCount }, (_, i) =>
-      canonical(
-        node.child(i),
-        ["paragraph", "heading"].includes(node.type.name) && i === node.childCount - 1,
-        ["paragraph", "heading"].includes(node.type.name) && i === 0,
-      ),
-    );
     return {
       type: node.type.name,
       attrs,
-      text: node.isText
-        ? (trimStart ? node.text?.replace(/^ +/u, "") : node.text)?.replace(
-            trimEnd ? / +$/u : /$^/u,
-            "",
-          )
-        : node.text,
+      text: node.text,
       marks: node.marks.map((mark) => ({
         type: mark.type.name,
         attrs: Object.fromEntries(
           Object.entries(mark.attrs).filter(([name]) => !metadata.has(name)),
         ),
       })),
-      content: children,
+      content: Array.from({ length: node.childCount }, (_, i) => canonical(node.child(i))),
     };
   };
   return JSON.stringify(canonical(before)) === JSON.stringify(canonical(after));

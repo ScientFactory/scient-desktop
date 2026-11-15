@@ -507,16 +507,19 @@ function wordAroundCaret(state: EditorState): { from: number; to: number } | nul
 /**
  * Set one font mark on the selection; `null` removes it. At a caret it applies to the word
  * around it (as Word does), or, between words, to the typing marks. Every selected range gets
- * it, so a selection across table cells reaches all of them.
+ * it, so a selection across table cells reaches all of them. Inline code is skipped: the file
+ * cannot hold a font span around code, so code keeps its own look.
  */
 function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
   return (state, dispatch) => {
     if (!dispatch) return true;
     const type = requiredMarkType(markName);
+    const code = requiredMarkType("code");
     const { empty, $from } = state.selection;
     const word = empty ? wordAroundCaret(state) : null;
     if (empty && word === null) {
       const kept = (state.storedMarks ?? $from.marks()).filter((mark) => mark.type !== type);
+      if (kept.some((mark) => mark.type === code)) return true;
       dispatch(state.tr.setStoredMarks(attrs ? type.create(attrs).addToSet(kept) : kept));
       return true;
     }
@@ -533,7 +536,14 @@ function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
       let end = to;
       while (start < end && isSpace(start)) start += 1;
       while (end > start && isSpace(end - 1)) end -= 1;
-      transaction = transaction.addMark(start, end, type.create(attrs));
+      state.doc.nodesBetween(start, end, (node, position) => {
+        if (!node.isInline || node.marks.some((mark) => mark.type === code)) return;
+        transaction = transaction.addMark(
+          Math.max(start, position),
+          Math.min(end, position + node.nodeSize),
+          type.create(attrs),
+        );
+      });
     }
     dispatch(transaction);
     return true;

@@ -52,6 +52,7 @@ import {
   type ScientMarkdownTableDimensions,
 } from "./commands";
 import { scientMarkdownParser, scientMarkdownSchema } from "./schema";
+import { selectionMarkValue } from "./selectionMarkValue";
 import {
   addImageUploadPlaceholder,
   imageUploadPlaceholderPosition,
@@ -1723,32 +1724,8 @@ export class ScientMarkdownEditorView {
           : state.doc.rangeHasMark(selection.from, selection.to, mark),
       )
       .map((mark) => mark.name);
-    // The shared value of a mark attribute over the selection; `mixed` when the selection
-    // holds more than one value (a null value there means "none", not "several").
-    const markAttribute = <T extends string | number>(
-      markName: string,
-      attribute: string,
-      kind: "string" | "number",
-    ): { readonly value: T | null; readonly mixed: boolean } => {
-      const type = scientMarkdownSchema.marks[markName]!;
-      const valid = (value: unknown): value is T => typeof value === kind;
-      if (selection.empty) {
-        const mark = (state.storedMarks ?? selection.$from.marks()).find((m) => m.type === type);
-        const value = mark?.attrs[attribute];
-        return { value: valid(value) ? value : null, mixed: false };
-      }
-      const values = new Set<T | null>();
-      state.doc.nodesBetween(selection.from, selection.to, (node) => {
-        if (!node.isText) return;
-        const value = node.marks.find((m) => m.type === type)?.attrs[attribute];
-        values.add(valid(value) ? value : null);
-      });
-      return values.size === 1
-        ? { value: [...values][0] ?? null, mixed: false }
-        : { value: null, mixed: values.size > 1 };
-    };
-    const fontFamily = markAttribute<string>("font_family", "family", "string");
-    const fontSize = markAttribute<number>("font_size", "size", "number");
+    const fontFamily = selectionMarkValue<string>(state, "font_family", "family", "string");
+    const fontSize = selectionMarkValue<number>(state, "font_size", "size", "number");
     let blockType = selection.$from.parent.type.name;
     let headingLevel: number | null =
       blockType === "heading" ? Number(selection.$from.parent.attrs.level) : null;
