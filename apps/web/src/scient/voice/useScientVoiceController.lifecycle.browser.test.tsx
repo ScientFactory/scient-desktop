@@ -2,6 +2,7 @@ import { render as _fixtureRender, type Screen, act } from "../../../test/render
 import {
   EnvironmentId,
   type DesktopVoiceBridge,
+  type VoiceDictationEngine,
   type VoiceModelsSnapshot,
   type VoiceTranscript,
 } from "@t3tools/contracts";
@@ -68,8 +69,11 @@ describe("voice operation ownership", () => {
 
   let delivered = vi.fn<(owner: string, text: string) => void>();
   let correctionClient: VoiceTranscriptCorrectionClient | undefined;
-  /** Set to dictate with ChatGPT; null when no Scient Agent is signed in to it. */
+  /** Set to dictate with ChatGPT; null when no provider is signed in to it. */
   let chatGpt: VoiceJobTranscriber | null | undefined;
+  /** The saved engine; unset means ChatGPT when `chatGpt` is set, else this computer. */
+  let engine: VoiceDictationEngine | undefined;
+  let chosen = vi.fn<(engine: "local" | "chatgpt") => void>();
   let now: number;
   function Probe({ _fixture, owner }: { owner: string } & { _fixture: _Fixture }) {
     const control = useScientVoiceController({
@@ -78,7 +82,9 @@ describe("voice operation ownership", () => {
       environmentId: EnvironmentId.make("test"),
       correctionEnabled: !!correctionClient,
       ...(correctionClient ? { correctionClient } : {}),
-      ...(chatGpt !== undefined ? { engine: "chatgpt" as const, chatGpt } : {}),
+      ...(chatGpt !== undefined ? { chatGpt } : {}),
+      engine: engine ?? (chatGpt !== undefined ? "chatgpt" : "local"),
+      onEngineChosen: chosen,
     });
     useLayoutEffect(() => {
       _fixture.publishControl(owner, control);
@@ -93,6 +99,8 @@ describe("voice operation ownership", () => {
     });
     correctionClient = undefined;
     chatGpt = undefined;
+    engine = undefined;
+    chosen = vi.fn();
     now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     pending = deferred<VoiceTranscript>();
@@ -228,8 +236,115 @@ describe("voice operation ownership", () => {
     await start(_fixture);
     expect(recorder.start).not.toHaveBeenCalled();
     expect(control(_fixture).errorMessage).toBe(
-      "Sign in to ChatGPT in Scient Agent to dictate with ChatGPT.",
+      "Sign in to ChatGPT in Scient Agent or Codex to dictate with ChatGPT.",
     );
+  });
+
+  describe("before an engine is chosen", () => {
+    const model = snapshot.models[0]!;
+    const notSetUp: VoiceModelsSnapshot = {
+      ...snapshot,
+      models: [{ ...model, state: { state: "missing" } }],
+    };
+
+    async function render(_fixture: _Fixture) {
+      engine = "auto";
+      await act(
+        async () => await _fixture.root0.rerender(<Probe _fixture={_fixture} owner="owner" />),
+      );
+    }
+
+    it("asks once even with a model already set up, which it uses without downloading", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      const transcribe = vi.fn(async () => ({ text: "from ChatGPT" }));
+      chatGpt = { transcribe };
+      client.downloadModel = vi.fn(async () => snapshot);
+      await render(_fixture);
+
+      await start(_fixture);
+      expect(control(_fixture).phase).toBe("setup-prompt");
+      expect(control(_fixture).chatGptOffered).toBe(true);
+      expect(recorder.start).not.toHaveBeenCalled();
+
+      await act(() => control(_fixture).setupModel(model.id));
+      now += 300;
+      expect(client.downloadModel).not.toHaveBeenCalled();
+      expect(chosen).toHaveBeenCalledExactlyOnceWith("local");
+      const { completion } = await stop(_fixture);
+      await finish(completion, "on this computer");
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(delivered).toHaveBeenCalledWith("owner", "on this computer");
+    });
+
+    it("keeps dictating with a model set up when there is no ChatGPT sign-in", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      chatGpt = null;
+      await render(_fixture);
+
+      await start(_fixture);
+      expect(control(_fixture).phase).toBe("recording");
+      expect(chosen).not.toHaveBeenCalled();
+    });
+
+    it("offers ChatGPT without recording, then dictates with it once chosen", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      const transcribe = vi.fn(async () => ({ text: "from ChatGPT" }));
+      chatGpt = { transcribe };
+      client.getModelsState = async () => notSetUp;
+      await render(_fixture);
+
+      await start(_fixture);
+      expect(control(_fixture).phase).toBe("setup-prompt");
+      expect(control(_fixture).chatGptOffered).toBe(true);
+      expect(recorder.start).not.toHaveBeenCalled();
+
+      await act(() => control(_fixture).chooseChatGpt());
+      now += 300;
+      expect(chosen).toHaveBeenCalledExactlyOnceWith("chatgpt");
+      expect(control(_fixture).phase).toBe("recording");
+      const { completion } = await stop(_fixture);
+      await act(async () => await completion);
+      expect(transcribe).toHaveBeenCalledOnce();
+      expect(client.transcribe).not.toHaveBeenCalled();
+      expect(delivered).toHaveBeenCalledWith("owner", "from ChatGPT");
+    });
+
+    it("keeps this computer once a model downloaded where ChatGPT was offered", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      chatGpt = { transcribe: vi.fn(async () => ({ text: "unused" })) };
+      client.getModelsState = async () => notSetUp;
+      client.downloadModel = async () => snapshot;
+      await render(_fixture);
+
+      await start(_fixture);
+      await act(() => control(_fixture).setupModel(model.id));
+      expect(chosen).toHaveBeenCalledExactlyOnceWith("local");
+      expect(control(_fixture).phase).toBe("recording");
+    });
+
+    it("sets up a local model as before without a ChatGPT sign-in", async () => {
+      await using _fixture = _createFixture();
+      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+      await _setupFixture0(_fixture);
+      chatGpt = null;
+      client.getModelsState = async () => notSetUp;
+      client.downloadModel = async () => snapshot;
+      await render(_fixture);
+
+      await start(_fixture);
+      expect(control(_fixture).phase).toBe("setup-prompt");
+      expect(control(_fixture).chatGptOffered).toBe(false);
+      await act(() => control(_fixture).setupModel(model.id));
+      expect(chosen).not.toHaveBeenCalled();
+    });
   });
 
   it("never sends unsafe global cancellation to an older host", async () => {

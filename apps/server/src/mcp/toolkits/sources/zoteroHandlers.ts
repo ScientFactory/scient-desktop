@@ -303,7 +303,11 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
       imported: count("imported"),
       skipped: count("skipped"),
       failed: count("failed"),
-      items: operation.items.map((item) => ({
+      // A part of a large import names only what needs a look; the counts say the rest.
+      items: (operation.run
+        ? operation.items.filter((item) => item.state !== "imported" || item.note)
+        : operation.items
+      ).map((item) => ({
         itemKey: item.itemKey,
         outcome: item.state,
         ...(item.duplicateKind ? { duplicate: item.duplicateKind } : {}),
@@ -313,7 +317,8 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
         ...(item.note ? { note: item.note } : {}),
       })),
       ...(notBrought.length > 0 ? { notBrought } : {}),
-      ...(operation.run && operation.run.remaining > 0
+      // A person who stopped the import is not overruled by going on: no runId then.
+      ...(operation.run && operation.run.remaining > 0 && operation.state !== "cancelled"
         ? { remaining: operation.run.remaining, runId: operation.run.runId }
         : {}),
     };

@@ -16,19 +16,22 @@ import {
 } from "../../components/ui/dialog";
 import { toastManager } from "../../components/ui/toast";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import {
+  REVIEW_VERSION_LABELS,
+  STAGE_WORDS,
+  decisionText,
+  differenceCounts,
+  plural,
+  reviewDate,
+  rowHeading,
+  searchText,
+  type ReviewVersionDifferences,
+} from "./reviewVersionLabels";
+import { Sides } from "./Sides";
 import type { SystematicReviews } from "./useSystematicReviews";
 
 type Version = ScientSystematicReviewConflictsResult["versions"][number];
 type Pick = "keep" | "use-other" | "combine";
-
-const date = (value: string) => {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? value
-    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(parsed);
-};
-const plural = (value: number, one: string, many: string) =>
-  `${value.toLocaleString()} ${value === 1 ? one : many}`;
 
 function VersionSummary(props: { readonly heading: string; readonly version: Version | null }) {
   const { version } = props;
@@ -39,7 +42,7 @@ function VersionSummary(props: { readonly heading: string; readonly version: Ver
         <>
           <p className="break-words font-medium">{version.title}</p>
           <p className="text-xs text-muted-foreground tabular-nums">
-            Changed {date(version.updatedAt)}{" "}
+            Changed {reviewDate(version.updatedAt)}{" "}
             {version.updatedBy === "agent" ? "by an agent" : "by you"}
           </p>
           <p className="text-xs text-muted-foreground tabular-nums">
@@ -49,7 +52,7 @@ function VersionSummary(props: { readonly heading: string; readonly version: Ver
           </p>
           <p className="text-xs text-muted-foreground tabular-nums">
             {version.lastDecidedAt
-              ? `Last decision ${date(version.lastDecidedAt)}`
+              ? `Last decision ${reviewDate(version.lastDecidedAt)}`
               : "No decisions yet"}
           </p>
         </>
@@ -60,12 +63,67 @@ function VersionSummary(props: { readonly heading: string; readonly version: Ver
   );
 }
 
-/** Both versions of a review side by side, with the choice between them. */
+/** What the two versions do not share, both sides of each, a page at a time. */
+function DifferenceRows(props: {
+  readonly differences: ReviewVersionDifferences;
+  readonly disabled: boolean;
+  readonly onMore: () => void;
+}) {
+  const { rows, nextOffset } = props.differences;
+  const names = {
+    hereName: REVIEW_VERSION_LABELS.here,
+    otherName: REVIEW_VERSION_LABELS.other,
+  };
+  return (
+    <>
+      {rows.length > 0 ? (
+        <ul className="divide-y divide-border text-sm">
+          {rows.map((row) => {
+            const heading = rowHeading(row);
+            return (
+              <li key={heading.key} className="py-3">
+                <p className="font-medium break-words">{heading.title}</p>
+                <p className="text-xs text-muted-foreground">{heading.standing}</p>
+                {row.kind === "decision" ? (
+                  <Sides
+                    label="Decision"
+                    here={decisionText(row.here)}
+                    other={decisionText(row.other)}
+                    {...names}
+                  />
+                ) : row.kind === "search" ? (
+                  <Sides
+                    label="Search"
+                    here={searchText(row.here, row.other ? "only in this version" : null)}
+                    other={searchText(row.other, row.here ? "only in the other version" : null)}
+                    {...names}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {nextOffset !== null ? (
+        <Button size="xs" variant="ghost" disabled={props.disabled} onClick={props.onMore}>
+          {REVIEW_VERSION_LABELS.more}
+        </Button>
+      ) : null}
+    </>
+  );
+}
+
+/** Both versions of a review side by side, what differs between them, and the choice. */
 function ReviewVersionsDialog(props: {
   readonly versions: ScientSystematicReviewConflictsResult | null;
+  /** By other version: what differs from it, null when that could not be read. */
+  readonly differences: ReadonlyMap<string, ReviewVersionDifferences | null>;
   readonly error: string | null;
   readonly disabled: boolean;
+  /** A read is under way: no further rows are asked for. */
+  readonly reading: boolean;
   readonly onChoose: (conflictId: string, pick: Pick) => void;
+  readonly onMore: (conflictId: string, shown: ReviewVersionDifferences) => void;
   readonly onClose: () => void;
 }) {
   const { disabled, onChoose: choose } = props;
@@ -84,44 +142,64 @@ function ReviewVersionsDialog(props: {
             <p className="text-sm text-destructive-foreground">{props.error}</p>
           ) : props.versions === null ? null : (
             <div className="space-y-5">
-              {props.versions.versions.map((version) => (
-                <section key={version.conflictId} className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <VersionSummary heading="This version" version={props.versions!.current} />
-                    <VersionSummary heading="The other version" version={version} />
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    <Button
-                      size="compact"
-                      variant="outline"
-                      disabled={disabled}
-                      onClick={() => choose(version.conflictId!, "keep")}
-                    >
-                      Keep this version
-                    </Button>
-                    <Button
-                      size="compact"
-                      variant="outline"
-                      disabled={disabled}
-                      onClick={() => choose(version.conflictId!, "use-other")}
-                    >
-                      Use the other
-                    </Button>
-                    <Button
-                      size="compact"
-                      variant="outline"
-                      disabled={disabled}
-                      onClick={() => choose(version.conflictId!, "combine")}
-                    >
-                      Combine
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Combine keeps the searches and records of both versions, and reopens any record
-                    the two decided differently.
-                  </p>
-                </section>
-              ))}
+              {props.versions.versions.map((version) => {
+                const differences = props.differences.get(version.conflictId!);
+                return (
+                  <section key={version.conflictId} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <VersionSummary
+                        heading={REVIEW_VERSION_LABELS.here}
+                        version={props.versions!.current}
+                      />
+                      <VersionSummary heading={REVIEW_VERSION_LABELS.other} version={version} />
+                    </div>
+                    {differences === undefined ? null : (
+                      <p className="text-sm tabular-nums">
+                        {differences
+                          ? differenceCounts(differences)
+                          : REVIEW_VERSION_LABELS.unreadable}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-1">
+                      <Button
+                        size="compact"
+                        variant="outline"
+                        disabled={disabled}
+                        onClick={() => choose(version.conflictId!, "keep")}
+                      >
+                        Keep this version
+                      </Button>
+                      <Button
+                        size="compact"
+                        variant="outline"
+                        disabled={disabled}
+                        onClick={() => choose(version.conflictId!, "use-other")}
+                      >
+                        Use the other
+                      </Button>
+                      <Button
+                        size="compact"
+                        variant="outline"
+                        disabled={disabled}
+                        onClick={() => choose(version.conflictId!, "combine")}
+                      >
+                        Combine
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Combine keeps the searches and records of both versions, and reopens any
+                      record the two decided differently.
+                    </p>
+                    {differences ? (
+                      <DifferenceRows
+                        differences={differences}
+                        disabled={props.reading}
+                        onMore={() => props.onMore(version.conflictId!, differences)}
+                      />
+                    ) : null}
+                  </section>
+                );
+              })}
             </div>
           )}
         </DialogPanel>
@@ -137,8 +215,12 @@ export function ReviewVersionsLine(props: {
 }) {
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<ScientSystematicReviewConflictsResult | null>(null);
+  const [differences, setDifferences] = useState<
+    ReadonlyMap<string, ReviewVersionDifferences | null>
+  >(new Map());
   const [error, setError] = useState<string | null>(null);
-  // A choice is offered only on versions read after the last opening and the last choice.
+  // A choice is offered only on versions, and their differences, read after the last opening
+  // and the last choice.
   const [reading, setReading] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const latestRead = useRef(0);
@@ -146,6 +228,7 @@ export function ReviewVersionsLine(props: {
     latestRead.current += 1;
     const read = latestRead.current;
     setReading(true);
+    setDifferences(new Map());
     const next = await props.reviews.readConflicts(props.reviewId).catch((cause: unknown) => {
       if (read === latestRead.current) {
         setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
@@ -153,11 +236,39 @@ export function ReviewVersionsLine(props: {
       return null;
     });
     if (read !== latestRead.current) return;
-    setReading(false);
-    if (!next) return;
+    if (!next) {
+      setReading(false);
+      return;
+    }
     setError(null);
     setVersions(next);
     if (next.versions.length === 0) setOpen(false);
+    const pages = new Map<string, ReviewVersionDifferences | null>();
+    for (const version of next.versions) {
+      const page = await props.reviews
+        .readConflicts(props.reviewId, { conflictId: version.conflictId!, offset: 0 })
+        .catch(() => null);
+      if (read !== latestRead.current) return;
+      pages.set(version.conflictId!, page?.differences ?? null);
+    }
+    setDifferences(pages);
+    setReading(false);
+  };
+  const showMore = async (conflictId: string, shown: ReviewVersionDifferences) => {
+    const read = latestRead.current;
+    setReading(true);
+    const next = await props.reviews
+      .readConflicts(props.reviewId, { conflictId, offset: shown.nextOffset ?? 0 })
+      .catch(() => null);
+    if (read !== latestRead.current) return;
+    const page = next?.differences;
+    // Another version in force, or this one settled elsewhere: the rows shown are of a pair
+    // that no longer stands, so everything is read again.
+    if (!page || next.currentRevision !== versions?.currentRevision) return load();
+    setDifferences(
+      new Map(differences).set(conflictId, { ...page, rows: [...shown.rows, ...page.rows] }),
+    );
+    setReading(false);
   };
   const choose = async (conflictId: string, pick: Pick) => {
     setChoosing(true);
@@ -203,17 +314,18 @@ export function ReviewVersionsLine(props: {
       {open ? (
         <ReviewVersionsDialog
           versions={versions}
+          differences={differences}
           error={error}
           disabled={props.reviews.conflictsDisabled || reading || choosing}
+          reading={reading || choosing}
           onChoose={(conflictId, pick) => void choose(conflictId, pick)}
+          onMore={(conflictId, shown) => void showMore(conflictId, shown)}
           onClose={() => setOpen(false)}
         />
       ) : null}
     </>
   );
 }
-
-const STAGE_WORDS = { "title-abstract": "title and abstract", "full-text": "full text" } as const;
 
 /** What Combine left for a person, kept on the review until dismissed. */
 export function CombineReportNotice(props: {

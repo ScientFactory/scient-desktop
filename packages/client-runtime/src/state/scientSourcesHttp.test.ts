@@ -9,7 +9,10 @@ import * as Schema from "effect/Schema";
 
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
 import { layerRemoteHttpClient } from "../rpc/http.ts";
-import { updateEnvironmentScientSourceNote } from "./scientSourcesHttp.ts";
+import {
+  beginEnvironmentZoteroScopedImport,
+  updateEnvironmentScientSourceNote,
+} from "./scientSourcesHttp.ts";
 
 const decodeNoteRequest = Schema.decodeUnknownSync(ScientSourceNoteUpdateRequest);
 
@@ -89,4 +92,35 @@ it.effect(
         { expectedNote: "Saved elsewhere", noteSession: "session-1", citationKey: "other2026" },
       ]);
     }),
+);
+
+it.effect("asks for the next part of a large Zotero import by its run, as it was asked", () =>
+  Effect.gen(function* () {
+    const bodies: unknown[] = [];
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(await new Request(input, init).json());
+      return Response.json({
+        formatVersion: 2,
+        operationId: "run-2",
+        libraryId: "library_test",
+        adapter: "zotero",
+        actor: "user",
+        intake: "zotero",
+        state: "running",
+        createdAt: "2026-11-15T00:00:00.000Z",
+        updatedAt: "2026-11-15T00:00:00.000Z",
+        items: [],
+        run: { runId: "run", part: 2, remaining: 40, scope: { kind: "library" } },
+      });
+    }) satisfies typeof fetch;
+    const part = yield* beginEnvironmentZoteroScopedImport({
+      prepared,
+      root: "/project",
+      continueRun: "run",
+      retryFailed: true,
+    }).pipe(Effect.provide(layerRemoteHttpClient(fetchFn)));
+    expect(part.run?.part).toBe(2);
+    // Nothing of a first request is invented: the run alone says what to go on with.
+    expect(bodies).toEqual([{ root: "/project", continueRun: "run", retryFailed: true }]);
+  }),
 );

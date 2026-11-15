@@ -1172,16 +1172,10 @@ export async function beginZoteroScopedImport(input: {
   readonly zotero?: ZoteroAccess;
   /** Library stores: the project the imported sources are pinned in. */
   readonly pinInto?: string;
-  /** The run whose next part this begins (a scope too large for one operation). */
-  readonly continueRun?: string;
   /** Tests only: a smaller part than an operation's limit. */
   readonly partSize?: number;
 }) {
   const { zotero, partSize } = input;
-  const shared = { ...(zotero ? { zotero } : {}), ...(partSize ? { partSize } : {}) };
-  if (input.continueRun !== undefined) {
-    return continueZoteroImportRun({ root: input.root, runId: input.continueRun, ...shared });
-  }
   const parts = await readSourceImportParts(input.root, input.operationId);
   const [begun] = parts;
   if (
@@ -1202,17 +1196,20 @@ export async function beginZoteroScopedImport(input: {
     ...(input.groupId ? { groupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
     pin: await importPinInstance(input.root, input.pinInto),
-    ...shared,
+    ...(zotero ? { zotero } : {}),
+    ...(partSize ? { partSize } : {}),
   });
 }
 
 /**
  * Begins the next part of a large Zotero import. What it brings, from which Zotero library
  * and for which project is on the run's record, so nothing of that is asked again.
+ * `retryFailed` takes again, with what remains, the references earlier parts failed on.
  */
 export async function continueZoteroImportRun(input: {
   readonly root: ScientSourceStoreLocation;
   readonly runId: string;
+  readonly retryFailed?: boolean;
   readonly zotero?: ZoteroAccess;
   readonly partSize?: number;
 }) {
@@ -1233,6 +1230,7 @@ export async function continueZoteroImportRun(input: {
     ...(begun.zoteroGroupId ? { groupId: begun.zoteroGroupId } : {}),
     actor: begun.actor,
     pin: begun.pinInstanceId ? { pinInstanceId: begun.pinInstanceId } : {},
+    retryFailed: input.retryFailed === true,
     ...(input.zotero ? { zotero: input.zotero } : {}),
     ...(input.partSize ? { partSize: input.partSize } : {}),
   });
@@ -1248,6 +1246,7 @@ async function beginZoteroRunPart(input: {
   readonly groupId?: string;
   readonly actor?: "user" | "agent";
   readonly pin: { readonly pinInstanceId?: string };
+  readonly retryFailed?: boolean;
   readonly zotero?: ZoteroAccess;
   readonly partSize?: number;
 }) {
@@ -1263,10 +1262,14 @@ async function beginZoteroRunPart(input: {
   // A large scope comes in parts: each takes what has no source here yet and no earlier part
   // of the run has handled (imported, skipped as a possible duplicate, or failed).
   const here = large ? await zoteroItemKeysHere(input.root, input.groupId) : new Set<string>();
-  // An item a stopped part never reached is not handled: a later part takes it.
+  // An item a stopped part never reached is not handled: a later part takes it. So is one
+  // that failed, when asked to try those again; what a part did last is what counts.
+  const last = new Map(
+    parts.flatMap((part) => part.items.map((item) => [item.itemKey, item.state] as const)),
+  );
   const handled = new Set(
-    parts.flatMap((part) =>
-      part.items.flatMap((item) => (item.state === "pending" ? [] : [item.itemKey])),
+    [...last].flatMap(([itemKey, state]) =>
+      state === "pending" || (state === "failed" && input.retryFailed) ? [] : [itemKey],
     ),
   );
   const rest = inScope.filter((key) => !here.has(key) && !handled.has(key));

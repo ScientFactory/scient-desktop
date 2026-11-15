@@ -17,7 +17,6 @@ export const JOIN_DIFFERENCES_LABELS = {
   addSeparately: "Add separately",
   removedHere: "Removed here, still in the other Library (not brought back)",
   untitled: "Untitled source",
-  none: "(none)",
 } as const;
 
 const day = (iso: string) => {

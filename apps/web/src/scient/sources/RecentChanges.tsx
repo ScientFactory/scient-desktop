@@ -129,6 +129,8 @@ export function RecentChangesDialog(props: {
   readonly onChanged: () => Promise<unknown>;
   /** Starts adding what a Library folder holds; the panel shows its progress. */
   readonly onAddFromLibrary: (fromFolder: string) => Promise<unknown>;
+  /** Goes on with a large Zotero import that stopped before its end; the panel shows it. */
+  readonly onImportRest: (importId: string, remaining: number) => Promise<unknown>;
   /** Arranges for a Library a restore kept to be the Library again; the panel says it waits. */
   readonly onPutBackLibrary: (folder: string) => Promise<unknown>;
   /** Opens the papers a join left as they are here because both Libraries have them. */
@@ -341,6 +343,21 @@ export function RecentChangesDialog(props: {
                             props.onClose();
                           }}
                         />
+                      ) : null}
+                      {change.kind === "import" && change.remaining && props.canChange ? (
+                        <Button
+                          className="mt-1"
+                          size="xs"
+                          variant="outline"
+                          disabled={working}
+                          aria-label={`${RECENT_CHANGES_LABELS.importRest}: ${sentence}`}
+                          onClick={() => {
+                            void props.onImportRest(change.id, change.remaining ?? 0);
+                            props.onClose();
+                          }}
+                        >
+                          {RECENT_CHANGES_LABELS.importRest}
+                        </Button>
                       ) : null}
                       {change.kind === "restore" && change.kept && props.canChange ? (
                         // For a restore made by mistake: that Library whole, not only its

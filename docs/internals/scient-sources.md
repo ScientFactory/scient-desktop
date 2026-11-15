@@ -1234,6 +1234,28 @@ summarizes the version in force and each other version for the picker: title,
 who changed it last and when, searches, records, decisions in force and the
 latest decision's date.
 
+**Differences between two versions** (`scientReviewVersionDifferences`, read
+from the two files by `readScientReviewVersionDifferences`): the version in
+force (`here`) against one other version, joined by the IDs Combine joins
+them by, source IDs and search IDs. A decision row is a record and stage whose
+decision in force differs in decision, reason or note, or that only one
+version has decided (a decision one version reopened counts); who decided and
+when is carried but is not a difference. A search row is a search only one
+version has, or one in both whose database, query, date, result count, notes
+or set of records differ; each side carries its record count and how many of
+them the other side's entry lacks. Two entries the copies logged separately
+have different search IDs and are two one-sided rows, as Combine keeps both. A
+record row is a record only one version has. The title, the question, the
+exclusion reasons, duplicate marks with distinct pairs, and each record's
+latest retrieval outcome are compared whole and named in `alsoDiffering`,
+without rows. The answer has the counts of everything and one page of 100
+rows from `offset`: decisions that differ, searches, one-sided decisions,
+one-sided records; `nextOffset` is null on the last page. Titles come from
+the copies of the sources' details saved with each version, the one in force
+first, so the list needs neither the Library nor the folder the other version
+came from. It is null when either file is missing or does not decode. Nothing
+is written.
+
 **Git.** `libraryMoveGitTracked` runs `git ls-files -z -- .scient/sources`
 through `GitVcsDriver` before the first cleanup. Tracked files are deleted from
 the working tree like any other and left for the person to commit;
@@ -1472,13 +1494,16 @@ dismiss it with `scient_sources_organize`.
 **Review conflicts on the wire.** `systematicReview` carries
 `conflictVersions` (when above zero) and `combineReport`.
 `systematicReviewConflicts` (read) returns `{ current, versions,
-combineReport }`. `systematicReviewConflict` (operate) takes
+combineReport }`, and with `differencesOf: { conflictId, offset }` also
+`differences` (null when they cannot be read). `systematicReviewConflict` (operate) takes
 `{ root, reviewId, change }`, with `change` `{ action: "resolve", conflictId,
 pick }` or `{ action: "dismiss-report" }`. In library mode
 `scient_sources_systematic_reviews` lists `conflicts` and `combineReport` on a
-review, and `scient_sources_systematic_review_update` takes `resolve-conflict`
-and `dismiss-combine-report`. The library tool list is 112,261 bytes; the
-project list is unchanged.
+review, and with `differencesOf` (a `conflictId` and an optional `offset`)
+answers with `differences` in place of the review, or `not-found` when that
+version is gone. `scient_sources_systematic_review_update` takes
+`resolve-conflict` and `dismiss-combine-report`. These inputs are in the
+Library's tool list only; the project list is unchanged.
 
 **The v1 record-change listener** (`startManagedBibliographySync`) skips a
 root that is the personal library (`library.json` and no project file).
@@ -1591,9 +1616,16 @@ it into the library again.
 review has another version from a copy of this project.", which opens a picker
 read fresh from `systematicReviewConflicts`: the version in force and each
 other version side by side, with "Keep this version", "Use the other" and
-"Combine" (`systematicReviewConflict`, its own command and grant). The choices
-are off until the versions have been read after the picker opened and after
-each choice. The picker's read names the version in force by a hash of its file
+"Combine" (`systematicReviewConflict`, its own command and grant). For each
+other version the picker then reads the first page of differences
+(`differencesOf`) and shows the counts as one sentence above the choices and
+the rows below them, in the two-sided layout the Library's join differences
+use (`Sides.tsx`; words in `reviewVersionLabels.ts`); "Show more" reads the
+next page and, if another version is in force by then, reads everything
+again. The choices
+are off until the versions and their differences have been read after the
+picker opened and after each choice; differences that cannot be read are said
+in one sentence and do not block the choice. The picker's read names the version in force by a hash of its file
 (`currentRevision`; two versions can share an `updatedAt`), and the pick sends
 it back; if another version is in force by then, the server changes nothing and
 answers `version-changed`, and the picker says so and reads again. The agent
@@ -3279,9 +3311,15 @@ record's citation key; a record without one gets a free key from the same
 rules for that file only. Project notes are excluded unless requested.
 `exportBibliographyFile` reads the written file back and returns `notKept`:
 identifiers, the source type, each further detail (`more`, by its plain name;
-a date agrees when one is the other's beginning) and creators the format
-could not carry. A report's own number is written as the format's number and
-its issue apart, which is how the readers take them. arXiv IDs go to RIS
+two dates agree when they cite the same, so a time of day left off is no
+loss and a range cut to its first year is), a creator the file does not name
+("Some creators") and one it names under another role ("Creator roles"),
+compared by the words of the name. An abbreviation equal to the container's
+title is carried by the title. A report's own number is written as the
+format's number and its issue always as the issue, which is how the readers
+take them. The CSL-JSON reader reads every name variable Zotero's roles are
+cited under (`NAME_ROLES`, from `ZOTERO_ROLE_CSL`), so a director written
+comes back a director. arXiv IDs go to RIS
 `AN` and EndNote `accession-num` as `arXiv:<id>`, PMCIDs to RIS `C2` and
 EndNote `custom2`, and preprints to `M3`/`work-type` `Preprint`.
 `scient_sources_export` writes a project file atomically and replaces an
@@ -3385,7 +3423,10 @@ creator; an identifier or citation-key line leaves Extra only when the
 record took that very value; a talk's or a recording's `place` is its
 `event-place`, on import and on Send.
 `cslJsonItem` writes every `more` entry but `extra` as its CSL variable (a
-date or a range of two by its parts, any other text whole as a literal),
+date or a range of two by its parts, "circa 1850" and "Spring 2020" with
+CSL's `circa` and `season`, an unknown month or day `00` left out, any other
+text whole as a literal; the source's own date is read by the same
+`cslDateFromText`, and falls back to its beginning or its year),
 every creator under its role's variable (a film's director stays its
 director; only a primary role CSL has no variable for, a program's
 programmer, is the author), and the CSL type of a
@@ -3464,8 +3505,10 @@ import also counts the notes and files in the scope that belong to no
 reference (each once, also when filed in two collections) and stores them
 on the operation, or says that Zotero could not be asked
 (`alone-uncounted`), never zero. `summarizeNotBrought` adds one line for the
-references a Zotero import skipped because they were already here under
-another origin (`already-here`): nothing of Zotero's copy was looked at.
+references a Zotero import skipped because the same work was already here
+under another origin, by its identifier or its PDF (`already-here`): nothing
+of Zotero's copy was looked at. A possible match is not in that line; the
+summary asks the person to review those.
 `summarizeNotBrought`
 and `notBroughtName` (`packages/scient-sources/src/notBrought.ts`) add them up
 and name them for the panel's summary and for the agent's import result alike.
@@ -3498,12 +3541,24 @@ returns it, with no error. Stopping a part adds what it never reached to
 `run.remaining`, and a later part takes those items. The panel begins the
 next part when one completes with something remaining (`runZoteroScope`),
 also for a part that was under way when Scient closed (`resumeImport`), shows
-the parts as one import, and after a stop offers "Import the rest". An
-agent's import returns `remaining` and `runId` and goes on when called with
-that `runId` alone. Each receipt of a part carries `runId`;
-`listScientSourceImports` and `readScientSourceImport` add a run's parts up,
-so Recent changes shows one import under the run's ID, with its sources and
-its "not brought" list over all parts (`wholeSourceImport`). A scope of 500
+the parts as one import (`wholeRun`; the finished parts of the run on screen
+are kept in the hook, so a stopped part stays shown with them), and after a
+stop offers "Import the rest". The request to go on is its own shape of
+`ZoteroScopedImportRequest`: `{ root, continueRun, retryFailed? }`, passed
+through the client layer whole. `retryFailed` ("Try failed items again" in a
+run) makes the next part take the references earlier parts failed on; a
+reference a later part took again counts once, as that part left it
+(`wholeSourceImport`, `wholeRun`). After a restart the panel's summary counts
+from the part it resumed; the record counts all of it. An agent's import
+returns `remaining` and `runId` and goes on when called with that `runId`
+alone; when a person stopped the part it returns no `runId`, so it does not
+go on by itself; a part of a run lists only the references that need a look.
+Each receipt of a part carries `runId`; `listScientSourceImports` and
+`readScientSourceImport` add a run's parts up, so Recent changes shows one
+import under the run's ID, with its sources, its failures and its "not
+brought" list over all parts, and `remaining` when its last part is not
+running and something is still to come: the line then offers "Import the
+rest". A scope of 500
 or fewer is one operation as before, already-imported items included as
 skips. Scope discovery is capped at 100,000 references and fails with a
 request to choose a smaller scope above that bound. Send takes at most 500
@@ -3512,10 +3567,14 @@ sources at a time and says so instead of leaving the rest out.
 **Refresh** (`refreshZoteroSources`) reads named sources again as asked.
 Without names it reads every source that came from Zotero, of `among` when a
 project's sources are meant (its other sources are not reported as failures),
-in ID order; with `start` it reads a batch of 200 from that position and
-returns `total` and `nextStart`. The panel asks batch after batch and shows
-how far it is; closing the dialog stops asking and keeps what was read.
-Without `start` (an agent) more than 500 is refused with a sentence. Collection and whole-library actions skip the separate preflight
+in ID order; with `after` it reads the batch of 200 that follows that source
+(null: from the first) and returns `total` and `next`, so a source added or
+removed between batches moves no other. The panel asks batch after batch and
+shows how far it is; closing the dialog stops asking and keeps what was
+read. In a project the route gives the project's pins as `among`; with
+`allLibrary` (the panel shows the whole Library) it gives none, and every
+Zotero source of the Library is read. Without `after` (an agent) more than
+500 is refused with a sentence. Collection and whole-library actions skip the separate preflight
 screen; each item is still validated, duplicate-assessed and committed by the
 normal importer, and exact or possible matches are skipped. A zotero.org
 preflight does not hash PDFs (that would download every file); identifier,

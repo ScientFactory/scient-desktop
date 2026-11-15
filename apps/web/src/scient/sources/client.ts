@@ -40,6 +40,7 @@ import type {
   ScientSourcesScope,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewConflictRequest,
+  ScientSystematicReviewConflictsRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
   ScientSourcesExportRequest,
@@ -53,6 +54,7 @@ import type {
   ScientSourcesZoteroSendRequest,
   ZoteroConnection,
   ZoteroImportScope,
+  ZoteroScopedImportRequest,
 } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
@@ -171,7 +173,7 @@ export function changeSystematicReview(
 
 export function readSystematicReviewConflicts(
   environmentId: EnvironmentId,
-  input: ScientSystematicReviewRequest,
+  input: ScientSystematicReviewConflictsRequest,
 ) {
   return runtime.runPromise(
     listEnvironmentScientSystematicReviewConflicts({ prepared: prepared(environmentId), ...input }),
@@ -385,16 +387,7 @@ export function beginZoteroItemsImport(
 
 export function beginZoteroScopeImport(
   environmentId: EnvironmentId,
-  input: {
-    readonly root: string;
-    readonly operationId: string;
-    /** The run whose next part to begin, for a scope too large for one operation. */
-    readonly continueRun?: string;
-    readonly scope: ZoteroImportScope;
-    readonly connection?: ZoteroConnection;
-    readonly groupId?: string;
-    readonly pin?: boolean;
-  },
+  input: ZoteroScopedImportRequest,
 ) {
   return runSourcesCommand(sourcesCommands.beginScopedImport, environmentId, input);
 }

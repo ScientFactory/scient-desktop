@@ -39,7 +39,7 @@ export interface ProviderVoiceTranscriptCorrection {
   }) => Effect.Effect<{ readonly text: string }, VoiceTranscriptCorrectionError>;
 }
 
-/** Dictation through the provider's own sign-in, such as Scient Agent's ChatGPT account. */
+/** Dictation through the provider's own sign-in, such as Scient Agent's or Codex's ChatGPT account. */
 export interface ProviderVoiceDictation {
   readonly dictate: (input: {
     /** A 16-bit mono WAV recording. */

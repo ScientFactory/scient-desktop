@@ -114,15 +114,16 @@ describe("Zotero refresh", () => {
       .toSorted();
     expect(sourceIds).toHaveLength(3);
 
-    const batch = (start: number) =>
-      refreshZoteroSources({ root, actor: "user", zotero, start, batchSize: 2 });
-    const first = await batch(0);
+    const batch = (after: string | null) =>
+      refreshZoteroSources({ root, actor: "user", zotero, after, batchSize: 2 });
+    const first = await batch(null);
     expect(first.items.map((item) => item.sourceId)).toEqual(sourceIds.slice(0, 2));
-    expect(first).toMatchObject({ total: 3, nextStart: 2 });
-    const last = await batch(2);
-    expect(last.items.map((item) => item.sourceId)).toEqual(sourceIds.slice(2));
+    expect(first).toMatchObject({ total: 3, next: sourceIds[1] });
+    // The batch after a source, not after a count: one removed meanwhile skips no other.
+    const last = await batch(sourceIds[0] ?? "");
+    expect(last.items.map((item) => item.sourceId)).toEqual(sourceIds.slice(1));
     expect(last.total).toBe(3);
-    expect(last.nextStart).toBeUndefined();
+    expect(last.next).toBeUndefined();
 
     // A project's sources: the two of them that came from Zotero, and no failure for others.
     const among = await refreshZoteroSources({

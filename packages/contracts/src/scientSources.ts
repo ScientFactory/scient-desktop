@@ -21,6 +21,7 @@ import {
   ScientSourcesBulkRequestChange,
   ScientSourcesBulkResult,
   ScientReviewCombineReport,
+  ScientReviewVersionDifferences,
   ScientReviewVersionSummary,
   ScientSystematicReviewAction,
   ScientSystematicReviewChangeResult,
@@ -763,6 +764,14 @@ export const ScientSystematicReviewChangeRequest = Schema.Struct({
 });
 export type ScientSystematicReviewChangeRequest = typeof ScientSystematicReviewChangeRequest.Type;
 
+export const ScientSystematicReviewConflictsRequest = Schema.Struct({
+  ...ScientSystematicReviewRequest.fields,
+  /** Also answer with a page of what differs between the version in force and this one. */
+  differencesOf: Schema.optionalKey(Schema.Struct({ conflictId: NonEmptyString, offset: Count })),
+});
+export type ScientSystematicReviewConflictsRequest =
+  typeof ScientSystematicReviewConflictsRequest.Type;
+
 /** The picker for a review with other versions: the one in force, then each other version. */
 export const ScientSystematicReviewConflictsResult = Schema.Struct({
   current: Schema.NullOr(ScientReviewVersionSummary),
@@ -770,6 +779,8 @@ export const ScientSystematicReviewConflictsResult = Schema.Struct({
   currentRevision: Schema.optionalKey(NonEmptyString),
   versions: Schema.Array(ScientReviewVersionSummary),
   combineReport: Schema.NullOr(ScientSystematicReviewCombineReport),
+  /** With `differencesOf`; null when either version cannot be read. */
+  differences: Schema.optionalKey(Schema.NullOr(ScientReviewVersionDifferences)),
 });
 export type ScientSystematicReviewConflictsResult =
   typeof ScientSystematicReviewConflictsResult.Type;
@@ -1119,13 +1130,15 @@ const RefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
 );
 
 /**
- * Without sourceIds, every source imported from Zotero is refreshed: with `start`, a batch of
- * them from that position (the result says where the next begins).
+ * Without sourceIds, every source imported from Zotero is refreshed (of the whole Library
+ * with `allLibrary`, else of the project). With `after`, a batch of them: null begins, and
+ * the result's `next` is the `after` of the batch that follows.
  */
 export const ScientSourcesZoteroRefreshRequest = Schema.Struct({
   root: NonEmptyString,
   sourceIds: Schema.optionalKey(BoundedSourceIds),
-  start: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  after: Schema.optionalKey(Schema.NullOr(NonEmptyString)),
+  allLibrary: Schema.optionalKey(Schema.Boolean),
   connection: Schema.optionalKey(ZoteroConnection),
   useZotero: Schema.optionalKey(RefreshFields),
   keepLocal: Schema.optionalKey(RefreshFields),
@@ -1156,16 +1169,26 @@ export const ZoteroCollectionsRequest = Schema.Struct({
 });
 export type ZoteroCollectionsRequest = typeof ZoteroCollectionsRequest.Type;
 
-export const ZoteroScopedImportRequest = Schema.Struct({
-  root: NonEmptyString,
-  operationId: NonEmptyString,
-  /** The run to continue: the next part of a scope too large for one operation. */
-  continueRun: Schema.optionalKey(NonEmptyString),
-  scope: ZoteroImportScope,
-  connection: Schema.optionalKey(ZoteroConnection),
-  groupId: Schema.optionalKey(ZoteroGroupId),
-  pin: PinRequest,
-});
+/**
+ * Begins the import of a Zotero scope, or the next part of one too large for one operation.
+ * Going on needs the run alone: what it brings, from where and for which project is on its
+ * record. `retryFailed` also takes again the references earlier parts failed on.
+ */
+export const ZoteroScopedImportRequest = Schema.Union([
+  Schema.Struct({
+    root: NonEmptyString,
+    operationId: NonEmptyString,
+    scope: ZoteroImportScope,
+    connection: Schema.optionalKey(ZoteroConnection),
+    groupId: Schema.optionalKey(ZoteroGroupId),
+    pin: PinRequest,
+  }),
+  Schema.Struct({
+    root: NonEmptyString,
+    continueRun: NonEmptyString,
+    retryFailed: Schema.optionalKey(Schema.Boolean),
+  }),
+]);
 export type ZoteroScopedImportRequest = typeof ZoteroScopedImportRequest.Type;
 
 export const ScientSourcesPreflightRequest = Schema.Struct({

@@ -53,11 +53,13 @@ describe("what an import did not bring, in words", () => {
       message: null,
     });
     const items = [
-      // The same DOI under another origin, and a possible match: nothing of Zotero's copy came.
+      // The same DOI or the same PDF under another origin: nothing of Zotero's copy came.
       skipped("s1", "same-identifier"),
-      skipped("s2", "possible-metadata-match"),
-      // Imported from this very Zotero item before: nothing new to say.
+      skipped("s2", "same-pdf"),
+      // Imported from this very Zotero item before: nothing new to say. And a possible match
+      // is for the person to look at, not a reference said to be here.
       skipped("s3", "same-origin"),
+      skipped("s4", "possible-metadata-match"),
     ];
     const lines = summarizeNotBrought({
       adapter: "zotero",

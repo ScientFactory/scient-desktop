@@ -134,6 +134,7 @@ export const readSystematicReviewsForInvocation = Effect.fn("ScientSystematicRev
     readonly stage?: ScientReviewStage;
     readonly limit?: number;
     readonly includeDecisions?: boolean;
+    readonly differencesOf?: { readonly conflictId: string; readonly offset?: number };
   }) {
     const store = yield* resolveScientSourcesStore();
     const { root } = store;
@@ -149,6 +150,22 @@ export const readSystematicReviewsForInvocation = Effect.fn("ScientSystematicRev
       };
     }
     const reviewId = input.reviewId;
+    if (input.differencesOf) {
+      const { conflictId, offset = 0 } = input.differencesOf;
+      const differences =
+        store.kind === "library"
+          ? (yield* attempt(() =>
+              libraryReviewConflicts(store, { reviewId, differencesOf: { conflictId, offset } }),
+            )).differences
+          : null;
+      if (!differences) {
+        return yield* new ScientSourcesToolError({
+          code: "not-found",
+          message: "That version of the review was not found. Read the review for its conflicts.",
+        });
+      }
+      return { differences };
+    }
     const view =
       store.kind === "library"
         ? yield* libraryReviewView(store, reviewId)

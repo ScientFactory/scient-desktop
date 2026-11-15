@@ -12,7 +12,11 @@ import {
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { advanceSourceImport, beginZoteroScopedImport } from "./ScientSourcesCoordinator.ts";
+import {
+  advanceSourceImport,
+  beginZoteroScopedImport,
+  continueZoteroImportRun,
+} from "./ScientSourcesCoordinator.ts";
 import {
   fakeZoteroAccess,
   fakeZoteroAccessWithGroup,
@@ -311,14 +315,15 @@ describe("Zotero import", () => {
       return operation;
     };
     const begin = (continueRun?: string) =>
-      beginZoteroScopedImport({
-        root,
-        operationId: continueRun ? "ignored-for-a-later-part" : "run",
-        scope: { kind: "library" },
-        zotero,
-        partSize: 5,
-        ...(continueRun ? { continueRun } : {}),
-      });
+      continueRun
+        ? continueZoteroImportRun({ root, runId: continueRun, zotero, partSize: 5 })
+        : beginZoteroScopedImport({
+            root,
+            operationId: "run",
+            scope: { kind: "library" },
+            zotero,
+            partSize: 5,
+          });
 
     const first = await begin();
     expect(first).toMatchObject({
@@ -392,16 +397,25 @@ describe("Zotero import", () => {
         },
       ]),
     );
-    const zotero = fakeZoteroAccess(fakeZoteroTransport({ items }));
-    const begin = (continueRun?: string) =>
-      beginZoteroScopedImport({
-        root,
-        operationId: continueRun ? "ignored" : "stop",
-        scope: { kind: "library" },
-        zotero,
-        partSize: 3,
-        ...(continueRun ? { continueRun } : {}),
-      });
+    const failures = new Map<string, Error>();
+    const zotero = fakeZoteroAccess(fakeZoteroTransport({ items, failures }));
+    const begin = (continueRun?: string, retryFailed = false) =>
+      continueRun
+        ? continueZoteroImportRun({ root, runId: continueRun, zotero, partSize: 3, retryFailed })
+        : beginZoteroScopedImport({
+            root,
+            operationId: "stop",
+            scope: { kind: "library" },
+            zotero,
+            partSize: 3,
+          });
+    const finish = async (operationId: string) => {
+      let part = await advanceSourceImport({ root, operationId, zotero });
+      while (part.state === "running") {
+        part = await advanceSourceImport({ root, operationId, zotero });
+      }
+      return part;
+    };
 
     expect((await begin()).run).toMatchObject({ part: 1, remaining: 3 });
     // Stopped before anything came: its three are still to come, with the other three.
@@ -409,10 +423,13 @@ describe("Zotero import", () => {
     const second = await begin("stop");
     expect(second.items.map((entry) => entry.itemKey)).toEqual(keys.slice(0, 3));
     expect(second).toMatchObject({ operationId: "stop-2", run: { part: 2, remaining: 3 } });
-    let part = await advanceSourceImport({ root, operationId: "stop-2", zotero });
-    while (part.state === "running") {
-      part = await advanceSourceImport({ root, operationId: "stop-2", zotero });
-    }
+    // Zotero does not answer for one of them: it fails, and going on does not take it again.
+    failures.set(keys[1] ?? "", new Error("Zotero is busy."));
+    expect((await finish("stop-2")).items.map((entry) => entry.state)).toEqual([
+      "imported",
+      "failed",
+      "imported",
+    ]);
 
     // The other three are deleted in Zotero meanwhile: the import is over, and says so.
     for (const key of keys.slice(3)) items.delete(key);
@@ -421,6 +438,13 @@ describe("Zotero import", () => {
       state: "completed",
       run: { remaining: 0 },
     });
+    expect((await listScientSourceImports(root, 10))[0]).toMatchObject({ failed: 1 });
+
+    // "Try failed items again": a further part takes the one that failed, and it counts once.
+    failures.clear();
+    const again = await begin("stop", true);
+    expect(again.items.map((entry) => entry.itemKey)).toEqual([keys[1]]);
+    await finish(again.operationId);
     const [listed] = await listScientSourceImports(root, 10);
     expect(listed).toMatchObject({ operationId: "stop", outcome: "completed", failed: 0 });
     expect(listed?.importedSourceIds).toHaveLength(3);

@@ -43,10 +43,11 @@ function setup() {
   return { onChanged: vi.fn() };
 }
 
-function Harness(props: { readonly onChanged: () => void }) {
+function Harness(props: { readonly onChanged: () => void; readonly allLibrary?: boolean }) {
   const sync = useZoteroSync({
     environmentId: "environment-1" as EnvironmentId,
     root: "/project",
+    allLibrary: props.allLibrary === true,
     onChanged: props.onChanged,
   });
   return (
@@ -82,6 +83,32 @@ describe("Refresh from Zotero", () => {
       useZotero: ["title"],
     });
     expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a large Library again batch after batch, each following the last source checked", async () => {
+    const { onChanged } = setup();
+    const checked = (sourceId: string) => ({ ...conflicted, sourceId, conflicts: [] });
+    mocks.refreshZoteroSources
+      .mockReset()
+      .mockResolvedValueOnce({
+        connection: "local",
+        items: [checked("source_a")],
+        total: 2,
+        next: "source_a",
+      })
+      .mockResolvedValueOnce({ connection: "local", items: [checked("source_b")], total: 2 });
+    await using _screen = await render(<Harness onChanged={onChanged} allLibrary />, {
+      router: false,
+    });
+
+    await page.getByRole("button", { name: "Start" }).click();
+
+    await expect.element(page.getByText("Everything matches Zotero.")).toBeVisible();
+    const asked = { root: "/project", connection: "local", allLibrary: true };
+    expect(mocks.refreshZoteroSources.mock.calls.map(([, request]) => request)).toEqual([
+      { ...asked, after: null },
+      { ...asked, after: "source_a" },
+    ]);
   });
 
   it("explains why Zotero cannot be read instead of refreshing", async () => {

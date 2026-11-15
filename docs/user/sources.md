@@ -179,7 +179,19 @@ not move it again on its own.
 pulled from git) changed a systematic review differently, the review shows
 "This review has another version from a copy of this project." Choose **Show
 versions** on that line to see both versions side by side: who changed each one last, and their searches,
-records and decisions. Choose **Keep this version**, **Use the other**, or
+records and decisions. Under them Scient says what differs, counts first: the
+decisions that differ, and the decisions, searches and records only one version
+has. If the title, the question, the exclusion reasons, the records marked as
+duplicates or the full-text retrieval records differ, it names them. Below the
+choices, each difference is listed with both versions' side: for a record the
+two decided differently, each decision with its reason, its date, whether an
+agent made it, and its note; for a search, its details and how many records
+each version has for it. What the two versions agree on is left out. A long
+list shows 100 differences at a time, the decisions that differ first; **Show
+more** brings the next. Looking changes nothing. An agent can read the same
+list.
+
+Choose **Keep this version**, **Use the other**, or
 **Combine**. Combine keeps the searches and sources of both versions and
 reopens any source the two decided differently, so you can decide it again. The
 version you do not keep is stored aside, not deleted. After Combine, a short
@@ -296,8 +308,12 @@ had chosen before it.
    than 500 references come in parts of 500, one after the other, and the
    summary counts them as one import and says how many are still to come. If
    Scient closes in the middle, the import goes on when you open the Library
-   again. If you stop it, **Import the rest** goes on from where it was.
-   Nothing is imported twice, and **Recent changes** lists it as one import.
+   again. If you stop it, **Import the rest** goes on from where it was, now
+   or later from the import's line in **Recent changes**, which lists the
+   whole import as one and says how many references are still to come.
+   **Try failed items again** takes the failures of every part. Nothing is
+   imported twice. After Scient was closed in the middle, the summary counts
+   from where the import went on; the line in Recent changes counts all of it.
 
 Scient copies each reference's metadata, tags, child notes (as **My note**)
 and every PDF attachment into your Library, and adds the references to this
@@ -323,9 +339,9 @@ many references it concerns: highlights and comments on PDFs, files that are
 not PDFs, links
 kept as attachments, PDFs Zotero could not hand over, notes whose links or
 tables became plain text, and notes and files that belong to no reference.
-A reference that was already in your Library (the same DOI, or a possible
-match you did not import) is listed too: nothing was taken from Zotero's copy
-of it. **Show** on a line shows the references it concerns. All of it is
+A reference that was already in your Library (the same DOI or the same PDF)
+is listed too: nothing was taken from Zotero's copy of it. A possible match
+is not listed there; the summary asks you to look at those. **Show** on a line shows the references it concerns. All of it is
 still in Zotero. Zotero's Trash, saved searches and tag colours are not
 looked at. The list is made by comparing what was brought with everything Zotero
 sent, so what is not on it was brought. It stays with the import: in **Recent
@@ -372,9 +388,10 @@ in Zotero stays in your Library. The details under **More details** (edition,
 place of publication and the like) are compared one by one: a new one comes
 in while one you corrected here stays, and one you removed here stays removed
 as long as Zotero's did not change. A source imported before Scient kept
-these details gets them on its next refresh. A large Library is read again
-200 sources at a time, and the dialog says how far it is; closing it stops
-there and keeps what was read. If Zotero cannot be read (for example it is
+these details gets them on its next refresh. In a project the refresh reads
+the project's Zotero sources; in **All Library**, every Zotero source in the
+Library. A large Library is read again 200 sources at a time, and the dialog
+says how far it is; closing it stops there and keeps what was read. If Zotero cannot be read (for example it is
 not open), the dialog says what to do; **Check again** then refreshes without
 leaving it.
 
@@ -1293,7 +1310,7 @@ they do not grant arbitrary host file paths or turn uncertain metadata into
 verified evidence. Agents can browse and import from Zotero, refresh from it
 and send to it with the same rules as you; they change Zotero only when you ask
 them to send. An agent brings a large collection 500 references at a time and
-goes on until none remain. An agent can also read the same **Recent changes** list as you,
+goes on until none remain; it does not go on with an import you stopped. An agent can also read the same **Recent changes** list as you,
 so you can ask it to undo yesterday's tagging or to restore a paper it removed.
 
 ## Current limits

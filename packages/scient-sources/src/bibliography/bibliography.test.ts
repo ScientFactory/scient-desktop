@@ -548,6 +548,45 @@ describe("export", () => {
     expect(lost("bibtex")).not.toContain("Edition");
   });
 
+  it("reports what a file changed, and nothing it carried another way", () => {
+    const lost = (changes: object, format: BibliographyFormat) =>
+      exportBibliographyFile(
+        [{ record: decodeRecord({ ...record, ...changes }), citationKey: "k" }],
+        format,
+        { includeNotes: false },
+      ).notKept.map((entry) => entry.field);
+    // A range of years: CSL-JSON keeps both ends; a file that keeps only the first says so.
+    const range = { more: { "original-date": "1824/1825" } };
+    expect(lost(range, "csl-json")).toEqual([]);
+    expect(lost(range, "bibtex")).toEqual(["Original date"]);
+    expect(lost(range, "ris")).toEqual(["Original date"]);
+    // A film's director: CSL-JSON reads the role back; the others have no place for it.
+    const film = {
+      type: "other",
+      customType: "film",
+      creators: [
+        { creatorType: "director", givenName: "Godfrey", familyName: "Reggio", literalName: null },
+      ],
+    };
+    expect(lost(film, "csl-json")).toEqual([]);
+    expect(lost(film, "ris")).toEqual(["Creator roles"]);
+    expect(lost(film, "bibtex")).toEqual(["Some creators"]);
+    for (const format of BIBLIOGRAPHY_FORMATS) {
+      // A time of day left off, and an abbreviation that is the title itself: nothing lost.
+      expect(lost({ more: { accessed: "2020-05-17T10:00:00Z" } }, format)).toEqual([]);
+      expect(lost({ more: { "container-title-short": record.containerTitle } }, format)).toEqual(
+        [],
+      );
+      // A report with an issue and no number of its own: the issue stays an issue.
+      const report = decodeRecord({ ...record, type: "report", containerTitle: null, issue: "2" });
+      const [back] = parseBibliography(
+        formatBibliography([{ record: report, citationKey: "k" }], format, { includeNotes: false }),
+        format,
+      ).entries;
+      expect([back?.issue, back?.more.number]).toEqual(["2", undefined]);
+    }
+  });
+
   it("reads a program, slides and a manuscript as what they are", () => {
     const types = (text: string, format: BibliographyFormat) =>
       parseBibliography(text, format).entries.map((entry) => entry.type);

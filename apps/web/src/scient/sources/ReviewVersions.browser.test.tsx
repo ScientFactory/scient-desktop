@@ -86,6 +86,30 @@ const versions: ScientSystematicReviewConflictsResult = {
   combineReport: null,
 };
 
+type Differences = NonNullable<ScientSystematicReviewConflictsResult["differences"]>;
+const none = { differing: 0, onlyHere: 0, onlyOther: 0 };
+const differences = (rows: Differences["rows"], nextOffset: number | null): Differences => ({
+  decisions: { differing: 1, onlyHere: 0, onlyOther: 0 },
+  searches: none,
+  records: { onlyHere: 0, onlyOther: 1 },
+  alsoDiffering: [],
+  rows,
+  nextOffset,
+});
+const decidedDifferently: Differences["rows"][number] = {
+  kind: "decision",
+  sourceId: "source_1",
+  title: "Early goal-directed therapy",
+  stage: "title-abstract",
+  here: { decision: "include", decidedAt: "2026-11-01T00:00:00.000Z", decidedBy: "user" },
+  other: {
+    decision: "exclude",
+    reason: "Wrong population",
+    decidedAt: "2026-11-05T00:00:00.000Z",
+    decidedBy: "agent",
+  },
+};
+
 function setup(canChange: boolean) {
   mocks.canChange = canChange;
   for (const mock of [
@@ -124,13 +148,49 @@ function view() {
 const versionsLine = "This review has another version from a copy of this project. Show versions";
 
 describe("versions of a review from a copy of the project", () => {
-  it("shows both versions and uses the other, then reloads the review", async () => {
+  it("shows both versions and what differs, then uses the other and reloads the review", async () => {
     setup(true);
+    mocks.readSystematicReviewConflicts.mockImplementation(
+      async (_environment: EnvironmentId, input: { differencesOf?: { offset: number } }) =>
+        input.differencesOf === undefined
+          ? versions
+          : {
+              ...versions,
+              differences:
+                input.differencesOf.offset === 0
+                  ? differences([decidedDifferently], 100)
+                  : differences(
+                      [
+                        {
+                          kind: "record",
+                          sourceId: "source_2",
+                          title: "A later trial",
+                          in: "other",
+                        },
+                      ],
+                      null,
+                    ),
+            },
+    );
     await using screen = await render(view(), { router: false });
 
     await userEvent.click(screen.getByRole("button", { name: versionsLine }));
     await expect.element(page.getByText("Sepsis trials (laptop copy)")).toBeVisible();
     await expect.element(page.getByText("No decisions yet")).toBeVisible();
+    await expect.element(page.getByText("Early goal-directed therapy")).toBeVisible();
+    await expect.element(page.getByText(/^Included · /u)).toBeVisible();
+    await expect
+      .element(page.getByText(/^Excluded · Wrong population · .* · by agent$/u))
+      .toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Show more" }));
+    await expect.element(page.getByText("A later trial")).toBeVisible();
+    await expect.element(page.getByText("Early goal-directed therapy")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+    expect(mocks.readSystematicReviewConflicts).toHaveBeenLastCalledWith(environmentId, {
+      root: "/project",
+      reviewId: "review_1",
+      differencesOf: { conflictId: "conflict_a", offset: 100 },
+    });
     await userEvent.click(page.getByRole("button", { name: "Use the other" }));
 
     await vi.waitFor(() =>

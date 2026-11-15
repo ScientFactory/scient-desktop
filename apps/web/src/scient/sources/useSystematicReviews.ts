@@ -3,6 +3,7 @@ import type {
   EnvironmentId,
   ScientSystematicReviewChangeResult,
   ScientSystematicReviewConflictChange,
+  ScientSystematicReviewConflictsRequest,
   ScientSystematicReviewList,
   ScientSystematicReviewResult,
 } from "@t3tools/contracts";
@@ -174,8 +175,16 @@ export function useSystematicReviews(input: {
     canResolve,
     /** Choices between versions are off while one saves or without the Library grant. */
     conflictsDisabled: pending || !canResolve,
-    readConflicts: (id: string) =>
-      readSystematicReviewConflicts(input.environmentId, { root: input.root, reviewId: id }),
+    /** The versions of a review; with `differencesOf`, also a page of what differs from one. */
+    readConflicts: (
+      id: string,
+      differencesOf?: ScientSystematicReviewConflictsRequest["differencesOf"],
+    ) =>
+      readSystematicReviewConflicts(input.environmentId, {
+        root: input.root,
+        reviewId: id,
+        ...(differencesOf ? { differencesOf } : {}),
+      }),
     changeConflict,
   };
 }

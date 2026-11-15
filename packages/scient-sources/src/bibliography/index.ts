@@ -11,7 +11,7 @@ import { normalizePersistentIdentifier } from "../normalize.ts";
 import { scientSourceMoreKind, scientSourceMoreLabel } from "../sourceMore.ts";
 import { scientLibraryIdentityProblem } from "../sourceIdentity.ts";
 import { formatBibtex, parseBibtex } from "./bibtex.ts";
-import { formatCslJson, parseCslJson } from "./cslJson.ts";
+import { cslDateFromText, formatCslJson, parseCslJson } from "./cslJson.ts";
 import { formatEndnoteXml, parseEndnoteXml } from "./endnoteXml.ts";
 import {
   BIBLIOGRAPHY_FORMATS,
@@ -372,6 +372,20 @@ const IDENTIFIER_LABELS: Readonly<Record<string, string>> = {
  * hold (identifiers, the source type), so a backup or move is not silently
  * poorer than the Library. Notes are left out on purpose and not reported.
  */
+/** A person or body by the words of the name, however a format split or ordered them. */
+const personOf = (creator: {
+  readonly givenName: string | null;
+  readonly familyName: string | null;
+  readonly literalName: string | null;
+}) =>
+  [creator.familyName, creator.givenName, creator.literalName]
+    .join(" ")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .toSorted()
+    .join(" ");
+
 export function exportBibliographyFile(
   items: ReadonlyArray<BibliographyExportItem>,
   format: BibliographyFormat,
@@ -400,13 +414,25 @@ export function exportBibliographyFile(
     // A further detail the format has no field for, or a line kept as written.
     for (const [name, value] of Object.entries(record.more ?? {})) {
       const back = entry?.more[name];
-      // A date that came back without its time of day is the same date.
+      // A date is the same when it cites the same: with or without a time of day, not a prefix.
       const same =
         back === value ||
-        (back !== undefined && scientSourceMoreKind(name) === "date" && value.startsWith(back));
+        // An abbreviation that is the title itself is carried by the title.
+        (name === "container-title-short" && value === entry?.containerTitle) ||
+        (back !== undefined &&
+          scientSourceMoreKind(name) === "date" &&
+          JSON.stringify(cslDateFromText(back)) === JSON.stringify(cslDateFromText(value)));
       if (!same) fields.add(scientSourceMoreLabel(name));
     }
-    if (entry && entry.creators.length < record.creators.length) fields.add("Some creators");
+    // A creator the file does not name at all, and one it names under another role.
+    const back = new Map(entry?.creators.map((creator) => [personOf(creator), creator]));
+    for (const creator of record.creators) {
+      const found = back.get(personOf(creator));
+      if (!found) fields.add("Some creators");
+      else if (found.creatorType.toLowerCase() !== creator.creatorType.toLowerCase()) {
+        fields.add("Creator roles");
+      }
+    }
     for (const field of fields) {
       const summary = lost.get(field) ?? { entryCount: 0, citationKeys: [] };
       summary.entryCount += 1;

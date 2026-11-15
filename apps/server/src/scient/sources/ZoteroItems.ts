@@ -16,6 +16,7 @@ import {
   ZOTERO_BASE_FIELD,
   ZOTERO_FIELD_TARGET,
   ZOTERO_ROLE_CSL,
+  ZOTERO_ROLE_SPELLING,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 
@@ -226,16 +227,6 @@ const ROLE_BY_EXTRA_NAME: ReadonlyMap<string, string> = new Map([
   ...Object.entries(ZOTERO_ROLE_CSL).map(([role, csl]) => [csl, role] as const),
   ...Object.keys(ZOTERO_ROLE_CSL).map((role) => [role, role] as const),
 ]);
-/** The roles as Zotero spells them, for the ones whose name has an inner capital. */
-const ROLE_SPELLING: Readonly<Record<string, string>> = {
-  bookauthor: "bookAuthor",
-  castmember: "castMember",
-  executiveproducer: "executiveProducer",
-  originalcreator: "originalCreator",
-  reviewedauthor: "reviewedAuthor",
-  seriescreator: "seriesCreator",
-  serieseditor: "seriesEditor",
-};
 /** Types whose place is where the event was, not where a publisher is. */
 export const PLACE_IS_EVENT: ReadonlySet<string> = new Set([
   "presentation",
@@ -248,6 +239,20 @@ const squeezed = (name: string) => name.toLowerCase().replace(/[\s_-]+/gu, "");
 const FIELD_BY_SQUEEZED: ReadonlyMap<string, string> = new Map(
   Object.keys(ZOTERO_FIELD_TARGET).map((name) => [squeezed(name), name]),
 );
+/** A creator, as Zotero reads one from a line of Extra: `editor: Family || Given`, or one name. */
+export function zoteroExtraCreator(name: string, value: string) {
+  const role =
+    ROLE_BY_EXTRA_NAME.get(name.replace(/\s+/gu, "-")) ?? ROLE_BY_EXTRA_NAME.get(squeezed(name));
+  if (role === undefined) return undefined;
+  const [family, given] = value.split("||").map((part) => part.trim());
+  return {
+    creatorType: ZOTERO_ROLE_SPELLING[role] ?? role,
+    givenName: given || null,
+    familyName: given === undefined ? null : family || null,
+    literalName: given === undefined ? (family ?? value) : null,
+  };
+}
+
 /** CSL names for the record's own fields, which Zotero lets a person give in Extra. */
 const TYPED_BY_CSL: Readonly<Record<string, ZoteroTypedTarget>> = {
   title: "title",
@@ -353,17 +358,9 @@ function zoteroBibliographic(item: ZoteroRawItem): {
       if (normalizeImportedCitationKey(value) !== keptKey) extraKept.push(line);
       continue;
     }
-    // A creator, as Zotero reads one from Extra: `editor: Family || Given`, or one name.
-    const role =
-      ROLE_BY_EXTRA_NAME.get(name.replace(/\s+/gu, "-")) ?? ROLE_BY_EXTRA_NAME.get(squeezed(name));
-    if (role !== undefined) {
-      const [family, given] = value.split("||").map((part) => part.trim());
-      creators.push({
-        creatorType: ROLE_SPELLING[role] ?? role,
-        givenName: given || null,
-        familyName: given === undefined ? null : family || null,
-        literalName: given === undefined ? (family ?? value) : null,
-      });
+    const creator = zoteroExtraCreator(name, value);
+    if (creator) {
+      creators.push(creator);
       continue;
     }
     const target = zoteroExtraLineTarget(name);

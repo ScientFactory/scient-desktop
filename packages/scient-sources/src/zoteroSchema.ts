@@ -194,6 +194,17 @@ export const ZOTERO_ROLE_CSL: Readonly<Record<string, string>> = {
   translator: "translator",
 };
 
+/** The roles as Zotero spells them, for the ones whose name has an inner capital. */
+export const ZOTERO_ROLE_SPELLING: Readonly<Record<string, string>> = {
+  bookauthor: "bookAuthor",
+  castmember: "castMember",
+  executiveproducer: "executiveProducer",
+  originalcreator: "originalCreator",
+  reviewedauthor: "reviewedAuthor",
+  seriescreator: "seriesCreator",
+  serieseditor: "seriesEditor",
+};
+
 /** The role Zotero cites as the author for a type whose makers are not called authors. */
 export const ZOTERO_PRIMARY_ROLE: Readonly<Record<string, string>> = {
   artwork: "artist",

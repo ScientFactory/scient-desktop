@@ -1816,10 +1816,13 @@ export function wholeSourceImport(
   if (!first || !last) return null;
   if (parts.length === 1) return first;
   const { notBrought: _, ...latest } = last;
+  // A reference a later part took again (after a stop, or a failure tried again) counts once,
+  // as that later part left it.
+  const items = new Map(parts.flatMap((part) => part.items.map((item) => [item.itemKey, item])));
   return {
     ...latest,
     operationId: first.operationId,
-    items: parts.flatMap((part) => part.items),
+    items: [...items.values()],
     ...(first.notBrought ? { notBrought: first.notBrought } : {}),
   };
 }
@@ -1855,6 +1858,8 @@ export interface ScientSourceImportSummary {
   readonly failed: number;
   /** How many kinds of things it read and did not bring. */
   readonly notBrought: number;
+  /** A large import that stopped before its end: how many references are still to come. */
+  readonly remaining?: number;
 }
 
 /**
@@ -1899,7 +1904,7 @@ export async function listScientSourceImports(
   return imports;
 }
 
-/** What the receipts of one import add up to; the outcome and the date are its latest part's. */
+/** When an import of several receipts finished and how: its latest part's date and outcome. */
 function finishedImport(parts: ReadonlyArray<ScientSourceImportReceipt>) {
   const inOrder = parts.toSorted((left, right) => left.finishedAt.localeCompare(right.finishedAt));
   const last = inOrder.at(-1);
@@ -1907,7 +1912,6 @@ function finishedImport(parts: ReadonlyArray<ScientSourceImportReceipt>) {
     finishedAt: last?.finishedAt ?? "",
     outcome: last?.outcome ?? ("completed" as const),
     importedSourceIds: inOrder.flatMap((part) => part.importedSourceIds),
-    failed: inOrder.reduce((sum, part) => sum + part.failedItemKeys.length, 0),
   };
 }
 
@@ -1919,15 +1923,22 @@ async function importSummary(
   const operation = wholeSourceImport(
     await readSourceImportParts(root, operationId).catch(() => []),
   );
-  return operation
-    ? {
-        operationId,
-        ...finished,
-        by: operation.actor,
-        intake: operation.intake,
-        notBrought: summarizeNotBrought(operation).length,
-      }
-    : null;
+  if (!operation) return null;
+  // Counted on the parts as one: a failure a later part brought in is not a failure.
+  const remaining = operation.state === "running" ? 0 : (operation.run?.remaining ?? 0);
+  return {
+    operationId,
+    finishedAt: finished.finishedAt,
+    outcome: finished.outcome,
+    importedSourceIds: operation.items.flatMap((item) =>
+      item.state === "imported" && item.sourceId ? [item.sourceId] : [],
+    ),
+    failed: operation.items.filter((item) => item.state === "failed").length,
+    by: operation.actor,
+    intake: operation.intake,
+    notBrought: summarizeNotBrought(operation).length,
+    ...(remaining > 0 ? { remaining } : {}),
+  };
 }
 
 /** One finished import by its operation ID; null when it is not on record. */

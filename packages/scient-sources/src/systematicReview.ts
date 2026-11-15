@@ -77,6 +77,61 @@ export const ScientReviewScreening = Schema.Struct({
 });
 export type ScientReviewScreening = typeof ScientReviewScreening.Type;
 
+const {
+  sourceId: _decisionSourceId,
+  stage: _decisionStage,
+  cleared: _decisionCleared,
+  ...decisionFields
+} = ScientReviewScreening.fields;
+const VersionDecision = Schema.NullOr(Schema.Struct(decisionFields));
+const VersionSearch = Schema.NullOr(
+  Schema.Struct({
+    ...searchDetailFields,
+    records: Count,
+    /** Of its records, those the same search in the other version does not have. */
+    recordsOnlyThisSide: Count,
+  }),
+);
+/** One thing two versions of a review do not share; `here` is the version in force. */
+export const ScientReviewVersionDifference = Schema.Union([
+  /** The decision in force differs (decision, reason or note), or only one version has one. */
+  Schema.Struct({
+    kind: Schema.Literal("decision"),
+    sourceId: NonEmptyString,
+    title: Schema.NullOr(Schema.String),
+    stage: ScientReviewStage,
+    here: VersionDecision,
+    other: VersionDecision,
+  }),
+  /** A search in one version only, or in both with other details or other records. */
+  Schema.Struct({ kind: Schema.Literal("search"), here: VersionSearch, other: VersionSearch }),
+  /** A record only one version has. */
+  Schema.Struct({
+    kind: Schema.Literal("record"),
+    sourceId: NonEmptyString,
+    title: Schema.NullOr(Schema.String),
+    in: Schema.Literals(["here", "other"]),
+  }),
+]);
+export type ScientReviewVersionDifference = typeof ScientReviewVersionDifference.Type;
+
+const OneSidedCounts = Schema.Struct({ onlyHere: Count, onlyOther: Count });
+
+/** What differs between the version in force and another: counts of all of it, one page of rows. */
+export const ScientReviewVersionDifferences = Schema.Struct({
+  decisions: Schema.Struct({ differing: Count, ...OneSidedCounts.fields }),
+  searches: Schema.Struct({ differing: Count, ...OneSidedCounts.fields }),
+  records: OneSidedCounts,
+  /** Parts of a review that differ and have no rows. */
+  alsoDiffering: Schema.Array(
+    Schema.Literals(["title", "question", "exclusion-reasons", "duplicates", "retrieval"]),
+  ),
+  /** Decisions that differ, searches, decisions in one version only, then records. */
+  rows: Schema.Array(ScientReviewVersionDifference),
+  nextOffset: Schema.NullOr(Count),
+});
+export type ScientReviewVersionDifferences = typeof ScientReviewVersionDifferences.Type;
+
 /** Full-text retrieval of a report included at title and abstract; `sought` is still in progress. */
 export const ScientReviewRetrievalOutcome = Schema.Literals([
   "sought",

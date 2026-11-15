@@ -21,6 +21,7 @@ import type {
   ScientSourcesMoveStatusRequest,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewConflictRequest,
+  ScientSystematicReviewConflictsRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
   ScientSourcesExportRequest,
@@ -34,6 +35,7 @@ import type {
   ScientSourcesZoteroSendRequest,
   ZoteroConnection,
   ZoteroImportScope,
+  ZoteroScopedImportRequest,
 } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
@@ -616,7 +618,9 @@ export const changeEnvironmentScientSystematicReview = Effect.fn(
 
 export const listEnvironmentScientSystematicReviewConflicts = Effect.fn(
   "clientRuntime.state.listEnvironmentScientSystematicReviewConflicts",
-)(function* (input: { readonly prepared: PreparedConnection } & ScientSystematicReviewRequest) {
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientSystematicReviewConflictsRequest,
+) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   const { prepared, ...payload } = input;
@@ -873,37 +877,19 @@ export const beginEnvironmentZoteroImport = Effect.fn(
 
 export const beginEnvironmentZoteroScopedImport = Effect.fn(
   "clientRuntime.state.beginEnvironmentZoteroScopedImport",
-)(function* (input: {
-  readonly prepared: PreparedConnection;
-  readonly root: string;
-  readonly operationId: string;
-  readonly scope: ZoteroImportScope;
-  readonly connection?: ZoteroConnection;
-  readonly groupId?: string;
-  readonly pin?: boolean;
-}) {
+)(function* (input: { readonly prepared: PreparedConnection } & ZoteroScopedImportRequest) {
+  const { prepared, ...payload } = input;
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   return yield* executeAuthenticatedEnvironmentHttpRequest({
-    prepared: input.prepared,
+    prepared,
     signer,
     remoteAuthorization,
     method: "POST",
     url: (urls) => urls.beginScopedImport(),
     timeoutMs: IMPORT_STEP_TIMEOUT_MS,
     group: "scientSources",
-    request: ({ client, headers }) =>
-      client.beginScopedImport({
-        headers,
-        payload: {
-          root: input.root,
-          operationId: input.operationId,
-          scope: input.scope,
-          ...(input.connection ? { connection: input.connection } : {}),
-          ...(input.groupId ? { groupId: input.groupId } : {}),
-          ...(input.pin !== undefined ? { pin: input.pin } : {}),
-        },
-      }),
+    request: ({ client, headers }) => client.beginScopedImport({ headers, payload }),
   });
 });
 

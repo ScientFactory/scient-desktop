@@ -9,6 +9,7 @@ import {
 
 import {
   PLACE_IS_EVENT,
+  zoteroExtraCreator,
   zoteroExtraLineTarget,
   zoteroExtraLines,
   type ZoteroRawItem,
@@ -211,8 +212,12 @@ export function zoteroDataFromRecord(input: {
     const said = new Set(ours);
     // A line of Zotero's that Scient has no value for stays, so sending never deletes it; one
     // that names a detail written above (to its field or as a line) is replaced by it.
-    const kept = zoteroExtraLines(input.existingExtra).flatMap(({ line, name }) => {
+    const sent = new Set(record.creators.map(creatorIdentity));
+    const kept = zoteroExtraLines(input.existingExtra).flatMap(({ line, name, value }) => {
       if (said.has(line)) return [];
+      // A creator the import read from this line is sent as a creator: not kept twice.
+      const creator = name && value ? zoteroExtraCreator(name, value) : undefined;
+      if (creator && sent.has(creatorIdentity(creator))) return [];
       if (supplied.has(MANAGED_EXTRA.exec(line)?.[1]?.toLowerCase() ?? "")) return [];
       const target = zoteroExtraLineTarget(name ?? "");
       return target && "more" in target && written.has(target.more) ? [] : [line];
@@ -245,6 +250,17 @@ export function zoteroDataFromRecord(input: {
   if (record.tags.length > 0) data.tags = record.tags.map((tag) => ({ tag }));
   return data;
 }
+
+/** One creator in one role, however the name's case and the role's spelling were written. */
+const creatorIdentity = (creator: {
+  readonly creatorType: string;
+  readonly givenName: string | null;
+  readonly familyName: string | null;
+  readonly literalName: string | null;
+}) =>
+  [creator.creatorType, creator.familyName, creator.givenName, creator.literalName]
+    .map((part) => (part ?? "").trim().toLowerCase())
+    .join("\0");
 
 function comparable(field: string, value: unknown): unknown {
   if (field === "tags" && Array.isArray(value)) {

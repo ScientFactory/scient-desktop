@@ -31,10 +31,12 @@ import {
 import {
   ScientReviewCombineReport,
   scientReviewDecisions,
+  scientReviewRecordIds,
   ScientSystematicReview,
   type ScientReviewScreening,
   type ScientReviewSearch,
   type ScientReviewStage,
+  type ScientReviewVersionDifferences,
   type ScientReviewVersionSummary,
 } from "./systematicReview.ts";
 
@@ -45,6 +47,9 @@ const STAGES: ReadonlyArray<ScientReviewStage> = ["title-abstract", "full-text"]
 const decodeReview = Schema.decodeUnknownSync(ScientSystematicReview);
 const validateReview = Schema.decodeSync(ScientSystematicReview);
 const CONFLICT_FILE = /^([0-9a-f]{12})\.json$/u;
+const isConflictId = (value: string) => /^[0-9a-f]{12}$/u.test(value);
+/** Rows of differences between two versions served at a time. */
+const DIFFERENCES_PAGE = 100;
 /** Combine's report, beside the review's conflict files; the conflict listing never offers it. */
 const COMBINE_REPORT_FILE = "combined.json";
 const decodeCombineReportFile = Schema.decodeUnknownSync(
@@ -76,12 +81,36 @@ const conflictFolder = (root: string, reviewId: string) => {
 const reviewFile = (root: string, reviewId: string) =>
   NodePath.join(root, ...REVIEWS_DIRECTORY.split("/"), `${reviewId}.json`);
 
+const conflictFile = (root: string, reviewId: string, conflictId: string) =>
+  NodePath.join(conflictFolder(root, reviewId), `${conflictId}.json`);
+const inForceSnapshotAt = (root: string, reviewId: string) => ({
+  projectRoot: root,
+  directory: REVIEWS_DIRECTORY,
+  name: reviewId,
+  reviewId,
+});
+const conflictSnapshotAt = (root: string, reviewId: string, conflictId: string) => ({
+  projectRoot: root,
+  directory: `${CONFLICTS_DIRECTORY}/${reviewId}`,
+  name: conflictId,
+  reviewId,
+});
+
 async function readText(filePath: string): Promise<string | null> {
   try {
     return await NodeFSP.readFile(filePath, "utf8");
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return null;
     throw error;
+  }
+}
+
+/** A review file's content, or null when it is missing or does not decode. */
+function reviewOrNull(text: string | null): ScientSystematicReview | null {
+  try {
+    return text ? decodeReview(JSON.parse(text)) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -290,20 +319,10 @@ export async function resolveScientReviewConflict(input: {
   });
   return scientSourceStoreInternals.withOperationLock(`${root}:reviews-write`, async () => {
     const folder = conflictFolder(root, input.reviewId);
-    if (!/^[0-9a-f]{12}$/u.test(input.conflictId)) return { outcome: "not-found" };
-    const conflictReviewPath = NodePath.join(folder, `${input.conflictId}.json`);
-    const conflictSnapshot = {
-      projectRoot: root,
-      directory: `${CONFLICTS_DIRECTORY}/${input.reviewId}`,
-      name: input.conflictId,
-      reviewId: input.reviewId,
-    };
-    const inForceSnapshot = {
-      projectRoot: root,
-      directory: REVIEWS_DIRECTORY,
-      name: input.reviewId,
-      reviewId: input.reviewId,
-    };
+    if (!isConflictId(input.conflictId)) return { outcome: "not-found" };
+    const conflictReviewPath = conflictFile(root, input.reviewId, input.conflictId);
+    const conflictSnapshot = conflictSnapshotAt(root, input.reviewId, input.conflictId);
+    const inForceSnapshot = inForceSnapshotAt(root, input.reviewId);
     const incomingText = await readText(conflictReviewPath);
     const existingText = await readText(reviewFile(root, input.reviewId));
     if (!incomingText || !existingText) return { outcome: "not-found" };
@@ -446,17 +465,193 @@ export async function readScientReviewVersions(input: {
   const conflicts = await listScientReviewConflicts(input);
   if (conflicts.length === 0) return { current: null, currentRevision: null, versions: [] };
   const text = await readText(reviewFile(root, input.reviewId));
-  let current: ScientSystematicReview | null = null;
-  try {
-    current = text ? decodeReview(JSON.parse(text)) : null;
-  } catch {
-    current = null;
-  }
+  const current = reviewOrNull(text);
   return {
     current: current ? versionSummary(null, current) : null,
     currentRevision: text ? revisionOf(text) : null,
     versions: conflicts.map((conflict) => versionSummary(conflict.conflictId, conflict.review)),
   };
+}
+
+const decisionOf = ({
+  sourceId: _sourceId,
+  stage: _stage,
+  cleared: _cleared,
+  ...decision
+}: ScientReviewScreening) => decision;
+
+const sortedText = (values: ReadonlyArray<string>) => values.toSorted().join("\n");
+
+/** The parts of a review compared whole: a difference in one is named, not listed. */
+const NAMED_PARTS: ReadonlyArray<
+  readonly [
+    ScientReviewVersionDifferences["alsoDiffering"][number],
+    (review: ScientSystematicReview) => string,
+  ]
+> = [
+  ["title", (review) => review.title],
+  ["question", (review) => review.question ?? ""],
+  ["exclusion-reasons", (review) => sortedText(review.exclusionReasons)],
+  [
+    "duplicates",
+    (review) =>
+      sortedText([
+        ...review.duplicates.map((entry) => `duplicate\0${entry.sourceId}\0${entry.duplicateOf}`),
+        ...review.distinctPairs.map(([left, right]) => `distinct\0${pairKey(left, right)}`),
+      ]),
+  ],
+  [
+    "retrieval",
+    (review) => {
+      const latest = new Map<string, string>();
+      for (const entry of review.retrieval ?? []) {
+        latest.set(entry.sourceId, `${entry.sourceId}\0${entry.outcome}\0${entry.note ?? ""}`);
+      }
+      return sortedText([...latest.values()]);
+    },
+  ],
+];
+
+const searchContent = (search: ScientReviewSearch) =>
+  JSON.stringify([
+    search.database,
+    search.query,
+    search.searchedOn,
+    search.resultCount ?? null,
+    search.notes ?? "",
+  ]);
+
+/**
+ * What two versions of a review do not share, by the IDs Combine joins them by: `here` is the
+ * version in force. Who decided and when is shown but is not itself a difference.
+ */
+export function scientReviewVersionDifferences(input: {
+  readonly here: ScientSystematicReview;
+  readonly other: ScientSystematicReview;
+  readonly titleOf: (sourceId: string) => string | null;
+  readonly offset: number;
+}): ScientReviewVersionDifferences {
+  const { here, other, titleOf } = input;
+  const bothSides = (row: { readonly here: unknown; readonly other: unknown }) =>
+    row.here !== null && row.other !== null;
+  const sides = (rows: ReadonlyArray<{ readonly here: unknown; readonly other: unknown }>) => ({
+    differing: rows.filter(bothSides).length,
+    onlyHere: rows.filter((row) => row.other === null).length,
+    onlyOther: rows.filter((row) => row.here === null).length,
+  });
+
+  const decisions = STAGES.flatMap((stage) => {
+    const mine = scientReviewDecisions(here, stage);
+    const theirs = scientReviewDecisions(other, stage);
+    return [...new Set([...mine.keys(), ...theirs.keys()])].flatMap((sourceId) => {
+      const [left, right] = [mine.get(sourceId), theirs.get(sourceId)];
+      const same =
+        left?.decision === right?.decision &&
+        left?.reason === right?.reason &&
+        left?.note === right?.note;
+      return same
+        ? []
+        : [
+            {
+              kind: "decision" as const,
+              sourceId,
+              title: titleOf(sourceId),
+              stage,
+              here: left ? decisionOf(left) : null,
+              other: right ? decisionOf(right) : null,
+            },
+          ];
+    });
+  });
+
+  const searchSide = (search: ScientReviewSearch | undefined, counterpart = new Set<string>()) =>
+    search
+      ? {
+          ...searchDetails(search),
+          records: search.sourceIds.length,
+          recordsOnlyThisSide: search.sourceIds.filter((id) => !counterpart.has(id)).length,
+        }
+      : null;
+  const searches = [
+    ...new Set([...here.searches, ...other.searches].map((search) => search.searchId)),
+  ].flatMap((searchId) => {
+    const mine = here.searches.find((search) => search.searchId === searchId);
+    const theirs = other.searches.find((search) => search.searchId === searchId);
+    const row = {
+      kind: "search" as const,
+      here: searchSide(mine, new Set(theirs?.sourceIds)),
+      other: searchSide(theirs, new Set(mine?.sourceIds)),
+    };
+    const same =
+      row.here?.recordsOnlyThisSide === 0 &&
+      row.other?.recordsOnlyThisSide === 0 &&
+      searchContent(mine!) === searchContent(theirs!);
+    return same ? [] : [row];
+  });
+
+  const [mine, theirs] = [
+    new Set(scientReviewRecordIds(here)),
+    new Set(scientReviewRecordIds(other)),
+  ];
+  const recordsOnly = (side: "here" | "other", ids: Set<string>, counterpart: Set<string>) =>
+    [...ids]
+      .filter((sourceId) => !counterpart.has(sourceId))
+      .map((sourceId) => ({
+        kind: "record" as const,
+        sourceId,
+        title: titleOf(sourceId),
+        in: side,
+      }));
+  const onlyHere = recordsOnly("here", mine, theirs);
+  const onlyOther = recordsOnly("other", theirs, mine);
+
+  const rows = [
+    ...decisions.filter(bothSides),
+    ...searches,
+    ...decisions.filter((row) => !bothSides(row)),
+    ...onlyHere,
+    ...onlyOther,
+  ];
+  const end = input.offset + DIFFERENCES_PAGE;
+  return {
+    decisions: sides(decisions),
+    searches: sides(searches),
+    records: { onlyHere: onlyHere.length, onlyOther: onlyOther.length },
+    alsoDiffering: NAMED_PARTS.filter(([, text]) => text(here) !== text(other)).map(
+      ([part]) => part,
+    ),
+    rows: rows.slice(input.offset, end),
+    nextOffset: end < rows.length ? end : null,
+  };
+}
+
+/**
+ * What differs between the version in force and another, for the picker and for agents. Reads
+ * the project folder only; null when either version is missing or does not decode.
+ */
+export async function readScientReviewVersionDifferences(input: {
+  readonly projectRoot: string;
+  readonly reviewId: string;
+  readonly conflictId: string;
+  readonly offset: number;
+}): Promise<ScientReviewVersionDifferences | null> {
+  const root = await projectRootFor(input.projectRoot);
+  if (!isConflictId(input.conflictId)) return null;
+  // The other version first: its path refuses an unsafe review ID before any file is read.
+  const other = reviewOrNull(await readText(conflictFile(root, input.reviewId, input.conflictId)));
+  const here = reviewOrNull(await readText(reviewFile(root, input.reviewId)));
+  if (!here || !other || other.reviewId !== input.reviewId) return null;
+  // Titles come from the copies of the sources' details saved with each version.
+  const [mine, theirs] = await Promise.all([
+    readScientReviewSnapshotAt(inForceSnapshotAt(root, input.reviewId)),
+    readScientReviewSnapshotAt(conflictSnapshotAt(root, input.reviewId, input.conflictId)),
+  ]);
+  return scientReviewVersionDifferences({
+    here,
+    other,
+    titleOf: (sourceId) => (mine.get(sourceId) ?? theirs.get(sourceId))?.title ?? null,
+    offset: input.offset,
+  });
 }
 
 /** Combine's report for a review, until someone dismisses it. */

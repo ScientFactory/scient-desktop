@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
+import { DECISION_LABELS } from "./reviewVersionLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 
 /** What a review screen shows of a record: a Library source, or a review's own record. */
@@ -24,12 +25,6 @@ export type ReviewRecordView = Pick<
   "sourceId" | "revision" | "title" | "creators" | "issuedYear" | "containerTitle" | "label"
 >;
 type ReviewDetail = NonNullable<ScientSystematicReviewResult["detail"]>;
-
-const DECISION_LABELS: Readonly<Record<ScientReviewDecision, string>> = {
-  include: "Included",
-  exclude: "Excluded",
-  maybe: "Maybe",
-};
 
 function creatorLine(record: ReviewRecordView | undefined): string {
   if (!record) return "";

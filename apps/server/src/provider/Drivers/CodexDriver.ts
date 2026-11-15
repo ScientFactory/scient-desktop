@@ -48,6 +48,7 @@ import {
   makeCodexManagedRuntimeResolution,
 } from "../../scient/providerLifecycle/CodexManagedRuntimeActions.ts";
 import { makeCodexVoiceTranscriptCorrection } from "../../scient/voice/CodexVoiceTranscriptCorrection.ts";
+import { makeCodexChatGptDictation } from "../../scient/voice/CodexChatGptDictation.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -301,6 +302,14 @@ export const CodexDriver: ScientProviderDriver<
       effectiveConfig,
       processEnv,
     );
+    // SCIENT-FORK: dictation with ChatGPT through this Codex's ChatGPT sign-in.
+    const voiceDictation = makeCodexChatGptDictation({
+      settings: effectiveConfig,
+      cwd: serverConfig.cwd,
+      environment: processEnv,
+      spawner,
+      http: httpClient,
+    });
     const connectionActions = makeCodexConnectionActions(
       effectiveConfig,
       serverConfig.cwd,
@@ -548,6 +557,7 @@ export const CodexDriver: ScientProviderDriver<
       orchestrationAdapter,
       textGeneration,
       voiceTranscriptCorrection,
+      voiceDictation,
       connectionActions,
       managedRuntimeActions: managedRuntime.actions,
       skillActions,
