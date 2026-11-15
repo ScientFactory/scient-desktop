@@ -768,18 +768,31 @@ describe("checkReferences on a Word document", () => {
     expect(report.findings.every((finding) => finding.location === null)).toBe(true);
   });
 
-  it("lists Word documents to check and says when a file is not one", async () => {
+  it("lists Word documents to check and says when a file is not one or is too large", async () => {
     await using fixture = await project();
     await fixture.write("paper.docx", "This is not a Word file.");
     await fixture.write("~$paper.docx", "Word's lock file");
+    // Small and valid, but with more members than any Word file: refused before they are read.
+    await fixture.write(
+      "many.docx",
+      await wordFile({
+        "word/document.xml": `<w:document ${WORD_NS}><w:body>${paragraph(run("Text."))}</w:body></w:document>`,
+        ...Object.fromEntries(
+          Array.from({ length: 10_000 }, (_, index) => [`word/media/image${index}.png`, ""]),
+        ),
+      }),
+    );
 
     const listed = (await listReferenceDocuments(fixture.root)).paths;
-    expect(listed.filter((path) => path.endsWith(".docx"))).toEqual(["paper.docx"]);
-    await expect(
+    expect(listed.filter((path) => path.endsWith(".docx"))).toEqual(["many.docx", "paper.docx"]);
+    const check = (path: string) =>
       checkReferences(
-        { root: fixture.root, target: { kind: "file", path: "paper.docx" } },
+        { root: fixture.root, target: { kind: "file", path } },
         { resolveIdentifiers: registry(works), now },
-      ),
-    ).rejects.toThrow("paper.docx could not be read as a Word document.");
+      );
+    await expect(check("paper.docx")).rejects.toThrow(
+      "paper.docx could not be read as a Word document.",
+    );
+    await expect(check("many.docx")).rejects.toThrow("many.docx is too large to check.");
   });
 });

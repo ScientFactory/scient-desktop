@@ -12,6 +12,8 @@ import { openZipArchive } from "../../zipArchive.ts";
 
 /** Only the XML parts are read, never pictures; a part this large uncompressed is refused. */
 const MAX_PART_BYTES = 32 * 1024 * 1024;
+/** A Word file holds a few dozen parts and one per picture; an archive with more is refused unread. */
+const MAX_ENTRIES = 10_000;
 
 export class WordFileError extends Schema.TaggedError<WordFileError>()("WordFileError", {
   problem: Schema.Literals(["unreadable", "too-large"]),
@@ -229,11 +231,12 @@ const unreadable = () => new WordFileError({ problem: "unreadable" });
 
 const readParts = Effect.fn("WordFile.readParts")(function* (path: string) {
   const archive = yield* openZipArchive(path, unreadable);
+  if (archive.entryCount > MAX_ENTRIES) return yield* new WordFileError({ problem: "too-large" });
   const entries = new Map<string, Yauzl.Entry>();
   for (;;) {
     const entry = yield* archive.next;
     if (entry === null) break;
-    entries.set(entry.fileName, entry);
+    if (/\.(?:xml|rels)$/u.test(entry.fileName)) entries.set(entry.fileName, entry);
   }
   const part = Effect.fn("WordFile.readPart")(function* (name: string) {
     const entry = entries.get(name);
