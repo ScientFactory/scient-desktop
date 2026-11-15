@@ -2232,8 +2232,10 @@ it.effect("sparse restore rewrites manual skip-worktree files and keeps exclusio
 
 // A root repository with a populated submodule that has its own populated submodule.
 const makeSubmoduleTree = Effect.fn("makeSubmoduleTree")(function* (
-  git: (cwd: string, args: ReadonlyArray<string>) => Effect.Effect<unknown, unknown>,
+  driver: Effect.Success<ReturnType<typeof GitVcsDriver.makeVcsDriverShape>>,
 ) {
+  const git = (cwd: string, args: ReadonlyArray<string>) =>
+    driver.execute({ operation: "test", cwd, args });
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const makeRepository = Effect.fn("makeRepository")(function* (prefix: string) {
@@ -2273,7 +2275,7 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     const git = (cwd: string, args: ReadonlyArray<string>) =>
       driver.execute({ operation: "test", cwd, args });
-    const root = yield* makeSubmoduleTree(git);
+    const root = yield* makeSubmoduleTree(driver);
     const files = ["file.txt", "library/file.txt", "library/nested/file.txt"].map((file) =>
       path.join(root, file),
     );
@@ -2329,7 +2331,7 @@ it.effect("a submodule capture cut off keeps no earlier ref of that checkpoint",
     );
     const git = (cwd: string, args: ReadonlyArray<string>) =>
       driver.execute({ operation: "test", cwd, args });
-    const root = yield* makeSubmoduleTree(git);
+    const root = yield* makeSubmoduleTree(driver);
     const library = path.join(root, "library");
     const nested = path.join(library, "nested");
     const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/recaptured");
