@@ -7,6 +7,7 @@ import {
 } from "@scientfactory/scient-sources";
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import {
+  ChevronRightIcon,
   FileTextIcon,
   FlaskConicalIcon,
   FolderIcon,
@@ -37,7 +38,7 @@ import {
 } from "../../components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { ScientTooltip } from "../presentation/ScientTooltip";
-import { orderedCollections } from "./collectionTree";
+import { collectionIndent, orderedCollections } from "./collectionTree";
 import { LIBRARY_LABELS } from "./libraryLabels";
 import { SCIENT_SOURCE_STUDY_DESIGN_LABELS, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
@@ -167,6 +168,22 @@ export function SourcesFilterMenu(props: {
   const types = [...new Set(props.records.map((record) => record.type))];
   const categories = scientSourceCategoryCounts(props.records);
   const selectedTagCount = filter.tags?.length ?? 0;
+  const tree = orderedCollections(organization.collections);
+  const shownId = organize.collection?.collectionId;
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
+  const [unfoldedFor, setUnfoldedFor] = useState(shownId);
+  // The tree opens down to a collection once, when it starts being shown.
+  if (unfoldedFor !== shownId) {
+    setUnfoldedFor(shownId);
+    const above = tree.find((entry) => entry.collection.collectionId === shownId)?.aboveIds ?? [];
+    setUnfolded(new Set([...unfolded, ...above]));
+  }
+  const fold = (collectionId: string, open: boolean) => {
+    const next = new Set(unfolded);
+    if (open) next.add(collectionId);
+    else next.delete(collectionId);
+    setUnfolded(next);
+  };
   const canSave = organize.filterActive || props.query.trim().length > 0;
   const newCollection = () =>
     props.onRequestName({
@@ -233,28 +250,55 @@ export function SourcesFilterMenu(props: {
                   <Count value={props.records.length} />
                 </span>
               </MenuRadioItem>
-              {orderedCollections(organization.collections).map(({ collection, child }) => (
-                // On the item, which keyboard navigation focuses, so the full name shows there too.
-                <ScientTooltip key={collection.collectionId} content={collection.name}>
-                  <MenuRadioItem value={collection.collectionId}>
-                    <span
-                      className={
-                        child
-                          ? "flex min-w-0 items-center gap-2 ps-4"
-                          : "flex min-w-0 items-center gap-2"
-                      }
-                    >
-                      <span className="min-w-0 flex-1 truncate">{collection.name}</span>
-                      <Count
-                        value={
-                          scientSourceCollectionMemberIds(organization, collection.collectionId)
-                            .size
-                        }
-                      />
-                    </span>
-                  </MenuRadioItem>
-                </ScientTooltip>
-              ))}
+              {tree
+                .filter((entry) => entry.aboveIds.every((id) => unfolded.has(id)))
+                .map(({ collection, aboveIds, hasChildren }) => {
+                  const open = unfolded.has(collection.collectionId);
+                  return (
+                    // On the item, which keyboard navigation focuses, so the full name shows there too.
+                    <ScientTooltip key={collection.collectionId} content={collection.name}>
+                      <MenuRadioItem
+                        value={collection.collectionId}
+                        aria-expanded={hasChildren ? open : undefined}
+                        onKeyDown={(event) => {
+                          // Right unfolds and Left folds; a folded row leaves Left to the menu.
+                          const unfolds = event.key === "ArrowRight";
+                          if (!hasChildren || unfolds === open) return;
+                          if (!unfolds && event.key !== "ArrowLeft") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          fold(collection.collectionId, unfolds);
+                        }}
+                      >
+                        <span
+                          className="flex min-w-0 items-center gap-1.5"
+                          style={collectionIndent(aboveIds.length)}
+                        >
+                          <span
+                            aria-hidden
+                            className={hasChildren ? "flex shrink-0" : "invisible flex shrink-0"}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              fold(collection.collectionId, !open);
+                            }}
+                          >
+                            <ChevronRightIcon
+                              className={open ? "size-3.5 rotate-90" : "size-3.5"}
+                            />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">{collection.name}</span>
+                          <Count
+                            value={
+                              scientSourceCollectionMemberIds(organization, collection.collectionId)
+                                .size
+                            }
+                          />
+                        </span>
+                      </MenuRadioItem>
+                    </ScientTooltip>
+                  );
+                })}
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem disabled={!organize.canChange} onClick={newCollection}>

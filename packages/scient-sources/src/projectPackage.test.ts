@@ -8,7 +8,12 @@ import { initializeScientProject, readScientProjectIdentity } from "@scientfacto
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
-import { organizeScientSources, readScientSourcesOrganization } from "./collections.ts";
+import {
+  changeScientSourceCollectionMembers,
+  organizeScientSources,
+  placeScientSourceCollections,
+  readScientSourcesOrganization,
+} from "./collections.ts";
 import {
   listScientReviewConflicts,
   resolveScientReviewConflict,
@@ -932,7 +937,7 @@ describe("importing a project package", () => {
     ).toMatchObject({ state: "none", carriedAt: expect.any(String) });
   });
 
-  it("keeps collection ancestry, so two Methods folders stay apart", async () => {
+  it("keeps collection ancestry, so two Methods folders and two same-named siblings stay apart", async () => {
     const { base, mine, source } = await setup();
     const trial = await add(mine, "trial");
     const overview = await add(mine, "overview");
@@ -952,6 +957,26 @@ describe("importing a project package", () => {
       ).collection!.collectionId;
     await make("Methods", await make("Trials"), [trial.sourceId]);
     await make("Methods", await make("Reviews"), [overview.sourceId]);
+    // Two top-level collections with one name, as an import from Zotero can leave them.
+    const twins = [
+      ["collection_11111111111111111111111111111111", trial.sourceId],
+      ["collection_22222222222222222222222222222222", overview.sourceId],
+    ] as const;
+    await placeScientSourceCollections({
+      root: mine,
+      tree: twins.map(([collectionId]) => ({ collectionId, name: "Scopus" })),
+      wanted: twins.map(([collectionId]) => collectionId),
+      remake: false,
+      actor: "user",
+    });
+    for (const [collectionId, sourceId] of twins) {
+      await changeScientSourceCollectionMembers({
+        root: mine,
+        collectionId,
+        add: [sourceId],
+        actor: "user",
+      });
+    }
     const handoff = NodePath.join(base, "handoff");
     await exportTo(source, mine, handoff);
 
@@ -977,6 +1002,8 @@ describe("importing a project package", () => {
         .toSorted(),
     ).toEqual([
       ["Reviews/Methods", ["Study overview"]],
+      ["Scopus", ["Study overview"]],
+      ["Scopus", ["Study trial"]],
       ["Trials/Methods", ["Study trial"]],
     ]);
   });

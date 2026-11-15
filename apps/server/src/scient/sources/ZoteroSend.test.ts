@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This test exercises the real project filesystem boundary.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -9,6 +10,7 @@ import {
   type ScientSourceCandidate,
 } from "@scientfactory/scient-sources";
 import {
+  attachScientSourcePdf,
   importScientSource,
   readScientSourceRecord,
   updateScientSourceMetadata,
@@ -16,6 +18,7 @@ import {
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { zoteroItem } from "./Zotero.testkit.ts";
+import type { ZoteroAccess } from "./ZoteroConnections.ts";
 import type { ZoteroRawItem } from "./ZoteroItems.ts";
 import { refreshZoteroSources, sendSourcesToZotero } from "./ZoteroSync.ts";
 import type { ZoteroWebHttp, ZoteroWebRequest } from "./ZoteroWebAdapter.ts";
@@ -112,19 +115,44 @@ function zoteroOrg(
     readonly groups?: Record<string, object>;
     /** False: zotero.org does not say what a type accepts, as before these were asked for. */
     readonly templates?: boolean;
+    /** False: the key has no file access. */
+    readonly files?: boolean;
+    /** Bytes the storage holds before it is full. */
+    readonly quota?: number;
+    /** How many uploads to the storage fail before one goes through. */
+    readonly storageFailures?: number;
+    /** How many reads of an item fail before one goes through. */
+    readonly readFailures?: number;
   } = {},
 ) {
   const items = new Map<string, ZoteroRawItem>();
   const writes: ZoteroWebRequest[] = [];
   let version = 10;
-  const keys = ["NEWA2345", "NEWB2345", "NEWC2345", "NEWD2345"];
+  let keyCount = 0;
+  const nextKey = () => `NEW${"ABCDEFGHIJKLMNOP"[keyCount++] ?? "Z"}2345`;
+  const md5 = (bytes: Buffer) => NodeCrypto.createHash("md5").update(bytes).digest("hex");
+  // Zotero's file storage, by MD5, and the uploads it has authorised.
+  const stored = new Map<string, Buffer>();
+  const authorised = new Map<string, { readonly md5: string; readonly filename: string }>();
+  let storageFailures = options.storageFailures ?? 0;
+  let readFailures = options.readFailures ?? 0;
+  const usedTokens = new Set<string>();
   const json = (body: unknown, headers: Record<string, string> = {}) => ({
     status: 200,
     headers,
     body: JSON.stringify(body),
   });
+  const empty = (status: number) => ({ status, headers: {}, body: "" });
   const http: ZoteroWebHttp = {
     download: async () => ({ status: 404 }),
+    upload: async (url, contentType, body) => {
+      if (url.protocol !== "https:" || !contentType.startsWith("multipart/form-data")) return 400;
+      if (body.prefix !== "--b\r\n" || body.suffix !== "\r\n--b--") return 400;
+      if (storageFailures-- > 0) return 500;
+      const bytes = await NodeFSP.readFile(body.path);
+      stored.set(md5(bytes), bytes);
+      return 201;
+    },
     request: async (request) => {
       const path = request.url.pathname;
       if (path === "/keys/current") {
@@ -132,7 +160,7 @@ function zoteroOrg(
           userID: USER,
           username: "ada",
           access: {
-            user: { library: true, files: true, write: options.write ?? true },
+            user: { library: true, files: options.files ?? true, write: options.write ?? true },
             ...(options.groups ? { groups: options.groups } : {}),
           },
         });
@@ -158,10 +186,15 @@ function zoteroOrg(
       }
       if (request.method === "POST" && path === `/users/${USER}/items`) {
         writes.push(request);
+        const token = request.headers["Zotero-Write-Token"];
+        if (token && usedTokens.has(token)) {
+          return { status: 412, headers: {}, body: "Write token already used" };
+        }
+        if (token) usedTokens.add(token);
         const successful: Record<string, { key: string; version: number }> = {};
         for (const [index, entry] of (JSON.parse(request.body ?? "[]") as object[]).entries()) {
           version += 1;
-          const key = keys.shift() ?? "NEWZ2345";
+          const key = nextKey();
           items.set(key, {
             key,
             version,
@@ -172,8 +205,54 @@ function zoteroOrg(
         }
         return json({ successful, failed: {} });
       }
+      const file = /^\/users\/\d+\/items\/([A-Z0-9]{8})\/file$/u.exec(path);
+      const attachment = file?.[1] ? items.get(file[1]) : undefined;
+      if (request.method === "POST" && attachment) {
+        if (request.headers["If-None-Match"] !== "*") return empty(428);
+        if (options.files === false) return empty(403);
+        const form = new URLSearchParams(request.body ?? "");
+        const fill = (hash: string, filename: string) => {
+          version += 1;
+          items.set(attachment.key, {
+            ...attachment,
+            version,
+            data: { ...attachment.data, md5: hash, filename, version } as ZoteroRawItem["data"],
+          });
+        };
+        const upload = authorised.get(form.get("upload") ?? "");
+        if (upload) {
+          // Zotero checks that the bytes it was sent are the ones it was told of.
+          if (!stored.has(upload.md5)) return empty(400);
+          fill(upload.md5, upload.filename);
+          return empty(204);
+        }
+        const hash = form.get("md5") ?? "";
+        const filename = form.get("filename") ?? "";
+        if (stored.has(hash)) {
+          fill(hash, filename);
+          return json({ exists: 1 });
+        }
+        const used = [...stored.values()].reduce((sum, bytes) => sum + bytes.length, 0);
+        if (used + Number(form.get("filesize")) > (options.quota ?? Infinity)) return empty(413);
+        const uploadKey = `upload${authorised.size + 1}`;
+        authorised.set(uploadKey, { md5: hash, filename });
+        return json({
+          url: "https://storage.example/zotero",
+          contentType: "multipart/form-data; boundary=b",
+          prefix: "--b\r\n",
+          suffix: "\r\n--b--",
+          uploadKey,
+        });
+      }
       const match = /^\/users\/\d+\/items\/([A-Z0-9]{8})(\/children)?$/u.exec(path);
       const item = match?.[1] ? items.get(match[1]) : undefined;
+      if (request.method === "DELETE" && item) {
+        if (request.headers["If-Unmodified-Since-Version"] !== String(item.version)) {
+          return empty(412);
+        }
+        items.delete(item.key);
+        return empty(204);
+      }
       if (request.method === "PATCH" && item) {
         writes.push(request);
         if (request.headers["If-Unmodified-Since-Version"] !== String(item.version)) {
@@ -191,6 +270,7 @@ function zoteroOrg(
         const children = [...items.values()].filter((child) => child.data.parentItem === match[1]);
         return json(children, { "total-results": String(children.length) });
       }
+      if (item && readFailures-- > 0) return empty(500);
       return item ? json(item) : { status: 404, headers: {}, body: "" };
     },
   };
@@ -202,6 +282,7 @@ function zoteroOrg(
   };
   return {
     items,
+    stored,
     writes,
     editInZotero,
     zotero: {
@@ -261,6 +342,45 @@ async function sourceInScient(fields: Partial<ScientSourceCandidate> = {}) {
   if (!imported.record) throw new Error("The fixture source was not added.");
   return { root, sourceId: imported.record.sourceId };
 }
+
+/** A source in Scient with one PDF, "paper.pdf", whose bytes carry `text`. */
+async function sourceWithPdf(text: string) {
+  const { root, sourceId } = await sourceInScient();
+  const pdfPath = NodePath.join(root, "incoming.pdf");
+  await NodeFSP.writeFile(pdfPath, `%PDF-1.4\n% ${text}\n%%EOF\n`);
+  const record = await readScientSourceRecord(root, sourceId);
+  const attached = await attachScientSourcePdf({
+    root,
+    sourceId,
+    expectedRevision: record!.revision,
+    pdfPath,
+    fileName: "paper.pdf",
+    actor: "user",
+  });
+  if (attached.outcome !== "attached") throw new Error("The fixture PDF was not attached.");
+  return { root, sourceId };
+}
+
+const sendWithPdfs = (
+  source: { readonly root: string; readonly sourceId: string },
+  org: { readonly zotero: ZoteroAccess },
+) =>
+  sendSourcesToZotero({
+    root: source.root,
+    sourceIds: [source.sourceId],
+    pdfs: true,
+    actor: "user",
+    zotero: org.zotero,
+  });
+
+const attachmentsIn = (org: { readonly items: ReadonlyMap<string, ZoteroRawItem> }) =>
+  [...org.items.values()]
+    .filter((item) => item.data.itemType === "attachment")
+    .map(({ data }) => ({
+      parentItem: data.parentItem,
+      filename: data.filename,
+      md5: "md5" in data && typeof data.md5 === "string" ? data.md5 : null,
+    }));
 
 describe("Send to Zotero", () => {
   it("creates the item with its note and links the source to it", async () => {
@@ -587,6 +707,23 @@ describe("Send to Zotero", () => {
     expect((await readScientSourceRecord(root, sourceId))?.title).toBe("Edited in Zotero");
   });
 
+  it("says so, and makes no second item, when an earlier Send made the item but did not finish", async () => {
+    const { root, sourceId } = await sourceInScient();
+    // The item is made, then reading it back to link the source fails.
+    const org = zoteroOrg({ readFailures: 1 });
+    const send = () =>
+      sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero });
+
+    expect((await send()).items).toEqual([expect.objectContaining({ outcome: "failed" })]);
+    expect((await send()).items).toEqual([
+      expect.objectContaining({
+        outcome: "failed",
+        message: expect.stringContaining("Look for the item in Zotero"),
+      }),
+    ]);
+    expect([...org.items.values()].filter((item) => item.data.itemType !== "note")).toHaveLength(1);
+  });
+
   it("explains a key that can only read", async () => {
     const { root, sourceId } = await sourceInScient();
     const org = zoteroOrg({ write: false });
@@ -610,5 +747,115 @@ describe("Send to Zotero", () => {
       }),
     ).rejects.toThrow(/cannot write to this group/u);
     expect(org.writes).toEqual([]);
+  });
+
+  it("sends a PDF the item lacks through Zotero's upload, once, and only when asked", async () => {
+    const source = await sourceWithPdf("first");
+    const org = zoteroOrg();
+
+    // Off unless asked: the details go, the PDF does not.
+    await sendSourcesToZotero({
+      root: source.root,
+      sourceIds: [source.sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+    expect(attachmentsIn(org)).toEqual([]);
+
+    const sent = await sendWithPdfs(source, org);
+    expect(sent.items[0]).toMatchObject({
+      outcome: "unchanged",
+      pdfs: [{ fileName: "paper.pdf", outcome: "sent", message: null }],
+    });
+    const [md5] = [...org.stored.keys()];
+    expect(attachmentsIn(org)).toEqual([{ parentItem: "NEWA2345", filename: "paper.pdf", md5 }]);
+
+    expect((await sendWithPdfs(source, org)).items[0]?.pdfs).toEqual([
+      { fileName: "paper.pdf", outcome: "in-zotero", message: null },
+    ]);
+    // Another paper with the same bytes: Zotero already holds them, so nothing is uploaded.
+    const twin = await sourceWithPdf("first");
+    expect((await sendWithPdfs(twin, org)).items[0]?.pdfs).toEqual([
+      { fileName: "paper.pdf", outcome: "sent", message: null },
+    ]);
+    expect(org.stored.size).toBe(1);
+    expect(attachmentsIn(org).filter((attachment) => attachment.md5 === md5)).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      "a key without file access",
+      { files: false },
+      "The Zotero key in Accounts does not allow files.",
+    ],
+    ["a full storage", { quota: 8 }, "The Zotero storage is full."],
+  ] as const)(
+    "says why the PDF was not sent with %s, leaves no empty attachment, and still sends the details",
+    async (_case, options, message) => {
+      const source = await sourceWithPdf("first");
+      const org = zoteroOrg(options);
+
+      expect((await sendWithPdfs(source, org)).items[0]).toMatchObject({
+        outcome: "created",
+        pdfs: [{ fileName: "paper.pdf", outcome: "not-sent", message }],
+      });
+      expect(attachmentsIn(org)).toEqual([]);
+    },
+  );
+
+  it("does not upload a second copy of a file Zotero links to", async () => {
+    const source = await sourceWithPdf("first");
+    const org = zoteroOrg();
+    await sendSourcesToZotero({
+      root: source.root,
+      sourceIds: [source.sourceId],
+      actor: "user",
+      zotero: org.zotero,
+    });
+    org.items.set("LINK2345", {
+      key: "LINK2345",
+      version: 1,
+      library: { type: "user", id: USER },
+      data: {
+        key: "LINK2345",
+        version: 1,
+        itemType: "attachment",
+        parentItem: "NEWA2345",
+        linkMode: "linked_file",
+        path: "/Users/ada/Papers/paper.pdf",
+      } as ZoteroRawItem["data"],
+    });
+
+    expect((await sendWithPdfs(source, org)).items[0]?.pdfs).toEqual([
+      {
+        fileName: "paper.pdf",
+        outcome: "not-sent",
+        message: "Zotero links to a file of that name on your computer.",
+      },
+    ]);
+    expect(org.stored.size).toBe(0);
+  });
+
+  it("finishes a PDF stopped half way on the next Send, in the same attachment", async () => {
+    const source = await sourceWithPdf("first");
+    const org = zoteroOrg({ storageFailures: 1 });
+
+    expect((await sendWithPdfs(source, org)).items[0]?.pdfs).toEqual([
+      {
+        fileName: "paper.pdf",
+        outcome: "not-sent",
+        message: "It did not reach zotero.org. Send again to finish.",
+      },
+    ]);
+    expect(attachmentsIn(org)).toEqual([
+      { parentItem: "NEWA2345", filename: "paper.pdf", md5: null },
+    ]);
+
+    expect((await sendWithPdfs(source, org)).items[0]?.pdfs).toEqual([
+      { fileName: "paper.pdf", outcome: "sent", message: null },
+    ]);
+    expect(attachmentsIn(org)).toEqual([
+      { parentItem: "NEWA2345", filename: "paper.pdf", md5: [...org.stored.keys()][0] },
+    ]);
   });
 });

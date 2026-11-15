@@ -19,9 +19,12 @@ import {
   ScientSourceCollectionsDocument,
   ScientSourceSavedSearch,
   ScientSourcesBulkReceipt,
+  SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT,
   SCIENT_SOURCE_COLLECTION_LIMIT,
   SCIENT_SOURCE_COLLECTION_MEMBER_LIMIT,
+  SCIENT_SOURCE_NAME_LIMIT,
   SCIENT_SOURCE_SAVED_SEARCH_LIMIT,
+  type ScientSourceCollectionSummary,
   type ScientSourceFilter,
   type ScientSourcesBulkFields,
   type ScientSourcesBulkRequestChange,
@@ -79,6 +82,8 @@ const EMPTY_DOCUMENT: ScientSourceCollectionsDocument = {
   collections: [],
   savedSearches: [],
 };
+
+const COLLECTION_LIMIT_MESSAGE = `A project can have at most ${SCIENT_SOURCE_COLLECTION_LIMIT} collections.`;
 
 function nameKey(name: string): string {
   return name.trim().toLocaleLowerCase();
@@ -235,15 +240,57 @@ function trimDeleted<A extends { readonly deletedAt?: string }>(
   return entries.filter((entry) => !dropped.has(entry));
 }
 
+type CollectionsById = ReadonlyMap<string, ScientSourceCollection>;
+
+function collectionsById(collections: ReadonlyArray<ScientSourceCollection>): CollectionsById {
+  return new Map(collections.map((collection) => [collection.collectionId, collection]));
+}
+
+/** The collections a collection is in, nearest first, deleted ones too; a repeat ends it. */
+function collectionsAbove(
+  byId: CollectionsById,
+  collection: ScientSourceCollection,
+): ReadonlyArray<ScientSourceCollection> {
+  const above: ScientSourceCollection[] = [];
+  const seen = new Set([collection.collectionId]);
+  let parent = collection.parentCollectionId ? byId.get(collection.parentCollectionId) : undefined;
+  while (parent && !seen.has(parent.collectionId)) {
+    above.push(parent);
+    seen.add(parent.collectionId);
+    parent = parent.parentCollectionId ? byId.get(parent.parentCollectionId) : undefined;
+  }
+  return above;
+}
+
+/** Drops all but the newest deleted collections; what was under a dropped one moves up to its parent. */
+function trimDeletedCollections(
+  collections: ReadonlyArray<ScientSourceCollection>,
+): ReadonlyArray<ScientSourceCollection> {
+  const kept = trimDeleted(collections);
+  if (kept.length === collections.length) return kept;
+  const byId = collectionsById(collections);
+  const keptIds = new Set(kept.map((collection) => collection.collectionId));
+  return kept.map((collection) => {
+    if (!collection.parentCollectionId || keptIds.has(collection.parentCollectionId)) {
+      return collection;
+    }
+    const parent = collectionsAbove(byId, collection).find((above) =>
+      keptIds.has(above.collectionId),
+    );
+    const { parentCollectionId: _dropped, ...rest } = collection;
+    return parent ? { ...rest, parentCollectionId: parent.collectionId } : rest;
+  });
+}
+
 function projectOrganization(
   document: ScientSourceCollectionsDocument,
   presentSourceIds: ReadonlySet<string>,
 ): ScientSourcesOrganization {
-  const live = new Set(liveCollectionIds(document));
+  const byId = collectionsById(document.collections);
   return {
     collections: document.collections
       .filter((collection) => collection.deletedAt === undefined)
-      .map((collection) => collectionSummary(collection, presentSourceIds, live)),
+      .map((collection) => collectionSummary(collection, presentSourceIds, byId)),
     savedSearches: document.savedSearches
       .filter((search) => search.deletedAt === undefined)
       .map(savedSearchSummary),
@@ -294,7 +341,7 @@ async function mutate<A>(
     if (next) {
       const bounded: ScientSourceCollectionsDocument = {
         formatVersion: 1,
-        collections: trimDeleted(next.collections),
+        collections: trimDeletedCollections(next.collections),
         savedSearches: trimDeleted(next.savedSearches),
       };
       validateCollectionsDocument(bounded);
@@ -313,13 +360,10 @@ async function mutate<A>(
   });
 }
 
-function liveCollectionIds(document: ScientSourceCollectionsDocument): ReadonlyArray<string> {
-  return document.collections
-    .filter((collection) => collection.deletedAt === undefined)
-    .map((collection) => collection.collectionId);
-}
-
-/** Names are unique among siblings: two parents can each have a "Methods". */
+/**
+ * The same-named sibling a hand-made change means: the oldest. Two can share a name only when
+ * they arrived as two, from Zotero or another Library.
+ */
 function liveCollectionByName(
   document: ScientSourceCollectionsDocument,
   name: string,
@@ -333,23 +377,34 @@ function liveCollectionByName(
   );
 }
 
-/** Why a collection cannot sit under this parent, or null when it can. */
+/**
+ * Why a collection cannot sit under this parent, or null when it can. "too-deep" is also a
+ * collection put inside itself. Levels are counted on the stored tree, deleted ones included,
+ * so restoring one never makes the tree deeper than it may be.
+ */
 function nestingProblem(
   document: ScientSourceCollectionsDocument,
   parentCollectionId: string,
   childCollectionId: string | null,
 ): "not-found" | "too-deep" | null {
-  const parent = findCollection(document, parentCollectionId);
+  const byId = collectionsById(document.collections);
+  const parent = byId.get(parentCollectionId);
   if (!parent || parent.deletedAt !== undefined) return "not-found";
-  if (parent.parentCollectionId !== undefined || parentCollectionId === childCollectionId)
-    return "too-deep";
-  const hasChildren =
-    childCollectionId !== null &&
-    document.collections.some(
-      (collection) =>
-        collection.deletedAt === undefined && collection.parentCollectionId === childCollectionId,
-    );
-  return hasChildren ? "too-deep" : null;
+  const above = [parent, ...collectionsAbove(byId, parent)];
+  if (above.some((collection) => collection.collectionId === childCollectionId)) return "too-deep";
+  const levelsUnder =
+    childCollectionId === null
+      ? 0
+      : Math.max(
+          0,
+          ...document.collections.map(
+            (collection) =>
+              collectionsAbove(byId, collection).findIndex(
+                (entry) => entry.collectionId === childCollectionId,
+              ) + 1,
+          ),
+        );
+  return above.length + 1 + levelsUnder > SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT ? "too-deep" : null;
 }
 
 function replaceCollection(
@@ -450,9 +505,7 @@ export function createScientSourceCollection(input: {
         document.collections.filter((entry) => entry.deletedAt === undefined).length >=
           SCIENT_SOURCE_COLLECTION_LIMIT
       ) {
-        throw new Error(
-          `A project can have at most ${SCIENT_SOURCE_COLLECTION_LIMIT} collections.`,
-        );
+        throw new Error(COLLECTION_LIMIT_MESSAGE);
       }
       return {
         document: !changed
@@ -475,6 +528,139 @@ export function createScientSourceCollection(input: {
 
 function findCollection(document: ScientSourceCollectionsDocument, collectionId: string) {
   return document.collections.find((collection) => collection.collectionId === collectionId);
+}
+
+/** A collection as it is kept elsewhere: in Zotero, another Library or a project package. */
+export type ScientSourceOutsideCollection = Pick<
+  ScientSourceCollectionSummary,
+  "collectionId" | "name" | "parentCollectionId"
+>;
+
+export type ScientSourcePlacedCollection =
+  | { readonly collection: ScientSourceCollection; readonly created: boolean }
+  | { readonly collection: null; readonly why: string };
+
+/**
+ * Finds or makes the wanted collections of an outside tree with the ones above them: by ID, else
+ * by name under the same parent if no other outside one took it, else new. One deleted here is
+ * left out, or with `remake` made anew under a new ID so the deleted one stays restorable.
+ */
+export function placeScientSourceCollections(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly tree: ReadonlyArray<ScientSourceOutsideCollection>;
+  readonly wanted: ReadonlyArray<string>;
+  readonly remake: boolean;
+  readonly actor: ScientSourceActor;
+}): Promise<ReadonlyMap<string, ScientSourcePlacedCollection>> {
+  return mutate<ReadonlyMap<string, ScientSourcePlacedCollection>>(
+    input.root,
+    (document, { now }) => {
+      const outside = new Map(
+        input.tree
+          .toSorted((left, right) => left.collectionId.localeCompare(right.collectionId))
+          .map((node) => [node.collectionId, node]),
+      );
+      const parentOf = (node: ScientSourceOutsideCollection) =>
+        node.parentCollectionId ? outside.get(node.parentCollectionId) : undefined;
+      const byId = new Map(collectionsById(document.collections));
+      const taken = new Set<string>();
+      // The whole tree is matched each time, in one order, so which same-named sibling has a
+      // collection made by hand does not depend on what is wanted.
+      const here = new Map<string, ScientSourceCollection | null>();
+      const match = (node: ScientSourceOutsideCollection): ScientSourceCollection | null => {
+        const known = here.get(node.collectionId);
+        if (known !== undefined) return known;
+        // Set first, so a tree that loops ends here.
+        here.set(node.collectionId, null);
+        const parent = parentOf(node);
+        const parentHere = parent ? match(parent) : undefined;
+        const own = byId.get(node.collectionId);
+        const found =
+          own && own.deletedAt === undefined
+            ? own
+            : parentHere === null
+              ? null
+              : (document.collections.find(
+                  (collection) =>
+                    collection.deletedAt === undefined &&
+                    collection.parentCollectionId === parentHere?.collectionId &&
+                    nameKey(collection.name) === nameKey(node.name) &&
+                    !outside.has(collection.collectionId) &&
+                    !taken.has(collection.collectionId),
+                ) ?? null);
+        if (found) taken.add(found.collectionId);
+        here.set(node.collectionId, found);
+        return found;
+      };
+      for (const node of outside.values()) match(node);
+
+      const placed = new Map<string, ScientSourcePlacedCollection | null>();
+      // Parents before children, as callers undo in reverse.
+      const result = new Map<string, ScientSourcePlacedCollection>();
+      const added: ScientSourceCollection[] = [];
+      let live = document.collections.filter((entry) => entry.deletedAt === undefined).length;
+      const place = (node: ScientSourceOutsideCollection): ScientSourcePlacedCollection | null => {
+        const known = placed.get(node.collectionId);
+        if (known !== undefined) return known;
+        const make = (): ScientSourcePlacedCollection | null => {
+          const found = here.get(node.collectionId);
+          if (found) return { collection: found, created: false };
+          const deleted = byId.has(node.collectionId);
+          if (deleted && !input.remake) return null;
+          const parent = parentOf(node);
+          const above = parent ? place(parent) : undefined;
+          if (above && !above.collection) {
+            return { collection: null, why: "The collection above it could not be made here." };
+          }
+          // Under a deleted parent that is not made again, as the person's own ones are there.
+          const parentHere =
+            above === null && parent ? byId.get(parent.collectionId) : above?.collection;
+          const name = node.name.trim();
+          const levels = parentHere ? collectionsAbove(byId, parentHere).length + 2 : 1;
+          const why = !name
+            ? "It has no name."
+            : name.length > SCIENT_SOURCE_NAME_LIMIT
+              ? `Its name is longer than ${SCIENT_SOURCE_NAME_LIMIT} characters.`
+              : levels > SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT
+                ? `It is more than ${SCIENT_SOURCE_COLLECTION_DEPTH_LIMIT} levels deep.`
+                : live >= SCIENT_SOURCE_COLLECTION_LIMIT
+                  ? COLLECTION_LIMIT_MESSAGE
+                  : null;
+          if (why) return { collection: null, why };
+          const collection: ScientSourceCollection = {
+            collectionId: deleted ? newId("collection") : node.collectionId,
+            name,
+            ...(parentHere ? { parentCollectionId: parentHere.collectionId } : {}),
+            sourceIds: [],
+            createdAt: now,
+            updatedAt: now,
+            updatedBy: input.actor,
+          };
+          byId.set(collection.collectionId, collection);
+          added.push(collection);
+          live += 1;
+          return { collection, created: true };
+        };
+        // Set first, so a tree that loops ends here.
+        placed.set(node.collectionId, null);
+        const made = make();
+        placed.set(node.collectionId, made);
+        if (made) result.set(node.collectionId, made);
+        return made;
+      };
+      for (const collectionId of input.wanted) {
+        const node = outside.get(collectionId);
+        if (node) place(node);
+      }
+      return {
+        document:
+          added.length === 0
+            ? null
+            : { ...document, collections: [...document.collections, ...added] },
+        result,
+      };
+    },
+  );
 }
 
 export function renameScientSourceCollection(input: {
@@ -508,7 +694,7 @@ export function renameScientSourceCollection(input: {
   });
 }
 
-/** Puts a collection under a top-level parent, or (null) back at the top level. */
+/** Puts a collection, with what is under it, under another one, or (null) at the top level. */
 function moveScientSourceCollection(input: {
   readonly root: ScientSourceStoreLocation;
   readonly collectionId: string;
@@ -548,8 +734,9 @@ function moveScientSourceCollection(input: {
 }
 
 /**
- * Deleting a collection never touches its sources, and it can be restored. With
- * `expectedUpdatedAt`, one changed since is left as it is ("unchanged").
+ * Deleting a collection never touches its sources, and it can be restored. The collections
+ * under it stay and show one level up until then. With `expectedUpdatedAt`, one changed since
+ * is left as it is ("unchanged").
  */
 export function deleteScientSourceCollection(input: {
   readonly root: ScientSourceStoreLocation;
@@ -591,21 +778,9 @@ export function restoreScientSourceCollection(input: {
         result: { outcome: "unchanged", collection: current, ...unchangedMembers },
       };
     }
-    // Its parent may have moved under another collection since; nesting stays one level deep.
-    const parent = current.parentCollectionId
-      ? findCollection(document, current.parentCollectionId)
-      : undefined;
-    const keepsParent = parent !== undefined && parent.parentCollectionId === undefined;
-    const parentCollectionId = keepsParent ? current.parentCollectionId : undefined;
-    const clash = liveCollectionByName(document, current.name, parentCollectionId);
-    if (clash) return { document: null, result: { outcome: "name-taken", collection: clash } };
-    const { deletedAt: _deletedAt, parentCollectionId: _parent, ...live } = current;
-    const collection: ScientSourceCollection = {
-      ...live,
-      ...(parentCollectionId ? { parentCollectionId } : {}),
-      updatedAt: now,
-      updatedBy: input.actor,
-    };
+    // Back where it was, whatever a sibling is called by now: an Undo is never refused.
+    const { deletedAt: _deletedAt, ...live } = current;
+    const collection: ScientSourceCollection = { ...live, updatedAt: now, updatedBy: input.actor };
     return {
       document: replaceCollection(document, collection),
       result: { outcome: "restored", collection, ...unchangedMembers },
@@ -753,13 +928,13 @@ export function deleteScientSourceSearch(input: {
 function collectionSummary(
   collection: ScientSourceCollection,
   presentSourceIds: ReadonlySet<string>,
-  liveIds: ReadonlySet<string>,
+  byId: CollectionsById,
 ) {
-  const parent = collection.parentCollectionId;
+  const parent = collectionsAbove(byId, collection).find((above) => above.deletedAt === undefined);
   return {
     collectionId: collection.collectionId,
     name: collection.name,
-    ...(parent && liveIds.has(parent) ? { parentCollectionId: parent } : {}),
+    ...(parent ? { parentCollectionId: parent.collectionId } : {}),
     sourceIds: collection.sourceIds.filter((sourceId) => presentSourceIds.has(sourceId)),
     updatedAt: collection.updatedAt,
     updatedBy: collection.updatedBy,
@@ -787,7 +962,7 @@ export async function organizeScientSources(input: {
     const result = await pending;
     if (!result.collection) return { outcome: result.outcome };
     const present = new Set((await listScientSourceRecords(root)).map((record) => record.sourceId));
-    const live = new Set(liveCollectionIds(await readDocument(await sourceStorePaths(root))));
+    const live = collectionsById((await readDocument(await sourceStorePaths(root))).collections);
     return "addedSourceIds" in result
       ? {
           outcome: result.outcome,

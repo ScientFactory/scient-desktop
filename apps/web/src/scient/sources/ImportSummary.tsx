@@ -42,7 +42,6 @@ export function ImportSummary(props: {
   const unprocessed = props.operation.items.filter((item) => item.state === "pending").length;
   const running = props.operation.state === "running";
   const stopped = props.operation.state === "cancelled";
-  const notes = [...new Set(props.operation.items.flatMap((item) => item.note ?? []))];
   const importedIds = props.operation.items.flatMap((item) =>
     item.state === "imported" && item.sourceId ? [item.sourceId] : [],
   );
@@ -57,7 +56,6 @@ export function ImportSummary(props: {
     unprocessed === 0 &&
     alreadyPresent === 0 &&
     reviewRequired === 0 &&
-    notes.length === 0 &&
     notBrought.length === 0 &&
     !(props.rest && props.rest.count > 0)
   )
@@ -96,11 +94,6 @@ export function ImportSummary(props: {
           {stopped ? "Import stopped" : running ? "Importing sources" : "Import complete"}
         </div>
         <div className="mt-0.5 text-xs text-muted-foreground">{details.join(" · ")}</div>
-        {notes.slice(0, 3).map((note) => (
-          <div key={note} className="mt-1 text-xs text-muted-foreground">
-            {note}
-          </div>
-        ))}
         {libraryOnly ? (
           <div className="mt-1 text-xs text-muted-foreground">
             {inLibraryNotProjectLabel(importedIds.length)}

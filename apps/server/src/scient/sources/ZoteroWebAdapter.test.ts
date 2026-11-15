@@ -28,6 +28,7 @@ function recordedHttp(answer: (request: ZoteroWebRequest) => ZoteroResponse) {
       return answer(request);
     },
     download: async () => ({ status: 404 }),
+    upload: async () => 500,
   };
   return { http, requests };
 }

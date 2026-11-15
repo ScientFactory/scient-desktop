@@ -1,5 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Write tokens are content digests; sync state records ISO times like the store.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Write tokens and PDF hashes are content digests; sync state records ISO times like the store.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 
 import {
   normalizeScientSourceEditableMetadata,
@@ -17,6 +19,7 @@ import {
   listScientSourceRecords,
   readScientSourceRecord,
   readScientSourceZoteroSync,
+  sourceAttachmentAbsolutePath,
   updateScientSourceExternalReferences,
   updateScientSourceMetadata,
   updateScientSourceNote,
@@ -34,6 +37,7 @@ import {
 import { decodeZoteroRawItem, type ZoteroItemMaterial, type ZoteroRawItem } from "./ZoteroItems.ts";
 import {
   readZoteroAttachmentFiles,
+  readZoteroItemChildren,
   readZoteroItemMaterial,
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
@@ -425,6 +429,122 @@ async function syncAfterSend(input: {
   });
 }
 
+type ZoteroSendPdf = NonNullable<ScientSourceZoteroSendItem["pdfs"]>[number];
+
+const PDF_NOT_SENT = {
+  full: "The Zotero storage is full.",
+  busy: "zotero.org is busy. Send again in a minute.",
+  failed: "It did not reach zotero.org. Send again to finish.",
+  linked: "Zotero links to a file of that name on your computer.",
+} as const;
+
+function noFilesMessage(library: ZoteroWebLibrary): string {
+  return library.groupId
+    ? "This group does not let the key in Accounts add files."
+    : "The Zotero key in Accounts does not allow files.";
+}
+
+/**
+ * Each PDF of the source that the item lacks, through Zotero's file upload. An attachment left
+ * without its file by an earlier Send is filled, not doubled; one this Send made and Zotero
+ * then refused a file for is deleted again. Never replaces or removes a file in Zotero.
+ */
+async function sendPdfs(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly record: ScientSourceRecord;
+  readonly library: ZoteroWebLibrary;
+  readonly itemKey: string;
+}): Promise<ReadonlyArray<ZoteroSendPdf>> {
+  const { record, library } = input;
+  const results: ZoteroSendPdf[] = [];
+  const attachments =
+    record.attachments.length === 0
+      ? []
+      : await readZoteroItemChildren(library.transport, input.itemKey).then(
+          (children) => children.filter((child) => child.data.itemType === "attachment"),
+          () => null,
+        );
+  for (const attachment of record.attachments) {
+    const { fileName } = attachment;
+    const notSent = (message: string) => results.push({ fileName, outcome: "not-sent", message });
+    if (!attachments) {
+      notSent(PDF_NOT_SENT.failed);
+      continue;
+    }
+    try {
+      const path = sourceAttachmentAbsolutePath(input.root, attachment);
+      const hash = NodeCrypto.createHash("md5");
+      for await (const chunk of NodeFS.createReadStream(path)) hash.update(chunk as Buffer);
+      const md5 = hash.digest("hex");
+      if (attachments.some((child) => child.fields?.md5 === md5)) {
+        results.push({ fileName, outcome: "in-zotero", message: null });
+        continue;
+      }
+      // Zotero keeps only a path for a linked file, so its name is all there is to compare.
+      const linked = attachments.some(
+        (child) =>
+          child.data.linkMode === "linked_file" &&
+          (child.data.filename ?? child.fields?.path?.split(/[\\/:]/u).at(-1)) === fileName,
+      );
+      if (linked) {
+        notSent(PDF_NOT_SENT.linked);
+        continue;
+      }
+      if (!library.canAddFiles) {
+        notSent(noFilesMessage(library));
+        continue;
+      }
+      const empty = attachments.find(
+        (child) =>
+          child.data.linkMode === "imported_file" &&
+          !child.fields?.md5 &&
+          child.data.filename === fileName,
+      );
+      const [made] = empty
+        ? [null]
+        : await library.createItems(
+            [
+              {
+                itemType: "attachment",
+                parentItem: input.itemKey,
+                linkMode: "imported_file",
+                title: fileName,
+                contentType: "application/pdf",
+                filename: fileName,
+              },
+            ],
+            // Fresh each time: Zotero refuses a token used in the last 12 hours, and an
+            // attachment deleted after a refusal must be made again when the person retries.
+            NodeCrypto.randomUUID().replaceAll("-", ""),
+          );
+      const target = empty?.key ?? made?.key;
+      if (!target) {
+        notSent(PDF_NOT_SENT.failed);
+        continue;
+      }
+      const { size, mtimeMs } = await NodeFSP.stat(path);
+      const upload = await library.uploadFile(target, {
+        path,
+        fileName,
+        md5,
+        size,
+        mtime: Math.trunc(mtimeMs),
+      });
+      if (upload === "sent") {
+        results.push({ fileName, outcome: "sent", message: null });
+        continue;
+      }
+      if (made && (upload === "forbidden" || upload === "full")) {
+        await library.deleteItem(made.key, made.version).catch(() => false);
+      }
+      notSent(upload === "forbidden" ? noFilesMessage(library) : PDF_NOT_SENT[upload]);
+    } catch {
+      notSent(PDF_NOT_SENT.failed);
+    }
+  }
+  return results;
+}
+
 async function sendOne(input: {
   readonly root: ScientSourceStoreLocation;
   readonly record: ScientSourceRecord;
@@ -506,6 +626,8 @@ export async function sendSourcesToZotero(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceIds: ReadonlyArray<string>;
   readonly groupId?: string;
+  /** Also each PDF the item lacks, for a source whose details were sent or already there. */
+  readonly pdfs?: boolean;
   readonly actor: ScientSourceActor;
   readonly zotero: ZoteroAccess;
 }): Promise<{ readonly items: ReadonlyArray<ScientSourceZoteroSendItem> }> {
@@ -543,7 +665,17 @@ export async function sendSourcesToZotero(input: {
       continue;
     }
     try {
-      items.push(await sendOne({ root: input.root, record, library, actor: input.actor }));
+      const item = await sendOne({ root: input.root, record, library, actor: input.actor });
+      const placed =
+        item.outcome === "created" || item.outcome === "updated" || item.outcome === "unchanged";
+      items.push(
+        input.pdfs && placed && item.itemKey
+          ? {
+              ...item,
+              pdfs: await sendPdfs({ root: input.root, record, library, itemKey: item.itemKey }),
+            }
+          : item,
+      );
     } catch (error) {
       items.push({
         sourceId,

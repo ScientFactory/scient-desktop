@@ -7,7 +7,12 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { createScientSourceCollection, readScientSourcesOrganization } from "./collections.ts";
+import {
+  changeScientSourceCollectionMembers,
+  createScientSourceCollection,
+  placeScientSourceCollections,
+  readScientSourcesOrganization,
+} from "./collections.ts";
 import { backUpScientLibrary, scientLibraryBackupLeavesOut } from "./libraryBackup.ts";
 import {
   compareScientLibraries,
@@ -692,6 +697,45 @@ describe("adding what another Library holds", () => {
       (entry) => entry.name,
     );
     expect(names.toSorted()).toEqual(["Chapter 3", "Thesis"]);
+  });
+
+  it("keeps two same-named collections of the other Library as two", async () => {
+    const theirs = await built([
+      { op: "add", label: "a", pdf: false },
+      { op: "add", label: "b", pdf: false },
+    ]);
+    const id = (label: string) => workOf(theirs.model, label).sourceId;
+    const twins = [
+      ["collection_11111111111111111111111111111111", id("a")],
+      ["collection_22222222222222222222222222222222", id("b")],
+    ] as const;
+    await placeScientSourceCollections({
+      root: theirs.library,
+      tree: twins.map(([collectionId]) => ({ collectionId, name: "Scopus" })),
+      wanted: twins.map(([collectionId]) => collectionId),
+      remake: false,
+      actor: "user",
+    });
+    for (const [collectionId, sourceId] of twins) {
+      await changeScientSourceCollectionMembers({
+        root: theirs.library,
+        collectionId,
+        add: [sourceId],
+        actor: "user",
+      });
+    }
+    const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+
+    await joinScientLibrary({
+      library: ours.library,
+      folder: await backUp(theirs.scenario),
+      actor: "user",
+    });
+
+    const collections = (await readScientSourcesOrganization(ours.library)).collections;
+    expect(collections.map((entry) => [entry.collectionId, entry.name, entry.sourceIds])).toEqual(
+      twins.map(([collectionId, sourceId]) => [collectionId, "Scopus", [sourceId]]),
+    );
   });
 
   it("adds both of two papers the other Library keeps as two, whichever part each falls in", async () => {

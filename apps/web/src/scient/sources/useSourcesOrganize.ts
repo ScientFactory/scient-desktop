@@ -538,6 +538,9 @@ export function useSourcesOrganize(input: {
       return result?.collection ?? null;
     },
     deleteCollection: async (collectionId: string) => {
+      const under = organization.collections.filter(
+        (entry) => entry.parentCollectionId === collectionId,
+      ).length;
       const result = await organize(
         { action: "delete-collection", collectionId },
         "Collection was not deleted",
@@ -550,7 +553,10 @@ export function useSourcesOrganize(input: {
       toastManager.add({
         type: "success",
         title: `Deleted collection “${name}”`,
-        description: "Its sources stay in the Library.",
+        description:
+          under === 0
+            ? "Its sources stay in the Library."
+            : `Its sources stay in the Library, and ${under === 1 ? "its subcollection" : `its ${under} subcollections`} moved up a level.`,
         actionProps: {
           children: "Undo",
           onClick: () => {

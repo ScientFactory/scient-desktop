@@ -38,6 +38,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuItem,
   MenuPopup,
   MenuSeparator,
@@ -805,6 +806,11 @@ export function SourceDetails(props: {
   readonly onOpenHistory?: () => void;
   /** Without a group ID, the source goes to My Library. */
   readonly onSendToZotero?: (groupId: string | null) => void;
+  /** "Include PDF" in the Send menu, for a source that has one. */
+  readonly zoteroSendPdfs?: {
+    readonly include: boolean;
+    readonly change: (include: boolean) => void;
+  };
   /** Zotero groups the key in Accounts can write to; with any, Send to Zotero asks where. */
   readonly zoteroWritableGroups?: ReadonlyArray<{
     readonly groupId: string;
@@ -1049,7 +1055,9 @@ export function SourceDetails(props: {
                 History
               </MenuItem>
             ) : null}
-            {props.onSendToZotero && (props.zoteroWritableGroups ?? []).length > 0 ? (
+            {props.onSendToZotero &&
+            ((props.zoteroWritableGroups ?? []).length > 0 ||
+              (props.zoteroSendPdfs && record.attachments.length > 0)) ? (
               <MenuSub>
                 <MenuSubTrigger disabled={readOnly}>
                   <Upload />
@@ -1066,6 +1074,17 @@ export function SourceDetails(props: {
                       <span className="min-w-0 truncate">{group.name}</span>
                     </MenuItem>
                   ))}
+                  {props.zoteroSendPdfs && record.attachments.length > 0 ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuCheckboxItem
+                        checked={props.zoteroSendPdfs.include}
+                        onCheckedChange={props.zoteroSendPdfs.change}
+                      >
+                        {record.attachments.length === 1 ? "Include PDF" : "Include PDFs"}
+                      </MenuCheckboxItem>
+                    </>
+                  ) : null}
                 </MenuSubPopup>
               </MenuSub>
             ) : props.onSendToZotero ? (
