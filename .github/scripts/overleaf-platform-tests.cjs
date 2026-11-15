@@ -18,6 +18,7 @@ const FILES = {
     "src/scient/overleaf/overleafHostPaths.test.ts",
     "src/scient/overleaf/overleafFileAvailability.test.ts",
     "src/scient/overleaf/OverleafSync.folders.test.ts",
+    "src/scient/overleaf/OverleafSync.folderMoves.test.ts",
     "src/scient/overleaf/OverleafCoordinator.platform.test.ts",
     "src/scient/overleaf/WorkspaceApplier.crash.platform.test.ts",
     "src/scient/workspace/WindowsRetainedFileMutation.test.ts",
@@ -31,8 +32,10 @@ const FILES = {
     "src/scient/overleaf/OverleafStateStore.test.ts",
     "src/scient/overleaf/RetainedDiscard.crash.test.ts",
     "src/scient/overleaf/OverleafSync.folders.test.ts",
+    "src/scient/overleaf/OverleafSync.folderMoves.test.ts",
     "src/scient/overleaf/OverleafCoordinator.platform.test.ts",
     "src/scient/overleaf/WorkspaceApplier.crash.test.ts",
+    "src/scient/overleaf/WorkspaceApplier.crash.shapes.test.ts",
     "src/scient/overleaf/WorkspaceApplier.crash.platform.test.ts",
     "src/scient/workspace/PlatformFileIdentity.test.ts",
     "src/scient/workspace/NativeFilePublication.test.ts",
@@ -96,6 +99,12 @@ function platformFiles() {
 // Enough of each failure to carry a command's own error output, as hdiutil's reason.
 const FAILURE_LINES = 20;
 
+// The server config runs files one at a time, against load-sensitive flakes. Two at a time
+// roughly halves this step on the hosted runners. Each file runs in its own process with its own
+// temporary folders and disk images; the one machine-wide resource, the drive letter
+// WindowsRetainedFileMutation gives its virtual disk, belongs to a single file.
+const WORKERS = 2;
+
 /** Each failed test with the start of its failure message, from a Vitest JSON report. */
 function failures(report) {
   const lines = [];
@@ -123,7 +132,8 @@ function run() {
     const env = { ...process.env, ...buildHelpers(path.join(scratch, "helpers")) };
     const output = path.join(scratch, "results.json");
     try {
-      execFileSync("vp", ["test", "run", ...files, "--reporter=json", `--outputFile=${output}`], {
+      const args = ["test", "run", ...files, "--fileParallelism", `--maxWorkers=${WORKERS}`];
+      execFileSync("vp", [...args, "--reporter=json", `--outputFile=${output}`], {
         cwd,
         env,
         stdio: "inherit",
