@@ -23,7 +23,14 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useSyncExternalStore, useRef, useState } from "react";
+import {
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useSyncExternalStore,
+  useRef,
+  useState,
+} from "react";
 
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { Button } from "../../components/ui/button";
@@ -449,10 +456,13 @@ export function ScientSourcesPanel(props: {
   const scopes = sources.overview?.scopes;
   const readingFilter = scopes ? organize.reading : {};
   const sourceSearchIndex = indexScientSourceSummaries(sources.overview?.records ?? []);
+  // Filtering 20,000 rows takes longer than a keystroke should wait: the box shows the letter at
+  // once and the list follows.
+  const listQuery = useDeferredValue(sourceQuery);
   const filteredSourceRecords = sortScientSourceRecords(
     filterScientSourceSearchIndex(
       sourceSearchIndex,
-      sourceQuery,
+      listQuery,
       organize.filter,
       organize.organization,
     ).filter(
