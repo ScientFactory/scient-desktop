@@ -649,7 +649,7 @@ The current committed alignment through
 [the 2026-11-15 7f6e403a88 receipt](docs/internals/t3-upstream-sync-20261115-7f6e403a88.md).
 Literal merge `4f0837dd3bd1d732ded3fcf408eaa9bd62340d0a` has owned base
 `220f377211ff71cc8ee76c8a04710bc208699ba0` and the frozen official target as parents, retaining
-the 143 official commits after `2bee33eb19`; PR #PR_NUMBER carries it. Pi starts attached to its owned session file, failed
+the 143 official commits after `2bee33eb19`; PR #937 carries it. Pi starts attached to its owned session file, failed
 turn starts settle, delegated tasks stop reading the parent's history, checkpoints cover
 submodules within Scient's capture deadline, and T3's migrations 92-94 land as Scient's 96-98.
 OpenCode wake continuations confirm their permission rules like every turn. Release remains
