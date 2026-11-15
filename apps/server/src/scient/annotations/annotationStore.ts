@@ -10,7 +10,10 @@ import {
   isScientLibraryLocation,
   type ScientSourceStoreLocation,
 } from "@scientfactory/scient-sources/library-root";
-import { assertScientProjectDirectory } from "@scientfactory/scient-sources/project-files";
+import {
+  assertScientProjectDirectory,
+  SCIENT_ANNOTATION_FILE_MAX_BYTES,
+} from "@scientfactory/scient-sources/project-files";
 import {
   SCIENT_ANNOTATIONS_DIRECTORY,
   ScientAnnotationActor,
@@ -26,7 +29,6 @@ import {
 import * as Schema from "effect/Schema";
 
 export const MAX_ANNOTATIONS_PER_PDF = 5_000;
-const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_HISTORY_PER_ANNOTATION = 10;
 const MAX_SEEN_PATHS = 16;
 const MAX_LISTED_FILES = 10_000;
@@ -385,7 +387,7 @@ async function readFileAt(
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new Error(`${NodePath.basename(filePath)} is not a safe regular file.`);
   }
-  if (stats.size > MAX_FILE_BYTES) {
+  if (stats.size > SCIENT_ANNOTATION_FILE_MAX_BYTES) {
     throw new Error(`${NodePath.basename(filePath)} exceeds the safe size limit.`);
   }
   const value: unknown = JSON.parse(await NodeFSP.readFile(filePath, "utf8"));
@@ -402,7 +404,7 @@ async function readFileAt(
 async function writeFileAt(home: ScientAnnotationHome, file: ScientAnnotationFile): Promise<void> {
   const filePath = annotationFilePath(home, file.material.sha256);
   const serialized = `${JSON.stringify(file, null, 2)}\n`;
-  if (Buffer.byteLength(serialized, "utf8") > MAX_FILE_BYTES) {
+  if (Buffer.byteLength(serialized, "utf8") > SCIENT_ANNOTATION_FILE_MAX_BYTES) {
     throw new Error("The PDF has too many annotations to save.");
   }
   // Every writer comes here: a file the reader would refuse hides all of the PDF's annotations.

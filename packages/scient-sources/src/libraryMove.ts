@@ -59,7 +59,7 @@ import {
   type ScientSourceActor,
   type ScientSourceRecord,
 } from "./model.ts";
-import { assertScientProjectDirectory } from "./projectFiles.ts";
+import { assertScientProjectDirectory, SCIENT_ANNOTATION_FILE_MAX_BYTES } from "./projectFiles.ts";
 import {
   decodeScientProjectPinsText,
   joinScientProjectPinsText,
@@ -1187,13 +1187,21 @@ async function copyAnnotation(
     if (!(await createJson(ctx, destination, incoming))) {
       const raced = annotationFile(await readJsonFile(destination), sha256);
       if (!raced) throw new Error("A library annotation file cannot be read.");
-      await atomicWriteJson(destination, mergeAnnotationFiles(raced, incoming), MAX_JSON_BYTES);
+      await atomicWriteJson(
+        destination,
+        mergeAnnotationFiles(raced, incoming),
+        SCIENT_ANNOTATION_FILE_MAX_BYTES,
+      );
     }
   } else {
     const library = annotationFile(current, sha256);
     if (!library) throw new Error("A library annotation file cannot be read.");
     if (!annotationsCovered(library, incoming)) {
-      await atomicWriteJson(destination, mergeAnnotationFiles(library, incoming), MAX_JSON_BYTES);
+      await atomicWriteJson(
+        destination,
+        mergeAnnotationFiles(library, incoming),
+        SCIENT_ANNOTATION_FILE_MAX_BYTES,
+      );
     }
   }
   return sha256;
@@ -2384,7 +2392,11 @@ async function restoreLibraryAnnotations(ctx: MoveContext) {
     const project = annotationFile(current ?? (await readJsonFile(destination)), sha256);
     // A project file that does not decode is left for the person; nothing overwrites it.
     if (project && !annotationsCovered(project, library)) {
-      await atomicWriteJson(destination, mergeAnnotationFiles(project, library), MAX_JSON_BYTES);
+      await atomicWriteJson(
+        destination,
+        mergeAnnotationFiles(project, library),
+        SCIENT_ANNOTATION_FILE_MAX_BYTES,
+      );
     }
   }
 }
