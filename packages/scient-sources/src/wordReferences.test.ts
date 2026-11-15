@@ -68,34 +68,36 @@ describe("Word references", () => {
   });
 
   it("reads Mendeley's fields and Mendeley Cite's content controls", () => {
-    const item = (title: string) => ({
-      id: "ITEM-1",
+    // Mendeley Desktop numbers a citation's items; Mendeley Cite gives each its item's ID.
+    const item = (title: string, id = "ITEM-1") => ({
+      id,
       itemData: {
-        id: "ITEM-1",
+        id,
         title,
         type: "article-journal",
         issued: { "date-parts": [["2019"]] },
       },
     });
+    const dinosaurs = item("Dinosaur eggs", "6b0d8d0d-3f1e-4a3c-9a0e-2c5f1d7b9e41");
     const references = read({
       codes: [
         code(
           `ADDIN CSL_CITATION ${JSON.stringify({ citationItems: [{ ...item("Maker movement"), uris: ["http://www.mendeley.com/documents/?uuid=bdfc0dee"] }], mendeley: { formattedCitation: "(Seo, 2019)" } })}`,
         ),
         code(
-          `MENDELEY_CITATION_v3_${btoa(JSON.stringify({ citationID: "MENDELEY_CITATION_1de18c13", citationItems: [item("Dinosaur eggs")] }))}`,
+          `MENDELEY_CITATION_v3_${btoa(JSON.stringify({ citationID: "MENDELEY_CITATION_1de18c13", citationItems: [dinosaurs] }))}`,
         ),
         code(
-          `MENDELEY_CITATION_v3_${btoa(JSON.stringify({ citationID: "MENDELEY_CITATION_77aa01c2", citationItems: [item("Dinosaur eggs")] }))}`,
+          `MENDELEY_CITATION_v3_${btoa(JSON.stringify({ citationID: "MENDELEY_CITATION_77aa01c2", citationItems: [dinosaurs] }))}`,
         ),
         code("MENDELEY_BIBLIOGRAPHY"),
       ],
     });
     expect(references).toMatchObject({ kind: "managed", citations: 3, hasList: true });
-    // Mendeley Cite gives a work no address: the same title and date is the same work.
-    expect(references.kind === "managed" && references.works.map(({ item }) => item.title)).toEqual(
-      ["Maker movement", "Dinosaur eggs"],
-    );
+    expect(references.kind === "managed" && references.works.map(({ id }) => id)).toEqual([
+      "http://www.mendeley.com/documents/?uuid=bdfc0dee",
+      `mendeley:${dinosaurs.id}`,
+    ]);
   });
 
   it("reads an EndNote record from the field or its data, counting a nested data field once", () => {
