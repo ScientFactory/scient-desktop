@@ -19,7 +19,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../components/ui/menu";
-import { orderedCollections } from "./collectionTree";
+import { collectionIndent, orderedCollections } from "./collectionTree";
 import { SCIENT_SOURCE_STUDY_DESIGN_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
@@ -225,13 +225,15 @@ export function SourceOrganizeSection(props: {
             Collection
           </MenuTrigger>
           <MenuPopup align="start" side="bottom" className="min-w-48">
-            {collections.map(({ collection, label }) => (
+            {collections.map(({ collection, aboveIds }) => (
               <MenuCheckboxItem
                 key={collection.collectionId}
                 checked={collection.sourceIds.includes(sourceId)}
                 onCheckedChange={(checked) => setMembership(collection.collectionId, checked)}
               >
-                <span className="min-w-0 truncate">{label}</span>
+                <span className="block min-w-0 truncate" style={collectionIndent(aboveIds.length)}>
+                  {collection.name}
+                </span>
               </MenuCheckboxItem>
             ))}
             {collections.length > 0 ? <MenuSeparator /> : null}

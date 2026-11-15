@@ -34,7 +34,7 @@ import {
 import { toastManager } from "../../components/ui/toast";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { restoreScientSource } from "./client";
-import { orderedCollections } from "./collectionTree";
+import { collectionIndent, orderedCollections } from "./collectionTree";
 import {
   LIBRARY_LABELS,
   someAlsoInOtherProjectsLabel,
@@ -260,7 +260,7 @@ export function SourcesBulkBar(props: {
             </MenuTrigger>
             <MenuPopup align="end" side="bottom" className="min-w-48">
               {orderedCollections(organize.organization.collections).map(
-                ({ collection, label }) => {
+                ({ collection, aboveIds }) => {
                   const members = new Set(collection.sourceIds);
                   const inAll = sourceIds.every((sourceId) => members.has(sourceId));
                   return (
@@ -276,7 +276,12 @@ export function SourcesBulkBar(props: {
                         )
                       }
                     >
-                      <span className="min-w-0 truncate">{label}</span>
+                      <span
+                        className="block min-w-0 truncate"
+                        style={collectionIndent(aboveIds.length)}
+                      >
+                        {collection.name}
+                      </span>
                     </MenuCheckboxItem>
                   );
                 },
