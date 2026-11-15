@@ -864,6 +864,9 @@ describe("OpenCodeAdapterV2", () => {
       let failNextChildUpdate = false;
       let ignoreChildUpdates = false;
       let ignoreRootUpdates = false;
+      let stallRootAbort = false;
+      const rootAbortStalled = promiseGate<void>();
+      let childAborted = promiseGate<void>();
       const aborted: Array<string> = [];
       const harness = yield* makeOpenCodeRuntimeHarness("child-policy-change", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
@@ -893,6 +896,11 @@ describe("OpenCodeAdapterV2", () => {
           promptAsync: async () => ({ data: true }),
           abort: async (input: { sessionID: string }) => {
             aborted.push(input.sessionID);
+            if (input.sessionID === child) childAborted.resolve();
+            if (input.sessionID === root && stallRootAbort) {
+              rootAbortStalled.resolve();
+              await new Promise<never>(() => {});
+            }
             return { data: true };
           },
           children: async (input: { sessionID: string }) => ({
@@ -987,15 +995,20 @@ describe("OpenCodeAdapterV2", () => {
 
       // Root rules OpenCode does not confirm stop the running child too; a turn start
       // writes its root rules through the same guard.
+      // A root abort that never returns does not hold back the child's.
       ignoreRootUpdates = true;
+      stallRootAbort = true;
       aborted.length = 0;
-      const narrowed = yield* Effect.exit(
-        harness.runtime.resumeThread({
-          providerThread: harness.providerThread,
-          runtimePolicy: supervised,
-        }),
-      );
-      assert.isTrue(Exit.isFailure(narrowed));
+      childAborted = promiseGate<void>();
+      const narrowing = yield* harness.runtime
+        .resumeThread({ providerThread: harness.providerThread, runtimePolicy: supervised })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.promise(() => rootAbortStalled.promise);
+      // The child is stopped while the root abort still hangs, before any deadline passes.
+      yield* Effect.promise(() => childAborted.promise);
+      stallRootAbort = false;
+      yield* TestClock.adjust("11 seconds");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(narrowing)));
       assert.includeMembers(aborted, [root, child]);
       // SCIENT-FORK:END
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),

@@ -3588,11 +3588,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             Effect.onExit((exit) =>
               Exit.isSuccess(exit) || !progress.writeStarted
                 ? Effect.void
-                : abortRootSession(owner).pipe(
-                    Effect.ignore({ log: true }),
-                    Effect.andThen(abortDescendants(owner.nativeSessionId)),
-                    Effect.timeout("10 seconds"),
-                    Effect.ignore({ log: true }),
+                : // A stalled root abort must not hold back the children's.
+                  Effect.all(
+                    [
+                      abortRootSession(owner).pipe(Effect.ignore({ log: true })),
+                      abortDescendants(owner.nativeSessionId).pipe(
+                        Effect.timeout("10 seconds"),
+                        Effect.ignore({ log: true }),
+                      ),
+                    ],
+                    { concurrency: 2, discard: true },
                   ),
             ),
             permissionPermit.withPermit,
