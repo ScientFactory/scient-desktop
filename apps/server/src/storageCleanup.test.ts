@@ -770,6 +770,10 @@ const runCleanupTest = <A, E>(
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer));
 
+// SCIENT-FORK: fork snapshot attempt ids (UUID v4).
+const ATTEMPT_A = "00000000-0000-4000-8000-00000000000a";
+const ATTEMPT_B = "00000000-0000-4000-8000-00000000000b";
+const ATTEMPT_C = "00000000-0000-4000-8000-00000000000c";
 const legacyCheckpointRef = (threadId: string, turn: number) =>
   `refs/t3/checkpoints/${Base64Url.encode(threadId)}/turn/${turn}`;
 
@@ -790,7 +794,14 @@ const checkpointCleanupFixture = Effect.fn("test.checkpointCleanupFixture")(func
   })}`;
   const addThread = Effect.fn("test.addCheckpointThread")(function* (
     id: string,
-    options: { deleted?: boolean; archived?: boolean; source?: string; legacyOnly?: boolean } = {},
+    options: {
+      deleted?: boolean;
+      archived?: boolean;
+      source?: string;
+      legacyOnly?: boolean;
+      // SCIENT-FORK: a Scient conversation fork's recorded snapshot ref.
+      forkSnapshot?: string | null;
+    } = {},
   ) {
     const scopeId = CheckpointScopeId.make(`scope:${id}`);
     yield* sql`INSERT INTO orchestration_v2_projection_threads ${sql.insert({
@@ -807,6 +818,9 @@ const checkpointCleanupFixture = Effect.fn("test.checkpointCleanupFixture")(func
       payload_json: JSON.stringify({
         worktreePath: worktree,
         forkedFrom: options.source ? { type: "run", threadId: options.source } : null,
+        ...(options.forkSnapshot === undefined
+          ? {}
+          : { conversationFork: { cwd: worktree, checkpointRef: options.forkSnapshot } }),
       }),
     })}`;
     if (!options.legacyOnly)
@@ -839,7 +853,10 @@ const checkpointCleanupFixture = Effect.fn("test.checkpointCleanupFixture")(func
         maxOutputBytes: 16 * 1024 * 1024,
       })
       .pipe(Effect.map(({ stdout }) => stdout.trim().split("\n").filter(Boolean).sort()));
-  return { ...fixture, sql, addThread, listRefs };
+  // SCIENT-FORK: ForkCheckpointOwnership's snapshot name in a thread's own namespace.
+  const forkSnapshotRef = (threadId: string, attempt: string) =>
+    `${legacyCheckpointRef(threadId, 0)}-${attempt}`;
+  return { ...fixture, sql, addThread, listRefs, forkSnapshotRef };
 });
 
 describe("checkpoint ref cleanup", () => {
@@ -923,6 +940,81 @@ describe("checkpoint ref cleanup", () => {
       }).pipe(Effect.provide(Sqlite.layerMemory)),
     ),
   );
+
+  // SCIENT-FORK:START — Scient conversation-fork snapshots.
+  it.live("prunes a deleted fork's recorded snapshot and only that one", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, repo, command, addThread, listRefs, forkSnapshotRef } =
+          yield* checkpointCleanupFixture();
+        const deleted = forkSnapshotRef("fork-deleted", ATTEMPT_A);
+        const live = forkSnapshotRef("fork-live", ATTEMPT_B);
+        // Unrecorded: another attempt's leftover, and a ref recorded in another thread's namespace.
+        const unrecorded = forkSnapshotRef("fork-deleted", ATTEMPT_B);
+        const foreign = forkSnapshotRef("other", ATTEMPT_C);
+        yield* addThread("fork-deleted", { deleted: true, forkSnapshot: deleted });
+        const liveRefs = yield* addThread("fork-live", { forkSnapshot: live });
+        yield* addThread("fork-foreign", { deleted: true, forkSnapshot: foreign });
+        for (const ref of [deleted, live, unrecorded, foreign])
+          yield* command(repo, ["update-ref", ref, "HEAD"]);
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual([...liveRefs, live, unrecorded, foreign].sort());
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+
+  it.live("keeps a deleted fork's snapshot while a fork attempt still holds it", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, sql, repo, command, addThread, listRefs, forkSnapshotRef } =
+          yield* checkpointCleanupFixture();
+        const snapshot = forkSnapshotRef("fork-reserved", ATTEMPT_A);
+        yield* addThread("fork-reserved", { deleted: true, forkSnapshot: snapshot });
+        yield* command(repo, ["update-ref", snapshot, "HEAD"]);
+        yield* sql`INSERT INTO scient_fork_checkpoint_ownership ${sql.insert({
+          attempt_id: ATTEMPT_A,
+          command_id: "fork-command",
+          target_thread_id: "fork-reserved",
+          cwd: repo,
+          checkpoint_ref: snapshot,
+          checkpoint_oid: null,
+          owner_pid: process.pid,
+        })}`;
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual([snapshot]);
+        yield* sql`DELETE FROM scient_fork_checkpoint_ownership`;
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual([]);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+
+  // A Scient fork copies its boundary into its own snapshot, so a live fork of a deleted fork
+  // needs none of the deleted one's refs; a T3 run fork keeps its source's, snapshot included.
+  it.live("prunes a deleted fork's snapshot under a live Scient fork, not under a run fork", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, sql, repo, command, addThread, listRefs, forkSnapshotRef } =
+          yield* checkpointCleanupFixture();
+        const parent = forkSnapshotRef("fork-parent", ATTEMPT_A);
+        const child = forkSnapshotRef("fork-child", ATTEMPT_B);
+        const parentRefs = yield* addThread("fork-parent", { deleted: true, forkSnapshot: parent });
+        const childRefs = yield* addThread("fork-child", { forkSnapshot: child });
+        for (const ref of [parent, child]) yield* command(repo, ["update-ref", ref, "HEAD"]);
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual([...childRefs, child].sort());
+
+        for (const ref of [...parentRefs, parent])
+          yield* command(repo, ["update-ref", ref, "HEAD"]);
+        yield* addThread("run-child", { source: "fork-parent" });
+        yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = 'deleted' WHERE thread_id = 'fork-child'`;
+        yield* service.runNow;
+        expect(yield* listRefs()).toEqual(expect.arrayContaining([...parentRefs, parent]));
+        expect(yield* listRefs()).not.toContain(child);
+      }).pipe(Effect.provide(Sqlite.layerMemory)),
+    ),
+  );
+  // SCIENT-FORK:END
 
   it.live("cleans more checkpoint refs than default git output holds", () =>
     runCleanupTest(

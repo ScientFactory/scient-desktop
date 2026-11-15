@@ -377,7 +377,7 @@ patchedDependencies:
   '@legendapp/list@3.7.2': 3c68607b8bb7a531873bcbe0b197d163ef1fdb4d4cf52a4ddf9d2b3804671658
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.4': 866e0a0ddfb4bd2040780b22ed25fe1b2888007fcd5481538ad8f69d6ea7d6ec
-  '@pierre/trees@1.0.0-beta.6': 89b9655ab0b73365c5862649b8636a7533d62ea8a9bba8057c3ca08d4d58c92b
+  '@pierre/trees@1.0.0-beta.6': fa712464867a49dfdfaa2e714cc91ea38c75f821d94c05740e9885b23dd627f7
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': 6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d
   '@react-navigation/native-stack@7.21.0': 990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42
@@ -846,7 +846,7 @@ importers:
         version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@opentelemetry/api@1.10.0)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.3)(esbuild@0.28.2)(happy-dom@20.11.6(bufferutil@4.1.0)(utf-8-validate@6.0.6))(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@pierre/trees':
         specifier: 1.0.0-beta.6
-        version: 1.0.0-beta.6(patch_hash=89b9655ab0b73365c5862649b8636a7533d62ea8a9bba8057c3ca08d4d58c92b)(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
+        version: 1.0.0-beta.6(patch_hash=fa712464867a49dfdfaa2e714cc91ea38c75f821d94c05740e9885b23dd627f7)(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
       '@types/mdast':
         specifier: ^4.0.4
         version: 4.0.4
@@ -1249,7 +1249,7 @@ importers:
         version: 1.1.0
       '@pierre/trees':
         specifier: 1.0.0-beta.6
-        version: 1.0.0-beta.6(patch_hash=89b9655ab0b73365c5862649b8636a7533d62ea8a9bba8057c3ca08d4d58c92b)(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
+        version: 1.0.0-beta.6(patch_hash=fa712464867a49dfdfaa2e714cc91ea38c75f821d94c05740e9885b23dd627f7)(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
       '@scientfactory/conversation':
         specifier: workspace:*
         version: link:../../packages/scient-conversation
@@ -18842,7 +18842,7 @@ snapshots:
       react-dom: 19.3.0(react@19.3.0)
       shiki: 4.2.0
 
-  '@pierre/trees@1.0.0-beta.6(patch_hash=89b9655ab0b73365c5862649b8636a7533d62ea8a9bba8057c3ca08d4d58c92b)(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)':
+  '@pierre/trees@1.0.0-beta.6(patch_hash=fa712464867a49dfdfaa2e714cc91ea38c75f821d94c05740e9885b23dd627f7)(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)':
     dependencies:
       '@pierre/theming': 1.0.2(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
       preact: 11.0.0-beta.0
@@ -18854,7 +18854,7 @@ snapshots:
       - '@shikijs/themes'
       - shiki
 
-  '@pierre/trees@1.0.0-beta.6(patch_hash=89b9655ab0b73365c5862649b8636a7533d62ea8a9bba8057c3ca08d4d58c92b)(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)':
+  '@pierre/trees@1.0.0-beta.6(patch_hash=fa712464867a49dfdfaa2e714cc91ea38c75f821d94c05740e9885b23dd627f7)(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)':
     dependencies:
       '@pierre/theming': 1.0.2(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
       preact: 11.0.0-beta.0

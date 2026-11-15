@@ -1,6 +1,7 @@
 import type { AccountSignIn, AccountSignInState, AccountSummary } from "@t3tools/contracts";
 import { universityDetails } from "./scientPaperLinks.ts";
 import { anySiteMatches, siteMatchesUrl } from "./scientSiteMatch.ts";
+import { parseUrl } from "./url.ts";
 
 const LIMITED_PAUSE_MS = 60 * 60 * 1000;
 const RETRY_PAUSE_MS = 15 * 60 * 1000;
@@ -103,7 +104,7 @@ export function signInsForPage<A extends SignInRow>(
   return fitting.length === 1 ? fitting : [];
 }
 
-const originOf = (url: string) => (URL.canParse(url) ? new URL(url).origin : url);
+const originOf = (url: string) => parseUrl(url)?.origin ?? url;
 
 /**
  * One real site and identity: where the sign-in happens and who. Duplicate rows, and two

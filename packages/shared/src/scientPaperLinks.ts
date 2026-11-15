@@ -1,4 +1,5 @@
 import type { AccountDetails, AccountSummary } from "@t3tools/contracts";
+import { parseUrl } from "./url.ts";
 
 /**
  * Journal platforms, each with one institutional sign-in for every journal it hosts, as
@@ -25,8 +26,7 @@ const SHIBBOLETH_SITES = new Set(["pubs.acs.org", "rupress.org"]);
 const ELSEVIER_SITES = new Set(["www.sciencedirect.com", "www.cell.com", "www.thelancet.com"]);
 const SPRINGER_SITES = new Set(["link.springer.com", "www.nature.com"]);
 
-export const publisherOf = (url: string) =>
-  URL.canParse(url) ? new URL(url).hostname.replace(/^www\./u, "") : url;
+export const publisherOf = (url: string) => parseUrl(url)?.hostname.replace(/^www\./u, "") ?? url;
 
 /**
  * The publisher's own link that sends a reader to their university's sign-in and back to the
@@ -34,8 +34,8 @@ export const publisherOf = (url: string) =>
  * use the library link, or the user's own way in.
  */
 export function institutionLink(articleUrl: string, entityId: string): string | undefined {
-  if (!URL.canParse(articleUrl)) return undefined;
-  const article = new URL(articleUrl);
+  const article = parseUrl(articleUrl);
+  if (article === null) return undefined;
   const idp = encodeURIComponent(entityId);
   const back = encodeURIComponent(articleUrl);
   const host = article.hostname;
@@ -65,10 +65,10 @@ export function institutionLinkFromButton(
   articleUrl: string,
   entityId: string,
 ): string | undefined {
-  if (!URL.canParse(buttonUrl) || !URL.canParse(articleUrl)) return undefined;
-  const button = new URL(buttonUrl);
+  const button = parseUrl(buttonUrl);
+  const article = parseUrl(articleUrl);
+  if (button === null || article === null) return undefined;
   if (button.protocol !== "https:") return undefined;
-  const article = new URL(articleUrl);
   const idp = encodeURIComponent(entityId);
   if (/\/action\/(?:ssostart|showLogin)/iu.test(button.pathname))
     return `${button.origin}/action/ssostart?idp=${idp}&redirectUri=${encodeURIComponent(article.pathname + article.search)}`;
@@ -77,8 +77,8 @@ export function institutionLinkFromButton(
     return `${button.origin}/Shibboleth.sso/Login?entityID=${idp}&target=${encodeURIComponent(target)}`;
   }
   const back = button.searchParams.get("return");
-  if (back && URL.canParse(back) && new URL(back).protocol === "https:") {
-    const answer = new URL(back);
+  const answer = back ? parseUrl(back) : null;
+  if (answer?.protocol === "https:") {
     answer.searchParams.set(button.searchParams.get("returnIDParam") ?? "entityID", entityId);
     return answer.href;
   }
@@ -180,8 +180,9 @@ export function universitySignInLink(details: WebsiteDetails): string | undefine
  * that asked, or to it through a library's address.
  */
 export function signInReturn(url: string): "openathens" | "direct" | "proxied" | undefined {
-  if (!URL.canParse(url)) return undefined;
-  const { hostname, pathname } = new URL(url);
+  const parsed = parseUrl(url);
+  if (parsed === null) return undefined;
+  const { hostname, pathname } = parsed;
   if (hostname === new URL(OPEN_ATHENS_HOME).hostname)
     return pathname.startsWith("/app") ? "openathens" : undefined;
   if (hostname === new URL(SIGN_IN_PAGE).hostname) return "direct";
