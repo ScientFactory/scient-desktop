@@ -890,6 +890,32 @@ describe("crash tests: each crash, then a rerun that ends in done with nothing l
     const last = combined.screening.at(-1)!;
     expect(last.cleared).toBe(true);
     expect(last.note).toBe(SCIENT_REVIEW_COMBINED_NOTE);
+
+    // The same search logged apart on each copy is one search with the records of both:
+    // kept twice, its records would be counted twice among those identified.
+    const logged = (searchId: string, sourceIds: string[]) => ({
+      ...base,
+      screening: [],
+      searches: [
+        {
+          searchId,
+          database: "PubMed",
+          query: "sepsis",
+          searchedOn: "2026-01-01",
+          sourceIds,
+          loggedAt: `2026-01-0${sourceIds.length}T00:00:00.000Z`,
+          loggedBy: "user" as const,
+        },
+      ],
+    });
+    const { review: joined, report } = combineScientReviews({
+      existing: logged("search_here", ["s1"]),
+      incoming: logged("search_there", ["s1", "s2"]),
+      actor: "user",
+      now: "2026-02-01T00:00:00.000Z",
+    });
+    expect(joined.searches).toMatchObject([{ searchId: "search_here", sourceIds: ["s1", "s2"] }]);
+    expect(report.differingSearches).toEqual([]);
   });
 });
 
