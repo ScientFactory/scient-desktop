@@ -575,6 +575,9 @@ describe("which helpers are accepted", () => {
 });
 
 describe.skipIf(!posix)("a capability inquiry's deadline", () => {
+  // These polls wait on a real shell starting, writing and being reaped, which can take longer
+  // than the poll's default second on a loaded host; the inquiry's own deadline stays faked.
+  const forProcess = { timeout: 10_000 };
   it("reports its own deadline, not a refusal, once the helper has exited", () =>
     inScratch("scient-capabilities-deadline-", async (root) => {
       const slow = NodePath.join(root, "helper-slow");
@@ -583,7 +586,7 @@ describe.skipIf(!posix)("a capability inquiry's deadline", () => {
       try {
         const asked = nativeFilePublicationCapabilities(slow);
         // The inquiry looks at the helper's file before it launches it and starts the deadline.
-        await expect.poll(() => vi.getTimerCount()).toBeGreaterThan(0);
+        await expect.poll(() => vi.getTimerCount(), forProcess).toBeGreaterThan(0);
         vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
         await expect(asked).rejects.toBeInstanceOf(NativeCheckDeadlineError);
       } finally {
@@ -604,14 +607,16 @@ describe.skipIf(!posix)("a capability inquiry's deadline", () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       try {
         const asked = nativeFilePublicationCapabilities(path).catch((cause: unknown) => cause);
-        await expect.poll(() => vi.getTimerCount()).toBeGreaterThan(0);
+        await expect.poll(() => vi.getTimerCount(), forProcess).toBeGreaterThan(0);
         // Whatever the helper printed is read before it closes, however the deadline ends it.
         await expect
-          .poll(() =>
-            NodeFSP.stat(printed).then(
-              () => true,
-              () => false,
-            ),
+          .poll(
+            () =>
+              NodeFSP.stat(printed).then(
+                () => true,
+                () => false,
+              ),
+            forProcess,
           )
           .toBe(true);
         vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
@@ -634,7 +639,9 @@ describe.skipIf(!posix)("a capability inquiry's deadline", () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       try {
         const asked = nativeFilePublicationCapabilities(path).catch((cause: unknown) => cause);
-        await expect.poll(() => NodeFSP.readFile(pidFile, "utf8").catch(() => "")).toMatch(/\d/u);
+        await expect
+          .poll(() => NodeFSP.readFile(pidFile, "utf8").catch(() => ""), forProcess)
+          .toMatch(/\d/u);
         const pid = Number(await NodeFSP.readFile(pidFile, "utf8"));
         // Reaped: Node has seen it exit.
         await expect
@@ -645,7 +652,7 @@ describe.skipIf(!posix)("a capability inquiry's deadline", () => {
             } catch {
               return true;
             }
-          })
+          }, forProcess)
           .toBe(true);
         vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
         expect(await asked).not.toBeInstanceOf(NativeCheckDeadlineError);
