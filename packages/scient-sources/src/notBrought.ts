@@ -85,7 +85,11 @@ export function notBroughtName(line: Pick<NotBroughtLine, "kind" | "name">): str
     case "note-images":
       return "Images in notes";
     case "highlights":
-      return "Highlights and comments on PDFs";
+      return name === "unplaced"
+        ? "Highlights and comments not placed on the page (listed with the PDF's highlights)"
+        : name === "no-file"
+          ? "Highlights and comments on files that did not come"
+          : "Highlights and comments on PDFs";
     case "related":
       return "Links to related items";
     case "automatic-tags":

@@ -22,7 +22,7 @@ import {
   zoteroItem,
 } from "./Zotero.testkit.ts";
 import { zoteroItemToCandidate } from "./ZoteroItems.ts";
-import { countZoteroScopeStandalone } from "./ZoteroLibraryReader.ts";
+import { countZoteroScopeStandalone, readZoteroItemMaterial } from "./ZoteroLibraryReader.ts";
 import type { ZoteroWebHttp } from "./ZoteroWebAdapter.ts";
 
 const roots: string[] = [];
@@ -188,6 +188,14 @@ describe("Zotero import", () => {
 
   it("says what Zotero holds for each reference that it did not bring", async () => {
     const root = await project();
+    const mark = (key: string, parentItem: string) =>
+      zoteroItem(key, {
+        itemType: "annotation",
+        parentItem,
+        annotationType: "highlight",
+        annotationText: "A passage",
+        annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+      });
     const zotero = fakeZoteroAccess(
       fakeZoteroTransport({
         items: new Map([
@@ -211,7 +219,7 @@ describe("Zotero import", () => {
                 } as object),
               }),
               children: [
-                { ...pdfAttachment("PDFA2345", "book.pdf"), meta: { numChildren: 7 } },
+                pdfAttachment("PDFA2345", "book.pdf"),
                 pdfAttachment("PDFB2345", "not-in-zotero-storage.pdf"),
                 zoteroItem("SNAP2345", {
                   itemType: "attachment",
@@ -236,6 +244,12 @@ describe("Zotero import", () => {
           ],
         ]),
         files: new Map([["PDFA2345", await pdf(root, "book.pdf")]]),
+        // This PDF has no text to place one on; the second PDF and the snapshot do not come.
+        annotations: new Map([
+          ["PDFA2345", [mark("MARKA234", "PDFA2345")]],
+          ["PDFB2345", [mark("MARKB234", "PDFB2345"), mark("MARKB345", "PDFB2345")]],
+          ["SNAP2345", [mark("MARKS234", "SNAP2345")]],
+        ]),
       }),
     );
 
@@ -253,10 +267,11 @@ describe("Zotero import", () => {
     expect(operation.items[0]?.notBrought).toEqual([
       { kind: "related", count: 1 },
       { kind: "automatic-tags", count: 1 },
-      { kind: "highlights", count: 7 },
       { kind: "file", name: "text/html", count: 1 },
       { kind: "link", count: 1 },
+      { kind: "highlights", name: "no-file", count: 3 },
       { kind: "pdf", name: "unavailable", count: 1 },
+      { kind: "highlights", name: "unplaced", count: 1 },
     ]);
     // What it did bring is as before; the note keeps its link.
     const [record] = await listScientSourceRecords(root);
@@ -648,5 +663,59 @@ describe("Zotero import", () => {
         ["The lab's", "groups/4321"],
       ]),
     );
+  });
+
+  it("reads highlights from zotero.org on each file that has some, and from Zotero here by the reference", async () => {
+    const mark = zoteroItem("MARK2345", {
+      itemType: "annotation",
+      parentItem: "PDFA2345",
+      annotationType: "underline",
+      annotationText: "A passage",
+      annotationColor: "#5FB236",
+      annotationPosition: JSON.stringify({ pageIndex: 2, rects: [] }),
+      annotationSortIndex: "00002|000412|00100",
+    });
+    // zotero.org counts a file's highlights; Zotero here counts none.
+    const library = (numChildren: number) => ({
+      items: new Map([
+        [
+          "ABCD2345",
+          {
+            item: zoteroItem("ABCD2345"),
+            children: [
+              { ...pdfAttachment("PDFA2345", "a.pdf"), meta: { numChildren } },
+              { ...pdfAttachment("PDFB2345", "b.pdf"), meta: { numChildren: 0 } },
+            ],
+          },
+        ],
+      ]),
+      annotations: new Map([["PDFA2345", [mark]]]),
+    });
+    const web = fakeZoteroTransport(library(1), "web");
+    const local = fakeZoteroTransport(library(0), "local");
+
+    const fromWeb = await readZoteroItemMaterial(web, "ABCD2345");
+    const fromLocal = await readZoteroItemMaterial(local, "ABCD2345");
+
+    const read = {
+      key: "MARK2345",
+      attachmentKey: "PDFA2345",
+      kind: "underline",
+      page: 3,
+      text: "A passage",
+      comment: "",
+      color: "#5fb236",
+      offset: 412,
+      addedAt: null,
+    };
+    expect([fromWeb.annotations, fromLocal.annotations]).toEqual([[read], [read]]);
+    const asked = (requests: ReadonlyArray<string>) =>
+      requests.filter((path) => !path.startsWith("/items/ABCD2345"));
+    expect(asked(web.requests).map((path) => path.split("?")[0])).toEqual([
+      "/items/PDFA2345/children",
+    ]);
+    expect(asked(local.requests)).toEqual([
+      "/items?itemKey=ABCD2345&itemType=annotation&format=json&limit=100&start=0",
+    ]);
   });
 });

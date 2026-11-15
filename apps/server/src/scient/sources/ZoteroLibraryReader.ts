@@ -331,28 +331,53 @@ export async function countZoteroScopeStandalone(
   }
 }
 
-async function readAllChildren(
+/** Every item at a path, page by page. */
+async function readAllPages(
   transport: ZoteroTransport,
-  itemKey: string,
+  path: string,
+  query: Readonly<Record<string, string>> = {},
 ): Promise<ReadonlyArray<ZoteroRawItem>> {
-  const children: ZoteroRawItem[] = [];
+  const items: ZoteroRawItem[] = [];
   let start = 0;
   while (true) {
     const parameters = new URLSearchParams({
+      ...query,
       format: "json",
       limit: String(MAX_PAGE_SIZE),
       start: String(start),
     });
-    const { response, value } = await getJson(
-      transport,
-      `/items/${itemKey}/children?${parameters.toString()}`,
-    );
+    const { response, value } = await getJson(transport, `${path}?${parameters.toString()}`);
     const page = decodeZoteroRawItems(value);
-    children.push(...page);
+    items.push(...page);
     start += page.length;
-    if (page.length === 0 || start >= totalResults(response, children.length)) break;
+    if (page.length === 0 || start >= totalResults(response, items.length)) break;
   }
-  return children;
+  return items;
+}
+
+/**
+ * The highlights and comments on an item's files. zotero.org counts them on each file
+ * (`numChildren`) and lists them as its children. Zotero on this computer counts none and lists
+ * only notes and files as children, but a search by the item's key reaches its files' ones.
+ */
+async function readZoteroAnnotations(
+  transport: ZoteroTransport,
+  itemKey: string,
+  children: ReadonlyArray<ZoteroRawItem>,
+): Promise<ReadonlyArray<ZoteroRawItem>> {
+  const files = children.filter((child) => child.data.itemType === "attachment");
+  if (transport.connection === "local") {
+    return files.length > 0
+      ? readAllPages(transport, "/items", { itemKey, itemType: "annotation" })
+      : [];
+  }
+  const annotations: ZoteroRawItem[] = [];
+  for (const file of files) {
+    if ((file.meta?.numChildren ?? 0) === 0) continue;
+    const on = await readAllPages(transport, `/items/${file.key}/children`);
+    annotations.push(...on.filter((child) => child.data.itemType === "annotation"));
+  }
+  return annotations;
 }
 
 async function readZoteroItemWithChildren(
@@ -362,9 +387,10 @@ async function readZoteroItemWithChildren(
   if (!ZOTERO_ITEM_KEY_PATTERN.test(itemKey)) throw new Error("The Zotero item key is invalid.");
   const [{ value }, children] = await Promise.all([
     getJson(transport, `/items/${itemKey}?format=json`),
-    readAllChildren(transport, itemKey),
+    readAllPages(transport, `/items/${itemKey}/children`),
   ]);
-  return { item: decodeZoteroRawItem(value), children };
+  const annotations = await readZoteroAnnotations(transport, itemKey, children);
+  return { item: decodeZoteroRawItem(value), children: [...children, ...annotations] };
 }
 
 /** One item with its notes, PDFs and citation key; Better BibTeX fills a key Zotero lacks. */

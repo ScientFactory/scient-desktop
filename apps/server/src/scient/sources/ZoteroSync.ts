@@ -14,6 +14,7 @@ import {
 } from "@scientfactory/scient-sources";
 import {
   attachScientSourcePdf,
+  inspectScientSourcePdf,
   listScientSourceRecords,
   readScientSourceRecord,
   readScientSourceZoteroSync,
@@ -31,6 +32,7 @@ import {
   zoteroWebLibrary,
   type ZoteroAccess,
 } from "./ZoteroConnections.ts";
+import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
 import { decodeZoteroRawItem, type ZoteroItemMaterial, type ZoteroRawItem } from "./ZoteroItems.ts";
 import {
   readZoteroAttachmentFiles,
@@ -68,6 +70,7 @@ export async function recordZoteroSync(input: {
   readonly record: ScientSourceRecord;
   readonly material: ZoteroItemMaterial;
   readonly attachmentKeys: ReadonlyArray<string>;
+  readonly pdfs: Readonly<Record<string, string>> | undefined;
 }): Promise<void> {
   const reference = zoteroReference(input.material.candidate);
   if (!reference) return;
@@ -86,6 +89,7 @@ export async function recordZoteroSync(input: {
     note: input.material.note,
     notes: [...input.material.notes],
     attachmentKeys: [...input.attachmentKeys],
+    ...(input.pdfs ? { pdfs: { ...input.pdfs } } : {}),
   });
 }
 
@@ -137,8 +141,12 @@ async function attachNewPdfs(input: {
 }) {
   const fresh = input.material.pdfs.filter((pdf) => !input.knownKeys.has(pdf.key));
   const files = await readZoteroAttachmentFiles(input.transport, fresh);
+  // Only a PDF with highlights is hashed; one that gets some later is learnt by the refresh.
+  const highlighted = new Set(input.material.annotations.map((entry) => entry.attachmentKey));
   let record = input.record;
   let added = 0;
+  const handled: string[] = [];
+  const pdfs = new Map<string, string>();
   try {
     for (const file of files) {
       const result = await attachScientSourcePdf({
@@ -152,15 +160,41 @@ async function attachNewPdfs(input: {
       if (result.outcome === "stale") break;
       if (result.outcome === "attached") added += 1;
       record = result.record;
+      handled.push(file.attachmentKey);
+      if (highlighted.has(file.attachmentKey)) {
+        pdfs.set(file.attachmentKey, (await inspectScientSourcePdf(file.path)).sha256);
+      }
     }
   } finally {
     await Promise.all(files.map((file) => file.release().catch(() => undefined)));
   }
-  return {
-    record,
-    added,
-    keys: [...input.knownKeys, ...files.map((file) => file.attachmentKey)],
-  };
+  return { record, added, keys: [...input.knownKeys, ...handled], pdfs };
+}
+
+/**
+ * Which PDF here each Zotero file with highlights is. One not known yet (it had none at import,
+ * or was imported before this was kept) is learnt by reading that file from Zotero once more.
+ */
+async function zoteroPdfsHere(input: {
+  readonly transport: ZoteroTransport;
+  readonly material: ZoteroItemMaterial;
+  readonly known: Readonly<Record<string, string>>;
+  readonly attachedKeys: ReadonlyArray<string>;
+}): Promise<ReadonlyMap<string, string>> {
+  const pdfs = new Map(Object.entries(input.known));
+  const highlighted = new Set(input.material.annotations.map((entry) => entry.attachmentKey));
+  for (const pdf of input.material.pdfs) {
+    if (pdfs.has(pdf.key) || !highlighted.has(pdf.key)) continue;
+    if (!input.attachedKeys.includes(pdf.key)) continue;
+    const file = await input.transport.attachmentFile(pdf);
+    if (!file) continue;
+    try {
+      pdfs.set(pdf.key, (await inspectScientSourcePdf(file.path)).sha256);
+    } finally {
+      await file.release().catch(() => undefined);
+    }
+  }
+  return pdfs;
 }
 
 async function refreshOne(input: {
@@ -252,6 +286,12 @@ async function refreshOne(input: {
     actor: input.actor,
   });
   record = attached.record;
+  const pdfs = await zoteroPdfsHere({
+    transport: input.transport,
+    material,
+    known: { ...base?.pdfs, ...Object.fromEntries(attached.pdfs) },
+    attachedKeys: attached.keys,
+  });
   const current = zoteroReference(material.candidate);
   if (current && current.itemVersion !== reference.itemVersion) {
     const references = record.externalReferences.map((entry) =>
@@ -278,7 +318,17 @@ async function refreshOne(input: {
     note: plan.base.note,
     ...(plan.base.notes ? { notes: [...plan.base.notes] } : {}),
     attachmentKeys: attached.keys,
+    pdfs: Object.fromEntries(pdfs),
   });
+  // Last, so a failure here leaves the rest saved; each one comes once, so a retry is safe.
+  const highlights = await bringZoteroAnnotations({
+    root: input.root,
+    record,
+    annotations: material.annotations,
+    pdfs,
+    now: new Date().toISOString(),
+  });
+  if (highlights.added > 0) changedFields.push("highlights");
   const updated = changedFields.length > 0 || attached.added > 0;
   return {
     ...summary,
@@ -420,6 +470,7 @@ async function syncAfterSend(input: {
     record: updated.record,
     material,
     attachmentKeys: same ? previous.attachmentKeys : [],
+    pdfs: same ? previous.pdfs : undefined,
   });
 }
 
