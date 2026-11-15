@@ -11,7 +11,9 @@ import {
   editableMetadataFromRecord,
   validateScientSourceEditableMetadata,
 } from "./editable.ts";
+import { assessSourceMetadataDuplicate } from "./duplicates.ts";
 import type { ScientSourceCandidate } from "./model.ts";
+import { sourceEditionsDiffer } from "./normalize.ts";
 import { normalizeScientSourceMore } from "./sourceMore.ts";
 import {
   importScientSource,
@@ -151,6 +153,34 @@ describe("the details a source has beyond its own fields", () => {
       edition: "4",
       "publisher-place": "Oxford",
     });
+  });
+
+  it("takes another edition or version of the same title for another source", () => {
+    const existing = (more: Record<string, string>) => [
+      {
+        formatVersion: 1 as const,
+        sourceId: "source_1",
+        projectId: "project_1",
+        revision: 1,
+        ...withMore(more),
+        externalReferences: [],
+        attachments: [],
+        fieldProvenance: [],
+        importedAt: "2026-11-15T09:00:00.000Z",
+      },
+    ];
+    const kind = (here: Record<string, string>, coming: Record<string, string>) =>
+      assessSourceMetadataDuplicate({ source: withMore(coming), existing: existing(here) }).kind;
+    // Same title, author and year: the edition tells them apart, however it is written.
+    expect(kind({ edition: "2" }, { edition: "3rd ed." })).toBe("new");
+    expect(kind({ version: "1.1-35" }, { version: "1.1-36" })).toBe("new");
+    expect(kind({ edition: "2" }, { edition: "2nd" })).toBe("possible-metadata-match");
+    // A source that names no edition may still be the same book: a person decides.
+    expect(kind({ edition: "2" }, {})).toBe("possible-metadata-match");
+    expect(kind({}, {})).toBe("possible-metadata-match");
+    expect(
+      sourceEditionsDiffer({ more: { edition: "Second" } }, { more: { edition: "third" } }),
+    ).toBe(true);
   });
 
   it("refuses a detail that is too long instead of cutting it", () => {

@@ -3,7 +3,7 @@ import type {
   ScientSourceDuplicateAssessment,
   ScientSourceRecord,
 } from "./model.ts";
-import { sourceMetadataKey } from "./normalize.ts";
+import { sourceEditionsDiffer, sourceMetadataKey } from "./normalize.ts";
 import { isbn13 } from "./identifierInput.ts";
 import {
   scientSourceIntakeProblem,
@@ -12,7 +12,10 @@ import {
   type ScientLibraryIdentityProblem,
 } from "./sourceIdentity.ts";
 
-type SourceMetadata = Pick<ScientSourceRecord, "creators" | "identifiers" | "issuedYear" | "title">;
+type SourceMetadata = Pick<
+  ScientSourceRecord,
+  "creators" | "identifiers" | "issuedYear" | "title"
+> & { readonly more?: Readonly<Record<string, string>> };
 
 /** Ends the move's merge line when some merges kept different values; the Library offers Review. */
 export const SCIENT_LIBRARY_MERGES_TO_REVIEW = "kept different values: Review.";
@@ -43,8 +46,10 @@ export function assessSourceMetadataDuplicate(input: {
 
   const metadataKey = sourceMetadataKey(input.source);
   if (metadataKey !== null) {
+    // Another edition or version of the same title is another source.
     const metadataMatches = input.existing.filter(
-      (record) => sourceMetadataKey(record) === metadataKey,
+      (record) =>
+        sourceMetadataKey(record) === metadataKey && !sourceEditionsDiffer(record, input.source),
     );
     if (metadataMatches.length > 0) {
       return {

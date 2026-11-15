@@ -94,6 +94,8 @@ export const ZoteroRawItem = Schema.Struct({
    * Zotero's answer; `decodeZoteroRawItem` fills it in.
    */
   fields: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  /** Every field the item's type has, empty ones too: what Zotero accepts back for it. */
+  fieldNames: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ZoteroRawItem = typeof ZoteroRawItem.Type;
 
@@ -112,7 +114,7 @@ function textFields(data: Readonly<Record<string, unknown>>): Readonly<Record<st
 /** The item as Zotero sent it, with its non-empty text fields listed before any are dropped. */
 function withAllFields(value: unknown): unknown {
   return isRecord(value) && isRecord(value.data)
-    ? { ...value, fields: textFields(value.data) }
+    ? { ...value, fields: textFields(value.data), fieldNames: Object.keys(value.data) }
     : value;
 }
 
@@ -217,6 +219,19 @@ const TYPED_BY_CSL: Readonly<Record<string, ZoteroTypedTarget>> = {
   url: "url",
 };
 
+/** The place a line of Extra names, by a CSL variable or a Zotero field name; none for free text. */
+export function zoteroExtraLineTarget(
+  name: string,
+): { readonly typed: ZoteroTypedTarget } | { readonly more: string } | undefined {
+  const csl = name.toLowerCase().trim().replace(/\s+/gu, "-");
+  const variable = [csl, csl.replace(/-/gu, "_")].find(isScientSourceMoreName);
+  if (variable !== undefined && variable !== "extra") return { more: variable };
+  const typed = TYPED_BY_CSL[csl];
+  if (typed) return { typed };
+  const field = FIELD_BY_SQUEEZED.get(squeezed(name));
+  return field ? ZOTERO_FIELD_TARGET[field] : undefined;
+}
+
 /**
  * Where a Zotero item's bibliographic text goes: each field, under its general name, into the
  * record's own field or `more`; the first to want a place gets it. A line of Extra that names
@@ -277,14 +292,7 @@ function zoteroBibliographic(item: ZoteroRawItem): {
     if (name in EXTRA_FIELDS || name === "citation key" || name === "issn" || name === "isbn") {
       continue;
     }
-    const csl = name.replace(/\s+/gu, "-");
-    const variable = [csl, csl.replace(/-/gu, "_")].find(isScientSourceMoreName);
-    const field = FIELD_BY_SQUEEZED.get(squeezed(name));
-    const target =
-      variable !== undefined && variable !== "extra"
-        ? { more: variable }
-        : (TYPED_BY_CSL[csl] && { typed: TYPED_BY_CSL[csl] }) ||
-          (field ? ZOTERO_FIELD_TARGET[field] : undefined);
+    const target = zoteroExtraLineTarget(name);
     if (target && "typed" in target && typed[target.typed] === undefined) {
       typed[target.typed] = value;
       from.set(target.typed, "extra");

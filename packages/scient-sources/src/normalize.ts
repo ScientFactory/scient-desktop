@@ -30,6 +30,29 @@ export function sourceMetadataKey(
   return [title, normalizedCreator, source.issuedYear].join("|");
 }
 
+/**
+ * Whether two sources say they are different editions, or different versions, of a work. The
+ * same title, lead creator and year then do not make them one source. Only where both say
+ * which: a source that names no edition may still be the other one.
+ */
+export function sourceEditionsDiffer(
+  left: { readonly more?: Readonly<Record<string, string>> },
+  right: { readonly more?: Readonly<Record<string, string>> },
+): boolean {
+  // "2", "2nd" and "2nd ed." are one edition; a version is compared as it is written.
+  const edition = (value: string | undefined) => {
+    const text = normalized(value ?? null);
+    return text ? (/\d+/u.exec(text)?.[0] ?? text) : null;
+  };
+  const version = (value: string | undefined) => normalized(value ?? null) || null;
+  const differ = (mine: string | null, theirs: string | null) =>
+    mine !== null && theirs !== null && mine !== theirs;
+  return (
+    differ(edition(left.more?.edition), edition(right.more?.edition)) ||
+    differ(version(left.more?.version), version(right.more?.version))
+  );
+}
+
 export function sourceMetadataDiagnostics(
   source: ScientSourceCandidate | ScientSourceRecord,
 ): ReadonlyArray<ScientSourceMetadataDiagnostic> {

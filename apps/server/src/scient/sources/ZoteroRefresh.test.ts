@@ -109,6 +109,130 @@ describe("Zotero refresh", () => {
     );
   });
 
+  it("compares each further detail on its own: takes a new one, keeps an edited one, reports it", async () => {
+    const book = zoteroItem("ABCD2345", {
+      itemType: "book",
+      version: 3,
+      title: "A book",
+      abstractNote: "A.",
+      ...({ edition: "2nd", place: "Leiden" } as object),
+    });
+    const { root, library, zotero, record } = await importedFromZotero(book);
+    expect(record.more).toEqual({ edition: "2nd", "publisher-place": "Leiden" });
+    // The edition is corrected here, and the place is removed here on purpose.
+    const edited = await updateScientSourceMetadata({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      metadata: { ...editableMetadataFromRecord(record), more: { edition: "2nd revised" } },
+    });
+    expect(edited.record?.more).toEqual({ edition: "2nd revised" });
+    // In Zotero the edition changes too, and a series and a page count are added.
+    library.items.set("ABCD2345", {
+      item: zoteroItem("ABCD2345", {
+        ...book.data,
+        version: 4,
+        ...({ edition: "3rd", place: "Leiden", series: "Methods", numPages: "412" } as object),
+      }),
+      children: [],
+    });
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+    const refreshed = await readScientSourceRecord(root, record.sourceId);
+    // New details arrive; the edit here stands; the place stays removed (Zotero's is unchanged).
+    expect(refreshed?.more).toEqual({
+      edition: "2nd revised",
+      "collection-title": "Methods",
+      "number-of-pages": "412",
+    });
+    expect(result.items[0]).toMatchObject({
+      outcome: "updated",
+      changedFields: expect.arrayContaining(["more"]),
+      conflicts: [{ field: "more", local: "Edition: 2nd revised", zotero: "Edition: 3rd" }],
+    });
+    // Only what was taken is Zotero's; the edition is still the person's.
+    expect(
+      refreshed?.fieldProvenance
+        .filter((entry) => entry.field.startsWith("more."))
+        .map((entry) => [entry.field, entry.origin])
+        .toSorted(),
+    ).toEqual([
+      ["more.collection-title", "zotero"],
+      ["more.edition", "user"],
+      ["more.number-of-pages", "zotero"],
+      ["more.publisher-place", "user"],
+    ]);
+
+    // The clash is said again until a side is picked; "Use Zotero's" takes the edition.
+    const again = await refreshZoteroSources({ root, actor: "user", zotero });
+    expect(again.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["more"]);
+    await refreshZoteroSources({
+      root,
+      actor: "user",
+      zotero,
+      sourceIds: [record.sourceId],
+      choices: { useZotero: new Set(["more"]) },
+    });
+    // The edition that clashed is Zotero's now; the place removed here stays removed.
+    expect((await readScientSourceRecord(root, record.sourceId))?.more).toEqual({
+      edition: "3rd",
+      "collection-title": "Methods",
+      "number-of-pages": "412",
+    });
+    expect(
+      (await refreshZoteroSources({ root, actor: "user", zotero })).items[0]?.conflicts,
+    ).toEqual([]);
+  });
+
+  it("brings the further details to a source that was imported before they were kept", async () => {
+    const book = zoteroItem("ABCD2345", {
+      itemType: "book",
+      version: 3,
+      title: "A book",
+      abstractNote: "A.",
+      ...({ edition: "2nd", place: "Leiden" } as object),
+    });
+    const { root, zotero, record } = await importedFromZotero(book);
+    // As an import made before this: the record has none, and neither has what was last read.
+    const { more: _more, ...without } = record;
+    const recordFile = NodePath.join(
+      root,
+      ".scient",
+      "sources",
+      "records",
+      `${record.sourceId}.json`,
+    );
+    await NodeFSP.writeFile(
+      recordFile,
+      JSON.stringify({
+        ...without,
+        fieldProvenance: without.fieldProvenance.filter(
+          (entry) => !entry.field.startsWith("more."),
+        ),
+      }),
+    );
+    const baseFile = NodePath.join(
+      root,
+      ".scient",
+      "sources",
+      "sync",
+      "zotero",
+      `${record.sourceId}.json`,
+    );
+    const base = JSON.parse(await NodeFSP.readFile(baseFile, "utf8")) as {
+      metadata: Record<string, unknown>;
+    };
+    delete base.metadata.more;
+    await NodeFSP.writeFile(baseFile, JSON.stringify(base));
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+    expect(result.items[0]).toMatchObject({ outcome: "updated", changedFields: ["more"] });
+    expect((await readScientSourceRecord(root, record.sourceId))?.more).toEqual({
+      edition: "2nd",
+      "publisher-place": "Leiden",
+    });
+  });
+
   it("keeps reporting an open clash until the user picks a side", async () => {
     const { root, library, zotero, record } = await importedFromZotero(original);
     await editHere(root, record.sourceId, { title: "Mine" });
