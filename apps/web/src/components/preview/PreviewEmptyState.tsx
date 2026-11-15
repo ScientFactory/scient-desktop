@@ -1,4 +1,5 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { parseUrl } from "@t3tools/shared/url";
 import { ChevronDown, Globe, History, RadioTower } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -53,7 +54,7 @@ export function PreviewEmptyState({
   const groups = groupPreviewServers({ servers, threadId, environmentHttpBaseUrl });
   const relevantServerKeys = new Set(groups.relevant.map(localServerKey));
   const recents = recentEntries
-    .filter((entry) => URL.canParse(entry.url))
+    .filter((entry) => parseUrl(entry.url) !== null)
     .filter((entry) => {
       const key = localUrlKey(entry.url);
       return key === null || !relevantServerKeys.has(key);

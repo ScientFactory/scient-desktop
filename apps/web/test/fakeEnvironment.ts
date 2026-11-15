@@ -31,6 +31,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import type {
   ConnectionAttemptError,
@@ -508,13 +509,17 @@ export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
   options?: {
     readonly acceptCommands?: boolean;
+    readonly keybindings?: ResolvedKeybindingsConfig;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
   },
 ): Disposable {
   threads = fixtures;
-  baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER]);
+  baseServerConfig = {
+    ...makeServerConfig(options?.providers ?? [CODEX_PROVIDER]),
+    keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
+  };
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
   holdCommand = options?.holdCommand ?? (() => false);

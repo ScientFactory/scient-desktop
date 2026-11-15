@@ -3181,7 +3181,7 @@ describe("UsageService", () => {
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               version: number;
             };
-            assert.strictEqual(document.version, 16);
+            assert.strictEqual(document.version, 17);
             assert.strictEqual(await NodeFSP.readFile(priorPath, "utf8"), priorText);
             assert.strictEqual(await NodeFSP.readFile(v4Path, "utf8"), v4Text);
           });
@@ -3426,7 +3426,7 @@ describe("UsageService", () => {
               const persisted = decodeUnknownJsonString(
                 await NodeFSP.readFile(cachePath, "utf8"),
               ) as { version: number };
-              assert.strictEqual(persisted.version, 16);
+              assert.strictEqual(persisted.version, 17);
               assert.strictEqual(await NodeFSP.readFile(legacyPath, "utf8"), legacy);
             }),
           );
@@ -3439,7 +3439,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v16.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v17.json");
           // SCIENT-FORK: older cache files stay for older Scient builds; stale temp folders go.
           assert.deepStrictEqual(
             (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
