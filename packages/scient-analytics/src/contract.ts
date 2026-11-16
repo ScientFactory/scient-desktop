@@ -312,6 +312,7 @@ const FAILURE_CLASSES = new Set([
   "publish",
   "workspace",
 ]);
+const PROCESS_EXIT_REASONS = new Set(["crashed", "oom", "killed", "abnormal-exit"]);
 const HEALTH_COMPONENTS = new Set(["desktop", "server", "renderer", "browser", "analytics"]);
 const HEALTH_OPERATIONS = new Set([
   "startup",
@@ -953,6 +954,11 @@ function normalizeEvent(
           outcome: normalizedEnum(property(input, "outcome"), HEALTH_OUTCOMES),
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
+          // How a process ended: macOS exit code 5 (SIGTRAP) is a Chromium CHECK, not memory.
+          ...optionalProperties(input, { exitReason: PROCESS_EXIT_REASONS }),
+          ...(Number.isSafeInteger(property(input, "exitCode"))
+            ? { exitCode: property(input, "exitCode") as number }
+            : {}),
         },
       };
     case "app.diagnostics":

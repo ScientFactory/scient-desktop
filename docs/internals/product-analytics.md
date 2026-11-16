@@ -713,7 +713,9 @@ carry `runRef`, the first 16 hex characters of a SHA-256 of the local run id, so
 joins its request totals without sending the id. Turn outcomes also carry `providerVersion`, the
 provider runtime's own release (Scient Agent's version, for example), when it is a plain release
 number. `app.diagnostics` adds `oldestEventAgeBucket`, how long the delivered batch's oldest event
-waited on the computer, so an outage shows as late delivery rather than missing events.
+waited on the computer, so an outage shows as late delivery rather than missing events. A renderer
+`app.health` termination adds `exitReason` (`crashed`, `oom`, `killed`, `abnormal-exit`) and
+`exitCode`; on macOS exit code 5 (SIGTRAP) is a Chromium `CHECK`, not memory pressure.
 
 The failure is the run's latest failed root error item, as `latestRootProviderFailure` picks it; a
 retry that recovered or a subagent's error is not the turn's failure. These fields explain a
