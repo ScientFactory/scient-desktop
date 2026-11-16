@@ -167,7 +167,7 @@ describe("Scient source model", () => {
     // A type a person chose stands: their article is not taken for the preprint.
     const typedByHand = {
       ...filed,
-      fieldProvenance: [{ field: "type", origin: "user" as const }],
+      fieldProvenance: [{ field: "type", origin: "user" as const, sourceField: null }],
     };
     expect(assessSourceDuplicate({ candidate: preprint, existing: [typedByHand] })).toMatchObject({
       kind: "new",
