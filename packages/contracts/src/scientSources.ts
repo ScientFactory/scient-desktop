@@ -1438,6 +1438,7 @@ export const ScientSourcesPossibleDuplicateKind = Schema.Literals([
   "possible-pdf-match",
   "possible-metadata-match",
   "possible-container-match",
+  "possible-version-match",
 ]);
 export const ScientSourcesDuplicateReason = Schema.Literals([
   ...ScientSourceIdentityProblem.literals,
