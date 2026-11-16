@@ -224,6 +224,29 @@ test("gates runs queue behind a live holder and take over a dead one's lock", ()
   );
 });
 
+test("a dead run's lock is cleared only by one recovery at a time", () => {
+  const commonDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-lock-"));
+  directories.push(commonDir);
+  const lock = NodePath.join(commonDir, "scient-alignment-gates.lock");
+  const dead = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
+  NodeFS.mkdirSync(lock);
+  NodeFS.writeFileSync(NodePath.join(lock, "owner.json"), JSON.stringify({ pid: dead }));
+  NodeFS.mkdirSync(`${lock}.recovery`);
+  let waits = 0;
+  const release = acquireGatesLock(commonDir, {
+    root: "next",
+    // Another waiter's recovery is in progress; it ends during the first wait.
+    wait: () => {
+      waits++;
+      NodeAssert.equal(NodeFS.existsSync(NodePath.join(lock, "owner.json")), true);
+      NodeFS.rmSync(`${lock}.recovery`, { recursive: true });
+    },
+  });
+  NodeAssert.equal(waits, 1);
+  release();
+  NodeAssert.equal(NodeFS.existsSync(`${lock}.recovery`), false);
+});
+
 test("a run whose lock was taken over leaves the new owner's lock when it ends", () => {
   const commonDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-lock-"));
   directories.push(commonDir);

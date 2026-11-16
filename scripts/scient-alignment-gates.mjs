@@ -247,6 +247,7 @@ export function acquireGatesLock(commonDir, { root, wait = sleep, log = console.
       return null;
     }
   };
+  const recovery = `${lock}.recovery`;
   const token = NodeCrypto.randomUUID();
   let announced = false;
   for (;;) {
@@ -264,33 +265,32 @@ export function acquireGatesLock(commonDir, { root, wait = sleep, log = console.
       if (error.code !== "EEXIST") throw error;
     }
     const holder = ownerOf(lock);
-    if (holder === null) {
-      // Created a moment ago and not yet written, or left empty by a crash.
-      const age = Date.now() - NodeFS.statSync(lock, { throwIfNoEntry: false })?.mtimeMs;
-      if (!(age > 60_000)) {
-        wait(1000);
-        continue;
-      }
+    const ageOf = (dir) => Date.now() - NodeFS.statSync(dir, { throwIfNoEntry: false })?.mtimeMs;
+    // Unreadable: created a moment ago and not yet written, or left empty by a crash.
+    const dead = holder === null ? ageOf(lock) > 60_000 : !alive(holder.pid);
+    if (holder === null && !dead) {
+      wait(1000);
+      continue;
     }
-    if (holder === null || !alive(holder.pid)) {
-      // Moving the lock aside is atomic: of several waiters, one moves it. A waiter that
-      // moved a lock someone took meanwhile puts it back.
-      const aside = `${lock}.stale-${token}`;
+    if (dead) {
+      // One recovery at a time, and the owner is checked again inside it: while the dead
+      // lock exists nobody else can take it, so only that lock is ever removed.
       try {
-        NodeFS.renameSync(lock, aside);
-      } catch {
+        NodeFS.mkdirSync(recovery);
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        // A recovery holds this for milliseconds; one this old crashed.
+        if (ageOf(recovery) > 60_000) NodeFS.rmSync(recovery, { recursive: true, force: true });
+        else wait(1000);
         continue;
       }
-      const moved = ownerOf(aside);
-      if (moved !== null && moved.token !== holder?.token) {
-        try {
-          NodeFS.renameSync(aside, lock);
-          continue;
-        } catch {
-          // Yet another run holds the lock now; the moved one's release leaves it alone.
-        }
+      try {
+        const current = ownerOf(lock);
+        if (current === null ? ageOf(lock) > 60_000 : current.token === holder?.token)
+          NodeFS.rmSync(lock, { recursive: true, force: true });
+      } finally {
+        NodeFS.rmSync(recovery, { recursive: true, force: true });
       }
-      NodeFS.rmSync(aside, { recursive: true, force: true });
       continue;
     }
     if (!announced) {
