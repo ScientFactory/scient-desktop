@@ -50,6 +50,7 @@ function resolverSet(overrides: Partial<AbstractResolvers> = {}): AbstractResolv
     pubmed: async () => null,
     crossref: async () => null,
     europePmc: async () => null,
+    openAlex: async () => null,
     ...overrides,
   };
 }
@@ -203,6 +204,19 @@ describe("source metadata abstract enrichment", () => {
       }),
     });
     expect(unchanged).toBe(input);
+  });
+
+  it("puts OpenAlex's abstract words back in order, only for the same DOI", () => {
+    const work = {
+      doi: "https://doi.org/10.1000/EXAMPLE",
+      abstract_inverted_index: { the: [0, 3], Trial: [1], improved: [2], outcome: [4] },
+    };
+    expect(
+      sourceMetadataEnricherInternals.evidenceFromOpenAlex(work, "10.1000/example")?.abstract,
+    ).toBe("the Trial improved the outcome");
+    expect(
+      sourceMetadataEnricherInternals.evidenceFromOpenAlex(work, "10.1000/different"),
+    ).toBeNull();
   });
 
   it("rejects Europe PMC results whose identifier does not exactly match", () => {

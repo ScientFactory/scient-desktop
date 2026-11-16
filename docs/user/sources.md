@@ -573,8 +573,8 @@ Scient copies each PDF into your Library and creates editable source details;
 when you import a single new PDF, its details open so you can check them.
 It first uses metadata embedded in the file. When the PDF contains one clear
 DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
-better bibliographic metadata or an abstract from PubMed, Crossref, or Europe
-PMC. It does not use fuzzy title matching, OCR, or an AI model to invent
+better bibliographic metadata or an abstract from PubMed, Europe PMC,
+Crossref or OpenAlex. It does not use fuzzy title matching, OCR, or an AI model to invent
 missing facts. The date a PDF file was made is not taken as the publication
 date; only a publication date the publisher embedded counts. A PDF remains
 importable when metadata cannot be resolved; the unknown fields stay visible

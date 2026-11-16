@@ -600,7 +600,7 @@ export const ScientSourceAddInput = Schema.Struct({
   pdfRelativePath: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096)))),
   enrich: Schema.optionalKey(
     Schema.Boolean.annotate({
-      description: "Fill a missing abstract from the DOI or PMID.",
+      description: "Fill a missing abstract by DOI or PMID (default true).",
     }),
   ),
   allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),

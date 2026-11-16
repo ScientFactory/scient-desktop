@@ -1588,7 +1588,7 @@ const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolki
           root,
           entries: identifierList,
           actor: "agent",
-          enrich: input.enrich ?? false,
+          enrich: input.enrich ?? true,
           allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
           resolveIdentifiers,
         },
@@ -1732,7 +1732,7 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
           {
             root,
             candidate,
-            enrich: input.enrich ?? false,
+            enrich: input.enrich ?? true,
             allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
             resolveIdentifier,
             ...(identifierResolution ? { identifierResolution } : {}),
