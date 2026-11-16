@@ -1,6 +1,8 @@
 import {
   AccountsError,
   type AccountPaperForSourceInput,
+  type AccountSummary,
+  type AccountTarget,
   type EnvironmentId,
   type PaperAsked,
   type PaperItemState,
@@ -37,9 +39,66 @@ const ONE_PAPER_WAIT = "150 seconds";
 
 const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
 
+const noteUniversitiesUsed = Effect.fn("Papers.noteUniversitiesUsed")(function* (
+  scope: AccountSessionScope,
+  universities: ReadonlyArray<AccountSummary>,
+) {
+  const accounts = yield* AccountsService;
+  for (const university of universities)
+    yield* accounts.recordUse({
+      target: { type: "account", accountId: university.accountId },
+      action: "sign-in",
+      threadId: scope.threadId,
+      ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
+      outcome: "ok",
+    });
+});
+
 /**
- * An agent's request is decided here, once: its session's access to the browser profile and to
- * each saved sign-in. What it may use travels with its papers, which keep going after its turn.
+ * The user just did what an agent's waiting papers asked. A university connected since joins
+ * them when its controls let that conversation use it without asking; an agent kept out of the
+ * browser still gets free copies only.
+ */
+const withUniversitiesNow = Effect.fn("Papers.withUniversitiesNow")(function* (
+  requester: PaperRequester,
+) {
+  const { threadId, accounts: allowed } = requester;
+  if (allowed === "all" || threadId === undefined || !requester.browser) return requester;
+  const scope: AccountSessionScope = { threadId, projectId: requester.projectId, unattended: true };
+  const accounts = yield* AccountsService;
+  const usable = (target: AccountTarget, action: "open-profile" | "sign-in") =>
+    accounts.authorize(scope, target, action).pipe(
+      Effect.map(({ decision }) => decision === "allowed"),
+      Effect.orElseSucceed(() => false),
+    );
+  const session = yield* accounts.forSession(scope).pipe(Effect.option);
+  const connected = Option.match(session, {
+    onNone: () => [],
+    onSome: (found) => universitiesOf(found.accounts),
+  }).filter(({ accountId }) => !allowed.includes(accountId));
+  const added = yield* Effect.filter(connected, (account) => {
+    const profileId = universityDetails(account.details)?.profileId;
+    return (
+      profileId === undefined
+        ? Effect.succeed(true)
+        : usable({ type: "profile", profileId }, "open-profile")
+    ).pipe(
+      Effect.flatMap((browses) =>
+        browses
+          ? usable({ type: "account", accountId: account.accountId }, "sign-in")
+          : Effect.succeed(false),
+      ),
+    );
+  });
+  yield* noteUniversitiesUsed(scope, added);
+  return added.length === 0
+    ? requester
+    : { ...requester, accounts: [...allowed, ...added.map(({ accountId }) => accountId)] };
+});
+
+/**
+ * An agent's request is decided here: its session's access to the browser profile and to each
+ * saved sign-in. What it may use travels with its papers, which keep going after its turn.
  */
 const agentRequester = Effect.fn("Papers.agentRequester")(function* () {
   const scope: AccountSessionScope = yield* accountSessionScope();
@@ -82,18 +141,12 @@ const agentRequester = Effect.fn("Papers.agentRequester")(function* () {
       ),
     ),
   );
-  for (const university of universities)
-    yield* accounts.recordUse({
-      target: { type: "account", accountId: university.accountId },
-      action: "sign-in",
-      threadId: scope.threadId,
-      ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
-      outcome: "ok",
-    });
+  yield* noteUniversitiesUsed(scope, universities);
   const reachable = new Set(universities.map((account) => account.accountId));
   return {
     environmentId: invocation.environmentId,
     threadId: scope.threadId,
+    ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
     browser: universities.length > 0 || (yield* mayBrowse(undefined)),
     accounts:
       universities.length > 0
@@ -276,7 +329,7 @@ export const listPapersAsUser = (root: string, environmentId: EnvironmentId) =>
   resumePapers(root, userRequester(environmentId)).pipe(Effect.provide(FetchHttpClient.layer));
 
 export const continuePapersAsUser = (root: string, environmentId: EnvironmentId) =>
-  continuePapers(root, userRequester(environmentId)).pipe(
+  continuePapers(root, userRequester(environmentId), withUniversitiesNow).pipe(
     Effect.as({}),
     Effect.provide(FetchHttpClient.layer),
   );
@@ -285,6 +338,6 @@ export const continuePapersAsUser = (root: string, environmentId: EnvironmentId)
 export const continueWaitingPapers = (environmentId: EnvironmentId) =>
   Effect.forEach(
     waitingPaperRoots(),
-    (root) => continuePapers(root, userRequester(environmentId)),
+    (root) => continuePapers(root, userRequester(environmentId), withUniversitiesNow),
     { discard: true },
   ).pipe(Effect.ignore, Effect.provide(FetchHttpClient.layer));

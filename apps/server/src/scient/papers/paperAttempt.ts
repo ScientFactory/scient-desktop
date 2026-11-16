@@ -6,6 +6,7 @@ import {
   type PaperAsked,
   type PaperItem,
   type PaperRequest,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { publisherOf, universitiesOf, universityDetails } from "@t3tools/shared/scientPaperLinks";
 import * as Clock from "effect/Clock";
@@ -47,6 +48,7 @@ export interface PaperRequester {
   readonly environmentId: EnvironmentId;
   /** The conversation that asked, when an agent did. */
   readonly threadId?: ThreadId;
+  readonly projectId?: ProjectId;
   /** False for an agent the user keeps out of the browser: free copies only. */
   readonly browser: boolean;
   /** The saved sign-ins it may use: the user's own request may use all of them. */

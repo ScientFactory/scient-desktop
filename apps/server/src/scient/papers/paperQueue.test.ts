@@ -1,5 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AccountId, EnvironmentId, ThreadId, type PaperQueueSummary } from "@t3tools/contracts";
+import {
+  AccountId,
+  EnvironmentId,
+  ThreadId,
+  type AccountSummary,
+  type PaperQueueSummary,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +19,7 @@ import { vi } from "vite-plus/test";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import type * as PaperAttempt from "./paperAttempt.ts";
+import { continuePapersAsUser } from "./getPaper.ts";
 import {
   continuePapers,
   listPapers,
@@ -153,6 +160,7 @@ const withServices = <A, E>(
     | PreviewAutomationBroker
     | Scope.Scope
   >,
+  accounts: Parameters<typeof fakeAccounts>[0] = {},
 ) =>
   Effect.gen(function* () {
     const announced = yield* Queue.unbounded<PaperQueueSummary>();
@@ -165,7 +173,7 @@ const withServices = <A, E>(
     return yield* test(settled).pipe(
       Effect.provideService(ScientSourcesBackend, "project"),
       Effect.provideService(AccountsService, {
-        ...fakeAccounts().service,
+        ...fakeAccounts(accounts).service,
         setPaperQueue: (summary) => Queue.offer(announced, summary).pipe(Effect.asVoid),
       }),
       // The fetching is stubbed, so neither the network nor the browser is ever reached.
@@ -228,6 +236,66 @@ it.effect("runs a paper from an older queue file with free copies only", () =>
       ]);
     }),
   ),
+);
+
+it.effect(
+  "asked again, a paper that waited for the person tries again with either asker's access",
+  () =>
+    withServices((settled) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+        yield* requestPapers(root, [{ doi: "10.1/needs-you" }], agent);
+        yield* settled(root);
+        fetched.calls.length = 0;
+        const later = { ...agent, accounts: [AccountId.make("acc_fixture2")] };
+        yield* requestPapers(root, [{ doi: "10.1/needs-you" }], later);
+        yield* settled(root);
+        expect(fetched.calls).toEqual([
+          {
+            doi: "10.1/needs-you",
+            requester: { ...later, accounts: [...agent.accounts, ...later.accounts] },
+          },
+        ]);
+      }),
+    ),
+);
+
+const university = {
+  accountId: AccountId.make("acc_university"),
+  name: "Hebrew University",
+  details: {
+    kind: "website",
+    sites: ["huji.ac.il"],
+    institution: { name: "Hebrew University", entityId: "x", domain: "huji.ac.il" },
+  },
+} as unknown as AccountSummary;
+
+/** An agent's paper waits for a university; the user connects one, then releases the paper. */
+const releasedAfterConnecting = (denied: boolean) =>
+  withServices(
+    (settled) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+        yield* requestPapers(root, [{ doi: "10.1/needs-you" }], agent);
+        yield* settled(root);
+        fetched.calls.length = 0;
+        yield* continuePapersAsUser(root, environmentId);
+        yield* settled(root);
+        return fetched.calls.map(({ requester }) => requester.accounts);
+      }),
+    { accounts: [university], denied },
+  );
+
+it.effect("lets an agent's waiting paper use a university the user connected since", () =>
+  Effect.gen(function* () {
+    expect(yield* releasedAfterConnecting(false)).toEqual([
+      [...agent.accounts, university.accountId],
+    ]);
+    // Its controls still decide: one the conversation may not use stays out.
+    expect(yield* releasedAfterConnecting(true)).toEqual([agent.accounts]);
+  }),
 );
 
 it.effect("forgets who asked once a paper is finished", () =>
@@ -358,7 +426,7 @@ it.effect("files a waiting paper on the source a later request names", () =>
       yield* requestPapers(root, [{ doi: "10.1/later", source }], agent);
       yield* settled(root);
       fetched.released = true;
-      yield* continuePapers(root, user);
+      yield* continuePapers(root, user, Effect.succeed);
       yield* settled(root);
 
       expect(yield* listPapers(root)).toMatchObject([
@@ -383,7 +451,7 @@ it.effect("keeps the credit of a named source when a Library request joins it", 
       yield* requestPapers(root, [{ doi: "10.1/joined-later", library: true }], agent);
       yield* settled(root);
       fetched.released = true;
-      yield* continuePapers(root, user);
+      yield* continuePapers(root, user, Effect.succeed);
       yield* settled(root);
 
       expect(yield* Effect.promise(() => listScientSourceRecords(root))).toMatchObject([
