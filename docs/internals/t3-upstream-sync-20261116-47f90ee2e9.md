@@ -52,9 +52,16 @@ The branch is `codex/t3-sync-47f90ee2e9-20261116`. The `upstream` push URL stays
 - **Extension session switch (#37472):** taken, composed with Scient's session identity guard.
   The guard ended the session when Pi reported a session file Scient had not chosen. A settle
   probe that sees a new file now adopts it (with its session id) before the guard runs, as T3
-  does, and a queued turn naming the old file keeps the live one.
+  does, and a queued turn naming the old file keeps the live one. The session then claims the
+  new file's lease before the move is recorded; if another live session already writes that
+  file, the moved session stops instead of becoming a second writer.
 - **Failed manual compaction (#37526):** taken; Scient's pending native acceptance stays inside
-  T3's `compactionCancelled` branch. Image-read previews (#37471) are taken unchanged.
+  T3's `compactionCancelled` branch. The turn fails, but the session stays `ready` with the
+  error message: Scient retires an `error` session before reuse, and the live Pi would keep its
+  session file's lease from the replacement, so the next message could not start. The
+  `pi_compaction` replay pins follow T3's two removed reads; the failed compaction is no longer
+  settled or probed twice, and the reads of the probe `compaction_end` started are replayed.
+  Image-read previews (#37471) are taken unchanged.
 
 ### Web
 
@@ -63,8 +70,10 @@ The branch is `codex/t3-sync-47f90ee2e9-20261116`. The `upstream` push URL stays
   runs. T3's tests pass unchanged.
 - **Stashed prompt previews (#37498):** thread mentions are replaced by name before Scient's
   `composerCitationsToPlainText`.
-- **Model catalog gaps (#37528):** T3's runtime-catalog helpers replace the per-driver lists;
-  Scient's rule that a known unavailable model is not re-added stays.
+- **Model catalog gaps (#37528):** T3's runtime-catalog helpers replace the per-driver lists.
+  Pi now joins the drivers whose missing selection survives a catalog gap, so Scient's rule
+  that a model the provider reports unavailable is not kept now also guards that path. The
+  merge had dropped T3's `DEFAULT_MODEL_BY_PROVIDER` import; it is restored.
 - **Cmd+Enter on an edited queued message (#37507):** Scient's composer edits queued messages
   through its own queue edit, not T3's `useQueuedRunEdit`, so T3's change reaches only that
   hook and its tests. The browser test keeps Scient's earlier removal of two attachment-edit
@@ -73,11 +82,22 @@ The branch is `codex/t3-sync-47f90ee2e9-20261116`. The `upstream` push URL stays
   (#37509), composer underscores (#37495) and delegated-task sidebar selection (#37500) are taken
   without Scient changes.
 
+### ACP
+
+- **Pending tools end when a prompt fails (#37537):** taken. A tool ended as failed keeps that
+  status, so Droid's later failure path does not report it a second time.
+
+### Desktop updates
+
+- **Download and install refresh (#37476):** taken; the channel comparison uses Scient's own
+  version parser, which knows Beta.
+
 ### Server
 
 File search (#37451, with the `fff-node` patch), branch totals (#37455), session scan (#37478),
 fx and Muse refreshes (#37457), title quotes (#37499), ACP whitespace (#37505) and ACP custom
-models (#37516) are taken without Scient changes. `t3 pair --tailscale` (#37466) is T3's CLI text.
+models (#37516) are taken without Scient changes. `t3 pair --tailscale` (#37466) is T3's CLI text. Claude stays out of T3's new
+keep-missing-models rule (#37457): Scient treats Claude's catalog as authoritative.
 
 ## Removed Scient code
 
@@ -102,4 +122,34 @@ T3's phone fixes (#37426, #37390, #37131) and the Language row moved into Genera
 
 ## Follow-ups
 
-None new.
+- **A failed Pi turn blocks the next message.** After any failed Pi turn whose process stays
+  usable (a model error, a rejected prompt), Pi marks the session `error`, as T3 does. Scient
+  starts a replacement session, but the live Pi still holds the session file's lease, so the next
+  message fails after its retries; the old process is released only by idle cleanup. This
+  predates the alignment. Codex recommends retiring the exact superseded session before opening
+  its replacement. A separate PR.
+- **T3's web `useQueuedRunEdit` hook has no caller.** Scient edits queued messages through its own
+  queue edit, so the hook and its browser test only exercise dead code. A separate PR removes them.
+
+## Verification
+
+Local: macOS arm64, Node 26.13.1, isolated synthetic state, none of the agent shell's
+live-profile variables.
+
+- **Static checks:** the root typecheck, `vp check`, knip, `brand:check`, both generate checks,
+  the seam check and the provenance check pass. `icons:check` reports stale generated icons;
+  CI does not run it, and the range touches no icons.
+- **Suites:** every changed package ran on its own; the server suite ran with six workers.
+  Failures that are the same on the owned base, or that pass alone:
+  - shared: the login-shell PATH test;
+  - server: the port scanner's agent stop, `ClaudeSkills` (case-insensitive disk), the
+    setup-script syntax-error test and the real LaTeX engine; `PeerLinks` times out only under
+    parallel load;
+  - ACP registry: two tests time out on this machine on the owned base too.
+- **Scient tests fitted to T3's behaviour:** the checkpoint reuse test's publish hook also
+  matches Scient's `fetch` publication; T3's Pi drift test expects Scient's `set_model` on every
+  turn; the Pi test fake reports the selected model once.
+- **Browser tests:** stash menu, model picker, queued-run edit and the six Sidebar files pass.
+- **Codex review (GPT-6.1 Sol, high):** the merge review found the update-channel parser, the
+  unavailable-model path, the Pi file lease, the dead queue-edit hook and the missing verification
+  record; all are fixed or listed above. A second review of the fixes found nothing.
