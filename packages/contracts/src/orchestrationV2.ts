@@ -283,6 +283,9 @@ export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   promptCacheTtlMs: Schema.optional(PositiveInt),
   autoCompactThreshold: Schema.optional(PositiveInt),
   promptCacheExpiresAt: Schema.optional(Schema.String),
+  // SCIENT-FORK:START — Scient Agent's cache tier: a short entry carries no expiry, yet still expires.
+  promptCacheTier: Schema.optional(Schema.Literals(["short", "long"])),
+  // SCIENT-FORK:END
   updatedAt: Schema.String,
 });
 export type OrchestrationV2ProviderTurnTokenUsage =

@@ -116,6 +116,9 @@ import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindin
 // SCIENT-FORK:END
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+// SCIENT-FORK:START — Scient Agent's idle compaction starts before this release.
+export const PROVIDER_SESSION_IDLE_TIMEOUT_MS = DEFAULT_IDLE_TIMEOUT_MS;
+// SCIENT-FORK:END
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */

@@ -148,11 +148,13 @@ list appears above the composer as a read-only list.
 
 **Compact idle threads** works for Scient Agent as it does for
 [Claude](./providers-claude.md#compact-long-conversations), with the same setting and the same
-per-provider override. **Before the cache expires (beta)** applies only when the model's prompt
-cache lasts an hour, as with a Claude sign-in; Scient compacts such a thread over 200,000 tokens
-shortly before its cache expires. With a shorter cache, or one that never expires, it does nothing.
-**When you return** offers the **Compact** chip after an hour idle. This needs a Scient Agent that
-reports its prompt cache; older ones only show the chip.
+per-provider override, except that Scient Agent uses **Before the cache expires** unless you
+choose another mode for it (**Use default** follows the setting in Providers > Advanced). Scient
+then compacts an idle thread over 200,000 tokens about 25 minutes after its last reply, while the
+agent still holds the conversation and its prompt cache: before Scient stops an idle agent after
+30 minutes, and before the agent stops keeping a five-minute cache warm. A model whose cache never
+expires is never compacted for being idle. **When you return** offers the **Compact** chip after an
+hour idle. This needs a Scient Agent that reports its prompt cache; older ones only show the chip.
 
 Agent notices, retry progress and save failures appear in the conversation. Questions retain
 the agent's offered choices, editor text and timeout information; an expired question closes

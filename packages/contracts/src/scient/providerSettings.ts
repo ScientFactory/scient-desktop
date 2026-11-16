@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { TrimmedString } from "../baseSchemas.ts";
 import type { CustomModelSetting as CustomModelSchema } from "../model.ts";
+import { SCIENT_AGENT_DEFAULT_IDLE_COMPACTION } from "./idleCompaction.ts";
 
 export const SCIENT_PROVIDER_ENABLED_DEFAULTS = {
   omp: false,
@@ -78,7 +79,7 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
   const SCIENT_AGENT_IDLE_COMPACTION_MODES = [
     { value: "default", label: "Use default" },
     { value: "onReturn", label: "When you return" },
-    { value: "beforeCacheExpires", label: "Before the cache expires (beta)" },
+    { value: "beforeCacheExpires", label: "Before the cache expires" },
     { value: "off", label: "Never" },
   ] as const;
 
@@ -124,11 +125,11 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
       idleCompaction: Schema.Literals(
         SCIENT_AGENT_IDLE_COMPACTION_MODES.map((mode) => mode.value),
       ).pipe(
-        Schema.withDecodingDefault(Effect.succeed("default" as const)),
+        Schema.withDecodingDefault(Effect.succeed(SCIENT_AGENT_DEFAULT_IDLE_COMPACTION)),
         Schema.annotateKey({
           title: "Compact idle threads",
           description:
-            "When to compact an idle thread over 200,000 tokens: after you return, just before its one-hour prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+            "When to compact an idle thread over 200,000 tokens: before its prompt cache expires (the default), after you return, or never. Use default follows Providers > Advanced.",
           providerSettingsForm: {
             control: "select",
             options: SCIENT_AGENT_IDLE_COMPACTION_MODES,

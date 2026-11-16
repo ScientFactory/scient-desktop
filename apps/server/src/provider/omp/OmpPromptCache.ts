@@ -16,16 +16,29 @@ const decodePromptCacheFrame = Schema.decodeUnknownOption(PromptCacheFrame);
 type TokenUsage = Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
 
 /**
- * `usage` with when its one-hour prompt cache expires, which idle compaction
- * times itself against. A five-minute entry would compact after every short
- * pause, so only the one-hour tier carries an expiry.
+ * Only a one-hour entry carries an expiry: the agent keeps a five-minute one warm while idle.
+ * No frame clears what an earlier reply recorded, since the turn's usage merges each reply's.
  */
 export const withOmpPromptCacheExpiry = (usage: TokenUsage, event: unknown): TokenUsage => {
   const frame = Option.getOrUndefined(decodePromptCacheFrame(event));
-  if (frame?.promptCache.tier !== "long") return usage;
-  const { touchedAt, ttlMs } = frame.promptCache;
+  if (frame === undefined)
+    return {
+      ...usage,
+      promptCacheTier: undefined,
+      promptCacheTtlMs: undefined,
+      promptCacheExpiresAt: undefined,
+    };
+  const { tier, touchedAt, ttlMs } = frame.promptCache;
+  if (tier === "short")
+    return {
+      ...usage,
+      promptCacheTier: tier,
+      promptCacheTtlMs: undefined,
+      promptCacheExpiresAt: undefined,
+    };
   return {
     ...usage,
+    promptCacheTier: tier,
     promptCacheTtlMs: Math.trunc(ttlMs),
     promptCacheExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(touchedAt + ttlMs)),
   };
