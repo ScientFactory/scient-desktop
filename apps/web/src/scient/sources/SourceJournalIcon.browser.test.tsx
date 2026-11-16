@@ -52,7 +52,7 @@ it("decodes bundled artwork offline without asking the environment", async () =>
     <SourceJournalIcon
       environmentId={environmentId}
       root="/project"
-      record={{ ...record, containerTitle: "Nature", identifiers: [], url: null }}
+      record={{ ...record, containerTitle: "NEJM Evidence", identifiers: [], url: null }}
       resolveIcon={resolveIcon}
     />,
     { router: false },
@@ -89,6 +89,31 @@ it("replaces a PubMed platform fallback with the journal artwork discovered thro
   );
 });
 
+it("replaces a shared publisher fallback with discovered venue artwork", async () => {
+  using _observer = stubGlobal("IntersectionObserver", undefined);
+  const pending = Promise.withResolvers<JournalIcon>();
+  const resolveIcon = vi.fn(() => pending.promise);
+  // This leaf icon has no routing behavior.
+  await using screen = await render(
+    <SourceJournalIcon
+      environmentId={environmentId}
+      root="/project"
+      record={{ ...record, type: "conference-paper", containerTitle: "IEEE Access", url: null }}
+      resolveIcon={resolveIcon}
+    />,
+    { router: false },
+  );
+  const publisherUrl = screen.container.querySelector("img")?.getAttribute("src");
+  expect(publisherUrl).toMatch(/ieee/);
+  await vi.waitFor(() => expect(resolveIcon).toHaveBeenCalledTimes(1));
+  await act(() => pending.resolve(icon()));
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(firstUrl),
+  );
+  await act(() => screen.container.querySelector("img")!.dispatchEvent(new Event("error")));
+  expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(publisherUrl);
+});
+
 it("retains discovered artwork through unrelated record revisions and article title edits", async () => {
   using _observer = stubGlobal("IntersectionObserver", undefined);
   const resolveIcon = vi.fn(async () => icon());
@@ -118,7 +143,7 @@ it("retains discovered artwork through unrelated record revisions and article ti
   expect(resolveIcon).toHaveBeenCalledTimes(1);
 });
 
-it("shares pending discovery across journal rows and reuses the result after remounting", async () => {
+it("shares pending discovery for duplicate source rows and reuses successful venue artwork for other papers", async () => {
   using _observer = stubGlobal("IntersectionObserver", undefined);
   const pending = Promise.withResolvers<JournalIcon>();
   const resolveIcon = vi.fn(() => pending.promise);
@@ -134,12 +159,7 @@ it("shares pending discovery across journal rows and reuses the result after rem
       <SourceJournalIcon
         environmentId={environmentId}
         root="/project"
-        record={{
-          ...record,
-          sourceId: "second",
-          url: "https://journal.example/another-article",
-          identifiers: [],
-        }}
+        record={record}
         resolveIcon={resolveIcon}
       />
     </>,
@@ -159,6 +179,69 @@ it("shares pending discovery across journal rows and reuses the result after rem
   );
   expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(firstUrl);
   expect(resolveIcon).toHaveBeenCalledTimes(1);
+});
+
+it.each(["missing", "failed"] as const)(
+  "does not let a %s source lookup suppress another paper in the same venue",
+  async (outcome) => {
+    using _observer = stubGlobal("IntersectionObserver", undefined);
+    const resolveIcon = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        if (outcome === "failed") throw new Error("offline");
+        return null;
+      })
+      .mockResolvedValue(icon());
+    // These leaf icons have no routing behavior.
+    await using screen = await render(
+      <SourceJournalIcon
+        environmentId={environmentId}
+        root="/project"
+        record={{ ...record, sourceId: "without-doi", identifiers: [], url: null }}
+        resolveIcon={resolveIcon}
+      />,
+      { router: false },
+    );
+    await vi.waitFor(() => expect(resolveIcon).toHaveBeenCalledTimes(1));
+    await screen.rerender(
+      <SourceJournalIcon
+        environmentId={environmentId}
+        root="/project"
+        record={record}
+        resolveIcon={resolveIcon}
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(firstUrl),
+    );
+  },
+);
+
+it("retries a previously unresolvable source immediately when its DOI arrives", async () => {
+  using _observer = stubGlobal("IntersectionObserver", undefined);
+  const resolveIcon = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(icon());
+  // This leaf icon has no routing behavior.
+  await using screen = await render(
+    <SourceJournalIcon
+      environmentId={environmentId}
+      root="/project"
+      record={{ ...record, identifiers: [], url: null }}
+      resolveIcon={resolveIcon}
+    />,
+    { router: false },
+  );
+  await vi.waitFor(() => expect(resolveIcon).toHaveBeenCalledTimes(1));
+  await screen.rerender(
+    <SourceJournalIcon
+      environmentId={environmentId}
+      root="/project"
+      record={record}
+      resolveIcon={resolveIcon}
+    />,
+  );
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(firstUrl),
+  );
 });
 
 it("never transfers stale artwork or pending completions between journals, publishers, roots, or environments", async () => {

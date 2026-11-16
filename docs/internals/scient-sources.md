@@ -77,36 +77,60 @@ immediately, and a single completed source opens in the existing details state.
 The preflight surface is retained only for the weak possible-metadata-match
 decision that cannot be made safely on the researcher's behalf.
 
-Journal artwork is optional presentation, not source truth. A small bundled
-catalog paints recognized journal or publisher marks immediately, including
-offline and from a title or ISSN alone. Matching is exact after normalization;
-a publisher fallback is named as such, not presented as distinct journal artwork.
-Bundled assets require documented redistribution provenance and retain their
-trademark notices. They are build assets, never remote image URLs.
+Journal artwork is optional presentation, not source truth. The bundled catalog
+contains complete marks with documented redistribution provenance, not cropped
+initials or reconstructed favicons. Publisher and platform marks are labelled
+as fallbacks and never suppress discovery of the source's actual website icon.
+Named article, conference-paper and preprint venues are eligible; books retain
+their source-type icon. Original proportions and transparency are preserved.
 
-Articles without a curated journal match use the Sources-owned read endpoint
-and existing signed asset route. A bundled host/publisher/platform mark remains
-an immediate fallback, not a reason to skip DOI discovery (including PubMed
-imports). Client requests are shared by journal within an environment and
-project, with a bounded cache and signed-URL renewal. Updating a note, reading
-state, or star does not clear the artwork. Discovery starts near the visible
-scroll region; unknown sources and image failures immediately show the
-source-type icon. Missing icons are checked again after one minute.
+Discovery uses the Sources-owned read endpoint and signed asset route. It
+upgrades standard HTTP metadata addresses to HTTPS without ever sending an HTTP
+request. Crossref journal titles or ISSNs must agree with the record; DataCite
+preprint platforms cannot brand a published journal. OpenAlex homepages require
+an ISSN match or a unique exact title and publisher match. Ambiguous names are not
+guessed. Canonical article artwork is accepted only on that verified venue's
+site or an explicitly known publisher-owned domain; arbitrary record URLs and
+guessed registrable-parent homepages are never venue authority.
+A small conference-homepage map distinguishes proceedings from arXiv version
+DOIs. Canonical article declarations and verified venue declarations precede
+conventional verified-venue favicons and exact publisher fallbacks; completion order
+does not change that priority. Declared favicons precede Apple touch icons.
+Verified pages may explicitly declare CDN-hosted favicons, but page and image
+redirects cannot transfer authority to another registrable domain.
+Official JAMA Network support artwork is a labelled publisher fallback.
+The official NEJM AI store wordmark requires both that exact venue and its
+publisher; it is never reused for another NEJM journal. Neither is redistributed.
 
-The server keys artwork by normalized ISSN, or journal title and publisher when
-no ISSN exists, before resolving an article address. Disk hits need no Crossref
-or publisher request, even for records without an article link. Artwork remains
-usable offline: after 30 days it is returned immediately while one background
-refresh runs. Missing artwork is remembered on disk for six hours; a discovery
-deadline retries after one minute. Discovery has a six-second budget once its
-Crossref lookup is admitted to the shared pacing lane (or immediately for a
-direct article address), and aborts outstanding HTTPS requests. Waiting behind
-other journals does not consume a discovery's network budget.
-Discovery retains public-address checks, standard HTTPS, redirect/body limits,
-first-party raster validation, and at most two declared-icon attempts per page.
-Cache metadata is atomically replaced; older cache identities rebuild lazily.
+Client successes are shared within an environment/project only when ISSN, venue
+title, publisher and preprint/published scope agree. A bad record's fallback
+cannot brand a differently attributed record. Pending requests and misses retain
+the source evidence that produced them.
+Notes, stars and reading-state changes do not reload artwork. Signed URLs renew
+without removing a working image, and a broken discovered image restores the
+bundled fallback. Successful host-side artwork persists for 30 days and remains
+visible offline or during refresh. Source-specific misses use a bounded cache
+and exponential backoff from one minute to six hours. A separate venue backoff
+prevents repeated registry/site discovery for other papers; a verified homepage
+is retained so different canonical paper evidence can still succeed. Cache
+versions predating the authority checks are rebuilt instead of reused.
+
+Discovery has a six-second network budget after registry-lane admission.
+Public-address checks and DNS pinning apply to every request, including
+redirects. Requests retain HTTPS, redirect and body limits. Image redirects
+cannot change registrable domains, including private suffix boundaries. Raster
+and embedded ICO payload headers have dimension bounds and must actually decode
+before caching. SVGs reject active content, external/file references, entities
+and excessive complexity, then rasterize into bounded PNG pixels; SVG documents
+never reach the renderer. At most three native decode children run at once;
+queued and active decoding obey discovery cancellation. Children have bounded
+input/output and a kill deadline: malformed native decoder input cannot crash
+the server. PNG output must be complete, and packaged workers flush it before
+exiting. Cache metadata retains artwork URL and attribution and
+is replaced atomically.
 Icons never enter project records, block the list, or permit the renderer to
-contact arbitrary publisher URLs.
+contact arbitrary publisher URLs. Discovery remains best-effort: a blocked or
+unavailable website leaves the honest publisher/platform or source-type fallback.
 
 ## Durable project store
 

@@ -145,11 +145,14 @@ however wide the panel is; a heading that continues onto a new row of cards is
 repeated there, dimmed. Each card keeps its journal and year. **Show as a list**
 goes back. Each row and card starts with a journal or publisher icon when one is
 available, else an icon for its type (article, book, conference paper and so on,
-named on hover). Common journal marks are included with Scient and work offline.
-Other journal icons are saved after discovery and kept visible while Scient
-refreshes them in the background. Changing a note, star, or reading state does
-not reload the icon. A publisher's shared mark is identified as a publisher on
-hover. In list view, the blue **Unread** dot sits with the actions on the right,
+named on hover). Some complete journal, publisher and platform marks ship with
+Scient. Other website icons are discovered for articles, conference papers and
+preprints, saved for offline use, and kept visible during background refresh.
+Changing a note, star, or reading state does not reload the icon. Hover names the
+journal or the website/publisher fallback actually shown; it does not claim that
+a shared publisher logo is a journal-specific mark. A blocked or unavailable
+site leaves the fallback visible and can be checked again later.
+In list view, the blue **Unread** dot sits with the actions on the right,
 immediately before **Open PDF** when a PDF is available.
 
 ### Two notes

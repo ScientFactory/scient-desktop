@@ -10,9 +10,9 @@ function article(overrides: Partial<JournalRecord> = {}): JournalRecord {
 
 describe("bundled journal artwork", () => {
   it("resolves synchronously from title or normalized ISSN without a page or DOI", () => {
-    const titleIcon = bundledJournalIcon(article({ containerTitle: "Nature" }));
+    const titleIcon = bundledJournalIcon(article({ containerTitle: "NEJM Evidence" }));
     const issnIcon = bundledJournalIcon(
-      article({ identifiers: [{ scheme: " ISSN ", value: " 0028 0836 " }] }),
+      article({ identifiers: [{ scheme: " ISSN ", value: " 2766 5526 " }] }),
     );
 
     expect(titleIcon).not.toBeNull();
@@ -22,16 +22,16 @@ describe("bundled journal artwork", () => {
   });
 
   it("normalizes curated abbreviations without guessing from a prefix or ambiguous abbreviation", () => {
-    expect(bundledJournalIcon(article({ containerTitle: "  NAT.\u00a0MED.  " }))).toBe(
-      bundledJournalIcon(article({ containerTitle: "Nature Medicine" })),
+    expect(bundledJournalIcon(article({ containerTitle: "  NEJM.\u00a0EVID.  " }))).toBe(
+      bundledJournalIcon(article({ containerTitle: "NEJM Evidence" })),
     );
-    expect(bundledJournalIcon(article({ containerTitle: "Nature Medicine Advances" }))).toBeNull();
+    expect(bundledJournalIcon(article({ containerTitle: "NEJM Evidence Advances" }))).toBeNull();
     expect(bundledJournalIcon(article({ containerTitle: "Front Med" }))).toBeNull();
   });
 
   it("only interprets ISSN identifiers as journal identities", () => {
     expect(
-      bundledJournalIcon(article({ identifiers: [{ scheme: "doi", value: "0028-0836" }] })),
+      bundledJournalIcon(article({ identifiers: [{ scheme: "doi", value: "2766-5526" }] })),
     ).toBeNull();
     expect(
       bundledJournalIcon(
@@ -42,28 +42,28 @@ describe("bundled journal artwork", () => {
 
   it("accepts agreeing print/electronic ISSNs but rejects conflicting journals sharing a mark", () => {
     const identifiers = [
-      { scheme: "issn", value: "1078-8956" },
-      { scheme: "eissn", value: "1546-170x" },
+      { scheme: "issn", value: "0360-0300" },
+      { scheme: "eissn", value: "1557-7341" },
     ];
     const matching = bundledJournalIcon(
-      article({ containerTitle: "Nature Medicine", identifiers }),
+      article({ containerTitle: "ACM Computing Surveys", identifiers }),
     );
     expect(matching).not.toBeNull();
     expect(bundledJournalIcon(article({ identifiers }))).toBe(matching);
     expect(
       bundledJournalIcon(
         article({
-          identifiers: [...identifiers, { scheme: "issn", value: "2041-1723" }],
-          url: "https://www.nature.com/articles/example",
+          identifiers: [...identifiers, { scheme: "issn", value: "2169-3536" }],
+          url: "https://dl.acm.org/doi/example",
         }),
       ),
     ).toBeNull();
     expect(
       bundledJournalIcon(
         article({
-          containerTitle: "Nature Communications",
+          containerTitle: "IEEE Access",
           identifiers,
-          url: "https://nature.com",
+          url: "https://ieeexplore.ieee.org",
         }),
       ),
     ).toBeNull();
@@ -73,7 +73,7 @@ describe("bundled journal artwork", () => {
     expect(
       bundledJournalIcon(
         article({
-          containerTitle: "Nature",
+          containerTitle: "NEJM Evidence",
           identifiers: [{ scheme: "issn", value: "1234-5678" }],
         }),
       ),
@@ -81,34 +81,37 @@ describe("bundled journal artwork", () => {
     expect(
       bundledJournalIcon(
         article({
-          containerTitle: "Nature",
+          containerTitle: "NEJM Evidence",
           identifiers: [{ scheme: "issn", value: "not-an-issn" }],
         }),
       )?.journalTitle,
-    ).toBe("Nature");
+    ).toBe("NEJM Evidence");
   });
 
   it("prefers identified journals to publisher and indexing-platform fallbacks", () => {
     const icon = bundledJournalIcon(
       article({
-        containerTitle: "Nature",
-        identifiers: [{ scheme: "issn", value: "0028-0836" }],
+        containerTitle: "NEJM Evidence",
+        identifiers: [{ scheme: "issn", value: "2766-5526" }],
         url: "https://pubmed.ncbi.nlm.nih.gov/12345678/",
       }),
     );
-    expect(icon?.journalTitle).toBe("Nature");
-    expect(icon).toBe(bundledJournalIcon(article({ containerTitle: "Nature" })));
+    expect(icon?.journalTitle).toBe("NEJM Evidence");
+    expect(icon).toBe(bundledJournalIcon(article({ containerTitle: "NEJM Evidence" })));
   });
 
-  it("labels shared publisher artwork honestly instead of claiming journal-specific artwork", () => {
-    const medicine = bundledJournalIcon(article({ containerTitle: "Nature Medicine" }));
-    const digitalMedicine = bundledJournalIcon(article({ containerTitle: "npj Digital Medicine" }));
-    const ai = bundledJournalIcon(article({ containerTitle: "NEJM AI" }));
+  it("distinguishes curated journal art from publisher marks that still need discovery", () => {
+    const journal = bundledJournalIcon(article({ containerTitle: "NEJM Evidence" }));
+    const ieee = bundledJournalIcon(article({ containerTitle: "IEEE Access" }));
+    const acm = bundledJournalIcon(article({ containerTitle: "ACM Computing Surveys" }));
 
-    expect(medicine?.journalTitle).toBe("Nature (publisher)");
-    expect(digitalMedicine).toBe(medicine);
-    expect(ai?.journalTitle).toBe("NEJM Group (publisher)");
-    expect(ai?.url).not.toBe(medicine?.url);
+    expect(journal?.source).toBe("journal");
+    expect(ieee?.source).toBe("site");
+    expect(ieee?.journalTitle).toBe("IEEE (publisher)");
+    expect(acm?.source).toBe("site");
+    expect(acm?.journalTitle).toBe("ACM (publisher)");
+    expect(bundledJournalIcon(article({ containerTitle: "Nature" }))).toBeNull();
+    expect(bundledJournalIcon(article({ containerTitle: "NEJM AI" }))).toBeNull();
   });
 
   it("uses only generic publisher/platform marks for uncurated journal URLs", () => {
@@ -116,10 +119,10 @@ describe("bundled journal artwork", () => {
       bundledJournalIcon(
         article({
           containerTitle: "An uncurated journal",
-          url: "https://www.nature.com/articles/x",
+          url: "https://dl.acm.org/doi/example",
         }),
       )?.journalTitle,
-    ).toBe("Nature (publisher)");
+    ).toBe("ACM (publisher)");
     expect(
       bundledJournalIcon(article({ url: "https://pubmed.ncbi.nlm.nih.gov/123/" }))?.journalTitle,
     ).toBe("PubMed (platform)");
@@ -128,11 +131,11 @@ describe("bundled journal artwork", () => {
 
   it("does not match spoofed hosts, malformed URLs, non-web protocols, or unknown identities", () => {
     for (const url of [
-      "https://nature.com.example.org/article",
-      "https://notnature.com/article",
-      "https://nature.com@example.org/article",
+      "https://acm.org.example.org/article",
+      "https://notacm.org/article",
+      "https://acm.org@example.org/article",
       "not a URL",
-      "ftp://nature.com/article",
+      "ftp://acm.org/article",
       "https://constructor/",
       null,
     ]) {
@@ -140,15 +143,15 @@ describe("bundled journal artwork", () => {
     }
   });
 
-  it("never treats another source type as a journal article", () => {
+  it("permits named conference and preprint venues but not unrelated source types", () => {
+    for (const type of ["conference-paper", "preprint"]) {
+      expect(bundledJournalIcon(article({ type, containerTitle: "ACM Computing Surveys" }))).toBe(
+        bundledJournalIcon(article({ containerTitle: "ACM Computing Surveys" })),
+      );
+    }
     expect(
       bundledJournalIcon(
-        article({
-          type: "preprint",
-          containerTitle: "Nature",
-          identifiers: [{ scheme: "issn", value: "0028-0836" }],
-          url: "https://nature.com",
-        }),
+        article({ type: "book", containerTitle: "NEJM Evidence", url: "https://dl.acm.org" }),
       ),
     ).toBeNull();
   });

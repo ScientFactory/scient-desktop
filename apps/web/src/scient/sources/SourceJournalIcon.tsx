@@ -69,6 +69,7 @@ function cachedIcon(resolveIcon: IconResolver, cacheKey: string): JournalIcon {
 function discoverIcon(
   resolveIcon: IconResolver,
   cacheKey: string,
+  lookupKey: string,
   environmentId: EnvironmentId,
   root: string,
   sourceId: string,
@@ -78,9 +79,12 @@ function discoverIcon(
     cache = new Map();
     resolverCaches.set(resolveIcon, cache);
   }
-  const entry: CachedIcon = cache.get(cacheKey) ?? { icon: null, retryAt: 0 };
-  cache.delete(cacheKey);
-  cache.set(cacheKey, entry);
+  // Only successes are venue-wide; misses and pending lookups depend on the source's evidence.
+  const shared = cache.get(cacheKey);
+  if (shared && (shared.pending || shared.retryAt > Date.now())) return shared;
+  const entry: CachedIcon = cache.get(lookupKey) ?? { icon: shared?.icon ?? null, retryAt: 0 };
+  cache.delete(lookupKey);
+  cache.set(lookupKey, entry);
   if (cache.size > MAX_CACHED_JOURNALS) cache.delete(cache.keys().next().value!);
   if (entry.pending || entry.retryAt > Date.now()) return entry;
   entry.pending = Promise.resolve()
@@ -93,6 +97,11 @@ function discoverIcon(
       }
       entry.icon = icon ?? entry.icon;
       entry.retryAt = icon ? Math.max(now + 1_000, icon.expiresAt - 15_000) : now + MISS_LIFETIME;
+      if (icon) {
+        cache.delete(cacheKey);
+        cache.set(cacheKey, { icon, retryAt: entry.retryAt });
+        if (cache.size > MAX_CACHED_JOURNALS) cache.delete(cache.keys().next().value!);
+      }
     })
     .catch(() => {
       entry.retryAt = Date.now() + RETRY_DELAY;
@@ -111,11 +120,18 @@ export function SourceJournalIcon(props: {
 }) {
   const identity = journalIconIdentity(props.record);
   const cacheKey = JSON.stringify([props.environmentId, props.root, identity]);
+  const lookupKey = JSON.stringify([
+    cacheKey,
+    props.record.sourceId,
+    props.record.url,
+    props.record.identifiers.filter(({ scheme }) => /^doi$/iu.test(scheme.trim())),
+  ]);
   return (
     <JournalIconImage
-      key={JSON.stringify([cacheKey, props.record.sourceId, props.record.type])}
+      key={lookupKey}
       {...props}
       cacheKey={cacheKey}
+      lookupKey={lookupKey}
       eligible={identity !== null}
       bundled={bundledJournalIcon(props.record)}
       resolveIcon={props.resolveIcon ?? readScientSourceJournalIcon}
@@ -129,10 +145,11 @@ function JournalIconImage(props: {
   readonly record: SourceRecord;
   readonly resolveIcon: IconResolver;
   readonly cacheKey: string;
+  readonly lookupKey: string;
   readonly eligible: boolean;
   readonly bundled: ReturnType<typeof bundledJournalIcon>;
 }) {
-  const { environmentId, root, resolveIcon, cacheKey, eligible, bundled } = props;
+  const { environmentId, root, resolveIcon, cacheKey, lookupKey, eligible, bundled } = props;
   const sourceId = props.record.sourceId;
   const [discovered, setDiscovered] = useState<{
     resolver: IconResolver;
@@ -144,12 +161,14 @@ function JournalIconImage(props: {
   );
   const containerRef = useRef<HTMLSpanElement>(null);
   const needsDiscovery = eligible && bundled?.source !== "journal";
+  const resolved =
+    discovered?.resolver === resolveIcon ? discovered.icon : cachedIcon(resolveIcon, cacheKey);
   const icon =
     bundled?.source === "journal"
       ? bundled
-      : ((discovered?.resolver === resolveIcon
-          ? discovered.icon
-          : cachedIcon(resolveIcon, cacheKey)) ?? bundled);
+      : resolved && resolved.url !== failedUrl
+        ? resolved
+        : bundled;
   const imageFailed = icon?.url === failedUrl;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes viewport admission before starting environment discovery
@@ -175,7 +194,7 @@ function JournalIconImage(props: {
     let active = true;
     let timer: number | undefined;
     const refresh = async () => {
-      const entry = discoverIcon(resolveIcon, cacheKey, environmentId, root, sourceId);
+      const entry = discoverIcon(resolveIcon, cacheKey, lookupKey, environmentId, root, sourceId);
       await entry.pending;
       if (!active) return;
       if (entry.icon && entry.icon.url !== failedUrl && entry.icon.expiresAt > Date.now()) {
@@ -196,6 +215,7 @@ function JournalIconImage(props: {
     shouldResolve,
     resolveIcon,
     cacheKey,
+    lookupKey,
     environmentId,
     root,
     sourceId,
@@ -215,7 +235,7 @@ function JournalIconImage(props: {
           alt=""
           loading="lazy"
           draggable={false}
-          className="size-full rounded-[3px] object-contain"
+          className="size-full object-contain"
           onError={() => {
             setFailedUrl(icon.url);
             if (icon === bundled) return;
