@@ -167,6 +167,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         environmentId: props.environmentId,
         threadRef: props.threadRef,
         root: props.cwd,
+        documentPath: props.relativePath,
         candidates: libraryCitations,
         items: pandocCitationItems(request.source),
         quote: request.quote,

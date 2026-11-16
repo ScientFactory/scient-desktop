@@ -15,10 +15,16 @@ export interface LibraryCitationCandidate {
   readonly title: string | null;
   /** The source's first PDF; absent when it has none, or for an entry that is no Library source. */
   readonly pdf?: { readonly attachmentId: string; readonly fileName: string };
+  /**
+   * Another of this project's keys for the source, kept after a merge (`alsoCitedAs`): a citation
+   * using it opens the source, but a new citation is offered only the source's first key.
+   */
+  readonly alias?: true;
 }
 
 const MENU_LIMIT = 8;
 
+/** Every key this project cites a Library source by: its first key and each one kept after a merge. */
 export function libraryCitationCandidates(
   records: ScientSourcesOverviewResult["records"],
 ): ReadonlyArray<LibraryCitationCandidate> {
@@ -28,14 +34,18 @@ export function libraryCitationCandidates(
     const name = creator?.familyName ?? creator?.literalName ?? creator?.givenName ?? null;
     const label = [name, record.issuedYear].filter((part) => part !== null).join(" ");
     const pdf = record.attachments.find((attachment) => attachment.kind === "pdf");
+    const candidate: LibraryCitationCandidate = {
+      sourceId: record.sourceId,
+      citationKey: record.citationKey,
+      label: label || record.citationKey,
+      title: record.title,
+      ...(pdf ? { pdf: { attachmentId: pdf.attachmentId, fileName: pdf.fileName } } : {}),
+    };
+    const aliases = new Set(record.alsoCitedAs ?? []);
+    aliases.delete(record.citationKey);
     return [
-      {
-        sourceId: record.sourceId,
-        citationKey: record.citationKey,
-        label: label || record.citationKey,
-        title: record.title,
-        ...(pdf ? { pdf: { attachmentId: pdf.attachmentId, fileName: pdf.fileName } } : {}),
-      },
+      candidate,
+      ...[...aliases].map((key) => ({ ...candidate, citationKey: key, alias: true as const })),
     ];
   });
 }
@@ -71,16 +81,17 @@ function score(candidate: LibraryCitationCandidate, query: string): number | nul
   return scores.length > 0 ? Math.min(...scores) : null;
 }
 
-/** Best matches for what follows `[@`, by key, then author and year, then title. */
+/** Best matches for what follows `[@`, by key, then author and year, then title; first keys only. */
 export function filterLibraryCitations(
   candidates: ReadonlyArray<LibraryCitationCandidate>,
   query: string,
   limit = MENU_LIMIT,
 ): ReadonlyArray<LibraryCitationCandidate> {
+  const offered = candidates.filter((candidate) => !candidate.alias);
   const normalized = normalizeSearchQuery(query);
-  if (!normalized) return candidates.slice(0, limit);
+  if (!normalized) return offered.slice(0, limit);
   const ranked: Array<RankedSearchResult<LibraryCitationCandidate>> = [];
-  for (const candidate of candidates) {
+  for (const candidate of offered) {
     const value = score(candidate, normalized);
     if (value === null) continue;
     insertRankedSearchResult(
@@ -107,7 +118,7 @@ export function libraryLatexCitationChoices(
   readonly command: "cite";
 }> {
   return candidates.flatMap((candidate) =>
-    bibliographyKeys.has(candidate.citationKey)
+    candidate.alias || bibliographyKeys.has(candidate.citationKey)
       ? []
       : [
           {

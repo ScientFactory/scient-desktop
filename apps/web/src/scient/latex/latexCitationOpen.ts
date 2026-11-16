@@ -2,6 +2,8 @@ import { latexCitationItems, type CitationItem } from "@scientfactory/scient-sou
 
 import { isMacPlatform } from "~/lib/utils";
 
+import { latexCommentRanges, maskLatexSource } from "./latexSourceSyntax";
+
 /** Command-click on a Mac, Control-click elsewhere: how a writer follows a citation. */
 export function isCitationOpenClick(
   event: Pick<MouseEvent, "button" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
@@ -95,22 +97,27 @@ function clickedKey(list: KeyList, offset: number): string | null {
 
 /**
  * The citation a click at `offset` lands in: the one key under it, with the postnote only when
- * the command names one key; otherwise every key the command cites. Null outside a citation and
- * in a comment.
+ * the command names one key; otherwise every key the command cites. Null outside a citation, in
+ * a comment and in verbatim text, which hold no citations; a comment between a command and its
+ * arguments, or inside its key list, is skipped as TeX skips it.
  */
 export function latexSourceCitationAt(source: string, offset: number): LatexSourceCitation | null {
-  let start = source.lastIndexOf("\\", offset);
+  if (latexCommentRanges(source).some(({ from, to }) => from < offset && offset <= to)) {
+    return null;
+  }
+  // Offsets and line breaks stay where they are; comments and verbatim text become spaces.
+  const live = maskLatexSource(source, { literals: true });
+  let start = live.lastIndexOf("\\", offset);
   while (start >= 0 && offset - start <= LOOK_BACK) {
-    const citation = escaped(source, start) ? null : citationAt(source, start);
+    const citation = escaped(live, start) ? null : citationAt(live, start);
     if (citation) {
       // Citations do not nest: one that ends before the click is the nearest there is.
       if (offset > citation.end) return null;
-      const before = source.slice(source.lastIndexOf("\n", start - 1) + 1, start);
-      if (/(?<!\\)(?:\\\\)*%/u.test(before)) return null;
       const items = citation.lists.flatMap((list) => {
         const key = clickedKey(list, offset);
         return key === null ? [] : latexCitationOpenItems(list.keys, list.notes, key);
       });
+      const before = source.slice(source.lastIndexOf("\n", start - 1) + 1, start);
       const quote = latexQuoteBefore(before.replace(/\\([%&_#$])/gu, "$1"));
       return {
         items:
@@ -121,7 +128,7 @@ export function latexSourceCitationAt(source: string, offset: number): LatexSour
       };
     }
     if (/\n[\t ]*\n/u.test(source.slice(start, offset))) return null;
-    start = start === 0 ? -1 : source.lastIndexOf("\\", start - 1);
+    start = start === 0 ? -1 : live.lastIndexOf("\\", start - 1);
   }
   return null;
 }

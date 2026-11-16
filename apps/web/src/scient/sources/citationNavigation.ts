@@ -1,34 +1,44 @@
 import { PdfTarget } from "@scientfactory/document-artifacts";
 import type { CitationItem } from "@scientfactory/scient-sources";
-import type {
-  ContextMenuItem,
-  EnvironmentId,
-  ScientSourceDetailResult,
-  ScopedThreadRef,
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import {
+  AuthFilesystemReadScope,
+  type ContextMenuItem,
+  type EnvironmentId,
+  type ScientSourceDetailResult,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { toastManager } from "~/components/ui/toast";
 import { readLocalApi } from "~/localApi";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { assetEnvironment } from "~/state/assets";
+import { readEnvironmentScope, readPreparedConnection } from "~/state/session";
 
 import { readSourceAnnotations } from "../annotations/client";
+import { readPdfPageLabels, type PdfPageLabels } from "../annotations/pdfQuotePageLabels";
 import {
   pdfRevealDocumentKey,
   requestPdfPageReveal,
   requestPdfReveal,
 } from "../pdf/anchors/pdfRevealRequests";
 import { pdfDocumentIdentity } from "../pdf/anchors/pdfTextTarget";
-import { workspacePdfSource } from "../pdf/pdfSource";
+import { pdfSourceAssetResource, workspacePdfSource } from "../pdf/pdfSource";
 import { scientSourcePdfSurface } from "../rightPanel/surfaces";
 import {
+  checkedCitationEntries,
   citationChoiceText,
+  citationLabelsNeeded,
   citationOpenStep,
   citationReveal,
   resolveCitationEntries,
   type CitationEntry,
+  type CitationNotice,
   type CitationPassageNotice,
 } from "./citationNavigationModel";
-import { readScientSource } from "./client";
+import { readScientCitationKeys, readScientSource } from "./client";
 import type { LibraryCitationCandidate } from "./libraryCitations";
 import { openLibrarySource } from "./librarySourceRequest";
 
@@ -36,6 +46,9 @@ export interface CitationOpenRequest {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly root: string;
+  /** The project-relative document holding the citation, whose bibliography decides what a key
+   * names there; null when unknown, and the keys are taken as the project's. */
+  readonly documentPath: string | null;
   readonly candidates: ReadonlyArray<LibraryCitationCandidate>;
   readonly items: ReadonlyArray<CitationItem>;
   /** The quoted passage the citation ends, when it closes a quote ("Quote in my document"). */
@@ -45,27 +58,45 @@ export interface CitationOpenRequest {
 }
 
 type SourceAttachment = ScientSourceDetailResult["attachments"][number];
-type Notice = { readonly title: string; readonly description?: string };
 
 const SHOWING_DETAILS = "Showing its details in the Library.";
 
 /** A later citation click wins over one still reading its source. */
 let latestOpen = 0;
 
-/** Opens what a citation names. False when none of its keys is a Library source here. */
+/**
+ * Opens what a citation names. False when none of its keys is a Library key in this project.
+ * Before anything opens, the keys are checked in the document's bibliography: a key it defines as
+ * another work is left out, and nothing opens when every key is.
+ */
 export function openCitation(request: CitationOpenRequest): boolean {
   const entries = resolveCitationEntries(request.candidates, request.items);
-  const [first] = entries;
-  if (!first) return false;
+  if (entries.length === 0) return false;
   const open = ++latestOpen;
-  if (entries.length === 1) {
-    void openEntry(request, first, open);
-  } else {
-    void chooseEntry(entries, request.at).then((entry) => {
-      if (entry && open === latestOpen) return openEntry(request, entry, open);
-    });
-  }
+  void checkEntries(request, entries).then(async (checked) => {
+    if (open !== latestOpen) return;
+    for (const notice of checked.notices) toastManager.add({ type: "info", ...notice });
+    const [first] = checked.entries;
+    if (!first) return;
+    const entry =
+      checked.entries.length === 1 ? first : await chooseEntry(checked.entries, request.at);
+    if (entry && open === latestOpen) await openEntry(request, entry, open);
+  });
   return true;
+}
+
+async function checkEntries(request: CitationOpenRequest, entries: ReadonlyArray<CitationEntry>) {
+  const { environmentId, root, documentPath } = request;
+  if (documentPath === null) return { entries, notices: [] };
+  const keys = [...new Set(entries.map((entry) => entry.item.key))];
+  // A disconnected environment throws before any request: the check failed.
+  const resolved = await Promise.resolve()
+    .then(() => readScientCitationKeys(environmentId, { root, path: documentPath, keys }))
+    .then(
+      (result) => result.keys,
+      () => null,
+    );
+  return checkedCitationEntries(entries, resolved);
 }
 
 async function chooseEntry(
@@ -89,7 +120,7 @@ async function chooseEntry(
   return chosen === null ? null : (entries[Number(chosen)] ?? null);
 }
 
-function passageNotice(notice: CitationPassageNotice, showing: string): Notice {
+function passageNotice(notice: CitationPassageNotice, showing: string): CitationNotice {
   switch (notice) {
     case "not-found":
       return { title: "This passage is not among the source's highlights", description: showing };
@@ -115,6 +146,24 @@ function sourcePdf(request: CitationOpenRequest, sourceId: string, attachment: S
   });
 }
 
+/** A URL serving a source's PDF, for reading its page labels; null when it cannot be served. */
+async function sourcePdfUrl(
+  environmentId: EnvironmentId,
+  descriptor: ReturnType<typeof sourcePdf>,
+): Promise<string | null> {
+  const connection = readPreparedConnection(environmentId);
+  const resource = pdfSourceAssetResource(descriptor);
+  if (connection === null || resource === null) return null;
+  if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) return null;
+  const issued = await executeAtomQuery(
+    appAtomRegistry,
+    assetEnvironment.createUrl({ environmentId, input: { resource } }),
+    { reportFailure: false, reportDefect: false, refresh: true },
+  );
+  if (issued._tag === "Failure") return null;
+  return resolveAssetUrl(connection.httpBaseUrl, issued.value.relativeUrl);
+}
+
 async function openEntry(
   request: CitationOpenRequest,
   entry: CitationEntry,
@@ -122,7 +171,7 @@ async function openEntry(
 ): Promise<void> {
   const { environmentId, root, threadRef } = request;
   const { sourceId } = entry.candidate;
-  const showDetails = (notice: Notice | null) => {
+  const showDetails = (notice: CitationNotice | null) => {
     openLibrarySource({ threadRef, root, sourceId });
     if (notice) toastManager.add({ type: "info", ...notice });
   };
@@ -166,11 +215,25 @@ async function openEntry(
     });
     return;
   }
-  const reveal = citationReveal(
-    step,
+  const known =
     highlights &&
-      highlights.filter((pdf) => pdfs.some((known) => known.attachmentId === pdf.attachmentId)),
+    highlights.filter((pdf) => pdfs.some((known) => known.attachmentId === pdf.attachmentId));
+  // Several highlights with the quoted words are told apart by the printed page of each.
+  const labels = new Map<string, PdfPageLabels>(
+    await Promise.all(
+      citationLabelsNeeded(step, known).map(async (attachmentId) => {
+        const attachment = pdfs.find((pdf) => pdf.attachmentId === attachmentId)!;
+        const descriptor = sourcePdf(request, sourceId, attachment);
+        const read = await readPdfPageLabels({
+          contentKey: attachment.sha256,
+          url: () => sourcePdfUrl(environmentId, descriptor),
+        });
+        return [attachmentId, read] as const;
+      }),
+    ),
   );
+  if (open !== latestOpen) return;
+  const reveal = citationReveal(step, known, labels);
   switch (reveal._tag) {
     case "Details":
       showDetails(reveal.notice ? passageNotice(reveal.notice, SHOWING_DETAILS) : null);

@@ -46,6 +46,36 @@ describe("latexSourceCitationAt", () => {
     expect(clickAt(String.raw`50\% \cite{|a}`)?.items).toEqual([{ key: "a", locator: null }]);
   });
 
+  it("finds nothing in verbatim text, a displayed example of a citation", () => {
+    for (const environment of ["verbatim", "Verbatim", "lstlisting", "minted", "comment"]) {
+      const options = environment === "minted" ? "{latex}" : "";
+      expect(
+        clickAt(`\\begin{${environment}}${options}\nSee \\cite{|soil2021}.\n\\end{${environment}}`),
+      ).toBeNull();
+    }
+    const pipes = String.raw`Write \verb|\cite{soil2021}| for it.`;
+    expect(latexSourceCitationAt(pipes, pipes.indexOf("soil") + 1)).toBeNull();
+    expect(clickAt(String.raw`Write \verb+\cite{s|oil2021}+ for it.`)).toBeNull();
+    expect(clickAt(String.raw`Write \lstinline!\cite{s|oil2021}! for it.`)).toBeNull();
+    // Verbatim text before a real citation does not hide it.
+    expect(clickAt(String.raw`\verb!\cite{x}! and \cite{|a}`)?.items).toEqual([
+      { key: "a", locator: null },
+    ]);
+  });
+
+  it("skips a comment between the command and its keys, and a commented-out key", () => {
+    expect(clickAt("\\cite % the pivotal study\n  {|a}")?.items).toEqual([
+      { key: "a", locator: null },
+    ]);
+    expect(clickAt("\\cite[p.~4]% note\n{|a}")?.items).toEqual([{ key: "a", locator: "p.~4" }]);
+    expect(clickAt("\\cite{a, % b,\n  |c}")?.items).toEqual([{ key: "c", locator: null }]);
+    expect(clickAt("\\ci|te{a, % b,\n  c}")?.items).toEqual([
+      { key: "a", locator: null },
+      { key: "c", locator: null },
+    ]);
+    expect(clickAt("\\cite{a, % |b,\n  c}")).toBeNull();
+  });
+
   it("reads the quote that Quote in my document writes before the citation", () => {
     expect(clickAt(String.raw`“A 50\% rise” \cite[p.~4]{|a}`)).toEqual({
       items: [{ key: "a", locator: "p.~4" }],
