@@ -1,135 +1,131 @@
 # Scient Desktop
 
 ScientFactory owns Scient Desktop; Yaacov is the accountable owner.
-This file contains Scient-specific working instructions.
-
-Upstream changes to this file are policy proposals to review, not instructions
-to adopt automatically.
+Upstream edits to Scient policy are proposals, not automatic adoption, including
+policy in linked guides. This file controls Scient-specific policy where a guide
+conflicts; report the conflict rather than silently choosing another rule.
+If a rule conflicts with the task, explain it and obtain human approval before
+breaking it. Do not ask again for an action already explicitly authorized.
 
 ## Where code lives
 
 - `apps/server`: provider processes, workspace operations, persistence,
-  orchestration, terminals, and version control.
-- `apps/web`: React client.
-- `apps/desktop`: Electron shell and native desktop integration.
-- `apps/mobile`: React Native client.
-- `apps/marketing`: website.
-- `packages/contracts`: shared schemas and contract-level helpers.
-- `packages/shared`: shared utilities.
-- `packages/client-runtime`: shared client connection and domain-state logic.
-- `packages/scient-*`: Scient capability packages. Check the relevant package
-  and its integration points before adding equivalent behavior in app code.
-- `.repos/`: read-only reference implementations; do not edit or import from them.
+  orchestration, terminals and version control.
+- `apps/web`: React client; `apps/desktop`: Electron/native integration;
+  `apps/mobile`: React Native; `apps/marketing`: website.
+- `packages/contracts`: schemas/contracts; `packages/shared`: utilities;
+  `packages/client-runtime`: shared client connections and domain state.
+- `packages/scient-*`: Scient capabilities. Check the relevant owner and integration
+  points before duplicating a capability in an app.
+- `.repos/`: read-only reference code; do not edit it or import from it.
 
-Read `.repos/effect/LLMS.md` before writing Effect code.
-Architecture details: `docs/internals/overview.md`.
-Terminology: `docs/internals/glossary.md`.
+Architecture: [overview](docs/internals/overview.md); terminology:
+[glossary](docs/internals/glossary.md).
 
 ## Shared quality defaults
 
-- Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
-- Client mutations use `createEnvironmentRpcCommand`. Add protected methods to
-  `CLIENT_GUARDED_RPC_SCOPES` in contracts and use the command's `permissionAtom`
-  for UI availability. Grants are checked at execution against the destination
-  environment; the server remains authoritative. Keep raw RPC clients inside
-  `rpc/`, and extend permission behavior tests when adding a protected method.
-- Reusable Effect functions use `Effect.fn("Service.operation")` with a stable
-  span name, not a function wrapping `Effect.gen`. Keep `Effect.gen` for inline
-  programs and layer construction. Use `Effect.fnUntraced` only for high-frequency
-  paths or an existing tracing boundary; explain the choice nearby. Named
-  `Effect.fn` creates a span; the unnamed form does not. Preserve existing span
-  names and options, passing combinators as additional function-builder arguments.
-- `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations.
-- Inferred types over annotations. `any` is the enemy.
-- Default to no comment. Write one only for a constraint, an external quirk, or an invariant the code can't show, in one line where you can and four at most. Don't restate names or signatures, narrate steps, record history, or explain the fix you just made; the PR carries that. `t3code/no-low-value-comments` enforces the length cap and the mechanical cases.
-- React effects synchronize with systems outside React. Derive state in render and act in handlers; keep real lifecycle work with its owner. The `t3code/no-unreasoned-state-sync` lint rule reports every effect; one that stays states its reason with `// oxlint-disable-next-line t3code/no-unreasoned-state-sync -- <why>`.
-- Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.
-- If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
+Read the relevant owner before choosing or changing an implementation:
+
+- For server features or transports—RPC, HTTP routes, MCP tools, scheduled tasks
+  and CLI entries—read [Effect services](docs/internals/effect-services.md).
+  Capabilities live in services; transports only decode, call one service method
+  and map errors. Protocol complexity belongs in adapters, not shared orchestration
+  or presentation code.
+- Before writing Effect code, read `.repos/effect/LLMS.md`. The project service guide
+  governs project conventions; the local library reference supplies API semantics.
+  Reusable functions use named `Effect.fn("Service.operation")`; keep `Effect.gen`
+  for inline programs and layers. Preserve span names/options and pass combinators
+  as builder arguments. Untraced work follows the guide's listed cases and explains
+  its reason nearby; a loop alone is not an exemption.
+- For web controls/styles, read [web UI](docs/internals/web-ui.md). Shared controls
+  own their appearance: select a variant/size, not a restyling `className`.
+  Generic new looks become shared variants; feature-only looks stay in that feature.
+  Layout classes belong on the parent.
+- Before writing or reviewing tests, read [testing](docs/internals/testing.md).
+  The Scient coverage and clock-lifetime rules below define project policy;
+  the guide supplies compatible authoring details and examples.
+
+Prefer inferred types; avoid `any`. Default to no comment. Write one only for a
+constraint, external quirk or invariant the code cannot show, in one line where
+possible and four at most. Do not restate names/signatures, narrate steps, record
+history or explain the fix just made; the PR carries that.
+React effects synchronize with systems outside React, not derived state or user
+actions. Existing lint supplies mechanical checks and suppression syntax; a reason
+comment does not justify evading the design constraint.
+UI status reflects the work it describes. No continuously repainting animations;
+high-refresh displays amplify their GPU cost.
+
+Client mutations use `createEnvironmentRpcCommand`; register protected methods in
+`CLIENT_GUARDED_RPC_SCOPES`, use `permissionAtom` for UI availability, and extend
+permission behavior tests. The destination server checks grants at execution.
+Raw RPC clients stay in `rpc/`.
 
 ## Architectural boundaries
 
-- The server owns execution and workspace access. Clients may connect to another
-  machine; client paths and credentials are not server paths and credentials.
-- Orchestration V2 is the live engine (`apps/server/src/orchestration-v2`).
-  `Orchestrator` serializes commands per thread; `EventSink` commits events,
-  projections, command receipts, and outbox effects transactionally. The effect
-  worker performs execution through V2 services and adapters. Native runs own
-  queued work; upstream's `QueuedRunsControl` is its UI, with Scient's parts in
-  `apps/web/src/scient/threadQueue/useScientQueueParts.tsx`. Extend this path, not the
-  superseded V1 engine, reactors, provider service, or queue ledger. Legacy
-  readers are import/recovery boundaries, never execution authorities.
-- Server features are services and transports stay thin: a `ws.ts` RPC handler, HTTP route,
-  MCP tool, scheduled task, or CLI entry decodes input, calls one service method, and maps
-  errors. See [Effect services](docs/internals/effect-services.md).
-- A provider driver identifies an implementation; a provider instance identifies
-  one configured runtime. Route model selections and sessions by instance ID,
-  not merely by driver kind.
-- Provider adapters own protocol differences. Shared UI consumes capabilities;
-  unknown, unsupported, default, and explicitly selected settings have different
-  meanings.
-- Shared changes require checking affected clients, entry points, provider
-  adapters, and connection modes. Settings changes also need to account for
-  existing configurations, fresh setup, and reload. A repaired development
-  profile does not establish that the product handles those paths.
+The server owns execution/workspace access, including for remote clients. Client
+paths and credentials are not server paths and credentials.
+Orchestration V2 owns live execution. `Orchestrator` serializes commands per thread
+and owns queue admission, order, holds and advancement. `EventSink` commits facts,
+projections, receipts and outbox effects transactionally; workers execute after
+commit. A command receipt is not effect completion. Extend native queued runs and
+[their UI integration](docs/internals/scient-thread-queue.md), not retired engines,
+reactors, provider service or queue ledger. Legacy readers only import or recover.
+
+Route models/sessions by provider instance ID, not driver kind. Adapters own protocol
+differences; shared UI consumes capabilities. Unknown, unsupported, default and
+explicit settings differ. Shared changes cover affected clients, entry points,
+adapters and connection modes. Settings cover existing configurations, fresh setup
+and reload; repairing a development profile does not prove those product paths.
 
 ## Development traps
 
-- Multiple agents and development apps may share this machine and checkout.
-  Preserve unrelated working-tree and staged changes. Commit only the changes
-  intended for the requested commit.
-- Follow `docs/operations/local-dev-app.md` for desktop lifecycle operations.
-  Stable and feature candidates have separate identities and state. Switch the
-  stable app only with `pnpm dev:app:review <ref>`
-  (`docs/operations/dev-app-review.md`); never edit its review checkout,
-  profiles or launchers by hand.
-  The shared `.scient/skills/scient-dev-app/SKILL.md` routes agent-assisted
-  lifecycle work to that guide and its Windows instructions. Read it when
-  launching, verifying, restarting, or stopping a candidate; it does not grant
-  permission to do those things during a read-only inspection.
-- Never kill processes by broad name or path pattern. An agent's own command
-  line may contain the worktree path. Use the owning candidate's lifecycle
-  commands; a matching name or working directory alone does not prove ownership.
-- Leave a candidate available when the user is reviewing it. Do not stop or
-  restart it merely to tidy up after a task.
-- The desktop renderer hot-reloads; its backend runs a bundle. Server changes
-  and bundled dependency changes require refreshing that candidate's backend
-  before testing them. Renderer HMR does not prove the backend is current.
-- Reading, copying, importing, or modifying live Scient or T3 data requires
-  explicit authorization for that data and operation. Use synthetic fixtures
-  for ordinary development; never point a test server at a live profile.
-- Keep credentials out of logs, fixtures, commits, screenshots, and responses.
-  Do not copy provider credentials between profiles as a setup shortcut.
-- Inspect resolved runtime paths. Installed, stable-development, and feature
-  profiles differ; do not assume all state lives under `userdata/`.
-  Existing `scient-next` storage and identity values are compatibility
-  boundaries, not branding to rename.
-- Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset for ordinary development.
-  Vite's same-origin proxy supports local and remote access.
-- A newly connected web client needs pairing. Give the intended tester the
-  generated pairing URL, not a bare localhost origin. Its token is a credential;
-  keep it out of commits and public evidence.
+- Preserve unrelated working/staged changes, including the user's and other agents'
+  edits, and running apps. Commit only the changes within the requested scope.
+- Before launching, verifying, restarting or stopping a desktop candidate, read the
+  checkout's `.scient/skills/scient-dev-app/SKILL.md` if not already supplied, and
+  follow the [candidate guide](docs/operations/local-dev-app.md) and its host-specific
+  route. Switch the stable app only with `pnpm dev:app:review <ref>` under the
+  [stable-review procedure](docs/operations/dev-app-review.md); never hand-edit its
+  review checkout, profiles or launchers. Read-only inspection does not authorize
+  lifecycle changes.
+- Stable and feature candidates have separate identities/state. Use the owning
+  candidate's lifecycle commands; a matching process name/path is not ownership.
+  Never kill by broad patterns. Leave any candidate the user is reviewing available;
+  do not stop or restart it merely to tidy up.
+- Renderer HMR does not refresh the backend bundle. Refresh that candidate's backend
+  after server/bundled-dependency changes before claiming those changes were tested.
+- Reading, copying, importing or modifying live Scient/T3 data requires explicit
+  authorization for that data and operation. Use synthetic state; never test against
+  a live profile. Keep credentials out of logs, fixtures, captures, commits and replies;
+  do not copy provider credentials between profiles.
+- Inspect resolved runtime paths. Installed, stable and feature profiles differ;
+  do not assume all state lives under `userdata/`. Preserve compatibility-sensitive
+  package names, environment variables, storage/migration paths and identities,
+  formats and license notices, including `scient-next` values. These are not cosmetic
+  branding to rename.
+- Leave `VITE_HTTP_URL`/`VITE_WS_URL` unset for ordinary development; use Vite's
+  same-origin proxy. Give new web clients the generated pairing URL, not a bare
+  origin, and share its credential only with the intended tester.
 
 ## Development and verification
 
-Use the versions declared in `package.json` and the committed lockfile.
-`vp i` installs dependencies; `vp run dev` starts server and web.
-If worktree setup is already running, wait for its completion marker instead of
-starting a second install.
-For persistent desktop candidates, use `docs/operations/local-dev-app.md`.
-Other commands and platform prerequisites: `docs/operations/development.md`.
+Use pinned versions/lockfile. `vp i` installs; `vp run dev` starts server/web.
+If `.t3/setup-running` identifies active setup, wait for `.t3/setup-done` or
+`.t3/setup-failed`; inspect failure rather than starting a second install.
+Do not overlap installs or heavy local suites. Commands/platform prerequisites:
+[development](docs/operations/development.md).
 
 ### Verification
 
-Run focused tests, formatting, lint, and affected-package type checks while
-iterating. Use `vp run typecheck` in the affected package so its Vite task runs,
-including packages without a `typecheck` npm script. Run snippets from the owning
-package, where its dependencies resolve. Check unused files, exports and
-dependencies with `pnpm run knip:check` when changing those surfaces.
-`vp run check:changed <ref>` runs the affected iteration checks, including
-uncommitted changes; it does not replace the final gate below.
-For a regression fix, verify that the focused test distinguishes the broken
-behavior from the fix, and retain a failing negative control when practical.
-Final qualification uses the applicable focused checks plus:
+Use focused tests, formatting, lint and affected-package checks while iterating.
+`vp run check:changed <ref>` includes uncommitted changes and does not replace final
+qualification. Use `vp run typecheck` in affected packages, including those without
+an npm typecheck script; run snippets from the owning package so dependencies resolve.
+Run `pnpm run knip:check` when files, exports or dependencies change. For regression
+fixes, prove the focused test fails on broken behavior and passes with the repair;
+retain a negative control when practical, not a permanently failing test suite.
+
+After the candidate stabilizes, run applicable focused checks plus:
 
 ```sh
 pnpm exec vp fmt --check
@@ -141,187 +137,134 @@ pnpm run test:desktop-smoke
 git diff --check
 ```
 
-`pnpm alignment:gates` runs this list (plus knip and brand) without the desktop
-host's live-profile variables. It runs every package's tests even after a failure
-and the server suite's files in parallel, and full runs from different worktrees
-queue behind its lock.
-Run the complete local gate once the candidate has stabilized. Record the
-commands, revision or working diff, environment, results, and any remaining
-gaps so later reviews can reuse evidence for the same candidate. After a
-subsequent change, rerun the checks whose evidence the change can invalidate;
-shared contracts, test setup, orchestration, packaging, and broad dependency
-changes usually require wider requalification. Formatting-only or maintainer
-documentation-only edits do not by themselves invalidate runtime-test results,
-but runtime-loaded Markdown, fixtures, generated inputs, and user-facing Help
-must be treated according to how the product consumes them.
+Record commands, revision/diff, environment, results and gaps. Reuse matching evidence;
+rerun checks invalidated by later edits. Shared contracts, test setup, orchestration,
+packaging and broad dependency changes usually need wider requalification.
+Formatting/maintainer-doc edits alone do not invalidate runtime results; runtime-loaded
+Markdown, Help, fixtures and generated inputs follow their consumers. Hosted CI
+qualifies the pushed revision but does not replace local platform checks when the
+changed behavior depends on that platform. Interim reviews identify checks still open.
+Run `pnpm brand:check` after branding changes or upstream merges. Alignments follow
+[the alignment protocol](docs/internals/upstream-alignment-protocol.md).
+`pnpm alignment:gates` adds knip/brand and clears live-profile variables for its gates.
+Use the checkout's [runner](scripts/scient-alignment-gates.mjs) and
+[runner documentation](docs/internals/scripts.md); package-completion, concurrency
+and cross-worktree locking behavior depend on that revision. Do not assume a lock
+or parallel execution that the checkout does not implement.
 
-Hosted CI qualifies the final pushed revision in a clean environment. It does
-not replace local platform checks such as desktop smoke tests when the changed
-behavior depends on that platform. Avoid running multiple heavy local suites
-concurrently; other agents and development apps may share the machine.
+Keep tests for distinct behavior, guarantees and failure modes, not incidental copy,
+markup, classes, constants, wiring or mock echoes. Avoid redundant cases; another
+row earns its place by guarding a distinct outcome, boundary or failure mode, not
+merely a different literal. A shared implementation branch alone proves neither
+redundancy nor equivalence. Use Node for pure logic and browser tests for DOM/React.
+Keep fix-commit regression tests; if the title omits their purpose, record
+`// regression: <sha> <subject>`. Before deleting a test that asserts behavior,
+break its covered logic and show a retained test fails. Do not assume equivalence
+from a shared code path or an upstream deletion, or evade proof by calling a test
+obsolete, low-value or flaky. Intentionally removing the guarded behavior needs
+explicit scope, not a claim that another test still covers it.
+Keep Scient extensions to upstream tests in `.scient.` siblings.
 
-Run `pnpm brand:check` after branding changes and upstream merges.
-An interim review can precede full qualification; identify remaining checks.
+Use receipts, persisted events and worker completion for asynchronous tests; controlled
+clocks for time. The test guide owns wait/retry/skip rules and browser-resource setup.
+Scient browser tests use `apps/web/test/render.tsx` and disposable resources. Use its
+ownership-aware `fakeTimers()` helper, not raw clock installation/restoration.
+Put post-mount fake timers on an outer fixture stack and run screen cleanup/unmount
+before disposing that stack, so the tree cancels its fake-clock work while the clock
+is still installed. Post-mount spies instead dispose before unmount.
+A timed-out test can keep running against a shared clock: use `advanceTestClock(signal,
+ms)` from `apps/web/test/testClock.ts`. Custom waits must not advance that clock after
+their test aborts. Fake time does not lay out DOM; use `apps/web/test/listMeasurement.ts`
+for list readiness. Wait on the state under test, not a fixed delay or frame/step count.
+Browser readiness waits default to 5 s; a shorter readiness claim sets its waiter
+deadline, not a test-case timeout or retry.
+Prove flake fixes fail-before/pass-after under the same targeted slowness/probe:
+`SCIENT_TEST_CPU_THROTTLE=6 vp test run <file>` in `apps/web` (about 4 for fast-runner
+conditions, 6 for slow-runner conditions, 8 for stress; not a hardware guarantee).
 
-Use orchestration receipts and worker completion signals in asynchronous tests.
-Use controlled clocks when testing time-dependent behavior.
-Do not add per-test timeouts or retries, wall-clock duration assertions, sleep or
-yield polling loops, or browser frame/transition waits. Browser assertions use
-`expect.element` or `vi.waitFor`; timed behavior uses the full controlled clock.
-Skipped tests need a tracking issue and reason. Mock factories must not spread
-real modules that load Shiki or diff workers.
-
-#### Deterministic browser tests
-
-CI runners lay out pages several times slower than a developer Mac, so a test
-that passes locally can still race there.
-
-- Wait on the state you check: a receipt, an owner's event, or a measurement
-  (`test/listMeasurement.ts` for a list row's size). Never wait a fixed delay or
-  a number of frames or steps, and do not let fake time stand in for rendering:
-  a fake clock does not lay out or measure.
-- `vi.waitFor`, `expect.poll` and `expect.element` default to 5 s in the browser
-  project, for eventual readiness. A test that checks something happens quickly
-  states its own `timeout`.
-- Unmount before restoring fake timers, so the tree cancels what it scheduled
-  on them: put `fakeTimers()` on the fixture stack that outlives the unmount.
-- A test past its deadline keeps running, and the fake clock is shared. Drive
-  it through `advanceTestClock(signal, ms)` (`test/testClock.ts`), which stops
-  once the test's `signal` aborts. `vi.waitFor`, `vi.waitUntil` and
-  `expect.poll` belong to the test that started them and stop (without moving
-  the clock) once it aborts or another test starts; a fake clock a timed-out
-  test left installed is removed before the next test, and its late
-  `fakeTimers()` dispose leaves the next test's clock alone.
-- Prove a flaky-test fix under CI-like slowness and a targeted probe (a delayed
-  observer, grammar load or visibility report): fail before, pass after, under
-  the same condition. `SCIENT_TEST_CPU_THROTTLE=<rate>` slows each test page's
-  CPU through Chromium (4 is about a fast runner, 6 a slow one, 8 a stress run):
-  `SCIENT_TEST_CPU_THROTTLE=6 vp test run <file>` in `apps/web`.
-
-Web component tests are `*.browser.test.tsx` and render through
-`apps/web/test/render.tsx`. Acquire test changes with `using` / `await using`
-so disposal restores them even on failure; avoid module-level screens and
-`beforeEach` / `afterEach` cleanup. Reset shared `vi.mock` factory state in a
-`setup()` call at the start of each test. `t3code/require-disposable-render`
-enforces this lifecycle. Test meaningful behavior rather than static markup
-that only repeats props or callback wiring.
-Acquire spies driven after mounting after the render, so they dispose before
-unmounting; fake timers are acquired after the render too, but dispose after it
-unmounts (above). A render helper that waits or interacts must own its screen in
-an `AsyncDisposableStack` until it returns successfully. Give `rerender` a fresh
-element. The router is enabled by default; explain any `router: false` fixture.
-
-#### What earns a test
-
-A test stays only if it guards something that matters and nothing else guards it:
-a user-visible behavior, a data or safety guarantee, a protocol or persistence
-contract, or a fixed bug.
-
-- Do not add tests that restate copy, markup, class names, constants, callback
-  wiring or mock calls, or that check a visual nit. Visual fixes are proven with
-  before/after captures.
-- Keep one table row per code path. Read the implementation to find the
-  branches; rows that differ only by a literal on the same path add nothing.
-- Put pure logic in a Node test. Use a browser test only for DOM and React
-  behavior.
-- Keep a test that a `fix(...)` commit added, and say why with
-  `// regression: <sha> <subject>` when its title does not.
-- Before deleting a test that asserts behavior, break the logic it covered and
-  confirm a kept test fails. "Another test covers it", "same code path" and
-  "upstream deleted it" are guesses until that check passes.
-- Scient cases that extend an upstream test file go in a `.scient.` sibling
-  file, so the upstream file stays identical to upstream.
-
-Match verification to the claim: markup assertions do not establish native
-interaction, and mocked providers do not establish real-provider compatibility.
-Keep automated verification and the user's visual acceptance distinct.
-
-Verify user-visible frontend changes in a real browser or simulator without
-asking first. The primary agent does this once after integrating; subagents do
-not launch their own dev servers. Use synthetic state, never the user's live
-profile.
+Prove visual fixes with before/after captures; capture the before-state before editing.
+Verify user-visible frontend changes once after integration in a real browser or
+simulator without asking first, using synthetic state. The primary agent performs
+this pass; subagents do not launch duplicate dev servers. This does not override
+host/tool restrictions or authorize consequential actions. Mocks/markup do not prove
+real-provider/native compatibility; automated proof and the user's visual acceptance
+are separate.
 
 ## Git, upstream, and delivery
 
-- `origin` is `ScientFactory/scient-desktop`.
-  `upstream` is the official `pingdotgg/t3code` repository and must remain
-  fetch-only with push URL `DISABLED`.
-- No direct product commits to `main`. Commit, push, merge, and release according
-  to the authorized workflow.
-- Open PRs only when requested or already authorized by the conversation's
-  delivery workflow.
-- Before opening a PR, check its relationship to current main. Choose alignment
-  appropriate to branch ownership; do not automatically rebase shared history.
-- Queue a PR only when the user explicitly authorized its merge or auto-merge
-  is already enabled. Non-draft status and green CI alone are not authorization.
-  Never enable auto-merge on other PRs just because they look ready. Review the
-  current head and respect unresolved blockers; report conflicts instead of
-  resolving them. Use GitHub's merge queue without bypassing checks or jumping
-  the queue, and do not repeatedly realign queued branches. Before pushing a
-  correction to a queued PR, remove it from the queue and disable auto-merge;
-  review the new head before requesting delivery again. Return the PR/CI links
-  rather than monitoring unless the user asks.
-- For an already merge-authorized, reviewed PR with required checks green and no
-  conflicts, queue its current head; do not merge main into it only to obtain
-  CI reuse. A fresh queue run takes about as long as the PR run that update
-  would cost, and several such PRs can be queued together. Merge main first for
-  a conflict, for dependent work, or when the change is sensitive to what landed
-  since.
-- When the queue removes an authorized PR for `failed_checks` on an unchanged
-  head, and the failure matches an open entry in
-  [`docs/operations/ci-flakes.md`](docs/operations/ci-flakes.md), re-add it once
-  right away. Check the PR timeline first: if the queue had already removed this
-  head before, stop and tell the user. Never re-add after a typecheck, build, provenance or
-  unknown failure; investigate it, and record a new flake there before anything else.
-- Push a correction once its local checks pass, as one push. Each push cancels
-  and restarts the PR's CI, so a series of pushes while CI runs wastes the runs.
-- Preserve literal upstream ancestry. Upstream merges use dedicated branches
-  and `docs/internals/upstream-alignment-protocol.md`, separate from product
-  changes.
-- Before changing a protected Scient divergence, consult `UPSTREAM.md`,
-  `upstream-state.json`, and the relevant linked record.
-- Preserve compatibility-sensitive package names, environment variables,
-  storage paths, formats, and license notices. User-facing product language
-  is Scient.
-- Development work does not authorize changing cloud, telemetry, updater,
-  background-service, signing, or publication controls. Follow the relevant
-  release or operations procedure when that work is authorized.
+- `origin`: `ScientFactory/scient-desktop`. `upstream`: official `pingdotgg/t3code`,
+  fetch-only with push URL `DISABLED`. No direct product commits to `main`.
+- Commit/push/open/merge/release only within the authorized workflow. Before opening
+  a PR, check its relationship to current main. Choose alignment according to branch
+  ownership; do not automatically rebase shared history. Respect unresolved blockers;
+  report conflicts rather than resolving them without the relevant authorization.
+- Use GitHub's merge queue; do not bypass checks or jump the queue except through
+  the approved admin procedure below. Queue only a merge-authorized or already
+  auto-merge-enabled PR. When its current head is reviewed, required checks are green
+  and there are no conflicts, queue that head. Non-draft/green alone is not permission;
+  do not enable auto-merge on other PRs just because they look ready.
+- Do not merge main solely for CI reuse or repeatedly realign a queued branch:
+  an update adds another PR run and can serialize work the queue runs together.
+  Align for conflicts, dependencies or sensitivity to intervening changes. Before
+  correcting a queued PR, dequeue and disable auto-merge; verify and review the new
+  head before requesting delivery again. Push locally verified corrections together,
+  not as a series that repeatedly restarts CI. Return PR/CI links; do not monitor
+  unless asked.
+- After queue removal for `failed_checks` on an unchanged authorized head, inspect
+  its timeline and match every failure against open
+  [flake signatures](docs/operations/ci-flakes.md). If this is the first removal of
+  that head and it qualifies, re-add once right away. If it was removed earlier as
+  well, stop and tell the user. Never re-add a typecheck, build, provenance or unknown
+  failure. Investigate nonmatching failures and record any newly confirmed flake
+  with an owner before further delivery attempts. A row is not a failure waiver.
+- Admin-merge only with explicit approval for that PR's reviewed head and accepted
+  failures matching open flake signatures. All checks must have finished and the
+  head must contain current main. Recheck head, checks and main immediately before
+  merging; a head pin does not lock main. If these conditions cannot be maintained,
+  return to the queue. Every other underlying check must pass; red aggregates qualify
+  only when solely caused by accepted flakes. Never bypass unknown, build/typecheck,
+  format/lint, documentation or provenance failures.
+- The admin procedure's temporary protection change must be explicitly covered by
+  approval; one informed approval can cover both it and the merge, without a second
+  ritual prompt. The named procedure is: inspect the `Main merge queue` ruleset,
+  record its pre-state, dequeue the PR, temporarily add the `Repository admin` role
+  as bypass actor, merge the pinned head with a merge commit, then remove that bypass
+  at once in `finally`, on success or failure, and verify restoration. The role bypass
+  is repository-wide while present, not scoped by GitHub to this PR. This procedure
+  assumes no standing bypass actors; if live controls differ, stop and report rather
+  than disabling protection or substituting another actor. Preserve unrelated fields
+  and concurrent edits; do not blindly restore a stale full snapshot. `finally` is
+  not transactional: report unexpected state or unverified restoration immediately.
+  Verify inclusion on main, tell the user that already-queued runs restart, and give
+  the main-push CI link. This is not permission for release or unsolicited monitoring.
+- Repository protection, deployment environments, secrets, cloud/telemetry/updater,
+  background services, signing and publication require explicit scope. Generic merge
+  permission does not authorize those controls. When authorized, follow the relevant
+  operations/release runbook, not an improvised procedure.
+- Preserve literal upstream ancestry and dedicated alignment branches, separate
+  from product changes. Before changing protected Scient divergence, read
+  `UPSTREAM.md`, `upstream-state.json` and its linked record. User-facing language is Scient.
 
-Use conventional-commit titles. PR descriptions include the problem, resulting
-behavior, verification, documentation impact, platforms, and the model and
-harness used. Contribution policy and evidence requirements: `CONTRIBUTING.md`.
-
-PR descriptions and handbacks state the expected behavior on macOS, Windows and
-Linux, the checks that ran on each, and what remains unproven there. Put a
-difference between platforms first: a path that is macOS-only, skipped
-elsewhere, or never run on a real Windows or Linux computer, including gaps
-inherited from upstream. "Unaffected" needs its reason. CI with mocks does not
-qualify OS authenticators, installed browsers, live sites or installed builds.
+Use conventional-commit titles. PRs include problem, resulting behavior, verification,
+documentation impact and model/harness attribution; follow
+[CONTRIBUTING.md](CONTRIBUTING.md) and the PR template.
+PRs and handbacks state expected behavior, actual checks and unproven claims for
+macOS, Windows and Linux. Lead with differences, including inherited gaps, skipped
+paths and anything never run on a real Windows or Linux computer. Justify “unaffected.”
+Shared expected behavior may use one explanation; execution evidence and unproven
+platforms must remain explicit. CI mocks do not qualify OS authenticators, installed
+browsers, live sites or installed builds.
 
 ## Documentation
 
-Start at `docs/README.md` and update the existing owner:
-
-- `docs/user/`: user workflows and source material for public Scient Docs.
-- `docs/internals/`: capability, architecture, and development guidance,
-  with historical records distinguished from current instructions.
-- `docs/operations/`: development, maintenance, and release procedures.
-- `UPSTREAM.md`: upstream divergence and integration records.
-
-Relevant documentation may live here or in the separate Scient repository.
-Follow [this index](docs/README.md), [Scient's index](https://github.com/ScientFactory/Scient/blob/main/docs/README.md),
-and linked documents relevant to the task; check whether they describe current
-behavior, proposals, or history. Use an available local Scient checkout or
-authenticated repository access; private-repository access is not required for
-external contributions.
-
-Document durable behavior, decisions, and constraints—not a narration of the code.
-Update existing explanations when facts change; avoid field inventories and
-PR-by-PR histories.
-
-Keep temporary plans, transcripts, scratch files, and PR-only media out of
-committed source. Avoid duplicating implementation history already held in Git
-and PRs. Update documentation when its facts or user instructions change.
-
-PR descriptions include a `Documentation impact` declaration:
-`None — reason`, `Updated — paths`, or `Dependent PR — link`.
+Update the existing durable owner: `docs/user/` for Help, `docs/internals/` for
+architecture/guidance, `docs/operations/` for runbooks and `UPSTREAM.md` for divergence.
+Use [docs/README.md](docs/README.md) and its cross-repository links to locate relevant
+owners. Read them before working and check whether they describe current behavior,
+a proposal or history. Use available local/authenticated Scient access; external
+contributors need not obtain private-repository access.
+Keep current guidance distinct from proposals/history. Update facts/instructions when
+they change; document durable constraints, not field inventories or implementation
+narration. Keep temporary plans, transcripts, scratch and PR-only media out of
+committed source. PRs include `Documentation impact: None — reason`, `Updated — paths`,
+or `Dependent PR — repository and link`.
