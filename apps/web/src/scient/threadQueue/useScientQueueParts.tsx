@@ -8,7 +8,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { canSendQueuedRun, isQueueUsageLimitProven } from "@t3tools/shared/scientQueuedRunSend";
-import { CircleAlertIcon, PencilIcon } from "lucide-react";
+import { CircleAlertIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { ComposerBanner } from "../../components/chat/ComposerBanner";
@@ -29,14 +29,13 @@ const FAILED_START_NOTICE =
 
 /**
  * Scient's additions to upstream's queue control: the held-queue Send rule, the failed-start
- * Retry, readable command failures, and the "Editing queued message" row after extraction.
+ * Retry and readable command failures.
  */
 export function useScientQueueParts(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly projection: Projection | undefined;
   readonly workflow: ThreadQueueWorkflowState | null;
-  readonly editingRunId: RunId | null;
   readonly error: string | null | undefined;
   readonly setBusyRunId: (runId: RunId | null) => void;
 }) {
@@ -106,59 +105,31 @@ export function useScientQueueParts(input: {
     isBusy: () => busyRef.current,
     notice: actionError ?? input.error ?? (failedHead ? FAILED_START_NOTICE : null),
     retry,
-    // Extraction for an edit removes the queued run while its draft is still open.
-    detachedEdit:
-      input.editingRunId !== null && !queued.some(({ run }) => run.id === input.editingRunId),
   };
 }
 
-/** The notice and edit rows shown above the queued messages. */
+/** The notice row shown above the queued messages. */
 export function ScientQueueNotices(props: {
   readonly parts: ReturnType<typeof useScientQueueParts>;
   readonly busy: boolean;
-  readonly onCancelEdit: () => void;
 }) {
-  const { detachedEdit, notice, retry } = props.parts;
-  return (
-    <>
-      {detachedEdit ? (
-        <ComposerBanner.Row>
-          <ComposerBanner.Icon>
-            <PencilIcon />
-          </ComposerBanner.Icon>
-          <ComposerBanner.Content className="text-muted-foreground">
-            Editing queued message
-          </ComposerBanner.Content>
-          <ComposerBanner.Actions>
-            <Button
-              size="xs"
-              variant="ghost"
-              aria-label="Cancel editing queued message"
-              onClick={props.onCancelEdit}
-            >
-              Cancel
-            </Button>
-          </ComposerBanner.Actions>
-        </ComposerBanner.Row>
-      ) : null}
-      {notice === null ? null : (
-        <ComposerBanner.Row role="alert">
-          <ComposerBanner.Icon className="text-destructive">
-            <CircleAlertIcon />
-          </ComposerBanner.Icon>
-          <ComposerBanner.Content className="block text-destructive wrap-anywhere">
-            {notice}
-          </ComposerBanner.Content>
-          {retry === null ? null : (
-            <ComposerBanner.Actions>
-              <Button size="xs" variant="outline" disabled={props.busy} onClick={retry}>
-                Retry
-              </Button>
-            </ComposerBanner.Actions>
-          )}
-        </ComposerBanner.Row>
+  const { notice, retry } = props.parts;
+  return notice === null ? null : (
+    <ComposerBanner.Row role="alert">
+      <ComposerBanner.Icon className="text-destructive">
+        <CircleAlertIcon />
+      </ComposerBanner.Icon>
+      <ComposerBanner.Content className="block text-destructive wrap-anywhere">
+        {notice}
+      </ComposerBanner.Content>
+      {retry === null ? null : (
+        <ComposerBanner.Actions>
+          <Button size="xs" variant="outline" disabled={props.busy} onClick={retry}>
+            Retry
+          </Button>
+        </ComposerBanner.Actions>
       )}
-    </>
+    </ComposerBanner.Row>
   );
 }
 

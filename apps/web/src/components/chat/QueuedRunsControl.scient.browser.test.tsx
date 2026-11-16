@@ -246,32 +246,6 @@ it("says why a queue command failed", async () => {
   );
 });
 
-it.each([false, true])(
-  "keeps one Cancel after extraction removes the edited row (another row remains: %s)",
-  async (hasTail) => {
-    const queue = heldQueue({});
-    const extracted = {
-      ...queue,
-      runs: queue.runs.flatMap((run) =>
-        run.id === RunId.make("run-2")
-          ? [{ ...run, status: "cancelled" as const, queueHeld: false, queuePosition: null }]
-          : hasTail
-            ? [run]
-            : [],
-      ),
-    };
-    setup(extracted);
-    await using screen = await render(
-      <QueuedRunsControl {...props} editingRunId={RunId.make("run-2")} />,
-    );
-    expect(
-      screen.getByRole("button", { name: "Cancel editing queued message" }).elements(),
-    ).toHaveLength(1);
-    expect(screen.container.textContent).not.toContain("Message 2");
-    expect(screen.getByRole("listitem").elements()).toHaveLength(hasTail ? 1 : 0);
-  },
-);
-
 it("previews a follow-up being admitted, saying Queuing… only when admission is slow", async () => {
   setup({ ...base, runs: [], messages: [] });
   const preview = (accepted: boolean) => [

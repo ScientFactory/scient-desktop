@@ -130,7 +130,6 @@ export function QueuedRunsControl({
     threadId: props.threadId,
     projection,
     workflow,
-    editingRunId: props.editingRunId,
     error: props.error,
     setBusyRunId,
   });
@@ -247,16 +246,12 @@ export function QueuedRunsControl({
     },
   }));
 
-  // SCIENT-FORK:START queue-scient-parts — notices and the detached-edit row lead the queue; the
-  // variable sizes their ComposerBanner rows outside a composer banner.
+  // SCIENT-FORK:START queue-scient-parts — notices lead the queue; the variable sizes their
+  // ComposerBanner rows outside a composer banner.
   const scientNotices =
-    scient.notice === null && !scient.detachedEdit ? null : (
+    scient.notice === null ? null : (
       <div className="flex flex-col gap-1 text-xs [--composer-banner-icon-column:--spacing(6)]">
-        <ScientQueueNotices
-          parts={scient}
-          busy={busyRunId !== null}
-          onCancelEdit={props.onCancelEdit}
-        />
+        <ScientQueueNotices parts={scient} busy={busyRunId !== null} />
       </div>
     );
   if (items.length === 0) {

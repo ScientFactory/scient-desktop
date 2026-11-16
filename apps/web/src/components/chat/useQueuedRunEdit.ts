@@ -22,6 +22,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+// SCIENT-FORK: Scient skill mentions.
+import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import {
   restoreAttachmentOnlyBootstrapPrompt,
   stripAttachmentOnlyBootstrapPrompt,
@@ -174,6 +176,8 @@ async function submitQueuedRunEdit(input: {
         threadId: editing.threadId,
         runId: editing.runId,
         text: restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0),
+        // SCIENT-FORK: an edited message's `$skill` mentions choose its Scient skills.
+        selectedScientSkillNames: collectSelectedScientSkillNames(content.prompt),
         edit: {
           messageId: editing.messageId,
           attachments: uploads,

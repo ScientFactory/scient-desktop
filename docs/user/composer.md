@@ -434,7 +434,9 @@ the original request never reached the agent, Resume sends that request again.
 The pencil on a queued message opens it in the composer for editing. The original message
 stays in the queue until you save, and it is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
-The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
+The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. While a
+turn is running, the opposite-action shortcut or a `Cmd`-click (`Ctrl`-click on Windows and Linux)
+saves the message and then steers it into that turn. Whatever
 you had typed in the composer before starting the edit is restored afterwards. If the queued
 message starts or is removed while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.

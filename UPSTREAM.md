@@ -276,7 +276,7 @@ The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
 `queuedRunsControl` slot. Scient's additions live in
 `scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
 `SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
-command errors, the edit row after extraction and the delayed "Queuing…" status. Take
+command errors and the delayed "Queuing…" status. Take
 upstream's changes to the rest of the file as they are, including its single Send now action
 without reordering; agents still reorder through `scient_queue`.
 

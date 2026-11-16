@@ -4,7 +4,11 @@
 
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useComposerDraftStore, type ComposerThreadTarget } from "../../composerDraftStore.ts";
+import {
+  isQueuedRunEditDraftId,
+  useComposerDraftStore,
+  type ComposerThreadTarget,
+} from "../../composerDraftStore.ts";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast.tsx";
 import { buildVoiceDraftReplacement } from "./voiceComposerInsert.ts";
 
@@ -63,8 +67,15 @@ export function appendVoiceTranscriptToStoredDraft(
 ): boolean {
   const store = useComposerDraftStore.getState();
   // A closed new-thread draft has no session; writing would leave an orphan no
-  // route can show. Server threads keep their own draft key.
-  if (typeof target === "string" && store.getDraftSession(target) === null) return false;
+  // route can show. Server threads keep their own draft key. A queued-message edit
+  // takes the transcript while its draft is still open.
+  if (
+    typeof target === "string" &&
+    (isQueuedRunEditDraftId(target)
+      ? store.getComposerDraft(target) === null
+      : store.getDraftSession(target) === null)
+  )
+    return false;
   const current = store.getComposerDraft(target)?.prompt ?? "";
   store.setPrompt(target, buildVoiceDraftReplacement(current, text).replacement);
   return true;
