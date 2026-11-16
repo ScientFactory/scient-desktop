@@ -17,6 +17,8 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -52,6 +54,10 @@ import {
 import { make as makeRequests, ProviderRuntimeRequests } from "./ProviderRuntimeRequests.ts";
 import { make as makeRecovery } from "./ProviderRuntimeRecovery.ts";
 import * as ServerConfig from "../../config.ts";
+import { ProcessRunner } from "../../processRunner.ts";
+import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
+import { make as makeAgentBackground } from "./ScientAgentBackgroundRuntime.ts";
+import * as AgentPolicy from "./ScientAgentRuntimePolicy.ts";
 
 const CODEX = ProviderDriverKind.make("codex");
 const INSTANCE = ProviderInstanceId.make("codex");
@@ -139,6 +145,8 @@ function makeHarness(
     readonly isBusy?: ProviderActivityShape["isBusy"];
     readonly closeInstance?: ProviderSessionManagerV2Shape["closeInstance"];
     readonly requests?: ProviderRuntimeRequests["Service"];
+    readonly agentPolicy?: AgentPolicy.ScientAgentRuntimePolicy["Service"];
+    readonly observeRegistryChanges?: boolean;
   } = {},
 ) {
   return Effect.gen(function* () {
@@ -209,7 +217,9 @@ function makeHarness(
       setProviderConnectionOperation: () => SubscriptionRef.get(providersRef),
       setProviderAuthenticationFailure: () => SubscriptionRef.get(providersRef),
       setProviderManagedRuntimeSummary: setRuntime,
-      streamChanges: Stream.empty,
+      streamChanges: hooks.observeRegistryChanges
+        ? SubscriptionRef.changes(providersRef)
+        : Stream.empty,
     };
     const coordinator = yield* makeLifecycleCoordinator;
     const lifecycleReleaseCountRef = yield* SubscriptionRef.make(0);
@@ -240,6 +250,13 @@ function makeHarness(
           settled: (input) =>
             SubscriptionRef.update(requestLogRef, (log) => [...log, `settled:${input.outcome}`]),
         });
+    const policyRef = yield* Ref.make<AgentPolicy.BackgroundRecord>({});
+    const agentPolicy =
+      hooks.agentPolicy ??
+      AgentPolicy.ScientAgentRuntimePolicy.of({
+        read: Ref.get(policyRef),
+        update: (change) => Ref.modify(policyRef, (before) => [before, change(before)]),
+      });
     const providerSessionsLayer = Layer.mock(ProviderSessionManagerV2)({
       closeInstance: (instanceId) =>
         Ref.update(stopCountRef, (count) => count + 1).pipe(
@@ -259,6 +276,9 @@ function makeHarness(
                 requestsLayer,
                 NodeServices.layer,
                 NodeCrypto.layer,
+                ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-manager-layer-" }).pipe(
+                  Layer.provide(NodeServices.layer),
+                ),
               ),
             ),
           ),
@@ -267,6 +287,7 @@ function makeHarness(
           Effect.map((services) => Context.get(services, ProviderRuntimeManager)),
         )
       : yield* make().pipe(
+          Effect.provideService(AgentPolicy.ScientAgentRuntimePolicy, agentPolicy),
           Effect.provideService(ProviderRegistry, registry),
           Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
           Effect.provideService(ProviderActivity, activity),
@@ -283,6 +304,7 @@ function makeHarness(
     return {
       manager,
       registry,
+      agentPolicy,
       providersRef,
       reloadCountRef,
       reloadedInstancesRef,
@@ -308,6 +330,48 @@ function installPlan() {
     message: "Install reviewed Codex.",
   };
 }
+
+const AGENT = ProviderDriverKind.make("scient");
+const agentRuntime: ProviderRuntimeSummary = {
+  ...missingRuntime,
+  qualifiedVersion: "0.1.6",
+  availableManagedVersion: "0.1.6",
+  actions: ["install", "update", "repair"],
+};
+const agentProvider: ServerProvider = {
+  ...provider,
+  driver: AGENT,
+  connection: { ...provider.connection!, runtime: agentRuntime },
+};
+
+const agentTestLayer = (prefix: string) =>
+  ServerConfig.layerTest(NodeOS.tmpdir(), { prefix }).pipe(
+    Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
+  );
+
+const startAgentLoop = Effect.fn("test.startAgentLoop")(function* (
+  manager: ProviderRuntimeManager["Service"],
+  registry: ProviderRegistry["Service"],
+  policy: AgentPolicy.ScientAgentRuntimePolicy["Service"],
+) {
+  yield* makeAgentBackground().pipe(
+    Effect.provideService(ProviderRuntimeManager, manager),
+    Effect.provideService(ProviderRegistry, registry),
+    Effect.provideService(AgentPolicy.ScientAgentRuntimePolicy, policy),
+    Effect.provide(Layer.mergeAll(Layer.mock(ProcessRunner)({}), Layer.mock(AnalyticsService)({}))),
+    Effect.provideServiceEffect(
+      ServerConfig.ServerConfig,
+      ServerConfig.ServerConfig.pipe(
+        Effect.map((config) => ({ ...config, mode: "desktop" as const })),
+      ),
+    ),
+    Effect.provideService(HostProcess.Platform, "darwin"),
+  );
+});
+
+const loadAgentPolicy = Layer.build(AgentPolicy.layer).pipe(
+  Effect.map((services) => Context.get(services, AgentPolicy.ScientAgentRuntimePolicy)),
+);
 
 describe("ProviderRuntimeManager", () => {
   it.effect("publishes one managed install and reloads every instance of the driver", () =>
@@ -1334,6 +1398,296 @@ describe("ProviderRuntimeManager", () => {
           ),
         ),
       ),
+  );
+
+  it.effect.each(["install", "update", "repair"] as const)(
+    "keeps pending Agent %s cancellation across restart and automatic startup",
+    (action) =>
+      Effect.gen(function* () {
+        const requests = yield* makeRequests();
+        const request = {
+          requestId: "pending-agent",
+          instanceId: INSTANCE,
+          driver: AGENT,
+          action,
+          catalogRevision: "reviewed:1",
+        };
+        yield* requests.requested(request);
+        yield* requests.settled({
+          ...request,
+          outcome: "retryable",
+          retryAfterMs: 2 * 60 * 60_000,
+        });
+        const restarted = yield* makeRequests();
+        const policy = yield* loadAgentPolicy;
+        const runs = yield* Ref.make(0);
+        const summary: ProviderRuntimeSummary = {
+          ...agentRuntime,
+          source: action === "install" ? "missing" : "scient_managed",
+          managedVersion: action === "install" ? null : "0.1.5",
+        };
+        const { manager, registry } = yield* makeHarness(
+          {
+            getSummary: Effect.succeed(summary),
+            plan: () => Effect.succeed({ ...installPlan(), action, version: "0.1.6" }),
+            run: () => Ref.update(runs, (count) => count + 1),
+          },
+          [{ ...agentProvider, connection: { ...agentProvider.connection!, runtime: summary } }],
+          undefined,
+          undefined,
+          undefined,
+          { requests: restarted, agentPolicy: policy, observeRegistryChanges: true },
+        );
+        yield* startAgentLoop(manager, registry, policy);
+        const cancelled = yield* manager.cancel({
+          instanceId: INSTANCE,
+          requestId: request.requestId,
+        });
+        assert.isNull(cancelled.providers[0]?.connection?.runtime?.operation);
+        assert.isNull(cancelled.providers[0]?.connection?.runtime?.pendingRecovery);
+        assert.deepStrictEqual(yield* (yield* makeRequests()).list, []);
+        const persisted = yield* (yield* loadAgentPolicy).read;
+        assert.deepStrictEqual(
+          persisted,
+          action === "update"
+            ? { skippedVersion: "0.1.6" }
+            : action === "repair"
+              ? { userStopped: true, skippedVersion: "0.1.6" }
+              : { userStopped: true },
+        );
+        yield* TestClock.adjust("61 seconds");
+        assert.strictEqual(yield* Ref.get(runs), 0);
+      }).pipe(Effect.provide(agentTestLayer("scient-agent-pending-cancel-"))),
+  );
+
+  it.effect.each(["reviewed:1", "reviewed:2"])(
+    "defers automatic Agent starts, including shared instances, until requested recovery revalidates %s",
+    (reviewedPlan) =>
+      Effect.gen(function* () {
+        const requests = yield* makeRequests();
+        const request = {
+          requestId: "cooling-agent",
+          instanceId: INSTANCE,
+          driver: AGENT,
+          action: "install" as const,
+          catalogRevision: "reviewed:1",
+        };
+        yield* requests.requested(request);
+        yield* requests.settled({
+          ...request,
+          outcome: "retryable",
+          retryAfterMs: 2 * 60 * 60_000,
+        });
+        const runs = yield* Ref.make(0);
+        const revision = yield* Ref.make("reviewed:1");
+        const policy = yield* loadAgentPolicy;
+        const { manager, registry, providersRef, lifecycleReleaseCountRef } = yield* makeHarness(
+          {
+            getSummary: Effect.succeed(agentRuntime),
+            plan: () =>
+              Ref.get(revision).pipe(
+                Effect.map((catalogRevision) => ({
+                  ...installPlan(),
+                  version: "0.1.6",
+                  catalogRevision,
+                })),
+              ),
+            run: () => Ref.update(runs, (count) => count + 1),
+          },
+          [agentProvider, { ...agentProvider, instanceId: SECOND_INSTANCE }],
+          undefined,
+          undefined,
+          undefined,
+          { requests, agentPolicy: policy, observeRegistryChanges: true },
+        );
+        yield* startAgentLoop(manager, registry, policy);
+        yield* makeRecovery().pipe(
+          Effect.provideService(ProviderRuntimeRequests, requests),
+          Effect.provideService(ProviderRuntimeManager, manager),
+          Effect.provideService(ProviderRegistry, registry),
+        );
+        for (const instanceId of [INSTANCE, SECOND_INSTANCE]) {
+          const error = yield* manager
+            .startInBackground({
+              instanceId,
+              action: "install",
+              catalogRevision: "reviewed:1",
+              attempt: 1,
+            })
+            .pipe(Effect.flip);
+          assert.strictEqual(error.reason, "runtime_busy");
+        }
+        yield* TestClock.adjust("61 seconds");
+        assert.strictEqual(yield* Ref.get(runs), 0);
+        yield* Ref.set(revision, reviewedPlan);
+        yield* TestClock.adjust(2 * 60 * 60_000 - 61_000);
+        if (reviewedPlan === "reviewed:1") {
+          yield* awaitState(lifecycleReleaseCountRef, (count) => count === 1);
+          assert.strictEqual(yield* Ref.get(runs), 1);
+          const operation = (yield* registry.getProviders)[0]?.connection?.runtime?.operation;
+          assert.strictEqual(operation?.status, "succeeded");
+          assert.isTrue(operation?.background);
+        } else {
+          yield* awaitState(
+            providersRef,
+            (providers) => providers[0]?.connection?.runtime?.pendingRecovery === null,
+          );
+          assert.strictEqual(yield* Ref.get(runs), 0);
+        }
+        assert.deepStrictEqual(yield* (yield* makeRequests()).list, []);
+      }).pipe(Effect.provide(agentTestLayer("scient-agent-cooldown-"))),
+  );
+
+  it.effect.each([
+    { phase: "pending", file: "requests.json" },
+    { phase: "active", file: "requests.json" },
+    { phase: "pending", file: "scient-agent.json" },
+    { phase: "active", file: "scient-agent.json" },
+  ] as const)(
+    "does not acknowledge $phase Agent cancellation when $file cannot be written",
+    ({ phase, file }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const denied = yield* Ref.make(false);
+        const guardedFs = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            Ref.get(denied).pipe(
+              Effect.flatMap((fail) =>
+                fail && to.endsWith(file)
+                  ? Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "PermissionDenied",
+                        module: "FileSystem",
+                        method: "rename",
+                        pathOrDescriptor: to,
+                      }),
+                    )
+                  : fs.rename(from, to),
+              ),
+            ),
+        });
+        const requests = yield* makeRequests().pipe(
+          Effect.provideService(FileSystem.FileSystem, guardedFs),
+        );
+        const request = {
+          requestId: "cancel-denied",
+          instanceId: INSTANCE,
+          driver: AGENT,
+          action: "install" as const,
+          catalogRevision: "reviewed:1",
+        };
+        yield* requests.requested(request);
+        const policy = yield* loadAgentPolicy.pipe(
+          Effect.provideService(FileSystem.FileSystem, guardedFs),
+        );
+        const running = yield* Deferred.make<void>();
+        const { manager, coordinator } = yield* makeHarness(
+          {
+            getSummary: Effect.succeed(agentRuntime),
+            plan: () => Effect.succeed({ ...installPlan(), version: "0.1.6" }),
+            run: () => Deferred.succeed(running, undefined).pipe(Effect.andThen(Effect.never)),
+          },
+          [agentProvider],
+          undefined,
+          undefined,
+          undefined,
+          { requests, agentPolicy: policy },
+        );
+        const background =
+          phase === "active"
+            ? yield* manager.startInBackground({ ...request, attempt: 1 }).pipe(Effect.forkChild)
+            : undefined;
+        if (background) yield* Deferred.await(running);
+        const before = yield* requests.list;
+        yield* Ref.set(denied, true);
+        const error = yield* manager
+          .cancel({ instanceId: INSTANCE, requestId: request.requestId })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.reason, "runtime_operation_failed");
+        assert.deepStrictEqual(yield* requests.list, before);
+        assert.deepStrictEqual(yield* (yield* makeRequests()).list, before);
+        if (background) assert.isDefined(yield* coordinator.current(INSTANCE));
+        yield* Ref.set(denied, false);
+        yield* manager.cancel({ instanceId: INSTANCE, requestId: request.requestId });
+        if (background) assert.strictEqual(yield* Fiber.join(background), "cancelled");
+        assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+        assert.deepStrictEqual(yield* (yield* makeRequests()).list, []);
+        assert.deepStrictEqual(yield* (yield* loadAgentPolicy).read, { userStopped: true });
+      }).pipe(Effect.provide(agentTestLayer("scient-agent-cancel-denied-"))),
+  );
+
+  it.effect(
+    "settles background ownership after a failed persistence write and recovers on a later pass",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const denied = yield* Ref.make(false);
+        const guardedFs = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            Ref.get(denied).pipe(
+              Effect.flatMap((fail) =>
+                fail && to.endsWith("requests.json")
+                  ? Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "PermissionDenied",
+                        module: "FileSystem",
+                        method: "rename",
+                        pathOrDescriptor: to,
+                      }),
+                    )
+                  : fs.rename(from, to),
+              ),
+            ),
+        });
+        const requests = yield* makeRequests().pipe(
+          Effect.provideService(FileSystem.FileSystem, guardedFs),
+        );
+        const request = {
+          requestId: "settlement-denied",
+          instanceId: INSTANCE,
+          driver: CODEX,
+          action: "install" as const,
+          catalogRevision: "reviewed:1",
+        };
+        yield* requests.requested(request);
+        const runs = yield* Ref.make(0);
+        const { manager, registry, coordinator, lifecycleReleaseCountRef } = yield* makeHarness(
+          {
+            getSummary: Effect.succeed(missingRuntime),
+            plan: () => Effect.succeed(installPlan()),
+            run: () =>
+              Ref.update(runs, (count) => count + 1).pipe(Effect.andThen(Ref.set(denied, true))),
+          },
+          [provider],
+          undefined,
+          undefined,
+          undefined,
+          { requests },
+        );
+        assert.strictEqual(
+          yield* manager.startInBackground({ ...request, attempt: 1 }),
+          "succeeded",
+        );
+        yield* awaitState(lifecycleReleaseCountRef, (count) => count === 1);
+        assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+        assert.lengthOf(yield* requests.list, 1);
+        assert.lengthOf(yield* (yield* makeRequests()).list, 1);
+        yield* makeRecovery().pipe(
+          Effect.provideService(ProviderRuntimeRequests, requests),
+          Effect.provideService(ProviderRuntimeManager, manager),
+          Effect.provideService(ProviderRegistry, registry),
+        );
+        // A failed lease write must not terminate recovery or start an unleased operation.
+        yield* TestClock.adjust("7 minutes");
+        assert.strictEqual(yield* Ref.get(runs), 1);
+        yield* Ref.set(denied, false);
+        yield* TestClock.adjust("1 minute");
+        yield* awaitState(lifecycleReleaseCountRef, (count) => count === 2);
+        assert.strictEqual(yield* Ref.get(runs), 2);
+        assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+      }).pipe(Effect.provide(agentTestLayer("scient-settlement-denied-"))),
   );
 
   it.effect("cancels a requested foreground startup before its operation is published", () =>

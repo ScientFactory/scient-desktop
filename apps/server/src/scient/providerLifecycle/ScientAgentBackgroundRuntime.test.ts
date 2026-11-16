@@ -10,9 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -28,8 +26,9 @@ import {
   firstPickState,
   make,
   parseMeteredOutput,
-  recordAfterUserChange,
 } from "./ScientAgentBackgroundRuntime.ts";
+
+import { recordAfterUserChange, ScientAgentRuntimePolicy } from "./ScientAgentRuntimePolicy.ts";
 
 const INSTANCE = ProviderInstanceId.make("scient");
 
@@ -108,6 +107,19 @@ describe("backgroundRuntimeAction", () => {
       backgroundRuntimeAction(scientAgent(), { failures: { version: "0.1.5", count: 5 } }).kind,
       "start",
     );
+    assert.deepStrictEqual(
+      backgroundRuntimeAction(
+        scientAgent({
+          pendingRecovery: {
+            requestId: "reviewed",
+            action: "install",
+            nextRetryAt: "2026-11-16T02:00:00.000Z",
+          },
+        }),
+        {},
+      ),
+      { kind: "wait", reason: "requested-recovery" },
+    );
   });
 });
 
@@ -130,6 +142,12 @@ describe("recordAfterUserChange", () => {
         skippedVersion: "0.1.6",
       }),
     ).toEqual({});
+    expect(recordAfterUserChange({ action: "repair", status: "cancelled" }, "0.1.6")?.({})).toEqual(
+      {
+        userStopped: true,
+        skippedVersion: "0.1.6",
+      },
+    );
     expect(recordAfterUserChange({ action: "repair", status: "failed" }, "0.1.6")).toBeUndefined();
   });
 });
@@ -226,23 +244,19 @@ describe("ScientAgentBackgroundRuntime", () => {
             Layer.mock(AnalyticsService)({
               record: (event) => Ref.update(events, (all) => [...all, event]),
             }),
-            FileSystem.layerNoop({
-              makeDirectory: () => Effect.void,
-              readFileString: (path) =>
-                SubscriptionRef.get(record).pipe(
-                  Effect.filterOrFail(
-                    (text): text is string => text !== null,
-                    () =>
-                      PlatformError.systemError({
-                        _tag: "NotFound",
-                        module: "FileSystem",
-                        method: "readFileString",
-                        pathOrDescriptor: path,
-                      }),
-                  ),
+            Layer.succeed(
+              ScientAgentRuntimePolicy,
+              ScientAgentRuntimePolicy.of({
+                read: SubscriptionRef.get(record).pipe(
+                  Effect.map((text) => JSON.parse(text ?? "{}")),
                 ),
-              writeFileString: (_path, text) => SubscriptionRef.set(record, text),
-            }),
+                update: (change) =>
+                  SubscriptionRef.modify(record, (text) => {
+                    const before = JSON.parse(text ?? "{}");
+                    return [before, JSON.stringify(change(before))];
+                  }),
+              }),
+            ),
           ),
         ),
         Effect.provideServiceEffect(

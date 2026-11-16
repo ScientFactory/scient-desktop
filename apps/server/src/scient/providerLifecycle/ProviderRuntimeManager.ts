@@ -42,7 +42,13 @@ import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSession
 import { ProviderActivity } from "./ProviderActivity.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
-import { ProviderRuntimeRequests, type RuntimeRequest } from "./ProviderRuntimeRequests.ts";
+import {
+  ProviderRuntimeRequests,
+  sameRuntime,
+  type RuntimeRequest,
+} from "./ProviderRuntimeRequests.ts";
+import * as ScientAgentRuntimePolicy from "./ScientAgentRuntimePolicy.ts";
+import { recordAfterUserChange } from "./ScientAgentRuntimePolicy.ts";
 
 export interface ProviderRuntimeManagerShape {
   readonly plan: (
@@ -203,6 +209,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const lifecycleCoordinator = yield* ProviderLifecycleCoordinator;
   const activity = yield* ProviderActivity;
   const requests = yield* ProviderRuntimeRequests;
+  const agentPolicy = yield* ScientAgentRuntimePolicy.ScientAgentRuntimePolicy;
   const random = yield* SecureRandom.SecureRandom;
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveRuntimeOperation>>(
     new Map(),
@@ -294,6 +301,35 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     }
     return { actions, snapshot, provider };
   });
+
+  const persistCancellation = Effect.fn("ProviderRuntimeManager.persistCancellation")(function* (
+    target: RuntimeTarget,
+    action: ProviderManagedRuntimeAction,
+    requestId: string | undefined,
+  ) {
+    if (target.provider === ProviderDriverKind.make("scient")) {
+      const runtime = target.snapshot.connection?.runtime;
+      const change = recordAfterUserChange(
+        { action, status: "cancelled" },
+        runtime?.availableManagedVersion ?? runtime?.qualifiedVersion ?? null,
+      );
+      if (change) yield* agentPolicy.update(change);
+    }
+    yield* requests.settled({
+      instanceId: target.snapshot.instanceId,
+      driver: target.provider,
+      outcome: "cancelled",
+      ...(requestId ? { requestId } : {}),
+    });
+  });
+
+  const persistenceActionError = (target: RuntimeTarget, message: string) =>
+    makeError({
+      provider: target.provider,
+      instanceId: target.snapshot.instanceId,
+      reason: "runtime_operation_failed",
+      message,
+    });
 
   const takeIfCurrent = (instanceId: ProviderInstanceId, operationId: string) =>
     Ref.modify(activeRef, (active) => {
@@ -567,6 +603,20 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       yield* Deferred.succeed(outcome, "cancelled");
       return yield* Effect.interrupt;
     }
+    if (
+      background &&
+      !background.requestId &&
+      (yield* requests.list).some((request) =>
+        sameRuntime(request, { instanceId: input.instanceId, driver: target.provider }),
+      )
+    ) {
+      return yield* makeError({
+        provider: target.provider,
+        instanceId: input.instanceId,
+        reason: "runtime_busy",
+        message: "A requested runtime recovery owns this runtime.",
+      });
+    }
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
       provider: target.provider,
@@ -581,13 +631,15 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       });
     }
     if (background === undefined) {
-      yield* requests.requested({
-        requestId: operationId,
-        instanceId: input.instanceId,
-        driver: target.provider,
-        action: input.action,
-        catalogRevision: input.catalogRevision,
-      });
+      yield* requests
+        .requested({
+          requestId: operationId,
+          instanceId: input.instanceId,
+          driver: target.provider,
+          action: input.action,
+          catalogRevision: input.catalogRevision,
+        })
+        .pipe(Effect.mapError((error) => persistenceActionError(target, error.message)));
     }
     const startedAt = yield* nowIso;
     const baseSummary = yield* target.actions.getSummary.pipe(
@@ -629,7 +681,9 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         requested.action !== input.action ||
         requested.catalogRevision !== input.catalogRevision
       ) {
-        yield* requests.update(background.requestId, () => undefined);
+        yield* requests
+          .update(background.requestId, () => undefined)
+          .pipe(Effect.mapError((error) => persistenceActionError(target, error.message)));
         yield* Deferred.succeed(outcome, "cancelled");
         return yield* Effect.interrupt;
       }
@@ -852,18 +906,27 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
               }).pipe(
                 Effect.catchCause(() => publishUnexpectedFailure),
                 Effect.andThen(
-                  requests.settled({
-                    instanceId: input.instanceId,
-                    driver: target.provider,
-                    ...(active.requestId ? { requestId: active.requestId } : {}),
-                    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
-                    outcome:
-                      completion._tag === "Success"
-                        ? "succeeded"
-                        : managedRuntimeFailureRetryable(completion.failure, lastStage)
-                          ? "retryable"
-                          : "failed",
-                  }),
+                  requests
+                    .settled({
+                      instanceId: input.instanceId,
+                      driver: target.provider,
+                      ...(active.requestId ? { requestId: active.requestId } : {}),
+                      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+                      outcome:
+                        completion._tag === "Success"
+                          ? "succeeded"
+                          : managedRuntimeFailureRetryable(completion.failure, lastStage)
+                            ? "retryable"
+                            : "failed",
+                    })
+                    .pipe(
+                      Effect.catchTags({
+                        ProviderRuntimeRequestsPersistenceError: () =>
+                          Effect.logWarning(
+                            "Runtime request settlement could not be persisted; retaining recovery intent",
+                          ),
+                      }),
+                    ),
                 ),
                 Effect.andThen(
                   Deferred.succeed(outcome, completion._tag === "Success" ? "succeeded" : "failed"),
@@ -1057,18 +1120,24 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           ? candidate.operationId === input.operationId
           : pending !== undefined && candidate.requestId === input.requestId);
       if (!matchesActive && pending) {
-        yield* requests.update(pending.requestId, () => undefined);
+        yield* persistCancellation(target, pending.action, pending.requestId).pipe(
+          Effect.mapError((error) => persistenceActionError(target, error.message)),
+        );
         for (const [operationId, starting] of yield* Ref.get(startupsRef)) {
           if (
             operationId === pending.requestId ||
             starting.background?.requestId === pending.requestId
           ) {
+            if ((yield* Ref.get(activeRef)).get(starting.instanceId)?.operationId === operationId)
+              continue;
             yield* interruptStartup(operationId, "cancelled");
           }
         }
         candidate = (yield* Ref.get(activeRef)).get(input.instanceId);
         if (candidate?.requestId !== pending.requestId) {
-          yield* syncPendingRecovery();
+          yield* syncPendingRecovery().pipe(
+            Effect.mapError((error) => persistenceActionError(target, error.message)),
+          );
           return { providers: yield* providerRegistry.getProviders };
         }
         matchesActive = true;
@@ -1086,6 +1155,10 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         Effect.gen(function* () {
           const current = (yield* Ref.get(activeRef)).get(input.instanceId);
           if (current?.operationId !== operationId) return undefined;
+          if (yield* Ref.get(current.committedRef)) return "committed" as const;
+          yield* persistCancellation(target, current.action, current.requestId).pipe(
+            Effect.mapError((error) => persistenceActionError(target, error.message)),
+          );
           if (yield* Ref.get(current.committedRef)) return "committed" as const;
           return yield* takeIfCurrent(input.instanceId, operationId);
         }),
@@ -1106,12 +1179,6 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider runtime operation is no longer active.",
         });
       }
-      yield* requests.settled({
-        instanceId: input.instanceId,
-        driver: target.provider,
-        outcome: "cancelled",
-        ...(claim.requestId ? { requestId: claim.requestId } : {}),
-      });
       yield* interruptStartup(claim.operationId, "cancelled");
       const providers = yield* settleActive(
         claim,
@@ -1121,6 +1188,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       );
       return { providers };
     },
+    Effect.uninterruptible,
   );
 
   // Instances of one driver share its runtime, so one reselection per driver
@@ -1213,15 +1281,31 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
 
   yield* syncPendingRecovery();
   yield* requests.changes.pipe(
-    Stream.runForEach(() => syncPendingRecovery()),
+    Stream.runForEach(() =>
+      syncPendingRecovery().pipe(
+        Effect.catchTags({
+          ProviderRuntimeRequestsPersistenceError: () =>
+            Effect.logWarning("Runtime recovery intent could not be pruned"),
+        }),
+      ),
+    ),
     Effect.forkScoped,
   );
   yield* providerRegistry.streamChanges.pipe(
-    Stream.runForEach(() => syncPendingRecovery()),
+    Stream.runForEach(() =>
+      syncPendingRecovery().pipe(
+        Effect.catchTags({
+          ProviderRuntimeRequestsPersistenceError: () =>
+            Effect.logWarning("Runtime recovery intent could not be pruned"),
+        }),
+      ),
+    ),
     Effect.forkScoped,
   );
 
   return ProviderRuntimeManager.of({ plan, start, cancel, reselect, startInBackground });
 });
 
-export const layer = Layer.effect(ProviderRuntimeManager, make());
+export const layer = Layer.effect(ProviderRuntimeManager, make()).pipe(
+  Layer.provide(ScientAgentRuntimePolicy.layer),
+);

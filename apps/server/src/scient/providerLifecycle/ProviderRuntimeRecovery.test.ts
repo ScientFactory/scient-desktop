@@ -14,7 +14,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
@@ -93,6 +95,55 @@ describe("ProviderRuntimeRequests", () => {
     ),
   );
 
+  it.effect(
+    "retains the visible and persisted request when cancellation cannot be written, then retries",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const denied = yield* Ref.make(false);
+        const guardedFs = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            Ref.get(denied).pipe(
+              Effect.flatMap((fail) =>
+                fail
+                  ? Effect.fail(
+                      PlatformError.systemError({
+                        _tag: "PermissionDenied",
+                        module: "FileSystem",
+                        method: "rename",
+                        pathOrDescriptor: to,
+                      }),
+                    )
+                  : fs.rename(from, to),
+              ),
+            ),
+        });
+        const requests = yield* makeRequests().pipe(
+          Effect.provideService(FileSystem.FileSystem, guardedFs),
+        );
+        yield* requests.requested(request);
+        const before = yield* requests.list;
+        yield* Ref.set(denied, true);
+        const failure = yield* requests
+          .settled({ ...request, outcome: "cancelled" })
+          .pipe(Effect.flip);
+        assert.strictEqual(failure._tag, "ProviderRuntimeRequestsPersistenceError");
+        assert.deepStrictEqual(yield* requests.list, before);
+        assert.deepStrictEqual(yield* (yield* makeRequests()).list, before);
+        yield* Ref.set(denied, false);
+        yield* requests.settled({ ...request, outcome: "cancelled" });
+        assert.deepStrictEqual(yield* requests.list, []);
+        assert.deepStrictEqual(yield* (yield* makeRequests()).list, []);
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-requests-denied-" }).pipe(
+            Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+      ),
+  );
+
   it.effect.each([1_000, 2 * 60 * MINUTE])(
     "persists the later of retry jitter and the source cooldown (%s ms)",
     (retryAfterMs) =>
@@ -121,11 +172,13 @@ describe("ProviderRuntimeRequests", () => {
 });
 
 describe("ProviderRuntimeRecovery", () => {
-  // Requests stay in memory here, so the loop's only waits are the clock and these calls.
+  // The clock owns retry deadlines; starts record completed attempts.
   const harness = (catalogRevision: string) =>
     Effect.gen(function* () {
-      const starts = yield* Ref.make<ReadonlyArray<{ attempt: number; at: number }>>([]);
-      const requests = yield* makeRequests().pipe(Effect.provide(FileSystem.layerNoop({})));
+      const starts = yield* SubscriptionRef.make<ReadonlyArray<{ attempt: number; at: number }>>(
+        [],
+      );
+      const requests = yield* makeRequests();
       yield* requests.requested(request);
       // The user's own try failed in a way a later try can fix.
       yield* requests.settled({ instanceId: INSTANCE, driver: CODEX, outcome: "retryable" });
@@ -143,12 +196,17 @@ describe("ProviderRuntimeRecovery", () => {
               startInBackground: (input) =>
                 Effect.gen(function* () {
                   const at = yield* Clock.currentTimeMillis;
-                  yield* Ref.update(starts, (all) => [...all, { attempt: input.attempt, at }]);
-                  yield* requests.settled({
-                    instanceId: input.instanceId,
-                    driver: CODEX,
-                    outcome: "retryable",
-                  });
+                  yield* requests
+                    .settled({
+                      instanceId: input.instanceId,
+                      driver: CODEX,
+                      outcome: "retryable",
+                    })
+                    .pipe(Effect.orDie);
+                  yield* SubscriptionRef.update(starts, (all) => [
+                    ...all,
+                    { attempt: input.attempt, at },
+                  ]);
                   return "failed" as ProviderRuntimeOutcome;
                 }),
             }),
@@ -156,9 +214,33 @@ describe("ProviderRuntimeRecovery", () => {
         ),
       );
       const runFor = (minutes: number) =>
-        Effect.forEach(Array.from({ length: minutes }), () => TestClock.adjust("1 minute"), {
-          discard: true,
-        });
+        Effect.forEach(
+          Array.from({ length: minutes }),
+          () =>
+            Effect.gen(function* () {
+              const nextMinute = (yield* Clock.currentTimeMillis) + MINUTE;
+              const due = (yield* requests.list).some((pending) => pending.dueAt <= nextMinute);
+              const completed = (yield* SubscriptionRef.get(starts)).length;
+              yield* TestClock.adjust("1 minute");
+              if (!due) return;
+              // Real durable writes are external to TestClock. Await the completed transition
+              // before advancing again, rather than racing fsync with the simulated clock.
+              if (catalogRevision === request.catalogRevision) {
+                yield* SubscriptionRef.changes(starts).pipe(
+                  Stream.filter((entries) => entries.length > completed),
+                  Stream.runHead,
+                );
+              } else {
+                yield* requests.changes.pipe(
+                  Stream.filter(
+                    (pending) => !pending.some((entry) => entry.requestId === request.requestId),
+                  ),
+                  Stream.runHead,
+                );
+              }
+            }),
+          { discard: true },
+        );
       return { starts, requests, runFor };
     }).pipe(
       Effect.provide(
@@ -172,7 +254,7 @@ describe("ProviderRuntimeRecovery", () => {
     Effect.gen(function* () {
       const { starts, runFor } = yield* harness("reviewed:1");
       yield* runFor(4 * 60);
-      const tries = yield* Ref.get(starts);
+      const tries = yield* SubscriptionRef.get(starts);
       assert.deepStrictEqual(
         tries.map((entry) => entry.attempt),
         [1, 2, 3],
@@ -189,7 +271,7 @@ describe("ProviderRuntimeRecovery", () => {
     Effect.gen(function* () {
       const { starts, requests, runFor } = yield* harness("reviewed:2");
       yield* runFor(10);
-      assert.deepStrictEqual(yield* Ref.get(starts), []);
+      assert.deepStrictEqual(yield* SubscriptionRef.get(starts), []);
       assert.deepStrictEqual(yield* requests.list, []);
     }),
   );

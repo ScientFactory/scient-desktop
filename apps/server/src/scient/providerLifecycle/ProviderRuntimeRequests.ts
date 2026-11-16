@@ -60,12 +60,21 @@ export const nextTryAt = Effect.fnUntraced(function* (retries: number) {
 });
 
 // Instances of a driver share one managed runtime; each ACP Registry agent has its own.
-const sameRuntime = (
+export const sameRuntime = (
   request: RuntimeRequest,
   change: { readonly instanceId: ProviderInstanceId; readonly driver: ProviderDriverKind },
 ) =>
   request.driver === change.driver &&
   (change.driver !== ACP_REGISTRY || request.instanceId === change.instanceId);
+
+export class ProviderRuntimeRequestsPersistenceError extends Schema.TaggedError<ProviderRuntimeRequestsPersistenceError>()(
+  "ProviderRuntimeRequestsPersistenceError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Scient could not save the requested runtime change. Try again.";
+  }
+}
 
 /**
  * Runtime changes the user asked for, kept across restarts until one succeeds, the user cancels or
@@ -81,21 +90,21 @@ export class ProviderRuntimeRequests extends Context.Service<
       readonly driver: ProviderDriverKind;
       readonly action: ProviderManagedRuntimeAction;
       readonly catalogRevision: string;
-    }) => Effect.Effect<void>;
+    }) => Effect.Effect<void, ProviderRuntimeRequestsPersistenceError>;
     readonly settled: (input: {
       readonly instanceId: ProviderInstanceId;
       readonly driver: ProviderDriverKind;
       readonly outcome: RuntimeChangeOutcome;
       readonly requestId?: string;
       readonly retryAfterMs?: number;
-    }) => Effect.Effect<void>;
+    }) => Effect.Effect<void, ProviderRuntimeRequestsPersistenceError>;
     readonly list: Effect.Effect<ReadonlyArray<RuntimeRequest>>;
     readonly changes: Stream.Stream<ReadonlyArray<RuntimeRequest>>;
     /** Changes this exact request if it still exists; `undefined` drops it. */
     readonly update: (
       requestId: string,
       change: (request: RuntimeRequest) => RuntimeRequest | undefined,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<void, ProviderRuntimeRequestsPersistenceError>;
   }
 >()("t3/scient/providerLifecycle/ProviderRuntimeRequests") {}
 
@@ -108,8 +117,14 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
   // Kept outside the runtime folders, which Remove deletes.
   const filePath = path.join(config.baseDir, "provider-runtimes", ".background", "requests.json");
   const stored = yield* fs.readFileString(filePath).pipe(
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed("[]"),
+    ),
     Effect.flatMap(decodeRequests),
-    Effect.orElseSucceed(() => []),
+    Effect.mapError(
+      (cause) => new ProviderRuntimeRequestsPersistenceError({ path: filePath, cause }),
+    ),
   );
   const requestsRef = yield* SubscriptionRef.make<ReadonlyArray<RuntimeRequest>>(
     yield* Effect.forEach(stored, (request) =>
@@ -131,12 +146,14 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
           if (updated === current) return;
           yield* encodeRequests(updated).pipe(
             Effect.flatMap((contents) =>
-              writeFileStringAtomically({ filePath, contents, mode: 0o600 }),
+              writeFileStringAtomically({ filePath, contents, mode: 0o600, durable: true }),
             ),
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),
             Effect.provideService(HostProcess.Platform, platform),
-            Effect.ignoreCause({ log: true }),
+            Effect.mapError(
+              (cause) => new ProviderRuntimeRequestsPersistenceError({ path: filePath, cause }),
+            ),
           );
           yield* SubscriptionRef.set(requestsRef, updated);
         }),

@@ -5,19 +5,14 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderManagedRuntimeAction,
-  type ProviderRuntimeSummary,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
@@ -25,6 +20,8 @@ import * as ProcessRunner from "../../processRunner.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import { ProviderRuntimeManager } from "./ProviderRuntimeManager.ts";
+import * as ScientAgentRuntimePolicy from "./ScientAgentRuntimePolicy.ts";
+import { recordAfterUserChange, type BackgroundRecord } from "./ScientAgentRuntimePolicy.ts";
 
 const SCIENT_AGENT = ProviderDriverKind.make("scient");
 const START_DELAY = "60 seconds";
@@ -37,20 +34,6 @@ const MAX_FAILED_ATTEMPTS_PER_RELEASE = 5;
 /** The download, the binary, the add-on it unpacks on first run, and staging. */
 const MIN_FREE_BYTES = 2 * 1024 ** 3;
 
-/** Kept outside the runtime folder, which Remove deletes. */
-const BackgroundRecord = Schema.Struct({
-  /** The user removed Scient Agent or cancelled its install: install only on request. */
-  userStopped: Schema.optionalKey(Schema.Boolean),
-  /** An update the user cancelled; a newer release is offered again. */
-  skippedVersion: Schema.optionalKey(Schema.String),
-  failures: Schema.optionalKey(Schema.Struct({ version: Schema.String, count: Schema.Number })),
-  firstPickRecorded: Schema.optionalKey(Schema.Boolean),
-});
-type BackgroundRecord = typeof BackgroundRecord.Type;
-const BackgroundRecordJson = Schema.fromJsonString(BackgroundRecord);
-const decodeRecord = Schema.decodeEffect(BackgroundRecordJson);
-const encodeRecord = Schema.encodeEffect(BackgroundRecordJson);
-
 export type BackgroundCheck =
   | { readonly kind: "start"; readonly action: "install" | "update"; readonly version: string }
   | { readonly kind: "wait"; readonly reason: string };
@@ -61,6 +44,7 @@ export function backgroundRuntimeAction(
   record: BackgroundRecord,
 ): BackgroundCheck {
   const runtime = provider.connection?.runtime;
+  if (runtime?.pendingRecovery) return { kind: "wait", reason: "requested-recovery" };
   if (!provider.enabled || !runtime) return { kind: "wait", reason: "unavailable" };
   const action: ProviderManagedRuntimeAction | undefined =
     runtime.source === "missing" && runtime.actions.includes("install")
@@ -82,28 +66,6 @@ export function backgroundRuntimeAction(
   )
     return { kind: "wait", reason: "gave-up" };
   return { kind: "start", action, version };
-}
-
-/**
- * How a finished change the user made moves the record: Remove, or Cancel of an install, stops
- * background installs; Cancel of an update skips that release; their own install or update
- * lets Scient take over again.
- */
-export function recordAfterUserChange(
-  operation: Pick<NonNullable<ProviderRuntimeSummary["operation"]>, "action" | "status">,
-  offeredVersion: string | null,
-): ((record: BackgroundRecord) => BackgroundRecord) | undefined {
-  const { action, status } = operation;
-  if (
-    (action === "remove" && status === "succeeded") ||
-    (action === "install" && status === "cancelled")
-  )
-    return (record) => ({ ...record, userStopped: true });
-  if (action === "update" && status === "cancelled" && offeredVersion !== null)
-    return (record) => ({ ...record, skippedVersion: offeredVersion });
-  if (action !== "remove" && status === "succeeded")
-    return ({ userStopped: _stopped, skippedVersion: _skipped, ...rest }) => rest;
-  return undefined;
 }
 
 /** True when the OS says the connection is metered. Unknown counts as not metered. */
@@ -137,33 +99,11 @@ export const make = Effect.fn("ScientAgentBackgroundRuntime.make")(function* () 
   const processes = yield* ProcessRunner.ProcessRunner;
   const analytics = yield* AnalyticsService;
   const platform = yield* HostProcess.Platform;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const recordPath = path.join(
-    config.baseDir,
-    "provider-runtimes",
-    ".background",
-    "scient-agent.json",
-  );
-
-  const readRecord = fs.readFileString(recordPath).pipe(
-    Effect.flatMap(decodeRecord),
-    Effect.orElseSucceed((): BackgroundRecord => ({})),
-  );
-  const recordLock = yield* Semaphore.make(1);
-  /** Applies a change under the lock and returns the record from before it. */
-  const updateRecord = (change: (record: BackgroundRecord) => BackgroundRecord) =>
-    recordLock.withPermits(1)(
-      Effect.gen(function* () {
-        const record = yield* readRecord;
-        const text = yield* encodeRecord(change(record));
-        yield* fs.makeDirectory(path.dirname(recordPath), { recursive: true });
-        yield* fs.writeFileString(recordPath, text);
-        return record;
-      }),
-    );
+  const policy = yield* ScientAgentRuntimePolicy.ScientAgentRuntimePolicy;
+  const readRecord = policy.read;
+  const updateRecord = policy.update;
   const changeRecord = (change: (record: BackgroundRecord) => BackgroundRecord) =>
-    updateRecord(change).pipe(Effect.ignore);
+    updateRecord(change).pipe(Effect.asVoid);
 
   const freeBytes = Effect.promise(() =>
     NodeFSP.statfs(config.baseDir).then(
@@ -219,54 +159,56 @@ export const make = Effect.fn("ScientAgentBackgroundRuntime.make")(function* () 
   );
 
   type Pass = "ready" | "failed" | "busy" | "waiting";
-  const tryOnce = Effect.fn("ScientAgentBackgroundRuntime.tryOnce")(
-    function* (): Effect.fn.Return<Pass> {
-      const provider = yield* scientAgent;
-      if (!provider) return "waiting";
-      const record = yield* readRecord;
-      const check = backgroundRuntimeAction(provider, record);
-      if (check.kind === "wait") return "waiting";
-      if (yield* anyRuntimeBusy) return "busy";
-      if ((yield* freeBytes) < MIN_FREE_BYTES) return "waiting";
-      if (yield* metered) return "waiting";
-      const planned = yield* manager
-        .plan({ instanceId: provider.instanceId, action: check.action })
-        .pipe(Effect.option);
-      if (Option.isNone(planned)) return "waiting";
-      const failures = record.failures?.version === check.version ? record.failures.count : 0;
-      const outcome = yield* manager
-        .startInBackground({
-          instanceId: provider.instanceId,
-          action: check.action,
-          catalogRevision: planned.value.catalogRevision,
-          attempt: failures + 1,
-        })
-        .pipe(Effect.orElseSucceed(() => "busy" as const));
-      switch (outcome) {
-        case "succeeded":
-          yield* changeRecord(({ failures: _failures, ...rest }) => rest);
-          return "ready";
-        case "failed":
-          yield* changeRecord((current) => ({
-            ...current,
-            failures: { version: check.version, count: failures + 1 },
-          }));
-          return "failed";
-        case "cancelled":
-          yield* changeRecord((current) =>
-            check.action === "install"
-              ? { ...current, userStopped: true }
-              : { ...current, skippedVersion: check.version },
-          );
-          return "waiting";
-        case "yielded":
-        case "busy":
-          return "busy";
-        case "interrupted":
-          return yield* Effect.interrupt;
+  const tryOnce = Effect.fn("ScientAgentBackgroundRuntime.tryOnce")(function* (): Effect.fn.Return<
+    Pass,
+    ScientAgentRuntimePolicy.ScientAgentRuntimePolicyError
+  > {
+    const provider = yield* scientAgent;
+    if (!provider) return "waiting";
+    const record = yield* readRecord;
+    const check = backgroundRuntimeAction(provider, record);
+    if (check.kind === "wait") return "waiting";
+    if (yield* anyRuntimeBusy) return "busy";
+    if ((yield* freeBytes) < MIN_FREE_BYTES) return "waiting";
+    if (yield* metered) return "waiting";
+    const planned = yield* manager
+      .plan({ instanceId: provider.instanceId, action: check.action })
+      .pipe(Effect.option);
+    if (Option.isNone(planned)) return "waiting";
+    const failures = record.failures?.version === check.version ? record.failures.count : 0;
+    const outcome = yield* manager
+      .startInBackground({
+        instanceId: provider.instanceId,
+        action: check.action,
+        catalogRevision: planned.value.catalogRevision,
+        attempt: failures + 1,
+      })
+      .pipe(Effect.orElseSucceed(() => "busy" as const));
+    switch (outcome) {
+      case "succeeded":
+        yield* changeRecord(({ failures: _failures, ...rest }) => rest);
+        return "ready";
+      case "failed":
+        yield* changeRecord((current) => ({
+          ...current,
+          failures: { version: check.version, count: failures + 1 },
+        }));
+        return "failed";
+      case "cancelled": {
+        const change = recordAfterUserChange(
+          { action: check.action, status: "cancelled" },
+          check.version,
+        );
+        if (change) yield* changeRecord(change);
+        return "waiting";
       }
-    },
-  );
+      case "yielded":
+      case "busy":
+        return "busy";
+      case "interrupted":
+        return yield* Effect.interrupt;
+    }
+  });
 
   // A newer release wakes the loop at once, so no update notice shows first.
   const offeredVersion = (provider: ServerProvider | undefined) =>
@@ -287,7 +229,9 @@ export const make = Effect.fn("ScientAgentBackgroundRuntime.make")(function* () 
     let failedInARow = 0;
     while (true) {
       yield* Ref.set(lastOfferRef, offeredVersion(yield* scientAgent));
-      const pass = yield* tryOnce();
+      const pass = yield* tryOnce().pipe(
+        Effect.catchTags({ ScientAgentRuntimePolicyError: () => Effect.succeed("busy" as const) }),
+      );
       if (pass === "failed") {
         const delay = FAILURE_BACKOFF[failedInARow];
         failedInARow += 1;
@@ -313,11 +257,16 @@ export const make = Effect.fn("ScientAgentBackgroundRuntime.make")(function* () 
           ?.runtime;
         const operation = runtime?.operation;
         if (!operation || operation.background || operation.finishedAt === null) return;
-        if ((yield* Ref.getAndSet(handled, operation.operationId)) === operation.operationId)
-          return;
+        if ((yield* Ref.get(handled)) === operation.operationId) return;
         const change = recordAfterUserChange(operation, runtime.availableManagedVersion ?? null);
         if (change) yield* changeRecord(change);
-      }),
+        yield* Ref.set(handled, operation.operationId);
+      }).pipe(
+        Effect.catchTags({
+          ScientAgentRuntimePolicyError: () =>
+            Effect.logWarning("Agent background policy persistence failed"),
+        }),
+      ),
     ),
   );
 
@@ -368,4 +317,5 @@ export function firstPickState(provider: ServerProvider): {
 
 export const layer = Layer.effect(ScientAgentBackgroundRuntime, make()).pipe(
   Layer.provide(ProcessRunner.layer),
+  Layer.provide(ScientAgentRuntimePolicy.layer),
 );

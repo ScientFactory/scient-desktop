@@ -589,16 +589,24 @@ change can interrupt it even while that read is blocked. Cleanup releases only i
 Requested installs, updates and repairs retain their reviewed plan and a stable request identity
 across transient failures and process restarts. While waiting, the runtime snapshot exposes scheduled
 recovery separately from a running operation. Settings shows the next retry time and **Cancel retry**;
-cancel clears the durable request, including during background startup. Success, removal, disabling
+cancel clears the durable request, including during background startup. Agent cancellation first
+saves the same stop/skip policy used for an active change: install stops automatic installs, update
+skips that release, and repair does both. No synthetic running operation is created for a pending
+request. A failed policy or request write reports an error and retains the request for a later try.
+Success, removal, disabling
 the instance, or a superseding choice also clears it. Recovery rechecks the enabled instance, runtime
 identity and exact reviewed plan before running. It never provisions a new third-party runtime on
-its own; Scient Agent retains its existing automatic provisioning policy.
+its own; Scient Agent retains its existing automatic provisioning policy. Automatic setup defers
+while a requested recovery owns the runtime, across all instances sharing that runtime. Only the
+exact recovery request can use that reservation of intent; it still revalidates the reviewed plan.
 
 Recovery waits a jittered five minutes, thirty minutes, then two hours after failures, followed by a
 four-hour cooldown. A server's Retry-After delay, capped at four hours of remaining time, can extend
 the next wait: recovery uses the later of its jittered backoff and that remaining delay. A foreground change
 takes priority over uncommitted background work; yielding preserves the reviewed request and partial
-download for a later try.
+download for a later try. The request store publishes mutations only after an atomic durable write.
+If settlement cannot persist, the manager still finishes operation cleanup and keeps the previous
+request and retry deadline. A failed recovery write ends that pass, and the next pass can try again.
 
 One lifecycle coordinator serializes connection, managed runtime mutation, and inherited provider
 maintenance for the same instance. Shared runtime mutation also takes a driver-wide reservation
