@@ -913,6 +913,39 @@ describe("Oh My Pi session runtime outcomes", () => {
     );
   }
 
+  it.effect("a later run that recovers in the same turn outweighs the prompt's failed run", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("recovered");
+      yield* h.runtime.accepted("prompt-recovered", true);
+      // The prompt's run gives up; a background result wakes the agent before the turn settles.
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ stopReason: "error", errorMessage: "Couldn't reach chatgpt.com" }),
+        { type: "auto_retry_end", success: false, attempt: 10, finalError: "Retry budget spent" },
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+        {
+          type: "prompt_result",
+          id: "prompt-recovered",
+          agentInvoked: true,
+          status: "error",
+          error: { message: "Couldn't reach chatgpt.com", kinds: ["transient"] },
+          sessionSettled: false,
+        },
+        { type: "agent_start" },
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "done" }] }),
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+      );
+      const outcome = yield* h.outcome;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(outcome).toEqual({
+        type: "turn-outcome",
+        outcome: "completed",
+        requestId: "prompt-recovered",
+      });
+    }),
+  );
+
   it.effect("a late prompt_result of a settled turn does not decide the next one", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();

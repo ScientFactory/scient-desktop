@@ -240,6 +240,7 @@ describe("Scient analytics background runtime", () => {
               queuedCountBucket: "0",
               retryCountBucket: "0",
               droppedCountBucket: "0",
+              oldestEventAgeBucket: "under-1m",
             },
           },
         ],

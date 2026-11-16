@@ -44,6 +44,8 @@ export type AnalyticsWorkerResponse =
       readonly queuedCount: number;
       readonly droppedCount: number;
       readonly retryCount: number;
+      /** How long the batch's oldest event waited to be sent, in milliseconds. */
+      readonly oldestEventAgeMs: number;
       readonly deliveryClass: "delivered" | "timeout" | "network" | "rejected";
     }
   | {

@@ -503,6 +503,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let commandRejected = false;
   /** Evidence for the open turn's outcome; reset when a turn begins. */
   let evidence: TurnEvidence = {};
+  /**
+   * A later run of the open turn started after its prompt's own run ended, for example when a
+   * background result woke the agent before the turn settled. prompt_result reports only the
+   * prompt's own run, so the latest run's evidence decides the turn instead.
+   */
+  let promptSuperseded = false;
   const settledPromptIds: Array<string> = [];
   /**
    * prompt_result and AsyncCommandFailure frames that arrived while the open
@@ -698,6 +704,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     promptReported = false;
     promptWaitStartedAt = undefined;
     evidence = {};
+    promptSuperseded = false;
     pendingOutcomes = [];
     yield* applySignal({
       type: "begin",
@@ -1015,8 +1022,14 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       ) {
         yield* startTurn(`${input.continuationIdPrefix}:${++continuationSequence}`, true);
       }
+      const followUpRun = turnIsOpen(turn) && turn.phase === "draining";
       openRunId = ++runSequence;
       yield* applySignal({ type: "agent-start", runId: openRunId });
+      if (followUpRun && turn.runId === openRunId) {
+        // The earlier run's failure was recovered from or replaced; only this run's ending counts.
+        promptSuperseded = true;
+        evidence = {};
+      }
       return;
     }
     if (event.type === "agent_end") {
@@ -1087,12 +1100,14 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (event.sessionSettled) sessionSettled();
         yield* publish({ type: "background-work", pending: !event.sessionSettled });
       }
-      evidence.promptStatus = event.status;
-      evidence.promptError = event.promptError?.message;
-      evidence.promptErrorCode = event.promptError?.code;
-      evidence.promptHttpStatus = event.promptError?.httpStatus;
-      evidence.promptResetAt = event.promptError?.resetAt;
-      evidence.promptErrorKinds = event.promptError?.kinds;
+      if (!promptSuperseded) {
+        evidence.promptStatus = event.status;
+        evidence.promptError = event.promptError?.message;
+        evidence.promptErrorCode = event.promptError?.code;
+        evidence.promptHttpStatus = event.promptError?.httpStatus;
+        evidence.promptResetAt = event.promptError?.resetAt;
+        evidence.promptErrorKinds = event.promptError?.kinds;
+      }
       if (typeof event.agentInvoked === "boolean") {
         yield* applySignal({
           type: "prompt-result",
