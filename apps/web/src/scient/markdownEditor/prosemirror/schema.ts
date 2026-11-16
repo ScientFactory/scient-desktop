@@ -68,11 +68,17 @@ type InternalMarkdownSerializerStateConstructor = new (
 const InternalMarkdownSerializerState =
   MarkdownSerializerState as unknown as InternalMarkdownSerializerStateConstructor;
 
+/** Marks that `**`, `*`, `~~` and `<span>` cannot open or close on a space. */
+const WHITESPACE_NEUTRAL_MARKS = new Set(["em", "strong", "strike", "font_size", "font_family"]);
+
+function withoutNeutralMarks(marks: readonly Mark[]): readonly Mark[] {
+  return marks.filter((mark) => !WHITESPACE_NEUTRAL_MARKS.has(mark.type.name));
+}
+
 /**
- * Whitespace is not styled content. A space or line break where the set of styles changes carries
- * no style: `**`, `*`, `~~` and `<span>` cannot start or end on it, so the writer would put it
- * outside the tag anyway, and a space between two styled words would otherwise take the styles
- * open around it. Both the writer and the round-trip guard use this one form.
+ * Whitespace is not styled content: a space or line break where the styles change loses the
+ * `WHITESPACE_NEUTRAL_MARKS`, as the file cannot hold them there. Links and code keep it.
+ * The writer and the round-trip guard share this one form.
  */
 export function unstyleBoundaryWhitespace(block: ProseMirrorNode): Fragment {
   const children: ProseMirrorNode[] = [];
@@ -82,7 +88,7 @@ export function unstyleBoundaryWhitespace(block: ProseMirrorNode): Fragment {
     const sameBefore = Mark.sameSet(child.marks, children[index - 1]?.marks ?? Mark.none);
     const sameAfter = Mark.sameSet(child.marks, children[index + 1]?.marks ?? Mark.none);
     if (child.type.name === "hard_break") {
-      unstyled.push(sameBefore && sameAfter ? child : child.mark(Mark.none));
+      unstyled.push(sameBefore && sameAfter ? child : child.mark(withoutNeutralMarks(child.marks)));
       return;
     }
     if (!child.isText || (sameBefore && sameAfter)) {
@@ -92,10 +98,11 @@ export function unstyleBoundaryWhitespace(block: ProseMirrorNode): Fragment {
     const text = child.text ?? "";
     const lead = sameBefore ? 0 : (/^\s*/u.exec(text)?.[0].length ?? 0);
     const tail = sameAfter ? 0 : (/\s*$/u.exec(text.slice(lead))?.[0].length ?? 0);
+    const edgeMarks = withoutNeutralMarks(child.marks);
     for (const [from, to, marks] of [
-      [0, lead, Mark.none],
+      [0, lead, edgeMarks],
       [lead, text.length - tail, child.marks],
-      [text.length - tail, text.length, Mark.none],
+      [text.length - tail, text.length, edgeMarks],
     ] as const) {
       if (from < to) unstyled.push(child.cut(from, to).mark(marks));
     }
