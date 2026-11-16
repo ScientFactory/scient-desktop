@@ -48,4 +48,25 @@ describe("citation key rename in documents", () => {
       ),
     ).toBe("See \\citep[p.~2]{a, new,b} and \\textcite{new}; \\label{old} and \\cite{older}.\r\n");
   });
+
+  // regression: a comment between a command and its arguments hid the citation from a rename.
+  it.each([
+    {
+      text: "See \\cite % old formatting\n  {old}.\n",
+      renamed: "See \\cite % old formatting\n  {new}.\n",
+    },
+    {
+      text: "See \\citep[see] % old page\n[p.~4]{old}.\n",
+      renamed: "See \\citep[see] % old page\n[p.~4]{new}.\n",
+    },
+    {
+      text: "See \\cite{a, % old}, c\n old,b}.\r\n",
+      renamed: "See \\cite{a, % old}, c\n new,b}.\r\n",
+    },
+  ])(
+    "renames LaTeX keys across comments and leaves the comments as written: %j",
+    ({ text, renamed }) => {
+      expect(renameCitationKeyInDocument("latex", text, "old", "new")).toBe(renamed);
+    },
+  );
 });
