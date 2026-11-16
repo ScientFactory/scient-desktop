@@ -628,6 +628,79 @@ describe("project pins", () => {
     },
   );
 
+  it("keeps every unsupplied citation input unknown when a partially enriched legacy source is repinned", async () => {
+    const base = await fixture();
+    const author = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const record = await addRecord(author.library, "legacy-report", {
+      type: "report",
+      more: { number: "TR-42", edition: "2" },
+    });
+    await pinScientLibrarySource({
+      projectRoot,
+      library: author.library,
+      sourceId: record.sourceId,
+      actor: "user",
+    });
+    const pinsPath = NodePath.join(projectRoot, ".scient", "library", "pins.json");
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"));
+    const { type, title, creators, issuedYear, identifiers, containerTitle } = file.pins[0].work;
+    file.pins[0].work = { type, title, creators, issuedYear, identifiers, containerTitle };
+    await NodeFSP.writeFile(pinsPath, JSON.stringify(file));
+    const collaborator = await newLibrary(base, "collaborator");
+    await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "user",
+    });
+    const [hydrated] = await listScientSourceRecords(collaborator.library);
+    if (!hydrated) throw new Error("The legacy source was not hydrated.");
+    const changed = await updateScientSourceMetadata({
+      root: collaborator.library,
+      sourceId: hydrated.sourceId,
+      expectedRevision: hydrated.revision,
+      metadata: { ...editableMetadataFromRecord(hydrated), more: { number: "TR-42" } },
+    });
+    expect(changed.outcome).toBe("updated");
+    await refreshScientProjectPinSnapshots({ projectRoot, library: collaborator.library });
+    const repinned = await newProject(base, "repinned");
+    await pinScientLibrarySource({
+      projectRoot: repinned,
+      library: collaborator.library,
+      sourceId: hydrated.sourceId,
+      actor: "user",
+    });
+    for (const root of [projectRoot, repinned]) {
+      const [pin] = await readScientProjectPins(root);
+      expect(pin?.work.more).toEqual({ number: "TR-42" });
+      for (const unknown of [
+        "customType",
+        "issuedRaw",
+        "publisher",
+        "volume",
+        "issue",
+        "pages",
+        "language",
+        "url",
+        "tags",
+      ])
+        expect(pin?.work).not.toHaveProperty(unknown);
+      expect(
+        await listScientProjectPinnedWorks({
+          projectRoot: root,
+          library: collaborator.library,
+        }),
+      ).toMatchObject([{ incompleteSnapshot: true }]);
+      expect(
+        await listScientProjectPinnedWorks({
+          projectRoot: root,
+          library: null,
+        }),
+      ).toMatchObject([{ incompleteSnapshot: true }]);
+    }
+  });
+
   it("keeps a snapshot's explicitly empty detail map known through hydration and repinning", async () => {
     const base = await fixture();
     const author = await newLibrary(base, "author");

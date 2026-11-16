@@ -34,10 +34,10 @@ import {
 } from "./model.ts";
 import {
   SCIENT_PIN_CITATION_TEXT_FIELDS,
+  SCIENT_PIN_OPTIONAL_CITATION_FIELDS,
   scientPinWorkIsComplete,
   scientPinCitationStillUnknown,
   scientPinWorkKeepingUnknown,
-  scientPinMoreFromRecord,
   withKnownPinCitationValues,
 } from "./pinCitation.ts";
 import {
@@ -302,38 +302,35 @@ function noteChange(
   };
 }
 
-/**
- * An unmerged source's copy: its record's values alone, none from the earlier copy. A field the
- * earlier copy did not know and the record has no information on stays unknown, so a fuller
- * managed entry is not given up for it.
- */
-function unmergedSourceWork(earlier: ScientPinWork, record: ScientSourceRecord): ScientPinWork {
-  return scientPinWorkKeepingUnknown(earlier, scientPinWorkFromRecord(record), record);
-}
-
-export function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWork {
-  const more = scientPinMoreFromRecord(record);
-  return {
-    type: record.type,
-    title: record.title,
-    creators: record.creators,
-    ...(record.incompleteCreatorRoles?.length
-      ? { incompleteCreatorRoles: record.incompleteCreatorRoles }
-      : {}),
-    issuedYear: record.issuedYear,
-    identifiers: record.identifiers,
-    containerTitle: record.containerTitle,
-    customType: record.customType ?? null,
-    issuedRaw: record.issuedRaw,
-    publisher: record.publisher,
-    volume: record.volume,
-    issue: record.issue,
-    pages: record.pages,
-    language: record.language,
-    url: record.url,
-    ...(more !== undefined ? { more } : {}),
-    tags: record.tags,
-  };
+export function scientPinWorkFromRecord(
+  record: ScientSourceRecord,
+  earlier: ScientPinWork | null = null,
+): ScientPinWork {
+  return scientPinWorkKeepingUnknown(
+    earlier,
+    {
+      type: record.type,
+      title: record.title,
+      creators: record.creators,
+      ...(record.incompleteCreatorRoles?.length
+        ? { incompleteCreatorRoles: record.incompleteCreatorRoles }
+        : {}),
+      issuedYear: record.issuedYear,
+      identifiers: record.identifiers,
+      containerTitle: record.containerTitle,
+      customType: record.customType ?? null,
+      issuedRaw: record.issuedRaw,
+      publisher: record.publisher,
+      volume: record.volume,
+      issue: record.issue,
+      pages: record.pages,
+      language: record.language,
+      url: record.url,
+      more: record.more ?? {},
+      tags: record.tags,
+    },
+    record,
+  );
 }
 
 function normalizePinNote(note: string | null | undefined): string | undefined {
@@ -1020,7 +1017,7 @@ export async function refreshScientProjectPinSnapshots(input: {
     // What an unmerged source's copy knew and its record does not is kept aside, not dropped.
     const displaced: Array<Parameters<typeof keepScientDisplacedCopies>[2][number]> = [];
     const whole = (stored: StoredPin, record: ScientSourceRecord): ScientPinWork => {
-      const work = unmergedSourceWork(stored.pin.work, record);
+      const work = scientPinWorkFromRecord(record, stored.pin.work);
       const differs = scientValuesChangedBy(stored.pin.work, work);
       const undoneAt = unmergedSince.get(record.sourceId);
       if (differs.length > 0 && undoneAt !== undefined) {
@@ -1042,10 +1039,9 @@ export async function refreshScientProjectPinSnapshots(input: {
         // be the other source's, written while the merge stood.
         const work = unmerged.has(record.sourceId)
           ? whole(stored, record)
-          : scientPinWorkKeepingUnknown(
+          : scientPinWorkFromRecord(
+              withKnownPinCitationValues(record, stored.pin.work),
               stored.pin.work,
-              scientPinWorkFromRecord(withKnownPinCitationValues(record, stored.pin.work)),
-              record,
             );
         pins.push({ ...stored, pin: { ...stored.pin, work } });
         continue;
@@ -1121,6 +1117,8 @@ function recordFromSnapshot(pin: ScientProjectPin): ScientSourceRecord {
   return {
     formatVersion: 2,
     sourceId: pin.sourceId,
+    hydratedFromProjectSourceId: pin.sourceId,
+    hydratedCitationFields: SCIENT_PIN_OPTIONAL_CITATION_FIELDS.filter((field) => field in work),
     revision: 1,
     citationKey: pin.citationKey,
     type: scientSourceTypeFromSnapshot(work.type),
@@ -1194,7 +1192,7 @@ export async function listScientProjectPinnedWorks(input: {
     const found = resolution?.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
     const ownId = ownIds[index];
     const own = ownId === undefined ? undefined : removed.get(ownId);
-    const pin = own ? { ...stored, work: unmergedSourceWork(stored.work, own) } : stored;
+    const pin = own ? { ...stored, work: scientPinWorkFromRecord(own, stored.work) } : stored;
     const projectNote = pin.note ?? null;
     const incomplete = !scientPinWorkIsComplete(pin.work);
     if (!found) {

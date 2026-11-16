@@ -696,6 +696,13 @@ sources in `<project>/.scient/library/pins.json`:
   or PDF. Missing optional keys are unknown, not empty (`pinCitation.ts`);
   explicit `more: {}` is known-empty. Hydration and repinning preserve that
   distinction, including snapshots with no other populated citation values.
+  Hydrated records retain their project origin and the explicit optional inputs
+  in `hydratedCitationFields`; this knowledge is not inferred from whichever
+  editable-field provenance happens to survive. A later edit can establish that
+  field independently without blessing unrelated missing inputs. Fresh pins,
+  virtual snapshot records and package imports carry the same knowledge.
+  Older hydrated records without that set use conservative provenance/value
+  evidence; an ambiguous year-only derived date stays unknown.
   `refreshScientProjectPinSnapshots` and `listScientProjectPinnedWorks` take a
   known snapshot value when the resolving record lacks it
   (`withKnownPinCitationValues`; a bare year, or a year with no stored date, is

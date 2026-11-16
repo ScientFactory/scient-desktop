@@ -313,4 +313,87 @@ describe("pinned citations travel with the project", () => {
     expect(await managedFiles(elsewhere)).toEqual(written);
     expect(afterCorrection.keptEntries).toHaveLength(3);
   });
+
+  it.each(["current", "legacy"] as const)(
+    "keeps richer managed entries after editing type on an empty %s hydration",
+    async (version) => {
+      const base = await NodeFSP.realpath(
+        await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pinned-knowledge-")),
+      );
+      fixtures.push(base);
+      const original = await computer(base, "author");
+      const projectRoot = NodePath.join(base, "project");
+      await NodeFSP.mkdir(projectRoot);
+      await initializeScientProject({ root: projectRoot });
+      const report = await add(original, {
+        ...works[0]!,
+        sourceKey: "report",
+        type: "report",
+        more: { number: "TR-42", edition: "2" },
+      });
+      await pinScientLibrarySource({
+        projectRoot,
+        library: original,
+        sourceId: report.sourceId,
+        actor: "user",
+      });
+      await syncPinnedBibliography({
+        root: projectRoot,
+        library: original,
+        access: "write",
+        actor: "user",
+      });
+      const written = await managedFiles(projectRoot);
+      expect(written.bib).toContain("number = {TR-42}");
+      expect(written.bib).toContain("edition = {2}");
+      const pinsPath = NodePath.join(projectRoot, ".scient", "library", "pins.json");
+      const file = JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"));
+      file.pins[0].work = {
+        type: "other",
+        title: null,
+        creators: [],
+        issuedYear: null,
+        identifiers: [],
+        containerTitle: null,
+      };
+      await NodeFSP.writeFile(pinsPath, JSON.stringify(file));
+      const elsewhere = NodePath.join(base, "elsewhere");
+      await NodeFSP.cp(projectRoot, elsewhere, { recursive: true });
+      const collaborator = await computer(base, "collaborator");
+      await syncPinnedBibliography({
+        root: elsewhere,
+        library: collaborator,
+        access: "write",
+        actor: "user",
+      });
+      await refreshScientProjectPinSnapshots({ projectRoot: elsewhere, library: collaborator });
+      let [hydrated] = await listScientSourceRecords(collaborator);
+      if (!hydrated) throw new Error("The empty legacy source was not hydrated.");
+      if (version === "legacy") {
+        const recordPath = NodePath.join(collaborator.root, "records", `${hydrated.sourceId}.json`);
+        const legacy = JSON.parse(await NodeFSP.readFile(recordPath, "utf8"));
+        delete legacy.hydratedCitationFields;
+        await NodeFSP.writeFile(recordPath, JSON.stringify(legacy));
+        hydrated = (await readScientSourceRecord(collaborator, hydrated.sourceId))!;
+      }
+      const changed = await updateScientSourceMetadata({
+        root: collaborator,
+        sourceId: hydrated.sourceId,
+        expectedRevision: hydrated.revision,
+        metadata: { ...editableMetadataFromRecord(hydrated), type: "book" },
+      });
+      expect(changed.outcome).toBe("updated");
+      await refreshScientProjectPinSnapshots({ projectRoot: elsewhere, library: collaborator });
+      expect((await readScientProjectPins(elsewhere))[0]?.work).not.toHaveProperty("more");
+      expect((await readScientProjectPins(elsewhere))[0]?.work.type).toBe("book");
+      const status = await syncPinnedBibliography({
+        root: elsewhere,
+        library: collaborator,
+        access: "write",
+        actor: "user",
+      });
+      expect(status.keptEntries).toHaveLength(1);
+      expect(await managedFiles(elsewhere)).toEqual(written);
+    },
+  );
 });

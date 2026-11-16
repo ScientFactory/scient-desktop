@@ -28,7 +28,7 @@ import {
   type ScientSourceIdentifier,
   type ScientSourceRecord,
 } from "./model.ts";
-import type { ScientPinCitationWork } from "./pinCitation.ts";
+import { SCIENT_PIN_OPTIONAL_CITATION_FIELDS, type ScientPinCitationWork } from "./pinCitation.ts";
 import {
   importScientSource,
   listScientSourceRecords,
@@ -597,12 +597,16 @@ async function resolveAt(
       continue;
     }
     if (input.mode === "write" && input.hydrate && request.work) {
+      const work = request.work;
       const hydrated = await importScientSource({
         root: library,
         operationId: `hydrate_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
         hydratedFromProjectSourceId: projectSourceId,
+        hydratedCitationFields: SCIENT_PIN_OPTIONAL_CITATION_FIELDS.filter(
+          (field) => field in work,
+        ),
         candidate: hydrationCandidate(
-          { projectSourceId, work: request.work },
+          { projectSourceId, work },
           input.hydrate.citationKeys?.get(projectSourceId),
         ),
         allowPossibleMetadataMatch: true,

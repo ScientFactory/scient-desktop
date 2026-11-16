@@ -3229,6 +3229,7 @@ interface ImportScientSourceInput {
   readonly operationId: string;
   readonly candidate: ScientSourceCandidate;
   readonly hydratedFromProjectSourceId?: string;
+  readonly hydratedCitationFields?: ReadonlyArray<string>;
   readonly pdfPath?: string;
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly allowPossibleMetadataMatch?: boolean;
@@ -3472,6 +3473,9 @@ async function importScientSourceWithRecordLookup(
       ...projectField(paths),
       ...(paths.owner.kind === "library" && input.hydratedFromProjectSourceId
         ? { hydratedFromProjectSourceId: input.hydratedFromProjectSourceId }
+        : {}),
+      ...(paths.owner.kind === "library" && input.hydratedCitationFields !== undefined
+        ? { hydratedCitationFields: input.hydratedCitationFields }
         : {}),
       revision,
       citationKey,

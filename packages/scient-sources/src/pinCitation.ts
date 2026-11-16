@@ -20,6 +20,12 @@ export const SCIENT_PIN_CITATION_TEXT_FIELDS = [
   "url",
 ] as const;
 
+export const SCIENT_PIN_OPTIONAL_CITATION_FIELDS = [
+  ...SCIENT_PIN_CITATION_TEXT_FIELDS,
+  "tags",
+  "more",
+] as const;
+
 type CitationTextField = (typeof SCIENT_PIN_CITATION_TEXT_FIELDS)[number];
 
 /** A pin's snapshot fields as the formatter reads them; the optional ones may be unknown. */
@@ -119,16 +125,10 @@ export function withKnownPinCitationValues(
 const fromProjectFile = (sourceField: string | null) =>
   sourceField?.startsWith("project-file:") ?? false;
 
-/** A hydrated record without this newer field cannot say that the detail map was empty. */
-export function scientPinMoreFromRecord(record: ScientSourceRecord): ScientSourceMore | undefined {
-  if (record.more !== undefined) return record.more;
-  return record.fieldProvenance.some((entry) => fromProjectFile(entry.sourceField)) &&
-    !record.fieldProvenance.some(
-      (entry) => entry.field === "more" || entry.field.startsWith("more."),
-    )
-    ? undefined
-    : {};
-}
+const isHydratedCitation = (record: ScientSourceRecord) =>
+  record.hydratedFromProjectSourceId !== undefined ||
+  record.hydratedCitationFields !== undefined ||
+  record.fieldProvenance.some((entry) => fromProjectFile(entry.sourceField));
 
 const hasIndependentCitationValue = (record: ScientSourceRecord, field: string) =>
   record.fieldProvenance.some(
@@ -136,6 +136,32 @@ const hasIndependentCitationValue = (record: ScientSourceRecord, field: string) 
       (entry.field === field || (field === "more" && entry.field.startsWith("more."))) &&
       !fromProjectFile(entry.sourceField),
   );
+
+/** Stable snapshot knowledge survives edits that replace individual field provenance. */
+export function scientPinCitationKnownFields(record: ScientSourceRecord): ReadonlyArray<string> {
+  if (!isHydratedCitation(record)) return SCIENT_PIN_OPTIONAL_CITATION_FIELDS;
+  return SCIENT_PIN_OPTIONAL_CITATION_FIELDS.filter((field) => {
+    if (
+      hasIndependentCitationValue(record, field) ||
+      record.hydratedCitationFields?.includes(field)
+    )
+      return true;
+    const value = record[field];
+    if (field === "more") {
+      if (Object.keys(record.more ?? {}).length > 0) return true;
+    } else if (!isEmpty(value) && !(field === "issuedRaw" && value === String(record.issuedYear)))
+      return true;
+    // Older hydrated records did not retain the known-field set. A derived year is
+    // ambiguous there; absent evidence must not promote it to a complete date.
+    return (
+      record.hydratedCitationFields === undefined &&
+      field !== "issuedRaw" &&
+      record.fieldProvenance.some(
+        (entry) => entry.field === field && fromProjectFile(entry.sourceField),
+      )
+    );
+  });
+}
 
 /**
  * Whether an older snapshot's managed entry must be kept for this record: it was hydrated from
@@ -148,10 +174,10 @@ export function scientPinCitationStillUnknown(
   record: ScientSourceRecord,
 ): boolean {
   if (scientPinWorkIsComplete(work)) return false;
-  const provenance = record.fieldProvenance;
-  if (!provenance.some((entry) => fromProjectFile(entry.sourceField))) return false;
-  return [...SCIENT_PIN_CITATION_TEXT_FIELDS, "tags", "more"].some(
-    (field) => !(field in work) && !hasIndependentCitationValue(record, field),
+  if (!isHydratedCitation(record)) return false;
+  const known = scientPinCitationKnownFields(record);
+  return SCIENT_PIN_OPTIONAL_CITATION_FIELDS.some(
+    (field) => !(field in work) && !known.includes(field),
   );
 }
 
@@ -161,18 +187,14 @@ export function scientPinCitationStillUnknown(
  * is no information. A field an edit or a registry set is known.
  */
 export function scientPinWorkKeepingUnknown<W extends ScientPinCitationWork>(
-  earlier: ScientPinCitationWork,
+  earlier: ScientPinCitationWork | null,
   next: W,
   record: ScientSourceRecord,
 ): W {
-  if (!record.fieldProvenance.some((entry) => fromProjectFile(entry.sourceField))) return next;
-  const unknown = ([...SCIENT_PIN_CITATION_TEXT_FIELDS, "tags", "more"] as const).filter(
-    (field) =>
-      !(field in earlier) &&
-      !hasIndependentCitationValue(record, field) &&
-      (isEmpty(next[field]) ||
-        (field === "more" && Object.keys(next.more ?? {}).length === 0) ||
-        (field === "issuedRaw" && next.issuedRaw === String(next.issuedYear))),
+  if (!isHydratedCitation(record)) return next;
+  const known = scientPinCitationKnownFields(record);
+  const unknown = SCIENT_PIN_OPTIONAL_CITATION_FIELDS.filter(
+    (field) => (earlier === null || !(field in earlier)) && !known.includes(field),
   );
   if (unknown.length === 0) return next;
   return Object.fromEntries(
