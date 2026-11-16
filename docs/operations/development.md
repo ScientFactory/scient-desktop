@@ -314,7 +314,8 @@ Release-note content keeps its additional catalog and rendering qualification;
 it does not suppress the full suites. Test selection never uses an import scan
 or a package subset.
 
-`Changes` uses the immutable event base and tested commit. It retains upstream's
+`Changes` uses the run's comparison base and tested commit; for a PR that base is
+the `main` its tested merge was made on (`docs/internals/ci.md`). It retains upstream's
 workspace ownership and production dependency graph for release smoke, plus the
 existing mobile native, Compute and packaging selectors. Their failed self-tests
 block `Check` while unknown outputs still run the native lanes. Rust runs for
