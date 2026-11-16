@@ -483,6 +483,7 @@ it.live("rechecks a later retained reference and refuses managed reuse after cle
           Layer.provide(
             Layer.succeed(ThreadCommandExecutor, {
               activeKeys: commands.activeKeys,
+              withDeletionLock: commands.withDeletionLock,
               withLock: (key, effect) =>
                 Deferred.succeed(entered, undefined).pipe(
                   Effect.andThen(Deferred.await(resume)),

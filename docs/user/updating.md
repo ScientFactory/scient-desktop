@@ -115,8 +115,8 @@ Scient must start again on that machine; this does not enable automatic startup.
 saved provider resume state need a new message, and terminal commands may still be interrupted.
 Changes apply to connected environments that support the setting. After an offline environment
 reconnects, use **Apply to all** to reconcile a different value; older servers need updating first.
-A thread that finished its turn to wait on a subagent, a background task, or a
-command or monitor the agent said it was waiting on is woken and told that this work
+A thread that finished its turn to wait on a subagent, a background task, a Claude
+monitor, or a command or other monitor the agent said it was waiting on is woken and told that this work
 stopped. Other background shells and monitors, such as a dev server and its
 watchdog, do not wake it; the thread learns about them with your next message.
 A thread is not resumed while it waits for your approval, answer, or secret, or

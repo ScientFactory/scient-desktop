@@ -2386,6 +2386,7 @@ describe("PiAdapterV2", () => {
       // SCIENT-FORK:START — Scient Extensions connectors stay unset without delivered connectors.
       assert.isUndefined(spawn.env.T3_MCP_CONNECTORS);
       // SCIENT-FORK:END
+      assert.equal(spawn.env.T3CODE_THREAD_ID, THREAD_ID);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

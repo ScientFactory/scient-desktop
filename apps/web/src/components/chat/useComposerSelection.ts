@@ -23,7 +23,11 @@ import {
   resolveNewDraftStartFromOrigin,
   threadHasStarted,
 } from "../../lib/chatThreadActions";
-import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
+import {
+  type DraftThreadEnvMode,
+  isSameModel,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import {
   getStartedThreadModelChangeBlockReason,
   deriveLockedProvider,
@@ -193,8 +197,23 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     }
     const rememberedOptions =
       useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
-    const selectedOptions =
-      options !== undefined && "length" in options ? options : rememberedOptions;
+    const threadSelection = activeThread.modelSelection;
+    // This pick replaces the stored options, so the thread's own model carries them over.
+    const pickOptions =
+      rememberedOptions !== undefined && rememberedOptions.length > 0
+        ? rememberedOptions
+        : threadSelection.instanceId === instanceId &&
+            entry !== undefined &&
+            isSameModel(
+              { providers: providerStatuses, selectedProvider: entry.driver, settings },
+              threadSelection,
+              { instanceId, model: resolvedModel },
+            )
+          ? threadSelection.options
+          : undefined;
+    // SCIENT-FORK:START — options passed with the pick replace the remembered ones.
+    const selectedOptions = options !== undefined && "length" in options ? options : pickOptions;
+    // SCIENT-FORK:END
     const nextModelSelection: ModelSelection =
       selectedOptions !== undefined && selectedOptions.length > 0
         ? { instanceId, model: resolvedModel, options: [...selectedOptions] }

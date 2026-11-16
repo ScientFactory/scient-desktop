@@ -2009,6 +2009,18 @@ const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstra
     return cookie.split(";")[0] ?? cookie;
   });
 
+// SCIENT-FORK:START — the desktop's own session skips WebSocket compression, so
+// compression tests connect as a paired client.
+const getPairedClientCredential = Effect.gen(function* () {
+  const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+  const response = yield* HttpClient.post("/api/auth/pairing-token", {
+    headers: { cookie: ownerCookie },
+    body: yield* HttpBody.json({}),
+  });
+  return ((yield* response.json) as { readonly credential: string }).credential;
+});
+// SCIENT-FORK:END
+
 const getAuthenticatedBearerSessionToken = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
     const { response, body } = yield* exchangeAccessToken(credential, {
@@ -4584,7 +4596,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       Effect.gen(function* () {
         yield* buildAppUnderTest();
 
-        const { cookie, url } = parseSessionCookieFromWsUrl(yield* getWsServerUrl("/ws"));
+        const { cookie, url } = parseSessionCookieFromWsUrl(
+          yield* getWsServerUrl("/ws", { credential: yield* getPairedClientCredential }),
+        );
         const openSocket = (perMessageDeflate: boolean) =>
           Effect.acquireRelease(
             Effect.callback<NodeWS.WebSocket, Error>((resume) => {
@@ -7045,13 +7059,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const transcriptDirectory = path.join(codexHome, "sessions", "2026", "08", "31");
         const transcriptPath = path.join(transcriptDirectory, "rollout-skipped.jsonl");
         yield* fileSystem.makeDirectory(transcriptDirectory, { recursive: true });
+        // A reply with no user turn cannot be imported; a session with no messages is not counted.
         yield* fileSystem.writeFileString(
           transcriptPath,
-          encodeTestJson({
-            timestamp: "2026-08-31T12:00:00.000Z",
-            type: "session_meta",
-            payload: { id: "rpc-skipped-session", cwd: workspaceRoot },
-          }),
+          [
+            encodeTestJson({
+              timestamp: "2026-08-31T12:00:00.000Z",
+              type: "session_meta",
+              payload: { id: "rpc-skipped-session", cwd: workspaceRoot },
+            }),
+            encodeTestJson({
+              timestamp: "2026-08-31T12:00:01.000Z",
+              type: "response_item",
+              payload: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Orphaned reply" }],
+              },
+            }),
+          ].join("\n"),
         );
         yield* fileSystem.utimes(transcriptPath, 0, 0);
 
@@ -14827,7 +14853,9 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
             yield* seedTransferBudgetHistory(app.v2.eventSink, provider);
 
             const baseUrl = yield* getHttpServerUrl();
-            const cookie = yield* getAuthenticatedSessionCookieHeader();
+            const cookie = yield* getAuthenticatedSessionCookieHeader(
+              yield* getPairedClientCredential,
+            );
             const wsUrl =
               baseUrl.replace(/^http:/, "ws:") +
               `/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}`;

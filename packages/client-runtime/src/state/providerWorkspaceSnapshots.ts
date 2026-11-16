@@ -8,8 +8,9 @@ import * as Equal from "effect/Equal";
 type ServerProviderEntry = ServerConfig["providers"][number];
 
 /**
- * The provider-wide fields a workspace snapshot builds on. A live session, a sign-out, or a
- * /usage-limits change shows up here, so a snapshot fetched before it no longer applies.
+ * The provider-wide fields a workspace snapshot builds on. A live session, a sign-out, a
+ * /usage-limits change, or a server rescan that changed the skills shows up here, so a snapshot
+ * fetched before it no longer applies.
  */
 // SCIENT-FORK:START — a full inventory reply's own machine fields decide its provenance. Replies
 // leave out the models and the catalog digest, so those come from the config's provider, as upstream.
@@ -25,6 +26,9 @@ const snapshotBasis = (
     ...(configProvider?.catalogDigest === undefined
       ? { slashCommands: provider.slashCommands, skills: provider.skills }
       : { catalogDigest: configProvider.catalogDigest }),
+    ...(configProvider?.workspaceRescannedAt === undefined
+      ? {}
+      : { workspaceRescannedAt: configProvider.workspaceRescannedAt }),
   };
 // SCIENT-FORK:END
 
@@ -72,9 +76,12 @@ export function recordFetchedWorkspaceSnapshot(
   input: { readonly instanceId: ProviderInstanceId; readonly cwd: string; readonly fresh: boolean },
   providers: ServerConfig["providers"],
   configProvider: ServerProviderEntry | undefined,
+  // The config's provider when the reply lands: a reply from a retired inventory never applies,
+  // even when the request started under it.
+  currentProvider: ServerProviderEntry | undefined = configProvider,
 ): ReadonlyArray<FetchedWorkspaceSnapshot> {
   const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-  if (provider?.nativeInventoryGeneration !== configProvider?.nativeInventoryGeneration) {
+  if (provider?.nativeInventoryGeneration !== currentProvider?.nativeInventoryGeneration) {
     return current;
   }
   // A cwd reply leaves out the machine lists, so its basis is the config's, as upstream.

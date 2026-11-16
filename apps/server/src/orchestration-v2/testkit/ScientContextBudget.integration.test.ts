@@ -320,7 +320,8 @@ const cases: ReadonlyArray<{
     name: "no-room-for-header",
     size: "maximum",
     historyBytes: 100_000,
-    window: 16_000,
+    // Half of a small window is reserved for work; the current input takes the rest.
+    window: 32,
     included: false,
     refused: true,
   },
@@ -662,7 +663,7 @@ it.live.each(
             }).pipe(Effect.result);
           // Find a witness at the actual whole-header boundary, then let
           // the worker independently use that same native-reported window.
-          for (let window = 16_000; window <= 20_000; window++) {
+          for (let window = 1_000; window <= 20_000; window++) {
             const without = yield* deliveryAt(window, prepared.textWithoutCatalogMarker);
             if (without._tag === "Failure") continue;
             const withMarker = yield* deliveryAt(window, prepared.text);

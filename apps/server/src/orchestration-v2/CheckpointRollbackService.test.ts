@@ -1,4 +1,3 @@
-import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -418,7 +417,7 @@ it.effect.each([
     let lockedThreads = Effect.succeed<ReadonlyArray<ThreadId>>([]);
     const layerThreadCommands = Layer.effect(
       ThreadCommandExecutor.ThreadCommandExecutor,
-      Effect.tap(KeyedLock.make<ThreadId>(), (lock) =>
+      Effect.tap(ThreadCommandExecutor.make, (lock) =>
         Effect.sync(() => {
           lockedThreads = lock.activeKeys;
         }),

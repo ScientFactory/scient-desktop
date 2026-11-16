@@ -19,3 +19,6 @@ export const DESKTOP_RENDERER_ORIGINS = [
   `${SCIENT_DESKTOP_IDENTITY.developmentScheme}://app`,
 ] as const;
 // SCIENT-FORK:END desktop-renderer-identity
+
+/** MCP refuses every browser Origin with 403, so the browser CORS layer must not answer for it. */
+export const MCP_HTTP_PATH = "/mcp";

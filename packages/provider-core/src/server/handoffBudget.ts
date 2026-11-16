@@ -125,13 +125,15 @@ export function handoffBudget(input: {
   const current =
     Math.ceil(Buffer.byteLength(JSON.stringify(input.userText)) / bytesPerToken) +
     attachmentTokenAllowance(input.attachments);
+  // Small windows would otherwise reserve all of themselves for work.
+  const workReserve = Math.min(Math.max(16_000, Math.ceil(window / 4)), Math.ceil(window / 2));
   return Math.max(
     0,
     Math.min(
       input.byteCap ?? HANDOFF_BYTE_CAP,
       // The selector consumes bytes; provider capacity and preset caps consume tokens.
       (input.tokenCap ?? Infinity) * bytesPerToken,
-      (window - native - current - Math.max(16_000, Math.ceil(window / 4))) * bytesPerToken,
+      (window - native - current - workReserve) * bytesPerToken,
     ),
   );
   // SCIENT-FORK:END

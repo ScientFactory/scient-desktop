@@ -418,6 +418,17 @@ describe("handoff budget", () => {
       );
     }
     assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 2_000);
+    // The work reserve never takes more than half of a small local window.
+    for (const [modelContextWindow, nativeContextEstimate, expected] of [
+      [8_192, 0, 4_086],
+      [32_768, 0, 16_758],
+      [131_072, 50_000, 48_294],
+    ] as const) {
+      assert.equal(
+        handoffBudget({ ...base, tokenCap: 64_000, modelContextWindow, nativeContextEstimate }),
+        expected,
+      );
+    }
   });
 
   it("keeps measured occupancy across a model change", () => {
@@ -546,13 +557,15 @@ describe("handoff budget", () => {
         assert.isAtMost(historyCost(selected.messages, selected.context), budget);
       }
       assert.equal(handoffBudget({ ...input, modelContextWindow: 2_000_000 }), 16_000);
-      assert.equal(handoffBudget({ ...input, modelContextWindow: 20_000 }), 0);
+      // 20k window: half is reserved for work, then 27 prompt bytes and 8,192 per image.
+      const smallWindowBudget = count === 1 ? 1_781 : 0;
+      assert.equal(handoffBudget({ ...input, modelContextWindow: 20_000 }), smallWindowBudget);
       assert.equal(
         handoffBudget({
           ...input,
           providerThread: { ...providerThread, contextUsage: { usedTokens: 0, maxTokens: 20_000 } },
         }),
-        0,
+        smallWindowBudget,
       );
       assert.equal(
         handoffBudget({
@@ -563,7 +576,7 @@ describe("handoff budget", () => {
             contextUsage: { usedTokens: 0, maxTokens: 1_000_000, autoCompactThreshold: 20_000 },
           },
         }),
-        0,
+        smallWindowBudget,
       );
     }
   });
@@ -1062,7 +1075,11 @@ describe("Scient serialized handoff allowance", () => {
       scientHandoffByteBudget({ ...input, attachments: [image] }),
       Math.max(0, available - 8_192 * 3),
     );
-    assert.equal(scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }), 0);
+    // A small window reserves half of itself for work, not the whole window.
+    assert.equal(
+      scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }),
+      (16_000 - 7_000 - 4 - 8_000) * 3,
+    );
   });
 });
 

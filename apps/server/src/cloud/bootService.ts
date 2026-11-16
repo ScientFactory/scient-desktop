@@ -662,7 +662,15 @@ const BootServiceProblem = Schema.Literals([
 ]);
 type BootServiceProblem = typeof BootServiceProblem.Type;
 
-export function formatBootServiceProblem(problem: BootServiceProblem): string {
+export function formatBootServiceProblem(
+  problem: BootServiceProblem,
+  // SCIENT-FORK:START — every repair runs this installation's `service update`.
+  commands: { readonly install: string; readonly restart: string } = {
+    install: "t3 service update",
+    restart: "t3 service update",
+  },
+  // SCIENT-FORK:END
+): string {
   switch (problem) {
     case "user-manager-unavailable":
       return "Cannot reach the systemd user manager. Run `systemctl --user status` in a login session for the service user. Install your distribution's systemd user-session support if it is missing; do not run Scient with sudo.";
@@ -671,11 +679,13 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
     case "linger-disabled":
       return 'Lingering is disabled. Scient will stop when your last login session ends and will not start at boot. Run `sudo loginctl enable-linger "$(id -un)"` on this machine, then retry the service command as your normal user.';
     case "service-disabled":
-      return "The service is not enabled to start automatically. Run `t3 service update` to repair it.";
-    case "restart-pending":
-      return "The installed version will run after the service restarts. Run `t3 service update` to restart it.";
+      return `The service is not enabled to start automatically. Run \`${commands.install}\` to repair it.`;
+    // SCIENT-FORK:START — Scient's unit file and restart copy.
     case "service-stopped":
-      return `The service is not running. Check the service log (on Linux, also \`systemctl --user status ${BOOT_SERVICE_UNIT_FILE}\`), then run \`t3 service update\`.`;
+      return `The service is not running. Check the service log (on Linux, also \`systemctl --user status ${BOOT_SERVICE_UNIT_FILE}\`), then run \`${commands.install}\`.`;
+    case "restart-pending":
+      return `The installed version will run after the service restarts. Run \`${commands.restart}\` to restart it.`;
+    // SCIENT-FORK:END
   }
 }
 

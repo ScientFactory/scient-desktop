@@ -125,6 +125,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getRelayTelemetryEnabled: () =>
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getClientPlatform: () => clientPlatform,
+  restartAudioService: () => ipcRenderer.invoke(IpcChannels.RESTART_AUDIO_SERVICE_CHANNEL),
   // SCIENT-FORK:START — keep the computer awake while threads work.
   keepAwake: (choice) => ipcRenderer.invoke(IpcChannels.KEEP_AWAKE_CHANNEL, choice),
   // SCIENT-FORK:END

@@ -204,7 +204,8 @@ function AutocompleteList({
     />
   );
   return scrollable ? (
-    <ScrollArea scrollbarGutter scrollFade>
+    // A flex column lets the viewport shrink with a height-capped parent instead of overflowing it.
+    <ScrollArea className="flex flex-col" scrollbarGutter scrollFade>
       {list}
     </ScrollArea>
   ) : (
