@@ -1,7 +1,9 @@
 import type { Editor } from "@tiptap/core";
 import { createContext, useState, useSyncExternalStore } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { NodeSelection, type EditorState } from "@tiptap/pm/state";
 import { countSelectedWords } from "../writing/caretStatus";
+import { latexFontState } from "./latexFontCommands";
 
 export const LatexInlineOwnerContext = createContext<Editor | null>(null);
 
@@ -137,11 +139,16 @@ interface EditingPresentation {
   bold: boolean;
   italic: boolean;
   code: boolean;
+  fontFamily: string | null;
+  fontFamilyMixed: boolean;
+  fontSize: number | null;
+  fontSizeMixed: boolean;
   selectedWords: number | null;
 }
 
-function editingPresentation(editor: Editor | null): EditingPresentation {
+function editingPresentation(editor: Editor | null, baseFontPt: 10 | 11 | 12): EditingPresentation {
   const selection = editor?.state.selection;
+  const font = latexFontState(editor, baseFontPt);
   return {
     formattingAvailable: Boolean(
       editor?.isEditable &&
@@ -152,6 +159,10 @@ function editingPresentation(editor: Editor | null): EditingPresentation {
     bold: editor?.isActive("bold") ?? false,
     italic: editor?.isActive("italic") ?? false,
     code: editor?.isActive("code") ?? false,
+    fontFamily: font.family,
+    fontFamilyMixed: font.familyMixed,
+    fontSize: font.size,
+    fontSizeMixed: font.sizeMixed,
     selectedWords: editor ? countSelectedWords(editor.state) : null,
   };
 }
@@ -161,16 +172,19 @@ const sameEditingPresentation = (before: EditingPresentation, after: EditingPres
   before.bold === after.bold &&
   before.italic === after.italic &&
   before.code === after.code &&
+  before.fontFamily === after.fontFamily &&
+  before.fontFamilyMixed === after.fontFamilyMixed &&
+  before.fontSize === after.fontSize &&
+  before.fontSizeMixed === after.fontSizeMixed &&
   before.selectedWords === after.selectedWords;
 
 /** Typing at a collapsed caret need not render unchanged controls. Selection,
  * formatting, ownership and editability changes still publish immediately.
  */
-export function useLatexEditingPresentation(owner: Editor | null) {
-  const { editor, value } = useLatexEditingSnapshot(
-    owner,
-    editingPresentation,
-    sameEditingPresentation,
+export function useLatexEditingPresentation(owner: Editor | null, baseFontPt: 10 | 11 | 12 = 10) {
+  const select = useStableCallback((target: Editor | null) =>
+    editingPresentation(target, baseFontPt),
   );
+  const { editor, value } = useLatexEditingSnapshot(owner, select, sameEditingPresentation);
   return { editor, ...value };
 }

@@ -222,6 +222,32 @@ Abstracts support ordinary paragraphs and inline or display math. **Insert >
 Document blocks > Abstract** visits an existing abstract in the open file before
 creating another.
 
+### Font and size
+
+In Visual, **Text > Font / Size** works as in the Markdown editor: a size in
+points from 1 to 100 (field, minus and plus buttons) and a font from a
+searchable list. At a caret the change applies to the word under it. Enter in the
+size field closes the panel; a selection that mixes sizes or fonts leaves the
+field empty, and the buttons start from the document's base size. Unlike Markdown,
+LaTeX Visual has no floating selection toolbar, so the panel is reached through
+**Text** only. A size is saved as a group `{\fontsize{12}{14.4}\selectfont …}`
+(the baseline is 1.2 times the size). Existing `\large`-style commands stay as
+written and show their number; they change only when you edit that text. With
+pdfLaTeX, Computer Modern has only fixed sizes, so Scient adds
+`\usepackage{fix-cm}` the first time an explicit size is written to a document
+that loads no scalable font package.
+
+A font is saved as `\fontfamily{qtm}\selectfont` in a pdfLaTeX document, which
+offers only the fonts with a free look-alike (TeX Gyre Termes for Times New
+Roman, Heros for Arial and Helvetica, Pagella for Palatino, Latin Modern). Under
+XeLaTeX, LuaLaTeX or Tectonic, or when `fontspec` is loaded, it is saved as an
+`\IfFontExistsTF` guard around `\fontspec{…}` with a Latin Modern fallback, so a
+font missing on the machine never stops the build. Other fonts are listed but
+disabled in a pdfLaTeX document, with a note. Arial and Helvetica share one
+pdfLaTeX family, so the list shows Arial for either. Hebrew text needs the Hebrew
+font of the language setup. Time-saving shortcuts for the size are not available
+yet.
+
 <a id="hebrew-and-mixed-language-documents"></a>
 
 ### Hebrew, language and paragraph direction
@@ -966,6 +992,17 @@ Wide or Custom values for each side. Layout groups also expose
 columns, line/paragraph spacing, custom paper dimensions, binding and mirrored
 margins, supported fonts and engine, heading/title defaults and simple running
 headers and footers. Custom executable definitions stay in Source.
+
+The **Font** list sets the font of the whole document: Default, three generic
+families, then the same named fonts as **Text > Font / Size**. In a pdfLaTeX
+document it writes `\renewcommand{\familydefault}{qtm}` (the family code of a free
+look-alike), so only fonts that have one are offered; the others are greyed with
+"needs XeLaTeX or LuaLaTeX". Under XeLaTeX or LuaLaTeX it writes
+`\setmainfont{Garamond}` and loads `fontspec`; the font must be installed on the
+machine that compiles. Change the compiler and the font in the same card and
+**Apply** writes both. **Default** removes only the active `\familydefault` line (never
+one in a comment or inside a macro) and a `\setmainfont` that names a listed font;
+a font you wrote yourself stays.
 
 Each setting starts from the document's current setup. **Apply** writes only
 changed settings; **Cancel** discards the draft. Blank custom margin fields retain

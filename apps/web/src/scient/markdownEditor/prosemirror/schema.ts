@@ -14,9 +14,16 @@ import type {
   NodeSpec,
   SchemaSpec,
 } from "prosemirror-model";
-import { Schema } from "prosemirror-model";
+import { Fragment, Mark, Schema } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 
+import {
+  MARKDOWN_FONT_SPAN_CLOSE,
+  catalogueFont,
+  markdownFontSpanOpen,
+  normalizeFontSize,
+  parseMarkdownFontSpanOpen,
+} from "@scientfactory/scient-markdown";
 import {
   findScientBackslashMathSpans,
   type ScientBackslashMathSpan,
@@ -61,6 +68,58 @@ type InternalMarkdownSerializerStateConstructor = new (
 const InternalMarkdownSerializerState =
   MarkdownSerializerState as unknown as InternalMarkdownSerializerStateConstructor;
 
+/** Marks that `**`, `*`, `~~` and `<span>` cannot open or close on a space. */
+const WHITESPACE_NEUTRAL_MARKS = new Set(["em", "strong", "strike", "font_size", "font_family"]);
+
+function withoutNeutralMarks(marks: readonly Mark[]): readonly Mark[] {
+  return marks.filter((mark) => !WHITESPACE_NEUTRAL_MARKS.has(mark.type.name));
+}
+
+/**
+ * Whitespace is not styled content: a space or line break where the styles change loses the
+ * `WHITESPACE_NEUTRAL_MARKS`, as the file cannot hold them there. Links and code keep it.
+ * The writer and the round-trip guard share this one form.
+ */
+export function unstyleBoundaryWhitespace(block: ProseMirrorNode): Fragment {
+  const children: ProseMirrorNode[] = [];
+  block.forEach((child) => children.push(child));
+  const unstyled: ProseMirrorNode[] = [];
+  children.forEach((child, index) => {
+    const sameBefore = Mark.sameSet(child.marks, children[index - 1]?.marks ?? Mark.none);
+    const sameAfter = Mark.sameSet(child.marks, children[index + 1]?.marks ?? Mark.none);
+    if (child.type.name === "hard_break") {
+      unstyled.push(sameBefore && sameAfter ? child : child.mark(withoutNeutralMarks(child.marks)));
+      return;
+    }
+    if (!child.isText || (sameBefore && sameAfter)) {
+      unstyled.push(child);
+      return;
+    }
+    const text = child.text ?? "";
+    const lead = sameBefore ? 0 : (/^\s*/u.exec(text)?.[0].length ?? 0);
+    const tail = sameAfter ? 0 : (/\s*$/u.exec(text.slice(lead))?.[0].length ?? 0);
+    const edgeMarks = withoutNeutralMarks(child.marks);
+    for (const [from, to, marks] of [
+      [0, lead, edgeMarks],
+      [lead, text.length - tail, child.marks],
+      [text.length - tail, text.length, edgeMarks],
+    ] as const) {
+      if (from < to) unstyled.push(child.cut(from, to).mark(marks));
+    }
+  });
+  return Fragment.fromArray(unstyled);
+}
+
+/** The same document with `unstyleBoundaryWhitespace` applied to every paragraph and heading. */
+function withUnstyledBoundaryWhitespace(node: ProseMirrorNode): ProseMirrorNode {
+  if (["paragraph", "heading"].includes(node.type.name))
+    return node.copy(unstyleBoundaryWhitespace(node));
+  if (node.isLeaf || node.isTextblock) return node;
+  const children: ProseMirrorNode[] = [];
+  node.forEach((child) => children.push(withUnstyledBoundaryWhitespace(child)));
+  return node.copy(Fragment.fromArray(children));
+}
+
 class ScientMarkdownSerializer extends MarkdownSerializer {
   override serialize(
     content: ProseMirrorNode,
@@ -79,7 +138,7 @@ class ScientMarkdownSerializer extends MarkdownSerializer {
       escapeMarkdown(text, startOfLine)
         .replace(/(?<!\\)\\\[/gu, "&#91;")
         .replace(/(?<!\\)\\\]/gu, "&#93;");
-    state.renderContent(content);
+    state.renderContent(withUnstyledBoundaryWhitespace(content));
     return state.out;
   }
 }
@@ -231,6 +290,47 @@ const footnoteDefinitionSpec: NodeSpec = {
 const strikeSpec: MarkSpec = {
   parseDOM: [{ tag: "s" }, { tag: "del" }, { tag: "strike" }],
   toDOM: () => ["s", 0],
+};
+
+const fontSizeSpec: MarkSpec = {
+  attrs: { size: { default: 12 } },
+  parseDOM: [
+    {
+      tag: "span[data-scient-font-size]",
+      // Pasted HTML is untrusted: only a size inside the allowed range becomes a mark.
+      getAttrs: (element) => {
+        const size = normalizeFontSize(Number(element.getAttribute("data-scient-font-size")));
+        return size === null ? false : { size };
+      },
+    },
+  ],
+  toDOM: (mark) => [
+    "span",
+    { style: `font-size:${mark.attrs.size}pt`, "data-scient-font-size": String(mark.attrs.size) },
+    0,
+  ],
+};
+
+const fontFamilySpec: MarkSpec = {
+  attrs: { family: { default: "Times New Roman" } },
+  parseDOM: [
+    {
+      tag: "span[data-scient-font-family]",
+      // Only a name from the catalogue becomes a mark; the CSS never comes from the paste.
+      getAttrs: (element) => {
+        const family = element.getAttribute("data-scient-font-family");
+        return family !== null && catalogueFont(family) !== null ? { family } : false;
+      },
+    },
+  ],
+  toDOM: (mark) => [
+    "span",
+    {
+      style: `font-family:${catalogueFont(String(mark.attrs.family))?.css ?? "inherit"}`,
+      "data-scient-font-family": String(mark.attrs.family),
+    },
+    0,
+  ],
 };
 
 const displayMathSpec: NodeSpec = {
@@ -452,7 +552,9 @@ export const scientMarkdownSchema: Schema = new Schema({
   nodes,
   marks: defaultMarkdownParser.schema.spec.marks
     .update("link", { ...linkSpec, attrs: { ...linkSpec.attrs, ...referenceAttributes } })
-    .addBefore("code", "strike", strikeSpec),
+    .addBefore("code", "strike", strikeSpec)
+    .addBefore("code", "font_size", fontSizeSpec)
+    .addBefore("code", "font_family", fontFamilySpec),
 } satisfies SchemaSpec);
 
 function tableAlignment(token: { readonly attrGet: (name: string) => string | null }): {
@@ -516,6 +618,66 @@ gfmTokenizer.inline.ruler.before("html_inline", "scient_hard_break", (state, sil
   if (!match) return false;
   if (!silent) state.push("hardbreak", "br", 0);
   state.pos += match[0].length;
+  return true;
+});
+
+// HTML is disabled, so only the exact font spans the package lists are read here.
+// Tokenizing the content between the tags guarantees every open token its close.
+const FONT_SPAN_OPEN_TAG = /^<span\b[^>]*>/u;
+const FONT_SPAN_TAG = /<span\b[^>]*>|<\/span>/gu;
+
+function fontSpanEnd(src: string, from: number, max: number): number {
+  FONT_SPAN_TAG.lastIndex = from;
+  let depth = 1;
+  for (let tag = FONT_SPAN_TAG.exec(src); tag && tag.index < max; tag = FONT_SPAN_TAG.exec(src)) {
+    depth += tag[0] === "</span>" ? -1 : 1;
+    if (depth === 0) return tag.index;
+  }
+  return -1;
+}
+
+/**
+ * Whether a span of the same kind (size or family) sits inside `src[from, to)`. A mark of one
+ * kind cannot nest in itself, so the outer span would lose its font after the inner one closes;
+ * such text is left as source instead.
+ */
+function hasNestedSpanOfKind(src: string, from: number, to: number, kind: "size" | "family") {
+  FONT_SPAN_TAG.lastIndex = from;
+  for (let tag = FONT_SPAN_TAG.exec(src); tag && tag.index < to; tag = FONT_SPAN_TAG.exec(src)) {
+    const inner = parseMarkdownFontSpanOpen(tag[0]);
+    if (inner !== null && kind in inner) return true;
+  }
+  return false;
+}
+
+gfmTokenizer.inline.ruler.before("html_inline", "scient_font_span", (state, silent) => {
+  const tag = FONT_SPAN_OPEN_TAG.exec(state.src.slice(state.pos, state.posMax))?.[0];
+  const span = tag === undefined ? null : parseMarkdownFontSpanOpen(tag);
+  if (tag === undefined || span === null) return false;
+  const contentStart = state.pos + tag.length;
+  const contentEnd = fontSpanEnd(state.src, contentStart, state.posMax);
+  if (contentEnd < 0) return false;
+  // Code spans, comments and escapes hide tags from a raw scan: such text stays source.
+  if (/`|<!--|\\</u.test(state.src.slice(contentStart, contentEnd + 1))) return false;
+  if (
+    hasNestedSpanOfKind(state.src, contentStart, contentEnd, "size" in span ? "size" : "family")
+  ) {
+    return false;
+  }
+  if (!silent) {
+    const kind = "size" in span ? "font_size" : "font_family";
+    const open = state.push(`${kind}_open`, "span", 1);
+    open.meta = span;
+    const oldPos = state.pos;
+    const oldMax = state.posMax;
+    state.pos = contentStart;
+    state.posMax = contentEnd;
+    state.md.inline.tokenize(state);
+    state.pos = oldPos;
+    state.posMax = oldMax;
+    state.push(`${kind}_close`, "span", -1);
+  }
+  state.pos = contentEnd + MARKDOWN_FONT_SPAN_CLOSE.length;
   return true;
 });
 
@@ -736,6 +898,8 @@ export const scientMarkdownParser = new MarkdownParser(scientMarkdownSchema, gfm
     }),
   },
   s: { mark: "strike" },
+  font_size: { mark: "font_size", getAttrs: (token) => ({ size: token.meta.size }) },
+  font_family: { mark: "font_family", getAttrs: (token) => ({ family: token.meta.family }) },
   scient_inline_math: {
     node: "inline_math",
     getAttrs: (token) => ({
@@ -924,6 +1088,18 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
         const close = defaultMarkdownSerializer.marks.link!.close;
         return typeof close === "string" ? close : close(state, mark, parent, index);
       },
+    },
+    font_size: {
+      open: (_state, mark) => markdownFontSpanOpen({ size: mark.attrs.size as number }),
+      close: MARKDOWN_FONT_SPAN_CLOSE,
+      expelEnclosingWhitespace: true,
+      mixable: true,
+    },
+    font_family: {
+      open: (_state, mark) => markdownFontSpanOpen({ family: String(mark.attrs.family) }),
+      close: MARKDOWN_FONT_SPAN_CLOSE,
+      expelEnclosingWhitespace: true,
+      mixable: true,
     },
     strike: {
       close: "~~",

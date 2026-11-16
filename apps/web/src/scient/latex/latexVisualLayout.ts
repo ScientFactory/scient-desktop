@@ -443,7 +443,7 @@ export function resolvedLatexFontSize(points: number, source: string): number {
     source.indexOf("\\begin{document}") < 0 ? source.length : source.indexOf("\\begin{document}"),
   );
   if (
-    /\\(?:setmainfont|babelfont)\b|\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^{}]*\b(?:fontspec|lmodern|newtxtext|newpxtext|tgtermes|tgpagella)\b/u.test(
+    /\\(?:setmainfont|babelfont)\b|\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^{}]*\b(?:fontspec|fix-cm|lmodern|newtxtext|newpxtext|tgtermes|tgpagella)\b/u.test(
       preamble,
     )
   )

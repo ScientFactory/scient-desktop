@@ -40,14 +40,19 @@ import type {
   ScientMarkdownImageNodeViewOptions,
   ScientMarkdownImageNodeViewRegistration,
 } from "../nodes/imageNodeView";
+import type { MarkdownDocumentFont } from "../documentFont";
 import {
+  documentFontEditable,
+  documentFontOf,
   filterScientMarkdownSlashCommands,
   runScientMarkdownCommand,
+  runScientMarkdownDocumentFont,
   runScientMarkdownTableInsert,
   type ScientMarkdownCommand,
   type ScientMarkdownTableDimensions,
 } from "./commands";
 import { scientMarkdownParser, scientMarkdownSchema } from "./schema";
+import { selectionMarkValue } from "./selectionMarkValue";
 import {
   addImageUploadPlaceholder,
   imageUploadPlaceholderPosition,
@@ -141,6 +146,8 @@ export interface ScientMarkdownEditorSnapshot {
   readonly canRedo: boolean;
   readonly canSetWikiLink: boolean;
   readonly canUndo: boolean;
+  readonly documentFont: MarkdownDocumentFont;
+  readonly documentFontEditable: boolean;
   readonly editable: boolean;
   readonly headingLevel: number | null;
   readonly findActiveIndex: number;
@@ -149,6 +156,12 @@ export interface ScientMarkdownEditorSnapshot {
   readonly findMatchCount: number;
   readonly findOpen: boolean;
   readonly findQuery: string;
+  readonly fontFamily: string | null;
+  /** True when the selection mixes several fonts; fontFamily is then null. */
+  readonly fontFamilyMixed: boolean;
+  readonly fontSize: number | null;
+  /** True when the selection mixes several sizes; fontSize is then null. */
+  readonly fontSizeMixed: boolean;
   readonly findWholeWord: boolean;
   readonly inTable: boolean;
   readonly listKind: "bullet" | "ordered" | "task" | null;
@@ -616,6 +629,12 @@ export class ScientMarkdownEditorView {
       else view.focus();
     }
     return handled;
+  }
+
+  setDocumentFont(font: MarkdownDocumentFont): boolean {
+    const view = this.editorView;
+    if (!view || !modeIsEditable(this.mode)) return false;
+    return runScientMarkdownDocumentFont(font, view.state, view.dispatch);
   }
 
   insertTable(dimensions: ScientMarkdownTableDimensions): boolean {
@@ -1705,6 +1724,8 @@ export class ScientMarkdownEditorView {
           : state.doc.rangeHasMark(selection.from, selection.to, mark),
       )
       .map((mark) => mark.name);
+    const fontFamily = selectionMarkValue<string>(state, "font_family", "family", "string");
+    const fontSize = selectionMarkValue<number>(state, "font_size", "size", "number");
     let blockType = selection.$from.parent.type.name;
     let headingLevel: number | null =
       blockType === "heading" ? Number(selection.$from.parent.attrs.level) : null;
@@ -1763,6 +1784,8 @@ export class ScientMarkdownEditorView {
       canRedo: redoDepth(state) > 0,
       canSetWikiLink: modeIsEditable(this.mode) && wikiLinkSelection !== null,
       canUndo: undoDepth(state) > 0,
+      documentFont: documentFontOf(state.doc),
+      documentFontEditable: documentFontEditable(state.doc),
       editable: modeIsEditable(this.mode),
       findActiveIndex: find.activeIndex,
       findCaseSensitive: find.caseSensitive,
@@ -1770,6 +1793,10 @@ export class ScientMarkdownEditorView {
       findMatchCount: find.matches.length,
       findOpen: this.findOpen,
       findQuery: find.query,
+      fontFamily: fontFamily.value,
+      fontFamilyMixed: fontFamily.mixed,
+      fontSize: fontSize.value,
+      fontSizeMixed: fontSize.mixed,
       findWholeWord: find.wholeWord,
       headingLevel,
       inTable,

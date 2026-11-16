@@ -10,6 +10,7 @@ import {
   use,
   useEffect,
   useState,
+  type CSSProperties,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -31,6 +32,13 @@ import { scientMathMarkdownText, scientMathRemarkPluginsForMessage } from "../ma
 import { resolveScientRichFenceKind } from "../presentation/scientRichFenceKind";
 import { scientMarkdownRemarkPlugins } from "../markdown/scientMarkdownProfiles";
 import type { DocumentPageTracker } from "./documentPageReadiness";
+import {
+  DOCUMENT_FONT_SANITIZE_ATTRIBUTES,
+  documentFontFamilyCss,
+  documentFontOfMarkdown,
+  rehypeApplyFontSpans,
+  rehypeMarkFontSpans,
+} from "./documentFont";
 import { remarkDocumentFrontMatter } from "./remarkDocumentFrontMatter";
 
 import "../bidi/scient-bidi.css";
@@ -75,6 +83,7 @@ const DOCUMENT_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
+    span: [...(defaultSchema.attributes?.span ?? []), ...DOCUMENT_FONT_SANITIZE_ATTRIBUTES.span],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -500,6 +509,8 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
     input.markdown,
   );
   const direction = resolveMarkdownDirection(input.markdown, input.direction);
+  const documentFont = documentFontOfMarkdown(input.markdown);
+  const documentFontCss = documentFontFamilyCss(documentFont.fontFamily);
   const context = {
     assets: new Map(input.assets.map((asset) => [asset.id, asset])),
     assetBaseUrl: props.inputUrl,
@@ -509,7 +520,9 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
   const rehypePlugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [
     rehypeRaw,
     [rehypeReportUnsupportedHtml, { tracker }],
+    rehypeMarkFontSpans,
     [rehypeSanitize, DOCUMENT_SANITIZE_SCHEMA],
+    rehypeApplyFontSpans,
     [rehypeEnsureTitle, { title: input.title }],
     [rehypeScientBidi, { direction, requestedDirection: input.direction }],
   ];
@@ -526,6 +539,13 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
         dir={direction}
         lang={input.language ?? undefined}
         data-scient-document={input.documentKind}
+        data-scient-font-size={documentFont.fontSize ?? undefined}
+        data-scient-font-family={documentFont.fontFamily ?? undefined}
+        style={
+          documentFontCss === null
+            ? undefined
+            : ({ "--scient-document-font-family": documentFontCss } as CSSProperties)
+        }
       >
         <ReactMarkdown
           remarkPlugins={remarkPlugins}

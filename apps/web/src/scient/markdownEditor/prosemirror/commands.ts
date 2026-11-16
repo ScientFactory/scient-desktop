@@ -33,6 +33,13 @@ import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
 import { nextScientMarkdownFootnoteLabel } from "../footnotes";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
+import { catalogueFont, normalizeFontSize } from "@scientfactory/scient-markdown";
+import {
+  canWriteMarkdownDocumentFont,
+  readMarkdownDocumentFont,
+  writeMarkdownDocumentFont,
+  type MarkdownDocumentFont,
+} from "../documentFont";
 
 export type ScientMarkdownCommand =
   | "add-column-after"
@@ -55,6 +62,9 @@ export type ScientMarkdownCommand =
   | "direction-rtl"
   | "display-math"
   | "footnote"
+  | `font-family-${string}`
+  | `font-size-${number}`
+  | "font-size-default"
   | "clear-formatting"
   | "hard-break"
   | "heading-1"
@@ -481,6 +491,157 @@ function clearMarkdownFormatting(): Command {
   };
 }
 
+/** The word around a caret (letters, digits, underscore) inside its text block, or null. */
+function wordAroundCaret(state: EditorState): { from: number; to: number } | null {
+  const { $from } = state.selection;
+  if (!$from.parent.isTextblock) return null;
+  const text = $from.parent.textBetween(0, $from.parent.content.size, undefined, "\ufffc");
+  const isLetter = (char: string | undefined) =>
+    char !== undefined && /[\p{L}\p{M}\p{N}_]/u.test(char);
+  // An apostrophe between two letters belongs to the word ("don't", "l'arbre").
+  const isWord = (at: number) =>
+    isLetter(text[at]) ||
+    (/['\u2019]/u.test(text[at] ?? "") && isLetter(text[at - 1]) && isLetter(text[at + 1]));
+  let start = $from.parentOffset;
+  let end = start;
+  while (isWord(start - 1)) start -= 1;
+  while (isWord(end)) end += 1;
+  return start === end ? null : { from: $from.start() + start, to: $from.start() + end };
+}
+
+/**
+ * Set one font mark on the selection; `null` removes it. At a caret it applies to the word
+ * around it (as Word does), or, between words, to the typing marks. Every selected range gets
+ * it, so a selection across table cells reaches all of them. Inline code is skipped: the file
+ * cannot hold a font span around code, so code keeps its own look.
+ */
+function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
+  return (state, dispatch) => {
+    if (!dispatch) return true;
+    const type = requiredMarkType(markName);
+    const code = requiredMarkType("code");
+    const { empty, $from } = state.selection;
+    const word = empty ? wordAroundCaret(state) : null;
+    if (empty && word === null) {
+      const kept = (state.storedMarks ?? $from.marks()).filter((mark) => mark.type !== type);
+      if (kept.some((mark) => mark.type === code)) return true;
+      dispatch(state.tr.setStoredMarks(attrs ? type.create(attrs).addToSet(kept) : kept));
+      return true;
+    }
+    let transaction = state.tr;
+    const ranges = word
+      ? [word]
+      : state.selection.ranges.map((range) => ({ from: range.$from.pos, to: range.$to.pos }));
+    for (const { from, to } of ranges) {
+      transaction = transaction.removeMark(from, to, type);
+      if (!attrs) continue;
+      // Like toggleMark: the written span cannot keep whitespace at its ends.
+      const isSpace = (at: number) => /^\s$/u.test(state.doc.textBetween(at, at + 1));
+      let start = from;
+      let end = to;
+      while (start < end && isSpace(start)) start += 1;
+      while (end > start && isSpace(end - 1)) end -= 1;
+      state.doc.nodesBetween(start, end, (node, position) => {
+        if (!node.isInline || node.marks.some((mark) => mark.type === code)) return;
+        transaction = transaction.addMark(
+          Math.max(start, position),
+          Math.min(end, position + node.nodeSize),
+          type.create(attrs),
+        );
+      });
+    }
+    dispatch(transaction);
+    return true;
+  };
+}
+
+/** Turn inline code on or off. The file cannot hold a font span around code, so turning it on drops the fonts. */
+const toggleInlineCode: Command = (state, dispatch) => {
+  const code = requiredMarkType("code");
+  const fonts = [requiredMarkType("font_size"), requiredMarkType("font_family")];
+  return toggleMark(code)(
+    state,
+    dispatch &&
+      ((transaction) => {
+        const ranges = state.selection.ranges.map((range) => [range.$from.pos, range.$to.pos]);
+        const turnedOn =
+          transaction.storedMarks?.some((mark) => mark.type === code) ||
+          ranges.some(([from, to]) => transaction.doc.rangeHasMark(from!, to!, code));
+        if (turnedOn) {
+          for (const font of fonts) {
+            for (const [from, to] of ranges) transaction.removeMark(from!, to!, font);
+          }
+          if (transaction.storedMarks) {
+            transaction.setStoredMarks(
+              transaction.storedMarks.filter((mark) => !fonts.includes(mark.type)),
+            );
+          }
+        }
+        dispatch(transaction);
+      }),
+  );
+};
+
+/** Parses `font-size-12`, `font-size-default`, `font-family-Arial`, `font-family-default`. */
+function fontCommand(command: string): Command {
+  const [, kind, value = ""] = /^font-(size|family)-(.+)$/u.exec(command) ?? [];
+  if (kind === undefined) return () => false;
+  const markName = kind === "size" ? "font_size" : "font_family";
+  if (value === "default") return setMarkdownFontMark(markName, null);
+  if (kind === "size") {
+    const size = normalizeFontSize(Number(value));
+    return size === null ? () => false : setMarkdownFontMark(markName, { size });
+  }
+  return catalogueFont(value) === null
+    ? () => false
+    : setMarkdownFontMark(markName, { family: value });
+}
+
+/** The leading YAML or TOML front matter block, if the document starts with one. */
+function leadingFrontMatter(doc: ProseMirrorNode): ProseMirrorNode | null {
+  const first = doc.firstChild;
+  const kind = first?.attrs.sourceKind;
+  return first?.type.name === "raw_block" && (kind === "yaml" || kind === "toml") ? first : null;
+}
+
+export function documentFontOf(doc: ProseMirrorNode): MarkdownDocumentFont {
+  return readMarkdownDocumentFont(leadingFrontMatter(doc)?.attrs.source ?? null);
+}
+
+/** Whether the document's front matter can carry font keys (none yet, or YAML). */
+export function documentFontEditable(doc: ProseMirrorNode): boolean {
+  const front = leadingFrontMatter(doc);
+  if (front === null) return true;
+  return (
+    front.attrs.sourceKind === "yaml" && canWriteMarkdownDocumentFont(String(front.attrs.source))
+  );
+}
+
+/** Write the whole-document font keys into the front matter, creating or removing the block. */
+export function runScientMarkdownDocumentFont(
+  font: MarkdownDocumentFont,
+  state: EditorState,
+  dispatch?: (transaction: Transaction) => void,
+): boolean {
+  const front = leadingFrontMatter(state.doc);
+  const next = writeMarkdownDocumentFont(front ? String(front.attrs.source) : null, font);
+  if (next === undefined) return false;
+  if (!dispatch) return true;
+  let transaction = state.tr;
+  if (next === null) {
+    if (front) transaction = transaction.delete(0, front.nodeSize);
+  } else if (front) {
+    transaction = transaction.setNodeMarkup(0, undefined, { ...front.attrs, source: next });
+  } else {
+    transaction = transaction.insert(
+      0,
+      requiredNodeType("raw_block").create({ source: next, sourceKind: "yaml" }),
+    );
+  }
+  dispatch(closeHistory(transaction));
+  return true;
+}
+
 /** Set block direction across the selection; a table is one directional block. */
 function setMarkdownTextDirection(direction: "ltr" | "rtl" | null): Command {
   return (state, dispatch) => {
@@ -515,7 +676,7 @@ function commandFor(command: ScientMarkdownCommand): Command {
     case "strike":
       return toggleMark(requiredMarkType("strike"));
     case "inline-code":
-      return toggleMark(requiredMarkType("code"));
+      return toggleInlineCode;
     case "undo":
       return undo;
     case "redo":
@@ -593,6 +754,8 @@ function commandFor(command: ScientMarkdownCommand): Command {
       // GFM cannot encode spans or arbitrary header cells. Keep the command
       // boundary honest as well as the menu, including keyboard/API callers.
       return () => false;
+    default:
+      return fontCommand(command);
   }
 }
 

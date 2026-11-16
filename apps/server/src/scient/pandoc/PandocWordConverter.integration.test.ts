@@ -633,4 +633,198 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       }),
     ),
   );
+  describe("local font size and family", () => {
+    const exportMarkdown = (name: string, markdown: string) =>
+      withConverter(({ converter, directory }) =>
+        Effect.gen(function* () {
+          const { docx, result } = yield* convertTo(converter, directory, name, {
+            bundle: makeBundle({ markdown }),
+          });
+          return {
+            document: docx.text("word/document.xml"),
+            styles: docx.text("word/styles.xml"),
+            warnings: result.warnings.map((warning) => warning.message).join("\n"),
+          };
+        }),
+      );
+
+    it.live("applies a size in points as a Word character style", () =>
+      Effect.gen(function* () {
+        const { document, styles, warnings } = yield* exportMarkdown(
+          "font-size-span",
+          'Some <span style="font-size:13.5pt">big</span> words.',
+        );
+        expect(document).toMatch(
+          /<w:rStyle w:val="Scient13_5pt"\s*\/>[\s\S]*?<w:t[^>]*>big<\/w:t>/u,
+        );
+        expect(styles).toMatch(/w:styleId="Scient13_5pt"[\s\S]*?<w:sz w:val="27"\s*\/>/u);
+        expect(warnings).not.toContain("Raw HTML");
+        expect(document).not.toContain("&lt;span");
+      }),
+    );
+
+    it.live("applies a named font as a Word character style", () =>
+      Effect.gen(function* () {
+        const { document, styles } = yield* exportMarkdown(
+          "font-family-span",
+          "Some <span style=\"font-family:'Courier New'\">code</span> words.",
+        );
+        expect(document).toMatch(/<w:rStyle w:val="ScientCourierNew"\s*\/>[\s\S]*?code/u);
+        expect(styles).toMatch(/w:styleId="ScientCourierNew"[\s\S]*?w:ascii="Courier New"/u);
+      }),
+    );
+
+    it.live("keeps both when a size span and a font span are nested", () =>
+      Effect.gen(function* () {
+        const { document } = yield* exportMarkdown(
+          "font-nested",
+          'Some <span style="font-size:14pt">big <span style="font-family:\'Arial\'">words</span></span> here.',
+        );
+        const sizeRun = /<w:r>(?:(?!<\/w:r>)[\s\S])*?big/u.exec(document)?.[0] ?? "";
+        const wordsRun = /<w:r>(?:(?!<\/w:r>)[\s\S])*?words/u.exec(document)?.[0] ?? "";
+        expect(sizeRun).toContain("Scient14pt");
+        expect(wordsRun).toContain("ScientArial14pt");
+      }),
+    );
+
+    it.live("keeps an absolute size inside a heading and a footnote", () =>
+      Effect.gen(function* () {
+        const { document, styles } = yield* exportMarkdown(
+          "font-heading",
+          '# Title with <span style="font-size:20pt">big</span> word\n\nText[^1]\n\n[^1]: Note <span style="font-size:20pt">big</span>.\n',
+        );
+        expect(document).toMatch(/<w:rStyle w:val="Scient20pt"\s*\/>[\s\S]*?<w:t[^>]*>big<\/w:t>/u);
+        expect(styles).toMatch(/w:styleId="Scient20pt"[\s\S]*?<w:sz w:val="40"\s*\/>/u);
+      }),
+    );
+
+    it.live("keeps the link look on a sized run inside a link", () =>
+      Effect.gen(function* () {
+        const { document, styles } = yield* exportMarkdown(
+          "font-link",
+          'See [a <span style="font-size:14pt">big</span> link](https://example.com).',
+        );
+        expect(document).toMatch(/<w:rStyle w:val="Scient14ptlink"\s*\/>[\s\S]*?big/u);
+        expect(styles).toMatch(
+          /w:styleId="Scient14ptlink"[\s\S]*?<w:sz w:val="28"\s*\/>[\s\S]*?<w:u w:val="single"/u,
+        );
+      }),
+    );
+
+    it.live("still drops every other span", () =>
+      Effect.gen(function* () {
+        const { document, warnings } = yield* exportMarkdown(
+          "font-other-span",
+          'Some <span style="color:red">plain</span> words.',
+        );
+        expect(document).toContain("plain");
+        expect(document).not.toContain("ScientSize");
+        expect(document).not.toContain("color");
+        expect(warnings).toContain("Raw HTML was left out");
+      }),
+    );
+
+    it.live("sets the base font and size from the front matter", () =>
+      Effect.gen(function* () {
+        const { styles } = yield* exportMarkdown(
+          "font-front-matter",
+          "---\nfontsize: 12pt\nmainfont: Times New Roman\n---\n\nText.\n",
+        );
+        expect(styles).toMatch(
+          /<w:docDefaults>[\s\S]*?w:ascii="Times New Roman"[\s\S]*?<w:sz w:val="24"\s*\/>/u,
+        );
+      }),
+    );
+    const exportLatex = (name: string, tex: string) =>
+      withConverter(({ converter, directory }) =>
+        Effect.gen(function* () {
+          const paper = NodePath.join(directory, "paper");
+          NodeFS.mkdirSync(paper, { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(paper, "main.tex"), tex);
+          const latex = yield* prepareLatexProject(NodePath.join(paper, "main.tex"), directory);
+          const { docx } = yield* convertTo(converter, directory, name, {
+            bundle: makeBundle({ markdown: "" }),
+            latex,
+            files: { baseDirectory: paper, allowRoots: [paper] },
+          });
+          return { document: docx.text("word/document.xml"), styles: docx.text("word/styles.xml") };
+        }),
+      );
+
+    it.live("keeps LaTeX size groups and family commands as Word character styles", () =>
+      Effect.gen(function* () {
+        const { document } = yield* exportLatex(
+          "latex-font",
+          [
+            "\\documentclass{article}",
+            "\\begin{document}",
+            "A {\\fontsize{14.4}{17.3}\\selectfont big \\textsf{both}} and \\textrm{roman} and {\\small tiny}.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        const run = (text: string) =>
+          new RegExp(`<w:r>(?:(?!</w:r>)[\\s\\S])*?${text}`, "u").exec(document)?.[0] ?? "";
+        expect(run("big")).toContain("Scient14_4pt");
+        expect(run("both")).toContain("ScientArial14_4pt");
+        expect(run("roman")).toContain("ScientTimesNewRoman");
+        expect(run("tiny")).toContain("Scient9pt");
+        expect(document).not.toContain("scient-size");
+      }),
+    );
+
+    it.live("exports size groups next to commands and inside arguments", () =>
+      Effect.gen(function* () {
+        const { document } = yield* exportLatex(
+          "latex-brace-forms",
+          [
+            "\\documentclass{article}",
+            "\\begin{document}",
+            "\\section {\\large Intro}",
+            "Body\\footnote {\\small note}. a{\\Large b}c and \\textbf{x}{\\large y}.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        const run = (text: string) =>
+          new RegExp(`<w:r>(?:(?!</w:r>)[\\s\\S])*?${text}`, "u").exec(document)?.[0] ?? "";
+        expect(run("Intro")).toContain("Scient12pt");
+        expect(run(">b<")).toContain("Scient14_4pt");
+        expect(run(">y<")).toContain("Scient12pt");
+        expect(document).not.toContain("scient-size");
+      }),
+    );
+
+    it.live("keeps a LaTeX font family group as a Word character style", () =>
+      Effect.gen(function* () {
+        const { document } = yield* exportLatex(
+          "latex-font-family",
+          [
+            "\\documentclass{article}",
+            "\\begin{document}",
+            "A {\\fontfamily{qtm}\\selectfont serif} text.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        const run = /<w:r>(?:(?!<\/w:r>)[\s\S])*?serif/u.exec(document)?.[0] ?? "";
+        expect(run).toContain("ScientTimesNewRoman");
+      }),
+    );
+
+    it.live("takes the base font from the LaTeX class option and \\familydefault", () =>
+      Effect.gen(function* () {
+        const { styles } = yield* exportLatex(
+          "latex-base-font",
+          [
+            "\\documentclass[12pt]{article}",
+            "\\renewcommand{\\familydefault}{\\rmdefault}",
+            "\\begin{document}",
+            "Text.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        expect(styles).toMatch(
+          /<w:docDefaults>[\s\S]*?Times New Roman[\s\S]*?<w:sz w:val="24"\s*\/>/u,
+        );
+      }),
+    );
+  });
 });
