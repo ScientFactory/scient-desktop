@@ -1707,7 +1707,8 @@ so you can ask it to undo yesterday's tagging or to restore a paper it removed.
 
 The Library supports Zotero (on this computer or on zotero.org), direct PDF import
 and reference files (BibTeX, RIS, CSL-JSON, EndNote XML). It does not yet
-provide evidence grading. Automatic two-way sync with Zotero is not supported; Send to Zotero does not upload PDFs. Highlights need selectable
+provide evidence grading. Automatic two-way sync with Zotero is not supported:
+refresh and send are separate steps you run. Highlights need selectable
 text: a scanned PDF without a text layer, chat attachments and generated PDFs
 cannot be highlighted yet.
 Your Library lives on one computer: each computer and each remote environment
