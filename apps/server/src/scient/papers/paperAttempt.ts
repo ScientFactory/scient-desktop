@@ -154,7 +154,7 @@ const controlsOf = (snapshot: AccountsSnapshot, target: AccountTarget) => {
     target.type === "account"
       ? snapshot.accounts.find(({ accountId }) => accountId === target.accountId)?.controls
       : snapshot.profiles.find(({ profileId }) => profileId === target.profileId);
-  if (!controls) return "default";
+  if (!controls) return `${snapshot.agentAccess}/default`;
   const { access, scope, allowedProjects = [] } = controls;
   const projects = scope.type === "projects" ? scope.projectIds.join(",") : "";
   return [snapshot.agentAccess, access, scope.type, projects, allowedProjects.join(",")].join("/");

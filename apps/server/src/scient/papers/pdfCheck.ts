@@ -59,8 +59,12 @@ export function pdfVerdict(
  * Whether a PDF's own text names this paper: its DOI, or most of its title. Stricter than
  * `pdfVerdict`, which lets an unreadable scan pass; this is for a file whose origin is unknown.
  */
-export function pdfNamesPaper(paper: Pick<Paper, "doi" | "title">, facts: PdfFacts): boolean {
-  if (facts.text.length < MIN_READABLE_TEXT || SUPPLEMENT_HEADING.test(facts.firstPage))
+export function pdfNamesPaper(
+  paper: Pick<Paper, "doi" | "title" | "pages">,
+  facts: PdfFacts,
+): boolean {
+  // A preview or a supplement fails here; an unreadable scan, which passes there, fails below.
+  if (pdfVerdict(paper, facts) !== "the-paper" || facts.text.length < MIN_READABLE_TEXT)
     return false;
   if (paper.doi !== undefined && facts.text.toLowerCase().includes(paper.doi.toLowerCase()))
     return true;

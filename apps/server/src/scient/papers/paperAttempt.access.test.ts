@@ -94,12 +94,13 @@ const fetchAs = (
   requester = agent(doi),
   accounts: ReadonlyArray<AccountSummary> = [university],
   later = true,
+  agentAccess = true,
 ) =>
   Effect.gen(function* () {
     opened.length = 0;
     // Long after any earlier failure at the publisher, so its own page is tried first.
     if (later) yield* TestClock.adjust("2 hours");
-    const fake = fakeAccounts({ accounts: [...accounts] });
+    const fake = fakeAccounts({ accounts: [...accounts], agentAccess });
     const fiber = yield* fetchOnePaper({ doi }, requester, () => Effect.undefined).pipe(
       Effect.provideService(AccountsService, {
         ...fake.service,
@@ -171,5 +172,24 @@ it.effect("decides again as soon as the university's access changes, not a minut
     );
     expect(next.opened.map(({ url }) => url).join()).not.toContain("openathens");
     expect(next.outcome).toMatchObject({ needed: { kind: "access" } });
+  }),
+);
+
+it.effect("stops at once when the user turns agents' access off, default profiles included", () =>
+  Effect.gen(function* () {
+    const requester = agent("10.1/switched");
+    const on = { value: true };
+    const refused = () => !on.value;
+    yield* fetchAs("10.1/switched-first", refused, requester);
+    on.value = false;
+    const next = yield* fetchAs(
+      "10.1/switched-next",
+      refused,
+      requester,
+      [university],
+      false,
+      false,
+    );
+    expect(next.opened).toEqual([]);
   }),
 );
