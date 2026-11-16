@@ -190,10 +190,15 @@ interface FakePi {
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly promptThinkingLevels: ReadonlyArray<string>;
   readonly promptModels: ReadonlyArray<string>;
+  /** Simulates a native extension changing Pi's active selection. */
+  readonly changeNatively: (change: {
+    readonly model?: string;
+    readonly thinking?: string;
+  }) => void;
   /** T3 extension's service tier as each prompt was sent; Pi resets it with each session. */
   readonly promptServiceTiers: ReadonlyArray<string | null>;
   /** Pi reloads extensions without the adapter seeing it, e.g. a user extension's ctx.newSession(). */
-  readonly reloadExtensions: () => void;
+  readonly reloadExtensions: (newSessionFile?: string) => void;
   /** Pi before 0.99 acknowledges prompts without a disposition. */
   readonly omitPromptDisposition: () => void;
   readonly queueStats: (data: unknown) => void;
@@ -493,9 +498,21 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     promptThinkingLevels,
     promptModels,
+    changeNatively: (change) => {
+      if (change.model !== undefined) {
+        currentModel = change.model;
+        const slash = change.model.indexOf("/");
+        selectedModel = {
+          provider: change.model.slice(0, slash),
+          id: change.model.slice(slash + 1),
+        };
+      }
+      thinkingLevel = change.thinking ?? thinkingLevel;
+    },
     promptServiceTiers,
-    reloadExtensions: () => {
+    reloadExtensions: (newSessionFile) => {
       serviceTier = null;
+      if (newSessionFile !== undefined) sessionFile = newSessionFile;
     },
     omitPromptDisposition: () => {
       promptDisposition = false;
@@ -3122,6 +3139,46 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("tracks the session file a user extension switches to during a turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      assert.equal(providerThread.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      const childFile = "/fake/extension-child.jsonl";
+
+      // An extension command such as /handoff calls ctx.newSession(); later prompts go to its file.
+      yield* startTurn(runtime, providerThread, "default", [], "/handoff", undefined, 1);
+      yield* fake.takeRequest("prompt");
+      fake.reloadExtensions(childFile);
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      yield* startTurn(runtime, providerThread, "default", [], "prompt B", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+      yield* fake.emit({ type: "agent_settled" });
+      const idle = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+      );
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // The persisted ref is what a later resume passes to switch_session.
+      assert.equal(
+        idle.type === "provider_thread.updated"
+          ? idle.providerThread.nativeThreadRef?.nativeId
+          : undefined,
+        childFile,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true, "previous"] as const)(
     "resets applied thinking when returning to Pi default (failed first restore: %s)",
     (failFirstRestore) =>
@@ -3573,6 +3630,7 @@ describe("PiAdapterV2", () => {
         const cases = [
           {
             toolName: "read",
+            args: { path: "/workspace/screens/shot.png" },
             result: { content, structuredContent: { ...image, note } },
             expected: { content },
           },
@@ -3629,6 +3687,7 @@ describe("PiAdapterV2", () => {
               type: `tool_execution_${phase}`,
               toolCallId: `image-${index}`,
               toolName: test.toolName,
+              ...("args" in test ? { args: test.args } : {}),
               ...(phase === "end" ? { result: test.result } : { partialResult: test.result }),
               isError: false,
             });
@@ -3646,7 +3705,10 @@ describe("PiAdapterV2", () => {
                 ? [{ mimeType: "image/png", data: image.data }]
                 : [],
             );
-            if (index === 0) assert.equal(turnItemOutputText(event.turnItem), note);
+            if (index === 0) {
+              assert.equal(turnItemOutputText(event.turnItem), note);
+              assert.equal(event.turnItem.viewedImagePath, "/workspace/screens/shot.png");
+            }
             if (index === 5) assert.equal(turnItemOutputText(event.turnItem), "first\nsecond");
             if (index === 2) {
               assert.deepEqual(compactDynamicToolOutput(event.turnItem.output), {
@@ -4234,6 +4296,51 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  // SCIENT-FORK: Scient confirms the selection with set_model on every turn, so both turns set it.
+  it.effect.each([
+    { change: { model: "openai/model-b", thinking: "minimal" }, setModels: 2 },
+    { change: { thinking: "minimal" }, setModels: 2 },
+  ])(
+    "reapplies the selection after an extension changes it natively (%o)",
+    ({ change, setModels }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const selection: ModelSelection = {
+          instanceId: PI_INSTANCE_ID,
+          model: "anthropic/model-a",
+          options: [{ id: "thinking", value: "high" }],
+        };
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: selection,
+          runtimePolicy,
+        });
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "anthropic/model-a",
+          [],
+          "/preset fast",
+          selection,
+        );
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        fake.changeNatively(change);
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+
+        yield* startTurn(runtime, providerThread, "anthropic/model-a", [], "Next", selection, 2);
+        yield* fake.takeRequest("prompt");
+        assert.deepEqual(fake.promptModels, ["anthropic/model-a", "anthropic/model-a"]);
+        assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
+        assert.equal(
+          fake.allRequests().filter((request) => request["type"] === "set_model").length,
+          setModels,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("records the model Pi reports on the completed provider turn", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -4770,7 +4877,27 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("fails a compact that never started", () =>
+  // A failed compact can respond before starting or after compaction_start/end.
+  it.effect.each([
+    {
+      name: "fails a compact Pi rejects before starting",
+      compactionEnd: null,
+      error: "Nothing to compact (session too small)",
+      status: "failed",
+    },
+    {
+      name: "fails a compact after compaction starts",
+      compactionEnd: { aborted: false, errorMessage: "Compaction failed: model request failed" },
+      error: "model request failed",
+      status: "failed",
+    },
+    {
+      name: "completes a compact an extension cancelled",
+      compactionEnd: { aborted: true },
+      error: "Compaction cancelled",
+      status: "completed",
+    },
+  ])("$name", ({ compactionEnd, error, status }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -4781,17 +4908,22 @@ describe("PiAdapterV2", () => {
       });
       yield* startTurn(runtime, providerThread, "default", [], "/compact");
       yield* fake.takeRequest("compact");
-      yield* fake.emit({
-        type: "response",
-        command: "compact",
-        success: false,
-        error: "Nothing to compact (session too small)",
-      });
+      if (compactionEnd !== null) {
+        yield* fake.emit({ type: "compaction_start", reason: "manual" });
+        yield* fake.emit({
+          type: "compaction_end",
+          reason: "manual",
+          result: null,
+          ...compactionEnd,
+        });
+      }
+      yield* fake.emit({ type: "response", command: "compact", success: false, error });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(
-        terminal.type === "turn.terminal" &&
-          terminal.status === "failed" &&
-          terminal.failure.message === "Nothing to compact (session too small)",
+      assert.deepEqual(
+        terminal.type === "turn.terminal"
+          ? { status: terminal.status, failure: terminal.failure?.message }
+          : null,
+        { status, failure: status === "failed" ? error : undefined },
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

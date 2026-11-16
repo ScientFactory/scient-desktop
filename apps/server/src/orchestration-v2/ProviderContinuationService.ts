@@ -82,7 +82,7 @@ export const layer = Layer.effectDiscard(
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
-    const threadLocks = yield* KeyedLock.make<ThreadId>();
+    const continuations = yield* KeyedLock.makeRunner<ThreadId>();
 
     const clearRetryAttempt = (key: string) =>
       Ref.update(retryAttempts, (current) => {
@@ -403,9 +403,7 @@ export const layer = Layer.effectDiscard(
             }),
           ),
           // A dispatch can wait on its parent's lock, so only its own thread's later requests queue behind it.
-          (handled) => threadLocks.withLock(request.threadId, handled),
-          // Starting immediately joins the thread's lock queue before the next take, keeping per-thread order.
-          Effect.forkScoped({ startImmediately: true }),
+          (handled) => continuations.run(request.threadId, handled),
         );
       }),
       Effect.forever,

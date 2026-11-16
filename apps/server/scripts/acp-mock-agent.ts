@@ -1627,6 +1627,21 @@ const program = Effect.gen(function* () {
         }
       }
 
+      if (emitTrackedToolCallKindThenHang !== undefined) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tracked-tool-call",
+            title: "git status",
+            kind: emitTrackedToolCallKindThenHang as AcpSchema.ToolKind,
+            status: "pending",
+            rawInput: { command: "git status" },
+          },
+        });
+        if (!failPrompt && promptCount !== failPromptOrdinal) return yield* Effect.never;
+      }
+
       if (failPrompt || promptCount === failPromptOrdinal) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
@@ -1643,21 +1658,6 @@ const program = Effect.gen(function* () {
           },
         });
         return yield* finishPrompt(requestedSessionId, "max_tokens");
-      }
-
-      if (emitTrackedToolCallKindThenHang !== undefined) {
-        yield* agent.client.sessionUpdate({
-          sessionId: requestedSessionId,
-          update: {
-            sessionUpdate: "tool_call_update",
-            toolCallId: "tracked-tool-call",
-            title: "git status",
-            kind: emitTrackedToolCallKindThenHang as AcpSchema.ToolKind,
-            status: "pending",
-            rawInput: { command: "git status" },
-          },
-        });
-        return yield* Effect.never;
       }
 
       if (hangPromptForever || (emitEmptySuccessfulBashThenHang && promptCount === 2)) {
