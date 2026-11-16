@@ -1927,20 +1927,38 @@ function LatexInlineCommandView({
         event.stopPropagation();
       }}
       onClickCapture={(event: MouseEvent<HTMLElement>) => {
-        const items = pendingCitation.current;
+        let items = pendingCitation.current;
         pendingCitation.current = null;
+        const key =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>("[data-citation-key]")
+            : null;
+        // Enter or Space on a citation while reading: a click with no press before it.
+        if (!items && event.detail === 0 && !editable && citation && citationOpener) {
+          const keyed = latexCitationOpenItems(
+            argument,
+            citation.notes,
+            key?.dataset.citationKey ?? null,
+          );
+          if (key?.dataset.citationTarget === undefined && citationOpener.opens(keyed)) {
+            items = keyed;
+          }
+        }
         if (!items || !citationOpener) return;
         event.preventDefault();
         event.stopPropagation();
         const position = getPos();
         const before = typeof position === "number" ? editor.state.doc.resolve(position) : null;
+        const box = (key ?? event.currentTarget).getBoundingClientRect();
         citationOpener.open(
           items,
           before &&
             latexQuoteBefore(
               before.parent.textBetween(0, before.parentOffset, undefined, "\ufffc"),
             ),
-          { x: event.clientX, y: event.clientY },
+          event.detail === 0
+            ? { x: box.left, y: box.bottom }
+            : { x: event.clientX, y: event.clientY },
         );
       }}
     >

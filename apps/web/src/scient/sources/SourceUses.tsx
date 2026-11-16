@@ -86,14 +86,14 @@ function SourceUsesSection(props: {
 }) {
   const { state } = props;
   return (
-    <section className="space-y-2">
+    <section className="space-y-2" aria-busy={state.status === "loading"}>
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         Used in this project
       </h3>
       {state.status === "loading" ? (
         <p className="text-sm text-muted-foreground">Looking for citations…</p>
       ) : state.status === "failed" ? (
-        <p className="text-sm text-muted-foreground">
+        <p role="alert" className="text-sm text-muted-foreground">
           Could not look for citations.{" "}
           <Button variant="link" size="micro" onClick={props.onRetry}>
             Retry

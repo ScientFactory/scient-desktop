@@ -59,7 +59,7 @@ const overview: ScientSourcesOverviewResult = {
   ],
 };
 
-function Harness() {
+function Harness(props: { readonly disabled?: boolean }) {
   const [source, setSource] = useState(SOURCE);
   const owner = useLatexVisualTestOwner(source);
   return (
@@ -68,7 +68,7 @@ function Harness() {
       draftKey="browser-citation-open"
       fileRevision="r1"
       source={source}
-      disabled={false}
+      disabled={props.disabled ?? false}
       environmentId={environmentId}
       cwd="/project"
       citationSource={{ environmentId, threadId, cwd: "/project" }}
@@ -83,21 +83,25 @@ function Harness() {
   );
 }
 
-it("opens the cited source on Command-click (Control-click) without selecting the citation", async () => {
+async function renderHarness(stack: AsyncDisposableStack, disabled = false) {
   mocks.readScientSources.mockReset().mockResolvedValue(overview);
   mocks.openCitation.mockReset().mockReturnValue(true);
   clearVisualDraft("browser-citation-open");
   await page.viewport(1400, 900);
-  await using stack = new AsyncDisposableStack();
   const container = document.createElement("div");
   Object.assign(container.style, { width: "1200px", height: "900px" });
   document.body.append(container);
   stack.defer(() => container.remove());
-  stack.use(await _fixtureRender(<Harness />, { container, router: false }));
-
+  stack.use(await _fixtureRender(<Harness disabled={disabled} />, { container, router: false }));
   await vi.waitFor(() =>
     expect(mocks.readScientSources).toHaveBeenCalledWith(environmentId, "/project"),
   );
+  return container;
+}
+
+it("opens the cited source on Command-click (Control-click) without selecting the citation", async () => {
+  await using stack = new AsyncDisposableStack();
+  const container = await renderHarness(stack);
   const citation = page.getByRole("button", { name: "Edit cite" });
   await expect.element(citation).toBeVisible();
   const editor = (
@@ -122,4 +126,18 @@ it("opens the cited source on Command-click (Control-click) without selecting th
   await userEvent.click(citation);
   expect(mocks.openCitation).not.toHaveBeenCalled();
   expect(editor.state.selection).toBeInstanceOf(NodeSelection);
+});
+
+it("opens the cited source with Enter while the editor cannot be edited", async () => {
+  await using stack = new AsyncDisposableStack();
+  await renderHarness(stack, true);
+  await act(() => Promise.all(mocks.readScientSources.mock.results.map((read) => read.value)));
+  const citation = page.getByRole("button", { name: "Edit cite" });
+  await expect.element(citation).toBeEnabled();
+  (citation.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(mocks.openCitation).toHaveBeenCalledOnce();
+  expect(mocks.openCitation.mock.lastCall![0]).toMatchObject({
+    items: [{ key: "lovelace1843notes", locator: "p.~4" }],
+  });
 });
