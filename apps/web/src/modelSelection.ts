@@ -326,7 +326,9 @@ export function resolveAppModelSelectionForInstance(
       unavailableSelection &&
       !hiddenModels.includes(unavailableSelection) &&
       resolveSelectableModel(entry.driverKind, selectedModel, entry.models) === null &&
-      !isRuntimeModelDefaultAlias(entry.driverKind, unavailableSelection)
+      !isRuntimeModelDefaultAlias(entry.driverKind, unavailableSelection) &&
+      // SCIENT-FORK: a model the provider reports unavailable is not a catalog gap.
+      !entry.models.some((model) => model.slug === unavailableSelection && model.unavailableReason)
     ) {
       return unavailableSelection;
     }
