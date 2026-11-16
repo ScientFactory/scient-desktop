@@ -400,6 +400,14 @@ font inside another font, is not read either: the outer span stays source so no
 text silently loses its font. Fonts come from a fixed list; a name outside it is
 never applied.
 
+A space or line break at the edge of a style carries no style. Applying a size or
+font to a selection that ends with a space leaves that space unsized, and a space
+between two words sized one at a time is unsized. The same holds for bold, italic and
+strikethrough: Markdown cannot open or close them on a space, so Scient writes the
+space outside. When the size or font of a selection is read, spaces are ignored,
+so words sized one by one show their common size. Inline code keeps its own look;
+a size or font applied across it skips the code.
+
 **Document > Document settings** sets the whole document's font and base size
 (10, 11 or 12 pt) in the file's front matter, as `mainfont:` and `fontsize:`.
 Only the key you change is rewritten; other lines and comments stay as they are.

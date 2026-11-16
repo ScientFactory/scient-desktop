@@ -39,7 +39,12 @@ catalog. Local font size and family are: `<span style="font-size:12pt">` and
 rule `scient_font_span`; names come from the shared catalogue in
 `packages/scient-markdown/src/fontCatalogue.ts`; a span nested in a span of the
 same kind is left as source), and the document font lives in the `fontsize` and
-`mainfont` front matter keys. Shared menus, math commands, renderers and footer components
+`mainfont` front matter keys. Whitespace is not styled content: where the set of marks
+changes, a space or line break loses `em`, `strong`, `strike`, `font_size` and `font_family`
+(`unstyleBoundaryWhitespace` in `schema.ts`), in the writer and in the round-trip guard
+(`hasSameWritebackContent`), so the guard does not refuse edits the file cannot hold; links and
+code keep their spaces. Font commands skip inline code, and the size or font shown for a
+selection ignores whitespace-only text (`selectionMarkValue.ts`). Shared menus, math commands, renderers and footer components
 do not merge the Markdown and LaTeX grammars, document models, or undo histories.
 
 Source preservation is bounded. Unchanged ledger ranges are reused exactly;
