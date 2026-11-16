@@ -57,7 +57,8 @@ describe("canonical code copy selection and lifetime", () => {
         screen.container.querySelector<HTMLButtonElement>('[aria-label="Copy code"]')!.click(),
       );
       expect(exec).toHaveBeenCalledExactlyOnceWith("copy");
-      expect(copied).toBe(code);
+      // Copy leaves out the fence's closing newline.
+      expect(copied).toBe(code.slice(0, -1));
       expect(selection.toString()).toBe(selected);
       expect([
         selection.anchorNode,
