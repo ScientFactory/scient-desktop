@@ -447,4 +447,11 @@ describe("Whitespace rule: other marks and characters", () => {
       mixed: false,
     });
   });
+
+  it("accepts deleting the first word of a line after a line break, as at the start of a paragraph", () => {
+    const session = open("aa bb  \ncc dd ee\n");
+    session.applyTransaction(session.state.tr.delete(1 + 6, 1 + 8), "user");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe("aa bb\\\n dd ee\n");
+  });
 });

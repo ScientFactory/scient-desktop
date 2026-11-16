@@ -1,7 +1,7 @@
 // Replays font size and bold gestures in a real browser with real keystrokes on a throwaway
 // document, and checks that no edit is refused and the file text stays as expected.
 import { TextSelection } from "prosemirror-state";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 import { ScientMarkdownEditorView } from "./view";
 
@@ -119,5 +119,63 @@ describe("font gestures in a real browser", () => {
     select(view, 0, 11);
     controller.execute("font-size-18");
     expect(refused(controller)).toBe(false);
+  });
+
+  describe("with the selection made by real keys, in the conditions that failed before", () => {
+    /** Put the caret at `from`, then extend the selection to `to` with Shift+ArrowRight. */
+    async function selectByKeys(view: ReturnType<typeof open>["view"], from: number, to: number) {
+      select(view, from);
+      await userEvent.keyboard(`{Shift>}${"{ArrowRight}".repeat(to - from)}{/Shift}`);
+      // The editor reads the browser selection asynchronously; wait until it has.
+      await vi.waitFor(() => {
+        expect([view.state.selection.from, view.state.selection.to]).toEqual([1 + from, 1 + to]);
+      });
+    }
+
+    it("a space typed between a sized word and the next word is accepted", async () => {
+      using editor = open("un bien mot\n");
+      const { controller, view } = editor;
+      await selectByKeys(view, 3, 7);
+      controller.execute("font-size-14");
+      await userEvent.keyboard("{ArrowRight}");
+      await vi.waitFor(() => expect(view.state.selection.empty).toBe(true));
+      await userEvent.keyboard(" ");
+      expect(refused(controller)).toBe(false);
+      // Chromium types a non-breaking space before an existing space; it is a space for this rule.
+      expect(draft(controller).replaceAll("\u00a0", " ")).toBe(
+        `un <span style="font-size:14pt">bien</span>  mot\n`,
+      );
+    });
+
+    it("italic over two differently sized words is accepted", async () => {
+      using editor = open("aa bb cc\n");
+      const { controller, view } = editor;
+      await selectByKeys(view, 0, 2);
+      controller.execute("font-size-14");
+      await selectByKeys(view, 3, 5);
+      controller.execute("font-size-20");
+      await selectByKeys(view, 1, 4);
+      controller.execute("italic");
+      expect(refused(controller)).toBe(false);
+    });
+
+    it("removing bold from the last word of a bold phrase is accepted", async () => {
+      using editor = open("**one two**\n");
+      const { controller, view } = editor;
+      await selectByKeys(view, 4, 7);
+      controller.execute("bold");
+      expect(refused(controller)).toBe(false);
+      expect(draft(controller)).toBe("**one** two\n");
+    });
+
+    it("a size on the text after a sized line break is accepted", async () => {
+      using editor = open("one  \ntwo three\n");
+      const { controller, view } = editor;
+      await selectByKeys(view, 0, 13);
+      controller.execute("font-size-14");
+      await selectByKeys(view, 4, 9);
+      controller.execute("font-size-20");
+      expect(refused(controller)).toBe(false);
+    });
   });
 });
