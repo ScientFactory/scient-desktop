@@ -1544,37 +1544,35 @@ it.layer(
       );
     });
 
-    it.each(["kiro", "claudeAgent"] as const)(
-      "keeps %s models a ready probe can omit",
-      (driver) => {
-        const previousProvider = {
-          instanceId: ProviderInstanceId.make(driver),
-          driver: ProviderDriverKind.make(driver),
-          status: "ready",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          checkedAt: "2026-10-30T00:00:00.000Z",
-          version: "1.0.0",
-          models: [
-            { slug: "built-in-model", name: "Built-in", isCustom: false, capabilities: null },
-            { slug: "listed-model", name: "Listed", isCustom: false, capabilities: null },
-          ],
-          slashCommands: [],
-          skills: [],
-        } as const satisfies ServerProvider;
-        const partialProvider = {
-          ...previousProvider,
-          checkedAt: "2026-10-30T00:01:00.000Z",
-          models: [previousProvider.models[0]],
-        } satisfies ServerProvider;
+    // SCIENT-FORK: Claude's catalog is authoritative in Scient (ScientProviderModelMerge.ts).
+    it.each(["kiro"] as const)("keeps %s models a ready probe can omit", (driver) => {
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make(driver),
+        driver: ProviderDriverKind.make(driver),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-30T00:00:00.000Z",
+        version: "1.0.0",
+        models: [
+          { slug: "built-in-model", name: "Built-in", isCustom: false, capabilities: null },
+          { slug: "listed-model", name: "Listed", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const partialProvider = {
+        ...previousProvider,
+        checkedAt: "2026-10-30T00:01:00.000Z",
+        models: [previousProvider.models[0]],
+      } satisfies ServerProvider;
 
-        assert.deepStrictEqual(
-          ProviderRegistry.mergeProviderSnapshot(previousProvider, partialProvider).models,
-          [...previousProvider.models],
-        );
-      },
-    );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, partialProvider).models,
+        [...previousProvider.models],
+      );
+    });
 
     it("retains stale OpenCode models when a refresh fails or lists none", () => {
       const previousProvider = {

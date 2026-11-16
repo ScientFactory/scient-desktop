@@ -401,7 +401,8 @@ it.effect.each([
             if (input.args.includes("add"))
               return liveProcess.run(input).pipe(Effect.tap(() => TestClock.adjust("1 second")));
             // The files are hashed and published by now, but not yet remembered.
-            return input.args.includes("update-ref")
+            // SCIENT-FORK: Scient publishes a staged checkpoint with fetch, not update-ref.
+            return input.args.includes("update-ref") || input.args.includes("fetch")
               ? liveProcess.run(input).pipe(Effect.tap(() => afterPublish))
               : liveProcess.run(input);
           },

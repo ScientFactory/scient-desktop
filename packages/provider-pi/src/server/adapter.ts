@@ -448,6 +448,8 @@ interface ActivePiTurn {
   settleWhenIdle: boolean;
   /** Pi fails a cancelled compact's response too; that is a stop, not a turn failure. */
   compactionCancelled: boolean;
+  // SCIENT-FORK: a refused /compact fails its turn but leaves Pi's session as it was.
+  compactRefused?: true;
   manualCompactInFlight: boolean;
   activeCompaction: PiCompactionState | null;
   activeProviderRetry: PiProviderRetryState | null;
@@ -2427,8 +2429,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           },
           treeRefs?.retainedNativeTurnIds,
         );
+        // SCIENT-FORK: an "error" session is retired before reuse, and its live Pi would keep
+        // the session file's lease from the replacement, so a refused /compact stays ready.
         yield* updateProviderSession(
-          failure !== null ? "error" : "ready",
+          failure !== null && turn.compactRefused !== true ? "error" : "ready",
           failure?.message ?? null,
         );
         if (failure !== null) {
@@ -3053,6 +3057,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   message: recordString(event, "error") ?? "Pi compact failed.",
                   class: "provider_error",
                 });
+                compactTurn.compactRefused = true;
                 if (state !== null) yield* finalizeTurn(state);
                 return;
               }

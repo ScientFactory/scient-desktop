@@ -993,8 +993,10 @@ describe("PiAdapterV2", () => {
         }
         const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
         assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+        // SCIENT-FORK: a refused /compact leaves the session ready; Scient retires "error" owners.
+        const failedStatus = failure === "failed compact" ? "ready" : "error";
         assert.deepInclude(runtime.providerSession, {
-          status: "error",
+          status: failedStatus,
           extensionStatuses: [{ key: "watch", text: "Watching 3 files" }],
         });
 
@@ -1012,7 +1014,7 @@ describe("PiAdapterV2", () => {
         });
         yield* takeEvent((event) => event.type === "runtime_request.updated");
         assert.deepInclude(runtime.providerSession, {
-          status: "error",
+          status: failedStatus,
           extensionStatuses: [{ key: "watch", text: "Watching 4 files" }],
         });
 
@@ -4918,6 +4920,17 @@ describe("PiAdapterV2", () => {
         });
       }
       yield* fake.emit({ type: "response", command: "compact", success: false, error });
+      // SCIENT-FORK: a refused /compact keeps its session reusable and still reports the error.
+      if (status === "failed") {
+        const session = yield* takeEvent(
+          (event) =>
+            event.type === "provider_session.updated" && event.providerSession.lastError === error,
+        );
+        assert.equal(
+          session.type === "provider_session.updated" ? session.providerSession.status : null,
+          "ready",
+        );
+      }
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.deepEqual(
         terminal.type === "turn.terminal"

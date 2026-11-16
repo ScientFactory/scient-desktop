@@ -1,5 +1,6 @@
 import {
   DEFAULT_MODEL,
+  DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ModelCapabilities,

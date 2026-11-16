@@ -8502,6 +8502,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               continue;
             if (options?.unstartedOnly === true && tool.status !== "pending") continue;
             yield* emitTool(context, tool, status);
+            // SCIENT-FORK: a tool ended here stays ended; a later failure path must not repeat it.
+            const ended = context.tools.get(tool.toolCallId);
+            if (ended !== undefined) context.tools.set(tool.toolCallId, { ...ended, status });
           }
         });
 
