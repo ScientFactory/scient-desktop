@@ -1063,6 +1063,63 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       }),
     ),
   );
+  it.effect("continues a turn that ended early by prompting, since the RPC has no resume", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        const { message, ...turn } = h.input;
+        if (h.runtime.resumeTurn === undefined)
+          return yield* Effect.die("Scient Agent offers no manual continuation");
+        yield* h.runtime.resumeTurn({ ...turn, messageId: message.messageId });
+        yield* peer.finish();
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        assert.deepInclude(terminal, { status: "completed" });
+        assert.deepEqual(
+          peer.state.prompts.map((prompt) => [prompt.frame.type, prompt.frame.message]),
+          [["prompt", "Continue where you left off."]],
+        );
+      }),
+    ),
+  );
+  it.effect("asks for the model catalog again once when a turn's discovery times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const silenced = yield* Deferred.make<void>();
+        let silenceNextDiscovery = false;
+        const discovery = (frame: { readonly type: string }) => {
+          if (frame.type !== "get_available_models" || !silenceNextDiscovery) return false;
+          silenceNextDiscovery = false;
+          return true;
+        };
+        const h = yield* modelHarness({
+          silentReply: discovery,
+          holdReply: (frame) =>
+            frame.type === "get_available_models" && silenceNextDiscovery
+              ? Deferred.succeed(silenced, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        silenceNextDiscovery = true;
+        const starting = yield* h.start(1, "vendor/a", "high").pipe(Effect.forkScoped);
+        yield* Deferred.await(silenced);
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(starting).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+        yield* h.peer.finish();
+        const terminal = yield* h.terminal();
+        assert.deepInclude(terminal, { status: "completed" });
+        assert.equal(
+          h.peer.state.log.filter((entry) => entry.startsWith("get_available_models")).length,
+          2,
+        );
+      }),
+    ),
+  );
   it.effect.each([
     {
       caseTitle: "carries the usage-limit reset time Scient Agent reports",
