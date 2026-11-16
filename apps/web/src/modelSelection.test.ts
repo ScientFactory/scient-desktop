@@ -410,8 +410,8 @@ describe("instance-scoped model selection", () => {
     },
     {
       driverName: "antigravity",
-      availableModel: "gemini-3.1-pro",
-      missingModel: "gemini-3.1-pro-high",
+      availableModel: "gemini-4-hydrogen",
+      missingModel: "gemini-4-hydrogen-high",
     },
     {
       driverName: "cursor",
@@ -648,7 +648,7 @@ describe("instance-scoped model selection", () => {
   it("offers only account catalog models for Antigravity despite custom model settings", () => {
     const driver = ProviderDriverKind.make("antigravity");
     const customId = ProviderInstanceId.make("antigravity_work");
-    const nativeModel = "gemini-3.1-pro";
+    const nativeModel = "gemini-4-hydrogen";
     const settings: UnifiedSettings = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
@@ -672,7 +672,7 @@ describe("instance-scoped model selection", () => {
   });
 
   it.each([
-    { driver: "antigravity", marker: ANTIGRAVITY_DEFAULT_MODEL, nativeModel: "gemini-3.1-pro" },
+    { driver: "antigravity", marker: ANTIGRAVITY_DEFAULT_MODEL, nativeModel: "gemini-4-hydrogen" },
     { driver: "acpRegistry", marker: "default", nativeModel: "agent-model" },
   ])(
     "resolves the $driver default marker without creating an unavailable model",
