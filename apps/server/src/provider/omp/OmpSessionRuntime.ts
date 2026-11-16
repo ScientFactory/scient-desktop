@@ -1146,6 +1146,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       yield* publish({ type: "observation", event });
       return;
     }
+    // SCIENT-FORK:START — Scient Agent's warming stopped: its confirmed cache times idle compaction.
+    if (event.type === "cache_warming_stopped") {
+      yield* publish({ type: "observation", event });
+      return;
+    }
+    // SCIENT-FORK:END
     if (event.type === "auto_retry_start") {
       if (!turnIsOpen(turn) || staleRunOpen()) return;
       evidence.retryExhausted = false;

@@ -4532,3 +4532,59 @@ it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts 
     assert.equal((yield* Ref.get(state)).closeCount, 1);
   }),
 );
+
+// Scient Agent's warming stops up to half an hour after the run's subscribers have left.
+it.effect(
+  "ProviderSessionManagerV2 keeps an idle thread's warming stop with no run subscribed",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:warming-stopped");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const afterSequence = yield* eventSink.latestSequence({ threadId });
+        const persisted = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter((stored) => stored.event.type === "provider-thread.updated"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const promptCacheWarmingStopped = {
+          stoppedAt: "2026-11-16T12:29:00.000Z",
+          expiresAt: "2026-11-16T12:31:00.000Z",
+        };
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.ok(queue);
+        yield* Queue.offer(queue, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: { ...providerThread, promptCacheWarmingStopped },
+          sessionScoped: true,
+        });
+        assert.isTrue(Option.isSome(yield* Fiber.join(persisted)));
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        assert.deepEqual(
+          projection.providerThreads.find((thread) => thread.id === providerThread.id)
+            ?.promptCacheWarmingStopped,
+          promptCacheWarmingStopped,
+        );
+      }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })), Effect.scoped);
+    }),
+);
