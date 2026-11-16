@@ -180,10 +180,23 @@ const withServices = <A, E>(
     const fs = yield* FileSystem.FileSystem;
     const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-state-" });
     const announced = yield* Queue.unbounded<PaperQueueSummary>();
+    const path = yield* Path.Path;
+    // Two papers ending together can both announce nothing waiting; only the list itself says so.
+    const nothingWaiting = (root: string) =>
+      listPapers(root).pipe(
+        Effect.map((items) => items.every((item) => item.state !== "waiting")),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.orDie,
+      );
     const settled = (root: string): Effect.Effect<void> =>
       Queue.take(announced).pipe(
         Effect.flatMap((summary) =>
-          summary.root === root && summary.waiting === 0 ? Effect.void : settled(root),
+          summary.root === root && summary.waiting === 0
+            ? nothingWaiting(root).pipe(
+                Effect.flatMap((done) => (done ? Effect.void : settled(root))),
+              )
+            : settled(root),
         ),
       );
     return yield* test(settled).pipe(
@@ -292,6 +305,8 @@ it.effect(
         fetched.started = started.resolve;
         yield* requestPapers(root, [{ doi: "10.1/slow" }], agent);
         yield* Effect.promise(() => started.promise);
+        // A sign-in finishing now finds this project, though nothing waits on the user yet.
+        expect(yield* waitingPaperRoots()).toContain(root);
         // The user connects while the first attempt is still out; it then comes back unanswered.
         yield* continuePapers(root, user);
         fetched.slow = Promise.resolve();
@@ -304,6 +319,30 @@ it.effect(
         ]);
       }),
     ),
+);
+
+it.effect("the user's own request for an agent's paper underway makes it theirs", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      const slow = Promise.withResolvers<void>();
+      fetched.slow = slow.promise;
+      fetched.calls.length = 0;
+      const started = Promise.withResolvers<void>();
+      fetched.started = started.resolve;
+      yield* requestPapers(root, [{ doi: "10.1/claimed-slow" }], agent);
+      yield* Effect.promise(() => started.promise);
+      yield* requestPapers(root, [{ doi: "10.1/claimed-slow" }], user);
+      fetched.slow = Promise.resolve();
+      slow.resolve();
+      yield* settled(root);
+      expect(fetched.calls).toEqual([
+        { doi: "10.1/claimed-slow", requester: agent },
+        { doi: "10.1/claimed-slow", requester: user },
+      ]);
+    }),
+  ),
 );
 
 it.effect("reuses only a copy it recorded for this paper, with its version", () =>
@@ -320,6 +359,11 @@ it.effect("reuses only a copy it recorded for this paper, with its version", () 
         { doi: "10.1/preprint", route: "saved-before", published: false, version: "preprint" },
         { doi: "10.1/other", state: "not-found" },
       ]);
+      // Replaced since, the file is no longer the copy it saved.
+      yield* fs.writeFileString(path.join(root, "papers", "A-preprint.pdf"), "%PDF-1.7\nother\n");
+      yield* requestPapers(root, [{ doi: "10.1/preprint" }, { doi: "10.1/another" }], user);
+      yield* settled(root);
+      expect(yield* listPapers(root)).toMatchObject([{ route: "open-access" }, {}]);
       // A file of the same name the queue didn't save, that doesn't read as this paper, isn't it.
       const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
       yield* fs.makeDirectory(path.join(elsewhere, "papers"));
@@ -329,6 +373,20 @@ it.effect("reuses only a copy it recorded for this paper, with its version", () 
       expect(yield* listPapers(elsewhere)).toMatchObject([
         { route: "open-access", path: "papers/A-preprint-2.pdf" },
       ]);
+    }),
+  ),
+);
+
+it.effect("leaves a queue file it can't read alone, and says so", () =>
+  withServices(() =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      // Not a file it can read: a folder where the queue file goes.
+      yield* fs.makeDirectory(yield* queueFile(root), { recursive: true });
+      const failed = yield* requestPapers(root, [{ doi: "10.1/x" }], agent).pipe(Effect.flip);
+      expect(failed.message).toBe("This project's paper list can't be read.");
+      expect((yield* fs.stat(yield* queueFile(root))).type).toBe("Directory");
     }),
   ),
 );

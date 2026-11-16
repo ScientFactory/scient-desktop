@@ -88,13 +88,19 @@ const agent = (doi: string): PaperRequester => ({
 });
 
 /** One paper, as an agent's request, with the university connected after it asked. */
-const fetchAs = (doi: string, refused: (target: AccountTarget) => boolean) =>
+const fetchAs = (
+  doi: string,
+  refused: (target: AccountTarget) => boolean,
+  requester = agent(doi),
+  accounts: ReadonlyArray<AccountSummary> = [university],
+  later = true,
+) =>
   Effect.gen(function* () {
     opened.length = 0;
     // Long after any earlier failure at the publisher, so its own page is tried first.
-    yield* TestClock.adjust("2 hours");
-    const fake = fakeAccounts({ accounts: [university] });
-    const fiber = yield* fetchOnePaper({ doi }, agent(doi), () => Effect.undefined).pipe(
+    if (later) yield* TestClock.adjust("2 hours");
+    const fake = fakeAccounts({ accounts: [...accounts] });
+    const fiber = yield* fetchOnePaper({ doi }, requester, () => Effect.undefined).pipe(
       Effect.provideService(AccountsService, {
         ...fake.service,
         authorize: (_scope, target) =>
@@ -112,7 +118,7 @@ const fetchAs = (doi: string, refused: (target: AccountTarget) => boolean) =>
       Effect.forkChild,
     );
     // Publishers are paced at a reader's speed.
-    for (let minute = 0; minute < 5; minute += 1) yield* TestClock.adjust("1 minute");
+    for (let turn = 0; turn < 2; turn += 1) yield* TestClock.adjust("20 seconds");
     return { outcome: yield* Fiber.join(fiber), opened: [...opened] };
   });
 
@@ -140,5 +146,30 @@ it.effect("skips a university the conversation may not use, and says so", () =>
     );
     expect(profile.outcome).toMatchObject({ needed: { kind: "access" } });
     expect(profile.opened.map(({ profileId }) => profileId)).toEqual(["main"]);
+  }),
+);
+
+it.effect("decides again as soon as the university's access changes, not a minute later", () =>
+  Effect.gen(function* () {
+    const requester = agent("10.1/changed");
+    const changing = {
+      ...university,
+      controls: { access: "allowed", scope: { type: "all-projects" } },
+    };
+    const refused = (target: AccountTarget) =>
+      target.type === "account" && changing.controls.access === "off";
+    const first = yield* fetchAs("10.1/changed-first", refused, requester, [changing as never]);
+    expect(first.outcome).toMatchObject({ state: "saved", route: "university" });
+    // Turned off in Settings right after: the next paper of the same conversation doesn't use it.
+    changing.controls = { ...changing.controls, access: "off" };
+    const next = yield* fetchAs(
+      "10.1/changed-next",
+      refused,
+      requester,
+      [changing as never],
+      false,
+    );
+    expect(next.opened.map(({ url }) => url).join()).not.toContain("openathens");
+    expect(next.outcome).toMatchObject({ needed: { kind: "access" } });
   }),
 );
