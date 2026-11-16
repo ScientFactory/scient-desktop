@@ -29,6 +29,26 @@ function renameInMarkdown(text: string, from: string, to: string): string {
 
 const LATEX_CITE_ARGUMENTS = /\\[A-Za-z]*cite[A-Za-z]*\*?(?:\s*\[[^\]]*\]){0,2}\s*\{([^{}]*)\}/uy;
 
+/**
+ * The text with each LaTeX comment (`%` to the end of its line, not `\%`) blanked by as many
+ * spaces: offsets and line breaks stay where they were, so arguments read from it map back.
+ */
+export function maskLatexComments(text: string): string {
+  let masked = "";
+  let copied = 0;
+  for (let at = text.indexOf("%"); at >= 0; at = text.indexOf("%", at + 1)) {
+    if (at < copied) continue;
+    let backslashes = 0;
+    while (text[at - 1 - backslashes] === "\\") backslashes++;
+    if (backslashes % 2 === 1) continue;
+    const lineEnd = text.slice(at).search(/[\r\n]/u);
+    const end = lineEnd < 0 ? text.length : at + lineEnd;
+    masked += text.slice(copied, at) + " ".repeat(end - at);
+    copied = end;
+  }
+  return copied === 0 ? text : masked + text.slice(copied);
+}
+
 /** Where the parser found `\cite`-family commands; comments and verbatim text have none. */
 function latexCiteOffsets(text: string): ReadonlyArray<number> {
   const offsets: number[] = [];
@@ -54,19 +74,27 @@ function latexCiteOffsets(text: string): ReadonlyArray<number> {
 }
 
 function renameInLatex(text: string, from: string, to: string): string {
+  // Arguments are read with comments blanked; only the key bytes are rewritten in `text`.
+  const masked = maskLatexComments(text);
+  const keyStarts: number[] = [];
+  let scanned = 0;
+  for (const offset of latexCiteOffsets(text)) {
+    if (offset < scanned) continue;
+    LATEX_CITE_ARGUMENTS.lastIndex = offset;
+    const match = LATEX_CITE_ARGUMENTS.exec(masked);
+    if (!match) continue;
+    scanned = offset + match[0].length;
+    let itemStart = scanned - 1 - match[1]!.length;
+    for (const item of match[1]!.split(",")) {
+      if (item.trim() === from) keyStarts.push(itemStart + item.length - item.trimStart().length);
+      itemStart += item.length + 1;
+    }
+  }
   let next = "";
   let copied = 0;
-  for (const offset of latexCiteOffsets(text)) {
-    if (offset < copied) continue;
-    LATEX_CITE_ARGUMENTS.lastIndex = offset;
-    const match = LATEX_CITE_ARGUMENTS.exec(text);
-    if (!match) continue;
-    const keysStart = offset + match[0].length - 1 - match[1]!.length;
-    const items = match[1]!.split(",");
-    if (!items.some((item) => item.trim() === from)) continue;
-    const renamed = items.map((item) => (item.trim() === from ? item.replace(from, to) : item));
-    next += `${text.slice(copied, keysStart)}${renamed.join(",")}`;
-    copied = keysStart + match[1]!.length;
+  for (const start of keyStarts) {
+    next += `${text.slice(copied, start)}${to}`;
+    copied = start + from.length;
   }
   return copied === 0 ? text : next + text.slice(copied);
 }
