@@ -791,8 +791,9 @@ Installs run with every backend stopped and an apply outcome is known before any
 so both events wait in a persisted journal in the desktop process
 ([`DesktopUpdateFacts.ts`](../../apps/desktop/src/scient/updateOutcomes/DesktopUpdateFacts.ts):
 at most 64 facts and 14 days; drops are counted into the next summary). It records nothing while
-analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, or a managed
-policy without telemetry) and deletes what an earlier launch kept. Facts travel on the telemetry
+analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, an off or invalid
+`SCIENT_ANALYTICS_CONSENT`, or a managed policy without telemetry) and deletes what an earlier
+launch kept. Facts travel on the telemetry
 pipe's `desktopUpdateStatus` report to one backend (the primary when ready, else the first ready
 one; two backends have two installation identities). That backend's `ingestRecorded` queues them
 with their own event ids and times, through the normal consent and shape checks, and the desktop

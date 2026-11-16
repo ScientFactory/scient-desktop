@@ -97,7 +97,11 @@ const make = Effect.gen(function* () {
     Effect.map((found) => found?.document?.limits?.telemetry !== false),
     Effect.orElseSucceed(() => false),
   );
-  const enabled = metadata.SCIENT_ANALYTICS_ENABLED === "true" && telemetryAllowed;
+  const consent = env.SCIENT_ANALYTICS_CONSENT ?? "diagnostic";
+  const enabled =
+    metadata.SCIENT_ANALYTICS_ENABLED === "true" &&
+    telemetryAllowed &&
+    ["essential", "product", "diagnostic"].includes(consent);
   const buildChannel =
     metadata.SCIENT_ANALYTICS_BUILD_CHANNEL as DesktopUpdateFactValue["buildChannel"];
 
