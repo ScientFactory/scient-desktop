@@ -1,12 +1,16 @@
 # CI flake register
 
-A test that failed CI on content that also passed it, with no fix merged yet. Agents use this
-list for one thing: when the merge queue removes a pull request for one of these signatures on an
-unchanged head, they re-add it once (see `AGENTS.md`). Anything not listed blocks as usual.
+A test that failed CI on content that also passed it, with no fix merged yet.
+Under [AGENTS.md](../../AGENTS.md#git-upstream-and-delivery), an open signature
+permits one re-add after merge-queue removal on an unchanged head. It can also
+identify accepted failures for an explicitly approved admin merge under that
+policy. Anything not listed blocks as usual.
 
-Each new signature gets an owner and an investigation the day it first appears. Remove its row in
-the pull request that fixes the cause. Rows never excuse a failure in CI itself: every listed test
-still runs and blocks on pull requests, in the queue and on main.
+Each new signature gets an owner and an investigation the day it first appears.
+Remove its row in the pull request that fixes the cause. Every listed test still
+runs and reports its result on pull requests, in the queue and on main; a row never
+makes CI green. Listed failures still block ordinary delivery. A row does not itself
+authorize an admin merge, change protection or waive AGENTS.md's exclusions.
 
 | Test                                                                                                                    | Signature                                                                                                                                           | First seen                                                                                                                                                                                                                                                                                                                         | Status                                                                                                                                                                                                                                                                      |
 | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
