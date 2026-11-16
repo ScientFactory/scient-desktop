@@ -619,16 +619,24 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         ...(commandRejected ? { source: "command" as const, failureCode: "command_rejected" } : {}),
       };
     }
-    // A later run that ended normally recovered from the prompt's own failed run. A later run that
-    // failed too keeps the prompt's structured cause (a usage limit's reset time, for example).
-    const recovered =
-      promptSuperseded &&
-      evidence.stopReason !== "error" &&
-      evidence.stopReason !== "aborted" &&
-      evidence.retryExhausted !== true;
+    // After a later run, prompt_result describes only the prompt's own run, so the latest run's
+    // ending decides. Only a later run that failed after a failed prompt keeps the prompt's
+    // structured cause (a usage limit's reset time, for example).
+    const laterRunFailed =
+      evidence.stopReason === "error" ||
+      evidence.stopReason === "aborted" ||
+      evidence.retryExhausted === true;
+    const runOnly = promptSuperseded && !(laterRunFailed && evidence.promptStatus === "error");
     const verdict = classifyOmpTurnOutcome(input.target, {
       settlement: outcome === "unknown" ? "unconfirmed" : "terminal",
-      ...(recovered ? { stopReason: evidence.stopReason } : evidence),
+      ...(runOnly
+        ? {
+            stopReason: evidence.stopReason,
+            errorMessage: evidence.errorMessage,
+            retryExhausted: evidence.retryExhausted,
+            retryFinalError: evidence.retryFinalError,
+          }
+        : evidence),
     });
     if (verdict.outcome === "unknown") {
       return {

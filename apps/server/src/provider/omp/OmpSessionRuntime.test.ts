@@ -983,6 +983,32 @@ describe("Oh My Pi session runtime outcomes", () => {
     }),
   );
 
+  it.effect("a later run that fails after the prompt's run succeeded fails the turn", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("woken");
+      yield* h.runtime.accepted("prompt-woken", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ stopReason: "stop", content: [{ type: "text", text: "started a job" }] }),
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+        {
+          type: "prompt_result",
+          id: "prompt-woken",
+          agentInvoked: true,
+          status: "completed",
+          sessionSettled: false,
+        },
+        { type: "agent_start" },
+        assistantEnd({ stopReason: "error", errorMessage: "Couldn't reach chatgpt.com" }),
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+      );
+      const outcome = yield* h.outcome;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(outcome).toMatchObject({ outcome: "failed", detail: "Couldn't reach chatgpt.com" });
+    }),
+  );
+
   it.effect("a late prompt_result of a settled turn does not decide the next one", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
