@@ -22,20 +22,24 @@ const gate = createAnalyticsClientGate<PreparedConnection>({
     runtime.runPromise(recordEnvironmentScientAnalyticsEvent({ prepared, event })),
 });
 
-/** Observe current view after consent discovery, not historical clicks. */
+/**
+ * Observe current view after consent discovery, not historical clicks. A new `viewKey`, which is
+ * never sent, counts the same event again, such as another tab of the same kind.
+ */
 export function useScientAnalyticsView(
   event: ScientAnalyticsUiEvent | null,
   explicitEnvironmentId?: EnvironmentId | null,
+  viewKey?: string,
 ) {
   const primary = usePrimaryEnvironmentId();
   const environmentId = explicitEnvironmentId === undefined ? primary : explicitEnvironmentId;
   const prepared = usePreparedConnection(environmentId);
   const connection = Option.getOrNull(prepared);
-  const eventKey = JSON.stringify(event);
+  const eventKey = event === null ? null : JSON.stringify([viewKey ?? null, event]);
   const read = useEffectEvent(() => (document.visibilityState === "hidden" ? null : event));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers a view observation with the analytics gate plus a document visibilitychange listener, disposed on unmount
   useEffect(() => {
-    if (connection === null || eventKey === "null") return;
+    if (connection === null || eventKey === null) return;
     const observation = gate.observeView(connection, () => read());
     document.addEventListener("visibilitychange", observation.refresh);
     return () => {

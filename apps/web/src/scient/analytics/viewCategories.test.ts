@@ -1,5 +1,15 @@
 import { expect, it } from "vite-plus/test";
-import { panelCategory, SETTINGS_ANALYTICS_SECTIONS, settingsCategory } from "./viewCategories";
+import type { RightPanelSurface } from "~/rightPanelStore";
+import {
+  panelCategory,
+  panelViewProperties,
+  SETTINGS_ANALYTICS_SECTIONS,
+  settingsCategory,
+} from "./viewCategories";
+
+type RightPanelFileAttachment = NonNullable<
+  Extract<RightPanelSurface, { kind: "file" }>["attachment"]
+>;
 
 // The server sends a section name as it is when it looks like an identifier, and "other" otherwise.
 const SENT_AS_IS = /^[A-Za-z0-9_.-]{1,64}$/u;
@@ -38,4 +48,36 @@ it("reports every settings page by name, never as other", () => {
   for (const section of SETTINGS_ANALYTICS_SECTIONS) {
     expect(section, `settings section "${section}" is sent by name`).toMatch(SENT_AS_IS);
   }
+});
+it("reports a file tab's extension and nothing else about it", () => {
+  const file = (relativePath: string, attachmentName?: string) =>
+    panelViewProperties({
+      id: "file:PRIVATE",
+      kind: "file",
+      relativePath,
+      revealLine: null,
+      revealRequestId: 0,
+      ...(attachmentName === undefined
+        ? {}
+        : { attachment: { name: attachmentName } as RightPanelFileAttachment }),
+    });
+  expect(file("PRIVATE/Results.v2.CSV")).toEqual({ category: "file-preview", fileType: "csv" });
+  expect(file("PRIVATE\\Makefile")).toEqual({ category: "file-preview", fileType: "none" });
+  expect(file("PRIVATE/.env")).toEqual({ category: "file-preview", fileType: "none" });
+  expect(file("PRIVATE-attachment-id", "scan.TIFF")).toEqual({
+    category: "file-preview",
+    fileType: "tiff",
+  });
+  expect(
+    panelViewProperties({
+      id: "scient:file:PRIVATE",
+      kind: "scient",
+      module: "file",
+      path: "/Users/PRIVATE/brain.nii",
+      line: null,
+    }),
+  ).toEqual({ category: "file-preview", fileType: "nii" });
+  expect(panelViewProperties({ id: "scient:sources", kind: "scient", module: "sources" })).toEqual({
+    category: "sources",
+  });
 });
