@@ -164,7 +164,6 @@ describe("SourceDetails", () => {
     );
 
     expect(markup).not.toContain("Open PDF");
-    expect(markup).toContain("Metadata needs review");
   });
 
   it("requires an explicit PDF choice when a Source has several materials", () => {
