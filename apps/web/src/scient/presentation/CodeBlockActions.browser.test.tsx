@@ -50,6 +50,17 @@ describe("code block actions", () => {
     // Icon morphing is gone upstream; the button draws lucide-react's icon again.
     expect(copy.querySelector("svg.lucide")).not.toBeNull();
   });
+
+  it("copies a fenced command without the fence's closing newline", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    await render(_fixture, false);
+    using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    document.querySelector<HTMLElement>('[aria-label="Copy code"]')!.click();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("x"));
+  });
 });
 
 function _createFixture() {

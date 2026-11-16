@@ -17,6 +17,7 @@ import {
   RawEventId,
   RunAttemptId,
   RunId,
+  type RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -311,11 +312,14 @@ export const layer: Layer.Layer<
         input: ProviderEventIngestInput,
         providerTurnId: ProviderTurnId,
         threadId = input.threadId,
+        retained: ReadonlyArray<RuntimeRequestId> = [],
       ) {
         const pending = yield* projections.getPendingNativeUserInputs(threadId, providerTurnId);
         const now = yield* DateTime.now;
         const events: Array<OrchestrationV2DomainEvent> = [];
+        const kept = new Set(retained);
         for (const request of pending.runtimeRequests) {
+          if (kept.has(request.id)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "runtime-request.updated",
@@ -326,6 +330,7 @@ export const layer: Layer.Layer<
           );
         }
         for (const node of pending.nodes) {
+          if (node.runtimeRequestId !== null && kept.has(node.runtimeRequestId)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "node.updated",
@@ -337,6 +342,7 @@ export const layer: Layer.Layer<
           );
         }
         for (const item of pending.turnItems) {
+          if (item.type === "user_input_request" && kept.has(item.requestId)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "turn-item.updated",
@@ -575,6 +581,7 @@ export const layer: Layer.Layer<
                       input,
                       input.event.providerTurn.id,
                       input.event.threadId,
+                      input.event.retainedRuntimeRequestIds,
                     )
                   : []),
                 yield* makeDomainEvent(input, {
@@ -701,7 +708,12 @@ export const layer: Layer.Layer<
               // The session manager serves these to clients before ingestion.
               return [];
             case "turn.terminal":
-              const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
+              const dismissed = yield* dismissNativeUserInputs(
+                input,
+                input.event.providerTurnId,
+                undefined,
+                input.event.retainedRuntimeRequestIds,
+              );
               if (input.event.status !== "failed") {
                 return dismissed;
               }

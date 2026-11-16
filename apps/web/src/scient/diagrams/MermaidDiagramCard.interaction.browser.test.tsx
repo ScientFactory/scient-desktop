@@ -419,7 +419,8 @@ describe("Mermaid error recovery", () => {
     ).toBeTruthy();
     expect(codeBlock.querySelector(".chat-markdown-shiki .diffs code")?.textContent).toBe(original);
     await act(() => button(_fixture, "Copy code").click());
-    expect(writeText).toHaveBeenCalledWith(original);
+    // Copy leaves out the fence's closing newline.
+    expect(writeText).toHaveBeenCalledWith(original.slice(0, -1));
   });
 
   it("preserves the successful diagram toolbar and source controls", async () => {

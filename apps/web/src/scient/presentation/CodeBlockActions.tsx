@@ -58,7 +58,12 @@ export function CodeBlockActions({
     !/[\p{Cc}\p{Cf}]/u.test(source.slice(0, -1));
   const copy = async () => {
     try {
-      const didCopy = await writeTextToClipboard(readCode(), "code");
+      // The fence's closing newline is not part of the command.
+      const code = readCode();
+      const didCopy = await writeTextToClipboard(
+        code.endsWith("\n") ? code.slice(0, -1) : code,
+        "code",
+      );
       if (!didCopy || !mounted.current) return;
       if (timer.current !== null) clearTimeout(timer.current);
       setCopied(true);
