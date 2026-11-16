@@ -76,30 +76,44 @@ async function withTimeout(promise, describeStep) {
 
 /**
  * Loads `url` and answers with its main-frame failure code and the page it ended on, or code 0
- * once a page finished loading after Google's redirects. Events of the previous load arrive before
- * this navigation starts.
+ * once the page it committed, after Google's redirects, finished loading. The previous page's
+ * commit and "finished" can arrive after this load starts, so this load's own commit is awaited.
  */
 async function load(contents, url) {
   const { promise, resolve } = Promise.withResolvers();
-  let started = false;
+  const href = (value) => new URL(value).href;
+  // Where this load is heading: `url`, then each redirect's target, until it commits there.
+  let heading = null;
+  let committed = false;
   const start = (details) => {
-    if (details.isMainFrame && !details.isSameDocument) started = true;
+    if (details.isMainFrame && !details.isSameDocument && href(details.url) === href(url)) {
+      heading = details.url;
+    }
+  };
+  const redirect = (details) => {
+    if (heading !== null && details.isMainFrame) heading = details.url;
+  };
+  const commit = (_event, committedUrl) => {
+    if (heading !== null && href(committedUrl) === href(heading)) committed = true;
   };
   const failed = (_event, code, _description, failedUrl, isMainFrame) => {
-    if (started && isMainFrame && code !== -3) done({ code, url: failedUrl });
+    if (heading !== null && isMainFrame && code !== -3) done({ code, url: failedUrl });
   };
   const finished = () => {
-    if (started) done({ code: 0, url: contents.getURL() });
+    if (committed) done({ code: 0, url: contents.getURL() });
+  };
+  const listeners = {
+    "did-start-navigation": start,
+    "did-redirect-navigation": redirect,
+    "did-navigate": commit,
+    "did-fail-load": failed,
+    "did-finish-load": finished,
   };
   const done = (outcome) => {
-    contents.off("did-start-navigation", start);
-    contents.off("did-fail-load", failed);
-    contents.off("did-finish-load", finished);
+    for (const [name, listener] of Object.entries(listeners)) contents.off(name, listener);
     resolve(outcome);
   };
-  contents.on("did-start-navigation", start);
-  contents.on("did-fail-load", failed);
-  contents.on("did-finish-load", finished);
+  for (const [name, listener] of Object.entries(listeners)) contents.on(name, listener);
   contents.loadURL(url).catch(() => undefined);
   return withTimeout(promise, `loading ${url}`);
 }
@@ -224,6 +238,7 @@ async function run() {
       trace.push(`${name} ${details.url} (showing ${tab.getURL()})`);
     });
   }
+  tab.on("did-finish-load", () => trace.push(`did-finish-load (showing ${tab.getURL()})`));
 
   tab.setWindowOpenHandler(() => ({ action: "allow" }));
   let popupCreated = null;
