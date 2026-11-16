@@ -3,9 +3,11 @@ import {
   liveScientAnnotations,
   scientAnnotationQuote,
   type ScientPdfAnnotation,
+  type ScientSourceCitationKeyResolution,
 } from "@t3tools/contracts";
 
-import { quoteProse } from "../annotations/quoteFormat";
+import type { PdfPageLabels } from "../annotations/pdfQuotePageLabels";
+import { quotePageLabels, quoteProse } from "../annotations/quoteFormat";
 import type { LibraryCitationCandidate } from "./libraryCitations";
 
 /** One work a citation names, as the Library source it resolves to. */
@@ -40,6 +42,75 @@ export function resolveCitationEntries(
     }
   }
   return entries;
+}
+
+export interface CitationNotice {
+  readonly title: string;
+  readonly description?: string;
+}
+
+/**
+ * What a citation opens once its keys are checked in its document: a key the document's
+ * bibliography defines as another work, or that is no Library key there, is left out; one not
+ * confirmed to be the Library source is kept, and that is said. `keys` is null when the check
+ * failed: every entry is kept, and that is said too.
+ */
+export function checkedCitationEntries(
+  entries: ReadonlyArray<CitationEntry>,
+  keys: ReadonlyArray<ScientSourceCitationKeyResolution> | null,
+): {
+  readonly entries: ReadonlyArray<CitationEntry>;
+  readonly notices: ReadonlyArray<CitationNotice>;
+} {
+  if (keys === null) {
+    return {
+      entries,
+      notices: [
+        {
+          title: "Couldn't check this citation in the document's bibliography",
+          description: "Opening the Library source it names in this project.",
+        },
+      ],
+    };
+  }
+  const kept: CitationEntry[] = [];
+  const notices: CitationNotice[] = [];
+  for (const key of new Set(entries.map((entry) => entry.item.key))) {
+    const folded = key.toLowerCase();
+    const resolved =
+      keys.find((candidate) => candidate.key === key) ??
+      keys.find((candidate) => candidate.key.toLowerCase() === folded);
+    const named = entries.filter((entry) => entry.item.key === key);
+    const status = resolved?.status ?? "unconfirmed";
+    const bibliography = resolved?.bibliography ?? null;
+    switch (status) {
+      case "other-work":
+        notices.push({
+          title: bibliography
+            ? `In this document, ${key} is another work (${bibliography}), not the Library source.`
+            : `In this document, ${key} is another work, not the Library source.`,
+        });
+        continue;
+      case "not-library":
+        notices.push({ title: `In this document, ${key} is not a Library source.` });
+        continue;
+      case "unconfirmed":
+        notices.push({
+          title: bibliography
+            ? `Not confirmed to be the Library source: ${bibliography} defines ${key} without an identifier to compare.`
+            : `Not confirmed to be the Library source: what ${key} names in this document could not be checked.`,
+        });
+        break;
+      case "library":
+        break;
+    }
+    // Only the sources the key names here; all of them if the check names none this client knows.
+    const sourceIds = new Set(resolved?.sourceIds ?? []);
+    const namedHere = named.filter((entry) => sourceIds.has(entry.candidate.sourceId));
+    kept.push(...(namedHere.length > 0 ? namedHere : named));
+  }
+  // Citation order, as the entries came.
+  return { entries: entries.filter((entry) => kept.includes(entry)), notices };
 }
 
 const TITLE_LIMIT = 80;
@@ -103,17 +174,54 @@ export type CitationReveal =
     }
   | { readonly _tag: "Details"; readonly notice: CitationPassageNotice | null };
 
+/** A source's highlights, by PDF. */
+export type CitationHighlights = ReadonlyArray<{
+  readonly attachmentId: string;
+  readonly annotations: ReadonlyArray<ScientPdfAnnotation>;
+}>;
+
+function quoteMatches(quote: string, highlights: CitationHighlights) {
+  return highlights.flatMap((pdf) =>
+    liveScientAnnotations(pdf.annotations)
+      .filter((annotation) => quoteProse(scientAnnotationQuote(annotation)) === quote)
+      .map((annotation) => ({ attachmentId: pdf.attachmentId, annotation })),
+  );
+}
+
 /**
- * Where in its PDF a citation opens. A quote is shown as the one highlight with the same words
- * (several are narrowed by the citation's page, compared with the highlight's page number);
- * otherwise the cited page is shown by its label. `highlights` is null when they could not be read.
+ * The PDFs whose page labels a quote needs to tell its highlights apart: those holding a highlight
+ * with its words when several have them and the citation names a page. Empty when none is needed.
+ */
+export function citationLabelsNeeded(
+  step: Extract<CitationOpenStep, { _tag: "Pdf" }>,
+  highlights: CitationHighlights | null,
+): ReadonlyArray<string> {
+  if (step.quote === null || step.pageLabel === null || highlights === null) return [];
+  const matches = quoteMatches(step.quote, highlights);
+  return matches.length > 1 ? [...new Set(matches.map((match) => match.attachmentId))] : [];
+}
+
+/**
+ * The printed page a highlight starts on, as "Quote in my document" writes it: its page label,
+ * or its page number in a PDF without labels. Null when the PDF's labels could not be read.
+ */
+function printedPage(annotation: ScientPdfAnnotation, labels: PdfPageLabels | undefined) {
+  const pages = annotation.anchor.selector.pages.map((page) => page.page);
+  const [first] = pages;
+  if (first === undefined || labels === undefined || labels._tag === "Unread") return null;
+  if (labels._tag === "None") return String(first);
+  return quotePageLabels(pages, labels.labels)?.[0] ?? String(first);
+}
+
+/**
+ * Where in its PDF a citation opens: a quote as the one highlight with its words, several narrowed
+ * by the cited page against each highlight's printed page (`pageLabels`, by attachment); none is
+ * picked when several remain or labels are unread. `highlights` is null when unread.
  */
 export function citationReveal(
   step: Extract<CitationOpenStep, { _tag: "Pdf" }>,
-  highlights: ReadonlyArray<{
-    readonly attachmentId: string;
-    readonly annotations: ReadonlyArray<ScientPdfAnnotation>;
-  }> | null,
+  highlights: CitationHighlights | null,
+  pageLabels: ReadonlyMap<string, PdfPageLabels> = new Map(),
 ): CitationReveal {
   let notice: CitationPassageNotice | null = null;
   const { quote, pageLabel } = step;
@@ -121,17 +229,16 @@ export function citationReveal(
     if (highlights === null) {
       notice = "unread";
     } else {
-      const matches = highlights.flatMap((pdf) =>
-        liveScientAnnotations(pdf.annotations)
-          .filter((annotation) => quoteProse(scientAnnotationQuote(annotation)) === quote)
-          .map((annotation) => ({ attachmentId: pdf.attachmentId, annotation })),
-      );
-      const narrowed =
-        matches.length > 1 && pageLabel !== null
-          ? matches.filter(
-              (match) => String(match.annotation.anchor.selector.pages[0]?.page) === pageLabel,
-            )
-          : matches;
+      const matches = quoteMatches(quote, highlights);
+      let narrowed = matches;
+      if (matches.length > 1 && pageLabel !== null) {
+        const printed = matches.map((match) =>
+          printedPage(match.annotation, pageLabels.get(match.attachmentId)),
+        );
+        narrowed = printed.includes(null)
+          ? matches
+          : matches.filter((_, index) => printed[index] === pageLabel);
+      }
       const [only] = narrowed;
       if (only && narrowed.length === 1) return { _tag: "Highlight", ...only };
       notice = matches.length === 0 ? "not-found" : "repeated";

@@ -31,9 +31,12 @@ export function useLatexCitationOpener(input: {
   readonly environmentId: EnvironmentId | null;
   readonly root: string | null;
   readonly threadRef: ScopedThreadRef | undefined;
+  /** The open document, project-relative: its bibliography decides what a key names. */
+  readonly documentPath: string | null;
 }): LatexCitationOpener | null {
   const root = input.root ?? "";
   const threadRef = input.threadRef;
+  const documentPath = input.documentPath;
   const environmentId = root && threadRef ? input.environmentId : null;
   const version = useLibraryVersionStore((state) => state.byRoot[root] ?? "");
   const candidates = useLibraryCitations({ environmentId, root, refresh: version });
@@ -41,7 +44,7 @@ export function useLatexCitationOpener(input: {
   return {
     opens: (items) => resolveCitationEntries(candidates, items).length > 0,
     open: (items, quote, at) => {
-      openCitation({ environmentId, threadRef, root, candidates, items, quote, at });
+      openCitation({ environmentId, threadRef, root, documentPath, candidates, items, quote, at });
     },
   };
 }

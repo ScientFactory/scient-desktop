@@ -1003,6 +1003,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     environmentId: props.environmentId,
     root: props.cwd,
     threadRef: props.threadRef,
+    documentPath: props.relativePath,
   });
   const linkedSourcePane =
     (mode === "split" && persistence !== null && !sourceRecovery.blocked) || !!linkedSourceReveal;

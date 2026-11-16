@@ -6114,6 +6114,7 @@ function LatexVisualEditorReady(
       environmentId: props.citationSource.environmentId,
       threadId: props.citationSource.threadId,
     },
+    documentPath: props.relativePath ?? null,
   });
   const citationSuggestions = useLatexCitationSuggestions({
     environmentId: props.environmentId ?? null,

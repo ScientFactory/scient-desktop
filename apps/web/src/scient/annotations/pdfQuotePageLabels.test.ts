@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { readQuotePageLabels } from "./pdfQuotePageLabels";
+import { readPdfPageLabels, readQuotePageLabels } from "./pdfQuotePageLabels";
 
 const documents = vi.hoisted(() => ({ acquire: vi.fn() }));
 vi.mock("../pdf/pdfDocuments", () => ({ acquirePdfDocument: documents.acquire }));
@@ -53,6 +53,17 @@ describe("page labels for a quote from a PDF no reader has open", () => {
     lease(null);
     const served = async () => "blob:later";
     expect(await readQuotePageLabels({ contentKey: "sha-unserved", url: served })).toBeNull();
+    expect(documents.acquire).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells a PDF without labels from one that could not be read", async () => {
+    expect(await readPdfPageLabels({ contentKey: "sha-unread", url: async () => null })).toEqual({
+      _tag: "Unread",
+    });
+    lease(null);
+    const input = { contentKey: "sha-unlabelled", url: async () => "blob:plain" };
+    expect(await readPdfPageLabels(input)).toEqual({ _tag: "None" });
+    expect(await readPdfPageLabels(input)).toEqual({ _tag: "None" });
     expect(documents.acquire).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,6 +1,14 @@
+import { pandocCitationItems } from "@scientfactory/scient-sources";
+import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterLibraryCitations, type LibraryCitationCandidate } from "./libraryCitations";
+import { resolveCitationEntries } from "./citationNavigationModel";
+import {
+  filterLibraryCitations,
+  libraryCitationCandidates,
+  libraryLatexCitationChoices,
+  type LibraryCitationCandidate,
+} from "./libraryCitations";
 
 const candidates: ReadonlyArray<LibraryCitationCandidate> = [
   { sourceId: "a", citationKey: "lovelace1843notes", label: "Lovelace 1843", title: "Notes" },
@@ -27,5 +35,42 @@ describe("Library citations", () => {
     ]);
     expect(filterLibraryCitations(candidates, "")).toHaveLength(3);
     expect(filterLibraryCitations(candidates, "zzz")).toEqual([]);
+  });
+
+  it("opens a source by a key it kept after a merge, offering the source once", () => {
+    // Only the fields the candidates read; an overview record has many more.
+    const record = {
+      sourceId: "soil",
+      citationKey: "soil2021",
+      alsoCitedAs: ["oldsoil", "soil2021"],
+      creators: [{ creatorType: "author", familyName: "Ng", givenName: null, literalName: null }],
+      issuedYear: 2021,
+      title: "Soil carbon",
+      attachments: [{ attachmentId: "pdf_soil", kind: "pdf", fileName: "soil.pdf" }],
+    } as unknown as ScientSourcesOverviewResult["records"][number];
+    const library = libraryCitationCandidates([record]);
+
+    const [alias] = resolveCitationEntries(library, pandocCitationItems("@oldsoil, p. 3"));
+    expect(alias?.candidate).toMatchObject({
+      sourceId: "soil",
+      citationKey: "oldsoil",
+      label: "Ng 2021",
+      pdf: { attachmentId: "pdf_soil", fileName: "soil.pdf" },
+    });
+    expect(alias?.item.locator).toBe("p. 3");
+    expect(
+      resolveCitationEntries(library, pandocCitationItems("@soil2021; @oldsoil")).map(
+        (entry) => entry.candidate.sourceId,
+      ),
+    ).toEqual(["soil"]);
+
+    // A new citation is offered the source's first key only.
+    expect(filterLibraryCitations(library, "").map((item) => item.citationKey)).toEqual([
+      "soil2021",
+    ]);
+    expect(filterLibraryCitations(library, "old")).toEqual([]);
+    expect(libraryLatexCitationChoices(library, new Set()).map((item) => item.key)).toEqual([
+      "soil2021",
+    ]);
   });
 });
