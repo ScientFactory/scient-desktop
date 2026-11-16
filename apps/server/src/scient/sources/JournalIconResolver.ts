@@ -1,17 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Journal icons are fetched and cached by the host.
-// @effect-diagnostics globalDate:off -- Cache freshness is based on filesystem timestamps.
+// @effect-diagnostics globalDate:off -- Cache freshness uses persisted wall-clock resolution times.
+// @effect-diagnostics globalTimers:off -- This Promise-based HTTPS boundary aborts native requests at its deadline.
 import * as NodeCrypto from "node:crypto";
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
+import * as NodeTimers from "node:timers";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   normalizePersistentIdentifier,
   type ScientSourceRecord,
 } from "@scientfactory/scient-sources";
+import { journalIconIdentity } from "@t3tools/shared/scientJournalIdentity";
 import { parse, type DefaultTreeAdapterMap } from "parse5";
 import { getDomain } from "tldts";
 
@@ -19,12 +22,13 @@ import { withRegistryContact } from "./metadataHttp.ts";
 import { createSerialRequestLane } from "./NcbiRequestLane.ts";
 
 const ICON_REQUEST_TIMEOUT_MS = 2_000;
+const ICON_DISCOVERY_TIMEOUT_MS = 6_000;
 const MAX_ICON_BYTES = 128 * 1024;
 const MAX_ICON_DOCUMENT_BYTES = 512 * 1024;
 const MAX_CROSSREF_BYTES = 512 * 1024;
 const MAX_REDIRECTS = 3;
 const MAX_DECLARED_ICON_ATTEMPTS = 2;
-const ICON_DISCOVERY_VERSION = 3;
+const ICON_DISCOVERY_VERSION = 4;
 const SUCCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const FAILURE_TTL_MS = 6 * 60 * 60 * 1_000;
 const USER_AGENT =
@@ -119,6 +123,7 @@ export type PublicHttpsHop = (input: {
   readonly url: URL;
   readonly accept: string;
   readonly maxBytes: number;
+  readonly signal?: AbortSignal;
 }) => Promise<HopResponse>;
 
 export interface JournalIconResolverOptions {
@@ -128,7 +133,6 @@ export interface JournalIconResolverOptions {
   readonly httpsHop?: PublicHttpsHop;
 }
 
-const failedUntil = new Map<string, number>();
 const activeResolutions = new Map<string, Promise<JournalIconMaterial | null>>();
 
 function isIntermediaryHost(hostname: string): boolean {
@@ -187,6 +191,7 @@ function publicAddress(address: string, family: number): boolean {
 
 async function resolvePublicAddress(
   url: URL,
+  signal?: AbortSignal,
 ): Promise<{ readonly address: string; readonly family: 4 | 6 }> {
   const literalFamily = NodeNet.isIP(url.hostname);
   if (literalFamily === 4 || literalFamily === 6) {
@@ -196,7 +201,10 @@ async function resolvePublicAddress(
   }
   const addresses = await Promise.race([
     NodeDnsPromises.lookup(url.hostname, { all: true, verbatim: true }),
-    NodeTimersPromises.setTimeout(ICON_REQUEST_TIMEOUT_MS, null, { ref: false }).then(() => {
+    NodeTimersPromises.setTimeout(ICON_REQUEST_TIMEOUT_MS, null, {
+      ref: false,
+      ...(signal ? { signal } : {}),
+    }).then(() => {
       throw new Error("The icon host lookup timed out.");
     }),
   ]);
@@ -216,8 +224,8 @@ async function resolvePublicAddress(
 const IMAGE_ACCEPT = "image/avif,image/webp,image/png,image/jpeg,image/gif,image/x-icon,*/*;q=0.1";
 const HTML_ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1";
 
-const publicHttpsHop: PublicHttpsHop = async ({ url, accept, maxBytes }) => {
-  const target = await resolvePublicAddress(url);
+const publicHttpsHop: PublicHttpsHop = async ({ url, accept, maxBytes, signal }) => {
+  const target = await resolvePublicAddress(url, signal);
   const { promise, resolve, reject } = Promise.withResolvers<HopResponse>();
   const request = NodeHttps.request(
     {
@@ -228,6 +236,7 @@ const publicHttpsHop: PublicHttpsHop = async ({ url, accept, maxBytes }) => {
       method: "GET",
       path: `${url.pathname}${url.search}`,
       servername: url.hostname,
+      ...(signal ? { signal } : {}),
       headers: {
         Accept: accept,
         Host: url.host,
@@ -472,6 +481,7 @@ async function downloadRasterIcon(url: URL, hop: PublicHttpsHop): Promise<Downlo
 async function defaultResolveLandingUrl(
   record: ScientSourceRecord,
   hop: PublicHttpsHop,
+  onAdmitted: () => void,
 ): Promise<URL | null> {
   const direct = parseEligiblePublicUrl(record.url);
   if (direct) return direct;
@@ -479,14 +489,15 @@ async function defaultResolveLandingUrl(
   if (!doi) return null;
   try {
     const encodedDoi = doi.split("/").map(encodeURIComponent).join("/");
-    const { body } = await runWithCrossrefLimit(() =>
-      requestPublicHttps({
+    const { body } = await runWithCrossrefLimit(() => {
+      onAdmitted();
+      return requestPublicHttps({
         url: withRegistryContact(new URL(`https://api.crossref.org/works/${encodedDoi}`)),
         maxBytes: MAX_CROSSREF_BYTES,
         accept: "application/json",
         hop,
-      }),
-    );
+      });
+    });
     return crossrefLandingUrl(JSON.parse(body.toString("utf8")) as unknown);
   } catch {
     return null;
@@ -542,31 +553,6 @@ async function defaultDownloadIcon(
   return preferredIcon(best, await largestDeclaredIcon((await root)?.candidates ?? [], hop));
 }
 
-function cacheKey(record: ScientSourceRecord, landingUrl: URL): string {
-  const journalTitle = record.containerTitle?.trim().toLocaleLowerCase("en-US") ?? "";
-  const issns = record.identifiers
-    .filter((identifier) => identifier.scheme.trim().toLowerCase() === "issn")
-    .map((identifier) => identifier.value.trim().toLowerCase())
-    .toSorted()
-    .join("|");
-  return NodeCrypto.createHash("sha256")
-    .update(`v1\0${issns}\0${journalTitle}\0${landingUrl.hostname.toLowerCase()}`)
-    .digest("hex");
-}
-
-function requestKey(record: ScientSourceRecord, cacheRoot: string): string {
-  const journalTitle = record.containerTitle?.trim().toLocaleLowerCase("en-US") ?? "";
-  const issns = record.identifiers
-    .filter((identifier) => identifier.scheme.trim().toLowerCase() === "issn")
-    .map((identifier) => identifier.value.trim().toLowerCase())
-    .toSorted()
-    .join("|");
-  const directHost = parseEligiblePublicUrl(record.url)?.hostname.toLowerCase() ?? "";
-  return NodeCrypto.createHash("sha256")
-    .update(`v1\0${cacheRoot}\0${issns}\0${journalTitle}\0${directHost}`)
-    .digest("hex");
-}
-
 function validCacheMetadata(value: unknown): CacheMetadata | null {
   const candidate = object(value);
   const extension = candidate?.extension;
@@ -617,7 +603,7 @@ async function readCachedIcon(input: {
       journalTitle: input.journalTitle,
       fresh:
         metadata.discoveryVersion === ICON_DISCOVERY_VERSION &&
-        input.now.getTime() - stat.mtimeMs <= SUCCESS_TTL_MS,
+        input.now.getTime() - Date.parse(metadata.resolvedAt) <= SUCCESS_TTL_MS,
     };
   } catch {
     return null;
@@ -639,7 +625,7 @@ async function writeCachedIcon(input: {
   await NodeFSP.writeFile(temporaryPath, input.icon.bytes, { mode: 0o600 });
   await NodeFSP.rename(temporaryPath, iconPath);
   await NodeFSP.writeFile(
-    NodePath.join(directory, "metadata.json"),
+    NodePath.join(directory, "metadata.json.tmp"),
     `${JSON.stringify({
       discoveryVersion: ICON_DISCOVERY_VERSION,
       extension: input.icon.extension,
@@ -649,6 +635,10 @@ async function writeCachedIcon(input: {
     } satisfies CacheMetadata)}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
+  await NodeFSP.rename(
+    NodePath.join(directory, "metadata.json.tmp"),
+    NodePath.join(directory, "metadata.json"),
+  );
   return {
     absolutePath: await NodeFSP.realpath(iconPath),
     cacheRoot: await NodeFSP.realpath(input.cacheRoot),
@@ -656,55 +646,91 @@ async function writeCachedIcon(input: {
   };
 }
 
-async function resolveUncached(input: {
+async function readFailureUntil(directory: string): Promise<number> {
+  try {
+    const failure = object(
+      JSON.parse(await NodeFSP.readFile(NodePath.join(directory, "failure.json"), "utf8")),
+    );
+    return failure?.discoveryVersion === ICON_DISCOVERY_VERSION &&
+      typeof failure.retryAfter === "number" &&
+      Number.isFinite(failure.retryAfter)
+      ? failure.retryAfter
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function discover(input: {
   readonly record: ScientSourceRecord;
   readonly cacheRoot: string;
+  readonly key: string;
+  readonly journalTitle: string;
   readonly options: JournalIconResolverOptions;
 }): Promise<JournalIconMaterial | null> {
-  const journalTitle = input.record.containerTitle?.trim();
-  if (!journalTitle || input.record.type !== "article") return null;
-  const hop = input.options.httpsHop ?? publicHttpsHop;
-  const resolveLandingUrl =
-    input.options.resolveLandingUrl ?? ((record) => defaultResolveLandingUrl(record, hop));
-  const downloadIcon = input.options.downloadIcon ?? ((url) => defaultDownloadIcon(url, hop));
-  const landingUrl = await resolveLandingUrl(input.record);
-  if (!landingUrl) return null;
-  const key = cacheKey(input.record, landingUrl);
-  const now = input.options.now?.() ?? new Date();
-  await NodeFSP.mkdir(input.cacheRoot, { recursive: true, mode: 0o700 });
-  const cached = await readCachedIcon({
-    cacheRoot: input.cacheRoot,
-    key,
-    journalTitle,
-    now,
-  });
-  if (cached?.fresh) {
-    const { fresh: _fresh, ...material } = cached;
-    return material;
+  const controller = new AbortController();
+  const { promise: deadline, resolve: finishDeadline } =
+    Promise.withResolvers<JournalIconMaterial | null>();
+  let timer: ReturnType<typeof NodeTimers.setTimeout> | undefined;
+  const startDeadline = () => {
+    if (timer) return;
+    timer = NodeTimers.setTimeout(() => {
+      controller.abort();
+      finishDeadline(null);
+    }, ICON_DISCOVERY_TIMEOUT_MS);
+    timer.unref();
+  };
+  const signal = controller.signal;
+  const rawHop = input.options.httpsHop ?? publicHttpsHop;
+  const hop: PublicHttpsHop = (request) => {
+    signal.throwIfAborted();
+    return rawHop({ ...request, signal });
+  };
+  const operation = async () => {
+    if (input.options.resolveLandingUrl) startDeadline();
+    const landingUrl = await (input.options.resolveLandingUrl
+      ? input.options.resolveLandingUrl(input.record)
+      : defaultResolveLandingUrl(input.record, hop, startDeadline));
+    signal.throwIfAborted();
+    if (!landingUrl) return null;
+    startDeadline();
+    const icon = await (input.options.downloadIcon
+      ? input.options.downloadIcon(landingUrl)
+      : defaultDownloadIcon(landingUrl, hop));
+    signal.throwIfAborted();
+    if (!icon) return null;
+    return writeCachedIcon({
+      ...input,
+      landingUrl,
+      icon,
+      now: input.options.now?.() ?? new Date(),
+    });
+  };
+  try {
+    const result = await Promise.race([operation(), deadline]);
+    if (result) return result;
+  } catch {
+    // Discovery is optional; a publisher failure never removes existing artwork.
+  } finally {
+    NodeTimers.clearTimeout(timer);
   }
-  // A negative result from an older discovery algorithm must not hide what this one finds.
-  const failureKey = `v${ICON_DISCOVERY_VERSION}\0${input.cacheRoot}\0${key}`;
-  if ((failedUntil.get(failureKey) ?? 0) > now.getTime()) {
-    if (!cached) return null;
-    const { fresh: _fresh, ...material } = cached;
-    return material;
-  }
-  const icon = await downloadIcon(landingUrl);
-  if (!icon) {
-    failedUntil.set(failureKey, now.getTime() + FAILURE_TTL_MS);
-    if (!cached) return null;
-    const { fresh: _fresh, ...material } = cached;
-    return material;
-  }
-  failedUntil.delete(failureKey);
-  return writeCachedIcon({
-    cacheRoot: input.cacheRoot,
-    key,
-    journalTitle,
-    landingUrl,
-    icon,
-    now,
-  });
+  const directory = NodePath.join(input.cacheRoot, input.key);
+  await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
+  await NodeFSP.writeFile(
+    NodePath.join(directory, "failure.json.tmp"),
+    JSON.stringify({
+      discoveryVersion: ICON_DISCOVERY_VERSION,
+      retryAfter:
+        (input.options.now?.() ?? new Date()).getTime() +
+        (signal.aborted ? 60_000 : FAILURE_TTL_MS),
+    }),
+    { mode: 0o600 },
+  );
+  await NodeFSP.rename(
+    NodePath.join(directory, "failure.json.tmp"),
+    NodePath.join(directory, "failure.json"),
+  );
+  return null;
 }
 
 export async function resolveJournalIcon(input: {
@@ -712,23 +738,34 @@ export async function resolveJournalIcon(input: {
   readonly cacheRoot: string;
   readonly options?: JournalIconResolverOptions;
 }): Promise<JournalIconMaterial | null> {
-  const title = input.record.containerTitle?.trim();
-  if (!title || input.record.type !== "article") return null;
-  const directUrl = parseEligiblePublicUrl(input.record.url);
-  const doi = sourceDoi(input.record);
-  if (!directUrl && !doi) return null;
-  const activeKey = requestKey(input.record, input.cacheRoot);
-  const active = activeResolutions.get(activeKey);
-  if (active) return active;
-  const resolution = resolveUncached({
-    record: input.record,
-    cacheRoot: input.cacheRoot,
-    options: input.options ?? {},
-  })
-    .catch(() => null)
-    .finally(() => activeResolutions.delete(activeKey));
-  activeResolutions.set(activeKey, resolution);
-  return resolution;
+  const journalTitle = input.record.containerTitle?.trim();
+  if (!journalTitle || input.record.type !== "article") return null;
+  const key = NodeCrypto.createHash("sha256")
+    .update(journalIconIdentity(input.record)!)
+    .digest("hex");
+  const now = input.options?.now?.() ?? new Date();
+  const cached = await readCachedIcon({ ...input, key, journalTitle, now });
+  const material = cached
+    ? { absolutePath: cached.absolutePath, cacheRoot: cached.cacheRoot, journalTitle }
+    : null;
+  if (cached?.fresh) return material;
+  const retryAfter = await readFailureUntil(NodePath.join(input.cacheRoot, key));
+  if (retryAfter > now.getTime()) return material;
+  if (!parseEligiblePublicUrl(input.record.url) && !sourceDoi(input.record)) return material;
+  const activeKey = `${NodePath.resolve(input.cacheRoot)}\0${key}`;
+  let resolution = activeResolutions.get(activeKey);
+  if (!resolution) {
+    resolution = discover({
+      ...input,
+      key,
+      journalTitle,
+      options: input.options ?? {},
+    })
+      .catch(() => null)
+      .finally(() => activeResolutions.delete(activeKey));
+    activeResolutions.set(activeKey, resolution);
+  }
+  return material ?? resolution;
 }
 
 export const journalIconResolverInternals = {

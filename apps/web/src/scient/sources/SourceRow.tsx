@@ -251,16 +251,6 @@ export function SourceRow(props: {
               className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={(event) => activateSource(event, record, row)}
             >
-              {/* Unread sits in its own gutter, so titles and author lines stay aligned. */}
-              <span className="-me-1.5 flex w-1.5 shrink-0 justify-center">
-                {record.readingStatus === "unread" ? (
-                  <span
-                    role="img"
-                    aria-label={LIBRARY_LABELS.unread}
-                    className="size-1.5 rounded-full bg-sky-500"
-                  />
-                ) : null}
-              </span>
               <SourceJournalIcon
                 environmentId={row.environmentId}
                 root={row.root}
@@ -284,7 +274,6 @@ export function SourceRow(props: {
           <SourceProvenance record={record} row={row} />
         </TooltipPopup>
       </Tooltip>
-      {/* The star sits beside the menu, so it lines up from row to row. */}
       <div className="mr-1 flex shrink-0 items-center gap-1">
         {metadataDiagnostics && metadataDiagnostics.length > 0 ? (
           <span className="flex size-7 shrink-0 items-center justify-center">
@@ -294,7 +283,21 @@ export function SourceRow(props: {
             />
           </span>
         ) : null}
-        <SourcePdfAction record={record} row={row} size="icon-sm" />
+        <span className="flex w-3 shrink-0 items-center justify-center">
+          {record.readingStatus === "unread" ? (
+            <ScientTooltip content={LIBRARY_LABELS.unread}>
+              <span
+                role="img"
+                aria-label={LIBRARY_LABELS.unread}
+                className="size-1.5 rounded-full bg-sky-500"
+              />
+            </ScientTooltip>
+          ) : null}
+        </span>
+        <span className="flex size-7 shrink-0 items-center justify-center">
+          <SourcePdfAction record={record} row={row} size="icon-sm" />
+        </span>
+        {/* The star sits beside the menu, so it lines up from row to row. */}
         {record.readingStatus !== undefined ? (
           <RowStar
             title={record.title}

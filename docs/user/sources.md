@@ -142,9 +142,14 @@ Type, reading state, tags and collections are filters, not orders. **Show as
 cards** shows the papers as cards in one flow, at most a comfortable width
 however wide the panel is; a heading that continues onto a new row of cards is
 repeated there, dimmed. Each card keeps its journal and year. **Show as a list**
-goes back. Each row and card starts with its journal's icon when Scient found
-one, else an icon for its type (article, book, conference paper and so on, named
-on hover).
+goes back. Each row and card starts with a journal or publisher icon when one is
+available, else an icon for its type (article, book, conference paper and so on,
+named on hover). Common journal marks are included with Scient and work offline.
+Other journal icons are saved after discovery and kept visible while Scient
+refreshes them in the background. Changing a note, star, or reading state does
+not reload the icon. A publisher's shared mark is identified as a publisher on
+hover. In list view, the blue **Unread** dot sits with the actions on the right,
+immediately before **Open PDF** when a PDF is available.
 
 ### Two notes
 

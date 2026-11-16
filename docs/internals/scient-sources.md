@@ -77,17 +77,36 @@ immediately, and a single completed source opens in the existing details state.
 The preflight surface is retained only for the weak possible-metadata-match
 decision that cannot be made safely on the researcher's behalf.
 
-Journal artwork is optional presentation, not source truth. A Sources-owned
-read endpoint may resolve a journal article's explicit publisher origin, fetch
-the conventional favicon and up to two larger first-party icons declared by the
-publisher's bounded public-HTTPS home page, validate raster bytes, preserve a
-smaller official icon when no better one succeeds, and cache the result under
-the environment state directory. The renderer uses
-the existing signed asset route and paints the generic book before lookup, on
-offline resolution, and on image failure. Resolution starts only for rows near
-the visible scroll region, so a large ledger does not create one network job per
-stored source. Icons never enter project records, block the list, or permit the
-renderer to contact arbitrary publisher URLs.
+Journal artwork is optional presentation, not source truth. A small bundled
+catalog paints recognized journal or publisher marks immediately, including
+offline and from a title or ISSN alone. Matching is exact after normalization;
+a publisher fallback is named as such, not presented as distinct journal artwork.
+Bundled assets require documented redistribution provenance and retain their
+trademark notices. They are build assets, never remote image URLs.
+
+Articles without a curated journal match use the Sources-owned read endpoint
+and existing signed asset route. A bundled host/publisher/platform mark remains
+an immediate fallback, not a reason to skip DOI discovery (including PubMed
+imports). Client requests are shared by journal within an environment and
+project, with a bounded cache and signed-URL renewal. Updating a note, reading
+state, or star does not clear the artwork. Discovery starts near the visible
+scroll region; unknown sources and image failures immediately show the
+source-type icon. Missing icons are checked again after one minute.
+
+The server keys artwork by normalized ISSN, or journal title and publisher when
+no ISSN exists, before resolving an article address. Disk hits need no Crossref
+or publisher request, even for records without an article link. Artwork remains
+usable offline: after 30 days it is returned immediately while one background
+refresh runs. Missing artwork is remembered on disk for six hours; a discovery
+deadline retries after one minute. Discovery has a six-second budget once its
+Crossref lookup is admitted to the shared pacing lane (or immediately for a
+direct article address), and aborts outstanding HTTPS requests. Waiting behind
+other journals does not consume a discovery's network budget.
+Discovery retains public-address checks, standard HTTPS, redirect/body limits,
+first-party raster validation, and at most two declared-icon attempts per page.
+Cache metadata is atomically replaced; older cache identities rebuild lazily.
+Icons never enter project records, block the list, or permit the renderer to
+contact arbitrary publisher URLs.
 
 ## Durable project store
 

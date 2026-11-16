@@ -1,5 +1,10 @@
-import type { EnvironmentId, ScientSourcesOverviewResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScientSourceJournalIconResult,
+  ScientSourcesOverviewResult,
+} from "@t3tools/contracts";
 import type { ScientSourceType } from "@scientfactory/scient-sources";
+import { journalIconIdentity } from "@t3tools/shared/scientJournalIdentity";
 import {
   Book,
   BookOpenText,
@@ -19,11 +24,12 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { readScientSourceJournalIcon } from "./client";
+import { bundledJournalIcon } from "./bundledJournalIcons";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
-type JournalIcon = Awaited<ReturnType<typeof readScientSourceJournalIcon>>;
+type JournalIcon = (NonNullable<ScientSourceJournalIconResult["icon"]> & { url: string }) | null;
 
 /** What kind of source it is, at a glance, until its journal's own icon arrives. */
 const SOURCE_TYPE_ICONS = {
@@ -42,44 +48,113 @@ const SOURCE_TYPE_ICONS = {
   other: File,
 } as const satisfies Readonly<Record<ScientSourceType, LucideIcon>>;
 
-function canResolveJournalIcon(record: SourceRecord): boolean {
-  return (
-    record.type === "article" &&
-    Boolean(record.containerTitle?.trim()) &&
-    (Boolean(record.url?.trim()) ||
-      record.identifiers.some((identifier) => identifier.scheme.trim().toLowerCase() === "doi"))
-  );
+type IconResolver = typeof readScientSourceJournalIcon;
+type ResolvedJournalIcon = NonNullable<JournalIcon>;
+type CachedIcon = {
+  icon: JournalIcon;
+  retryAt: number;
+  pending?: Promise<void>;
+};
+
+const resolverCaches = new WeakMap<IconResolver, Map<string, CachedIcon>>();
+const MAX_CACHED_JOURNALS = 256;
+const RETRY_DELAY = 30_000;
+const MISS_LIFETIME = 60_000;
+
+function cachedIcon(resolveIcon: IconResolver, cacheKey: string): JournalIcon {
+  const icon = resolverCaches.get(resolveIcon)?.get(cacheKey)?.icon;
+  return icon && icon.expiresAt > Date.now() ? icon : null;
+}
+
+function discoverIcon(
+  resolveIcon: IconResolver,
+  cacheKey: string,
+  environmentId: EnvironmentId,
+  root: string,
+  sourceId: string,
+): CachedIcon {
+  let cache = resolverCaches.get(resolveIcon);
+  if (!cache) {
+    cache = new Map();
+    resolverCaches.set(resolveIcon, cache);
+  }
+  const entry: CachedIcon = cache.get(cacheKey) ?? { icon: null, retryAt: 0 };
+  cache.delete(cacheKey);
+  cache.set(cacheKey, entry);
+  if (cache.size > MAX_CACHED_JOURNALS) cache.delete(cache.keys().next().value!);
+  if (entry.pending || entry.retryAt > Date.now()) return entry;
+  entry.pending = Promise.resolve()
+    .then(() => resolveIcon(environmentId, { root, sourceId }))
+    .then((icon) => {
+      const now = Date.now();
+      if (icon && icon.expiresAt <= now + 1_000) {
+        entry.retryAt = now + RETRY_DELAY;
+        return;
+      }
+      entry.icon = icon ?? entry.icon;
+      entry.retryAt = icon ? Math.max(now + 1_000, icon.expiresAt - 15_000) : now + MISS_LIFETIME;
+    })
+    .catch(() => {
+      entry.retryAt = Date.now() + RETRY_DELAY;
+    })
+    .finally(() => {
+      delete entry.pending;
+    });
+  return entry;
 }
 
 export function SourceJournalIcon(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly record: SourceRecord;
-  readonly resolveIcon?: typeof readScientSourceJournalIcon;
+  readonly resolveIcon?: IconResolver;
 }) {
-  const [icon, setIcon] = useState<JournalIcon>(null);
-  const [imageFailed, setImageFailed] = useState(false);
+  const identity = journalIconIdentity(props.record);
+  const cacheKey = JSON.stringify([props.environmentId, props.root, identity]);
+  return (
+    <JournalIconImage
+      key={JSON.stringify([cacheKey, props.record.sourceId, props.record.type])}
+      {...props}
+      cacheKey={cacheKey}
+      eligible={identity !== null}
+      bundled={bundledJournalIcon(props.record)}
+      resolveIcon={props.resolveIcon ?? readScientSourceJournalIcon}
+    />
+  );
+}
+
+function JournalIconImage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+  readonly record: SourceRecord;
+  readonly resolveIcon: IconResolver;
+  readonly cacheKey: string;
+  readonly eligible: boolean;
+  readonly bundled: ReturnType<typeof bundledJournalIcon>;
+}) {
+  const { environmentId, root, resolveIcon, cacheKey, eligible, bundled } = props;
+  const sourceId = props.record.sourceId;
+  const [discovered, setDiscovered] = useState<{
+    resolver: IconResolver;
+    icon: ResolvedJournalIcon;
+  } | null>(null);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [shouldResolve, setShouldResolve] = useState(
     () => typeof IntersectionObserver === "undefined",
   );
   const containerRef = useRef<HTMLSpanElement>(null);
-  const resolveIcon = props.resolveIcon ?? readScientSourceJournalIcon;
-  const eligible = canResolveJournalIcon(props.record);
+  const needsDiscovery = eligible && bundled?.source !== "journal";
+  const icon =
+    bundled?.source === "journal"
+      ? bundled
+      : ((discovered?.resolver === resolveIcon
+          ? discovered.icon
+          : cachedIcon(resolveIcon, cacheKey)) ?? bundled);
+  const imageFailed = icon?.url === failedUrl;
 
-  const [previousVisibility, setPreviousVisibility] = useState({
-    eligible: eligible,
-    sourceId: props.record.sourceId,
-  });
-  if (
-    previousVisibility.eligible !== eligible ||
-    previousVisibility.sourceId !== props.record.sourceId
-  ) {
-    setPreviousVisibility({ eligible: eligible, sourceId: props.record.sourceId });
-    setShouldResolve(typeof IntersectionObserver === "undefined");
-  }
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers icon resolution until the container DOM node nears the viewport via IntersectionObserver
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes viewport admission before starting environment discovery
   useEffect(() => {
-    if (!previousVisibility.eligible || typeof IntersectionObserver === "undefined") return;
+    if (!needsDiscovery || shouldResolve || typeof IntersectionObserver === "undefined") return;
     const element = containerRef.current;
     if (!element) return;
     const observer = new IntersectionObserver(
@@ -92,64 +167,46 @@ export function SourceJournalIcon(props: {
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [previousVisibility]);
+  }, [needsDiscovery, shouldResolve]);
 
-  const [previousIconInput, setPreviousIconInput] = useState({
-    eligible: eligible,
-    environmentId: props.environmentId,
-    revision: props.record.revision,
-    sourceId: props.record.sourceId,
-    root: props.root,
-    resolveIcon: resolveIcon,
-    shouldResolve: shouldResolve,
-  });
-  if (
-    previousIconInput.eligible !== eligible ||
-    previousIconInput.environmentId !== props.environmentId ||
-    previousIconInput.revision !== props.record.revision ||
-    previousIconInput.sourceId !== props.record.sourceId ||
-    previousIconInput.root !== props.root ||
-    previousIconInput.resolveIcon !== resolveIcon ||
-    previousIconInput.shouldResolve !== shouldResolve
-  ) {
-    setPreviousIconInput({
-      eligible: eligible,
-      environmentId: props.environmentId,
-      revision: props.record.revision,
-      sourceId: props.record.sourceId,
-      root: props.root,
-      resolveIcon: resolveIcon,
-      shouldResolve: shouldResolve,
-    });
-    setIcon(null);
-    setImageFailed(false);
-  }
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves the journal icon from the environment when inputs change, ignoring stale completions
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns shared environment discovery and signed-asset renewal for an admitted row
   useEffect(() => {
+    if (!needsDiscovery || !shouldResolve) return;
     let active = true;
-    const { eligible, shouldResolve, resolveIcon, environmentId, root, sourceId } =
-      previousIconInput;
-    if (!eligible || !shouldResolve) return () => undefined;
-    void resolveIcon(environmentId, {
-      root,
-      sourceId,
-    })
-      .then((result) => {
-        if (active) setIcon(result);
-      })
-      .catch(() => {
-        if (active) setIcon(null);
-      });
+    let timer: number | undefined;
+    const refresh = async () => {
+      const entry = discoverIcon(resolveIcon, cacheKey, environmentId, root, sourceId);
+      await entry.pending;
+      if (!active) return;
+      if (entry.icon && entry.icon.url !== failedUrl && entry.icon.expiresAt > Date.now()) {
+        setDiscovered({ resolver: resolveIcon, icon: entry.icon });
+      }
+      timer = window.setTimeout(
+        () => void refresh(),
+        Math.min(2_147_483_647, Math.max(1_000, entry.retryAt - Date.now())),
+      );
+    };
+    void refresh();
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
-  }, [previousIconInput]);
+  }, [
+    needsDiscovery,
+    shouldResolve,
+    resolveIcon,
+    cacheKey,
+    environmentId,
+    root,
+    sourceId,
+    failedUrl,
+  ]);
 
   const TypeIcon = SOURCE_TYPE_ICONS[props.record.type];
   const journalIcon = (
     <span
       ref={containerRef}
-      className="flex size-4 shrink-0 items-center justify-center"
+      className="flex size-5 shrink-0 items-center justify-center"
       aria-hidden
     >
       {icon && !imageFailed ? (
@@ -159,10 +216,15 @@ export function SourceJournalIcon(props: {
           loading="lazy"
           draggable={false}
           className="size-full rounded-[3px] object-contain"
-          onError={() => setImageFailed(true)}
+          onError={() => {
+            setFailedUrl(icon.url);
+            if (icon === bundled) return;
+            const entry = resolverCaches.get(resolveIcon)?.get(cacheKey);
+            if (entry) entry.retryAt = Date.now() + RETRY_DELAY;
+          }}
         />
       ) : (
-        <TypeIcon className="size-4" data-testid="source-generic-icon" />
+        <TypeIcon className="size-5" data-testid="source-generic-icon" />
       )}
     </span>
   );
@@ -177,5 +239,3 @@ export function SourceJournalIcon(props: {
     </ScientTooltip>
   );
 }
-
-export const sourceJournalIconInternals = { canResolveJournalIcon };
