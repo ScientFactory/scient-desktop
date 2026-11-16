@@ -297,6 +297,10 @@ export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManag
     /** A deferred turn start refuses a provider turned off since its message was admitted. */
     readonly requireEnabledInstance?: boolean;
     // SCIENT-FORK:END provider-enabled-at-open
+    // SCIENT-FORK:START — the refused owner a replacement session supersedes.
+    /** Retired first when still live and unusable; it can hold the native history's lease. */
+    readonly supersededProviderSessionId?: ProviderSessionId;
+    // SCIENT-FORK:END
   }) => Effect.Effect<
     ProviderAdapter.ProviderAdapterV2SessionRuntime,
     ProviderSessionManagerV2Error
@@ -3857,6 +3861,36 @@ export const layerWithOptions = (
                           ? "The prior native close failed; exact-owner recovery is required."
                           : "The prior native close is still pending.",
                     });
+                  // SCIENT-FORK:START — retire the exact unusable owner this replacement supersedes.
+                  const supersededId = input.supersededProviderSessionId;
+                  const superseded =
+                    supersededId === undefined || sessionKey(supersededId) === key
+                      ? undefined
+                      : (yield* Ref.get(sessions)).get(sessionKey(supersededId));
+                  if (
+                    supersededId !== undefined &&
+                    superseded !== undefined &&
+                    superseded.runtime.instanceId === input.modelSelection.instanceId &&
+                    superseded.attachedThreadIds.has(input.threadId)
+                  )
+                    yield* retireUnusableOwner(superseded.runtime, (reason) =>
+                      releaseEntry({
+                        providerSessionId: supersededId,
+                        expectedRuntime: superseded.runtime,
+                        reason,
+                        detail: "A replacement session supersedes this native owner.",
+                      }).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new ProviderSessionOpenError({
+                              instanceId: input.modelSelection.instanceId,
+                              providerSessionId: input.providerSessionId,
+                              cause,
+                            }),
+                        ),
+                      ),
+                    );
+                  // SCIENT-FORK:END
                   const existing = (yield* Ref.get(sessions)).get(key);
                   if (existing !== undefined) {
                     if (releasingRuntimes.has(existing.runtime))

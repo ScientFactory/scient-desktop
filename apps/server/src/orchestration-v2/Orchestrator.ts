@@ -3615,6 +3615,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               type: "provider-turn.start",
               runId: queuedRun.id,
               expectedAttemptId: attempt.id,
+              // SCIENT-FORK:START — a refused owner can still hold this native history.
+              ...(deliveryProviderThread.providerSessionId === null ||
+              deliveryProviderThread.providerSessionId === providerSessionId
+                ? {}
+                : { supersededProviderSessionId: deliveryProviderThread.providerSessionId }),
+              // SCIENT-FORK:END
             },
           },
         ],
@@ -8840,6 +8846,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               threadId: command.threadId,
             }),
           )));
+      // SCIENT-FORK:START — a refused owner can still hold this native history.
+      const supersededProviderSessionId =
+        replacesSession && activeProviderThread.providerSessionId !== providerSessionId
+          ? activeProviderThread.providerSessionId
+          : undefined;
+      // SCIENT-FORK:END
       const providerThreadId =
         reusableProviderThread?.id ??
         idAllocator.derive.providerThread({
@@ -8975,6 +8987,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
         ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
           ? { workspacePreparation: dispatchMode.workspaceStrategy }
+          : {}),
+        // SCIENT-FORK: the release that starts a prepared run names the superseded owner.
+        ...(dispatchMode.type === "defer_start" && supersededProviderSessionId !== undefined
+          ? { supersededProviderSessionId }
           : {}),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...wakeWorkStartedAt(projection, command),
@@ -9228,7 +9244,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         id: `effect:${command.commandId}:provider-turn.start:${runId}`,
         commandId: command.commandId,
         threadId: command.threadId,
-        request: { type: "provider-turn.start", runId },
+        request: {
+          type: "provider-turn.start",
+          runId,
+          // SCIENT-FORK: a refused owner can still hold this native history.
+          ...(supersededProviderSessionId === undefined ? {} : { supersededProviderSessionId }),
+        },
       } satisfies PendingOrchestrationEffectV2;
       if (dispatchMode.type !== "defer_start") {
         yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
@@ -12990,7 +13011,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           id: `effect:${command.commandId}:provider-turn.start:${state.run.id}`,
           commandId: command.commandId,
           threadId: command.threadId,
-          request: { type: "provider-turn.start", runId: state.run.id },
+          request: {
+            type: "provider-turn.start",
+            runId: state.run.id,
+            // SCIENT-FORK: the owner this prepared run's new provider session supersedes.
+            ...(state.run.supersededProviderSessionId === undefined
+              ? {}
+              : { supersededProviderSessionId: state.run.supersededProviderSessionId }),
+          },
         } satisfies PendingOrchestrationEffectV2,
       ]);
     },

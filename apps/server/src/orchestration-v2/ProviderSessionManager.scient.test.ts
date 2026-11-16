@@ -2670,6 +2670,116 @@ for (const status of ["error", "stopped"] as const) {
 }
 
 it.effect.each(
+  (["success", "pending", "failure"] as const).map((close) => ({
+    caseTitle: `ProviderSessionManagerV2 retires the exact superseded error owner of a new session id after ${close} close`,
+    close,
+  })),
+)("$caseTitle", ({ close }) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const closeEntered = yield* Deferred.make<void>();
+    const closeRelease = yield* Deferred.make<void>();
+    let unhealthy = false;
+    const supersededId = ProviderSessionId.make(`superseded-owner-${close}`);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const events = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`superseded-owner-${close}`);
+      const peerThreadId = ThreadId.make(`superseded-peer-${close}`);
+      yield* events.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now }),
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: peerThreadId, now }),
+        ],
+      });
+      const original = yield* manager.open({
+        threadId,
+        providerSessionId: supersededId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const peerId = ProviderSessionId.make(`superseded-peer-${close}`);
+      const peer = yield* manager.open({
+        threadId: peerThreadId,
+        providerSessionId: peerId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* Effect.sync(() => {
+        unhealthy = true;
+      });
+      assert.equal(original.providerSession.status, "error");
+      const input = {
+        threadId,
+        providerSessionId: ProviderSessionId.make(`superseding-owner-${close}`),
+        modelSelection,
+        runtimePolicy,
+        supersededProviderSessionId: supersededId,
+      };
+      const opening = yield* manager.open(input).pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(closeEntered);
+      assert.isTrue(Option.isNone(yield* manager.get(supersededId)));
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+      if (close === "pending") {
+        yield* TestClock.adjust("31 seconds");
+        assert.isTrue(Exit.isFailure(yield* Fiber.join(opening)));
+        assert.equal(
+          Option.getOrUndefined(yield* manager.getCloseState!(supersededId))?.state,
+          "pending",
+        );
+        // A retried start cannot open beside the pending close.
+        assert.isTrue(Exit.isFailure(yield* manager.open(input).pipe(Effect.exit)));
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }
+      yield* Deferred.succeed(closeRelease, undefined);
+      const result = yield* Fiber.join(opening);
+      if (close === "failure") {
+        assert.isTrue(Exit.isFailure(result));
+        assert.equal(
+          Option.getOrUndefined(yield* manager.getCloseState!(supersededId))?.state,
+          "failed",
+        );
+        assert.isTrue(Exit.isFailure(yield* manager.open(input).pipe(Effect.exit)));
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      } else {
+        if (close === "pending") yield* manager.close(supersededId);
+        const replacement =
+          close === "pending"
+            ? yield* manager.open(input)
+            : Exit.isSuccess(result)
+              ? result.value
+              : undefined;
+        assert.ok(replacement);
+        assert.equal(replacement.providerSessionId, input.providerSessionId);
+        assert.equal((yield* Ref.get(state)).openCount, 3);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }
+      assert.strictEqual(Option.getOrUndefined(yield* manager.get(peerId)), peer);
+    }).pipe(
+      Effect.ensuring(Deferred.succeed(closeRelease, undefined)),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 60_000,
+          liveStatus: (ordinal) => (ordinal === 1 && unhealthy ? "error" : "ready"),
+          closeSession: (sessionId) =>
+            sessionId !== supersededId
+              ? Effect.void
+              : Effect.gen(function* () {
+                  yield* Deferred.succeed(closeEntered, undefined);
+                  yield* Deferred.await(closeRelease);
+                  if (close === "failure")
+                    return yield* Effect.die("Controlled superseded-owner close failure");
+                }),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect.each(
   (["success", "failure", "interrupted-waiter"] as const).map((close) => ({
     caseTitle: `ProviderSessionManagerV2 joins exact sealed-prefix retirement with ${close} without losing peers or same-ID fencing`,
     close,
