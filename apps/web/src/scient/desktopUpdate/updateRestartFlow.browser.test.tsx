@@ -2,6 +2,7 @@ import { act, fakeTimers, render as _fixtureRender, type Screen } from "../../..
 import "../../index.css";
 
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type { UpdateEverythingRun } from "../../components/sidebar/updateEverything.logic";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
@@ -41,6 +42,17 @@ vi.mock("./restartWhenIdle", () => ({
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useParams: () => null,
+}));
+// A pass for other machines can start while the restart card is open.
+const updateRun = vi.hoisted(() => ({
+  current: null as UpdateEverythingRun | null,
+  save: vi.fn(),
+}));
+vi.mock("../../components/sidebar/updateEverythingRun", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useUpdateEverythingRun: () => updateRun.current,
+  saveUpdateEverythingResult: updateRun.save,
+  clearSavedUpdateEverythingResult: vi.fn(),
 }));
 
 import { SidebarUpdatePill } from "../../components/sidebar/SidebarUpdatePill";
@@ -142,6 +154,8 @@ async function _setupFixture0(_fixture: _Fixture) {
   localWork.blocksRestart = true;
   bridge.downloadUpdate.mockClear();
   bridge.installUpdate.mockClear();
+  updateRun.current = null;
+  updateRun.save.mockClear();
 }
 
 async function _cleanupFixture1(_fixture: _Fixture) {
@@ -176,6 +190,28 @@ describe("update restart flow", () => {
     await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledTimes(1));
     expect(confirm).not.toHaveBeenCalled();
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("Restart now saves a pass for other machines that started after the card opened", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    updateStore.set(downloaded());
+    await mount(_fixture);
+    await vi.waitFor(() => expect(footerButton(_fixture).textContent).toBe("Update"));
+    footerButton(_fixture).click();
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+
+    // The circle starts updating another machine while the card is open.
+    updateRun.current = { localVersion: null, phase: "providers", restartAt: null, machines: [] };
+    await act(() => updateStore.set(downloaded()));
+
+    restartNow(anchoredNotice()!)?.click();
+    await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledWith("0.6.19"));
+    expect(updateRun.save).toHaveBeenCalledWith(
+      expect.objectContaining({ localVersion: "0.6.19" }),
+    );
   });
 
   it("a second press on Update closes its card without installing", async () => {

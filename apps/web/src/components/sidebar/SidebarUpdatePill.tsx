@@ -10,6 +10,7 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useScientDownloadProgress } from "../../hooks/useScientDownloadProgress";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { cn } from "../../lib/utils";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
@@ -300,6 +301,25 @@ function SidebarUpdateControl() {
   useEffect(() => {
     if (action !== "install" && restartCardOpenRef.current) updateReadyNoticeRef.current?.close();
   }, [action]);
+  // Restart is explicit; no second confirmation. A pass for other machines running when Restart is
+  // chosen, even one started after the card opened, is saved first, so its summary and restarting
+  // servers follow the relaunch.
+  const installLocal = useStableCallback(
+    (bridge: NonNullable<typeof window.desktopBridge>, version: string | null) => {
+      if (!isUpdateRunActive(run)) return installFromFooter(bridge, undefined, version);
+      saveUpdateEverythingResult({
+        localVersion: version,
+        updatedServers: 0,
+        updatedProviders: 0,
+        failures: [],
+        restarting: [],
+      });
+      return installFromFooter(bridge, undefined, version).then((installed) => {
+        if (!installed) clearSavedUpdateEverythingResult();
+        return installed;
+      });
+    },
+  );
   // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
@@ -376,24 +396,6 @@ function SidebarUpdateControl() {
 
     if (!bridge || !state) return;
 
-    // SCIENT-FORK:START — Restart is explicit; no second confirmation. A running pass for
-    // other machines is saved first, so its summary and restarting servers follow the relaunch.
-    const installLocal = (version: string | null) => {
-      if (!isUpdateRunActive(run)) return installFromFooter(bridge, undefined, version);
-      saveUpdateEverythingResult({
-        localVersion: version,
-        updatedServers: 0,
-        updatedProviders: 0,
-        failures: [],
-        restarting: [],
-      });
-      return installFromFooter(bridge, undefined, version).then((installed) => {
-        if (!installed) clearSavedUpdateEverythingResult();
-        return installed;
-      });
-    };
-    // SCIENT-FORK:END
-
     if (action === "install" && state.errorContext !== "install") {
       // SCIENT-FORK:START — Update opens the restart card; a second press closes it.
       if (restartCardOpenRef.current) {
@@ -407,7 +409,7 @@ function SidebarUpdateControl() {
         shell: bridge,
         state,
         anchor: document.getElementById(releaseNotesTriggerId),
-        install: installLocal,
+        install: (version) => installLocal(bridge, version),
         persistent: true,
         onClose: () => {
           restartCardOpenRef.current = false;
@@ -461,7 +463,7 @@ function SidebarUpdateControl() {
 
     if (action === "install") {
       // SCIENT-FORK: a failed install retries directly.
-      void installLocal(state.downloadedVersion);
+      void installLocal(bridge, state.downloadedVersion);
       return;
     }
 

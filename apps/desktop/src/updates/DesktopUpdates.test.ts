@@ -335,17 +335,30 @@ describe("DesktopUpdates", () => {
     ) => Effect.Effect<void, ElectronUpdater.ElectronUpdaterDownloadUpdateError> = () =>
       Effect.void,
   ) => {
-    const feed = { version: null as string | null, releaseNotes: undefined as string | undefined };
+    const feed = {
+      version: null as string | null,
+      releaseNotes: undefined as string | undefined,
+      checkFails: false,
+    };
     // The harness's own emitter, wired once it exists.
     const updater = { emit: (_eventName: string, _payload?: unknown) => {} };
     const harness = makeHarness({
-      checkForUpdates: Effect.sync(() => {
+      checkForUpdates: Effect.suspend(() => {
+        if (feed.checkFails) {
+          return Effect.fail(
+            new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({
+              channel: "latest",
+              cause: new Error("net::ERR_INTERNET_DISCONNECTED"),
+            }),
+          );
+        }
         if (feed.version === null) updater.emit("update-not-available");
         else
           updater.emit("update-available", {
             version: feed.version,
             releaseNotes: feed.releaseNotes,
           });
+        return Effect.void;
       }),
       downloadUpdate: Effect.suspend(() => {
         const version = feed.version!;
@@ -424,6 +437,12 @@ describe("DesktopUpdates", () => {
         yield* updates.check("poll");
         yield* flushCallbacks;
         assert.equal(harness.downloadCount(), 1);
+        // A failed check keeps the offer and its retry schedule.
+        feed.checkFails = true;
+        yield* updates.check("poll");
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "available");
+        feed.checkFails = false;
 
         yield* TestClock.adjust("1 second");
         assert.equal(harness.downloadCount(), 2);
