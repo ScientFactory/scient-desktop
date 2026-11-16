@@ -10075,6 +10075,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 attachments: turnInput.message.attachments,
                 resolveAttachmentPath: host.resolveAttachmentPath,
                 resolveExtractedTextPath: host.resolveExtractedTextPath,
+                // SCIENT-FORK:START — preserve the complete context admitted by the host.
+                preserveOverflow: host.preserveAttachmentContext === true,
+                // SCIENT-FORK:END
               });
               const steerId = yield* steering.send(
                 runtime,

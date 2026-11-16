@@ -1860,7 +1860,7 @@ describe("DesktopWindow", () => {
 
   // regression: 15ca727b17 fix(desktop): reload the main renderer after it is killed (#20300)
   it.effect(
-    "recovers killed renderers without reloading indefinitely or reviving closed windows",
+    "recovers killed renderers with a backoff and without reviving closed windows",
     () =>
       Effect.gen(function* () {
         const fakeWindow = makeFakeBrowserWindow();
@@ -1884,18 +1884,20 @@ describe("DesktopWindow", () => {
             yield* TestClock.adjust(500);
             onLoaded();
           }
+          // Past the reload budget the fourth reload waits for the oldest attempt to age out.
           assert.equal(fakeWindow.loadURL.mock.calls.length, 4);
 
           yield* TestClock.adjust(60_000);
+          assert.equal(fakeWindow.loadURL.mock.calls.length, 5);
           onGone({}, { reason: "killed", exitCode: 9 });
           yield* TestClock.adjust(500);
-          assert.equal(fakeWindow.loadURL.mock.calls.length, 5);
+          assert.equal(fakeWindow.loadURL.mock.calls.length, 6);
           assert.equal(yield* Ref.get(createCount), 1);
 
           onGone({}, { reason: "killed", exitCode: 9 });
           fakeWindow.isDestroyed.mockReturnValue(true);
           yield* TestClock.adjust(500);
-          assert.equal(fakeWindow.loadURL.mock.calls.length, 5);
+          assert.equal(fakeWindow.loadURL.mock.calls.length, 6);
         }).pipe(Effect.provide(layer));
       }),
   );
