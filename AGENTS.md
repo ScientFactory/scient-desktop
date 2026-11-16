@@ -253,8 +253,9 @@ profile.
   Never enable auto-merge on other PRs just because they look ready. Review the
   current head and respect unresolved blockers; report conflicts instead of
   resolving them. Use GitHub's merge queue without bypassing checks or jumping
-  the queue, and do not repeatedly realign queued branches. Before pushing a
-  correction to a queued PR, remove it from the queue and disable auto-merge;
+  the queue, except for the admin merge below, and do not repeatedly realign
+  queued branches. Before pushing a correction to a queued PR, remove it from
+  the queue and disable auto-merge;
   review the new head before requesting delivery again. Return the PR/CI links
   rather than monitoring unless the user asks.
 - For an already merge-authorized, reviewed PR with required checks green and no
@@ -269,6 +270,11 @@ profile.
   right away. Check the PR timeline first: if the queue had already removed this
   head before, stop and tell the user. Never re-add after a typecheck, build, provenance or
   unknown failure; investigate it, and record a new flake there before anything else.
+- Admin-merge a PR, bypassing the queue, only when the user explicitly approves
+  that for that PR, its head contains current `main`, every other check on that
+  head passed, and each failure matches an open entry in
+  [`docs/operations/ci-flakes.md`](docs/operations/ci-flakes.md). Wait for
+  checks still running. Use a merge commit and confirm it landed on `main`.
 - Push a correction once its local checks pass, as one push. Each push cancels
   and restarts the PR's CI, so a series of pushes while CI runs wastes the runs.
 - Preserve literal upstream ancestry. Upstream merges use dedicated branches
