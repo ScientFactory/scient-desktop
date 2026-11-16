@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeTest from "node:test";
+import { test } from "vitest";
 import { qualifyTiming, timingEvents, verifyHandoff } from "./qualify-desktop-update.mjs";
 
 const sourceSha = "a".repeat(40);
@@ -28,7 +28,7 @@ function receipts() {
 }
 const qualify = (events) => qualifyTiming(events, "0.0.1", "0.0.2");
 
-NodeTest.test("reports preparation, shutdown and genuinely usable workspace separately", () => {
+test("reports preparation, shutdown and genuinely usable workspace separately", () => {
   NodeAssert.deepEqual(qualify(receipts()), {
     attemptId: "attempt-1",
     processId: 123,
@@ -41,7 +41,7 @@ NodeTest.test("reports preparation, shutdown and genuinely usable workspace sepa
   });
 });
 
-NodeTest.test("does not qualify a launch or a rendered window as a usable workspace", () => {
+test("does not qualify a launch or a rendered window as a usable workspace", () => {
   NodeAssert.throws(
     () => qualify(receipts().filter((event) => event.event !== "workspace-ready")),
     /workspace-ready/,
@@ -51,22 +51,19 @@ NodeTest.test("does not qualify a launch or a rendered window as a usable worksp
   NodeAssert.throws(() => qualify(events), /project.*restored/i);
 });
 
-NodeTest.test(
-  "rejects readiness from another launch, another process, or a mismatched version",
-  () => {
-    for (const change of [
-      { launchId: "unrelated-launch" },
-      { processId: 456 },
-      { targetVersion: "0.0.3" },
-    ]) {
-      const events = receipts();
-      Object.assign(events.at(-1), change);
-      NodeAssert.throws(() => qualify(events));
-    }
-  },
-);
+test("rejects readiness from another launch, another process, or a mismatched version", () => {
+  for (const change of [
+    { launchId: "unrelated-launch" },
+    { processId: 456 },
+    { targetVersion: "0.0.3" },
+  ]) {
+    const events = receipts();
+    Object.assign(events.at(-1), change);
+    NodeAssert.throws(() => qualify(events));
+  }
+});
 
-NodeTest.test("rejects duplicate relaunch readiness and abandoned attempts", () => {
+test("rejects duplicate relaunch readiness and abandoned attempts", () => {
   const duplicate = receipts();
   duplicate.push({ ...duplicate.at(-1) });
   NodeAssert.throws(() => qualify(duplicate), /Exactly one workspace-ready/);
@@ -76,7 +73,7 @@ NodeTest.test("rejects duplicate relaunch readiness and abandoned attempts", () 
   );
 });
 
-NodeTest.test("rejects missing measurements and readiness predating the backend", () => {
+test("rejects missing measurements and readiness predating the backend", () => {
   const missing = receipts();
   delete missing.at(-1).confirmToReadyMs;
   NodeAssert.throws(() => qualify(missing), /confirmToReadyMs/);
@@ -85,20 +82,17 @@ NodeTest.test("rejects missing measurements and readiness predating the backend"
   NodeAssert.throws(() => qualify(early), /preceded/);
 });
 
-NodeTest.test(
-  "reads only the actual structured restart log events and tolerates an incomplete final write",
-  () => {
-    const fields = { ...identity, event: "confirmed", component: "desktop-restart" };
-    const text =
-      JSON.stringify({
-        events: [
-          { name: "restart timing", attributes: fields },
-          { name: "unrelated event", attributes: fields },
-        ],
-      }) + '\n{"events":';
-    NodeAssert.deepEqual(timingEvents(text), [fields]);
-  },
-);
+test("reads only the actual structured restart log events and tolerates an incomplete final write", () => {
+  const fields = { ...identity, event: "confirmed", component: "desktop-restart" };
+  const text =
+    JSON.stringify({
+      events: [
+        { name: "restart timing", attributes: fields },
+        { name: "unrelated event", attributes: fields },
+      ],
+    }) + '\n{"events":';
+  NodeAssert.deepEqual(timingEvents(text), [fields]);
+});
 
 function candidate() {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-update-evidence-test-"));
@@ -122,30 +116,24 @@ function candidate() {
   return root;
 }
 
-NodeTest.test(
-  "refuses altered candidate bytes and a source commit different from the attestation",
-  () => {
-    const root = candidate();
-    try {
-      NodeAssert.equal(verifyHandoff(root, sourceSha).source.commit, sourceSha);
-      NodeAssert.throws(() => verifyHandoff(root, "b".repeat(40)), /requested source commit/);
-      NodeFS.writeFileSync(NodePath.join(root, "payload.zip"), "altered immutable artifact!!");
-      NodeAssert.throws(() => verifyHandoff(root, sourceSha));
-    } finally {
-      NodeFS.rmSync(root, { recursive: true, force: true });
-    }
-  },
-);
+test("refuses altered candidate bytes and a source commit different from the attestation", () => {
+  const root = candidate();
+  try {
+    NodeAssert.equal(verifyHandoff(root, sourceSha).source.commit, sourceSha);
+    NodeAssert.throws(() => verifyHandoff(root, "b".repeat(40)), /requested source commit/);
+    NodeFS.writeFileSync(NodePath.join(root, "payload.zip"), "altered immutable artifact!!");
+    NodeAssert.throws(() => verifyHandoff(root, sourceSha));
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
 
-NodeTest.test(
-  "refuses unsealed files instead of accidentally qualifying a substituted manifest",
-  () => {
-    const root = candidate();
-    try {
-      NodeFS.writeFileSync(NodePath.join(root, "latest-mac.yml"), "version: 9.9.9\n");
-      NodeAssert.throws(() => verifyHandoff(root, sourceSha), /unsealed/);
-    } finally {
-      NodeFS.rmSync(root, { recursive: true, force: true });
-    }
-  },
-);
+test("refuses unsealed files instead of accidentally qualifying a substituted manifest", () => {
+  const root = candidate();
+  try {
+    NodeFS.writeFileSync(NodePath.join(root, "latest-mac.yml"), "version: 9.9.9\n");
+    NodeAssert.throws(() => verifyHandoff(root, sourceSha), /unsealed/);
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});

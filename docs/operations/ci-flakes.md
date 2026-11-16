@@ -22,3 +22,9 @@ Windows packaging's "Installed desktop must survive the smoke interval and drain
 from source control discovery) inherited the app's output pipes and could hold them past the 8 s
 drain after a forced stop. The smoke now captures output to files and requires the app's own
 processes to end, and also checks a normal quit.
+
+Linux Test Server 7's Claude resume case
+([run 43903570147](https://github.com/ScientFactory/scient-desktop/actions/runs/43903570147/job/133426682440))
+observed a completed SendMessage before the exited query had finished retiring its native-thread
+state. The test now joins the query consumer before starting the next turn, rather than guessing
+that 2,000 scheduler yields cover asynchronous cleanup.
