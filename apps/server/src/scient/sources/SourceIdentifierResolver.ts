@@ -3,6 +3,7 @@
 import * as NodeTimersPromises from "node:timers/promises";
 
 import {
+  arxivIdOfDoi,
   editorialNoticeKind,
   isbn13,
   canonicalConnectorIdentifier,
@@ -105,9 +106,9 @@ const PubmedResponse = Schema.Struct({
   error: Schema.optionalKey(Schema.Unknown),
 });
 
-export const decodeCslMetadata = Schema.decodeUnknownSync(CslMetadata);
-export const decodePubmedResponse = Schema.decodeUnknownSync(PubmedResponse);
-export const decodePubmedSummary = Schema.decodeUnknownSync(PubmedSummary);
+const decodeCslMetadata = Schema.decodeUnknownSync(CslMetadata);
+const decodePubmedResponse = Schema.decodeUnknownSync(PubmedResponse);
+const decodePubmedSummary = Schema.decodeUnknownSync(PubmedSummary);
 
 function text(value: unknown): string | null {
   const first: unknown = Array.isArray(value) ? value[0] : value;
@@ -161,11 +162,11 @@ export function cslIssuedDate(issued: CslMetadata["issued"]): {
 }
 
 /** Crossref titles carry inline markup and line breaks from the deposited XML. */
-export function cslTitle(value: CslMetadata["title"]): string | null {
+function cslTitle(value: CslMetadata["title"]): string | null {
   return plainTextFromMarkup(text(value));
 }
 
-export function cslCreators(
+function cslCreators(
   values: ReadonlyArray<typeof CslCreator.Type> | undefined,
 ): ReadonlyArray<ScientSourceCreator> {
   return (values ?? []).flatMap((value): ReadonlyArray<ScientSourceCreator> => {
@@ -178,7 +179,7 @@ export function cslCreators(
   });
 }
 
-export function sourceTypeFromCsl(value: string | undefined): ScientSourceType {
+function sourceTypeFromCsl(value: string | undefined): ScientSourceType {
   switch (value) {
     case "article-journal":
     case "journal-article":
@@ -235,6 +236,8 @@ export interface RegistryRelation {
 /** Registry metadata in candidate field shapes; null or empty means the registry omitted it. */
 export interface ResolvedSourceMetadata {
   readonly type: ScientSourceType | null;
+  /** The registry's own name for a type Scient has no type for ("standard"). */
+  readonly customType?: string | null;
   readonly title: string | null;
   readonly creators: ReadonlyArray<ScientSourceCreator>;
   readonly issuedRaw: string | null;
@@ -318,14 +321,17 @@ function editorialNoticesFromUpdates(
 
 function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata {
   const issued = cslIssuedDate(csl.issued);
-  const type = sourceTypeFromCsl(csl.type);
   const resolvedDoi = text(csl.DOI) ?? doi;
+  // arXiv's DOI registry calls a deposit an article; it is a preprint.
+  const type = arxivIdOfDoi(resolvedDoi) ? "preprint" : sourceTypeFromCsl(csl.type);
   const issns = typeof csl.ISSN === "string" ? [csl.ISSN] : (csl.ISSN ?? []);
   const isbn = text(csl.ISBN);
   const abstract = normalizeScientSourceAbstractDocument(csl.abstract);
   const updates = cslUpdates(csl["updated-by"]);
+  const customType = type === "other" ? text(csl.type) : null;
   return {
     type: type === "other" ? null : type,
+    ...(customType ? { customType } : {}),
     title: cslTitle(csl.title),
     creators: cslCreators(csl.author),
     issuedRaw: issued.raw,
@@ -977,7 +983,11 @@ export function applyResolvedSourceMetadata(
     ...withoutSections,
     ...abstractSections,
     type: metadata.type ?? candidate.type,
-    ...(metadata.type ? { customType: null } : {}),
+    ...(metadata.type
+      ? { customType: null }
+      : metadata.customType && candidate.type === "other" && !candidate.customType
+        ? { customType: metadata.customType }
+        : {}),
     title: metadata.title ?? candidate.title,
     creators: supplied.creators ? metadata.creators : candidate.creators,
     // The registry's list is the work's own; the file's "and others" no longer applies.

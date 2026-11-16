@@ -34,7 +34,11 @@ import {
   importScientSourcesFile,
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
-import type { ScientSourcesImportOutcome, ScientSourcesImportCounts } from "./importOutcome";
+import {
+  isExactSourceDuplicate,
+  type ScientSourcesImportOutcome,
+  type ScientSourcesImportCounts,
+} from "./importOutcome";
 import { continueSourceImport, stopSourceImportContinuation } from "./importPipeline";
 import {
   emptyZoteroPage,
@@ -751,8 +755,12 @@ export function useScientSources(input: {
       };
     }
 
+    // A PDF of a paper already here goes in too: it is added to that source if it has no copy.
     const itemKeys = options.result.items.flatMap((item) =>
-      item.duplicate.kind === "new" ? [item.candidate.sourceKey] : [],
+      item.duplicate.kind === "new" ||
+      (options.adapter === "local-files" && isExactSourceDuplicate(item.duplicate.kind))
+        ? [item.candidate.sourceKey]
+        : [],
     );
     if (itemKeys.length === 0) {
       if (options.adapter === "local-files" && allItemKeys.length > 0) {
@@ -782,7 +790,7 @@ export function useScientSources(input: {
       ...(options.adapter === "local-files" ? { allLocalItemKeys: allItemKeys } : {}),
       request: options.request,
       revealSingleSource: options.result.items.length === 1,
-      priorCounts: counts,
+      priorCounts: workflowReviewedImportCounts(options.result, new Set(itemKeys)),
       ...(options.onStarted ? { onStarted: options.onStarted } : {}),
     });
   };

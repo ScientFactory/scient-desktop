@@ -7,8 +7,10 @@ import {
 import {
   scientLibraryFactsProblem,
   scientLibraryIdentityFacts,
+  scientSourceFirstCreatorKey,
   scientSourceIdentifiersConflict,
   scientSourcePdfIsEvidence,
+  scientSourcesMayBeVersions,
   scientSourceTitleKey,
   workLevelIdentifierKey,
   type ScientLibraryIdentityFacts,
@@ -23,7 +25,8 @@ export type ScientLibraryPossibleDuplicateKind =
   | "possible-identifier-match"
   | "possible-pdf-match"
   | "possible-metadata-match"
-  | "possible-container-match";
+  | "possible-container-match"
+  | "possible-version-match";
 
 /** `conflicting-group`: the pair agrees itself but is linked to copies that disagree. */
 export type ScientLibraryDuplicateReason = ScientLibraryIdentityProblem | "conflicting-group";
@@ -44,6 +47,7 @@ const LISTING_ORDER: ReadonlyArray<ScientLibraryPossibleDuplicateKind> = [
   "possible-pdf-match",
   "possible-metadata-match",
   "possible-container-match",
+  "possible-version-match",
 ];
 
 interface ScientLibraryDuplicateGroup {
@@ -378,6 +382,25 @@ export function assessScientLibraryDuplicates(input: {
     addPossible(bucket, "possible-container-match", (left, right) =>
       scientSourceIdentifiersConflict(left.identifiers, right.identifiers),
     );
+  }
+
+  for (const bucket of buckets(records, (record) => {
+    const title = factsOf(record).title;
+    const creator = scientSourceFirstCreatorKey(record);
+    return title && creator ? [`${title}\0${creator}`] : [];
+  })) {
+    for (const [index, left] of bucket.entries()) {
+      for (const right of bucket.slice(index + 1)) {
+        if (scientSourcesMayBeVersions(left, right)) {
+          addPair(
+            left.sourceId,
+            right.sourceId,
+            "possible-version-match",
+            "preprint-and-published",
+          );
+        }
+      }
+    }
   }
 
   return {

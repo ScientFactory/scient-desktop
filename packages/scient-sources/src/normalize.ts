@@ -1,6 +1,7 @@
 import type {
   ScientSourceCandidate,
   ScientSourceEditableMetadata,
+  ScientSourceFieldProvenance,
   ScientSourceMetadataDiagnostic,
   ScientSourceRecord,
   ScientSourceType,
@@ -53,11 +54,27 @@ export function sourceEditionsDiffer(
   );
 }
 
+/** The provenance of a title that is only the file's name, kept until the work's own is found. */
+export const SCIENT_SOURCE_FILE_NAME_TITLE = "file-name";
+
+/** A title that names the file, not the work: it shows the source, it says nothing of what it is. */
+export function scientSourceTitleIsFileName(source: {
+  readonly fieldProvenance?: ReadonlyArray<
+    Pick<ScientSourceFieldProvenance, "field" | "sourceField">
+  >;
+}): boolean {
+  return (
+    source.fieldProvenance?.some(
+      (entry) => entry.field === "title" && entry.sourceField === SCIENT_SOURCE_FILE_NAME_TITLE,
+    ) ?? false
+  );
+}
+
 export function sourceMetadataDiagnostics(
   source: ScientSourceCandidate | ScientSourceRecord,
 ): ReadonlyArray<ScientSourceMetadataDiagnostic> {
   const diagnostics: ScientSourceMetadataDiagnostic[] = [];
-  if (!source.title?.trim()) {
+  if (!source.title?.trim() || scientSourceTitleIsFileName(source)) {
     diagnostics.push({ field: "title", severity: "warning", message: "Title wasn’t found." });
   }
   if (source.creators.length === 0) {

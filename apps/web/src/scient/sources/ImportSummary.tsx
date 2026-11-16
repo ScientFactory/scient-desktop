@@ -17,6 +17,11 @@ import { importProgressLabel, type SourcesResultContent } from "./sourcesFeedbac
 /** How many kinds of things not brought are listed before "Show all". */
 const NOT_BROUGHT_FIRST = 5;
 
+const IMPORT_SUMMARY_LABELS = {
+  checkDetails: "Check details",
+  detailsToCheck: "Sources whose details to check",
+} as const;
+
 export interface ImportReceiptActions {
   /** Goes on with what the import left for later: a large file's or Zotero scope's rest. */
   readonly rest?: { readonly count: number; readonly onImport: () => void } | undefined;
@@ -49,8 +54,9 @@ export function importResultContent(
         ]
       : []),
   ];
-  const { onAddToProject, onRetryFailed, onViewSource, rest } = input;
+  const { onAddToProject, onRetryFailed, onShowSources, onViewSource, rest } = input;
   const libraryOnly = receipt.libraryOnlySourceIds;
+  const toCheck = receipt.detailsToCheckSourceIds;
   const actions = [
     rest ? (
       <Button key="rest" size="xs" variant="outline" onClick={rest.onImport}>
@@ -65,6 +71,16 @@ export function importResultContent(
     onRetryFailed && receipt.failed > 0 && input.operation?.state !== "cancelled" ? (
       <Button key="retry" size="xs" variant="outline" onClick={onRetryFailed}>
         Try again
+      </Button>
+    ) : null,
+    onShowSources && toCheck.length > 0 ? (
+      <Button
+        key="check"
+        size="xs"
+        variant="outline"
+        onClick={() => onShowSources(toCheck, IMPORT_SUMMARY_LABELS.detailsToCheck)}
+      >
+        {IMPORT_SUMMARY_LABELS.checkDetails}
       </Button>
     ) : null,
     onViewSource && receipt.existingSourceId ? (

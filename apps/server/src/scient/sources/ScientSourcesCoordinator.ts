@@ -87,6 +87,7 @@ import {
   restoreScientSource,
   revertScientSource,
   importScientSource,
+  importOrAttachScientSourceOperationItem,
   importScientSourceOperationItem,
   attachScientSourcePdf,
   detachScientSourcePdf,
@@ -955,7 +956,7 @@ export async function refreshAndCheckSourceMetadata(input: {
   const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
   const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
   const hasResolvableIdentifier = record.identifiers.some((identifier) =>
-    ["doi", "pmid"].includes(identifier.scheme.trim().toLowerCase()),
+    ["doi", "pmid", "arxiv"].includes(identifier.scheme.trim().toLowerCase()),
   );
   if (!pdf && !hasResolvableIdentifier) {
     return unchecked({
@@ -965,15 +966,19 @@ export async function refreshAndCheckSourceMetadata(input: {
       message:
         materialSelection._tag === "SeveralMaterials"
           ? "This source has several PDFs. Metadata refresh needs an explicit material choice."
-          : "Add a PDF, DOI, or PMID before refreshing this source's metadata.",
+          : "Add a PDF, DOI, PMID or arXiv ID before refreshing this source's metadata.",
     });
   }
 
-  const candidate = await refreshExistingSourceCandidate({
-    record,
-    pdfMaterial: pdf,
-    pdfPath: pdf ? sourceAttachmentAbsolutePath(root, pdf) : null,
-  });
+  // The same registry lookup as the check below, so the two agree on what the work is.
+  const candidate = await refreshExistingSourceCandidate(
+    {
+      record,
+      pdfMaterial: pdf,
+      pdfPath: pdf ? sourceAttachmentAbsolutePath(root, pdf) : null,
+    },
+    input.resolveIdentifier,
+  );
   const latest = await readScientSourceRecord(root, input.sourceId);
   if (!latest) throw new Error("The source was removed while its metadata was being checked.");
   if (latest.revision !== input.expectedRevision) {
@@ -1797,16 +1802,17 @@ export async function advanceSourceImport(
             root,
             pending.itemKey,
           );
-          return importScientSourceOperationItem({
+          const item = {
             root,
             operationId: input.operationId,
             candidate,
             actor: operation.actor,
             intake: operation.intake,
-            ...(pdfPath ? { pdfPath } : {}),
-            ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
-          });
+          };
+          return pdfPath && expectedPdf
+            ? importOrAttachScientSourceOperationItem({ ...item, pdfPath, expectedPdf })
+            : importScientSourceOperationItem(item);
         },
         (result) => (result.outcome === "imported" ? "imported" : "skipped"),
       );
@@ -1845,8 +1851,13 @@ export async function advanceSourceImport(
         itemKey: pending.itemKey,
         state: result.outcome === "imported" ? "imported" : "skipped",
         duplicateKind: result.duplicate.kind,
-        ...(result.record ? { sourceId: result.record.sourceId } : {}),
-        message: result.duplicate.reason,
+        // The source it made, or the one that was certainly this work already.
+        ...(pinned ? { sourceId: pinned } : {}),
+        ...(result.outcome === "attached" ? { attachedPdf: true } : {}),
+        message:
+          result.outcome === "attached"
+            ? "The paper was already here: its PDF was added to it."
+            : result.duplicate.reason,
         ...("notBrought" in result && Array.isArray(result.notBrought)
           ? { notBrought: result.notBrought }
           : {}),

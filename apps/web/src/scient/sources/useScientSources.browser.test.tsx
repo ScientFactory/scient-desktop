@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   preflightZoteroItems: vi.fn(),
   importScientSourcesFile: vi.fn(),
   advanceSourcesImport: vi.fn(),
+  uploadLocalSourcePdf: vi.fn(),
+  beginLocalSourcesImport: vi.fn(),
+  discardLocalSourcePdfs: vi.fn(),
 }));
 
 vi.mock("./client", () => ({
@@ -21,11 +24,11 @@ vi.mock("./client", () => ({
   readScientSource: vi.fn(),
   advanceSourcesImport: mocks.advanceSourcesImport,
   importScientSourcesFile: mocks.importScientSourcesFile,
-  beginLocalSourcesImport: vi.fn(),
+  beginLocalSourcesImport: mocks.beginLocalSourcesImport,
   beginZoteroItemsImport: vi.fn(),
   beginZoteroScopeImport: vi.fn(),
   cancelSourcesImport: vi.fn(),
-  discardLocalSourcePdfs: vi.fn(),
+  discardLocalSourcePdfs: mocks.discardLocalSourcePdfs,
   preflightZoteroItems: mocks.preflightZoteroItems,
   refreshScientSourceMetadata: vi.fn(),
   removeScientSource: vi.fn(),
@@ -34,7 +37,7 @@ vi.mock("./client", () => ({
   readZoteroLibrary: vi.fn(),
   readZoteroCollections: vi.fn(),
   readZoteroStatus: vi.fn(),
-  uploadLocalSourcePdf: vi.fn(),
+  uploadLocalSourcePdf: mocks.uploadLocalSourcePdf,
 }));
 
 const environmentId = "environment-1" as EnvironmentId;
@@ -74,6 +77,7 @@ interface HookProbe {
   reloadOverview: () => Promise<unknown>;
   previewImport: (itemKeys: ReadonlyArray<string>) => Promise<unknown>;
   importReferenceFile: ReturnType<typeof useScientSources>["importReferenceFile"];
+  uploadLocalFiles: ReturnType<typeof useScientSources>["uploadLocalFiles"];
   operation: ReturnType<typeof useScientSources>["operation"];
   selectScope: ReturnType<typeof useScientSources>["selectScope"];
 }
@@ -366,6 +370,78 @@ describe("useScientSources mounted behavior", () => {
       expect(outcome).toMatchObject({ kind: "review-required" });
       expect(probe.current.preflight?.items[0]?.candidate.sourceKey).toBe("zotero-item-1");
       expect(probe.current.busy).toBe(false);
+    });
+  });
+
+  it("sends the PDF of a paper already here to the import, to be added to it", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+    mocks.readScientSources.mockResolvedValue(overviewWith([]));
+    const staged = (sourceKey: string, kind: "new" | "same-identifier") => ({
+      item: {
+        candidate: {
+          sourceKey,
+          type: "preprint",
+          customType: null,
+          title: `Paper ${sourceKey}`,
+          creators: [],
+          issuedRaw: null,
+          issuedYear: 2017,
+          identifiers: [],
+          abstract: null,
+          containerTitle: null,
+          publisher: null,
+          volume: null,
+          issue: null,
+          pages: null,
+          language: null,
+          url: null,
+          tags: [],
+          externalReferences: [],
+          fieldProvenance: [],
+          pdfFileName: `${sourceKey}.pdf`,
+          pdfAvailable: true,
+          pdfAttachmentCount: 1,
+        },
+        duplicate: {
+          kind,
+          matchingSourceIds: kind === "new" ? [] : ["source-filed"],
+          reason: kind,
+        },
+        metadataDiagnostics: [],
+      },
+    });
+    mocks.uploadLocalSourcePdf
+      .mockReset()
+      .mockResolvedValueOnce(staged("fresh", "new"))
+      .mockResolvedValueOnce(staged("filed", "same-identifier"));
+    const operation = {
+      formatVersion: 1,
+      operationId: "operation-pdf",
+      projectId: "project-1",
+      adapter: "local-files",
+      actor: "user",
+      intake: "local-pdf",
+      state: "completed",
+      createdAt: "2026-11-16T00:00:00.000Z",
+      updatedAt: "2026-11-16T00:00:00.000Z",
+      items: [],
+    };
+    mocks.beginLocalSourcesImport.mockReset().mockResolvedValue(operation);
+    mocks.discardLocalSourcePdfs.mockReset().mockResolvedValue({ discarded: 0 });
+
+    await withMountedHook(_fixture, async (probe) => {
+      await act(async () => {
+        await probe.current.uploadLocalFiles([
+          new File(["%PDF-1.7"], "fresh.pdf", { type: "application/pdf" }),
+          new File(["%PDF-1.7"], "filed.pdf", { type: "application/pdf" }),
+        ]);
+      });
+      expect(mocks.beginLocalSourcesImport).toHaveBeenCalledWith(
+        environmentId,
+        expect.objectContaining({ itemKeys: ["fresh", "filed"] }),
+      );
+      expect(mocks.discardLocalSourcePdfs).not.toHaveBeenCalled();
     });
   });
 

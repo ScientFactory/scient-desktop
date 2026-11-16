@@ -4,10 +4,14 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
+import type { ScientSourceIdentifier } from "@scientfactory/scient-sources";
 
 import { textPdf } from "../annotations/annotationTestUtils.ts";
 import { localPdfSourceInternals } from "./LocalPdfSourceAdapter.ts";
+import type {
+  ResolvedSourceMetadata,
+  SourceIdentifierResolution,
+} from "./SourceIdentifierResolver.ts";
 
 describe("local PDF source adapter", () => {
   it("uses only one unambiguous DOI or explicitly labelled PMID", () => {
@@ -167,88 +171,122 @@ describe("local PDF source adapter", () => {
     );
   });
 
-  it("merges exact DOI metadata while preserving local provenance and the PDF identity", () => {
-    const fallback: ScientSourceCandidate = {
-      sourceKey: "local_abc",
-      type: "other",
-      customType: null,
-      title: "Uploaded file",
-      creators: [],
-      issuedRaw: null,
-      issuedYear: null,
-      identifiers: [{ scheme: "doi", value: "10.1001/jamanetworkopen.2024.8895(reprinted)may" }],
-      abstract: null,
-      containerTitle: null,
-      publisher: null,
-      volume: null,
-      issue: null,
-      pages: null,
-      language: null,
-      url: "https://doi.org/10.1000/example",
-      tags: [],
-      externalReferences: [],
-      fieldProvenance: [{ field: "identifiers", origin: "local-pdf", sourceField: "first-pages" }],
-      pdfAvailable: true,
-      pdfFileName: "paper.pdf",
-      pdfAttachmentCount: 1,
-    };
-
-    const candidate = localPdfSourceInternals.candidateFromCsl({
-      sourceKey: fallback.sourceKey,
-      csl: {
-        type: "article-journal",
-        title: "Resolved article",
-        author: [{ given: "Ada", family: "Lovelace" }],
-        issued: { "date-parts": [[2026, 8, 12]] },
-        DOI: "10.1000/example",
-        ISSN: ["1234-5678"],
-        abstract: "<p>Resolved <strong>abstract</strong>.</p>",
-        "container-title": "Journal of Reliable Sources",
-      },
-      fallback,
-    });
-
-    expect(candidate).toMatchObject({
-      sourceKey: fallback.sourceKey,
-      type: "article",
-      title: "Resolved article",
-      issuedRaw: "2026-08-12",
-      issuedYear: 2026,
-      pdfFileName: "paper.pdf",
-      externalReferences: [],
-      containerTitle: "Journal of Reliable Sources",
-      abstract: "Resolved abstract.",
-      abstractSections: [{ title: null, paragraphs: ["Resolved abstract."] }],
-    });
-    expect(candidate.identifiers).toEqual(
-      expect.arrayContaining([
-        { scheme: "doi", value: "10.1000/example" },
-        { scheme: "issn", value: "1234-5678" },
-      ]),
-    );
-    expect(candidate.identifiers).not.toContainEqual({
-      scheme: "doi",
-      value: "10.1001/jamanetworkopen.2024.8895(reprinted)may",
-    });
-    expect(candidate.fieldProvenance).toEqual(
-      expect.arrayContaining([
-        { field: "identifiers", origin: "local-pdf", sourceField: "first-pages" },
-        { field: "title", origin: "doi", sourceField: "title" },
-      ]),
-    );
+  it("reads a PDF's own arXiv ID, with its version, from its stamp, not one it cites", () => {
+    const { arxivStamp } = localPdfSourceInternals;
+    expect(arxivStamp("arXiv:1706.03762v7  [cs.CL]  2 Aug 2023")).toBe("1706.03762v7");
+    expect(arxivStamp("arXiv:hep-th/9901001v1 6 Jan 1999")).toBe("hep-th/9901001v1");
+    // A citation, and two stamps that disagree, name no deposit.
+    expect(arxivStamp("arXiv preprint arXiv:1810.04805, 2018")).toBeNull();
+    expect(arxivStamp("arXiv:1706.03762v7 [cs.CL] arXiv:1810.04805v2 [cs.CL]")).toBeNull();
   });
 
-  it("recognizes the journal-article type returned by DOI content negotiation", () => {
-    const fallback: ScientSourceCandidate = {
-      sourceKey: "local_journal_article",
-      type: "other",
-      customType: null,
-      title: "Uploaded file",
+  it("looks a PDF up by the stamp in its margin, and by a DOI in its text otherwise", async () => {
+    const folder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pdf-arxiv-"));
+    try {
+      const asked: string[] = [];
+      const resolve = async (identifiers: ReadonlyArray<ScientSourceIdentifier>) => {
+        const [identifier] = identifiers;
+        asked.push(`${identifier?.scheme}:${identifier?.value}`);
+        // As the resolver asks arXiv: for the deposit, without its version.
+        const key = `${identifier?.scheme}:${identifier?.value.replace(/v\d+$/u, "")}`;
+        return identifier && registry[key] ? found(identifier, registry[key]) : null;
+      };
+      const read = async (fileName: string, lines: ReadonlyArray<string>, margin?: string) => {
+        const pdfPath = NodePath.join(folder, fileName);
+        await NodeFSP.writeFile(pdfPath, textPdf([lines], margin ? { margin } : {}));
+        return localPdfSourceInternals.extractPdfMetadata(
+          { sourceKey: `local_${fileName}`, fileName, pdfPath },
+          resolve,
+        );
+      };
+      const stamp = "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023";
+
+      // arXiv's copy: its margin stamp names the deposit and version; the published DOI waits.
+      const preprint = await read(
+        "1706.03762.pdf",
+        ["Published as doi:10.5555/published.1"],
+        stamp,
+      );
+      expect(asked).toEqual(["arxiv:1706.03762v7"]);
+      expect(preprint).toMatchObject({
+        type: "preprint",
+        title: "Attention Is All You Need",
+        identifiers: [{ scheme: "arxiv", value: "1706.03762v7" }],
+      });
+      expect(preprint.fieldProvenance).not.toContainEqual(
+        expect.objectContaining({ field: "title", sourceField: "file-name" }),
+      );
+
+      // The same stamp quoted in a page's text is not this PDF's: its own DOI is looked up.
+      asked.length = 0;
+      await read("report.pdf", [`The stamp ${stamp} is quoted here.`, "doi:10.5555/report.1"]);
+      expect(asked).toEqual(["doi:10.5555/report.1"]);
+
+      // A DOI read with what follows it: its shorter spelling is the registry's, and replaces it.
+      asked.length = 0;
+      const article = await read("article.pdf", [
+        "JAMA Netw Open. doi:10.1001/jamanetworkopen.2024.8895(Reprinted)May",
+      ]);
+      expect(asked).toEqual([
+        "doi:10.1001/jamanetworkopen.2024.8895(reprinted)may",
+        "doi:10.1001/jamanetworkopen.2024.8895",
+      ]);
+      expect(article.identifiers).toEqual([
+        { scheme: "doi", value: "10.1001/jamanetworkopen.2024.8895" },
+      ]);
+      expect(article.fieldProvenance).toContainEqual(
+        expect.objectContaining({ field: "title", origin: "doi" }),
+      );
+
+      // A registry that answers for another DOI is not taken: the PDF keeps what it says.
+      const answeredOther = await read("other.pdf", ["doi:10.5555/asked.1"]);
+      expect(answeredOther.title).toBe("other");
+      expect(answeredOther.identifiers).toEqual([{ scheme: "doi", value: "10.5555/asked.1" }]);
+    } finally {
+      await NodeFSP.rm(folder, { recursive: true, force: true });
+    }
+  });
+});
+
+const registry: Record<string, Partial<ResolvedSourceMetadata>> = {
+  "arxiv:1706.03762": {
+    type: "preprint",
+    title: "Attention Is All You Need",
+    issuedRaw: "2017-06-12",
+    issuedYear: 2017,
+    identifiers: [{ scheme: "arxiv", value: "1706.03762" }],
+    url: "https://arxiv.org/abs/1706.03762",
+  },
+  "doi:10.1001/jamanetworkopen.2024.8895": {
+    type: "article",
+    title: "A resolved article",
+    identifiers: [{ scheme: "doi", value: "10.1001/jamanetworkopen.2024.8895" }],
+  },
+  "doi:10.5555/asked.1": {
+    type: "article",
+    title: "Another work",
+    identifiers: [{ scheme: "doi", value: "10.5555/answered.2" }],
+  },
+};
+
+function found(
+  identifier: ScientSourceIdentifier,
+  metadata: Partial<ResolvedSourceMetadata>,
+): SourceIdentifierResolution {
+  return {
+    status: "found",
+    identifier,
+    retrievedAt: "2026-11-16T00:00:00.000Z",
+    ...(identifier.scheme === "arxiv" ? { origin: "arxiv" as const } : {}),
+    metadata: {
+      type: null,
+      title: null,
       creators: [],
       issuedRaw: null,
       issuedYear: null,
       identifiers: [],
       abstract: null,
+      abstractSections: [],
       containerTitle: null,
       publisher: null,
       volume: null,
@@ -256,21 +294,7 @@ describe("local PDF source adapter", () => {
       pages: null,
       language: null,
       url: null,
-      tags: [],
-      externalReferences: [],
-      fieldProvenance: [],
-      pdfAvailable: true,
-      pdfFileName: "paper.pdf",
-      pdfAttachmentCount: 1,
-    };
-
-    const candidate = localPdfSourceInternals.candidateFromCsl({
-      sourceKey: fallback.sourceKey,
-      csl: { type: "journal-article", title: "Resolved article" },
-      fallback,
-    });
-
-    expect(candidate.type).toBe("article");
-    expect(candidate.customType).toBeNull();
-  });
-});
+      ...metadata,
+    },
+  };
+}

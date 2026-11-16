@@ -719,6 +719,51 @@ describe("library merge engine", () => {
     ]);
   });
 
+  it("lists a preprint beside its published paper, and merges the two only when asked", async () => {
+    const { root, library } = await newLibrary();
+    const title = "BERT: Pre-training of Deep Bidirectional Transformers";
+    await seed(root, [
+      record("source_preprint", {
+        type: "preprint",
+        title,
+        issuedYear: 2018,
+        identifiers: [{ scheme: "arxiv", value: "1810.04805" }],
+      }),
+      record("source_paper", {
+        type: "conference-paper",
+        title,
+        issuedYear: 2019,
+        identifiers: [{ scheme: "doi", value: "10.18653/v1/N19-1423" }],
+      }),
+      // Another first author: another work with the same title.
+      record("source_other", {
+        type: "article",
+        title,
+        creators: [
+          { creatorType: "author", givenName: "A", familyName: "Other", literalName: null },
+        ],
+      }),
+    ]);
+
+    const result = await mergeScientLibraryDuplicates({ library });
+
+    expect(result.mergedCount).toBe(0);
+    expect(result.possibleDuplicates).toEqual([
+      {
+        sourceIds: ["source_paper", "source_preprint"],
+        kind: "possible-version-match",
+        reason: "preprint-and-published",
+      },
+    ]);
+    await expect(
+      mergeScientLibrarySources({
+        library,
+        sourceIds: ["source_paper", "source_preprint"],
+        actor: "user",
+      }),
+    ).resolves.toMatchObject({ outcome: "merged" });
+  });
+
   it("only lists possible duplicates and never merges a pair marked distinct", async () => {
     const { root, library } = await newLibrary();
     await seed(root, [
