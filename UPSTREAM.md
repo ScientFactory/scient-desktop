@@ -6,7 +6,8 @@ Preserve exact-ID hidden defaults (new IDs visible), saved visibility/order/favo
 custom models, and explicit/persisted thread and global selections. Preferred subscription
 models, not catalog order, drive implicit defaults and the shared new-turn/explicit-resume
 quota fallback: configured fallback first (including an explicitly chosen API route or
-same-family account), then Scient Agent's OpenAI, Anthropic, Antigravity, Muse Code accounts,
+same-family account; default hiding cannot override it, but explicit hiding can), then
+Scient Agent's OpenAI, Anthropic, Antigravity, Muse Code accounts,
 subject to visibility, availability, sign-in, quota and task compatibility. Never silently
 choose metered API routes automatically or auto-resume a limited thread. This automatic
 chain can recover a standalone-provider thread too. Antigravity's native

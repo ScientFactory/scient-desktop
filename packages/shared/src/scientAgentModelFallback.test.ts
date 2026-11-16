@@ -248,6 +248,63 @@ describe("subscription fallback policy", () => {
     ).toEqual(configured);
   });
 
+  it.each(["gemini-3.8-flash", "antigravity-default"])(
+    "keeps a saved fallback hidden only by defaults: %s",
+    (savedModel) => {
+      const agent = makeAgent();
+      const slug = "gemini-3.8-flash";
+      const native: ServerProvider = {
+        ...agent,
+        instanceId: ProviderInstanceId.make("antigravity"),
+        driver: ProviderDriverKind.make("antigravity"),
+        models: [{ ...model(slug), aliases: ["antigravity-default"] }],
+        usageLimits: undefined,
+      };
+      const configured = { instanceId: native.instanceId, model: savedModel };
+      const input = {
+        currentSelection: { instanceId: agent.instanceId, model: currentModel },
+        fallbackSelection: configured,
+        providers: [agent, native],
+        now: NOW,
+      };
+      expect(resolveUsageLimitFallback(input)).toEqual(configured);
+      expect(
+        resolveUsageLimitFallback({
+          ...input,
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            providerModelPreferences: {
+              [native.instanceId]: { hiddenModels: [slug], modelOrder: [] },
+            },
+          },
+        }),
+      ).toEqual({ instanceId: agent.instanceId, model: sol });
+      expect(
+        resolveUsageLimitFallback({
+          ...input,
+          providers: [
+            agent,
+            {
+              ...native,
+              usageLimits: {
+                checkedAt: native.checkedAt,
+                windows: [
+                  {
+                    id: "gemini-pool",
+                    kind: "session",
+                    label: "Gemini",
+                    usedPercent: 100,
+                    modelIds: [slug],
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ).toEqual({ instanceId: agent.instanceId, model: sol });
+    },
+  );
+
   it("skips hidden and unavailable preferred models without reviving an old catalog entry", () => {
     const agent = makeAgent();
     expect(

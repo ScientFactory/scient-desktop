@@ -100,8 +100,15 @@ export function resolveUsageLimitFallback(input: {
   );
   if (!currentProvider) return undefined;
   const currentFamily = scientSubscriptionFamily(currentProvider, input.currentSelection.model);
-  const eligible = (provider: ServerProvider, selection: ModelSelection) => {
-    const model = provider.models.find((candidate) => candidate.slug === selection.model);
+  const eligible = (
+    provider: ServerProvider,
+    selection: ModelSelection,
+    includeDefaults = false,
+  ) => {
+    const model = provider.models.find(
+      (candidate) =>
+        candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
+    );
     if (
       !provider.enabled ||
       !provider.installed ||
@@ -111,7 +118,7 @@ export function resolveUsageLimitFallback(input: {
       !model ||
       model.unavailableReason ||
       model.supportsTextGeneration === false ||
-      exhaustedUsageWindow(provider, input.now, selection.model) ||
+      exhaustedUsageWindow(provider, input.now, model.slug) ||
       (input.settings &&
         !resolveProjectProviderInstanceEnabled(
           input.settings,
@@ -121,12 +128,11 @@ export function resolveUsageLimitFallback(input: {
     ) {
       return false;
     }
-    const hidden = resolveProviderModelPreferences(
-      provider.driver,
-      provider.models,
-      input.settings?.providerModelPreferences?.[provider.instanceId],
-    ).hiddenModels;
-    return !hidden.includes(selection.model);
+    const preferences = input.settings?.providerModelPreferences?.[provider.instanceId];
+    const hidden = includeDefaults
+      ? resolveProviderModelPreferences(provider.driver, provider.models, preferences).hiddenModels
+      : (preferences?.hiddenModels ?? []);
+    return !hidden.includes(selection.model) && !hidden.includes(model.slug);
   };
   if (input.fallbackSelection) {
     const preferred = input.providers.find(
@@ -144,7 +150,7 @@ export function resolveUsageLimitFallback(input: {
     const alternative = scientAgentAlternativeModel(
       agent,
       input.currentSelection.model,
-      (slug) => !eligible(agent, { instanceId: agent.instanceId, model: slug }),
+      (slug) => !eligible(agent, { instanceId: agent.instanceId, model: slug }, true),
       currentFamily,
     );
     if (alternative) return { instanceId: agent.instanceId, model: alternative.slug };

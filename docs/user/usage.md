@@ -209,8 +209,10 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 For a new turn that needs a quota fallback and the explicit resume-after-limit action,
 Scient first tries your explicitly configured fallback, including another account of the
-same provider, a custom model, or an API connection you chose. That model must be visible,
-available, enabled for the project, able to generate text, and not out of quota.
+same provider, a custom model, or an API connection you chose. A saved fallback remains
+eligible when only the default list hides it; explicitly hiding it in your provider
+settings disables it as a fallback. The model must be available, enabled for the project,
+able to generate text, and not out of quota. Saved aliases use the underlying model's limits.
 
 If that fallback cannot be used, Scient considers eligible subscription accounts connected
 inside Scient Agent in this order: **OpenAI → Anthropic →
