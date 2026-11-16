@@ -194,6 +194,12 @@ downloading, so how many papers you fetch is your call. Scient saves only a PDF 
 in the project's `papers` folder, and never fetches one twice. Papers an agent gets for your
 library also go on their source in the [Library](sources.md), which is added when missing.
 
+NEJM can ask you to accept its terms before the first paper opens through your university.
+Scient pauses those papers and offers **Open** in the same browser profile. Read the terms
+yourself and accept only if you agree; Scient never accepts them for you. After you open the
+page, the queue checks again for up to ten minutes and continues when access is available.
+If you finish later, ask for the paper again to resume it.
+
 ## What Accounts doesn't protect against
 
 Hidden values stay out of agent conversations, but not away from a malicious program running as

@@ -9,6 +9,7 @@ import {
   type PaperItem,
   type PreviewTabId,
   type PaperQueueInput,
+  type PaperQueueContinueInput,
   type PaperQueueRequestInput,
   type Institution,
   type AccountSignInAsPersonInput,
@@ -104,7 +105,7 @@ export const makeAccountsRpcHandlers = ({
   ) => Effect.Effect<typeof AccountPaperForSourceResult.Type, AccountsError>;
   readonly papers: {
     readonly request: (input: PaperQueueRequestInput) => Effect.Effect<object, AccountsError>;
-    readonly continue: (input: PaperQueueInput) => Effect.Effect<object, AccountsError>;
+    readonly continue: (input: PaperQueueContinueInput) => Effect.Effect<object, AccountsError>;
     readonly list: (
       input: PaperQueueInput,
     ) => Effect.Effect<ReadonlyArray<PaperItem>, AccountsError>;
@@ -583,8 +584,8 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
         ),
       request: (input: PaperQueueRequestInput) =>
         run((environmentId) => requestPapersAsUser(input, environmentId)),
-      continue: ({ root }: PaperQueueInput) =>
-        run((environmentId) => continuePapersAsUser(root, environmentId)),
+      continue: (input: PaperQueueContinueInput) =>
+        run((environmentId) => continuePapersAsUser(input, environmentId)),
       list: ({ root }: PaperQueueInput) =>
         run((environmentId) => listPapersAsUser(root, environmentId)),
       universities: (query: string) =>

@@ -15,7 +15,7 @@ const university = {
 const universities = [university];
 const missed = (
   route: "publisher" | "university",
-  reason: "sign-in" | "bot-check" | "paywall",
+  reason: "sign-in" | "bot-check" | "terms" | "paywall",
 ) => ({
   route,
   ...(route === "university" ? { account: university } : {}),
@@ -68,6 +68,20 @@ it("reads a bot check as needing a person at that publisher, in that profile onl
     needed: { kind: "check", site: "c.org", profileId: "main" },
   });
   expect([...laneFor("c.org").checks.keys()]).toEqual(["main"]);
+});
+
+it("holds terms for the affected profile and releases them for a later retry", () => {
+  const outcome = nextMove(
+    paper,
+    tried("ai.nejm.org", { missed: [missed("university", "terms")], universities }),
+  );
+  expect(outcome).toMatchObject({
+    state: "needs-you",
+    needed: { kind: "terms", site: "ai.nejm.org", profileId: "main" },
+  });
+  expect(laneFor("ai.nejm.org").checks.get("main")?.kind).toBe("terms");
+  clearHolds();
+  expect(laneFor("ai.nejm.org").checks.get("main")).toBeUndefined();
 });
 
 it("asks for a university when none is connected, and for access when one is held back", () => {

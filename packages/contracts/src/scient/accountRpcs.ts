@@ -30,6 +30,7 @@ import {
   AccountPaperForSourceResult,
   PaperItem,
   PaperQueueInput,
+  PaperQueueContinueInput,
   PaperQueueRequestInput,
   Institution,
   UniversitySearchInput,
@@ -248,7 +249,7 @@ export const WsAccountsPapersRequestRpc = Rpc.make(
 
 export const WsAccountsPapersContinueRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsPapersContinue,
-  { payload: PaperQueueInput, success: Schema.Struct({}), error: AccountsRpcError },
+  { payload: PaperQueueContinueInput, success: Schema.Struct({}), error: AccountsRpcError },
 );
 
 export const WsAccountsPapersListRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsPapersList, {

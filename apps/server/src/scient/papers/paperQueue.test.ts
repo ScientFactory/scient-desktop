@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, ThreadId, type PaperQueueSummary } from "@t3tools/contracts";
+import { EnvironmentId, PreviewTabId, ThreadId, type PaperQueueSummary } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -37,6 +37,11 @@ import {
   type ResolveSourceIdentifier,
 } from "../sources/SourceIdentifierResolver.ts";
 import { ScientSourcesBackend } from "../sources/SourcesBackend.ts";
+import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
+import { userRunInvocation } from "../accounts/checkAccounts.ts";
+import { fetchFromPage } from "./paperFetch.ts";
+import { paperPageScript } from "./paperPage.ts";
+import { PAPERS_THREAD } from "./paperAttempt.ts";
 
 const fetched = vi.hoisted(() => ({
   calls: [] as Array<{ doi: string | undefined; requester: PaperRequester }>,
@@ -222,6 +227,92 @@ const withServices = <A, E>(
       ),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.effect("reveals only a live consent form and retries as the original requester", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      for (const registered of [false, true]) {
+        const tabId = PreviewTabId.make(`nejm-consent-${registered}`);
+        const revealed: unknown[] = [];
+        const broker = PreviewAutomationBroker.of({
+          connect: () => Effect.succeed(Stream.empty),
+          focusHost: () => Effect.void,
+          respond: () => Effect.void,
+          invoke: <A>(request: { operation: string; input: unknown; tabId?: unknown }) =>
+            Effect.sync(() => {
+              const input = request.input as { open?: boolean; expression?: string };
+              if (request.operation === "open" && input.open) revealed.push(request);
+              return (
+                input.expression === paperPageScript
+                  ? {
+                      url: "https://ai.nejm.org/action/authenticateSharedSP",
+                      title: "Terms",
+                      status: 200,
+                      pdf: false,
+                      pdfUrl: null,
+                      login: false,
+                      challenge: false,
+                      terms: true,
+                      institutionUrl: null,
+                      buy: false,
+                    }
+                  : { tabId }
+              ) as A;
+            }),
+        });
+        if (registered) {
+          const gate = yield* fetchFromPage({
+            url: "https://ai.nejm.org/article",
+            profileId: "work",
+            caller: {
+              kind: "paper",
+              scope: { threadId: agent.threadId!, projectId: undefined, unattended: true },
+              requester: agent,
+            },
+            accept: () => Effect.succeed(false),
+          }).pipe(
+            Effect.provideService(PreviewAutomationBroker, broker),
+            Effect.provideService(
+              AgentInvocationContext,
+              userRunInvocation(PAPERS_THREAD, environmentId),
+            ),
+          );
+          expect(gate).toMatchObject({ reason: "terms", tabId });
+        }
+        const root = yield* restarted({
+          items: [
+            {
+              itemId: "consent-paper",
+              doi: "10.1/preprint",
+              state: "needs-you",
+              needed: { kind: "terms", site: "ai.nejm.org", profileId: "work", tabId },
+            },
+          ],
+          requesters: { "consent-paper": agent },
+        });
+        yield* continuePapers(root, user, undefined, {
+          site: "ai.nejm.org",
+          profileId: "work",
+        }).pipe(Effect.provideService(PreviewAutomationBroker, broker));
+        yield* settled(root);
+        expect(revealed).toMatchObject(
+          registered
+            ? [
+                {
+                  tabId,
+                  input: { tabId, reuseExistingTab: true, open: true },
+                },
+              ]
+            : [],
+        );
+        const [finished] = yield* listPapers(root);
+        expect(finished).toMatchObject({ state: "saved", version: "preprint" });
+        expect(finished?.needed).toBeUndefined();
+        expect(fetched.calls.at(-1)?.requester).toEqual(agent);
+      }
+    }),
+  ),
+);
 
 it.effect("keeps an agent's limited access across a restart, whoever resumes the queue", () =>
   withServices((settled) =>

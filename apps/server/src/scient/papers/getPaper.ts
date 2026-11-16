@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type PaperAsked,
   type PaperItemState,
+  type PaperQueueContinueInput,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -261,8 +262,11 @@ export const requestPapersAsUser = (
 export const listPapersAsUser = (root: string, environmentId: EnvironmentId) =>
   resumePapers(root, userRequester(environmentId)).pipe(Effect.provide(FetchHttpClient.layer));
 
-export const continuePapersAsUser = (root: string, environmentId: EnvironmentId) =>
-  continuePapers(root, userRequester(environmentId)).pipe(
+export const continuePapersAsUser = (
+  input: PaperQueueContinueInput,
+  environmentId: EnvironmentId,
+) =>
+  continuePapers(input.root, userRequester(environmentId), undefined, input.terms).pipe(
     Effect.as({}),
     Effect.provide(FetchHttpClient.layer),
   );

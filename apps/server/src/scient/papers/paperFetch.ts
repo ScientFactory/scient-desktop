@@ -2,6 +2,7 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   AccountsError,
   type AccountId,
+  type EnvironmentId,
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
@@ -25,6 +26,18 @@ const BOT_CHECK_WAIT_MS = 20_000;
 const SETTLE_MS = 2_000;
 
 const decodePage = Schema.decodeUnknownOption(PaperPage);
+
+const termsTabs = new Map<PreviewTabId, { environmentId: EnvironmentId; profileId: string }>();
+
+/** A persisted queue cannot grant control over an unrelated browser tab. */
+export function ownsPaperTermsTab(
+  tabId: PreviewTabId,
+  environmentId: EnvironmentId,
+  profileId: string,
+) {
+  const owner = termsTabs.get(tabId);
+  return owner?.environmentId === environmentId && owner.profileId === profileId;
+}
 
 /**
  * Fetches inside the page, so the site's own session applies, and saves the result as a download.
@@ -59,6 +72,7 @@ export type FetchResult =
       readonly reason:
         | "sign-in"
         | "bot-check"
+        | "terms"
         | "refused"
         | "paywall"
         | "institution"
@@ -69,6 +83,7 @@ export type FetchResult =
       readonly openUrl: string;
       /** The profile the page opened in, where a sign-in has to happen. */
       readonly profileId: string;
+      readonly tabId?: PreviewTabId;
       /** The journal's "Access through your institution" button, when it showed one. */
       readonly institutionUrl?: string;
       /** The saved sign-in that didn't sign in here, for the person to sign in to. */
@@ -79,6 +94,7 @@ export interface PageRequest {
   readonly url: string;
   /** The profile it opens in, decided and allowed by the caller. */
   readonly profileId: string;
+  readonly termsTabId?: PreviewTabId;
   /** Who the sign-in on a page that asks for one is for. */
   readonly caller: Extract<SignInCaller, { kind: "paper" }>;
   readonly accept: (bytes: Uint8Array) => Effect.Effect<boolean>;
@@ -132,6 +148,20 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
         ),
       );
   const { profileId } = request;
+  const heldTermsTab =
+    request.termsTabId && ownsPaperTermsTab(request.termsTabId, invocation.environmentId, profileId)
+      ? yield* invoke<unknown>(
+          "evaluate",
+          { expression: paperPageScript },
+          request.termsTabId,
+        ).pipe(
+          Effect.map(decodePage),
+          Effect.map((page) =>
+            Option.isSome(page) && page.value.terms ? request.termsTabId : undefined,
+          ),
+          Effect.orElseSucceed(() => undefined),
+        )
+      : undefined;
   const open = { url, reuseExistingTab: false, open: false };
   const opened = yield* invoke<PreviewAutomationStatus>("open", { ...open, profileId });
   const tab = opened.tabId;
@@ -142,11 +172,12 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
     outcome: "needs-sign-in" | "blocked" | "no-access",
     reason: Extract<FetchResult, { reason: unknown }>["reason"],
     message: string,
+    openUrl = url,
   ): FetchResult => ({
     status: outcome,
     reason,
     message,
-    openUrl: url,
+    openUrl,
     profileId,
   });
   const read = invoke<unknown>("evaluate", { expression: paperPageScript }, tab).pipe(
@@ -231,6 +262,17 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
           }
           break;
         }
+        case "terms":
+          kept = heldTermsTab === undefined;
+          if (kept) termsTabs.set(tab, { environmentId: invocation.environmentId, profileId });
+          return {
+            ...stopped(
+              "blocked",
+              "terms",
+              `${new URL(page.url).hostname} needs the user to review and accept its terms.`,
+            ),
+            tabId: heldTermsTab ?? tab,
+          };
         case "bot-check":
           return stopped(
             "blocked",
