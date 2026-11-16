@@ -20,6 +20,12 @@ import { getDomain } from "tldts";
 
 import { withRegistryContact } from "./metadataHttp.ts";
 import { createSerialRequestLane } from "./NcbiRequestLane.ts";
+import { rasterizeJournalSvg, validateJournalRaster } from "./JournalIconImage.ts";
+import {
+  publisherArtworkCandidates,
+  publisherControlsWebsite,
+  venueArtworkCandidates,
+} from "./JournalPublisherArtwork.ts";
 
 const ICON_REQUEST_TIMEOUT_MS = 2_000;
 const ICON_DISCOVERY_TIMEOUT_MS = 6_000;
@@ -27,15 +33,22 @@ const MAX_ICON_BYTES = 128 * 1024;
 const MAX_ICON_DOCUMENT_BYTES = 512 * 1024;
 const MAX_CROSSREF_BYTES = 512 * 1024;
 const MAX_REDIRECTS = 3;
-const MAX_DECLARED_ICON_ATTEMPTS = 2;
-const ICON_DISCOVERY_VERSION = 4;
+const MAX_DECLARED_ICON_ATTEMPTS = 3;
+const ICON_DISCOVERY_VERSION = 7;
 const SUCCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
-const FAILURE_TTL_MS = 6 * 60 * 60 * 1_000;
+const FAILURE_TTL_MS = 60_000;
+const MAX_FAILURE_TTL_MS = 6 * 60 * 60 * 1_000;
+const MAX_SOURCE_FAILURES = 64;
 const USER_AGENT =
   "Scient/0.0 (https://github.com/ScientFactory/scient-desktop; journal icon resolution)";
 
-// Crossref answers 429 to parallel lookups, as a list of rows asks for its icons at once.
-const runWithCrossrefLimit = createSerialRequestLane({ minimumStartIntervalMs: 200 });
+// Registries have independent rate limits; one slow service must not occupy another's lane.
+const registryLanes = new Map(
+  ["api.crossref.org", "api.datacite.org", "api.openalex.org"].map((host) => [
+    host,
+    createSerialRequestLane({ minimumStartIntervalMs: 200 }),
+  ]),
+);
 
 const blockedAddresses = new NodeNet.BlockList();
 for (const [network, prefix] of [
@@ -65,6 +78,10 @@ for (const [network, prefix] of [
   ["fc00::", 7],
   ["fe80::", 10],
   ["ff00::", 8],
+  ["::", 96],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
+  ["2002::", 16],
 ] as const) {
   blockedAddresses.addSubnet(network, prefix, "ipv6");
 }
@@ -76,6 +93,12 @@ const intermediaryHosts = [
   "europepmc.org",
   "ncbi.nlm.nih.gov",
   "zotero.org",
+  "adsabs.harvard.edu",
+  "semanticscholar.org",
+  "researchgate.net",
+  "openalex.org",
+  "scholar.google.com",
+  "core.ac.uk",
 ] as const;
 
 type IconFormat = {
@@ -88,12 +111,18 @@ type IconFormat = {
     | "image/webp";
 };
 
-type DownloadedIcon = IconFormat & { readonly bytes: Uint8Array };
+type DownloadedIcon = IconFormat & {
+  readonly bytes: Uint8Array;
+  readonly sourceUrl?: string;
+  readonly artworkTitle?: string;
+};
 
 type CacheMetadata = IconFormat & {
   readonly discoveryVersion: number;
   readonly resolvedAt: string;
   readonly sourceHost: string;
+  readonly sourceUrl?: string;
+  readonly artworkTitle?: string;
 };
 
 type HtmlNode = DefaultTreeAdapterMap["node"];
@@ -102,6 +131,8 @@ type HtmlElement = DefaultTreeAdapterMap["element"];
 type DeclaredIconCandidate = {
   readonly declaredSize: number;
   readonly url: URL;
+  readonly touchIcon: boolean;
+  readonly branding: boolean;
 };
 
 export interface JournalIconMaterial {
@@ -133,7 +164,13 @@ export interface JournalIconResolverOptions {
   readonly httpsHop?: PublicHttpsHop;
 }
 
-const activeResolutions = new Map<string, Promise<JournalIconMaterial | null>>();
+const activeResolutions = new Map<
+  string,
+  {
+    readonly requestKey: string;
+    readonly promise: Promise<JournalIconMaterial | null>;
+  }
+>();
 
 function isIntermediaryHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/\.$/u, "");
@@ -144,6 +181,10 @@ function parseEligiblePublicUrl(value: string | null): URL | null {
   if (!value) return null;
   try {
     const url = new URL(value);
+    if (url.protocol === "http:" && (!url.port || url.port === "80")) {
+      url.port = "";
+      url.protocol = "https:";
+    }
     if (url.protocol !== "https:" || (url.port && url.port !== "443")) return null;
     if (url.username || url.password || isIntermediaryHost(url.hostname)) return null;
     return url;
@@ -169,15 +210,120 @@ function object(value: unknown): Readonly<Record<string, unknown>> | null {
 
 function crossrefLandingUrl(value: unknown): URL | null {
   const message = object(object(value)?.message);
-  const resource = object(message?.resource);
-  const primary = object(resource?.primary);
-  const candidate =
-    typeof primary?.URL === "string"
-      ? primary.URL
-      : typeof message?.URL === "string"
-        ? message.URL
-        : null;
-  return parseEligiblePublicUrl(candidate);
+  const primary = object(object(message?.resource)?.primary);
+  return (
+    parseEligiblePublicUrl(typeof primary?.URL === "string" ? primary.URL : null) ??
+    parseEligiblePublicUrl(typeof message?.URL === "string" ? message.URL : null)
+  );
+}
+
+function conferenceHomepage(record: ScientSourceRecord): URL | null {
+  const title = record.containerTitle?.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu, " ");
+  // An arXiv DOI identifies a version, not the proceedings venue stored on the source.
+  if (
+    title &&
+    /^(?:(?:advances in )?neural information processing systems|neurips|nips|proceedings of the \d+(?:st|nd|rd|th) international conference on neural information processing systems)(?:[ ,:]*(?:\d{1,4}))?$/u.test(
+      title,
+    )
+  ) {
+    return new URL("https://neurips.cc/");
+  }
+  if (
+    title &&
+    /^(?:(?:cvpr)(?: \d{4})?|(?:(?:proceedings of the )?(?:ieee |ieee\/cvf )?(?:\d{4} )?(?:computer society )?conference on computer vision and pattern recognition|\d{4} (?:ieee |ieee\/cvf )?(?:computer society )?conference on computer vision and pattern recognition)(?: \(cvpr\))?)$/u.test(
+      title,
+    )
+  ) {
+    return new URL("https://cvpr.thecvf.com/");
+  }
+  return null;
+}
+
+async function registryJson(url: URL, hop: PublicHttpsHop, onAdmitted: () => void) {
+  try {
+    const lane = registryLanes.get(url.hostname);
+    if (!lane) return null;
+    return await lane(async () => {
+      onAdmitted();
+      const { body } = await requestPublicHttps({
+        url: withRegistryContact(url),
+        maxBytes: MAX_CROSSREF_BYTES,
+        accept: "application/json",
+        hop,
+      });
+      return JSON.parse(body.toString("utf8")) as unknown;
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function venueHomepage(
+  record: ScientSourceRecord,
+  hop: PublicHttpsHop,
+  onAdmitted: () => void,
+): Promise<URL | null> {
+  const conference = conferenceHomepage(record);
+  if (conference) return conference;
+  const issn = record.identifiers
+    .filter(({ scheme }) => /^e?issn$/iu.test(scheme.trim()))
+    .map(({ value }) => value.replace(/[-\s]/gu, "").toUpperCase())
+    .find((value) => /^\d{7}[\dX]$/u.test(value));
+  const url = new URL(
+    issn ? `https://api.openalex.org/sources/issn:${issn}` : "https://api.openalex.org/sources",
+  );
+  url.searchParams.set("select", "display_name,issn,homepage_url,host_organization_name");
+  if (!issn) {
+    url.searchParams.set("search", record.containerTitle!.trim());
+    url.searchParams.set("per-page", "100");
+  }
+  const response = object(await registryJson(url, hop, onAdmitted));
+  if (!response) return null;
+  const normalize = (title: string) =>
+    title
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]/gu, "");
+  const publisher = (value: string) => {
+    const name = normalize(value).replace(/(?:bv|llc|ltd|inc|limited)$/u, "");
+    if (/^(?:springer|springernature|springersciencebusinessmedia|biomedcentral)$/u.test(name))
+      return "springer";
+    return name.replace(/(?:publishing|publications|publishers|press)$/u, "");
+  };
+  if (
+    !issn &&
+    typeof object(response.meta)?.count === "number" &&
+    Number(object(response.meta)!.count) > 100
+  )
+    return null;
+  const candidates = issn
+    ? [response]
+    : Array.isArray(response.results)
+      ? response.results
+          .map(object)
+          .filter(
+            (source) =>
+              typeof source?.display_name === "string" &&
+              venueTitle(source.display_name) === venueTitle(record.containerTitle!) &&
+              (!record.publisher?.trim() ||
+                (typeof source.host_organization_name === "string" &&
+                  publisher(source.host_organization_name) === publisher(record.publisher))),
+          )
+      : [];
+  if (candidates.length !== 1) return null;
+  const source = candidates[0];
+  if (
+    issn &&
+    (!Array.isArray(source?.issn) ||
+      !source.issn.some(
+        (value) => typeof value === "string" && value.replace(/-/gu, "").toUpperCase() === issn,
+      ))
+  )
+    return null;
+  const homepage = parseEligiblePublicUrl(
+    typeof source?.homepage_url === "string" ? source.homepage_url : null,
+  );
+  return homepage && platformMatchesVenue(homepage, record) ? homepage : null;
 }
 
 function publicAddress(address: string, family: number): boolean {
@@ -221,7 +367,8 @@ async function resolvePublicAddress(
   return { address: selected.address, family: selected.family };
 }
 
-const IMAGE_ACCEPT = "image/avif,image/webp,image/png,image/jpeg,image/gif,image/x-icon,*/*;q=0.1";
+const IMAGE_ACCEPT =
+  "image/webp,image/png,image/jpeg,image/gif,image/x-icon,image/svg+xml,*/*;q=0.1";
 const HTML_ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1";
 
 const publicHttpsHop: PublicHttpsHop = async ({ url, accept, maxBytes, signal }) => {
@@ -345,46 +492,6 @@ function inspectIcon(bytes: Uint8Array): IconFormat | null {
   return null;
 }
 
-function iconPixelSize(bytes: Uint8Array): number | null {
-  const buffer = Buffer.from(bytes);
-  if (
-    buffer.length >= 24 &&
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47
-  ) {
-    const width = buffer.readUInt32BE(16);
-    const height = buffer.readUInt32BE(20);
-    return width > 0 && height > 0 ? Math.min(width, height) : null;
-  }
-  const prefix = buffer.subarray(0, 6).toString("ascii");
-  if (buffer.length >= 10 && (prefix === "GIF87a" || prefix === "GIF89a")) {
-    const width = buffer.readUInt16LE(6);
-    const height = buffer.readUInt16LE(8);
-    return width > 0 && height > 0 ? Math.min(width, height) : null;
-  }
-  if (
-    buffer.length >= 6 &&
-    buffer[0] === 0 &&
-    buffer[1] === 0 &&
-    buffer[2] === 1 &&
-    buffer[3] === 0
-  ) {
-    const count = Math.min(buffer.readUInt16LE(4), 32);
-    let largest = 0;
-    for (let index = 0; index < count; index += 1) {
-      const offset = 6 + index * 16;
-      if (offset + 1 >= buffer.length) break;
-      const width = buffer[offset] === 0 ? 256 : (buffer[offset] ?? 0);
-      const height = buffer[offset + 1] === 0 ? 256 : (buffer[offset + 1] ?? 0);
-      largest = Math.max(largest, Math.min(width, height));
-    }
-    return largest || null;
-  }
-  return null;
-}
-
 function isElement(node: HtmlNode): node is HtmlElement {
   return "tagName" in node;
 }
@@ -407,8 +514,12 @@ function declaredIconSize(value: string | null, rel: ReadonlySet<string>, url: U
   return 1;
 }
 
-function extractDeclaredIconCandidates(html: string, documentUrl: URL): DeclaredIconCandidate[] {
-  const documentDomain = getDomain(documentUrl.hostname, { allowPrivateDomains: false });
+function extractDeclaredIconCandidates(
+  html: string,
+  documentUrl: URL,
+  authoritativePage = false,
+): DeclaredIconCandidate[] {
+  const documentDomain = getDomain(documentUrl.hostname, { allowPrivateDomains: true });
   if (!documentDomain) return [];
   const candidates = new Map<string, DeclaredIconCandidate>();
   const visit = (node: HtmlNode): void => {
@@ -423,11 +534,13 @@ function extractDeclaredIconCandidates(html: string, documentUrl: URL): Declared
       ) {
         try {
           const url = parseEligiblePublicUrl(new URL(href, documentUrl).href);
-          const iconDomain = url ? getDomain(url.hostname, { allowPrivateDomains: false }) : null;
-          if (url && iconDomain === documentDomain && !/\.svg(?:$|\?)/iu.test(url.href)) {
+          const iconDomain = url ? getDomain(url.hostname, { allowPrivateDomains: true }) : null;
+          if (url && (iconDomain === documentDomain || authoritativePage)) {
             const candidate = {
               declaredSize: declaredIconSize(attribute(node, "sizes"), rel, url),
               url,
+              touchIcon: rel.has("apple-touch-icon") || rel.has("apple-touch-icon-precomposed"),
+              branding: false,
             };
             const existing = candidates.get(url.href);
             if (!existing || existing.declaredSize < candidate.declaredSize) {
@@ -439,43 +552,144 @@ function extractDeclaredIconCandidates(html: string, documentUrl: URL): Declared
         }
       }
     }
+    if (
+      isElement(node) &&
+      node.tagName === "img" &&
+      /(?:^|[\s_-])logo(?:$|[\s_-])/iu.test(
+        `${attribute(node, "alt") ?? ""} ${attribute(node, "class") ?? ""}`,
+      )
+    ) {
+      let parent: HtmlNode | undefined | null = node.parentNode;
+      let inHeader = false;
+      while (parent) {
+        if (isElement(parent) && (parent.tagName === "header" || parent.tagName === "nav")) {
+          inHeader = true;
+          break;
+        }
+        parent = "parentNode" in parent ? parent.parentNode : null;
+      }
+      const src = attribute(node, "src");
+      if (inHeader && src) {
+        try {
+          const url = parseEligiblePublicUrl(new URL(src, documentUrl).href);
+          if (
+            url &&
+            getDomain(url.hostname, { allowPrivateDomains: true }) === documentDomain &&
+            !candidates.has(url.href)
+          ) {
+            candidates.set(url.href, { url, declaredSize: 1, touchIcon: false, branding: true });
+          }
+        } catch {
+          // A malformed logo must not prevent favicon discovery.
+        }
+      }
+    }
     if ("childNodes" in node) {
       for (const child of node.childNodes) visit(child);
     }
   };
   visit(parse(html));
-  return [...candidates.values()].toSorted((left, right) => right.declaredSize - left.declaredSize);
+  return [...candidates.values()].toSorted(
+    (left, right) =>
+      Number(left.branding) - Number(right.branding) ||
+      Number(left.touchIcon) - Number(right.touchIcon) ||
+      right.declaredSize - left.declaredSize,
+  );
 }
 
-function publisherRootUrl(landingUrl: URL): URL {
-  const domain = getDomain(landingUrl.hostname, { allowPrivateDomains: false });
-  return domain ? new URL(`https://${domain}/`) : new URL("/", landingUrl.origin);
+type IconTransport = {
+  readonly hop: PublicHttpsHop;
+  readonly signal: AbortSignal;
+  readonly images: Map<string, Promise<DownloadedIcon | null>>;
+};
+
+function sameSite(left: URL, right: URL): boolean {
+  const domain = getDomain(left.hostname, { allowPrivateDomains: true });
+  return domain
+    ? domain === getDomain(right.hostname, { allowPrivateDomains: true })
+    : left.hostname === right.hostname;
 }
 
-function preferredIcon(
-  current: DownloadedIcon | null,
-  candidate: DownloadedIcon | null,
-): DownloadedIcon | null {
-  if (!current) return candidate;
-  if (!candidate) return current;
-  const currentSize = iconPixelSize(current.bytes) ?? 0;
-  const candidateSize = iconPixelSize(candidate.bytes) ?? 0;
-  return candidateSize > currentSize ? candidate : current;
+function venueTitle(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu, " ");
 }
 
-async function downloadRasterIcon(url: URL, hop: PublicHttpsHop): Promise<DownloadedIcon | null> {
+function registryVenueMatches(value: unknown, record: ScientSourceRecord): boolean {
+  const message = object(object(value)?.message);
+  const normalizeIssn = (value: string) => value.replace(/[-\s]/gu, "").toUpperCase();
+  const sourceIssns = record.identifiers
+    .filter(({ scheme }) => /^e?issn$/iu.test(scheme.trim()))
+    .map(({ value }) => normalizeIssn(value))
+    .filter((value) => /^\d{7}[\dX]$/u.test(value));
+  const registeredIssns = Array.isArray(message?.ISSN)
+    ? message.ISSN.filter((value): value is string => typeof value === "string")
+        .map(normalizeIssn)
+        .filter((value) => /^\d{7}[\dX]$/u.test(value))
+    : [];
+  if (sourceIssns.length && registeredIssns.length)
+    return registeredIssns.some((value) => sourceIssns.includes(value));
+  const title = venueTitle(record.containerTitle ?? "");
+  const titles = message?.["container-title"];
+  return (
+    !!title &&
+    Array.isArray(titles) &&
+    titles.some((value) => typeof value === "string" && venueTitle(value) === title)
+  );
+}
+
+type IconDocument = {
+  readonly url: URL;
+  readonly body: Buffer;
+};
+
+function downloadRasterIcon(url: URL, transport: IconTransport): Promise<DownloadedIcon | null> {
+  const previous = transport.images.get(url.href);
+  if (previous) return previous;
+  const download = fetchRasterIcon(url, transport);
+  transport.images.set(url.href, download);
+  return download;
+}
+
+async function fetchRasterIcon(url: URL, transport: IconTransport): Promise<DownloadedIcon | null> {
   try {
-    const { body } = await requestPublicHttps({
+    const { body, url: finalUrl } = await requestPublicHttps({
       url,
       maxBytes: MAX_ICON_BYTES,
       accept: IMAGE_ACCEPT,
-      hop,
+      hop: transport.hop,
     });
-    const format = inspectIcon(body);
-    return format ? { ...format, bytes: body } : null;
+    if (!sameSite(finalUrl, url)) return null;
+    const raster = inspectIcon(body);
+    if (raster && !(await validateJournalRaster(body, transport.signal))) return null;
+    const svg = raster ? null : await rasterizeJournalSvg(body, transport.signal);
+    const format =
+      raster ?? (svg ? { extension: "png" as const, mediaType: "image/png" as const } : null);
+    return format ? { ...format, bytes: svg ?? body, sourceUrl: finalUrl.href } : null;
   } catch {
     return null;
   }
+}
+
+const preprintPlatforms: Readonly<Record<string, readonly string[]>> = {
+  "arxiv.org": ["arxiv"],
+  "biorxiv.org": ["biorxiv"],
+  "medrxiv.org": ["medrxiv"],
+  "ssrn.com": ["ssrn", "social science research network"],
+  "researchsquare.com": ["research square"],
+  "preprints.org": ["preprints", "preprints.org"],
+};
+
+function platformMatchesVenue(url: URL, record: ScientSourceRecord): boolean {
+  const domain = getDomain(url.hostname, { allowPrivateDomains: true });
+  const title = record.containerTitle
+    ?.normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\([^)]*\)$/u, "")
+    .trim();
+  if (domain === "jstor.org") return false;
+  const names = domain ? preprintPlatforms[domain] : undefined;
+  return !names || (record.type === "preprint" && !!title && names.includes(title));
 }
 
 async function defaultResolveLandingUrl(
@@ -483,74 +697,100 @@ async function defaultResolveLandingUrl(
   hop: PublicHttpsHop,
   onAdmitted: () => void,
 ): Promise<URL | null> {
-  const direct = parseEligiblePublicUrl(record.url);
-  if (direct) return direct;
   const doi = sourceDoi(record);
-  if (!doi) return null;
-  try {
+  if (doi && (!doi.startsWith("10.48550/") || record.type === "preprint")) {
     const encodedDoi = doi.split("/").map(encodeURIComponent).join("/");
-    const { body } = await runWithCrossrefLimit(() => {
-      onAdmitted();
-      return requestPublicHttps({
-        url: withRegistryContact(new URL(`https://api.crossref.org/works/${encodedDoi}`)),
-        maxBytes: MAX_CROSSREF_BYTES,
-        accept: "application/json",
-        hop,
-      });
-    });
-    return crossrefLandingUrl(JSON.parse(body.toString("utf8")) as unknown);
-  } catch {
-    return null;
+    const crossrefRecord = await registryJson(
+      new URL(`https://api.crossref.org/works/${encodedDoi}`),
+      hop,
+      onAdmitted,
+    );
+    const crossref = crossrefLandingUrl(crossrefRecord);
+    if (
+      crossref &&
+      registryVenueMatches(crossrefRecord, record) &&
+      platformMatchesVenue(crossref, record)
+    )
+      return crossref;
+    if (record.type !== "preprint") return null;
+    const attributes = object(
+      object(
+        object(
+          await registryJson(
+            new URL(`https://api.datacite.org/dois/${encodedDoi}`),
+            hop,
+            onAdmitted,
+          ),
+        )?.data,
+      )?.attributes,
+    );
+    const datacite = parseEligiblePublicUrl(
+      typeof attributes?.url === "string" ? attributes.url : null,
+    );
+    if (datacite && platformMatchesVenue(datacite, record)) {
+      const platform =
+        preprintPlatforms[getDomain(datacite.hostname, { allowPrivateDomains: true }) ?? ""];
+      if (
+        platform ||
+        (typeof attributes?.publisher === "string" &&
+          venueTitle(attributes.publisher) === venueTitle(record.containerTitle ?? ""))
+      )
+        return datacite;
+    }
   }
+  // A user-supplied URL is paper evidence, not authority for every paper in its venue.
+  return null;
 }
 
 /** Icons declared by a document, resolved against its address after redirects. */
-async function declaredIconsOf(
-  url: URL,
-  hop: PublicHttpsHop,
-): Promise<{ readonly url: URL; readonly candidates: readonly DeclaredIconCandidate[] } | null> {
+async function declaredIconsOf(url: URL, transport: IconTransport): Promise<IconDocument | null> {
   try {
     // The icons are named in the head; a long article page is read only that far.
     const document = await requestPublicHttps({
       url,
       maxBytes: MAX_ICON_DOCUMENT_BYTES,
       accept: HTML_ACCEPT,
-      hop,
+      hop: transport.hop,
       partial: true,
     });
-    return {
-      url: document.url,
-      candidates: extractDeclaredIconCandidates(document.body.toString("utf8"), document.url),
-    };
+    if (!sameSite(document.url, url)) return null;
+    return { url: document.url, body: document.body };
   } catch {
     return null;
   }
 }
 
-async function largestDeclaredIcon(
+async function downloadDeclaredIcon(
   candidates: readonly DeclaredIconCandidate[],
-  hop: PublicHttpsHop,
+  transport: IconTransport,
 ): Promise<DownloadedIcon | null> {
-  let best: DownloadedIcon | null = null;
   for (const candidate of candidates.slice(0, MAX_DECLARED_ICON_ATTEMPTS)) {
-    best = preferredIcon(best, await downloadRasterIcon(candidate.url, hop));
+    const icon = await downloadRasterIcon(candidate.url, transport);
+    if (icon) return icon;
   }
-  return best;
+  return null;
 }
 
 async function defaultDownloadIcon(
   landingUrl: URL,
-  hop: PublicHttpsHop,
+  transport: IconTransport,
+  options: { readonly publisherFallback?: boolean; readonly document?: IconDocument | null } = {},
 ): Promise<DownloadedIcon | null> {
-  // The article page names the journal's icons; publisher homepages often hide behind identity redirects.
-  const article = await declaredIconsOf(landingUrl, hop);
-  const articleIcon = await largestDeclaredIcon(article?.candidates ?? [], hop);
+  const article =
+    options.document !== undefined
+      ? options.document
+      : await declaredIconsOf(landingUrl, transport);
+  const articleIcon = await downloadDeclaredIcon(
+    article ? extractDeclaredIconCandidates(article.body.toString("utf8"), article.url, true) : [],
+    transport,
+  );
   if (articleIcon) return articleIcon;
-  const siteUrl = article?.url ?? landingUrl;
-  const conventionalIcon = downloadRasterIcon(new URL("/favicon.ico", siteUrl.origin), hop);
-  const root = declaredIconsOf(publisherRootUrl(siteUrl), hop);
-  const best = await conventionalIcon;
-  return preferredIcon(best, await largestDeclaredIcon((await root)?.candidates ?? [], hop));
+  if (!options.publisherFallback) return null;
+  // Never climb a university, repository or hosting domain to invent a publisher identity.
+  return downloadRasterIcon(
+    new URL("/favicon.ico", (article?.url ?? landingUrl).origin),
+    transport,
+  );
 }
 
 function validCacheMetadata(value: unknown): CacheMetadata | null {
@@ -562,6 +802,7 @@ function validCacheMetadata(value: unknown): CacheMetadata | null {
   const discoveryVersion =
     typeof candidate?.discoveryVersion === "number" ? candidate.discoveryVersion : 1;
   if (
+    !candidate ||
     (extension !== "gif" &&
       extension !== "ico" &&
       extension !== "jpg" &&
@@ -577,7 +818,15 @@ function validCacheMetadata(value: unknown): CacheMetadata | null {
   ) {
     return null;
   }
-  return { discoveryVersion, extension, mediaType, resolvedAt, sourceHost };
+  return {
+    discoveryVersion,
+    extension,
+    mediaType,
+    resolvedAt,
+    sourceHost,
+    ...(typeof candidate.artworkTitle === "string" ? { artworkTitle: candidate.artworkTitle } : {}),
+    ...(typeof candidate.sourceUrl === "string" ? { sourceUrl: candidate.sourceUrl } : {}),
+  };
 }
 
 async function readCachedIcon(input: {
@@ -585,6 +834,7 @@ async function readCachedIcon(input: {
   readonly key: string;
   readonly journalTitle: string;
   readonly now: Date;
+  readonly record: ScientSourceRecord;
 }): Promise<(JournalIconMaterial & { readonly fresh: boolean }) | null> {
   const directory = NodePath.join(input.cacheRoot, input.key);
   try {
@@ -593,14 +843,16 @@ async function readCachedIcon(input: {
         await NodeFSP.readFile(NodePath.join(directory, "metadata.json"), "utf8"),
       ) as unknown,
     );
-    if (!metadata) return null;
+    if (!metadata || metadata.discoveryVersion !== ICON_DISCOVERY_VERSION) return null;
+    if (!platformMatchesVenue(new URL(`https://${metadata.sourceHost}/`), input.record))
+      return null;
     const absolutePath = NodePath.join(directory, `icon.${metadata.extension}`);
     const stat = await NodeFSP.stat(absolutePath);
     if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_ICON_BYTES) return null;
     return {
       absolutePath: await NodeFSP.realpath(absolutePath),
       cacheRoot: await NodeFSP.realpath(input.cacheRoot),
-      journalTitle: input.journalTitle,
+      journalTitle: metadata.artworkTitle ?? input.journalTitle,
       fresh:
         metadata.discoveryVersion === ICON_DISCOVERY_VERSION &&
         input.now.getTime() - Date.parse(metadata.resolvedAt) <= SUCCESS_TTL_MS,
@@ -632,6 +884,8 @@ async function writeCachedIcon(input: {
       mediaType: input.icon.mediaType,
       resolvedAt: input.now.toISOString(),
       sourceHost: input.landingUrl.hostname,
+      ...(input.icon.sourceUrl ? { sourceUrl: input.icon.sourceUrl } : {}),
+      ...(input.icon.artworkTitle ? { artworkTitle: input.icon.artworkTitle } : {}),
     } satisfies CacheMetadata)}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
@@ -642,23 +896,63 @@ async function writeCachedIcon(input: {
   return {
     absolutePath: await NodeFSP.realpath(iconPath),
     cacheRoot: await NodeFSP.realpath(input.cacheRoot),
-    journalTitle: input.journalTitle,
+    journalTitle: input.icon.artworkTitle ?? input.journalTitle,
   };
 }
 
-async function readFailureUntil(directory: string): Promise<number> {
+type RetryState = { readonly retryAfter: number; readonly attempts: number };
+type FailureState = {
+  readonly sources: Readonly<Record<string, RetryState>>;
+  readonly venue?: RetryState;
+  readonly homepageUrl?: string;
+};
+
+function validRetry(value: unknown): RetryState | undefined {
+  const retry = object(value);
+  return retry &&
+    typeof retry.retryAfter === "number" &&
+    Number.isFinite(retry.retryAfter) &&
+    typeof retry.attempts === "number" &&
+    Number.isInteger(retry.attempts) &&
+    retry.attempts > 0 &&
+    retry.attempts <= 16
+    ? { retryAfter: retry.retryAfter, attempts: retry.attempts }
+    : undefined;
+}
+
+async function readFailures(directory: string): Promise<FailureState> {
   try {
-    const failure = object(
+    const value = object(
       JSON.parse(await NodeFSP.readFile(NodePath.join(directory, "failure.json"), "utf8")),
     );
-    return failure?.discoveryVersion === ICON_DISCOVERY_VERSION &&
-      typeof failure.retryAfter === "number" &&
-      Number.isFinite(failure.retryAfter)
-      ? failure.retryAfter
-      : 0;
+    if (value?.discoveryVersion !== ICON_DISCOVERY_VERSION) return { sources: {} };
+    const entries = Object.entries(object(value.sources) ?? {}).slice(0, MAX_SOURCE_FAILURES);
+    const sources = Object.fromEntries(
+      entries.flatMap(([key, raw]) => {
+        const retry = validRetry(raw);
+        return /^[a-f0-9]{64}$/u.test(key) && retry ? [[key, retry]] : [];
+      }),
+    );
+    const venue = validRetry(value.venue);
+    const homepage = parseEligiblePublicUrl(
+      typeof value.homepageUrl === "string" ? value.homepageUrl : null,
+    );
+    return {
+      sources,
+      ...(venue ? { venue } : {}),
+      ...(homepage ? { homepageUrl: homepage.href } : {}),
+    };
   } catch {
-    return 0;
+    return { sources: {} };
   }
+}
+
+function nextRetry(previous: RetryState | undefined, now: number): RetryState {
+  const attempts = Math.min(16, (previous?.attempts ?? 0) + 1);
+  return {
+    attempts,
+    retryAfter: now + Math.min(MAX_FAILURE_TTL_MS, FAILURE_TTL_MS * 2 ** (attempts - 1)),
+  };
 }
 
 async function discover(input: {
@@ -666,12 +960,17 @@ async function discover(input: {
   readonly cacheRoot: string;
   readonly key: string;
   readonly journalTitle: string;
+  readonly requestKey: string;
+  readonly failures: FailureState;
   readonly options: JournalIconResolverOptions;
 }): Promise<JournalIconMaterial | null> {
   const controller = new AbortController();
+  const specificController = new AbortController();
+  const publisherCandidates = publisherArtworkCandidates(input.record);
   const { promise: deadline, resolve: finishDeadline } =
     Promise.withResolvers<JournalIconMaterial | null>();
-  let timer: ReturnType<typeof NodeTimers.setTimeout> | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  let specificTimer: NodeJS.Timeout | undefined;
   const startDeadline = () => {
     if (timer) return;
     timer = NodeTimers.setTimeout(() => {
@@ -679,26 +978,156 @@ async function discover(input: {
       finishDeadline(null);
     }, ICON_DISCOVERY_TIMEOUT_MS);
     timer.unref();
+    // Reserve time for an honest publisher fallback after blocked article sites.
+    if (publisherCandidates.length) {
+      specificTimer = NodeTimers.setTimeout(() => specificController.abort(), 3_500);
+      specificTimer.unref();
+    }
   };
   const signal = controller.signal;
   const rawHop = input.options.httpsHop ?? publicHttpsHop;
-  const hop: PublicHttpsHop = (request) => {
-    signal.throwIfAborted();
-    return rawHop({ ...request, signal });
-  };
+  const exchanges = new Map<string, Promise<HopResponse>>();
+  const makeHop =
+    (requestSignal: AbortSignal): PublicHttpsHop =>
+    (request) => {
+      requestSignal.throwIfAborted();
+      const key = JSON.stringify([request.url.href, request.accept, request.maxBytes]);
+      const previous = exchanges.get(key);
+      if (previous) return previous;
+      const response = Promise.resolve().then(() => rawHop({ ...request, signal: requestSignal }));
+      exchanges.set(key, response);
+      return response;
+    };
+  const hop = makeHop(signal);
+  const specificSignal = AbortSignal.any([signal, specificController.signal]);
+  const specificHop = makeHop(specificSignal);
+  const images = new Map<string, Promise<DownloadedIcon | null>>();
+  const specific: IconTransport = { hop: specificHop, signal: specificSignal, images };
+  const general: IconTransport = { hop, signal, images };
+  const canTryVenue =
+    (input.failures.venue?.retryAfter ?? 0) <= (input.options.now?.() ?? new Date()).getTime();
+  let triedVenue = false;
+  let verifiedHomepage = parseEligiblePublicUrl(input.failures.homepageUrl ?? null);
   const operation = async () => {
-    if (input.options.resolveLandingUrl) startDeadline();
-    const landingUrl = await (input.options.resolveLandingUrl
-      ? input.options.resolveLandingUrl(input.record)
-      : defaultResolveLandingUrl(input.record, hop, startDeadline));
+    const automatic = !input.options.resolveLandingUrl && !input.options.downloadIcon;
+    const knownConference = conferenceHomepage(input.record);
+    let homepage = knownConference ?? verifiedHomepage;
+    let landingUrl: URL | null = null;
+    let icon: DownloadedIcon | null = null;
+    if (automatic && knownConference && canTryVenue) {
+      verifiedHomepage = knownConference;
+      triedVenue = true;
+      startDeadline();
+      icon = await defaultDownloadIcon(knownConference, specific);
+      if (icon) landingUrl = knownConference;
+    }
+    if (!icon) {
+      if (input.options.resolveLandingUrl) startDeadline();
+      landingUrl = await (input.options.resolveLandingUrl
+        ? input.options.resolveLandingUrl(input.record)
+        : input.options.downloadIcon
+          ? (parseEligiblePublicUrl(input.record.url) ??
+            (await defaultResolveLandingUrl(input.record, specificHop, startDeadline)))
+          : await defaultResolveLandingUrl(input.record, specificHop, startDeadline));
+      signal.throwIfAborted();
+      if (automatic) {
+        // Prefetch the canonical page, but do not download its artwork before verifying its owner.
+        const document = landingUrl ? declaredIconsOf(landingUrl, specific) : null;
+        const publisherLanding = landingUrl && publisherControlsWebsite(input.record, landingUrl);
+        if (
+          canTryVenue &&
+          !knownConference &&
+          !publisherLanding &&
+          !(input.record.type === "preprint" && landingUrl)
+        ) {
+          homepage = await venueHomepage(input.record, specificHop, () => {
+            triedVenue = true;
+            startDeadline();
+          });
+          verifiedHomepage = homepage;
+        }
+        const ownedLanding =
+          landingUrl &&
+          (input.record.type === "preprint" ||
+            (homepage && sameSite(landingUrl, homepage)) ||
+            publisherLanding);
+        if (landingUrl && ownedLanding) {
+          startDeadline();
+          icon = await defaultDownloadIcon(landingUrl, specific, { document: await document });
+        } else {
+          landingUrl = null;
+        }
+        if (!icon && homepage && canTryVenue && !knownConference) {
+          triedVenue = true;
+          startDeadline();
+          const document = await declaredIconsOf(homepage, specific);
+          if (document) homepage = document.url;
+          icon = await defaultDownloadIcon(homepage, specific, { document });
+          if (icon) landingUrl = homepage;
+        }
+      } else if (landingUrl) {
+        startDeadline();
+        icon = await (input.options.downloadIcon
+          ? input.options.downloadIcon(landingUrl)
+          : defaultDownloadIcon(landingUrl, specific));
+      }
+    }
+    NodeTimers.clearTimeout(specificTimer);
+    if (!icon && automatic && canTryVenue) {
+      triedVenue = true;
+      startDeadline();
+      // A canonical paper URL can still be a forwarding hub. Its undeclared
+      // /favicon.ico is not venue evidence; only a verified venue gets this fallback.
+      const sites = homepage ? [homepage] : [];
+      const fallbacks = [
+        ...venueArtworkCandidates(input.record).map(async (candidate) => {
+          const found = await downloadRasterIcon(candidate.url, general);
+          return found
+            ? {
+                icon: {
+                  ...found,
+                  artworkTitle: `${input.journalTitle} (${candidate.publisher} publisher icon)`,
+                },
+                page: candidate.url,
+              }
+            : null;
+        }),
+        ...sites.map(async (page) => {
+          const found = await downloadRasterIcon(new URL("/favicon.ico", page.origin), general);
+          return found ? { icon: found, page } : null;
+        }),
+        ...publisherCandidates.map(async (candidate) => {
+          const found = await (candidate.kind === "image"
+            ? downloadRasterIcon(candidate.url, general)
+            : defaultDownloadIcon(candidate.url, general, { publisherFallback: true }));
+          return found
+            ? {
+                icon: {
+                  ...found,
+                  artworkTitle: `${input.journalTitle} (${candidate.publisher} publisher icon)`,
+                },
+                page: candidate.url,
+              }
+            : null;
+        }),
+      ];
+      for (const pending of fallbacks) {
+        const fallback = await pending.catch(() => null);
+        if (fallback) {
+          icon = fallback.icon;
+          landingUrl = fallback.page;
+          break;
+        }
+      }
+    }
     signal.throwIfAborted();
-    if (!landingUrl) return null;
-    startDeadline();
-    const icon = await (input.options.downloadIcon
-      ? input.options.downloadIcon(landingUrl)
-      : defaultDownloadIcon(landingUrl, hop));
-    signal.throwIfAborted();
-    if (!icon) return null;
+    if (!icon || !landingUrl) return null;
+    if (icon.sourceUrl && !icon.artworkTitle) {
+      icon = {
+        ...icon,
+        artworkTitle: `${input.journalTitle} (${new URL(icon.sourceUrl).hostname} website icon)`,
+      };
+    }
     return writeCachedIcon({
       ...input,
       landingUrl,
@@ -706,23 +1135,39 @@ async function discover(input: {
       now: input.options.now?.() ?? new Date(),
     });
   };
+  const directory = NodePath.join(input.cacheRoot, input.key);
   try {
     const result = await Promise.race([operation(), deadline]);
-    if (result) return result;
+    if (result) {
+      await NodeFSP.rm(NodePath.join(directory, "failure.json"), { force: true }).catch(
+        () => undefined,
+      );
+      return result;
+    }
   } catch {
-    // Discovery is optional; a publisher failure never removes existing artwork.
+    // Discovery is optional; a publisher failure never removes verified cached artwork.
   } finally {
+    controller.abort();
     NodeTimers.clearTimeout(timer);
+    NodeTimers.clearTimeout(specificTimer);
   }
-  const directory = NodePath.join(input.cacheRoot, input.key);
+  const now = (input.options.now?.() ?? new Date()).getTime();
+  const sources = Object.fromEntries([
+    ...Object.entries(input.failures.sources)
+      .filter(([key]) => key !== input.requestKey)
+      .sort(([, left], [, right]) => right.retryAfter - left.retryAfter)
+      .slice(0, MAX_SOURCE_FAILURES - 1),
+    [input.requestKey, nextRetry(input.failures.sources[input.requestKey], now)],
+  ]);
+  const venue = triedVenue ? nextRetry(input.failures.venue, now) : input.failures.venue;
   await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
   await NodeFSP.writeFile(
     NodePath.join(directory, "failure.json.tmp"),
     JSON.stringify({
       discoveryVersion: ICON_DISCOVERY_VERSION,
-      retryAfter:
-        (input.options.now?.() ?? new Date()).getTime() +
-        (signal.aborted ? 60_000 : FAILURE_TTL_MS),
+      sources,
+      ...(verifiedHomepage ? { homepageUrl: verifiedHomepage.href } : {}),
+      ...(venue ? { venue } : {}),
     }),
     { mode: 0o600 },
   );
@@ -739,44 +1184,60 @@ export async function resolveJournalIcon(input: {
   readonly options?: JournalIconResolverOptions;
 }): Promise<JournalIconMaterial | null> {
   const journalTitle = input.record.containerTitle?.trim();
-  if (!journalTitle || input.record.type !== "article") return null;
-  const key = NodeCrypto.createHash("sha256")
-    .update(journalIconIdentity(input.record)!)
+  const identity = journalIconIdentity(input.record);
+  if (!journalTitle || !identity) return null;
+  const key = NodeCrypto.createHash("sha256").update(identity).digest("hex");
+  const requestKey = NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([input.record.url, input.record.identifiers]))
     .digest("hex");
   const now = input.options?.now?.() ?? new Date();
   const cached = await readCachedIcon({ ...input, key, journalTitle, now });
   const material = cached
-    ? { absolutePath: cached.absolutePath, cacheRoot: cached.cacheRoot, journalTitle }
+    ? {
+        absolutePath: cached.absolutePath,
+        cacheRoot: cached.cacheRoot,
+        journalTitle: cached.journalTitle,
+      }
     : null;
   if (cached?.fresh) return material;
-  const retryAfter = await readFailureUntil(NodePath.join(input.cacheRoot, key));
+  const failures = await readFailures(NodePath.join(input.cacheRoot, key));
+  const retryAfter = failures.sources[requestKey]?.retryAfter ?? 0;
   if (retryAfter > now.getTime()) return material;
-  if (!parseEligiblePublicUrl(input.record.url) && !sourceDoi(input.record)) return material;
+  const sourceRetries = Object.values(failures.sources);
+  if (
+    !failures.sources[requestKey] &&
+    sourceRetries.length >= MAX_SOURCE_FAILURES &&
+    sourceRetries.every((retry) => retry.retryAfter > now.getTime())
+  )
+    return material;
   const activeKey = `${NodePath.resolve(input.cacheRoot)}\0${key}`;
-  let resolution = activeResolutions.get(activeKey);
-  if (!resolution) {
-    resolution = discover({
-      ...input,
-      key,
-      journalTitle,
-      options: input.options ?? {},
-    })
-      .catch(() => null)
-      .finally(() => activeResolutions.delete(activeKey));
-    activeResolutions.set(activeKey, resolution);
+  const active = activeResolutions.get(activeKey);
+  if (active) {
+    if (material) return material;
+    const resolved = await active.promise;
+    if (resolved || active.requestKey === requestKey) return resolved;
+    return resolveJournalIcon(input);
   }
+  const resolution = discover({
+    ...input,
+    key,
+    requestKey,
+    failures,
+    journalTitle,
+    options: input.options ?? {},
+  })
+    .catch(() => null)
+    .finally(() => activeResolutions.delete(activeKey));
+  activeResolutions.set(activeKey, { requestKey, promise: resolution });
   return material ?? resolution;
 }
 
 export const journalIconResolverInternals = {
   crossrefLandingUrl,
   extractDeclaredIconCandidates,
-  iconPixelSize,
   inspectIcon,
   isIntermediaryHost,
   parseEligiblePublicUrl,
-  preferredIcon,
   publicAddress,
-  publisherRootUrl,
   requestPublicHttps,
 };

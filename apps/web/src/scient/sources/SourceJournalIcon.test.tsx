@@ -33,8 +33,8 @@ const record = {
 it("includes bundled artwork in the first render without article links or a journal lookup", () => {
   const resolveIcon = vi.fn(async () => null);
   for (const identity of [
-    { containerTitle: "Nature", identifiers: [] },
-    { containerTitle: null, identifiers: [{ scheme: "issn", value: "0028-0836" }] },
+    { containerTitle: "NEJM Evidence", identifiers: [] },
+    { containerTitle: null, identifiers: [{ scheme: "issn", value: "2766-5526" }] },
   ]) {
     const markup = renderToStaticMarkup(
       <SourceJournalIcon

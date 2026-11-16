@@ -4,7 +4,7 @@ export function journalIconIdentity(record: {
   readonly publisher?: string | null;
   readonly identifiers: ReadonlyArray<{ readonly scheme: string; readonly value: string }>;
 }): string | null {
-  if (record.type !== "article") return null;
+  if (!["article", "conference-paper", "preprint"].includes(record.type)) return null;
   const title = record.containerTitle?.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
   if (!title) return null;
   const issns = record.identifiers
@@ -12,8 +12,14 @@ export function journalIconIdentity(record: {
     .map(({ value }) => value.replace(/[-\s]/gu, "").toUpperCase())
     .filter((value) => /^\d{7}[\dX]$/u.test(value))
     .sort();
-  if (issns[0]) return `issn:${issns[0]}`;
   const publisher =
     record.publisher?.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase() ?? "";
-  return JSON.stringify([title, publisher]);
+  // Publisher fallbacks and preprint platforms are evidence-dependent: an incorrect
+  // record must not brand another record merely because their ISSN is the same.
+  return JSON.stringify([
+    record.type === "preprint" ? "preprint" : "published",
+    issns[0] ?? null,
+    title,
+    publisher,
+  ]);
 }

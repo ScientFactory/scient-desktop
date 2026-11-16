@@ -1,7 +1,6 @@
 import acmUrl from "../../assets/journals/acm.png";
 import ieeeUrl from "../../assets/journals/ieee.png";
-import natureUrl from "../../assets/journals/nature.png";
-import nejmGroupUrl from "../../assets/journals/nejm-group.png";
+import nejmEvidenceUrl from "../../assets/journals/nejm-evidence.png";
 import pubmedUrl from "../../assets/journals/pubmed.png";
 
 type JournalIcon = {
@@ -24,25 +23,15 @@ type Journal = {
   readonly icon: JournalIcon;
 };
 
-const naturePublisher: JournalIcon = {
-  url: natureUrl,
-  journalTitle: "Nature (publisher)",
-  source: "journal",
-};
-const nejmPublisher: JournalIcon = {
-  url: nejmGroupUrl,
-  journalTitle: "NEJM Group (publisher)",
-  source: "journal",
-};
 const ieeePublisher: JournalIcon = {
   url: ieeeUrl,
   journalTitle: "IEEE (publisher)",
-  source: "journal",
+  source: "site",
 };
 const acmPublisher: JournalIcon = {
   url: acmUrl,
   journalTitle: "ACM (publisher)",
-  source: "journal",
+  source: "site",
 };
 const pubmedPlatform: JournalIcon = {
   url: pubmedUrl,
@@ -50,61 +39,12 @@ const pubmedPlatform: JournalIcon = {
   source: "site",
 };
 
-// Shared marks identify publishers, not distinct artwork for each of their journals.
 const journals: ReadonlyArray<Journal> = [
   {
-    title: "Nature",
-    aliases: ["Nature (London)"],
-    issns: ["0028-0836", "1476-4687"],
-    icon: { url: natureUrl, journalTitle: "Nature", source: "journal" },
-  },
-  {
-    title: "Nature Medicine",
-    aliases: ["Nat Med"],
-    issns: ["1078-8956", "1546-170X"],
-    icon: naturePublisher,
-  },
-  {
-    title: "npj Digital Medicine",
-    aliases: ["npj Digit Med"],
-    issns: ["2398-6352"],
-    icon: naturePublisher,
-  },
-  {
-    title: "NEJM AI",
-    aliases: [],
-    issns: ["2836-9386"],
-    icon: nejmPublisher,
-  },
-  {
-    title: "Nature Communications",
-    aliases: ["Nat Commun"],
-    issns: ["2041-1723"],
-    icon: naturePublisher,
-  },
-  {
-    title: "Scientific Reports",
-    aliases: ["Sci Rep"],
-    issns: ["2045-2322"],
-    icon: naturePublisher,
-  },
-  {
-    title: "Nature Methods",
-    aliases: ["Nat Methods"],
-    issns: ["1548-7091", "1548-7105"],
-    icon: naturePublisher,
-  },
-  {
-    title: "Nature Machine Intelligence",
-    aliases: ["Nat Mach Intell"],
-    issns: ["2522-5839"],
-    icon: naturePublisher,
-  },
-  {
-    title: "The New England Journal of Medicine",
-    aliases: ["New England Journal of Medicine", "N Engl J Med", "NEJM"],
-    issns: ["0028-4793", "1533-4406"],
-    icon: nejmPublisher,
+    title: "NEJM Evidence",
+    aliases: ["NEJM Evid"],
+    issns: ["2766-5526"],
+    icon: { url: nejmEvidenceUrl, journalTitle: "NEJM Evidence", source: "journal" },
   },
   {
     title: "IEEE Access",
@@ -136,29 +76,18 @@ for (const journal of journals) {
   for (const issn of journal.issns) journalsByIssn.set(normalizedIssn(issn), journal);
 }
 
-const natureSite: JournalIcon = { ...naturePublisher, source: "site" };
-const nejmSite: JournalIcon = { ...nejmPublisher, source: "site" };
-const ieeeSite: JournalIcon = { ...ieeePublisher, source: "site" };
-const acmSite: JournalIcon = { ...acmPublisher, source: "site" };
-
 const publishersByHost: Readonly<Record<string, JournalIcon>> = {
-  "nature.com": natureSite,
-  "www.nature.com": natureSite,
-  "nejm.org": nejmSite,
-  "www.nejm.org": nejmSite,
-  "ai.nejm.org": nejmSite,
-  "evidence.nejm.org": nejmSite,
-  "ieee.org": ieeeSite,
-  "www.ieee.org": ieeeSite,
-  "ieeexplore.ieee.org": ieeeSite,
-  "acm.org": acmSite,
-  "www.acm.org": acmSite,
-  "dl.acm.org": acmSite,
+  "ieee.org": ieeePublisher,
+  "www.ieee.org": ieeePublisher,
+  "ieeexplore.ieee.org": ieeePublisher,
+  "acm.org": acmPublisher,
+  "www.acm.org": acmPublisher,
+  "dl.acm.org": acmPublisher,
   "pubmed.ncbi.nlm.nih.gov": pubmedPlatform,
 };
 
 export function bundledJournalIcon(record: JournalRecord): JournalIcon | null {
-  if (record.type !== "article") return null;
+  if (!["article", "conference-paper", "preprint"].includes(record.type)) return null;
 
   const titleMatch = record.containerTitle
     ? journalsByTitle.get(normalizedTitle(record.containerTitle))
