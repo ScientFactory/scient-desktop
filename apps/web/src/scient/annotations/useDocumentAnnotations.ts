@@ -79,10 +79,13 @@ export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
       return;
     }
     let current = true;
+    // Reloads overlap; only the newest one's answer is kept.
+    let newest = 0;
     const load = () => {
+      const reading = ++newest;
       void readDocumentAnnotations(environmentId, { root, relativePath }).then(
         (result) => {
-          if (!current || result.status !== "available") return;
+          if (!current || reading !== newest || result.status !== "available") return;
           const pdf: AnnotatedPdf = {
             environmentId,
             root,
