@@ -91,7 +91,7 @@ describe("metadata HTTP completion", () => {
     expect(response.url.href).toBe("https://registry.example/complete");
   });
 
-  it("keeps an API key on the registry's host and drops it on a redirect elsewhere", async () => {
+  it("keeps an API key on the registry's origin and drops it on a redirect to another port or host", async () => {
     const received = new Map<string, Readonly<Record<string, string | string[] | undefined>>>();
     await using fixture = await startHttpTransport((request, response) => {
       request.resume();
@@ -99,6 +99,8 @@ describe("metadata HTTP completion", () => {
       if (request.url === "/same") {
         response.writeHead(302, { Location: "https://registry.example/other" }).end();
       } else if (request.url === "/other") {
+        response.writeHead(302, { Location: "https://registry.example:8443/port" }).end();
+      } else if (request.url === "/port") {
         response.writeHead(302, { Location: "https://mirror.example/final" }).end();
       } else response.end("complete");
     });
@@ -110,6 +112,7 @@ describe("metadata HTTP completion", () => {
     });
     expect(response).toMatchObject({ status: 200, body: "complete" });
     expect(received.get("/other")?.["x-api-key"]).toBe("secret");
+    expect(received.get("/port")?.["x-api-key"]).toBeUndefined();
     expect(received.get("/final")?.["x-api-key"]).toBeUndefined();
     expect(received.get("/final")?.["user-agent"]).toBe(METADATA_USER_AGENT);
     expect(received.get("/final")?.accept).toBe("application/json");

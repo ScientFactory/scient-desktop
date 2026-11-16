@@ -282,8 +282,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 type SourcesBackendMode = "project" | "library";
 
-const listFilters = (mode: SourcesBackendMode) =>
-  ` query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, ${mode === "project" ? "" : "readingStatus, starred, "}savedSearchId (see scient_sources_collections). inTrash lists removed sources. citationStyles finds CSL styles by journal or style name instead, with the project's style.`;
+const LIST_FILTERS = ` query matches citation key, title, authors, year, journal, identifiers and tags. tags must all match; collectionId includes subcollections; savedSearchId comes from scient_sources_collections. inTrash lists removed sources. citationStyles finds CSL styles by journal or style name instead, with the project's style.`;
 
 const listParameters = {
   query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
@@ -304,8 +303,8 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
   Tool.make("scient_sources_list", {
     description:
       mode === "project"
-        ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${listFilters(mode)}`
-        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${listFilters(mode)} duplicates: possible duplicate pairs (offset) and undoable merges (mergeOffset; allMerges: every receipt) instead; pass revision back. mergeId: one merge's receipt. recentChanges: bulk edits (undo unfinished parts' batchIds in reverse array order), merges, imports and Trash instead, newest first.`,
+        ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${LIST_FILTERS}`
+        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${LIST_FILTERS} duplicates: possible duplicate pairs (offset) and undoable merges (mergeOffset; allMerges: every receipt) instead; pass revision back. mergeId: one merge's receipt. recentChanges: bulk edits (undo unfinished parts' batchIds in reverse array order), merges, imports and Trash instead, newest first.`,
     parameters:
       mode === "project"
         ? Schema.Struct(listParameters)

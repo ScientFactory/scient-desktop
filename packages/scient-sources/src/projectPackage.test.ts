@@ -971,7 +971,11 @@ describe("importing a project package", () => {
   it("brings an abstract with its provenance and keeps what this computer knows of other fields", async () => {
     const { base, mine, source } = await setup();
     const doi = { scheme: "doi", value: "10.1000/abstract-provenance" };
-    const abstractProvenance = { field: "abstract", origin: "crossref", sourceField: "abstract" } as const;
+    const abstractProvenance = {
+      field: "abstract",
+      origin: "crossref",
+      sourceField: "abstract",
+    } as const;
     const paper = await add(mine, "paper", {
       identifiers: [doi],
       abstract: "Why it matters.",

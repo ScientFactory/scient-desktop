@@ -112,7 +112,7 @@ async function requestFollowing(
         const next = new URL(response.headers.location, url);
         return requestFollowing(
           next,
-          next.hostname === url.hostname ? headers : publicHeaders(headers),
+          next.origin === url.origin ? headers : publicHeaders(headers),
           redirects + 1,
           limits,
           send,
@@ -133,7 +133,7 @@ async function requestFollowing(
   return promise;
 }
 
-/** A redirect to another host carries no key or token, only what any client sends. */
+/** A redirect to another origin (host or port) carries no key or token, only what any client sends. */
 function publicHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).filter(([name]) => /^(?:user-agent|accept)$/iu.test(name)),
