@@ -7,37 +7,42 @@ app, while an SSH or manually managed environment may run its own Scient server.
 ## Update the desktop app
 
 Packaged Scient releases check their selected update track after startup and
-periodically while the app is open. Updates are deliberate:
+periodically while the app is open. When a release is available, Scient
+downloads it in the background; the update control stays quiet meanwhile, and
+its tooltip shows the download. Installing is your choice:
 
-1. Select the update control near the bottom of the sidebar, or use
-   **Scient → Check for Updates…** on macOS.
-2. When a release is available, choose the control again to download it.
-3. When the download finishes, Scient restarts right away if nothing on this
-   computer is working. If something is, a notice appears just above the
-   control instead. Choose **Restart now** to install the update.
+1. When the download is ready, the update control shows **Update**. Its tooltip
+   says **Restart and update to** that version.
+2. Choose **Update**. A card opens just above the control with **Restart now**.
+   Choose it to install that version. The card stays until you use it, close
+   it, or choose **Update** again.
 
-Nothing is working when no agent is in the middle of a turn and no Compute code
-is running. An agent waiting on you, on another thread, or watching a pull
-request or a monitor counts as not working; it continues after the restart. An
-agent waiting on work it started itself, such as a build or a subagent, counts
-as working, because a restart would stop that work.
+If a newer release appears before you restart, Scient downloads it in place of
+the older one, and **Update** returns once it is ready. **Restart now**
+installs only the version its card names: if a newer download replaced it,
+Scient tells you instead of installing a different version.
 
-The notice closes after about five seconds, or when you dismiss it. The update
-control then shows **Restart**. Choosing **Restart** in the sidebar, or
-**Install** in **Settings**, restarts Scient right away, with no extra
-confirmation. The
-**Read more** link in the notice opens that version's Scient release notes;
-reading them does not install the update. On Windows, Scient can stay closed for
-a few minutes while the update installs, then reopens.
+If the background download fails, Scient tries again after 1, 5 and 15
+minutes, then hourly and every 4 hours. The control shows **Retry** in the
+meantime; choose it to download right away. When that download finishes, a
+notice appears just above the control for about five seconds with **Restart
+now**; afterwards the control shows **Update**.
+
+**Install** in **Settings** also restarts Scient right away for the version
+shown there, with no extra confirmation. The **Read more** link in the card
+opens that version's Scient release notes; reading them does not install the
+update. On Windows, Scient can stay closed for a few minutes while the update
+installs, then reopens.
 
 On a narrow sidebar, **Import conversation** and **Usage** move into the
 three-dot **More sidebar actions** menu while the update control or the update
 circle is showing. Widening the sidebar brings their icons back into the footer
 row.
 
-Scient installs an update only after you choose **Update** or **Restart**.
-Restarting interrupts running agent turns and terminal commands, so when you
-choose **Restart** yourself, let them finish first.
+Scient installs an update only after you choose **Restart now** or
+**Install**, or run an update of everything that includes this app (below).
+Quitting Scient does not install a downloaded update. Restarting interrupts
+running agent turns and terminal commands, so let them finish first.
 Threads, settings, and project files remain in their existing locations.
 
 If the app restarts on its old version, Scient tells you the update did not
@@ -88,19 +93,21 @@ elsewhere.
 An SSH machine that Scient starts from this app's own package is not listed; it
 moves to the new version the next time it connects after this app updates.
 
-When this app also has an update to download, choosing **Update** on the update
-control includes everything else in one step: outdated providers first, then
-servers that are behind, then this desktop app. Servers move to the version this
-app is installing, or to your web app's version. A background service stays on
-its current release channel, and a remote desktop app installs the latest
-release from its own channel. If servers would stop running threads, a small
-card above **Update** says how many and waits for you to choose **Update** or
-**Cancel**; otherwise the step starts straight away. Progress appears in the
-circle. Once each server has started its own
-restart, this app restarts right away if nothing on this computer is working,
-as described above. Otherwise the update control shows **Restart**, and you
-restart when you are ready. A server that is still restarting finishes on its
-own.
+When this app's background download has failed and you choose **Retry**,
+the update control includes everything else in one step: outdated providers
+first, then servers that are behind, then this desktop app. Servers move to the
+version this app is installing, or to your web app's version. A background
+service stays on its current release channel, and a remote desktop app installs
+the latest release from its own channel. If servers would stop running threads,
+a small card above the control says how many and waits for you to choose
+**Update** or **Cancel**; otherwise the step starts straight away. Progress
+appears in the circle. Once each server has started its own restart, this app
+restarts right away if no agent on this computer is in the middle of a turn and
+no Compute code is running. An agent waiting on you, on another thread, or
+watching a pull request or a monitor counts as not working; an agent waiting on
+work it started itself, such as a build or a subagent, counts as working.
+Otherwise the update control shows **Update**, and you restart when you are
+ready. A server that is still restarting finishes on its own.
 
 ## Keep a connected server in sync
 

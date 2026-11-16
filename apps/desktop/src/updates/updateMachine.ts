@@ -74,6 +74,11 @@ export function reduceDesktopUpdateStateOnCheckFailure(
       canRetry: true,
     };
   }
+  // SCIENT-FORK: an offered update keeps downloading on its own schedule; one failed check of the
+  // feed does not withdraw it.
+  if (state.status === "available" && state.availableVersion !== null) {
+    return { ...state, checkedAt };
+  }
 
   return {
     ...state,

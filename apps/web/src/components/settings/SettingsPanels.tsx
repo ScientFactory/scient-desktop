@@ -222,8 +222,11 @@ function AboutVersionSection() {
     if (action === "install") {
       if (isUpdateActionPending) return;
       setIsUpdateActionPending(true);
-      // SCIENT-FORK: Restart is the user's explicit action; no second confirmation.
-      void installDesktopUpdateNow(bridge).finally(() => setIsUpdateActionPending(false));
+      // SCIENT-FORK: Restart is the user's explicit action; no second confirmation. It installs
+      // only the build this panel shows, never one that replaced it.
+      void installDesktopUpdateNow(bridge, undefined, updateState?.downloadedVersion).finally(() =>
+        setIsUpdateActionPending(false),
+      );
       return;
     }
 

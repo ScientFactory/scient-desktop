@@ -99,6 +99,29 @@ export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | nul
   return state?.hostArch === "arm64" && state.appArch === "x64";
 }
 
+// SCIENT-FORK:START — the desktop downloads an offered update by itself. Until it is ready the
+// control stays idle, unless the download failed or the user started it; then it shows progress.
+export function isBackgroundDesktopUpdate(
+  state: DesktopUpdateState | null,
+  userStartedDownload: boolean,
+): boolean {
+  if (state === null || userStartedDownload) return false;
+  if (state.status === "downloading") return true;
+  return state.status === "available" && state.errorContext !== "download";
+}
+
+export function getDesktopUpdateBackgroundTooltip(state: DesktopUpdateState): string {
+  const version = state.availableVersion ? ` ${state.availableVersion}` : "";
+  if (state.status !== "downloading") return `Update${version} will download in the background`;
+  const percent = state.downloadPercent;
+  const progress =
+    typeof percent === "number" && Number.isFinite(percent)
+      ? ` (${Math.floor(Math.min(100, Math.max(0, percent)))}%)`
+      : "";
+  return `Downloading update${version} in the background${progress}`;
+}
+// SCIENT-FORK:END
+
 /** Scient's compact footer copy; action admission remains owned by the updater. */
 export function getScientDesktopUpdateLabel(state: DesktopUpdateState): string | null {
   if (state.status === "downloading") {
@@ -110,7 +133,8 @@ export function getScientDesktopUpdateLabel(state: DesktopUpdateState): string |
   const action = resolveDesktopUpdateButtonAction(state);
   if (action === "none") return null;
   if (state.errorContext === "download" || state.errorContext === "install") return "Retry";
-  return action === "install" ? "Restart" : "Update";
+  // SCIENT-FORK: a downloaded update is one click away; its card offers the restart.
+  return "Update";
 }
 
 export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null): boolean {
@@ -156,14 +180,15 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     return `Downloading update${progress}`;
   }
   if (state.status === "downloaded") {
-    return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
+    // SCIENT-FORK: the click opens the restart card.
+    return `Restart and update to ${state.downloadedVersion ?? state.availableVersion ?? "the new version"}`;
   }
   if (state.status === "error") {
     if (state.errorContext === "install" && state.downloadedVersion) {
       return `Install failed for ${state.downloadedVersion}. Click to retry.`;
     }
     if (state.downloadedVersion) {
-      return `Update ${state.downloadedVersion} downloaded. Click to restart and install.`;
+      return `Restart and update to ${state.downloadedVersion}`;
     }
     return state.message ?? "Update failed";
   }
