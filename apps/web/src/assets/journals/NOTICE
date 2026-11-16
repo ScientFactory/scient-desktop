@@ -1,0 +1,123 @@
+Bundled journal, publisher and platform artwork
+
+Retrieved 2026-11-16. All five packaged assets are 180 x 180 PNG images, decoded
+and visually inspected, totaling 49,637 bytes. They are faithful rasterizations
+and crops of the existing brand paths below, not generated or redrawn logos.
+No network access is required to display them.
+
+Redistribution basis: CC0-1.0 for the specified Simple Icons files; Wikimedia
+Commons PD-textlogo classification for the specified Nature and shared NEJM
+wordmarks (LicenseRef-PD-textlogo). The latter is Commons' documented public-
+domain assessment for simple text/geometric logos, not a publisher-issued
+license. No rights are inferred from an open-access article license or from a
+favicon's public availability. Restricted official-site favicon/AI/npj artwork
+is not included.
+
+Trademark rights and other non-copyright restrictions remain with the respective
+owners. The marks identify the named publications, publishers or platform only;
+no affiliation, sponsorship or endorsement of Scient is implied. CC0 does not
+waive trademark rights, and the Commons records expressly warn of trademark
+restrictions. This notice does not claim a trademark license or universal legal
+clearance in every jurisdiction.
+
+nature.png
+  Identity: Nature's existing lowercase n glyph. Exact Nature records may name
+    the journal; other curated Nature journals and generic nature.com URLs use
+    the explicit label "Nature (publisher)". This is not distinct Nature Medicine
+    or npj Digital Medicine artwork.
+  Author / trademark owner: Nature / Springer Nature.
+  Documented basis: Commons PD-textlogo, with trademark warning.
+  Provenance page: https://commons.wikimedia.org/wiki/File:Nature_journal_logo.svg
+  Page revision: https://commons.wikimedia.org/w/index.php?title=File:Nature_journal_logo.svg&oldid=1043519050
+  Retrieved source: https://upload.wikimedia.org/wikipedia/commons/d/db/Nature_journal_logo.svg
+  Official source cited by Commons: https://www.nature.com/static/images/logos/nature-logo-40.21a62d60b0.svg
+  Source SVG SHA-256: 7f3791381d448a662bc34026fb731f7fab6390fa1205761efcf10c51f693ef49
+  Transformation: ImageMagick SVG rasterization at density 960 (1630 x 400),
+    crop pixel bounds (0, 60, 310, 400) to retain the existing n glyph only;
+    trim transparent margins, proportionally fit within 148 x 148, center on a
+    180 x 180 white canvas. Original black artwork retained; no redrawing.
+  Packaged: 4,045 bytes.
+  Packaged SHA-256: 8be4b5519f1a25e57c9b421fddcead371981b468f83ac85072a1b8295ad18997
+
+nejm-group.png
+  Identity: existing shared circled-N mark from the NEJM wordmark. Labeled
+    "NEJM Group (publisher)" for NEJM AI and other NEJM-family identities;
+    never presented as distinct NEJM AI artwork or as NEJM Evidence artwork.
+  Author / trademark owner: NEJM / Massachusetts Medical Society.
+  Documented basis: Commons PD-textlogo, with trademark warning.
+  Provenance page: https://commons.wikimedia.org/wiki/File:NEJM_Evidence_logo.svg
+  Page revision: https://commons.wikimedia.org/w/index.php?title=File:NEJM_Evidence_logo.svg&oldid=875866478
+  Retrieved source: https://upload.wikimedia.org/wikipedia/commons/a/a3/NEJM_Evidence_logo.svg
+  Official source cited by Commons: https://evidence.nejm.org/
+  Source SVG SHA-256: edb8fb17389fb2a4d56966cc1955b082cd7091376485776249fa2bafe0474c2b
+  Transformation: ImageMagick SVG rasterization at density 960 (1910 x 700),
+    crop pixel bounds (0, 0, 355, 370) to retain only the existing circled-N
+    mark, excluding the other NEJM letters and Evidence text; trim transparent
+    margins, proportionally fit within 148 x 148, center on a 180 x 180 white
+    canvas. Original #FF3300 artwork retained; no added text or redrawing.
+  Packaged: 9,357 bytes.
+  Packaged SHA-256: 34937eb0e2e3feeed284eb763ead2113f910865ea8f8d6b689577dbee6e1251e
+
+Simple Icons sources
+  Project: https://github.com/simple-icons/simple-icons
+  Pinned revision: c37b20d397a710fdd402aae3cb643b820b142074
+  License: CC0 1.0 Universal (CC0-1.0).
+  License text: https://github.com/simple-icons/simple-icons/blob/c37b20d397a710fdd402aae3cb643b820b142074/LICENSE.md
+  License summary: https://creativecommons.org/publicdomain/zero/1.0/
+  Per-icon metadata: https://github.com/simple-icons/simple-icons/blob/c37b20d397a710fdd402aae3cb643b820b142074/data/simple-icons.json
+  Individual license overrides: checked; none is declared for PubMed, IEEE or
+    ACM at this revision. Brand colors and official-source URLs below are from
+    those metadata entries. Shapes are the unmodified upstream SVG paths.
+
+pubmed.png
+  Identity: PubMed indexing platform, not a journal, NCBI or PubMed Central mark.
+  Trademark owner: relevant US National Library of Medicine / NIH rights holders.
+  Source: https://raw.githubusercontent.com/simple-icons/simple-icons/c37b20d397a710fdd402aae3cb643b820b142074/icons/pubmed.svg
+  Official source in metadata: https://pubmed.ncbi.nlm.nih.gov/
+  Source SVG SHA-256: 1425034ba757d4d8449a231e0261c9469ae44ee502500c023879beb192462064
+  Transformation: render existing paths in metadata color #326599 using
+    ImageMagick at density 960 (240 x 240); trim transparent margins,
+    proportionally fit within 148 x 148, center on a 180 x 180 white canvas.
+  Packaged: 8,621 bytes.
+  Packaged SHA-256: 6ade6af1d223823a12286ec16dd69bee75fb3a450d0c9e6813456ad00e59a282
+
+ieee.png
+  Identity: IEEE publisher symbol, not distinct artwork for a particular journal.
+  Trademark owner: Institute of Electrical and Electronics Engineers.
+  Source: https://raw.githubusercontent.com/simple-icons/simple-icons/c37b20d397a710fdd402aae3cb643b820b142074/icons/ieee.svg
+  Official source in metadata: https://brand-experience.ieee.org/templates-tools-resources/resources/master-brand-and-logos/
+  Brand guidelines in metadata: https://brand-experience.ieee.org/guidelines/brand-identity/
+  Source SVG SHA-256: 53877ab27f061e2b21ced82e9987e3eb5f293ad73a32cb480980cd7f71ad0fab
+  Transformation: render existing paths in metadata color #00629B using
+    ImageMagick at density 3840 (960 x 960); crop pixel bounds
+    (0, 320, 304, 640) to retain the existing diamond symbol and registration
+    mark, excluding the IEEE wordmark; trim transparent margins, proportionally
+    fit within 148 x 148, center on a 180 x 180 white canvas.
+  Packaged: 15,493 bytes.
+  Packaged SHA-256: 6c51174e6026411649c4a7b50cd8d1ab06acb23f941be33669fc6395485faf7b
+
+acm.png
+  Identity: ACM publisher mark, not distinct artwork for a particular journal.
+  Trademark owner: Association for Computing Machinery.
+  Source: https://raw.githubusercontent.com/simple-icons/simple-icons/c37b20d397a710fdd402aae3cb643b820b142074/icons/acm.svg
+  Official source in metadata: https://identitystandards.acm.org/
+  Source SVG SHA-256: b69a0bfe5b08b2db9799d091607760e636ad288832aad5ca9d008ca76f46993b
+  Transformation: render existing paths in metadata color #0085CA using
+    ImageMagick at density 960 (240 x 240); trim transparent margins,
+    proportionally fit within 148 x 148, center on a 180 x 180 white canvas.
+  Packaged: 12,121 bytes.
+  Packaged SHA-256: 9866afed94d57828fbba7a65a0326ecea15deb1b02a26b029cba4f61330dfff8
+
+Curated journal title and ISSN references
+  https://www.nature.com/nature/
+  https://www.nature.com/nm/
+  https://www.nature.com/npjdigitalmed/
+  https://www.nature.com/ncomms/
+  https://www.nature.com/srep/
+  https://www.nature.com/nmeth/
+  https://www.nature.com/natmachintell/
+  https://ai.nejm.org/about
+  https://portal.issn.org/resource/ISSN/2836-9386
+  https://www.nejm.org/
+  https://ieeeaccess.ieee.org/
+  https://dl.acm.org/journal/csur

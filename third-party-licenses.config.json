@@ -1158,6 +1158,13 @@
       "license": "MIT",
       "sourceUrl": "https://github.com/anomalyco/opencode",
       "noticeFile": "apps/web/src/components/files/office/LICENSE.opencode"
+    },
+    {
+      "name": "Journal and publisher marks",
+      "bundles": ["assets", "desktop", "web"],
+      "license": "CC0-1.0 AND LicenseRef-PD-textlogo",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/Template:PD-textlogo",
+      "noticeFile": "apps/web/src/assets/journals/NOTICE"
     }
   ]
 }

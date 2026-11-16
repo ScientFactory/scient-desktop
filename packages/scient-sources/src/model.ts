@@ -301,6 +301,7 @@ export const ScientSourceSummary = Schema.Struct({
   issuedYear: ScientSourceRecord.fields.issuedYear,
   identifiers: ScientSourceRecord.fields.identifiers,
   containerTitle: ScientSourceRecord.fields.containerTitle,
+  publisher: Schema.optionalKey(ScientSourceRecord.fields.publisher),
   url: ScientSourceRecord.fields.url,
   // Optional so a client can read an older server's list.
   tags: Schema.optional(ScientSourceRecord.fields.tags),
@@ -327,6 +328,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
     containerTitle: record.containerTitle,
+    publisher: record.publisher,
     url: record.url,
     tags: record.tags,
     externalReferences: record.externalReferences,

@@ -1,10 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Tests use isolated temporary cache directories.
 // @effect-diagnostics globalDate:off -- Fixed Date values make cache freshness deterministic.
+// @effect-diagnostics globalTimers:off -- Fake timers control native HTTPS deadlines and lane admission.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimers from "node:timers";
+import * as NodeTimersPromises from "node:timers/promises";
 
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import type { ScientSourceRecord } from "@scientfactory/scient-sources";
 
 import {
@@ -12,6 +16,9 @@ import {
   resolveJournalIcon,
   type PublicHttpsHop,
 } from "./JournalIconResolver.ts";
+
+vi.mock("node:timers", { spy: true });
+vi.mock("node:timers/promises", { spy: true });
 
 function article(overrides: Partial<ScientSourceRecord> = {}): ScientSourceRecord {
   return {
@@ -94,19 +101,25 @@ describe("journal icon resolution", () => {
       mediaType: "image/png" as const,
       bytes: png,
     }));
+    const resolveLandingUrl = vi.fn(async () => new URL("https://journal.example/article"));
     const options = {
       now: () => new Date("2026-08-13T10:00:00.000Z"),
-      resolveLandingUrl: async () => new URL("https://journal.example/article"),
+      resolveLandingUrl,
       downloadIcon,
     };
 
     const first = await resolveJournalIcon({ record: article(), cacheRoot, options });
-    const second = await resolveJournalIcon({ record: article(), cacheRoot, options });
+    const second = await resolveJournalIcon({
+      record: article({ url: null, identifiers: [] }),
+      cacheRoot,
+      options,
+    });
 
     expect(first).toEqual(second);
     expect(first?.journalTitle).toBe("Example Journal");
     await expect(NodeFSP.readFile(first!.absolutePath)).resolves.toEqual(Buffer.from(png));
     expect(downloadIcon).toHaveBeenCalledTimes(1);
+    expect(resolveLandingUrl).toHaveBeenCalledTimes(1);
   });
 
   it("shares one in-flight lookup across rows from the same journal", async () => {
@@ -123,46 +136,190 @@ describe("journal icon resolution", () => {
     };
 
     const [first, second] = await Promise.all([
-      resolveJournalIcon({ record: article({ sourceId: "source_one" }), cacheRoot, options }),
-      resolveJournalIcon({ record: article({ sourceId: "source_two" }), cacheRoot, options }),
+      resolveJournalIcon({
+        record: article({ sourceId: "source_one", url: null }),
+        cacheRoot,
+        options,
+      }),
+      resolveJournalIcon({
+        record: article({ sourceId: "source_two", url: "https://another.example/another-article" }),
+        cacheRoot,
+        options,
+      }),
     ]);
 
     expect(first).toEqual(second);
     expect(downloadIcon).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps an existing smaller icon when its quality refresh cannot complete", async () => {
+  it("returns stale artwork before a blocked refresh and keeps it if the refresh fails", async () => {
     const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
-    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
-    let available = true;
-    const downloadIcon = vi.fn(async () =>
-      available
-        ? {
-            extension: "png" as const,
-            mediaType: "image/png" as const,
-            bytes: png,
-          }
-        : null,
-    );
-    const options = {
-      now: () => new Date("2026-08-13T10:00:00.000Z"),
-      resolveLandingUrl: async () => new URL("https://journal.example/article"),
-      downloadIcon,
+    const icon = {
+      extension: "png" as const,
+      mediaType: "image/png" as const,
+      bytes: pngOfSize(32),
     };
-    const first = await resolveJournalIcon({ record: article(), cacheRoot, options });
-    const metadataPath = NodePath.join(NodePath.dirname(first!.absolutePath), "metadata.json");
-    const metadata = JSON.parse(await NodeFSP.readFile(metadataPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    delete metadata.discoveryVersion;
-    await NodeFSP.writeFile(metadataPath, `${JSON.stringify(metadata)}\n`);
-    available = false;
-
+    const first = await resolveJournalIcon({
+      record: article(),
+      cacheRoot,
+      options: {
+        now: () => new Date("2026-08-13T10:00:00.000Z"),
+        downloadIcon: async () => icon,
+      },
+    });
+    const pending = Promise.withResolvers<null>();
+    const started = Promise.withResolvers<void>();
+    const options = {
+      now: () => new Date("2026-10-13T10:00:00.000Z"),
+      downloadIcon: vi.fn(() => {
+        started.resolve();
+        return pending.promise;
+      }),
+    };
     const retained = await resolveJournalIcon({ record: article(), cacheRoot, options });
-
+    await started.promise;
     expect(retained).toEqual(first);
-    expect(downloadIcon).toHaveBeenCalledTimes(2);
+    const concurrent = await resolveJournalIcon({ record: article(), cacheRoot, options });
+    expect(concurrent).toEqual(first);
+    expect(options.downloadIcon).toHaveBeenCalledTimes(1);
+    pending.resolve(null);
+    const failurePath = NodePath.join(NodePath.dirname(first!.absolutePath), "failure.json");
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await NodeFSP.readFile(failurePath, "utf8"))).toMatchObject({
+        retryAfter: options.now().getTime() + 6 * 60 * 60 * 1_000,
+      }),
+    );
+    expect(await resolveJournalIcon({ record: article(), cacheRoot, options })).toEqual(first);
+    await expect(NodeFSP.readFile(first!.absolutePath)).resolves.toEqual(icon.bytes);
+  });
+
+  it("persists failed discovery across a fresh resolver and retries after its deadline", async () => {
+    const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
+    const time = new Date("2026-08-13T10:00:00.000Z").getTime();
+    let now = time;
+    const resolveLandingUrl = vi.fn(async () => null);
+    const options = { now: () => new Date(now), resolveLandingUrl };
+    expect(await resolveJournalIcon({ record: article(), cacheRoot, options })).toBeNull();
+    vi.resetModules();
+    // A static import would retain the original resolver's process-local state.
+    const freshResolver = await import("./JournalIconResolver.ts");
+    expect(
+      await freshResolver.resolveJournalIcon({ record: article(), cacheRoot, options }),
+    ).toBeNull();
+    expect(resolveLandingUrl).toHaveBeenCalledTimes(1);
+    now += 6 * 60 * 60 * 1_000;
+    expect(
+      await freshResolver.resolveJournalIcon({ record: article(), cacheRoot, options }),
+    ).toBeNull();
+    expect(resolveLandingUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds the whole discovery and aborts a stalled publisher without accepting its late result", async () => {
+    const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
+    const started = Promise.withResolvers<AbortSignal>();
+    const pending = Promise.withResolvers<{ status: number; location: null; body: Buffer }>();
+    vi.useFakeTimers();
+    try {
+      using _timer = vi.spyOn(NodeTimers, "setTimeout").mockImplementation(globalThis.setTimeout);
+      using _clearTimer = vi
+        .spyOn(NodeTimers, "clearTimeout")
+        .mockImplementation(globalThis.clearTimeout);
+      const resolution = resolveJournalIcon({
+        record: article(),
+        cacheRoot,
+        options: {
+          httpsHop: ({ signal }) => {
+            started.resolve(signal!);
+            return pending.promise;
+          },
+        },
+      });
+      const signal = await started.promise;
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(await resolution).toBeNull();
+      expect(signal.aborted).toBe(true);
+      pending.resolve({ status: 200, location: null, body: pngOfSize(64) });
+      const resolveLandingUrl = vi.fn(async () => new URL("https://journal.example/article"));
+      expect(
+        await resolveJournalIcon({ record: article(), cacheRoot, options: { resolveLandingUrl } }),
+      ).toBeNull();
+      expect(resolveLandingUrl).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives each queued journal its discovery budget after Crossref admission", async () => {
+    const cacheRoot = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-icons-"));
+    vi.useFakeTimers();
+    const started = Promise.withResolvers<void>();
+    const completed = Array.from({ length: 10 }, () => Promise.withResolvers<void>());
+    let completedCount = 0;
+    const delay = (milliseconds: number | undefined) => {
+      const pending = Promise.withResolvers<void>();
+      globalThis.setTimeout(pending.resolve, milliseconds);
+      return pending.promise;
+    };
+    try {
+      using _timer = vi.spyOn(NodeTimers, "setTimeout").mockImplementation(globalThis.setTimeout);
+      using _clearTimer = vi
+        .spyOn(NodeTimers, "clearTimeout")
+        .mockImplementation(globalThis.clearTimeout);
+      using _laneWait = vi
+        .spyOn(NodeTimersPromises, "setTimeout")
+        .mockImplementation(async (delayMs, value) => {
+          await delay(delayMs);
+          return value!;
+        });
+      const httpsHop: PublicHttpsHop = async ({ url }) => {
+        if (url.hostname === "api.crossref.org") {
+          started.resolve();
+          await delay(1_000);
+          return {
+            status: 200,
+            location: null,
+            body: Buffer.from(
+              JSON.stringify({
+                message: { resource: { primary: { URL: "https://journal.example/article" } } },
+              }),
+            ),
+          };
+        }
+        return {
+          status: 200,
+          location: null,
+          body: url.pathname.endsWith(".png")
+            ? pngOfSize(180)
+            : Buffer.from('<link rel="icon" href="/icon.png">'),
+        };
+      };
+      const journals = Array.from({ length: 10 }, (_, index) => `Queued Journal ${index}`);
+      const results = Promise.all(
+        journals.map((containerTitle, index) =>
+          resolveJournalIcon({
+            cacheRoot,
+            record: article({
+              containerTitle,
+              url: null,
+              identifiers: [{ scheme: "doi", value: `10.1000/${index}` }],
+            }),
+            options: { httpsHop },
+          }).then((result) => {
+            completed[completedCount++]!.resolve();
+            return result;
+          }),
+        ),
+      );
+      await started.promise;
+      for (const completion of completed) {
+        await vi.advanceTimersByTimeAsync(1_200);
+        await completion.promise;
+      }
+      expect((await results).map((icon) => icon?.journalTitle)).toEqual(journals);
+    } finally {
+      vi.useRealTimers();
+      await NodeFSP.rm(cacheRoot, { recursive: true, force: true });
+    }
   });
 
   it("recognizes supported raster formats and rejects active or arbitrary content", () => {
