@@ -140,4 +140,18 @@ describe("product insight contract", () => {
       }
     }
   });
+  it("keeps a file tab's type only when it is a known file type", () => {
+    const fileType = (value?: unknown) =>
+      normalizeInheritedEvent(
+        "panel.viewed",
+        { category: "file-preview", ...(value === undefined ? {} : { fileType: value }) },
+        context,
+      )?.properties.fileType;
+    expect(fileType("CSV")).toBe("csv");
+    expect(fileType("h5")).toBe("h5");
+    expect(fileType("none")).toBe("none");
+    for (const value of ["yaacovproject", "/Users/PRIVATE", "PRIVATE@example.com", 7])
+      expect(fileType(value)).toBe("other");
+    expect(fileType()).toBeUndefined();
+  });
 });
