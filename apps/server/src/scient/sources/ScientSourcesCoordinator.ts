@@ -160,7 +160,7 @@ import {
   resolveProjectBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
 import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
-import { recordZoteroSync } from "./ZoteroSync.ts";
+import { recordZoteroSync, verifyZoteroItemOwner } from "./ZoteroSync.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 import {
   forgetSourceCategories,
@@ -1735,8 +1735,27 @@ async function importZoteroOperationItem(input: {
   const imported = await zoteroImportMaterial(transport, input.itemKey);
   const { material, files } = imported;
   const candidate = zoteroImportCandidate(imported.candidate, groupId, input.itemKey);
+  const resume = async (matchingSourceIds?: ReadonlyArray<string>) => {
+    const record = await partiallyImportedRecord({
+      ...input,
+      candidate,
+      ...(matchingSourceIds ? { matchingSourceIds } : {}),
+    });
+    if (record) {
+      await verifyZoteroItemOwner({
+        root: input.root,
+        record,
+        candidate: material.candidate,
+        base: await readScientSourceZoteroSync(input.root, record.sourceId),
+        connection: transport.connection,
+        zotero: input.zotero,
+        action: "resume",
+      });
+    }
+    return record;
+  };
   try {
-    let partial = await partiallyImportedRecord({ ...input, candidate });
+    let partial = await resume();
     const [primary, ...extra] = files;
     let result = partial
       ? {
@@ -1758,11 +1777,7 @@ async function importZoteroOperationItem(input: {
           allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
         });
     if (result.outcome === "duplicate") {
-      partial = await partiallyImportedRecord({
-        ...input,
-        candidate,
-        matchingSourceIds: result.duplicate.matchingSourceIds,
-      });
+      partial = await resume(result.duplicate.matchingSourceIds);
       if (partial) result = { ...result, outcome: "imported", record: partial };
     }
     const record =
@@ -1787,13 +1802,19 @@ async function importZoteroOperationItem(input: {
             ),
         ),
       );
-      if (!(await readScientSourceZoteroSync(input.root, record.sourceId))) {
+      const base = await readScientSourceZoteroSync(input.root, record.sourceId);
+      const annotationLibraryId =
+        base?.annotationLibraryId ??
+        base?.libraryId ??
+        record.externalReferences.find((reference) => reference.system === "zotero")!.libraryId;
+      if (!base) {
         await recordZoteroSync({
           root: input.root,
           record,
           material,
           attachmentKeys: files.map((file) => file.attachmentKey),
           pdfs: Object.fromEntries(pdfs),
+          annotationLibraryId,
         });
       }
       const unfiled = await addToZoteroCollections({
@@ -1811,6 +1832,7 @@ async function importZoteroOperationItem(input: {
       const highlights = await bringZoteroAnnotations({
         root: input.root,
         record,
+        annotationLibraryId,
         annotations: onCopied,
         pdfs,
         now: new Date().toISOString(),

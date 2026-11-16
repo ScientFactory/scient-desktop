@@ -24,6 +24,8 @@ import {
   readScientSourceZoteroSync,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  sourceAttachmentAbsolutePath,
+  updateSourceImportOperationItem,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
@@ -40,7 +42,7 @@ import {
   zoteroGroupItem,
   zoteroItem,
 } from "./Zotero.testkit.ts";
-import { zoteroItemToCandidate } from "./ZoteroItems.ts";
+import { zoteroItemToCandidate, type ZoteroRawItem } from "./ZoteroItems.ts";
 import { countZoteroScopeStandalone, readZoteroItemMaterial } from "./ZoteroLibraryReader.ts";
 import type { ZoteroWebHttp } from "./ZoteroWebAdapter.ts";
 import {
@@ -48,6 +50,8 @@ import {
   readScientAnnotationFile,
 } from "../annotations/annotationStore.ts";
 import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
+import { refreshZoteroSources } from "./ZoteroSync.ts";
+import { textPdf } from "../annotations/annotationTestUtils.ts";
 
 const roots: string[] = [];
 
@@ -118,21 +122,32 @@ describe("Zotero import", () => {
     expect(record?.origin).toMatchObject({ actor: "user", intake: "zotero" });
   });
 
-  it.each(["item", "run"] as const)(
-    "resumes a partial source through %s retry without replacing later edits",
-    async (retry) => {
+  it.each([
+    { retry: "item", libraryId: 475425 },
+    { retry: "run", libraryId: 475425 },
+    { retry: "item after owner verification", libraryId: 0 },
+  ] as const)(
+    "resumes a partial source through $retry retry without replacing later edits",
+    async ({ retry, libraryId }) => {
       const root = await project();
-      const transport = fakeZoteroTransport({
+      const firstPdf = await pdf(root, "one.pdf");
+      await NodeFSP.writeFile(firstPdf, textPdf([["A quote whose note I edited."]]));
+      const library = {
         items: new Map([
           [
             "ABCD2345",
             {
-              item: zoteroItem("ABCD2345", {
-                title: "Partly imported",
-                abstractNote: "Already has an abstract.",
-                collections: ["COLL2345"],
-                extra: "Citation Key: originalKey",
-              }),
+              item: zoteroItem(
+                "ABCD2345",
+                {
+                  title: "Partly imported",
+                  abstractNote: "Already has an abstract.",
+                  DOI: "10.1000/partial-zotero",
+                  collections: ["COLL2345"],
+                  extra: "Citation Key: originalKey",
+                },
+                libraryId,
+              ),
               children: [
                 zoteroItem("NOTE2345", { itemType: "note", note: "<p>Original note</p>" }),
                 pdfAttachment("PDFA2345", "one.pdf"),
@@ -150,7 +165,7 @@ describe("Zotero import", () => {
           ],
         ]),
         files: new Map([
-          ["PDFA2345", await pdf(root, "one.pdf")],
+          ["PDFA2345", firstPdf],
           ["PDFB2345", await pdf(root, "two.pdf")],
           ["PDFC2345", await pdf(root, "three.pdf")],
         ]),
@@ -165,6 +180,15 @@ describe("Zotero import", () => {
                 annotationType: "highlight",
                 annotationText: "An older quote",
                 annotationComment: "Removed here",
+                annotationColor: "#ffd400",
+                annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+              }),
+              zoteroItem("EDIT2345", {
+                itemType: "annotation",
+                parentItem: "PDFA2345",
+                annotationType: "highlight",
+                annotationText: "A quote whose note I edited.",
+                annotationComment: "Original highlight note",
                 annotationColor: "#ffd400",
                 annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
               }),
@@ -185,7 +209,8 @@ describe("Zotero import", () => {
             ],
           ],
         ]),
-      });
+      };
+      const transport = fakeZoteroTransport(library);
       const zotero = fakeZoteroAccess(transport);
       await beginZoteroScopedImport({
         root,
@@ -240,32 +265,67 @@ describe("Zotero import", () => {
         relativePath: null,
         command: {
           action: "remove",
-          annotationId: "ann_zotero_user_0_OLDM2345",
+          annotationId: `ann_zotero_user_${libraryId}_OLDM2345`,
           expectedRevision: 1,
         },
         actor: "user",
         now: "2026-11-16T13:00:00.000Z",
       });
+      const highlightEdit = await mutateScientAnnotations({
+        canonicalRoot: root,
+        material: { sha256: first.sha256, byteLength: first.byteLength },
+        relativePath: null,
+        command: {
+          action: "update",
+          annotationId: `ann_zotero_user_${libraryId}_EDIT2345`,
+          expectedRevision: 1,
+          note: "My later highlight note",
+        },
+        actor: "user",
+        now: "2026-11-16T13:00:00.000Z",
+      });
+      expect(highlightEdit.outcome).toBe("updated");
       const tombstoned = await readScientAnnotationFile(root, first.sha256);
       expect(tombstoned?.unplaced?.[0]?.deletedAt).toBe("2026-11-16T13:00:00.000Z");
+      if (libraryId === 0) {
+        const original = library.items.get("ABCD2345")!;
+        library.items.set("ABCD2345", {
+          ...original,
+          item: { ...original.item, library: { type: "user", id: 475425 } },
+        });
+        const refreshed = await refreshZoteroSources({
+          root,
+          sourceIds: [partial!.sourceId],
+          actor: "user",
+          zotero,
+        });
+        expect(refreshed.items[0]?.outcome).toBe("updated");
+        expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toMatchObject({
+          libraryId: "475425",
+          annotationLibraryId: "0",
+        });
+        expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
+      }
+      const current = (await listScientSourceRecords(root))[0]!;
       const edited = await updateScientSourceMetadata({
         root,
         sourceId: partial!.sourceId,
-        expectedRevision: partial!.revision,
+        expectedRevision: current.revision,
         metadata: {
-          ...editableMetadataFromRecord(partial!),
+          ...editableMetadataFromRecord(current),
           title: "My later title",
           citationKey: "myLaterKey",
         },
         actor: "user",
       });
-      const noted = await updateScientSourceNote({
+      await updateScientSourceNote({
         root,
         sourceId: partial!.sourceId,
         expectedRevision: edited.record.revision,
         note: "My later note",
         actor: "user",
       });
+      const beforeRetry = (await listScientSourceRecords(root))[0]!;
       let operationId = "retry-zotero-pdfs";
       if (retry === "run") {
         const next = await continueZoteroImportRun({
@@ -288,7 +348,7 @@ describe("Zotero import", () => {
         title: "My later title",
         citationKey: "myLaterKey",
         note: "My later note",
-        revision: noted.record.revision + 1,
+        revision: beforeRetry.revision + (libraryId === 0 ? 0 : 1),
       });
       expect(records[0]!.attachments.map((attachment) => attachment.fileName).toSorted()).toEqual(
         ["one.pdf", "two.pdf", "three.pdf"].toSorted(),
@@ -298,7 +358,7 @@ describe("Zotero import", () => {
       )!;
       const marks = await readScientAnnotationFile(root, third.sha256);
       expect(marks?.unplaced).toMatchObject([
-        { annotationId: "ann_zotero_user_0_MARK2345", comment: "Keep this comment" },
+        { annotationId: `ann_zotero_user_${libraryId}_MARK2345`, comment: "Keep this comment" },
       ]);
       expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
       expect((await readScientSourcesOrganization(root)).collections).toMatchObject([
@@ -307,9 +367,166 @@ describe("Zotero import", () => {
       const sync = await readScientSourceZoteroSync(root, partial!.sourceId);
       expect(sync?.attachmentKeys.toSorted()).toEqual(["PDFA2345", "PDFB2345", "PDFC2345"]);
       expect(sync?.note).toBe("Original note");
+      if (libraryId === 0) {
+        expect(sync).toMatchObject({ libraryId: "475425", annotationLibraryId: "0" });
+      }
       expect(await advanceSourceImport({ root, operationId, zotero })).toEqual(finished);
       expect(await readScientAnnotationFile(root, third.sha256)).toEqual(marks);
       expect(await listScientSourceRecords(root)).toEqual(records);
+    },
+  );
+
+  it.each([
+    { owner: 475425, retry: "item" },
+    { owner: 475425, retry: "run" },
+    { owner: 0, retry: "item" },
+    { owner: 0, retry: "run" },
+  ] as const)(
+    "refuses another owner's same-key work on $retry retry of owner $owner",
+    async ({ owner, retry }) => {
+      const root = await project();
+      const keptPdf = await pdf(root, "kept.pdf");
+      const stagedPdf = await pdf(root, "staged.pdf");
+      const foreignPdf = await pdf(root, "foreign.pdf");
+      const initial = {
+        item: zoteroItem(
+          "ABCD2345",
+          {
+            title: "Original owner's work",
+            DOI: "10.1000/original-owner",
+            abstractNote: "Already complete.",
+            extra: "Citation Key: originalOwnerKey",
+          },
+          owner,
+        ),
+        children: [pdfAttachment("KEEP2345", "kept.pdf"), pdfAttachment("WAIT2345", "staged.pdf")],
+      };
+      const library = {
+        items: new Map<string, { item: ZoteroRawItem; children: ReadonlyArray<ZoteroRawItem> }>([
+          ["ABCD2345", initial],
+          ["EFGH2345", { item: zoteroItem("EFGH2345", { title: "Next part" }), children: [] }],
+        ]),
+        files: new Map([
+          ["KEEP2345", keptPdf],
+          ["WAIT2345", stagedPdf],
+          ["OTHER234", foreignPdf],
+        ]),
+      };
+      const zotero = fakeZoteroAccess(fakeZoteroTransport(library));
+      const begun = await beginZoteroScopedImport({
+        root,
+        operationId: "owner-retry",
+        scope: { kind: "library" },
+        zotero,
+        partSize: 1,
+      });
+      const committed = await importScientSource({
+        root,
+        operationId: begun.operationId,
+        candidate: zoteroItemToCandidate(initial.item),
+        pdfPath: keptPdf,
+        actor: "user",
+        intake: "zotero",
+      });
+      expect(committed.outcome).toBe("imported");
+      const edited = await updateScientSourceMetadata({
+        root,
+        sourceId: committed.record!.sourceId,
+        expectedRevision: committed.record!.revision,
+        metadata: {
+          ...editableMetadataFromRecord(committed.record!),
+          citationKey: "myOwnerKey",
+          tags: ["My later tag"],
+        },
+        actor: "user",
+      });
+      const noted = await updateScientSourceNote({
+        root,
+        sourceId: edited.record.sourceId,
+        expectedRevision: edited.record.revision,
+        note: "My later note",
+        actor: "user",
+      });
+      await updateSourceImportOperationItem({
+        root,
+        operationId: begun.operationId,
+        itemKey: initial.item.key,
+        state: "failed",
+        message: "Interrupted after the first PDF was committed.",
+      });
+      library.items.set(initial.item.key, {
+        item: zoteroItem(
+          initial.item.key,
+          {
+            title: "Unrelated new owner's work",
+            DOI: "10.1000/foreign-owner",
+            abstractNote: "Already complete.",
+          },
+          999999,
+        ),
+        children: [
+          pdfAttachment("OTHER234", "foreign.pdf"),
+          zoteroItem("NOTE2345", { itemType: "note", note: "<p>Another owner's note</p>" }),
+        ],
+      });
+      const operation =
+        retry === "run"
+          ? await continueZoteroImportRun({
+              root,
+              runId: begun.run!.runId,
+              retryFailed: true,
+              partSize: 1,
+              zotero,
+            })
+          : await retrySourceImport({
+              root,
+              operationId: begun.operationId,
+              itemKeys: [initial.item.key],
+            });
+      const stagedBytes = await NodeFSP.readFile(stagedPdf);
+      const before = noted.record;
+      const failed = await advanceSourceImport({
+        root,
+        operationId: operation.operationId,
+        zotero,
+      });
+      expect(failed.items[0]).toMatchObject({ itemKey: initial.item.key, state: "failed" });
+      expect(failed.run?.runId).toBe(begun.run!.runId);
+      expect(await listScientSourceRecords(root)).toEqual([before]);
+      expect(await readScientSourceZoteroSync(root, before.sourceId)).toBeNull();
+      expect(await NodeFSP.readFile(stagedPdf)).toEqual(stagedBytes);
+      expect(
+        await NodeFSP.readFile(sourceAttachmentAbsolutePath(root, before.attachments[0]!)),
+      ).toEqual(await NodeFSP.readFile(keptPdf));
+
+      library.items.set(initial.item.key, {
+        ...initial,
+        item: { ...initial.item, library: { type: "user", id: owner || 475425 } },
+      });
+      await retrySourceImport({
+        root,
+        operationId: operation.operationId,
+        itemKeys: [initial.item.key],
+      });
+      const finished = await advanceSourceImport({
+        root,
+        operationId: operation.operationId,
+        zotero,
+      });
+      expect(finished.items[0]).toMatchObject({ state: "imported", sourceId: before.sourceId });
+      const records = await listScientSourceRecords(root);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        sourceId: before.sourceId,
+        citationKey: "myOwnerKey",
+        tags: ["My later tag"],
+        note: "My later note",
+        origin: before.origin,
+      });
+      expect(records[0]!.attachments.map((attachment) => attachment.fileName)).toEqual([
+        before.attachments[0]!.fileName,
+        "staged.pdf",
+      ]);
     },
   );
 

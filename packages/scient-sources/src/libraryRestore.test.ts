@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The restore drill runs real Library steps in temporary folders.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -158,6 +159,99 @@ const besideOf = async (libraryRoot: string) =>
   (await NodeFSP.readdir(NodePath.dirname(libraryRoot))).toSorted();
 
 describe("restoring a backup of the Library", () => {
+  it.each(["file-link", "parent-link", "directory", "unlisted-link"] as const)(
+    "rejects a backup containing a %s without replacing a prior good restore",
+    async (kind) => {
+      const scenario = await createScenario(await temporaryRoot());
+      const nested = NodePath.join(scenario.libraryRoot, "future");
+      await NodeFSP.mkdir(nested);
+      await NodeFSP.writeFile(NodePath.join(nested, "kept.txt"), "external bytes\n");
+      const backup = await backUp(scenario);
+      const restoredRoot = NodePath.join(scenario.root, "restored", "library");
+      const good = await prepareScientLibraryRestore({ libraryRoot: restoredRoot, backup });
+      expect(good.outcome).toBe("ready");
+      const payload = NodePath.join(backup, "library");
+      const outside = NodePath.join(scenario.root, "outside");
+      await NodeFSP.mkdir(outside);
+      await NodeFSP.writeFile(NodePath.join(outside, "kept.txt"), "external bytes\n");
+      if (kind === "parent-link") {
+        await NodeFSP.rm(NodePath.join(payload, "future"), { recursive: true });
+        await NodeFSP.symlink(outside, NodePath.join(payload, "future"), "dir");
+      } else if (kind === "unlisted-link") {
+        await NodeFSP.symlink(outside, NodePath.join(payload, "extra"), "dir");
+      } else {
+        const file = NodePath.join(payload, "future", "kept.txt");
+        await NodeFSP.unlink(file);
+        if (kind === "directory") await NodeFSP.mkdir(file);
+        else await NodeFSP.symlink(NodePath.join(outside, "kept.txt"), file);
+      }
+      expect(
+        await prepareScientLibraryRestore({ libraryRoot: restoredRoot, backup }),
+      ).toMatchObject({
+        outcome: "damaged",
+      });
+      expect(await readScientLibraryRestorePending(restoredRoot)).toMatchObject({
+        restoreId: good.outcome === "ready" ? good.restoreId : "",
+      });
+      expect(
+        (await besideOf(restoredRoot)).filter((name) => name.startsWith("library.restoring-")),
+      ).toHaveLength(1);
+      expect(await finishScientLibraryRestore(restoredRoot)).toMatchObject({ outcome: "restored" });
+      expect(
+        await NodeFSP.readFile(NodePath.join(restoredRoot, "future", "kept.txt"), "utf8"),
+      ).toBe("external bytes\n");
+      expect((await NodeFSP.lstat(NodePath.join(restoredRoot, "future"))).isSymbolicLink()).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each(["file", "parent"] as const)(
+    "rejects a %s swapped for a link after enumeration and removes its staging folder",
+    async (kind) => {
+      const scenario = await createScenario(await temporaryRoot());
+      const nested = NodePath.join(scenario.libraryRoot, "future");
+      await NodeFSP.mkdir(nested);
+      await NodeFSP.writeFile(NodePath.join(nested, "kept.txt"), "matching bytes\n");
+      const backup = await backUp(scenario);
+      const outside = NodePath.join(scenario.root, "outside");
+      await NodeFSP.mkdir(outside);
+      await NodeFSP.writeFile(NodePath.join(outside, "kept.txt"), "matching bytes\n");
+      const restoredRoot = NodePath.join(scenario.root, "restored", "library");
+      let swapped = false;
+      const result = await prepareScientLibraryRestore({
+        libraryRoot: restoredRoot,
+        backup,
+        // Called synchronously after enumeration and before the first payload copy.
+        shouldStop: () => {
+          if (!swapped) {
+            swapped = true;
+            const target = NodePath.join(backup, "library", "future");
+            if (kind === "parent") {
+              NodeFS.rmSync(target, { recursive: true });
+              NodeFS.symlinkSync(outside, target, "dir");
+            } else {
+              NodeFS.unlinkSync(NodePath.join(target, "kept.txt"));
+              NodeFS.symlinkSync(
+                NodePath.join(outside, "kept.txt"),
+                NodePath.join(target, "kept.txt"),
+              );
+            }
+          }
+          return false;
+        },
+      });
+      expect(swapped).toBe(true);
+      expect(result).toEqual({ outcome: "damaged", file: "future/kept.txt" });
+      expect(await readScientLibraryRestorePending(restoredRoot)).toBeNull();
+      expect(
+        (await besideOf(restoredRoot)).filter((name) => name.startsWith("library.restoring-")),
+      ).toEqual([]);
+      expect(await finishScientLibraryRestore(restoredRoot)).toEqual({ outcome: "none" });
+      expect(NodeFS.existsSync(restoredRoot)).toBe(false);
+    },
+  );
+
   it("brings back every kept file and every rule, and the Library goes on working", async () => {
     const { scenario, model } = await build();
     const before = await inventory(scenario.libraryRoot);

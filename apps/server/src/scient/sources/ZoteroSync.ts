@@ -148,6 +148,45 @@ async function verifiedLegacyOwner(
   }
 }
 
+export async function verifyZoteroItemOwner(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly record: ScientSourceRecord;
+  readonly candidate: ScientSourceCandidate;
+  readonly base: ScientSourceZoteroSync | null;
+  readonly connection: ZoteroTransport["connection"];
+  readonly verifiedLocalOwner?: string | undefined;
+  readonly zotero?: ZoteroAccess;
+  readonly action: "refresh" | "resume";
+}): Promise<string | undefined> {
+  const reference = zoteroReference(input.record);
+  const current = zoteroReference(input.candidate);
+  const past = input.action === "refresh" ? "refreshed" : "resumed";
+  if (!reference || !current || reference.itemKey !== current.itemKey) {
+    throw new Error(
+      `This Zotero source is not the item originally imported. No source was ${past}.`,
+    );
+  }
+  const verifiedLocalOwner =
+    input.connection === "local"
+      ? corroboratedLegacyOwner(input.record, reference, input.candidate, input.base)
+      : (input.verifiedLocalOwner ??
+        (input.zotero
+          ? await verifiedLegacyOwner(input.zotero, reference, input.root, input.record)
+          : undefined));
+  if (
+    current.libraryId === "0" ||
+    (reference.libraryId === "0" && verifiedLocalOwner === undefined)
+  ) {
+    throw new Error(`This Zotero library's owner could not be verified. No source was ${past}.`);
+  }
+  if (!sameZoteroLibrary(reference.libraryId, current.libraryId, verifiedLocalOwner)) {
+    throw new Error(
+      `This Zotero source belongs to another library. Connect its owner to ${input.action} it.`,
+    );
+  }
+  return verifiedLocalOwner;
+}
+
 /** Records what Zotero held when a source was imported, so a later refresh has a base. */
 export async function recordZoteroSync(input: {
   readonly root: ScientSourceStoreLocation;
@@ -325,26 +364,17 @@ async function refreshOne(input: {
     throw error;
   }
   const currentReference = zoteroReference(material.candidate);
-  const currentLibraryId = currentReference?.libraryId;
   const savedBase = await readScientSourceZoteroSync(input.root, input.record.sourceId);
-  const verifiedLocalOwner =
-    input.transport.connection === "local"
-      ? corroboratedLegacyOwner(input.record, reference, material.candidate, savedBase)
-      : input.verifiedLocalOwner;
-  if (
-    currentLibraryId === "0" ||
-    (reference.libraryId === "0" && verifiedLocalOwner === undefined)
-  ) {
-    throw new Error("This Zotero library's owner could not be verified. No source was refreshed.");
-  }
-  if (
-    currentLibraryId === undefined ||
-    !sameZoteroLibrary(reference.libraryId, currentLibraryId, verifiedLocalOwner)
-  ) {
-    throw new Error(
-      "This Zotero source belongs to another library. Connect its owner to refresh it.",
-    );
-  }
+  const verifiedLocalOwner = await verifyZoteroItemOwner({
+    root: input.root,
+    record: input.record,
+    candidate: material.candidate,
+    base: savedBase,
+    connection: input.transport.connection,
+    verifiedLocalOwner: input.verifiedLocalOwner,
+    action: "refresh",
+  });
+  const currentLibraryId = currentReference!.libraryId;
   const base =
     savedBase?.itemKey === reference.itemKey &&
     sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner)

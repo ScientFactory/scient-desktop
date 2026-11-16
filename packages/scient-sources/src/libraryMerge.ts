@@ -44,6 +44,7 @@ import { normalizePersistentIdentifier } from "./normalize.ts";
 import { scientSourceTagKey } from "./organize.ts";
 import { workLevelIdentifierKey } from "./sourceIdentity.ts";
 import { scientSourceStoreInternals } from "./store.ts";
+import { isNodeError } from "./storeFiles.ts";
 
 const {
   sourceStorePaths,
@@ -164,6 +165,36 @@ function planMerge(
       conflicts.push({ field, kept, other: offered });
     }
   }
+  if (filled.includes("creators")) {
+    // Completeness belongs to the selected names; track even absence for Undo's paired check.
+    set("incompleteCreatorRoles", loser.incompleteCreatorRoles);
+    filled.push("incompleteCreatorRoles");
+  } else if (
+    survivor.creators.length > 0 &&
+    loser.creators.length > 0 &&
+    !same(survivor.incompleteCreatorRoles ?? [], loser.incompleteCreatorRoles ?? [])
+  ) {
+    conflicts.push({
+      field: "incompleteCreatorRoles",
+      kept: survivor.incompleteCreatorRoles ?? [],
+      other: loser.incompleteCreatorRoles ?? [],
+    });
+  }
+  let more: Record<string, string> | undefined;
+  for (const [name, offered] of Object.entries(loser.more ?? {})) {
+    const kept = survivor.more?.[name];
+    if (isEmptyValue(offered) || same(kept, offered)) continue;
+    const field = `more.${name}`;
+    if (isEmptyValue(kept)) {
+      more ??= { ...survivor.more };
+      more[name] = offered;
+      changes.push({ field, ...(kept === undefined ? {} : { before: kept }), after: offered });
+      filled.push(field);
+    } else {
+      conflicts.push({ field, kept, other: offered });
+    }
+  }
+  if (more !== undefined) next.more = more;
   // Sections only describe the abstract they were parsed from.
   if (
     isEmptyValue(current.abstractSections) &&
@@ -436,6 +467,19 @@ async function finishMerges(
   return finished;
 }
 
+async function pendingMergeEntries(paths: StorePaths) {
+  const directory = NodePath.join(paths.root, MERGES_DIRECTORY, PENDING_MERGES_DIRECTORY);
+  const state = await snapshot(directory);
+  if (state === "missing") return [];
+  if (state !== "directory") throw new Error("The pending merges path is not a safe directory.");
+  try {
+    return await NodeFSP.readdir(directory, { withFileTypes: true });
+  } catch (cause) {
+    if (isNodeError(cause, "ENOENT")) return [];
+    throw cause;
+  }
+}
+
 /**
  * Finishes merges and Undos a stopped process left halfway. A merge whose survivor revision
  * landed is completed; one that stopped before it, or whose records changed since, is dropped,
@@ -443,21 +487,21 @@ async function finishMerges(
  */
 async function settlePendingMerges(paths: StorePaths): Promise<void> {
   const directory = NodePath.join(paths.root, MERGES_DIRECTORY, PENDING_MERGES_DIRECTORY);
-  if ((await snapshot(directory)) !== "directory") return;
   const finishing: ScientLibraryMerge[] = [];
   const undoing: string[] = [];
-  for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+  for (const entry of await pendingMergeEntries(paths)) {
+    if (!entry.name.endsWith(".json")) continue;
+    if (!entry.isFile()) throw new Error(`${entry.name} is not a safe pending merge file.`);
     const filePath = NodePath.join(directory, entry.name);
     if (entry.name.startsWith(PENDING_UNDO_PREFIX)) {
       undoing.push(filePath);
       continue;
     }
-    const merge = await readBoundedJson(filePath, MAX_MERGE_BYTES, ScientLibraryMerge).catch(
-      () => null,
-    );
-    if (!merge) continue;
-    const trashed = await readTrashEntry(paths, merge.loserId).catch(() => null);
+    const merge = await readBoundedJson(filePath, MAX_MERGE_BYTES, ScientLibraryMerge);
+    if (entry.name !== `${merge.mergeId}.json` || merge.state !== "pending") {
+      throw new Error(`${entry.name} is not a consistent pending merge receipt.`);
+    }
+    const trashed = await readTrashEntry(paths, merge.loserId);
     const trashedByMerge = trashed?.mergedInto?.mergeId === merge.mergeId;
     // The trash entry lands before the record goes, so it does not prove the loser left.
     const loser = await readScientSourceRecordIfPresent(paths, merge.loserId);
@@ -482,17 +526,19 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
   }
   await finishMerges(paths, finishing);
   for (const filePath of undoing) {
-    const started = await readBoundedJson(filePath, MAX_MERGE_BYTES, PendingMergeUndo).catch(
-      () => null,
+    const started = await readBoundedJson(filePath, MAX_MERGE_BYTES, PendingMergeUndo);
+    if (NodePath.basename(filePath) !== `${PENDING_UNDO_PREFIX}${started.mergeId}.json`) {
+      throw new Error("The pending merge Undo identity is inconsistent.");
+    }
+    const merge = await readBoundedJson(
+      mergePath(paths, started.mergeId),
+      MAX_MERGE_BYTES,
+      ScientLibraryMerge,
     );
-    const merge = started
-      ? await readBoundedJson(
-          mergePath(paths, started.mergeId),
-          MAX_MERGE_BYTES,
-          ScientLibraryMerge,
-        ).catch(() => null)
-      : null;
-    if (started && merge?.state === "done") await applyMergeUndo(paths, merge, started.undoneBy);
+    if (merge.mergeId !== started.mergeId || merge.state === "pending") {
+      throw new Error("The pending merge Undo has no consistent finished receipt.");
+    }
+    if (merge.state === "done") await applyMergeUndo(paths, merge, started.undoneBy);
     await NodeFSP.rm(filePath, { force: true });
   }
 }
@@ -504,10 +550,8 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
  */
 export async function settleScientLibraryMerges(library: ScientLibraryLocation): Promise<void> {
   const paths = await libraryPaths(library);
-  const pending = await NodeFSP.readdir(
-    NodePath.join(paths.root, MERGES_DIRECTORY, PENDING_MERGES_DIRECTORY),
-  ).catch(() => []);
-  if (!pending.some((name) => name.endsWith(".json"))) return;
+  const pending = await pendingMergeEntries(paths);
+  if (!pending.some((entry) => entry.name.endsWith(".json"))) return;
   await withStoreLock(paths, "source-write", () => settlePendingMerges(paths));
 }
 
@@ -767,14 +811,37 @@ function revertMerge(
   const record = current as unknown as MutableRecord;
   const next: MutableRecord = { ...record };
   const unreverted = new Set<string>();
+  const creatorChanges = merge.changes.filter(
+    (change) => change.field === "creators" || change.field === "incompleteCreatorRoles",
+  );
+  const keepCreators =
+    creatorChanges.some((change) => !same(record[change.field], change.after)) &&
+    !creatorChanges.every((change) => same(record[change.field], change.before));
+  let more: Record<string, string> | undefined;
   for (const change of merge.changes) {
-    const value = record[change.field];
+    if (
+      keepCreators &&
+      (change.field === "creators" || change.field === "incompleteCreatorRoles")
+    ) {
+      unreverted.add(change.field);
+      continue;
+    }
+    const moreName = change.field.startsWith("more.") ? change.field.slice(5) : null;
+    const value = moreName === null ? record[change.field] : current.more?.[moreName];
     if (same(value, change.after)) {
-      if (change.before === undefined) delete next[change.field];
+      if (moreName !== null) {
+        more ??= { ...current.more };
+        if (change.before === undefined) delete more[moreName];
+        else more[moreName] = change.before as string;
+      } else if (change.before === undefined) delete next[change.field];
       else next[change.field] = change.before;
     } else if (!same(value, change.before)) {
       unreverted.add(change.field);
     }
+  }
+  if (more !== undefined) {
+    if (Object.keys(more).length === 0) delete next.more;
+    else next.more = more;
   }
   const tags = new Set(merge.added.tags);
   const identifiers = new Set(merge.added.identifiers.map(identifierKey));

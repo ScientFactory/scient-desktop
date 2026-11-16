@@ -506,6 +506,9 @@ function candidateFrom(record: ScientSourceRecord, projectSourceId: string): Sci
     customType: record.customType ?? null,
     title: record.title,
     creators: record.creators,
+    ...(record.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: record.incompleteCreatorRoles }
+      : {}),
     issuedRaw: record.issuedRaw,
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
@@ -518,6 +521,7 @@ function candidateFrom(record: ScientSourceRecord, projectSourceId: string): Sci
     pages: record.pages,
     language: record.language,
     url: record.url,
+    ...(record.more !== undefined ? { more: record.more } : {}),
     tags: record.tags,
     externalReferences: record.externalReferences,
     fieldProvenance: record.fieldProvenance,
