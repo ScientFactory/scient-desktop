@@ -22,8 +22,8 @@ const keptWhole = Schema.is(ScientUnplacedAnnotation);
 
 /**
  * A highlight's ID here, the same on every import and refresh: a Zotero key is unique only in
- * its library. That is the library the source's link names, which stays as it was at import
- * (Zotero on this computer reports `0` for My Library until it signs in to sync).
+ * its library. A source imported before local sign-in keeps its original annotation namespace
+ * even after its owner is verified and its library reference becomes canonical.
  */
 function zoteroAnnotationId(libraryId: string, key: string): string {
   const groupId = zoteroGroupIdOfLibrary(libraryId);
@@ -100,15 +100,16 @@ export async function bringZoteroAnnotations(input: {
   readonly annotations: ReadonlyArray<ZoteroPdfAnnotation>;
   readonly pdfs: ReadonlyMap<string, string>;
   readonly now: string;
+  readonly annotationLibraryId?: string;
 }): Promise<{
   readonly added: number;
   readonly unplaced: number;
   readonly elsewhere: number;
   readonly tooLong: number;
 }> {
-  const libraryId = input.record.externalReferences.find(
-    (reference) => reference.system === "zotero",
-  )?.libraryId;
+  const libraryId =
+    input.annotationLibraryId ??
+    input.record.externalReferences.find((reference) => reference.system === "zotero")?.libraryId;
   if (libraryId === undefined) throw new Error("This source is not linked to Zotero.");
   let added = 0;
   let unplaced = 0;

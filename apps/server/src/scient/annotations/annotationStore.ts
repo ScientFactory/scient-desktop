@@ -13,9 +13,10 @@ import {
 import {
   assertScientProjectDirectory,
   SCIENT_ANNOTATION_FILE_MAX_BYTES,
+  scientSourceMaterialDirectories,
+  scientSourcePdfMaterialPaths,
 } from "@scientfactory/scient-sources/project-files";
 import {
-  SCIENT_ANNOTATIONS_DIRECTORY,
   ScientAnnotationActor,
   ScientAnnotationNote,
   ScientPdfAnnotation,
@@ -33,7 +34,6 @@ const MAX_HISTORY_PER_ANNOTATION = 10;
 const MAX_SEEN_PATHS = 16;
 const MAX_LISTED_FILES = 10_000;
 const FILE_NAME = /^([0-9a-f]{64})\.json$/u;
-const LIBRARY_ANNOTATIONS_DIRECTORY = "annotations/v1";
 
 /**
  * Where a PDF's annotations live: a canonical project root (`.scient/annotations/v1`), or the
@@ -357,16 +357,9 @@ export async function annotationProjectRoot(root: string): Promise<string> {
   return canonical;
 }
 
-function annotationsDirectory(home: ScientAnnotationHome): string {
-  const relative = isScientLibraryLocation(home)
-    ? LIBRARY_ANNOTATIONS_DIRECTORY
-    : SCIENT_ANNOTATIONS_DIRECTORY;
-  return NodePath.join(homeRoot(home), ...relative.split("/"));
-}
-
 function annotationFilePath(root: ScientAnnotationHome, sha256: string): string {
   if (!/^[0-9a-f]{64}$/u.test(sha256)) throw new Error("The PDF hash is not a sha256 digest.");
-  return NodePath.join(annotationsDirectory(root), `${sha256}.json`);
+  return scientSourcePdfMaterialPaths(root, sha256).annotations;
 }
 
 /** Reads the file named for `sha256`; a file whose recorded identity differs is refused, never used. */
@@ -523,7 +516,7 @@ export async function listScientAnnotationFiles(
   home: ScientAnnotationHome,
   only?: ReadonlySet<string>,
 ): Promise<ScientAnnotationFileListing> {
-  const directory = annotationsDirectory(home);
+  const directory = scientSourceMaterialDirectories(home).annotations;
   let names: string[];
   try {
     await assertScientProjectDirectory(homeRoot(home), directory);

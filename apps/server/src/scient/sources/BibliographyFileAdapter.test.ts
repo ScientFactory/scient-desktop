@@ -1,13 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the real project filesystem boundary.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
+import { editableMetadataFromRecord } from "@scientfactory/scient-sources";
+import {
+  ensureScientLibrary,
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
+import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
 import {
   importScientSource,
   listScientSourceRecords,
   readScientSourceStagedFileImport,
+  updateScientSourceMetadata,
+  updateScientSourceNote,
   SCIENT_SOURCES_DIRECTORY,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -21,9 +32,39 @@ import {
   verifiedUploadFolder,
   writeProjectBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
-import { cancelSourceImport, importBibliographyFile } from "./ScientSourcesCoordinator.ts";
+import {
+  advanceSourceImport,
+  cancelSourceImport,
+  importBibliographyFile,
+  retrySourceImport,
+} from "./ScientSourcesCoordinator.ts";
 
 const fixtures: string[] = [];
+
+const rename = NodeFS.promises.rename;
+
+async function failThirdPdf(work: () => Promise<unknown>): Promise<void> {
+  NodeFS.promises.rename = async (from, to) => {
+    if (String(to).includes(`${NodePath.sep}records${NodePath.sep}`)) {
+      const record = JSON.parse(await NodeFSP.readFile(to, "utf8")) as {
+        attachments: unknown[];
+      };
+      if (record.attachments.length === 2) {
+        NodeFS.promises.rename = rename;
+        NodeModule.syncBuiltinESMExports();
+        throw new Error("Transient PDF record write failure.");
+      }
+    }
+    return rename(from, to);
+  };
+  NodeModule.syncBuiltinESMExports();
+  try {
+    await work();
+  } finally {
+    NodeFS.promises.rename = rename;
+    NodeModule.syncBuiltinESMExports();
+  }
+}
 
 async function project(): Promise<string> {
   const root = await NodeFSP.realpath(
@@ -120,6 +161,154 @@ describe("reference file import", () => {
     ]);
     expect(again.report).toMatchObject({ importCount: 0, presentCount: 3, alreadyInLibrary: 0 });
     expect(await listScientSourceRecords(root)).toHaveLength(3);
+  });
+
+  it("does not resume another operation's matching source or add its remaining PDFs", async () => {
+    const root = await project();
+    for (const name of ["one", "two"]) {
+      await NodeFSP.writeFile(NodePath.join(root, `${name}.pdf`), `%PDF-1.7\n${name}\n`);
+    }
+    await beginBibliographyFileImport({
+      root,
+      operationId: "unrelated-file-import",
+      fileName: "duplicates.bib",
+      sourceFolder: root,
+      text: "@article{duplicateKey, title={Existing work}, annote={New note}, file={:one.pdf:PDF;:two.pdf:PDF}}",
+      actor: "user",
+    });
+    const staged = await readScientSourceStagedFileImport(root, "unrelated-file-import");
+    const existing = await importScientSource({
+      root,
+      operationId: "preexisting-source",
+      candidate: { ...staged!.candidates[0]!, note: "My original note" },
+      actor: "user",
+      intake: "file",
+    });
+    const finished = await advanceSourceImport({ root, operationId: "unrelated-file-import" });
+    expect(finished.items[0]).toMatchObject({
+      state: "skipped",
+      sourceId: existing.record!.sourceId,
+    });
+    expect(finished.items[0]?.attachedPdf).toBeUndefined();
+    expect(await listScientSourceRecords(root)).toEqual([existing.record]);
+    expect(await readScientSourceStagedFileImport(root, "unrelated-file-import")).toBeNull();
+  });
+
+  it("resumes its committed entry after a later PDF fails, keeping later edits and all project keys", async () => {
+    const root = await project();
+    const libraryRoot = scientLibraryRootFor(NodePath.join(root, "state"));
+    await ensureScientLibrary(libraryRoot);
+    const library = scientLibraryLocation(libraryRoot);
+    for (const name of ["one", "two", "three"]) {
+      await NodeFSP.writeFile(NodePath.join(root, `${name}.pdf`), `%PDF-1.7\n${name}\n`);
+    }
+    const text = String.raw`@article{retryKey,
+      title={Retry with all authors}, author={Doe, Jane and others}, year={2026}, doi={10.1234/retry},
+      annote={Imported note}, file={:one.pdf:PDF;:two.pdf:PDF;:three.pdf:PDF}}
+      @article{aliasKey, title={Retry with all authors}, author={Doe, Jane and others}, year={2026}, doi={10.1234/retry}}`;
+    const begun = await beginBibliographyFileImport({
+      root: library,
+      projectRoot: root,
+      pinInto: root,
+      operationId: "file_retry_pdfs",
+      fileName: "retry.bib",
+      sourceFolder: root,
+      text,
+      actor: "user",
+    });
+    const itemKey = begun.operation!.items[0]!.itemKey;
+    const staged = await readScientSourceStagedFileImport(library, "file_retry_pdfs");
+    const candidate = staged!.candidates[0]!;
+    let resolutions = 0;
+    const resolveIdentifier = async () => {
+      resolutions += 1;
+      return {
+        status: "found" as const,
+        identifier: { scheme: "doi", value: "10.1234/retry" },
+        retrievedAt: "2026-11-16T12:00:00.000Z",
+        metadata: {
+          ...candidate,
+          abstractSections: [],
+          creators: [
+            ...candidate.creators,
+            { creatorType: "author", givenName: "John", familyName: "Roe", literalName: null },
+          ],
+        },
+      };
+    };
+    await failThirdPdf(async () => {
+      const failed = await advanceSourceImport({
+        root: library,
+        operationId: "file_retry_pdfs",
+        resolveIdentifier,
+      });
+      expect(failed.items[0]).toMatchObject({ state: "failed" });
+    });
+    const [partial] = await listScientSourceRecords(library);
+    expect(partial?.attachments).toHaveLength(2);
+    expect(partial?.creators).toHaveLength(2);
+    expect(await readScientSourceStagedFileImport(library, "file_retry_pdfs")).not.toBeNull();
+    const edited = await updateScientSourceMetadata({
+      root: library,
+      sourceId: partial!.sourceId,
+      expectedRevision: partial!.revision,
+      metadata: {
+        ...editableMetadataFromRecord(partial!),
+        title: "My later title",
+        citationKey: "myLaterKey",
+        creators: [
+          { creatorType: "author", givenName: "Edited", familyName: "Author", literalName: null },
+        ],
+      },
+      actor: "user",
+    });
+    expect(edited.outcome).toBe("updated");
+    const noted = await updateScientSourceNote({
+      root: library,
+      sourceId: edited.record.sourceId,
+      expectedRevision: edited.record.revision,
+      note: "My later note",
+      actor: "user",
+    });
+    await retrySourceImport({ root: library, operationId: "file_retry_pdfs", itemKeys: [itemKey] });
+    const finished = await advanceSourceImport({
+      root: library,
+      operationId: "file_retry_pdfs",
+      resolveIdentifier,
+    });
+    expect(finished.items[0]).toMatchObject({
+      state: "imported",
+      sourceId: partial!.sourceId,
+      authorList: "completed",
+      citationKeys: expect.arrayContaining([
+        expect.objectContaining({ citationKey: "retryKey" }),
+        expect.objectContaining({ citationKey: "aliasKey" }),
+      ]),
+    });
+    const records = await listScientSourceRecords(library);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      title: "My later title",
+      citationKey: "myLaterKey",
+      note: "My later note",
+      revision: noted.record.revision + 1,
+    });
+    expect(records[0]!.creators).toEqual(edited.record.creators);
+    expect(resolutions).toBe(1);
+    expect(records[0]!.attachments.map((attachment) => attachment.fileName)).toEqual([
+      "one.pdf",
+      "two.pdf",
+      "three.pdf",
+    ]);
+    expect((await readScientProjectPins(root)).map((pin) => pin.citationKey).toSorted()).toEqual([
+      "aliasKey",
+      "retryKey",
+    ]);
+    expect(await readScientSourceStagedFileImport(library, "file_retry_pdfs")).toBeNull();
+    expect(await advanceSourceImport({ root: library, operationId: "file_retry_pdfs" })).toEqual(
+      finished,
+    );
+    expect(await listScientSourceRecords(library)).toEqual(records);
   });
 
   it("continues a large file with sparse entries by their identity, without duplicates", async () => {

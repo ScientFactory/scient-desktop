@@ -232,7 +232,7 @@ function AttachmentAnnotations(props: {
                   // The PDF is not open here: it is read briefly for its printed page labels.
                   void readQuotePageLabels({ contentKey: attachment.sha256, url: pdfUrl }).then(
                     (labels) =>
-                      quoteInDocument(root, {
+                      quoteInDocument(environmentId, root, {
                         quote: scientAnnotationQuote(annotation),
                         pages,
                         pageLabels: quotePageLabels(pages, labels),

@@ -1,10 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This test exercises the real project filesystem boundary.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
+  editableMetadataFromRecord,
   notBroughtAmount,
   notBroughtName,
   summarizeNotBrought,
@@ -18,6 +21,9 @@ import {
   importScientSource,
   listScientSourceImports,
   listScientSourceRecords,
+  readScientSourceZoteroSync,
+  updateScientSourceMetadata,
+  updateScientSourceNote,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
@@ -25,6 +31,7 @@ import {
   advanceSourceImport,
   beginZoteroScopedImport,
   continueZoteroImportRun,
+  retrySourceImport,
 } from "./ScientSourcesCoordinator.ts";
 import {
   fakeZoteroAccess,
@@ -36,6 +43,11 @@ import {
 import { zoteroItemToCandidate } from "./ZoteroItems.ts";
 import { countZoteroScopeStandalone, readZoteroItemMaterial } from "./ZoteroLibraryReader.ts";
 import type { ZoteroWebHttp } from "./ZoteroWebAdapter.ts";
+import {
+  mutateScientAnnotations,
+  readScientAnnotationFile,
+} from "../annotations/annotationStore.ts";
+import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
 
 const roots: string[] = [];
 
@@ -105,6 +117,201 @@ describe("Zotero import", () => {
     ]);
     expect(record?.origin).toMatchObject({ actor: "user", intake: "zotero" });
   });
+
+  it.each(["item", "run"] as const)(
+    "resumes a partial source through %s retry without replacing later edits",
+    async (retry) => {
+      const root = await project();
+      const transport = fakeZoteroTransport({
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem("ABCD2345", {
+                title: "Partly imported",
+                abstractNote: "Already has an abstract.",
+                collections: ["COLL2345"],
+                extra: "Citation Key: originalKey",
+              }),
+              children: [
+                zoteroItem("NOTE2345", { itemType: "note", note: "<p>Original note</p>" }),
+                pdfAttachment("PDFA2345", "one.pdf"),
+                pdfAttachment("PDFB2345", "two.pdf"),
+                pdfAttachment("PDFC2345", "three.pdf"),
+              ],
+            },
+          ],
+          [
+            "EFGH2345",
+            {
+              item: zoteroItem("EFGH2345", { title: "Next part", abstractNote: "A." }),
+              children: [],
+            },
+          ],
+        ]),
+        files: new Map([
+          ["PDFA2345", await pdf(root, "one.pdf")],
+          ["PDFB2345", await pdf(root, "two.pdf")],
+          ["PDFC2345", await pdf(root, "three.pdf")],
+        ]),
+        collections: [{ key: "COLL2345", name: "Imported collection" }],
+        annotations: new Map([
+          [
+            "PDFA2345",
+            [
+              zoteroItem("OLDM2345", {
+                itemType: "annotation",
+                parentItem: "PDFA2345",
+                annotationType: "highlight",
+                annotationText: "An older quote",
+                annotationComment: "Removed here",
+                annotationColor: "#ffd400",
+                annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+              }),
+            ],
+          ],
+          [
+            "PDFC2345",
+            [
+              zoteroItem("MARK2345", {
+                itemType: "annotation",
+                parentItem: "PDFC2345",
+                annotationType: "highlight",
+                annotationText: "A quote on a scanned page",
+                annotationComment: "Keep this comment",
+                annotationColor: "#ffd400",
+                annotationPosition: JSON.stringify({ pageIndex: 0, rects: [] }),
+              }),
+            ],
+          ],
+        ]),
+      });
+      const zotero = fakeZoteroAccess(transport);
+      await beginZoteroScopedImport({
+        root,
+        operationId: "retry-zotero-pdfs",
+        scope: { kind: "library" },
+        zotero,
+        partSize: 1,
+      });
+      const rename = NodeFS.promises.rename;
+      NodeFS.promises.rename = async (from, to) => {
+        if (String(to).includes(`${NodePath.sep}records${NodePath.sep}`)) {
+          const record = JSON.parse(await NodeFSP.readFile(to, "utf8")) as {
+            attachments: unknown[];
+          };
+          if (record.attachments.length === 2) {
+            NodeFS.promises.rename = rename;
+            NodeModule.syncBuiltinESMExports();
+            throw new Error("Transient PDF record write failure.");
+          }
+        }
+        return rename(from, to);
+      };
+      NodeModule.syncBuiltinESMExports();
+      try {
+        const failed = await advanceSourceImport({
+          root,
+          operationId: "retry-zotero-pdfs",
+          zotero,
+        });
+        expect(failed.items[0]).toMatchObject({ state: "failed" });
+      } finally {
+        NodeFS.promises.rename = rename;
+        NodeModule.syncBuiltinESMExports();
+      }
+      const [partial] = await listScientSourceRecords(root);
+      expect(partial!.attachments).toHaveLength(2);
+      expect(await readScientSourceZoteroSync(root, partial!.sourceId)).toBeNull();
+      const first = partial!.attachments[0]!;
+      const material = await readZoteroItemMaterial(transport, "ABCD2345");
+      await bringZoteroAnnotations({
+        root,
+        record: partial!,
+        annotations: material.annotations.filter(
+          (annotation) => annotation.attachmentKey === "PDFA2345",
+        ),
+        pdfs: new Map([["PDFA2345", first.sha256]]),
+        now: "2026-11-16T12:00:00.000Z",
+      });
+      await mutateScientAnnotations({
+        canonicalRoot: root,
+        material: { sha256: first.sha256, byteLength: first.byteLength },
+        relativePath: null,
+        command: {
+          action: "remove",
+          annotationId: "ann_zotero_user_0_OLDM2345",
+          expectedRevision: 1,
+        },
+        actor: "user",
+        now: "2026-11-16T13:00:00.000Z",
+      });
+      const tombstoned = await readScientAnnotationFile(root, first.sha256);
+      expect(tombstoned?.unplaced?.[0]?.deletedAt).toBe("2026-11-16T13:00:00.000Z");
+      const edited = await updateScientSourceMetadata({
+        root,
+        sourceId: partial!.sourceId,
+        expectedRevision: partial!.revision,
+        metadata: {
+          ...editableMetadataFromRecord(partial!),
+          title: "My later title",
+          citationKey: "myLaterKey",
+        },
+        actor: "user",
+      });
+      const noted = await updateScientSourceNote({
+        root,
+        sourceId: partial!.sourceId,
+        expectedRevision: edited.record.revision,
+        note: "My later note",
+        actor: "user",
+      });
+      let operationId = "retry-zotero-pdfs";
+      if (retry === "run") {
+        const next = await continueZoteroImportRun({
+          root,
+          runId: operationId,
+          retryFailed: true,
+          partSize: 1,
+          zotero,
+        });
+        operationId = next.operationId;
+        expect(next.items.map((item) => item.itemKey)).toEqual(["ABCD2345"]);
+      } else {
+        await retrySourceImport({ root, operationId, itemKeys: ["ABCD2345"] });
+      }
+      const finished = await advanceSourceImport({ root, operationId, zotero });
+      expect(finished.items[0]).toMatchObject({ state: "imported", sourceId: partial!.sourceId });
+      const records = await listScientSourceRecords(root);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        title: "My later title",
+        citationKey: "myLaterKey",
+        note: "My later note",
+        revision: noted.record.revision + 1,
+      });
+      expect(records[0]!.attachments.map((attachment) => attachment.fileName).toSorted()).toEqual(
+        ["one.pdf", "two.pdf", "three.pdf"].toSorted(),
+      );
+      const third = records[0]!.attachments.find(
+        (attachment) => attachment.fileName === "three.pdf",
+      )!;
+      const marks = await readScientAnnotationFile(root, third.sha256);
+      expect(marks?.unplaced).toMatchObject([
+        { annotationId: "ann_zotero_user_0_MARK2345", comment: "Keep this comment" },
+      ]);
+      expect(await readScientAnnotationFile(root, first.sha256)).toEqual(tombstoned);
+      expect((await readScientSourcesOrganization(root)).collections).toMatchObject([
+        { name: "Imported collection", sourceIds: [partial!.sourceId] },
+      ]);
+      const sync = await readScientSourceZoteroSync(root, partial!.sourceId);
+      expect(sync?.attachmentKeys.toSorted()).toEqual(["PDFA2345", "PDFB2345", "PDFC2345"]);
+      expect(sync?.note).toBe("Original note");
+      expect(await advanceSourceImport({ root, operationId, zotero })).toEqual(finished);
+      expect(await readScientAnnotationFile(root, third.sha256)).toEqual(marks);
+      expect(await listScientSourceRecords(root)).toEqual(records);
+    },
+  );
 
   it("keeps the citation key Zotero or Better BibTeX gives", async () => {
     const root = await project();

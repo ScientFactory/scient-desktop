@@ -1585,7 +1585,7 @@ const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientRefe
 );
 
 /** Library mode adds the pick between a review's versions to the same two tools. */
-export const ScientSystematicReviewsToolkitRegistrationLive = Layer.unwrap(
+const ScientSystematicReviewsToolkitRegistrationLive = Layer.unwrap(
   Effect.gen(function* () {
     return (yield* ScientSourcesBackend) === "library"
       ? registerScientToolkit(ScientSystematicReviewsLibraryToolkit).pipe(

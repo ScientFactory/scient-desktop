@@ -6,6 +6,7 @@ import type { ZoteroConnectionStatus, ZoteroGroup } from "@scientfactory/scient-
 import * as Schema from "effect/Schema";
 
 import type { ZoteroResponse, ZoteroTransport } from "./ZoteroLibraryReader.ts";
+import { readBoundedNodeResponse, type NodeHttpRequest } from "./nodeHttpResponse.ts";
 
 const ZOTERO_HOST = "127.0.0.1";
 const ZOTERO_PORT = 23_119;
@@ -16,20 +17,23 @@ const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const USER_LIBRARY_PATH = "/api/users/0";
 const BETTER_BIBTEX_PATH = "/better-bibtex/json-rpc";
 
-function localRequest(
-  path: string,
-  options: { readonly body?: string; readonly timeoutMs?: number } = {},
-): Promise<ZoteroResponse> {
-  const allowed =
-    options.body === undefined ? path.startsWith("/api/") : path === BETTER_BIBTEX_PATH;
-  if (!allowed) throw new Error("Zotero path must remain under the local API.");
-  return new Promise((resolve, reject) => {
-    const request = NodeHttp.request(
+export const makeLocalZoteroRequest =
+  (send: NodeHttpRequest = NodeHttp.request) =>
+  async (
+    path: string,
+    options: { readonly body?: string; readonly timeoutMs?: number } = {},
+  ): Promise<ZoteroResponse> => {
+    const url = new URL(path, `http://${ZOTERO_HOST}:${ZOTERO_PORT}`);
+    const allowed =
+      options.body === undefined
+        ? path.startsWith("/api/") && url.pathname.startsWith("/api/")
+        : path === BETTER_BIBTEX_PATH;
+    if (!allowed) throw new Error("Zotero path must remain under the local API.");
+    const { promise, resolve, reject } = Promise.withResolvers<ZoteroResponse>();
+    const request = send(
+      url,
       {
-        host: ZOTERO_HOST,
-        port: ZOTERO_PORT,
         method: options.body === undefined ? "GET" : "POST",
-        path,
         headers: {
           Accept: "application/json",
           "Zotero-API-Version": String(ZOTERO_API_VERSION),
@@ -37,27 +41,26 @@ function localRequest(
         },
       },
       (response) => {
-        const chunks: Buffer[] = [];
-        let bytes = 0;
-        response.on("data", (chunk: Buffer) => {
-          bytes += chunk.byteLength;
-          if (bytes > MAX_RESPONSE_BYTES) {
-            request.destroy(new Error("Zotero returned more data than Scient can safely accept."));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        response.on("end", () => {
-          const headers: Record<string, string | undefined> = {};
-          for (const [name, value] of Object.entries(response.headers)) {
-            headers[name.toLowerCase()] = Array.isArray(value) ? value[0] : value;
-          }
-          resolve({
-            status: response.statusCode ?? 0,
-            headers,
-            body: Buffer.concat(chunks).toString("utf8"),
-          });
-        });
+        void readBoundedNodeResponse(response, {
+          maxBytes: MAX_RESPONSE_BYTES,
+          tooLargeMessage: "Zotero returned more data than Scient can safely accept.",
+        }).then(
+          (body) => {
+            const headers: Record<string, string | undefined> = {};
+            for (const [name, value] of Object.entries(response.headers)) {
+              headers[name.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+            }
+            resolve({
+              status: response.statusCode ?? 0,
+              headers,
+              body: body.toString("utf8"),
+            });
+          },
+          (error: unknown) => {
+            request.destroy();
+            reject(error);
+          },
+        );
       },
     );
     request.setTimeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS, () => {
@@ -65,8 +68,10 @@ function localRequest(
     });
     request.on("error", reject);
     request.end(options.body);
-  });
-}
+    return promise;
+  };
+
+const localRequest = makeLocalZoteroRequest();
 
 async function libraryGet(libraryPath: string, path: string): Promise<ZoteroResponse> {
   const response = await localRequest(`${libraryPath}${path}`);

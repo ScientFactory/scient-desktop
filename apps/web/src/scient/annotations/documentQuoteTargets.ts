@@ -1,3 +1,4 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { useEffect, useRef } from "react";
 
@@ -7,6 +8,7 @@ import { markdownQuote, type DocumentQuote } from "./quoteFormat";
 
 /** An open Markdown or LaTeX editor that can take a quote at its cursor. */
 export interface DocumentQuoteTarget {
+  readonly environmentId: EnvironmentId;
   readonly root: string;
   /** The document's name, for the confirmation. */
   readonly label: string;
@@ -57,12 +59,18 @@ export function useDocumentQuoteTarget(target: DocumentQuoteTarget | null): void
   }, [enabled]);
 }
 
-function latestTarget(root: string): DocumentQuoteTarget | null {
+function latestTarget(environmentId: EnvironmentId, root: string): DocumentQuoteTarget | null {
   const project = normalizeProjectPathForComparison(root);
   let best: Registered | null = null;
   for (const entry of registered) {
     const candidate = entry.target.current;
-    if (!candidate || normalizeProjectPathForComparison(candidate.root) !== project) continue;
+    if (
+      !candidate ||
+      candidate.environmentId !== environmentId ||
+      normalizeProjectPathForComparison(candidate.root) !== project
+    ) {
+      continue;
+    }
     if (!best || entry.focusedAt > best.focusedAt) best = entry;
   }
   return best?.target.current ?? null;
@@ -70,10 +78,14 @@ function latestTarget(root: string): DocumentQuoteTarget | null {
 
 /**
  * Puts a highlighted passage, with its citation, into the document the writer
- * used last in this project. Without an open document, it is copied instead.
+ * used last in this environment's project. Without an open document, it is copied instead.
  */
-export async function quoteInDocument(root: string, quote: DocumentQuote): Promise<void> {
-  const target = latestTarget(root);
+export async function quoteInDocument(
+  environmentId: EnvironmentId,
+  root: string,
+  quote: DocumentQuote,
+): Promise<void> {
+  const target = latestTarget(environmentId, root);
   if (target?.insert(quote)) {
     toastManager.add({ type: "success", title: `Quoted in ${target.label}` });
     return;

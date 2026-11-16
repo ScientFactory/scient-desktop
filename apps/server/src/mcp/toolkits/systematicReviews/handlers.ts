@@ -228,7 +228,7 @@ export const readSystematicReviewsForInvocation = Effect.fn("ScientSystematicRev
 export const updateSystematicReviewForInvocation = Effect.fn(
   "ScientSystematicReviewsToolkit.update",
 )(function* (input: { readonly change: ScientSystematicReviewAction }) {
-  const store = yield* resolveScientSourcesStore();
+  const store = yield* resolveScientSourcesStore("write");
   if (store.kind === "library") {
     return yield* attempt(() =>
       changeScientLibraryReview({
@@ -257,7 +257,7 @@ export const updateLibrarySystematicReviewForInvocation = Effect.fn(
   if (change.action !== "resolve-conflict" && change.action !== "dismiss-combine-report") {
     return yield* updateSystematicReviewForInvocation({ change });
   }
-  const store = yield* resolveScientSourcesStore();
+  const store = yield* resolveScientSourcesStore("write");
   if (store.kind !== "library") {
     return yield* new ScientSourcesToolError({
       code: "not-found",

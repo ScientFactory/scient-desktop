@@ -277,6 +277,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   useDocumentQuoteTarget(
     props.citationSource
       ? {
+          environmentId: props.citationSource.environmentId,
           root: props.citationSource.cwd,
           label: props.citationSource.path.split("/").at(-1) ?? props.citationSource.path,
           element: () => controller.view?.dom ?? null,

@@ -1052,6 +1052,7 @@ export async function restoreLibrarySource(store: Store, input: { readonly sourc
     sourceId: input.sourceId,
     actor: ACTOR,
   });
+  if (result.outcome === "restored") await afterChange(store, [result.sourceId]);
   return {
     ...result,
     record: result.record ? routeRecord(result.record, await pinOf(store, result.sourceId)) : null,

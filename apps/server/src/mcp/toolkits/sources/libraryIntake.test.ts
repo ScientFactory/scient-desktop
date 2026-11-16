@@ -350,12 +350,16 @@ describe("Sources intake on the library backend", () => {
   it.effect("a Zotero import keeps its base in the library; a refresh reaches the pin", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);
-      const original = zoteroItem("ABCD2345", {
-        title: "Original title",
-        version: 3,
-        creators: [{ creatorType: "author", firstName: "Ada", lastName: "Lovelace" }],
-        date: "2026",
-      });
+      const original = zoteroItem(
+        "ABCD2345",
+        {
+          title: "Original title",
+          version: 3,
+          creators: [{ creatorType: "author", firstName: "Ada", lastName: "Lovelace" }],
+          date: "2026",
+        },
+        "475425",
+      );
       const items = new Map([["ABCD2345", { item: original, children: [] }]]);
       const zotero = fakeZoteroTransport({ items });
 
@@ -372,7 +376,11 @@ describe("Sources intake on the library backend", () => {
       ]);
 
       items.set("ABCD2345", {
-        item: zoteroItem("ABCD2345", { ...original.data, version: 4, title: "Zotero's new title" }),
+        item: zoteroItem(
+          "ABCD2345",
+          { ...original.data, version: 4, title: "Zotero's new title" },
+          "475425",
+        ),
         children: [],
       });
       const refreshed = yield* run(refreshZoteroForInvocation({}), fixture, { zotero });

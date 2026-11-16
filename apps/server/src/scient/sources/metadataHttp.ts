@@ -3,6 +3,8 @@ import * as NodeHttps from "node:https";
 
 import packageJson from "../../../package.json" with { type: "json" };
 
+import { readBoundedNodeResponse, type NodeHttpRequest } from "./nodeHttpResponse.ts";
+
 const METADATA_TIMEOUT_MS = 5_000;
 const MAX_METADATA_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_REDIRECTS = 4;
@@ -76,14 +78,19 @@ export type MetadataRequest = (
   limits?: MetadataRequestLimits,
 ) => Promise<MetadataResponse>;
 
-export const requestMetadata: MetadataRequest = (url, headers, limits = {}) =>
-  requestFollowing(url, headers, 0, limits);
+export const makeMetadataRequest =
+  (send: NodeHttpRequest = NodeHttps.request): MetadataRequest =>
+  (url, headers, limits = {}) =>
+    requestFollowing(url, headers, 0, limits, send);
 
-function requestFollowing(
+export const requestMetadata: MetadataRequest = makeMetadataRequest();
+
+async function requestFollowing(
   url: URL,
   headers: Readonly<Record<string, string>>,
   redirects: number,
   limits: MetadataRequestLimits,
+  send: NodeHttpRequest,
 ): Promise<MetadataResponse> {
   if (url.protocol !== "https:") {
     return Promise.reject(new Error("Metadata requests must use HTTPS."));
@@ -91,44 +98,38 @@ function requestFollowing(
   if (redirects > MAX_METADATA_REDIRECTS) {
     return Promise.reject(new Error("The metadata service redirected too many times."));
   }
-  return new Promise((resolve, reject) => {
-    const hop = contactedRegistryRequest(url, headers);
-    const request = NodeHttps.get(hop.url, { headers: hop.headers }, (response) => {
+  const { promise, resolve, reject } = Promise.withResolvers<MetadataResponse>();
+  const hop = contactedRegistryRequest(url, headers);
+  const request = send(hop.url, { method: "GET", headers: hop.headers }, (response) => {
+    const receive = async (): Promise<MetadataResponse> => {
       const status = response.statusCode ?? 0;
+      const body = await readBoundedNodeResponse(response, {
+        maxBytes: limits.maxBytes ?? MAX_METADATA_RESPONSE_BYTES,
+        tooLargeMessage: "The metadata service returned too much data.",
+        discardBody: status < 200 || status >= 300,
+      });
       if (status >= 300 && status < 400 && response.headers.location) {
-        response.resume();
-        void requestFollowing(
+        return requestFollowing(
           new URL(response.headers.location, url),
           headers,
           redirects + 1,
           limits,
-        ).then(resolve, reject);
-        return;
+          send,
+        );
       }
-      if (status < 200 || status >= 300) {
-        response.resume();
-        resolve({ status, body: "", url });
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let length = 0;
-      response.on("data", (chunk: Buffer) => {
-        length += chunk.byteLength;
-        if (length > (limits.maxBytes ?? MAX_METADATA_RESPONSE_BYTES)) {
-          request.destroy(new Error("The metadata service returned too much data."));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      response.on("end", () =>
-        resolve({ status, body: Buffer.concat(chunks).toString("utf8"), url }),
-      );
+      return { status, body: body.toString("utf8"), url };
+    };
+    void receive().then(resolve, (error: unknown) => {
+      request.destroy();
+      reject(error);
     });
-    request.setTimeout(limits.timeoutMs ?? METADATA_TIMEOUT_MS, () => {
-      request.destroy(new Error("The metadata request timed out."));
-    });
-    request.on("error", reject);
   });
+  request.setTimeout(limits.timeoutMs ?? METADATA_TIMEOUT_MS, () => {
+    request.destroy(new Error("The metadata request timed out."));
+  });
+  request.on("error", reject);
+  request.end();
+  return promise;
 }
 
 export async function requestMetadataText(

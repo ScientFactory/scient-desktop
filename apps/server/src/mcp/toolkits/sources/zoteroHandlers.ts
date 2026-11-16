@@ -59,8 +59,10 @@ const zoteroAttempt = <A>(run: () => Promise<A>) =>
   });
 
 /** The store and the Zotero access an agent in this project has, following the Accounts switches. */
-const agentZotero = Effect.fn("ScientSourcesToolkit.zoteroAccess")(function* () {
-  const store = yield* resolveScientSourcesStore();
+const agentZotero = Effect.fn("ScientSourcesToolkit.zoteroAccess")(function* (
+  access: "read" | "write",
+) {
+  const store = yield* resolveScientSourcesStore(access);
   const zotero: ZoteroAccess = {
     ...(yield* ZoteroTransports),
     webKey: yield* zoteroKeyLookup({ actor: "agent", projectId: ProjectId.make(store.projectId) }),
@@ -109,7 +111,7 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
     readonly start?: number;
     readonly limit?: number;
   }) {
-    const { store, root, zotero } = yield* agentZotero();
+    const { store, root, zotero } = yield* agentZotero("read");
     const status = yield* zoteroAttempt(() =>
       inspectZoteroConnection({
         zotero,
@@ -240,7 +242,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
         message: "Pass exactly one of itemKeys, collectionKey, all or runId.",
       });
     }
-    const { store, root, zotero } = yield* agentZotero();
+    const { store, root, zotero } = yield* agentZotero("write");
     const { runId, itemKeys } = input;
     // A run's own record says which Zotero library it reads and how.
     const connection =
@@ -331,7 +333,7 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
     readonly useZotero?: ReadonlyArray<ScientSourceZoteroRefreshField>;
     readonly keepLocal?: ReadonlyArray<ScientSourceZoteroRefreshField>;
   }) {
-    const { store, root, zotero } = yield* agentZotero();
+    const { store, root, zotero } = yield* agentZotero("write");
     const sourceIds = yield* librarySourceIds(store, input.sourceIds);
     // Named sources are refreshed as asked; otherwise every Zotero source (of this project).
     const which = !sourceIds ? {} : input.sourceIds ? { sourceIds } : { among: sourceIds };
@@ -375,7 +377,7 @@ export const sendToZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroS
     readonly library?: string;
     readonly pdfs?: boolean;
   }) {
-    const { store, root, zotero } = yield* agentZotero();
+    const { store, root, zotero } = yield* agentZotero("write");
     const sourceIds = (yield* librarySourceIds(store, input.sourceIds)) ?? input.sourceIds;
     return yield* zoteroAttempt(() =>
       sendSourcesToZotero({

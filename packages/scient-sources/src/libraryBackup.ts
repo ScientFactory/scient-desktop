@@ -377,11 +377,18 @@ export type ScientLibraryBackupCheck =
   | { readonly outcome: "not-a-backup" }
   | {
       readonly outcome: "damaged";
-      /** Files that are gone or no longer match their recorded hash. */
+      /** Files that are unsafe to read, gone or no longer match their recorded hash. */
       readonly changed: ReadonlyArray<string>;
-      /** Files under `library/` that the manifest does not list. */
+      /** Files or unsafe entries under `library/` that the manifest does not list. */
       readonly unlisted: ReadonlyArray<string>;
     };
+
+/** Containment rules shared by backup checks and the stricter restore-name policy. */
+export const scientLibraryBackupPathIsUnsafe = (path: string): boolean =>
+  NodePath.win32.isAbsolute(path) ||
+  path
+    .split("/")
+    .some((part) => part === "" || part === "." || part === ".." || /[\\\u0000]/u.test(part));
 
 /** Reads a backup folder against its own manifest: every listed file present and unchanged. */
 export async function checkScientLibraryBackup(folder: string): Promise<ScientLibraryBackupCheck> {
@@ -391,22 +398,38 @@ export async function checkScientLibraryBackup(folder: string): Promise<ScientLi
     ScientLibraryBackupManifest,
   ).catch(() => null);
   if (!manifest) return { outcome: "not-a-backup" };
-  const payload = NodePath.join(folder, SCIENT_LIBRARY_BACKUP_PAYLOAD);
+  const unsafe = manifest.files.filter((file) => scientLibraryBackupPathIsUnsafe(file.path));
+  if (unsafe.length > 0) {
+    return { outcome: "damaged", changed: unsafe.map((file) => file.path), unlisted: [] };
+  }
+  const backup = await NodeFSP.realpath(folder);
+  const payload = NodePath.join(backup, SCIENT_LIBRARY_BACKUP_PAYLOAD);
+  if ((await snapshot(payload)) !== "directory") {
+    return { outcome: "damaged", changed: [SCIENT_LIBRARY_BACKUP_PAYLOAD], unlisted: [] };
+  }
+  const found = await scientLibraryBackupEntries(payload);
+  const regular = new Set(found.files);
   const changed: string[] = [];
   for (const file of manifest.files) {
-    const hash = await hashOf(NodePath.join(payload, ...file.path.split("/"))).catch(
-      (error: unknown) => {
-        if (isNodeError(error, "ENOENT")) return null;
-        throw error;
-      },
-    );
+    const path = NodePath.join(payload, ...file.path.split("/"));
+    const canonical = regular.has(file.path)
+      ? await NodeFSP.realpath(path).catch((error: unknown) => {
+          if (isNodeError(error, "ENOENT")) return null;
+          throw error;
+        })
+      : null;
+    if (canonical !== path || (await snapshot(path)) !== "file") {
+      changed.push(file.path);
+      continue;
+    }
+    const hash = await hashOf(path).catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return null;
+      throw error;
+    });
     if (hash !== file.sha256) changed.push(file.path);
   }
   const listed = new Set(manifest.files.map((file) => file.path));
-  const unlisted =
-    (await snapshot(payload)) === "directory"
-      ? (await scientLibraryBackupEntries(payload)).files.filter((path) => !listed.has(path))
-      : [];
+  const unlisted = [...found.files, ...found.others].filter((path) => !listed.has(path));
   return changed.length === 0 && unlisted.length === 0
     ? { outcome: "complete", createdAt: manifest.createdAt, counts: manifest.counts }
     : { outcome: "damaged", changed, unlisted };

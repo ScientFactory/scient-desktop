@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 
 export type ScientProjectFilePublication =
   | { readonly outcome: "written" }
-  /** The file no longer held the expected text; another writer's bytes were left in place. */
+  /** The file no longer held the expected bytes; another writer's bytes were left in place. */
   | {
       readonly outcome: "changed";
       /** Set when another writer's version could not go back in place and was kept beside it. */
@@ -145,8 +145,8 @@ export async function publishScientProjectFile(input: {
     }
     holdsOnlyCopy = true;
     try {
-      const previous = await NodeFSP.readFile(displaced, "utf8");
-      if (previous !== input.expected) {
+      const previous = await NodeFSP.readFile(displaced);
+      if (!previous.equals(Buffer.from(input.expected, "utf8"))) {
         if (await linkNoClobber(displaced, input.filePath)) {
           holdsOnlyCopy = false;
           return { outcome: "changed", keptPath: null };

@@ -5,6 +5,9 @@ import * as NodeFSP from "node:fs/promises";
 
 import {
   normalizeScientSourceEditableMetadata,
+  scientLibraryIdentityProblem,
+  workLevelIdentifierKey,
+  type ScientSourceCandidate,
   type ScientSourceActor,
   type ScientSourceExternalReference,
   type ScientSourceNotBrought,
@@ -12,6 +15,7 @@ import {
   type ScientSourceZoteroRefreshItem,
   type ScientSourceZoteroRefreshResult,
   type ScientSourceZoteroSendItem,
+  type ScientSourceZoteroSync,
   type ZoteroConnection,
   zoteroGroupIdOfLibrary,
   zoteroGroupLibraryId,
@@ -41,6 +45,7 @@ import { bringZoteroAnnotations } from "./ZoteroAnnotations.ts";
 import {
   addNotBrought,
   decodeZoteroRawItem,
+  zoteroItemMaterial,
   type ZoteroItemMaterial,
   type ZoteroRawItem,
 } from "./ZoteroItems.ts";
@@ -68,11 +73,79 @@ const MAX_REFRESH_SOURCES = 500;
 /** How many sources one request of a whole-Library refresh reads again from Zotero. */
 const REFRESH_BATCH_SOURCES = 200;
 
-/** Zotero item keys are per library; local "0" and the zotero.org user ID name the same one. */
+/** The first link is the library most recently sent to or imported from. */
 function zoteroReference(
   record: Pick<ScientSourceRecord, "externalReferences">,
 ): ScientSourceExternalReference | undefined {
   return record.externalReferences.find((reference) => reference.system === "zotero");
+}
+
+function sameZoteroLibrary(left: string, right: string, verifiedLocalOwner?: string): boolean {
+  if (left === "0" || right === "0") {
+    return (
+      verifiedLocalOwner !== undefined &&
+      verifiedLocalOwner !== "0" &&
+      (left === "0" ? right === verifiedLocalOwner : left === verifiedLocalOwner)
+    );
+  }
+  return left === right;
+}
+
+const libraryIdOfWeb = (library: ZoteroWebLibrary): string =>
+  library.groupId ? zoteroGroupLibraryId(library.groupId) : library.account.userId;
+
+function corroboratedLegacyOwner(
+  record: ScientSourceRecord,
+  reference: ScientSourceExternalReference,
+  candidate: ScientSourceCandidate,
+  base: ScientSourceZoteroSync | null,
+): string | undefined {
+  const current = zoteroReference(candidate);
+  if (
+    reference.libraryId !== "0" ||
+    !current ||
+    current.itemKey !== reference.itemKey ||
+    !/^[1-9][0-9]*$/u.test(current.libraryId)
+  )
+    return undefined;
+  if (base?.itemKey === current.itemKey && base.libraryId !== "0") {
+    return base.libraryId === current.libraryId ? current.libraryId : undefined;
+  }
+  if (scientLibraryIdentityProblem(record, candidate) !== null) return undefined;
+  const known = new Set(
+    record.identifiers.flatMap((identifier) => {
+      const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
+      return key === null ? [] : [key];
+    }),
+  );
+  return candidate.identifiers.some((identifier) => {
+    const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
+    return key !== null && known.has(key);
+  })
+    ? current.libraryId
+    : undefined;
+}
+
+async function verifiedLegacyOwner(
+  access: ZoteroAccess,
+  reference: ScientSourceExternalReference,
+  root: ScientSourceStoreLocation,
+  record: ScientSourceRecord,
+): Promise<string | undefined> {
+  if (reference.libraryId !== "0") return undefined;
+  try {
+    const local = await zoteroTransport(access, "local");
+    const item = await readTransportItem(local, reference.itemKey);
+    if (item?.library.type !== "user") return undefined;
+    return corroboratedLegacyOwner(
+      record,
+      reference,
+      zoteroItemMaterial(item, []).candidate,
+      await readScientSourceZoteroSync(root, record.sourceId),
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 /** Records what Zotero held when a source was imported, so a later refresh has a base. */
@@ -82,6 +155,7 @@ export async function recordZoteroSync(input: {
   readonly material: ZoteroItemMaterial;
   readonly attachmentKeys: ReadonlyArray<string>;
   readonly pdfs: Readonly<Record<string, string>> | undefined;
+  readonly annotationLibraryId?: string;
 }): Promise<void> {
   const reference = zoteroReference(input.material.candidate);
   if (!reference) return;
@@ -93,6 +167,9 @@ export async function recordZoteroSync(input: {
     formatVersion: 1,
     sourceId: input.record.sourceId,
     libraryId: reference.libraryId,
+    ...(input.annotationLibraryId !== undefined && input.annotationLibraryId !== reference.libraryId
+      ? { annotationLibraryId: input.annotationLibraryId }
+      : {}),
     itemKey: reference.itemKey,
     itemVersion: reference.itemVersion,
     syncedAt: new Date().toISOString(),
@@ -213,6 +290,8 @@ async function refreshOne(input: {
   readonly record: ScientSourceRecord;
   readonly transport: ZoteroTransport;
   readonly actor: ScientSourceActor;
+  readonly libraryId?: string;
+  readonly verifiedLocalOwner?: string | undefined;
   readonly choices: ZoteroRefreshChoices;
 }): Promise<ScientSourceZoteroRefreshItem> {
   const reference = zoteroReference(input.record);
@@ -220,6 +299,21 @@ async function refreshOne(input: {
   const empty = { changedFields: [], addedPdfCount: 0, conflicts: [] };
   if (!reference) {
     return { ...summary, ...empty, outcome: "failed", message: "Not linked to Zotero." };
+  }
+  if (
+    input.libraryId !== undefined &&
+    reference.libraryId === "0" &&
+    input.verifiedLocalOwner === undefined
+  ) {
+    throw new Error("This Zotero library's owner could not be verified. No source was refreshed.");
+  }
+  if (
+    input.libraryId !== undefined &&
+    !sameZoteroLibrary(reference.libraryId, input.libraryId, input.verifiedLocalOwner)
+  ) {
+    throw new Error(
+      "This Zotero source belongs to another library. Connect its owner to refresh it.",
+    );
   }
   let material: ZoteroItemMaterial;
   try {
@@ -230,7 +324,33 @@ async function refreshOne(input: {
     }
     throw error;
   }
-  const base = await readScientSourceZoteroSync(input.root, input.record.sourceId);
+  const currentReference = zoteroReference(material.candidate);
+  const currentLibraryId = currentReference?.libraryId;
+  const savedBase = await readScientSourceZoteroSync(input.root, input.record.sourceId);
+  const verifiedLocalOwner =
+    input.transport.connection === "local"
+      ? corroboratedLegacyOwner(input.record, reference, material.candidate, savedBase)
+      : input.verifiedLocalOwner;
+  if (
+    currentLibraryId === "0" ||
+    (reference.libraryId === "0" && verifiedLocalOwner === undefined)
+  ) {
+    throw new Error("This Zotero library's owner could not be verified. No source was refreshed.");
+  }
+  if (
+    currentLibraryId === undefined ||
+    !sameZoteroLibrary(reference.libraryId, currentLibraryId, verifiedLocalOwner)
+  ) {
+    throw new Error(
+      "This Zotero source belongs to another library. Connect its owner to refresh it.",
+    );
+  }
+  const base =
+    savedBase?.itemKey === reference.itemKey &&
+    sameZoteroLibrary(savedBase.libraryId, currentLibraryId, verifiedLocalOwner)
+      ? savedBase
+      : null;
+  const annotationLibraryId = base?.annotationLibraryId ?? base?.libraryId ?? reference.libraryId;
   const plan = planZoteroRefresh({
     record: input.record,
     base,
@@ -303,10 +423,13 @@ async function refreshOne(input: {
     known: { ...base?.pdfs, ...Object.fromEntries(attached.pdfs) },
     attachedKeys: attached.keys,
   });
-  const current = zoteroReference(material.candidate);
-  if (current && current.itemVersion !== reference.itemVersion) {
+  const current = currentReference;
+  if (
+    current &&
+    (current.itemVersion !== reference.itemVersion || current.libraryId !== reference.libraryId)
+  ) {
     const references = record.externalReferences.map((entry) =>
-      entry === zoteroReference(record) ? { ...entry, itemVersion: current.itemVersion } : entry,
+      entry === zoteroReference(record) ? current : entry,
     );
     record = (
       await updateScientSourceExternalReferences({
@@ -321,7 +444,8 @@ async function refreshOne(input: {
   await writeScientSourceZoteroSync(input.root, {
     formatVersion: 1,
     sourceId: record.sourceId,
-    libraryId: reference.libraryId,
+    libraryId: currentLibraryId,
+    ...(annotationLibraryId !== currentLibraryId ? { annotationLibraryId } : {}),
     itemKey: reference.itemKey,
     itemVersion: current?.itemVersion ?? reference.itemVersion,
     syncedAt: new Date().toISOString(),
@@ -336,6 +460,7 @@ async function refreshOne(input: {
   const highlights = await bringZoteroAnnotations({
     root: input.root,
     record,
+    annotationLibraryId,
     annotations: material.annotations,
     pdfs,
     now: new Date().toISOString(),
@@ -401,13 +526,27 @@ export async function refreshZoteroSources(input: {
   }
   const connection = await readyZoteroConnection(input.zotero, input.connection);
   // Each source is read again from the library it came from: My Library or its group.
-  const transports = new Map<string, Promise<ZoteroTransport>>();
+  const transports = new Map<
+    string,
+    Promise<{
+      readonly transport: ZoteroTransport;
+      readonly libraryId?: string;
+    }>
+  >();
   const transportFor = (record: ScientSourceRecord) => {
     const reference = zoteroReference(record);
     const groupId = reference ? zoteroGroupIdOfLibrary(reference.libraryId) : null;
     let transport = transports.get(groupId ?? "");
     if (!transport) {
-      transport = zoteroTransport(input.zotero, connection, groupId ?? undefined);
+      transport =
+        connection === "web"
+          ? zoteroWebLibrary(input.zotero, groupId ? { groupId } : {}).then((library) => ({
+              transport: library.transport,
+              libraryId: libraryIdOfWeb(library),
+            }))
+          : zoteroTransport(input.zotero, connection, groupId ?? undefined).then((transport) => ({
+              transport,
+            }));
       transports.set(groupId ?? "", transport);
     }
     return transport;
@@ -419,7 +558,16 @@ export async function refreshZoteroSources(input: {
         await refreshOne({
           root: input.root,
           record,
-          transport: await transportFor(record),
+          ...(await transportFor(record)),
+          verifiedLocalOwner:
+            connection === "web" && zoteroReference(record)
+              ? await verifiedLegacyOwner(
+                  input.zotero,
+                  zoteroReference(record)!,
+                  input.root,
+                  record,
+                )
+              : undefined,
           actor: input.actor,
           choices: input.choices ?? {},
         }),
@@ -449,11 +597,11 @@ export async function refreshZoteroSources(input: {
 const CHANGED_IN_ZOTERO =
   "This item changed in Zotero since Scient last read it. Refresh from Zotero, then send again.";
 
-async function readWebItem(
-  library: ZoteroWebLibrary,
+async function readTransportItem(
+  transport: ZoteroTransport,
   itemKey: string,
 ): Promise<ZoteroRawItem | null> {
-  const response = await library.transport.get(`/items/${itemKey}?format=json`);
+  const response = await transport.get(`/items/${itemKey}?format=json`);
   if (response.status === 404) return null;
   if (response.status !== 200) throw new Error(`zotero.org returned HTTP ${response.status}.`);
   return decodeZoteroRawItem(JSON.parse(response.body));
@@ -472,26 +620,42 @@ async function syncAfterSend(input: {
   readonly record: ScientSourceRecord;
   readonly itemKey: string;
   readonly actor: ScientSourceActor;
+  readonly reference?: ScientSourceExternalReference;
+  readonly verifiedLocalOwner?: string | undefined;
 }): Promise<void> {
   const material = await readZoteroItemMaterial(input.library.transport, input.itemKey);
   const fresh = zoteroReference(material.candidate);
   if (!fresh) return;
-  const others = input.record.externalReferences.filter((entry) => entry.system !== "zotero");
+  const others = input.record.externalReferences.filter(
+    (entry) =>
+      !(
+        entry.system === "zotero" &&
+        ((entry.libraryId === fresh.libraryId && entry.itemKey === fresh.itemKey) ||
+          (input.reference &&
+            entry.libraryId === input.reference.libraryId &&
+            entry.itemKey === input.reference.itemKey))
+      ),
+  );
   const updated = await updateScientSourceExternalReferences({
     root: input.root,
     sourceId: input.record.sourceId,
     expectedRevision: input.record.revision,
-    externalReferences: [...others, fresh],
+    externalReferences: [fresh, ...others],
     actor: input.actor,
   });
   const previous = await readScientSourceZoteroSync(input.root, input.record.sourceId);
-  const same = previous?.itemKey === fresh.itemKey && previous.libraryId === fresh.libraryId;
+  const same =
+    previous?.itemKey === fresh.itemKey &&
+    sameZoteroLibrary(previous.libraryId, fresh.libraryId, input.verifiedLocalOwner);
   await recordZoteroSync({
     root: input.root,
     record: updated.record,
     material,
     attachmentKeys: same ? previous.attachmentKeys : [],
     pdfs: same ? previous.pdfs : undefined,
+    annotationLibraryId: same
+      ? (previous.annotationLibraryId ?? previous.libraryId)
+      : (input.reference?.libraryId ?? fresh.libraryId),
   });
 }
 
@@ -632,17 +796,32 @@ async function sendOne(input: {
   readonly record: ScientSourceRecord;
   readonly library: ZoteroWebLibrary;
   readonly actor: ScientSourceActor;
+  readonly zotero: ZoteroAccess;
 }): Promise<ScientSourceZoteroSendItem> {
   const { record, library } = input;
   const summary = { sourceId: record.sourceId, title: record.title };
-  const linked = zoteroReference(record);
-  // A link to another library is not this library's item, even with the same key.
-  const reference =
-    linked && zoteroGroupIdOfLibrary(linked.libraryId) === library.groupId ? linked : undefined;
-  const current = reference ? await readWebItem(library, reference.itemKey) : null;
+  const libraryId = libraryIdOfWeb(library);
+  let verifiedLocalOwner: string | undefined;
+  let reference = record.externalReferences.find(
+    (entry) => entry.system === "zotero" && sameZoteroLibrary(entry.libraryId, libraryId),
+  );
+  if (!reference && !library.groupId) {
+    const legacy = record.externalReferences.find(
+      (entry) => entry.system === "zotero" && entry.libraryId === "0",
+    );
+    if (legacy) {
+      verifiedLocalOwner = await verifiedLegacyOwner(input.zotero, legacy, input.root, record);
+      if (sameZoteroLibrary(legacy.libraryId, libraryId, verifiedLocalOwner)) reference = legacy;
+    }
+  }
+  const current = reference ? await readTransportItem(library.transport, reference.itemKey) : null;
   if (reference && current) {
     const base = await readScientSourceZoteroSync(input.root, record.sourceId);
-    const lastRead = base?.itemKey === reference.itemKey ? base.itemVersion : reference.itemVersion;
+    const lastRead =
+      base?.itemKey === reference.itemKey &&
+      sameZoteroLibrary(base.libraryId, libraryId, verifiedLocalOwner)
+        ? base.itemVersion
+        : reference.itemVersion;
     if (current.version !== lastRead) {
       return {
         ...summary,
@@ -653,6 +832,9 @@ async function sendOne(input: {
     }
     const patch = zoteroPatchFor({ record, current });
     if (Object.keys(patch).length === 0) {
+      if (reference !== zoteroReference(record) || reference.libraryId === "0") {
+        await syncAfterSend({ ...input, reference, verifiedLocalOwner, itemKey: current.key });
+      }
       return { ...summary, outcome: "unchanged", itemKey: current.key, message: null };
     }
     const result = await library.updateItem(current.key, current.version, patch);
@@ -664,7 +846,7 @@ async function sendOne(input: {
         message: CHANGED_IN_ZOTERO,
       };
     }
-    await syncAfterSend({ ...input, itemKey: current.key });
+    await syncAfterSend({ ...input, reference, verifiedLocalOwner, itemKey: current.key });
     return { ...summary, outcome: "updated", itemKey: current.key, message: null };
   }
   const itemType = zoteroItemTypeFor(record);
@@ -747,13 +929,17 @@ export async function sendSourcesToZotero(input: {
       continue;
     }
     try {
-      const item = await sendOne({ root: input.root, record, library, actor: input.actor });
+      const item = await sendOne({
+        root: input.root,
+        record,
+        library,
+        actor: input.actor,
+        zotero: input.zotero,
+      });
       const placed =
         item.outcome === "created" || item.outcome === "updated" || item.outcome === "unchanged";
       const { itemKey } = item;
-      const libraryId = library.groupId
-        ? zoteroGroupLibraryId(library.groupId)
-        : library.account.userId;
+      const libraryId = libraryIdOfWeb(library);
       items.push(
         input.pdfs && placed && itemKey
           ? {

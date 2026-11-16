@@ -57,6 +57,12 @@ export type ScientSourcesStore =
 
 export type ScientSourcesLibraryStore = Extract<ScientSourcesStore, { readonly kind: "library" }>;
 
+/** Recovery failures block writes; they are not the non-project identity fallback. */
+export class ScientLibraryRecoveryError extends Schema.TaggedError<ScientLibraryRecoveryError>()(
+  "ScientLibraryRecoveryError",
+  { message: Schema.String, cause: Schema.Defect() },
+) {}
+
 export async function libraryExists(root: string): Promise<boolean> {
   return NodeFSP.lstat(NodePath.join(root, "library.json")).then(
     (stats) => stats.isFile(),
@@ -81,14 +87,22 @@ const projectStore = (project: ScientSourcesProject): ScientSourcesStore => ({
 });
 
 /**
- * Finishes merges and Undos that stopped halfway, before anything else is written: a killed
- * process, or an error that left the process running. Cheap when nothing is pending. A failure is
- * logged and tried again on the next write call; it never fails that call.
+ * Finishes merges and Undos before another write is admitted. A failed recovery leaves its
+ * intent in place and blocks writes until it can finish; reads do not start recovery.
  */
 export const finishInterruptedLibraryMerges = (library: ScientLibraryLocation) =>
-  Effect.promise(() => settleScientLibraryMerges(library)).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Could not finish the Library's interrupted merges.", { cause }),
+  Effect.tryPromise({
+    try: () => settleScientLibraryMerges(library),
+    catch: (cause) =>
+      new ScientLibraryRecoveryError({
+        message: "The Library's interrupted merge could not finish. No new write was started.",
+        cause,
+      }),
+  }).pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("Could not finish the Library's interrupted merges.", {
+        cause: error.cause,
+      }),
     ),
   );
 

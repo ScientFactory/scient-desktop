@@ -57,7 +57,11 @@ import {
 } from "./LibraryMove.ts";
 import { runLibraryMovePass } from "./LibraryMovePass.ts";
 import { organizeLibrarySources } from "./LibrarySourcesRoutes.ts";
-import { ScientSourcesBackend, resolveScientSourcesStoreFor } from "./SourcesBackend.ts";
+import {
+  ScientSourcesBackend,
+  resolveScientSourcesStoreFor,
+  type ScientLibraryRecoveryError,
+} from "./SourcesBackend.ts";
 
 const KEPT_COPY_LINE = expect.stringMatching(
   /^A copy of this project's sources from before the move is kept in \.scient\/library\/retained-before-library\/move_[0-9a-f]+\.$/u,
@@ -395,7 +399,10 @@ describe("one move per project in this server", () => {
   );
 });
 
-type ArrangeError = PlatformError.PlatformError | ScientLibraryMoveBusyError;
+type ArrangeError =
+  | PlatformError.PlatformError
+  | ScientLibraryMoveBusyError
+  | ScientLibraryRecoveryError;
 
 interface StatusRow {
   readonly name: string;

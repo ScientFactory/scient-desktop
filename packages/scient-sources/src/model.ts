@@ -381,6 +381,8 @@ export const ScientSourceZoteroSync = Schema.Struct({
   formatVersion: Schema.Literal(1),
   sourceId: NonEmptyString,
   libraryId: NonEmptyString,
+  /** Stable highlight namespace when a verified local "0" library gains its owner ID. */
+  annotationLibraryId: Schema.optionalKey(NonEmptyString),
   itemKey: NonEmptyString,
   itemVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   syncedAt: NonEmptyString,

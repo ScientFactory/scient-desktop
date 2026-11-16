@@ -261,6 +261,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
     }),
   ),
   pinned: Schema.optionalKey(Schema.Boolean),
+  fromSnapshot: Schema.optionalKey(Schema.Boolean),
   projectNote: Schema.optionalKey(NullableText),
   alsoCitedAs: Schema.optionalKey(Schema.Array(CitationKey)),
   /** Library mode: earlier project notes, oldest first; restore one with organize pin. */

@@ -42,6 +42,7 @@ import {
 } from "@scientfactory/scient-sources/library-root";
 import {
   pinScientLibrarySource,
+  listScientProjectPinnedWorks,
   readScientProjectPinNoteHistory,
   renameScientProjectPinKey,
   setScientProjectPinNote,
@@ -358,29 +359,27 @@ export const resolveScientSourcesProject = Effect.fn("ScientSourcesToolkit.resol
   },
 );
 
-/**
- * The project and, in library mode, the library a call works on. Write access is the
- * invocation's `sources:write`; without it a library-mode call writes nothing at all.
- */
-export const resolveScientSourcesStore = Effect.fn("ScientSourcesToolkit.resolveStore")(
-  function* () {
-    const project = yield* resolveScientSourcesProject();
-    const invocation = yield* AgentInvocationContext;
-    return yield* resolveScientSourcesStoreFor(
-      project,
-      invocation.capabilities.has("sources:write") ? "write" : "read",
-      "agent",
-    ).pipe(
-      // The move goes on; the message names its progress so the agent can say so and retry.
-      Effect.catchTags({
-        ScientLibraryMoveBusyError: (busy) =>
-          Effect.fail(
-            new ScientSourcesToolError({ code: "operation-failed", message: busy.message }),
-          ),
-      }),
-    );
-  },
-);
+/** Resolves only the access this operation needs; a broad grant never turns a read into a write. */
+export const resolveScientSourcesStore = Effect.fn("ScientSourcesToolkit.resolveStore")(function* (
+  access: "read" | "write" = "read",
+) {
+  const project = yield* resolveScientSourcesProject();
+  const invocation = yield* AgentInvocationContext;
+  if (access === "write" && !invocation.capabilities.has("sources:write")) {
+    return yield* toolError("operation-failed", "This operation needs sources:write access.");
+  }
+  return yield* resolveScientSourcesStoreFor(project, access, "agent").pipe(
+    // The move goes on; the message names its progress so the agent can say so and retry.
+    Effect.catchTags({
+      ScientLibraryMoveBusyError: (busy) =>
+        Effect.fail(
+          new ScientSourcesToolError({ code: "operation-failed", message: busy.message }),
+        ),
+      ScientLibraryRecoveryError: (error) =>
+        Effect.fail(toolError("operation-failed", error.message)),
+    }),
+  );
+});
 
 /** Library backend only: the project's move while it has something to say. Reads only. */
 const libraryMoveNotice = Effect.fn("ScientSourcesToolkit.moveNotice")(function* (root: string) {
@@ -818,7 +817,7 @@ export const readScientSourceCollectionsForInvocation = Effect.fn(
 
 export const organizeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.organize")(
   function* (input: { readonly change: ScientSourcesOrganizeAction }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     return yield* attempt(() =>
       organizeSources({ root: store.store, change: input.change, actor: "agent" }),
     );
@@ -856,7 +855,9 @@ export const organizeLibrarySourcesForInvocation = Effect.fn(
   if (!isLibraryOrganizeChange(change)) {
     return yield* organizeScientSourcesForInvocation({ change });
   }
-  const store = yield* resolveScientSourcesStore();
+  const store = yield* resolveScientSourcesStore(
+    change.action === "list-package-imports" ? "read" : "write",
+  );
   if (store.kind !== "library") {
     // Served from its own folder: not moved yet or already moved back, so nothing to move back.
     if (change.action === "move-back") return { outcome: "not-moved" as const };
@@ -1092,7 +1093,7 @@ const pinSummary = (pin: {
 
 export const bulkUpdateScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.bulkUpdate")(
   function* (input: { readonly change: ScientSourcesBulkRequestChange }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const root = store.root;
     const change =
       store.kind === "library" && "sourceIds" in input.change
@@ -1136,13 +1137,34 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
   }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
-    const sourceId = yield* sourceIdIn(store, input.sourceId);
+    const works =
+      store.kind === "library"
+        ? yield* attempt(() =>
+            listScientProjectPinnedWorks({
+              projectRoot: store.root,
+              library: store.exists ? store.library : null,
+            }),
+          )
+        : [];
+    const matchingWorks = works.filter(
+      (entry) => input.citationKey === undefined || entry.citationKey === input.citationKey,
+    );
+    const work =
+      matchingWorks.find((entry) => entry.projectSourceId === input.sourceId) ??
+      matchingWorks.find(
+        (entry) => entry.from === "library" && entry.record.sourceId === input.sourceId,
+      );
+    const sourceId = work?.record.sourceId ?? (yield* sourceIdIn(store, input.sourceId));
     const record =
-      store.kind === "library" && !store.exists
+      work?.record ??
+      (store.kind === "library" && !store.exists
         ? null
-        : yield* attempt(() => readScientSourceRecord(root, sourceId));
+        : yield* attempt(() => readScientSourceRecord(root, sourceId)));
     if (!record) return yield* toolError("not-found", "The source was not found in this project.");
-    const revisions = yield* attempt(() => listScientSourceRevisions(root, sourceId));
+    const fromSnapshot = work?.from === "snapshot";
+    const revisions = fromSnapshot
+      ? []
+      : yield* attempt(() => listScientSourceRevisions(root, sourceId));
     const pinned =
       store.kind === "library"
         ? yield* attempt(() =>
@@ -1155,18 +1177,20 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
         : null;
     const pin = pinned?.pin;
     const noteHistory =
-      store.kind === "library" && pin
+      store.kind === "library" && (work || pin)
         ? yield* attempt(() =>
             readScientProjectPinNoteHistory({
               projectRoot: store.root,
-              citationKey: pin.citationKey,
+              citationKey: work?.citationKey ?? pin!.citationKey,
             }),
           )
         : null;
-    const categories = currentScientSourceCategories(
-      record,
-      yield* attempt(() => readScientSourceCategories(root)),
-    );
+    const categories = fromSnapshot
+      ? null
+      : currentScientSourceCategories(
+          record,
+          yield* attempt(() => readScientSourceCategories(root)),
+        );
     const uses = input.uses
       ? yield* attempt(() =>
           store.kind === "library"
@@ -1185,7 +1209,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       ...record,
       abstract: abstractTruncated ? abstract.slice(0, maximumAbstractCharacters) : abstract,
       abstractTruncated,
-      note: record.note ?? null,
+      note: store.kind === "library" ? null : (record.note ?? null),
       revisions: revisions ?? [],
       ...(categories
         ? {
@@ -1222,8 +1246,13 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       ),
       ...(store.kind === "library"
         ? {
-            pinned: pin !== undefined,
-            ...(pin ? { citationKey: pin.citationKey, projectNote: pin.note ?? null } : {}),
+            pinned: work !== undefined || pin !== undefined,
+            fromSnapshot,
+            ...(work
+              ? { citationKey: work.citationKey, projectNote: work.projectNote }
+              : pin
+                ? { citationKey: pin.citationKey, projectNote: pin.note ?? null }
+                : {}),
             ...(pinned && pinned.alsoCitedAs.length > 0 ? { alsoCitedAs: pinned.alsoCitedAs } : {}),
             ...(noteHistory && noteHistory.length > 1
               ? {
@@ -1248,7 +1277,7 @@ export const updateScientSourceNoteForInvocation = Effect.fn("ScientSourcesToolk
     readonly expectedRevision: number;
     readonly note: string | null;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const root = store.store;
     const sourceId = yield* sourceIdIn(store, input.sourceId);
     const current = yield* attempt(() => readScientSourceRecord(root, sourceId));
@@ -1279,7 +1308,7 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
     readonly metadata: ScientSourceEditableMetadata;
     readonly allowPossibleMetadataMatch?: boolean;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     if (store.kind === "library") return yield* updateLibrarySource(store, input);
     const { root } = store;
     const citationKey = input.metadata.citationKey?.trim();
@@ -1333,7 +1362,7 @@ export const updateLibrarySourceForInvocation = Effect.fn("ScientSourcesToolkit.
     if (metadata === undefined && readingStatus === undefined && starred === undefined) {
       return yield* toolError("operation-failed", "Give metadata, readingStatus or starred.");
     }
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     if (store.kind !== "library") {
       if (metadata === undefined) {
         return yield* toolError("operation-failed", "Reading state needs the personal Library.");
@@ -1474,7 +1503,7 @@ export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
     readonly expectedRevision: number;
     readonly permanent?: boolean;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const root = store.store;
     if (input.permanent) {
       const citing =
@@ -1522,7 +1551,7 @@ export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
 
 export const restoreScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.restore")(
   function* (input: { readonly sourceId: string; readonly citationKey?: string }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const root = store.store;
     const result = yield* attempt(() =>
       restoreScientSource({ root, sourceId: input.sourceId, actor: "agent" }),
@@ -1542,7 +1571,7 @@ export const revertScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
     readonly expectedRevision: number;
     readonly toRevision: number;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const root = store.store;
     const sourceId = yield* sourceIdIn(store, input.sourceId);
     const current = yield* attempt(() => readScientSourceRecord(root, sourceId));
@@ -1566,7 +1595,7 @@ const IDENTIFIER_LIST_OPTIONS = new Set(["identifierList", "enrich", "allowPossi
 
 const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolkit.addByIdentifier")(
   function* (input: ScientSourceAddInputType, identifierList: ReadonlyArray<string>) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const root = store.store;
     const extra = Object.keys(input).find((field) => !IDENTIFIER_LIST_OPTIONS.has(field));
     if (extra) {
@@ -1622,7 +1651,7 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
   if (input.identifierList) {
     return yield* addScientSourcesByIdentifierForInvocation(input, input.identifierList);
   }
-  const store = yield* resolveScientSourcesStore();
+  const store = yield* resolveScientSourcesStore("write");
   const root = store.store;
   const fromFields = candidateFromAgentInput(input);
   // Bare identifiers select and add as the identifier list does, with no type to invent.
@@ -1800,7 +1829,7 @@ const EDITORIAL_WORDS = {
 
 export const checkScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.check")(
   function* (input: { readonly sourceId: string; readonly refresh?: boolean }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const root = store.store;
     const sourceId = yield* sourceIdIn(store, input.sourceId);
     const current = yield* attempt(() => readScientSourceRecord(root, sourceId));
@@ -1850,7 +1879,7 @@ export const attachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
     readonly expectedRevision: number;
     readonly pdfRelativePath: string;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const sourceId = yield* sourceIdIn(store, input.sourceId);
     const resolvedPdf = yield* attempt(() =>
       resolveScientSourceInputPdf(store.root, input.pdfRelativePath),
@@ -1880,7 +1909,7 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
     readonly attachmentId: string;
     readonly expectedRevision: number;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const sourceId = yield* sourceIdIn(store, input.sourceId);
     const result = yield* attempt(() =>
       detachSourcePdf({ root: store.store, ...input, sourceId, actor: "agent" }),
@@ -1901,7 +1930,7 @@ export const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolk
     readonly importEdited?: ReadonlyArray<"references.bib" | "references.json">;
     readonly citationStyle?: string | null;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     // The citation style is a project file, whichever store holds the sources.
     const { root } = store;
     const { citationStyle: styleId, ...files } = input;
@@ -2051,7 +2080,7 @@ const saveScientSourcePageForInvocation = Effect.fn("ScientSourcesToolkit.savePa
     readonly passage?: string;
     readonly meta?: ReadonlyArray<{ readonly name: string; readonly content: string }>;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const root = store.store;
     const resolveIdentifier = yield* keyedIdentifierLookup();
     const observeImport = yield* makeSourceImportAnalytics("agent");
@@ -2086,7 +2115,7 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
     /** Library mode: false brings the entries into the library without pinning them here. */
     readonly pin?: boolean;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const { root } = store;
     const observeImport = yield* makeSourceImportAnalytics("agent");
     const resolveIdentifier = yield* keyedIdentifierLookup();
@@ -2187,7 +2216,7 @@ export const exportScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
     readonly includeNotes?: boolean;
     readonly overwrite?: boolean;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const { root } = store;
     const sourceIds = input.sourceIds
       ? yield* Effect.forEach(input.sourceIds, (sourceId) => sourceIdIn(store, sourceId))
@@ -2263,7 +2292,7 @@ export const citeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.ci
     readonly sources: ReadonlyArray<string>;
     readonly format?: "markdown" | "latex";
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const resolveIdentifiers = yield* keyedBatchLookup(yield* ReferenceIdentifierLookup);
     if (store.kind === "library") {
       return yield* attempt(() =>

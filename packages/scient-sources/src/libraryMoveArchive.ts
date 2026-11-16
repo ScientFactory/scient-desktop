@@ -338,11 +338,12 @@ const RESTORE_PROGRESS = ".scient/library/restore-progress.json";
 const RESTORE_STAGING = ".scient/library/.restoring-archive";
 const PROJECT_STORE = ".scient/sources";
 
-/** Written before the restored store is published; a retry with it finishes the highlights. */
+/** Written before publication; the private empty marker travels with the restored store. */
 const RestoreProgress = Schema.Struct({
   formatVersion: Schema.Literal(1),
   archiveId: Schema.String,
   manifestSha256: Schema.String,
+  publicationId: Schema.optionalKey(Schema.String),
 });
 
 async function readRestoreProgress(projectRoot: string) {
@@ -462,6 +463,57 @@ async function publishCopy(
   }
 }
 
+async function hasPublicationMarker(projectRoot: string, relative: string): Promise<boolean> {
+  if (!(await safePath(projectRoot, relative, "directory"))) return false;
+  try {
+    return (await NodeFSP.lstat(absolute(projectRoot, relative))).isDirectory();
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+async function removeEmptyDirectory(path: string): Promise<boolean> {
+  try {
+    await NodeFSP.rmdir(path);
+    return true;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return true;
+    if (
+      isNodeError(error, "ENOTEMPTY") ||
+      isNodeError(error, "EEXIST") ||
+      isNodeError(error, "ENOTDIR")
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/** Each rmdir refuses files that arrive after the directory was read. Links are never followed. */
+async function removeEmptyDirectories(path: string): Promise<boolean> {
+  try {
+    if (!(await NodeFSP.lstat(path)).isDirectory()) return false;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return true;
+    throw error;
+  }
+  let entries: NodeFS.Dirent[];
+  try {
+    entries = await NodeFSP.readdir(path, { withFileTypes: true });
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return true;
+    if (isNodeError(error, "ENOTDIR")) return false;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !(await removeEmptyDirectories(NodePath.join(path, entry.name)))) {
+      return false;
+    }
+  }
+  return removeEmptyDirectory(path);
+}
+
 export type ScientPreMoveArchiveRestore =
   | {
       readonly outcome: "restored";
@@ -511,30 +563,55 @@ export async function restoreScientPreMoveArchive(input: {
   if (changed.length > 0) return { outcome: "archive-changed", files: changed };
   const manifestSha256 = (await hashFile(NodePath.join(folder, MANIFEST_FILE)))!;
   const progress = await readRestoreProgress(input.projectRoot);
-  const resuming = progress?.archiveId === archiveId && progress.manifestSha256 === manifestSha256;
+  const store = absolute(input.projectRoot, PROJECT_STORE);
+  const publicationId =
+    progress !== null &&
+    progress.archiveId === archiveId &&
+    progress.manifestSha256 === manifestSha256 &&
+    progress.publicationId !== undefined &&
+    SAFE_ID.test(progress.publicationId)
+      ? progress.publicationId
+      : NodeCrypto.randomUUID();
+  const publicationMarker = `.restoring-archive-${publicationId}`;
+  const publishedMarker = `${PROJECT_STORE}/${publicationMarker}`;
+  const resuming =
+    progress?.publicationId === publicationId &&
+    (await hasPublicationMarker(input.projectRoot, publishedMarker));
   if (!resuming && (await input.storePresent())) return { outcome: "project-store-present" };
 
-  if (!resuming || !(await input.storePresent())) {
+  if (!resuming) {
     const staging = absolute(input.projectRoot, `${RESTORE_STAGING}/${archiveId}`);
     await NodeFSP.rm(staging, { recursive: true, force: true });
+    await ensureDirectory(staging);
     for (const file of manifest.files.filter((entry) => entry.path.startsWith("sources/"))) {
       const destination = absolute(staging, file.path.slice("sources/".length));
       await stageCopy(absolute(folder, file.path), destination, file.sha256, input.faults);
     }
+    await NodeFSP.mkdir(NodePath.join(staging, publicationMarker));
     await atomicWriteJson(
       absolute(input.projectRoot, RESTORE_PROGRESS),
-      { formatVersion: 1, archiveId, manifestSha256 },
+      { formatVersion: 1, archiveId, manifestSha256, publicationId },
       4096,
     );
-    const store = absolute(input.projectRoot, PROJECT_STORE);
-    // An empty folder left by the move's cleanup is replaced; files there were refused above.
-    await NodeFSP.rm(store, { recursive: true, force: true });
+    if (!(await safePath(input.projectRoot, PROJECT_STORE, "directory"))) {
+      return { outcome: "archive-changed", files: [PROJECT_STORE] };
+    }
+    if (!(await removeEmptyDirectories(store))) return { outcome: "project-store-present" };
     await ensureDirectory(NodePath.dirname(store));
-    await NodeFSP.rename(staging, store);
-    await NodeFSP.rm(absolute(input.projectRoot, RESTORE_STAGING), {
-      recursive: true,
-      force: true,
-    });
+    try {
+      await NodeFSP.rename(staging, store);
+    } catch (error) {
+      if (
+        ["EEXIST", "ENOTEMPTY", "ENOTDIR", "EISDIR", "EPERM"].some((code) =>
+          isNodeError(error, code),
+        ) &&
+        (await NodeFSP.lstat(store).catch(() => null)) !== null
+      ) {
+        return { outcome: "project-store-present" };
+      }
+      throw error;
+    }
+    await removeEmptyDirectory(absolute(input.projectRoot, RESTORE_STAGING));
   }
   let keptAnnotations = 0;
   for (const file of manifest.files.filter((entry) => entry.path.startsWith("annotations/"))) {
@@ -545,7 +622,12 @@ export async function restoreScientPreMoveArchive(input: {
     // Published whole by an earlier attempt, or the project's own: that one is kept.
     if ((await hashFile(destination)) !== file.sha256) keptAnnotations += 1;
   }
+  if (!(await hasPublicationMarker(input.projectRoot, publishedMarker))) {
+    return { outcome: "project-store-present" };
+  }
+  // Removing the marker first would make an interrupted cleanup look like another writer's store.
   await NodeFSP.rm(absolute(input.projectRoot, RESTORE_PROGRESS), { force: true });
+  await removeEmptyDirectory(absolute(input.projectRoot, publishedMarker));
   return {
     outcome: "restored",
     archiveId,
@@ -574,7 +656,7 @@ export async function finishScientPreMoveRestore(input: {
       throw new ScientPreMoveRestorePendingError(`the copy ${progress.archiveId} is gone.`);
     case "project-store-present":
       throw new ScientPreMoveRestorePendingError(
-        `the copy ${progress.archiveId} changed after its restore began.`,
+        `the project holds a source store that this restore did not publish.`,
       );
     case "archive-changed":
       throw new ScientPreMoveRestorePendingError(

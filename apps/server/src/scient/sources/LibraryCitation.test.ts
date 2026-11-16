@@ -13,7 +13,7 @@ import {
 import { importScientSource, readScientSourceRecord } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { citeLibrarySources } from "./LibraryCitation.ts";
+import { citeLibrarySources, renameCitationKeyInProject } from "./LibraryCitation.ts";
 import { updateScientSource } from "./ScientSourcesCoordinator.ts";
 
 const fixtures: string[] = [];
@@ -118,10 +118,13 @@ describe("citing Library sources", () => {
     const root = await project();
     const record = await add(root, candidate("A", "Notes on the engine", []));
     await NodeFSP.mkdir(NodePath.join(root, "chapters"));
-    await NodeFSP.writeFile(NodePath.join(root, "paper.md"), "As [@lovelace1843notes] shows.\n");
+    await NodeFSP.writeFile(
+      NodePath.join(root, "paper.md"),
+      "\uFEFFÉmilie 𝛼 lovelace1843notes: [@lovelace1843notes].\r\n",
+    );
     await NodeFSP.writeFile(
       NodePath.join(root, "chapters", "one.tex"),
-      "See \\cite{lovelace1843notes,other}.\n",
+      "日本語 lovelace1843notes: \\cite{lovelace1843notes,other}.\n",
     );
     await NodeFSP.writeFile(NodePath.join(root, "untouched.md"), "No citations here.\n");
 
@@ -135,12 +138,36 @@ describe("citing Library sources", () => {
     expect(result.outcome).toBe("updated");
     expect(result.citationKeyRenamedIn).toEqual(["paper.md", "chapters/one.tex"]);
     expect(await NodeFSP.readFile(NodePath.join(root, "paper.md"), "utf8")).toBe(
-      "As [@ada-notes] shows.\n",
+      "\uFEFFÉmilie 𝛼 lovelace1843notes: [@ada-notes].\r\n",
     );
     expect(await NodeFSP.readFile(NodePath.join(root, "chapters", "one.tex"), "utf8")).toBe(
-      "See \\cite{ada-notes,other}.\n",
+      "日本語 lovelace1843notes: \\cite{ada-notes,other}.\n",
     );
     expect((await readScientSourceRecord(root, record.sourceId))?.citationKey).toBe("ada-notes");
+  });
+
+  it("preserves non-UTF-8 citation documents byte-for-byte and reports them", async () => {
+    const root = await project();
+    const documents = [
+      { path: "legacy.md", text: "Café [@old-key].\r\n" },
+      { path: "legacy.tex", text: "Café \\cite{old-key}.\r\n" },
+    ].map(({ path, text }) => ({ path, bytes: Buffer.from(text, "latin1") }));
+    for (const { path, bytes } of documents) {
+      await NodeFSP.writeFile(NodePath.join(root, path), bytes);
+    }
+
+    const result = await renameCitationKeyInProject(root, "old-key", "new-key");
+
+    expect(result.renamedIn).toEqual([]);
+    expect(result.skipped).toEqual(
+      documents.map(({ path }) => ({
+        path,
+        reason: "Not valid UTF-8; left unchanged to preserve the file's encoding.",
+      })),
+    );
+    for (const { path, bytes } of documents) {
+      expect(await NodeFSP.readFile(NodePath.join(root, path))).toEqual(bytes);
+    }
   });
 
   // regression: a rename stopped after 300 documents and six folder levels, without a word.
@@ -162,6 +189,13 @@ describe("citing Library sources", () => {
     fixtures.push(outside);
     await NodeFSP.writeFile(NodePath.join(outside, "linked.md"), cited);
     await NodeFSP.symlink(NodePath.join(outside, "linked.md"), NodePath.join(root, "linked.md"));
+    await NodeFSP.symlink(outside, NodePath.join(root, "linked-folder"), "dir");
+    await NodeFSP.symlink(NodePath.join(outside, "linked.md"), NodePath.join(root, ".linked.md"));
+    await NodeFSP.writeFile(NodePath.join(root, ".draft.md"), cited);
+    for (const folder of [".notes", ".git", ".scient"]) {
+      await NodeFSP.mkdir(NodePath.join(root, folder), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(root, folder, "hidden.md"), cited);
+    }
 
     const result = await updateScientSource({
       root,
@@ -170,12 +204,31 @@ describe("citing Library sources", () => {
       metadata: { ...editableMetadataFromRecord(record), citationKey: "ada-notes" },
     });
 
-    expect(result.citationKeyRenamedIn).toHaveLength(302);
+    expect(result.citationKeyRenamedIn).toHaveLength(303);
+    expect(await NodeFSP.readFile(NodePath.join(root, ".draft.md"), "utf8")).toBe(
+      "[@ada-notes]\r\n",
+    );
     expect(await NodeFSP.readFile(NodePath.join(root, "docs", "300.md"), "utf8")).toBe(
       "[@ada-notes]\r\n",
     );
     expect(await NodeFSP.readFile(NodePath.join(deep, "deep.md"), "utf8")).toBe("[@ada-notes]\r\n");
-    expect(result.citationKeyRenameSkipped?.map((entry) => entry.path)).toEqual(["linked.md"]);
+    expect(result.citationKeyRenameSkipped).toHaveLength(3);
+    expect(result.citationKeyRenameSkipped).toEqual(
+      expect.arrayContaining([
+        { path: ".notes", reason: "Not searched: a hidden folder." },
+        {
+          path: ".linked.md",
+          reason: "A link or special file; Scient does not follow it.",
+        },
+        {
+          path: "linked.md",
+          reason: "A link or special file; Scient does not follow it.",
+        },
+      ]),
+    );
+    for (const folder of [".notes", ".git", ".scient"]) {
+      expect(await NodeFSP.readFile(NodePath.join(root, folder, "hidden.md"), "utf8")).toBe(cited);
+    }
     expect(await NodeFSP.readFile(NodePath.join(outside, "linked.md"), "utf8")).toBe(cited);
   });
 });

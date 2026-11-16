@@ -24,7 +24,11 @@ import {
   type ScientLibraryLocation,
   type ScientSourceStoreLocation,
 } from "./libraryRoot.ts";
-import { resolveScientProjectFile } from "./projectFiles.ts";
+import {
+  assertScientProjectDirectory,
+  resolveScientProjectFile,
+  scientSourcePdfMaterialPaths,
+} from "./projectFiles.ts";
 import {
   assertSafeIdentifier,
   atomicCreateJson,
@@ -435,16 +439,17 @@ function sourceHistoryPath(paths: SourceStorePaths, sourceId: string, revision: 
   return NodePath.join(paths.history, sourceId, `${revision}.json`);
 }
 
-async function latestSourceHistoryRevision(
+async function readSourceHistoryRecords(
   paths: SourceStorePaths,
   sourceId: string,
-): Promise<number> {
+): Promise<ReadonlyArray<ScientSourceRecord>> {
   const directory = NodePath.dirname(sourceHistoryPath(paths, sourceId, 1));
   const state = await snapshot(directory);
-  if (state === "missing") return 0;
+  if (state === "missing") return [];
   if (state !== "directory") throw new Error("The source revision history is unsafe.");
+  await assertScientProjectDirectory(paths.root, directory);
 
-  let latestRevision = 0;
+  const records: ScientSourceRecord[] = [];
   for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
     const match = /^(\d+)\.json$/u.exec(entry.name);
     if (!match) continue;
@@ -461,7 +466,18 @@ async function latestSourceHistoryRevision(
     ) {
       throw new Error(`Source history ${entry.name} has inconsistent identity.`);
     }
-    latestRevision = Math.max(latestRevision, revision);
+    records.push(record);
+  }
+  return records;
+}
+
+async function latestSourceHistoryRevision(
+  paths: SourceStorePaths,
+  sourceId: string,
+): Promise<number> {
+  let latestRevision = 0;
+  for (const record of await readSourceHistoryRecords(paths, sourceId)) {
+    latestRevision = Math.max(latestRevision, record.revision);
   }
   return latestRevision;
 }
@@ -1195,8 +1211,9 @@ export async function restoreScientSource(input: {
 }
 
 /**
- * Deletes trashed sources for good: their entries, their revision history, and every stored PDF
- * no remaining source or trashed source refers to. Omitting sourceIds empties the whole trash.
+ * Deletes trashed sources, their history and their PDFs no remaining source or history uses.
+ * Omitting sourceIds empties the trash and also collects PDFs no current record refers to.
+ * A collected PDF's extracted text and annotations are removed after its bytes are unlinked.
  */
 export async function deleteScientSourcesPermanently(input: {
   readonly root: ScientSourceStoreLocation;
@@ -1211,7 +1228,11 @@ export async function deleteScientSourcesPermanently(input: {
     const chosen = selected
       ? entries.filter((entry) => selected.has(entry.sourceId))
       : removedByPerson(entries);
-    return deleteTrashEntries(paths, withCopiesMergedInto(entries, chosen));
+    return deleteTrashEntries(
+      paths,
+      withCopiesMergedInto(entries, chosen),
+      selected ? "selected" : "all",
+    );
   });
 }
 
@@ -1242,6 +1263,7 @@ export async function deleteTrashedScientSource(input: {
     const { removedFileCount } = await deleteTrashEntries(
       paths,
       withCopiesMergedInto(entries, [entry]),
+      "selected",
     );
     return { outcome: "deleted", sourceId: input.sourceId, removedFileCount };
   });
@@ -1251,7 +1273,16 @@ export async function deleteTrashedScientSource(input: {
 async function deleteTrashEntries(
   paths: SourceStorePaths,
   entries: ReadonlyArray<ScientSourceTrashEntry>,
+  collection: "selected" | "all",
 ): Promise<ScientSourcePermanentDeletionResult> {
+  const candidates = collection === "selected" ? new Set<string>() : undefined;
+  if (candidates) {
+    for (const entry of entries) {
+      for (const record of [entry.record, ...(await readKeptRevisions(paths, entry.sourceId))]) {
+        for (const attachment of record.attachments) candidates.add(attachment.relativePath);
+      }
+    }
+  }
   for (const entry of entries) {
     // The tombstone lands before the trash entry goes, so removal evidence is never absent.
     if (paths.owner.kind === "library") {
@@ -1267,32 +1298,65 @@ async function deleteTrashEntries(
       force: true,
     });
   }
-  const removedFileCount = entries.length > 0 ? await collectUnreferencedSourceFiles(paths) : 0;
+  const removedFileCount =
+    entries.length > 0 ? await collectUnreferencedSourceFiles(paths, candidates) : 0;
   return { deletedSourceIds: entries.map((entry) => entry.sourceId), removedFileCount };
 }
 
 /** Caller holds the source-write lock; prepared package blobs are rechecked when attached. */
-async function collectUnreferencedSourceFiles(paths: SourceStorePaths): Promise<number> {
+async function collectUnreferencedSourceFiles(
+  paths: SourceStorePaths,
+  candidates?: ReadonlySet<string>,
+): Promise<number> {
+  if (candidates?.size === 0) return 0;
   const live = await scanScientSourceRecords(paths);
   const trash = await scanTrash(paths);
   // An unreadable record may still refer to a file; deleting nothing is the safe answer.
   if (live.issues.length > 0 || trash.issues.length > 0) return 0;
-  const referenced = new Set(
-    [...live.records, ...trash.entries.map((entry) => entry.record)].flatMap((record) =>
-      record.attachments.map((attachment) => attachment.relativePath),
-    ),
-  );
-  if ((await snapshot(paths.files)) !== "directory") return 0;
+  const remaining = [...live.records, ...trash.entries.map((entry) => entry.record)];
+  const attachments = remaining.flatMap((record) => record.attachments);
+  const referenced = new Set(attachments.map((attachment) => attachment.relativePath));
+  const referencedHashes = new Set(attachments.map((attachment) => attachment.sha256));
+  if (candidates) {
+    try {
+      for (const current of remaining) {
+        for (const record of await readSourceHistoryRecords(paths, current.sourceId)) {
+          for (const attachment of record.attachments) {
+            referenced.add(attachment.relativePath);
+            referencedHashes.add(attachment.sha256);
+          }
+        }
+      }
+    } catch {
+      // An unreadable retained revision can still own the only restorable copy of a PDF.
+      return 0;
+    }
+  }
+  try {
+    await assertScientProjectDirectory(paths.root, paths.files);
+  } catch {
+    return 0;
+  }
   let removed = 0;
   for (const prefix of await NodeFSP.readdir(paths.files, { withFileTypes: true })) {
-    if (!prefix.isDirectory()) continue;
+    if (!prefix.isDirectory() || !/^[a-f0-9]{2}$/u.test(prefix.name)) continue;
     const directory = NodePath.join(paths.files, prefix.name);
     for (const file of await NodeFSP.readdir(directory, { withFileTypes: true })) {
-      if (!file.isFile() || !/^[a-f0-9]{64}\.pdf$/u.test(file.name)) continue;
-      if (referenced.has(NodePath.posix.join("files", "sha256", prefix.name, file.name))) continue;
+      if (
+        !file.isFile() ||
+        !/^[a-f0-9]{64}\.pdf$/u.test(file.name) ||
+        !file.name.startsWith(prefix.name)
+      ) {
+        continue;
+      }
+      const relativePath = NodePath.posix.join("files", "sha256", prefix.name, file.name);
+      if (candidates && !candidates.has(relativePath)) continue;
+      if (referenced.has(relativePath)) continue;
       try {
         await NodeFSP.unlink(NodePath.join(directory, file.name));
         removed += 1;
+        const sha256 = file.name.slice(0, -".pdf".length);
+        if (!referencedHashes.has(sha256)) await removeCollectedPdfMaterial(paths, sha256);
       } catch {
         // A file that cannot be deleted now is collected the next time the trash is emptied.
       }
@@ -1300,6 +1364,18 @@ async function collectUnreferencedSourceFiles(paths: SourceStorePaths): Promise<
     await NodeFSP.rmdir(directory).catch(() => undefined);
   }
   return removed;
+}
+
+/** Caller has removed this PDF under the source-write lock and found no remaining reference. */
+async function removeCollectedPdfMaterial(paths: SourceStorePaths, sha256: string): Promise<void> {
+  for (const filePath of Object.values(scientSourcePdfMaterialPaths(paths.location, sha256))) {
+    try {
+      await assertScientProjectDirectory(paths.root, NodePath.dirname(filePath));
+      if ((await snapshot(filePath)) === "file") await NodeFSP.unlink(filePath);
+    } catch {
+      // Unsafe or unavailable material is retained rather than following links or failing deletion.
+    }
+  }
 }
 
 // Reading state is about the person, not a revision of the source: never listed or reverted.

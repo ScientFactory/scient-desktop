@@ -1,12 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Reference check tests exercise the real project filesystem boundary.
 // @effect-diagnostics globalDate:off -- A fixed clock makes report timestamps deterministic.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStreamConsumers from "node:stream/consumers";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientReferenceCheckReport } from "@scientfactory/scient-sources";
+import { scientProjectFilePublicationHooks } from "@scientfactory/scient-sources/project-files";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { describe, expect, it } from "@effect/vitest";
 import * as yazl from "yazl";
@@ -264,9 +266,13 @@ describe("checkReferences", () => {
     );
   });
 
-  it("applies a registry fix to the .bib file and refuses one made stale by an edit", async () => {
+  it.each(["\n", "\r\n"])("changes only the checked .bib field (%j)", async (eol) => {
     await using fixture = await project();
-    await fixture.write("refs.bib", BIB);
+    const original = `\uFEFF% Émilie 𝛼 日本語\n${BIB}`.replaceAll("\n", eol);
+    await fixture.write("refs.bib", original);
+    const bibPath = NodePath.join(fixture.root, "refs.bib");
+    await NodeFSP.chmod(bibPath, 0o640);
+    const permissions = (await NodeFSP.stat(bibPath)).mode & 0o777;
     const target = { kind: "file", path: "refs.bib" } as const;
     const first = await checkReferences(
       { root: fixture.root, target },
@@ -287,13 +293,92 @@ describe("checkReferences", () => {
 
     expect(resolution.fixes.map(({ outcome }) => outcome)).toEqual(["applied", "stale"]);
     const bib = await fixture.read("refs.bib");
-    expect(bib).toContain("  year = {2021},\n  volume = {12},");
-    expect(bib).toContain("title = {Sleep in shift workers}, journal = {Sleep}, year = 2019");
+    expect(bib).toBe(original.replace("  year = {2020},", "  year = {2021},"));
+    expect((await NodeFSP.stat(bibPath)).mode & 0o777).toBe(permissions);
     const second = await checkReferences(
       { root: fixture.root, target },
       { resolveIdentifiers: registry(works), now },
     );
     expect(second.findings.some((finding) => finding.key === "smith2020")).toBe(false);
+  });
+
+  it.each([false, true])("keeps concurrent .bib saves (kept: %j)", async (keepFirstSave) => {
+    await using fixture = await project();
+    await fixture.write("refs.bib", BIB);
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "refs.bib" } },
+      { resolveIdentifiers: registry(works), now },
+    );
+    const yearFix = report.findings.find((finding) => finding.key === "smith2020")!.fix!;
+    const bibPath = NodePath.join(fixture.root, "refs.bib");
+    const firstSave = `% First editor save\n${BIB}`;
+    const secondSave = `% Newer editor save\n${BIB}`;
+    const fsPromises: { link: typeof NodeFSP.link } = NodeModule.createRequire(import.meta.url)(
+      "node:fs/promises",
+    );
+    const originalLink = fsPromises.link;
+    let blockedRestore = false;
+    scientProjectFilePublicationHooks.beforeReplace = async (filePath) => {
+      if (filePath !== bibPath) return;
+      scientProjectFilePublicationHooks.beforeReplace = null;
+      await NodeFSP.writeFile(bibPath, firstSave);
+    };
+    try {
+      if (keepFirstSave) {
+        fsPromises.link = async (source, destination) => {
+          if (destination === bibPath && String(source).endsWith(".replaced") && !blockedRestore) {
+            blockedRestore = true;
+            await NodeFSP.writeFile(bibPath, secondSave, { flag: "wx" });
+          }
+          return originalLink(source, destination);
+        };
+        NodeModule.syncBuiltinESMExports();
+      }
+      const result = await resolveReferenceFindings({
+        root: fixture.root,
+        apply: [yearFix],
+        actor: "user",
+      });
+      expect(result.fixes[0]?.outcome).toBe("stale");
+      expect(await fixture.read("refs.bib")).toBe(keepFirstSave ? secondSave : firstSave);
+      const files = (await NodeFSP.readdir(fixture.root)).filter((name) =>
+        name.includes("refs.bib"),
+      );
+      const kept = files.filter((name) => name.startsWith("refs.bib.kept-"));
+      expect(kept).toHaveLength(keepFirstSave ? 1 : 0);
+      expect(files).toHaveLength(keepFirstSave ? 2 : 1);
+      if (keepFirstSave) {
+        expect(await fixture.read(kept[0]!)).toBe(firstSave);
+        expect(result.fixes[0]?.message).toContain(kept[0]!);
+      }
+    } finally {
+      scientProjectFilePublicationHooks.beforeReplace = null;
+      fsPromises.link = originalLink;
+      NodeModule.syncBuiltinESMExports();
+    }
+  });
+
+  it("refuses to rewrite a non-UTF-8 .bib file and preserves its bytes", async () => {
+    await using fixture = await project();
+    const bytes = Buffer.from(`% Café\r\n${BIB}`, "latin1");
+    await fixture.write("refs.bib", bytes);
+    const result = await resolveReferenceFindings({
+      root: fixture.root,
+      apply: [
+        {
+          kind: "bibtex-field",
+          path: "refs.bib",
+          key: "smith2020",
+          field: "year",
+          current: "2020",
+          value: "2021",
+        },
+      ],
+      actor: "user",
+    });
+    expect(result.fixes[0]?.outcome).toBe("failed");
+    expect(result.fixes[0]?.message).toContain("not valid UTF-8");
+    expect(await NodeFSP.readFile(NodePath.join(fixture.root, "refs.bib"))).toEqual(bytes);
   });
 
   it("keeps both of two fixes to one file applied at the same time", async () => {

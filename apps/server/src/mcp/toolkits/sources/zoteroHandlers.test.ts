@@ -78,18 +78,25 @@ function inProject(root: string, transports: Omit<ZoteroAccess, "webKey">) {
     );
 }
 
-const library = () => ({
+const library = (libraryId: string | number = 0) => ({
   items: new Map([
     [
       "ABCD2345",
       {
-        item: zoteroItem("ABCD2345", { title: "First", abstractNote: "A.", collections: [] }),
+        item: zoteroItem(
+          "ABCD2345",
+          { title: "First", abstractNote: "A.", collections: [] },
+          libraryId,
+        ),
         children: [],
       },
     ],
     [
       "EFGH2345",
-      { item: zoteroItem("EFGH2345", { title: "Second", abstractNote: "B." }), children: [] },
+      {
+        item: zoteroItem("EFGH2345", { title: "Second", abstractNote: "B." }, libraryId),
+        children: [],
+      },
     ],
   ]),
 });
@@ -147,17 +154,23 @@ describe("Zotero agent tools", () => {
       const imported = yield* run(importZoteroForInvocation({ all: true }));
 
       expect(imported).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
-      // In the words the panel uses, so the agent can tell the person.
-      expect(imported.notBrought).toEqual([
-        { what: "Notes that belong to no reference", amount: "1" },
-      ]);
+      expect(
+        (yield* Effect.promise(() => listScientSourceRecords(root))).map(({ title, type }) => ({
+          title,
+          type,
+        })),
+      ).toEqual([{ title: "A book", type: "book" }]);
+      expect(imported.notBrought?.map(({ amount }) => amount)).toEqual(["1"]);
     }),
   );
 
   it.effect("imports the whole library once, skipping what is already there", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(project);
-      const run = inProject(root, { local: fakeZoteroTransport(library()), inspectLocal: ready });
+      const run = inProject(root, {
+        local: fakeZoteroTransport(library("475425")),
+        inspectLocal: ready,
+      });
 
       const first = yield* run(importZoteroForInvocation({ all: true }));
       const second = yield* run(importZoteroForInvocation({ all: true }));
@@ -188,8 +201,8 @@ describe("Zotero agent tools", () => {
       );
 
       expect(browse).toMatchObject({ state: "unreachable", items: [] });
-      expect(importError.message).toMatch(/^Open Zotero/u);
-      expect(sendError.message).toMatch(/Accounts/u);
+      expect(importError.code).toBe("operation-failed");
+      expect(sendError.code).toBe("operation-failed");
     }),
   );
 });

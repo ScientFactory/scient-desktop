@@ -5,11 +5,13 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeHttps from "node:https";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeStreamPromises from "node:stream/promises";
 
 import type { ZoteroConnectionStatus, ZoteroGroup } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 
 import { METADATA_USER_AGENT } from "./metadataHttp.ts";
+import { readBoundedNodeResponse, type NodeHttpRequest } from "./nodeHttpResponse.ts";
 import type { ZoteroResponse, ZoteroTransport } from "./ZoteroLibraryReader.ts";
 import type { ZoteroItemTemplate } from "./ZoteroWrite.ts";
 
@@ -60,12 +62,12 @@ function withoutKeyOffZotero(url: URL, headers: Readonly<Record<string, string>>
   return rest;
 }
 
-function nodeRequest(request: ZoteroWebRequest): Promise<ZoteroResponse> {
+function nodeRequest(request: ZoteroWebRequest, send: NodeHttpRequest): Promise<ZoteroResponse> {
   if (request.url.protocol !== "https:" || request.url.hostname !== ZOTERO_API_HOST) {
     return Promise.reject(new Error("Zotero web requests must go to api.zotero.org."));
   }
   return new Promise((resolve, reject) => {
-    const outgoing = NodeHttps.request(
+    const outgoing = send(
       request.url,
       {
         method: request.method,
@@ -77,22 +79,20 @@ function nodeRequest(request: ZoteroWebRequest): Promise<ZoteroResponse> {
         },
       },
       (response) => {
-        const chunks: Buffer[] = [];
-        let bytes = 0;
-        response.on("data", (chunk: Buffer) => {
-          bytes += chunk.byteLength;
-          if (bytes > MAX_RESPONSE_BYTES) {
-            outgoing.destroy(new Error("Zotero returned more data than Scient can safely accept."));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        response.on("end", () =>
-          resolve({
-            status: response.statusCode ?? 0,
-            headers: headersOf(response),
-            body: Buffer.concat(chunks).toString("utf8"),
-          }),
+        void readBoundedNodeResponse(response, {
+          maxBytes: MAX_RESPONSE_BYTES,
+          tooLargeMessage: "Zotero returned more data than Scient can safely accept.",
+        }).then(
+          (body) =>
+            resolve({
+              status: response.statusCode ?? 0,
+              headers: headersOf(response),
+              body: body.toString("utf8"),
+            }),
+          (error: unknown) => {
+            outgoing.destroy();
+            reject(error);
+          },
         );
       },
     );
@@ -108,6 +108,7 @@ function nodeDownload(
   url: URL,
   headers: Readonly<Record<string, string>>,
   destination: string,
+  send: NodeHttpRequest,
   redirects = 0,
 ): Promise<{ readonly status: number }> {
   if (url.protocol !== "https:") return Promise.reject(new Error("Zotero files must use HTTPS."));
@@ -115,48 +116,89 @@ function nodeDownload(
     return Promise.reject(new Error("Zotero redirected the file too many times."));
   }
   return new Promise((resolve, reject) => {
-    const outgoing = NodeHttps.get(
+    let receiving = false;
+    const outgoing = send(
       url,
-      { headers: withoutKeyOffZotero(url, headers) },
+      { method: "GET", headers: withoutKeyOffZotero(url, headers) },
       (response) => {
+        receiving = true;
         const status = response.statusCode ?? 0;
-        if (status >= 300 && status < 400 && response.headers.location) {
-          response.resume();
-          const next = new URL(response.headers.location, url);
-          void nodeDownload(next, headers, destination, redirects + 1).then(resolve, reject);
-          return;
-        }
-        if (status !== 200) {
-          response.resume();
-          resolve({ status });
-          return;
-        }
-        const file = NodeFS.createWriteStream(destination, { flags: "wx", mode: 0o600 });
-        let bytes = 0;
-        response.on("data", (chunk: Buffer) => {
-          bytes += chunk.byteLength;
-          if (bytes > MAX_PDF_BYTES) {
-            outgoing.destroy(new Error("The Zotero PDF is larger than Scient can import."));
+        const receive = async () => {
+          if (status !== 200) {
+            await readBoundedNodeResponse(response, {
+              maxBytes: MAX_RESPONSE_BYTES,
+              tooLargeMessage: "Zotero returned more data than Scient can safely accept.",
+              discardBody: true,
+            });
+            if (status >= 300 && status < 400 && response.headers.location) {
+              return nodeDownload(
+                new URL(response.headers.location, url),
+                headers,
+                destination,
+                send,
+                redirects + 1,
+              );
+            }
+            return { status };
           }
+          const file = NodeFS.createWriteStream(destination, { flags: "wx", mode: 0o600 });
+          await NodeStreamPromises.pipeline(
+            response,
+            async function* (source) {
+              let bytes = 0;
+              for await (const chunk of source) {
+                const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+                bytes += buffer.byteLength;
+                if (bytes > MAX_PDF_BYTES) {
+                  throw new Error("The Zotero PDF is larger than Scient can import.");
+                }
+                yield buffer;
+              }
+            },
+            file,
+          );
+          if (!response.complete) throw new Error("The Zotero file ended before it was complete.");
+          return { status };
+        };
+        void receive().then(resolve, (error: unknown) => {
+          outgoing.destroy();
+          reject(error);
         });
-        response.pipe(file);
-        file.on("finish", () => resolve({ status }));
-        file.on("error", reject);
-        response.on("error", reject);
       },
     );
     outgoing.setTimeout(REQUEST_TIMEOUT_MS, () => {
       outgoing.destroy(new Error("Timed out while downloading a Zotero file."));
     });
-    outgoing.on("error", reject);
+    outgoing.on("error", (error) => {
+      if (!receiving) reject(error);
+    });
+    outgoing.end();
   });
 }
 
-async function nodeUpload(url: URL, contentType: string, body: ZoteroUploadBody): Promise<number> {
+async function nodeUpload(
+  url: URL,
+  contentType: string,
+  body: ZoteroUploadBody,
+  send: NodeHttpRequest,
+): Promise<number> {
   if (url.protocol !== "https:") throw new Error("Zotero files must use HTTPS.");
   const { size } = await NodeFSP.stat(body.path);
   const { promise, resolve, reject } = Promise.withResolvers<number>();
-  const outgoing = NodeHttps.request(
+  let file: NodeFS.ReadStream | undefined;
+  let settled = false;
+  const closeFile = async () => {
+    if (!file) return;
+    file.destroy();
+    await NodeStreamPromises.finished(file, { cleanup: true }).catch(() => undefined);
+  };
+  const fail = (error: unknown) => {
+    if (settled) return;
+    settled = true;
+    outgoing.destroy();
+    void closeFile().then(() => reject(error));
+  };
+  const outgoing = send(
     url,
     {
       method: "POST",
@@ -169,28 +211,43 @@ async function nodeUpload(url: URL, contentType: string, body: ZoteroUploadBody)
       },
     },
     (response) => {
-      response.resume();
-      response.on("end", () => resolve(response.statusCode ?? 0));
+      void readBoundedNodeResponse(response, {
+        maxBytes: MAX_RESPONSE_BYTES,
+        tooLargeMessage: "Zotero returned more data than Scient can safely accept.",
+        discardBody: true,
+      }).then(() => {
+        if (settled) return;
+        settled = true;
+        outgoing.destroy();
+        void closeFile().then(() => resolve(response.statusCode ?? 0));
+      }, fail);
     },
   );
   outgoing.setTimeout(REQUEST_TIMEOUT_MS, () => {
-    outgoing.destroy(new Error("Timed out while sending a PDF to Zotero."));
+    fail(new Error("Timed out while sending a PDF to Zotero."));
   });
-  outgoing.on("error", reject);
+  outgoing.on("error", fail);
   // Streamed, so a large PDF is never held whole in memory.
-  const file = NodeFS.createReadStream(body.path);
-  file.on("error", (error) => outgoing.destroy(error));
-  file.on("end", () => outgoing.end(body.suffix));
+  file = NodeFS.createReadStream(body.path);
+  file.on("error", fail);
+  file.on("end", () => {
+    if (!settled) outgoing.end(body.suffix);
+  });
   outgoing.write(body.prefix);
   file.pipe(outgoing, { end: false });
   return promise;
 }
 
-export const nodeZoteroWebHttp: ZoteroWebHttp = {
-  request: nodeRequest,
-  download: nodeDownload,
-  upload: nodeUpload,
-};
+/** Socket injection keeps loopback fixtures separate from production URL and credential rules. */
+export function makeNodeZoteroWebHttp(send: NodeHttpRequest = NodeHttps.request): ZoteroWebHttp {
+  return {
+    request: (request) => nodeRequest(request, send),
+    download: (url, headers, destination) => nodeDownload(url, headers, destination, send),
+    upload: (url, contentType, body) => nodeUpload(url, contentType, body, send),
+  };
+}
+
+export const nodeZoteroWebHttp: ZoteroWebHttp = makeNodeZoteroWebHttp();
 
 const GroupKeyAccess = Schema.Struct({
   library: Schema.optionalKey(Schema.Boolean),

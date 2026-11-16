@@ -56,6 +56,7 @@ import {
 } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
+  createSourceImportOperation,
   deleteTrashedScientSource,
   detachScientSourcePdf,
   importScientSource,
@@ -67,6 +68,7 @@ import {
   restoreScientSource,
   updateScientSourceMetadata,
   updateScientSourceNote,
+  updateSourceImportOperationItem,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { organizeScientSources } from "./collections.ts";
@@ -1628,6 +1630,9 @@ describe("the sealed copy from before the move", () => {
     const elsewhere = NodePath.join(base, "elsewhere");
     await NodeFSP.cp(project, elsewhere, { recursive: true });
     const theirs = await newLibrary(base, "other-computer");
+    await NodeFSP.mkdir(NodePath.join(elsewhere, ".scient/sources/records/empty"), {
+      recursive: true,
+    });
     expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
       outcome: "restored",
       restoredSources: 2,
@@ -1649,6 +1654,162 @@ describe("the sealed copy from before the move", () => {
     ).toBe("Why this project cites A.");
     expect((await readScientProjectPins(elsewhere)).map((pin) => pin.sourceId)).toContain(
       b.sourceId,
+    );
+  });
+
+  it("refuses a project import committed during staging, including on retry, without changing its bytes", async () => {
+    const { base, library, project } = await seededMove();
+    const { journal } = await move(library, project);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const pause = pauseAtFirstFileCopy();
+    const restoring = restoreScientProjectPreMoveArchive({
+      projectRoot: elsewhere,
+      faults: {
+        copyFile: async (from, to) => {
+          await pause.beforeFileCopy();
+          await NodeFSP.copyFile(from, to);
+        },
+      },
+    });
+    await pause.reached;
+    const operationId = "op_during_archive_restore";
+    const itemKey = "during-restore";
+    const store = NodePath.join(elsewhere, ".scient/sources");
+    const importedFiles = new Map<string, Buffer>();
+    try {
+      const pdfPath = NodePath.join(base, "during-restore.pdf");
+      await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nimported while the archive was staging\n");
+      await createSourceImportOperation({
+        root: elsewhere,
+        operationId,
+        adapter: "file",
+        intake: "file",
+        itemKeys: [itemKey],
+      });
+      const imported = await importScientSource({
+        root: elsewhere,
+        operationId,
+        candidate: candidate(itemKey, { title: "Imported during archive restore" }),
+        pdfPath,
+        actor: "user",
+        intake: "file",
+      });
+      expect(imported.outcome).toBe("imported");
+      expect(imported.record!.attachments).toHaveLength(1);
+      expect(
+        await readScientSourceAttachmentPdf(elsewhere, imported.record!.attachments[0]!),
+      ).toEqual(new Uint8Array(await NodeFSP.readFile(pdfPath)));
+      await updateSourceImportOperationItem({
+        root: elsewhere,
+        operationId,
+        itemKey,
+        state: "imported",
+        sourceId: imported.record!.sourceId,
+      });
+      for (const relative of await NodeFSP.readdir(store, { recursive: true })) {
+        const path = NodePath.join(store, relative);
+        if ((await NodeFSP.lstat(path)).isFile()) {
+          importedFiles.set(relative, await NodeFSP.readFile(path));
+        }
+      }
+      expect(
+        JSON.parse(importedFiles.get(NodePath.join("receipts", `${operationId}.json`))!.toString()),
+      ).toMatchObject({
+        outcome: "completed",
+        importedSourceIds: [imported.record!.sourceId],
+      });
+    } finally {
+      pause.release();
+      await restoring;
+    }
+    expect(await restoring).toEqual({ outcome: "project-store-present" });
+    const progress = NodePath.join(elsewhere, ".scient/library/restore-progress.json");
+    const progressBefore = await NodeFSP.readFile(progress);
+    const staging = NodePath.join(
+      elsewhere,
+      ".scient/library/.restoring-archive",
+      NodePath.basename(journal!.archive!.path),
+    );
+    const manifest = await manifestOf(elsewhere, journal!);
+    for (const file of manifest.files) {
+      const archived = await NodeFSP.readFile(
+        NodePath.join(elsewhere, journal!.archive!.path, file.path),
+      );
+      expect(sha(archived), file.path).toBe(file.sha256);
+      if (file.path.startsWith("sources/")) {
+        expect(
+          await NodeFSP.readFile(NodePath.join(staging, file.path.slice("sources/".length))),
+        ).toEqual(archived);
+      }
+    }
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toEqual({
+      outcome: "project-store-present",
+    });
+    expect(await NodeFSP.readFile(progress)).toEqual(progressBefore);
+    for (const [relative, bytes] of importedFiles) {
+      expect(await NodeFSP.readFile(NodePath.join(store, relative)), relative).toEqual(bytes);
+    }
+    expect((await listScientSourceRecords(elsewhere)).map((record) => record.title)).toEqual([
+      "Imported during archive restore",
+    ]);
+    const keptImport = NodePath.join(base, "kept-concurrent-import");
+    await NodeFSP.rename(store, keptImport);
+    await NodeFSP.mkdir(NodePath.join(store, "records/empty"), { recursive: true });
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
+      outcome: "restored",
+      restoredSources: 2,
+      restoredPdfs: 1,
+    });
+    expect(await exists(progress)).toBe(false);
+    expect(
+      (await listScientSourceRecords(elsewhere)).map((record) => record.title).toSorted(),
+    ).toEqual(["Plain study, revised", "Study a"]);
+    for (const [relative, bytes] of importedFiles) {
+      expect(await NodeFSP.readFile(NodePath.join(keptImport, relative)), relative).toEqual(bytes);
+    }
+  });
+
+  it("does not follow a publication marker into its replaced store", async () => {
+    const { base, library, project } = await seededMove();
+    await move(library, project);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    await expect(
+      restoreScientProjectPreMoveArchive({
+        projectRoot: elsewhere,
+        faults: {
+          copyFile: async (from, to) => {
+            if (from.includes(`${NodePath.sep}annotations${NodePath.sep}`)) {
+              throw new Error("The disk is full.");
+            }
+            await NodeFSP.copyFile(from, to);
+          },
+        },
+      }),
+    ).rejects.toThrow("The disk is full.");
+    await NodeFSP.rename(
+      NodePath.join(elsewhere, ".scient/sources"),
+      NodePath.join(base, "interrupted-restore"),
+    );
+    const replacement = await add(elsewhere, "replacement");
+    const { publicationId } = JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(elsewhere, ".scient/library/restore-progress.json"),
+        "utf8",
+      ),
+    );
+    const publicationMarker = `.restoring-archive-${publicationId}`;
+    await NodeFSP.symlink(
+      NodePath.join(base, "interrupted-restore", publicationMarker),
+      NodePath.join(elsewhere, ".scient/sources", publicationMarker),
+    );
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toEqual({
+      outcome: "project-store-present",
+    });
+    expect(await readScientSourceRecord(elsewhere, replacement.sourceId)).toEqual(replacement);
+    expect(await exists(NodePath.join(elsewhere, ".scient/library/restore-progress.json"))).toBe(
+      true,
     );
   });
 
