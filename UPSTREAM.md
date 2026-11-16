@@ -5,9 +5,11 @@ fallback in `packages/shared/src/scientAgentModelFallback.ts`, mounted in `ChatV
 Preserve exact-ID hidden defaults (new IDs visible), saved visibility/order/favorites and
 custom models, and explicit/persisted thread and global selections. Preferred subscription
 models, not catalog order, drive implicit defaults and the shared new-turn/explicit-resume
-quota fallback: configured fallback first, then OpenAI, Anthropic, Antigravity, Muse Code,
+quota fallback: configured fallback first (including an explicitly chosen API route or
+same-family account), then Scient Agent's OpenAI, Anthropic, Antigravity, Muse Code accounts,
 subject to visibility, availability, sign-in, quota and task compatibility. Never silently
-fall back to metered API routes or auto-resume a limited thread. Antigravity's native
+choose metered API routes automatically or auto-resume a limited thread. This automatic
+chain can recover a standalone-provider thread too. Antigravity's native
 `google-antigravity` and CLI `antigravity-cli` catalog identities stay distinct; Hydrogen is
 preferred when offered even though the CLI source catalog names Carbon as its own default.
 Current choices and user controls: [Providers](docs/user/providers.md#model-visibility-and-subscription-defaults)

@@ -132,13 +132,13 @@ export function resolveProviderModelPreferences(
     | { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> }
     | undefined,
 ) {
-  if (preferences !== undefined) return preferences;
+  const agent = driver === "pi" || driver === "omp" || driver === "scient";
+  if (preferences !== undefined && (!agent || preferences.modelOrder.length > 0))
+    return preferences;
   return {
-    hiddenModels: getDefaultHiddenAgentModels(driver, models),
-    modelOrder:
-      driver === "pi" || driver === "omp" || driver === "scient"
-        ? sortAgentModelsByAccount(driver, models).map((model) => model.slug)
-        : [],
+    ...preferences,
+    hiddenModels: preferences?.hiddenModels ?? getDefaultHiddenAgentModels(driver, models),
+    modelOrder: agent ? sortAgentModelsByAccount(driver, models).map((model) => model.slug) : [],
   };
 }
 

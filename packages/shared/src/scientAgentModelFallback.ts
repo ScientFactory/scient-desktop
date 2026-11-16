@@ -38,7 +38,7 @@ export function scientSubscriptionFamily(provider: ServerProvider, model: string
   return id === "antigravity-cli" || id === "google-antigravity" ? "antigravity" : id;
 }
 
-export function isScientSubscriptionModel(provider: ServerProvider, model: string): boolean {
+function isScientSubscriptionModel(provider: ServerProvider, model: string): boolean {
   if (provider.driver !== "scient") return false;
   const { entry, canonical } = modelAccount(provider, model);
   return (

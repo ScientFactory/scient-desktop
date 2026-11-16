@@ -22,7 +22,6 @@ import {
 import * as DateTime from "effect/DateTime";
 // SCIENT-FORK:START — Scient Agent's own accounts stand in for each other.
 import {
-  isScientSubscriptionModel,
   scientAgentAlternativeModel,
   scientSubscriptionFamily,
 } from "./scientAgentModelFallback.ts";
@@ -110,7 +109,6 @@ export function resolveUsageLimitFallback(input: {
       provider.status === "error" ||
       !isProviderAvailable(provider) ||
       !model ||
-      model.isCustom ||
       model.unavailableReason ||
       model.supportsTextGeneration === false ||
       exhaustedUsageWindow(provider, input.now, selection.model) ||
@@ -128,29 +126,7 @@ export function resolveUsageLimitFallback(input: {
       provider.models,
       input.settings?.providerModelPreferences?.[provider.instanceId],
     ).hiddenModels;
-    if (hidden.includes(selection.model)) return false;
-    const family = scientSubscriptionFamily(provider, selection.model);
-    if (!family || (currentFamily !== undefined && family === currentFamily)) return false;
-    if (provider.driver === "scient") return isScientSubscriptionModel(provider, selection.model);
-    if (provider.auth.status !== "authenticated" || provider.auth.endpoint) return false;
-    const authType = provider.auth.type?.toLowerCase().replace(/[\s_-]+/g, "");
-    switch (provider.driver) {
-      case "codex":
-        return authType === "chatgpt";
-      case "claudeAgent":
-        return (
-          authType !== undefined &&
-          (authType.endsWith("subscription") ||
-            ["max", "maxplan", "max5", "max20", "enterprise", "team", "pro", "free"].includes(
-              authType,
-            ))
-        );
-      case "antigravity":
-      case "muse":
-        return (provider.usageLimits?.windows.length ?? 0) > 0;
-      default:
-        return false;
-    }
+    return !hidden.includes(selection.model);
   };
   if (input.fallbackSelection) {
     const preferred = input.providers.find(

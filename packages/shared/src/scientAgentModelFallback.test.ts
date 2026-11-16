@@ -203,7 +203,7 @@ describe("subscription fallback policy", () => {
           currentSelection: input.defaultSelection,
           providers: [agent, { ...native, auth }],
         }),
-      ).toEqual({ instanceId: agent.instanceId, model: sol });
+      ).toEqual(configured);
     }
     expect(
       resolveNewThreadModelSelection({
@@ -211,6 +211,41 @@ describe("subscription fallback policy", () => {
         explicitSelection: input.defaultSelection,
       }).selection,
     ).toEqual(input.defaultSelection);
+  });
+
+  it.each([
+    { driver: "cursor", model: "grok-4.7" },
+    { driver: "claudeAgent", model: "claude-sonnet-5-5" },
+    { driver: "antigravity", model: "gemini-4-hydrogen" },
+    { driver: "muse", model: "muse-wonder-full-1.0" },
+  ])("honors a configured $driver fallback without requiring quota telemetry", (candidate) => {
+    const agent = makeAgent();
+    const native: ServerProvider = {
+      ...agent,
+      instanceId: ProviderInstanceId.make("configured"),
+      driver: ProviderDriverKind.make(candidate.driver),
+      auth: { status: "authenticated" },
+      models: [model(candidate.model)],
+      usageLimits: undefined,
+    };
+    const configured = { instanceId: native.instanceId, model: candidate.model };
+    const input = {
+      defaultSelection: { instanceId: agent.instanceId, model: currentModel },
+      fallbackSelection: configured,
+      providers: [agent, native],
+      now: NOW,
+    };
+    expect(resolveNewThreadModelSelection(input).selection).toEqual(configured);
+    expect(
+      resolveUsageLimitFallback({ ...input, currentSelection: input.defaultSelection }),
+    ).toEqual(configured);
+    expect(
+      resolveUsageLimitFallback({
+        ...input,
+        currentSelection: input.defaultSelection,
+        providers: [agent, { ...native, models: [{ ...native.models[0]!, isCustom: true }] }],
+      }),
+    ).toEqual(configured);
   });
 
   it("skips hidden and unavailable preferred models without reviving an old catalog entry", () => {

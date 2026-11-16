@@ -207,15 +207,21 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 ## Subscription quota fallback
 
-For Scient Agent, a new turn that needs a quota fallback and the explicit resume-after-limit
-action use the same selection policy. Scient first tries your explicitly configured fallback.
-It then considers eligible subscription accounts in this order: **OpenAI → Anthropic →
+For a new turn that needs a quota fallback and the explicit resume-after-limit action,
+Scient first tries your explicitly configured fallback, including another account of the
+same provider, a custom model, or an API connection you chose. That model must be visible,
+available, enabled for the project, able to generate text, and not out of quota.
+
+If that fallback cannot be used, Scient considers eligible subscription accounts connected
+inside Scient Agent in this order: **OpenAI → Anthropic →
 Antigravity → Muse Code**, using each subscription's
 [preferred model](./providers.md#model-visibility-and-subscription-defaults), not catalog order.
 It skips hidden or unavailable models, signed-out accounts, exhausted quota, and models
 the provider reports as unsuitable for text generation.
 
-Automatic fallback never silently routes work to a metered API account. If no eligible
+This automatic chain also applies when the limited thread uses a standalone provider;
+standalone providers are destinations only when explicitly configured as the fallback.
+Automatic candidates never silently route work to a metered API account. If no eligible
 subscription choice remains, choose a model or account explicitly or wait for quota to refill.
 Resuming a limited conversation remains an explicit action; the policy does not silently
 resume it or rewrite its saved model. Subscription defaults also leave existing threads,

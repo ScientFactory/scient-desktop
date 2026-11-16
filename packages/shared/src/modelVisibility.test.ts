@@ -93,7 +93,7 @@ describe("curated native agent model visibility", () => {
   });
 
   it.each(["pi", "omp", "scient", "antigravity", "muse"])(
-    "preserves %s saved preferences, including explicit re-enablement and empty order",
+    "preserves %s saved preferences and groups an unset legacy order",
     (driver) => {
       const saved = {
         hiddenModels: ["my/custom"],
@@ -102,7 +102,13 @@ describe("curated native agent model visibility", () => {
       };
       expect(resolveProviderModelPreferences(driver, models, saved)).toBe(saved);
       const reenabled = { hiddenModels: [], modelOrder: [] };
-      expect(resolveProviderModelPreferences(driver, models, reenabled)).toBe(reenabled);
+      expect(resolveProviderModelPreferences(driver, models, reenabled)).toEqual({
+        hiddenModels: [],
+        modelOrder:
+          driver === "pi" || driver === "omp" || driver === "scient"
+            ? sortAgentModelsByAccount(driver, models).map((model) => model.slug)
+            : [],
+      });
     },
   );
 
