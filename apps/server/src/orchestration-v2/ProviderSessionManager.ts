@@ -3549,85 +3549,109 @@ export const layerWithOptions = (
               lastSessionStatus = event.providerSession.status;
               if (lastSessionStatus === "stopped") stoppedByProvider = true;
             }
-            return observeActivity(
-              entry.runtime.providerSessionId,
-              event.type === "turn.terminal"
-                ? markIdle(
-                    entry.runtime.providerSessionId,
-                    event.providerThreadId,
-                    event.runOrdinal,
-                  )
-                : metadataOnly
-                  ? Effect.void
-                  : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
-            ).pipe(
-              Effect.andThen(armRetryStall),
-              Effect.andThen(
-                event.type === "provider_session.updated"
-                  ? persistProviderSessionUpdate(entry, event)
-                  : Effect.void,
-              ),
-              Effect.andThen(
-                Effect.gen(function* () {
-                  if (
-                    event.type === "provider_thread.updated" &&
-                    event.providerThread.status === "error"
-                  ) {
-                    const threadId = event.providerThread.appThreadId;
-                    yield* Ref.update(sessions, (sessions) => {
-                      const key = sessionKey(entry.runtime.providerSessionId);
-                      const latest = sessions.get(key);
-                      if (latest?.runtime !== entry.runtime || threadId === null) return sessions;
-                      const loadedProviderThreadKeyByThread = new Map(
-                        latest.loadedProviderThreadKeyByThread,
-                      );
-                      loadedProviderThreadKeyByThread.delete(threadId);
-                      return new Map(sessions).set(key, {
-                        ...latest,
-                        loadedProviderThreadKeyByThread,
-                      });
-                    });
-                  }
-                  // Requests and recovered background commands can arrive before a run subscribes.
-                  const threadId = sessionScopedArtifactThreadId(event);
-                  if (threadId !== undefined) {
-                    yield* Effect.gen(function* () {
-                      const current = (yield* Ref.get(sessions)).get(
-                        sessionKey(entry.runtime.providerSessionId),
-                      );
-                      if (
-                        current?.runtime !== entry.runtime ||
-                        ((event.type === "provider_thread.updated" ||
-                          (event.type === "turn_item.updated" &&
-                            event.turnItem.type === "command_execution")) &&
-                          !current.attachedThreadIds.has(threadId))
-                      )
-                        return;
-                      yield* providerEventIngestor
-                        .ingestNormalized({
+            // SCIENT-FORK:START — a Pi extension can move this runtime to another session file.
+            // The move takes that file's lease before it is recorded; another writer stops it.
+            const claimMovedPiFile =
+              event.type === "provider_thread.updated"
+                ? claimPiFile(
+                    entry.scope,
+                    entry.runtime.driver,
+                    event.providerThread.nativeThreadRef?.nativeId,
+                  ).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapter.ProviderAdapterEventStreamError({
+                          driver: entry.runtime.driver,
                           providerSessionId: entry.runtime.providerSessionId,
-                          providerInstanceId: entry.runtime.instanceId,
-                          threadId,
-                          event,
-                        })
-                        .pipe(
-                          Effect.mapError(
-                            (cause) =>
-                              new ProviderAdapter.ProviderAdapterEventStreamError({
-                                driver: entry.runtime.driver,
-                                providerSessionId: entry.runtime.providerSessionId,
-                                raisedByT3: true,
-                                cause,
-                              }),
-                          ),
+                          raisedByT3: true,
+                          cause,
+                        }),
+                    ),
+                  )
+                : Effect.void;
+            // SCIENT-FORK:END
+            return Effect.andThen(
+              claimMovedPiFile,
+              observeActivity(
+                entry.runtime.providerSessionId,
+                event.type === "turn.terminal"
+                  ? markIdle(
+                      entry.runtime.providerSessionId,
+                      event.providerThreadId,
+                      event.runOrdinal,
+                    )
+                  : metadataOnly
+                    ? Effect.void
+                    : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
+              ).pipe(
+                Effect.andThen(armRetryStall),
+                Effect.andThen(
+                  event.type === "provider_session.updated"
+                    ? persistProviderSessionUpdate(entry, event)
+                    : Effect.void,
+                ),
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    if (
+                      event.type === "provider_thread.updated" &&
+                      event.providerThread.status === "error"
+                    ) {
+                      const threadId = event.providerThread.appThreadId;
+                      yield* Ref.update(sessions, (sessions) => {
+                        const key = sessionKey(entry.runtime.providerSessionId);
+                        const latest = sessions.get(key);
+                        if (latest?.runtime !== entry.runtime || threadId === null) return sessions;
+                        const loadedProviderThreadKeyByThread = new Map(
+                          latest.loadedProviderThreadKeyByThread,
                         );
-                    }).pipe(entry.requestEventPermit.withPermits(1));
+                        loadedProviderThreadKeyByThread.delete(threadId);
+                        return new Map(sessions).set(key, {
+                          ...latest,
+                          loadedProviderThreadKeyByThread,
+                        });
+                      });
+                    }
+                    // Requests and recovered background commands can arrive before a run subscribes.
+                    const threadId = sessionScopedArtifactThreadId(event);
+                    if (threadId !== undefined) {
+                      yield* Effect.gen(function* () {
+                        const current = (yield* Ref.get(sessions)).get(
+                          sessionKey(entry.runtime.providerSessionId),
+                        );
+                        if (
+                          current?.runtime !== entry.runtime ||
+                          ((event.type === "provider_thread.updated" ||
+                            (event.type === "turn_item.updated" &&
+                              event.turnItem.type === "command_execution")) &&
+                            !current.attachedThreadIds.has(threadId))
+                        )
+                          return;
+                        yield* providerEventIngestor
+                          .ingestNormalized({
+                            providerSessionId: entry.runtime.providerSessionId,
+                            providerInstanceId: entry.runtime.instanceId,
+                            threadId,
+                            event,
+                          })
+                          .pipe(
+                            Effect.mapError(
+                              (cause) =>
+                                new ProviderAdapter.ProviderAdapterEventStreamError({
+                                  driver: entry.runtime.driver,
+                                  providerSessionId: entry.runtime.providerSessionId,
+                                  raisedByT3: true,
+                                  cause,
+                                }),
+                            ),
+                          );
+                      }).pipe(entry.requestEventPermit.withPermits(1));
+                      yield* releaseLiveOutput;
+                      return;
+                    }
+                    yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
                     yield* releaseLiveOutput;
-                    return;
-                  }
-                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
-                  yield* releaseLiveOutput;
-                }),
+                  }),
+                ),
               ),
             );
           }),
