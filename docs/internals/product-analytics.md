@@ -309,8 +309,19 @@ count user turns.
 Scient Agent uses the existing installation observations, installed-state
 changes, lifecycle operations, submissions, terminal outcomes and token usage.
 `provider.lifecycle.*` says who started a runtime change (`trigger`: `user` or
-`background`), the background `attempt`, and for a finished download
-`resumedBucket`, `downloadSource` (`primary` is Scient's copy) and `compressed`.
+`background`) and the background `attempt`: Scient Agent's own provisioning, or Scient trying again a
+change the user asked for (from 1). For a finished download, or as far as a failed one got, it adds
+`resumedBucket`, `downloadSource` (`primary` is Scient's copy where one exists), `sourceKind`
+(`scient_mirror`, `github` or `vendor`), `downloadVariant` (`compressed` or `raw`),
+`downloadAttempts` (the downloader's own tries, not `attempt`), `progressBucket` (how much of the
+file the last try had), `throughputBucket` (bytes received per second of request time in Mbit/s
+buckets, kept bytes and waits between tries excluded), `networkKind` (how the last try's connection
+failed: `dns`, `refused`, `reset`, `unreachable`, `connect_timeout`, `stalled`, `cut_off` or
+`other`) and `compressedFailure` (why the compressed copy was given up for the raw one). Only
+`provider.lifecycle.failed` carries `failureClass`; it reports `stalled` (30 seconds without data)
+apart from `timeout`, while the operation itself still says `timeout` so older clients decode it.
+No URL, host, path or error text is sent. Builds up to 0.6.29 sent `compressed` instead of
+`downloadVariant`, and `failureClass: unknown` on the other lifecycle events.
 `provider.runtime.first_pick` is sent once per installation when the user first
 picks Scient Agent in the composer: `state` is `ready`, `in_progress` (with
 `percentBucket`), `failed` or `not_started`. Its `ready` share is the headline

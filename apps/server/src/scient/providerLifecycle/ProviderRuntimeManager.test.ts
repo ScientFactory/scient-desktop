@@ -48,6 +48,7 @@ import {
   make,
   ProviderRuntimeManager,
 } from "./ProviderRuntimeManager.ts";
+import { ProviderRuntimeRequests } from "./ProviderRuntimeRequests.ts";
 
 const CODEX = ProviderDriverKind.make("codex");
 const INSTANCE = ProviderInstanceId.make("codex");
@@ -224,6 +225,13 @@ function makeHarness(
     });
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
+    const requestLogRef = yield* SubscriptionRef.make<ReadonlyArray<string>>([]);
+    const requestsLayer = Layer.mock(ProviderRuntimeRequests)({
+      requested: (input) =>
+        SubscriptionRef.update(requestLogRef, (log) => [...log, `requested:${input.action}`]),
+      settled: (input) =>
+        SubscriptionRef.update(requestLogRef, (log) => [...log, `settled:${input.outcome}`]),
+    });
     const providerSessionsLayer = Layer.mock(ProviderSessionManagerV2)({
       closeInstance: (instanceId) =>
         Ref.update(stopCountRef, (count) => count + 1).pipe(
@@ -240,6 +248,7 @@ function makeHarness(
                 Layer.succeed(ProviderLifecycleCoordinator, trackedCoordinator),
                 Layer.succeed(ProviderActivity, activity),
                 providerSessionsLayer,
+                requestsLayer,
                 NodeServices.layer,
                 NodeCrypto.layer,
               ),
@@ -254,7 +263,12 @@ function makeHarness(
           Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
           Effect.provideService(ProviderActivity, activity),
           Effect.provide(
-            Layer.mergeAll(providerSessionsLayer, NodeServices.layer, NodeCrypto.layer),
+            Layer.mergeAll(
+              providerSessionsLayer,
+              requestsLayer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
           Scope.provide(managerScope),
         );
@@ -268,6 +282,7 @@ function makeHarness(
       stopCountRef,
       coordinator: trackedCoordinator,
       lifecycleReleaseCountRef,
+      requestLogRef,
       closeManager: Scope.close(managerScope, Exit.void),
     };
   });
@@ -988,6 +1003,42 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
+  // A later try fixes a server that stayed busy, not one that does not have the file.
+  it.effect.each([
+    {
+      caseTitle: "keeps the user's request after HTTP 429 on every try",
+      cause: new ManagedRuntimeFileError("HTTP 429 on all 5 tries.", {
+        failureClass: "http_4xx",
+        retryable: true,
+      }),
+      outcome: "retryable",
+    },
+    {
+      caseTitle: "drops the user's request after HTTP 404",
+      cause: new ManagedRuntimeFileError("HTTP 404.", { failureClass: "http_4xx" }),
+      outcome: "failed",
+    },
+  ])("$caseTitle", ({ cause, outcome }) =>
+    Effect.gen(function* () {
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: () =>
+          Effect.fail(new ProviderConnectionActionError({ message: "Install failed.", cause })),
+      };
+      const { manager, requestLogRef } = yield* makeHarness(actions, [systemProvider]);
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      assert.deepStrictEqual(yield* awaitState(requestLogRef, (log) => log.length === 2), [
+        "requested:install",
+        `settled:${outcome}`,
+      ]);
+    }),
+  );
+
   it.effect("does not mutate a shared runtime when active sessions cannot stop", () =>
     Effect.gen(function* () {
       const runCount = yield* Ref.make(0);
@@ -1054,24 +1105,19 @@ describe("ProviderRuntimeManager", () => {
     }),
   );
 
-  it.effect("runs a background install without a download limit and says how it ended", () =>
+  it.effect("runs a background install, says how it ended, and records no user request", () =>
     Effect.gen(function* () {
-      const backgroundRuns = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
       const actions: ProviderManagedRuntimeActions = {
         getSummary: Effect.succeed(missingRuntime),
         plan: () => Effect.succeed(installPlan()),
-        run: (_action, _revision, report, _await, options) =>
-          Ref.update(backgroundRuns, (runs) => [...runs, options?.background]).pipe(
-            Effect.andThen(
-              report({
-                status: "verifying",
-                message: "Verifying.",
-                download: { resumedBytes: 40, source: "fallback", compressed: true },
-              }),
-            ),
-          ),
+        run: (_action, _revision, report) =>
+          report({
+            status: "verifying",
+            message: "Verifying.",
+            download: { resumedBytes: 40, source: "fallback", compressed: true },
+          }),
       };
-      const { manager, providersRef } = yield* makeHarness(actions);
+      const { manager, providersRef, requestLogRef } = yield* makeHarness(actions);
       const outcome = yield* manager.startInBackground({
         instanceId: INSTANCE,
         action: "install",
@@ -1079,7 +1125,7 @@ describe("ProviderRuntimeManager", () => {
         attempt: 2,
       });
       assert.strictEqual(outcome, "succeeded");
-      assert.deepStrictEqual(yield* Ref.get(backgroundRuns), [true]);
+      assert.deepStrictEqual(yield* SubscriptionRef.get(requestLogRef), ["settled:succeeded"]);
       const operation = (yield* SubscriptionRef.get(providersRef))[0]?.connection?.runtime
         ?.operation;
       assert.strictEqual(operation?.status, "succeeded");
@@ -1098,11 +1144,15 @@ describe("ProviderRuntimeManager", () => {
     () =>
       Effect.gen(function* () {
         const never = yield* Deferred.make<void>();
+        const runs = yield* Ref.make(0);
         const actions: ProviderManagedRuntimeActions = {
           getSummary: Effect.succeed(missingRuntime),
           plan: () => Effect.succeed(installPlan()),
-          run: (_action, _revision, _report, _await, options) =>
-            options?.background ? Deferred.await(never) : Effect.void,
+          // Only the user's change, the second run, finishes; background runs wait.
+          run: () =>
+            Ref.getAndUpdate(runs, (count) => count + 1).pipe(
+              Effect.flatMap((count) => (count === 1 ? Effect.void : Deferred.await(never))),
+            ),
         };
         const other: ServerProvider = {
           ...provider,

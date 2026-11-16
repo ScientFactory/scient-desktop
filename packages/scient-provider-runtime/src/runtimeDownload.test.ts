@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Synthetic responses exercise the private download boundary without network or provider credentials.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Synthetic responses exercise the private download boundary without network or provider credentials; the slow-download case paces its body on the test clock.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -11,6 +11,7 @@ import {
   downloadManagedRuntime,
   ManagedRuntimeFileError,
   managedRuntimeFailureClass,
+  managedRuntimeFailureRetryable,
   verifyManagedRuntimeChecksum,
 } from "./runtimeFiles.ts";
 
@@ -42,6 +43,7 @@ async function input(signal = new AbortController().signal) {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   await Promise.all(
     roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
@@ -348,31 +350,6 @@ describe("downloads with Scient's own copy first", () => {
     expect(urls(fetch)).toEqual([mirror, request.fallbackUrl, request.fallbackUrl]);
   });
 
-  it("gives GitHub its own time limit when Scient's copy runs out of time", async () => {
-    const request = await twoSources();
-    const limits: AbortController[] = [];
-    using _timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
-      const limit = new AbortController();
-      limits.push(limit);
-      return limit.signal;
-    });
-    const fetch = vi
-      .fn()
-      .mockImplementationOnce(
-        (_url: URL, init: RequestInit) =>
-          new Promise((_resolve, reject) => {
-            init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
-            // Scient's copy is still busy when its own ten minutes end.
-            limits[0]!.abort(new DOMException("time limit", "TimeoutError"));
-          }),
-      )
-      .mockResolvedValueOnce(ok());
-    vi.stubGlobal("fetch", fetch);
-    await downloadManagedRuntime(request);
-    expect(urls(fetch)).toEqual([mirror, request.fallbackUrl]);
-    expect(limits).toHaveLength(2);
-  });
-
   it("fails only when both copies fail, and names both", async () => {
     const request = await twoSources();
     const fetch = vi.fn().mockImplementation(async () => new Response("busy", { status: 504 }));
@@ -427,9 +404,11 @@ describe("resumable downloads", () => {
         return partialContent(2, "llo");
       });
     vi.stubGlobal("fetch", fetch);
-    await expect(downloadManagedRuntime(request)).resolves.toEqual({
+    await expect(downloadManagedRuntime(request)).resolves.toMatchObject({
       resumedBytes: 2,
       source: "primary",
+      tries: 2,
+      progressPercent: 100,
     });
     expect(await NodeFSP.readFile(request.destination, "utf8")).toBe(body);
     expect(await NodeFSP.readdir(NodePath.dirname(request.partialPath))).toEqual([]);
@@ -511,36 +490,36 @@ describe("resumable downloads", () => {
         return partialContent(2, "llo");
       });
     vi.stubGlobal("fetch", fetch);
-    await expect(downloadManagedRuntime(request)).resolves.toEqual({
+    await expect(downloadManagedRuntime(request)).resolves.toMatchObject({
       resumedBytes: 2,
       source: "fallback",
     });
   });
 
-  it("keeps the bytes when the time limit ends and says trying again continues", async () => {
+  it("says how far a failed download got, and that a later try may finish it", async () => {
     const request = await resumable();
-    const limit = new AbortController();
-    using _timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(limit.signal);
-    await NodeFSP.mkdir(NodePath.dirname(request.partialPath), { recursive: true });
-    await NodeFSP.writeFile(request.partialPath, "he");
-    const fetch = vi.fn().mockImplementationOnce(
-      (_url: URL, init: RequestInit) =>
-        new Promise((_resolve, reject) => {
-          init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
-          limit.abort(new DOMException("time limit", "TimeoutError"));
-        }),
-    );
+    const reset = Object.assign(new Error("private detail"), { code: "ECONNRESET" });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("he"))
+      .mockRejectedValue(new TypeError("fetch failed", { cause: reset }));
     vi.stubGlobal("fetch", fetch);
-    const failure = await downloadManagedRuntime(request).then(
-      () => expect.unreachable("the download should stop"),
+    const onFailedTry = vi.fn();
+    const failure = await downloadManagedRuntime({ ...request, onFailedTry }).then(
+      () => expect.unreachable("the download should fail"),
       (cause: unknown) => cause,
     );
-    expect(failure).toBeInstanceOf(ManagedRuntimeFileError);
-    expect((failure as Error).message).toBe(
-      "The download took longer than 10 minutes. Scient kept what it downloaded; trying again continues from there.",
-    );
-    expect(managedRuntimeFailureClass(failure)).toBe("timeout");
-    expect(await NodeFSP.readFile(request.partialPath, "utf8")).toBe("he");
+    expect(onFailedTry).toHaveBeenCalledTimes(5);
+    expect(onFailedTry.mock.calls[0]![0]).toMatchObject({ tries: 1, networkKind: "cut_off" });
+    expect(onFailedTry.mock.calls.at(-1)![0]).toMatchObject({
+      resumedBytes: 2,
+      source: "primary",
+      tries: 5,
+      progressPercent: 40,
+      networkKind: "reset",
+    });
+    expect(managedRuntimeFailureClass(failure)).toBe("network");
+    expect(managedRuntimeFailureRetryable(failure)).toBe(true);
   });
 
   it("starts the retries afresh while a slow line keeps bringing data", async () => {
@@ -570,6 +549,54 @@ describe("resumable downloads", () => {
     });
     // Nine tries, more than the five a failing server gets.
     expect(fetch).toHaveBeenCalledTimes(9);
+  });
+});
+
+describe("downloads without an overall time limit", () => {
+  // regression: slow downloads failed after ten minutes while data still arrived.
+  it("keeps a slow download going past ten minutes while data arrives", async () => {
+    const request = { ...(await input()), expectedSize: 36 * 1024 };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    // A limit built on AbortSignal.timeout would otherwise ignore the test clock.
+    using _timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const limit = new AbortController();
+      setTimeout(() => limit.abort(new DOMException("time limit", "TimeoutError")), ms);
+      return limit.signal;
+    });
+    let body!: ReadableStreamDefaultController<Uint8Array>;
+    const response = new Response(
+      new ReadableStream({ start: (controller) => (body = controller) }),
+      {
+        headers: { "content-length": String(request.expectedSize) },
+      },
+    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    let awaited: { readonly bytes: number; readonly resolve: () => void } | undefined;
+    const download = downloadManagedRuntime({
+      ...request,
+      onProgress: (bytes) => {
+        if (awaited && bytes >= awaited.bytes) awaited.resolve();
+      },
+    });
+    const ended = download.then(
+      () => undefined,
+      () => undefined,
+    );
+    // Opening the file takes real time, so the clock moves on only once each KiB has arrived.
+    const written = (bytes: number) =>
+      Promise.race([new Promise<void>((resolve) => (awaited = { bytes, resolve })), ended]);
+    // 1 KiB every 20 seconds, inside the 30-second stall bound: twelve minutes in all.
+    for (let chunk = 1; chunk <= 36; chunk += 1) {
+      await vi.advanceTimersByTimeAsync(20_000);
+      body.enqueue(new Uint8Array(1024).fill(7));
+      await written(chunk * 1024);
+    }
+    body.close();
+    await expect(download).resolves.toMatchObject({
+      tries: 1,
+      progressPercent: 100,
+      bytesPerSecond: Math.round(request.expectedSize / 720),
+    });
   });
 });
 
@@ -607,6 +634,21 @@ describe("managed runtime failure classes", () => {
     );
   });
 
+  it.each([
+    ["HTTP 429 on every try", () => new Response("slow down", { status: 429 }), true],
+    ["HTTP 501", () => new Response("never", { status: 501 }), false],
+    ["a missing file", () => new Response("missing", { status: 404 }), false],
+    [
+      "an intercepted certificate",
+      () => Promise.reject(fetchFailure("SELF_SIGNED_CERT_IN_CHAIN")),
+      false,
+    ],
+  ])("says whether a later try may fix %s", async (_case, response, retryable) => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(response));
+    const failure = await failureOf(downloadManagedRuntime(await input()));
+    expect(managedRuntimeFailureRetryable(failure)).toBe(retryable);
+  });
+
   it("classifies a damaged download, cancellation and local disk errors without reading messages", async () => {
     const request = await input();
     await NodeFSP.writeFile(request.destination, "ko");
@@ -634,6 +676,8 @@ describe("managed runtime failure classes", () => {
       new Error("Scient could not install it.", { cause: Object.assign(new Error("x"), { code }) });
     expect(managedRuntimeFailureClass(wrapped("ENOSPC"))).toBe("disk_full");
     expect(managedRuntimeFailureClass(wrapped("EACCES"))).toBe("permission");
+    for (const local of [damaged, wrapped("ENOSPC"), wrapped("EACCES")])
+      expect(managedRuntimeFailureRetryable(local)).toBe(false);
     expect(
       managedRuntimeFailureClass(new ManagedRuntimeFileError("Unsafe archive path"), "installing"),
     ).toBe("extract");

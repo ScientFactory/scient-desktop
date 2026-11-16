@@ -12,7 +12,10 @@ import {
   type ProviderRuntimeSummary,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { managedRuntimeFailureClass } from "@scientfactory/provider-runtime";
+import {
+  managedRuntimeFailureClass,
+  managedRuntimeFailureRetryable,
+} from "@scientfactory/provider-runtime";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -37,6 +40,7 @@ import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSession
 import { ProviderActivity } from "./ProviderActivity.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
+import { ProviderRuntimeRequests } from "./ProviderRuntimeRequests.ts";
 
 export interface ProviderRuntimeManagerShape {
   readonly plan: (
@@ -61,7 +65,7 @@ export interface ProviderRuntimeManagerShape {
   readonly reselect: (instanceId: ProviderInstanceId) => Effect.Effect<boolean>;
   /**
    * Starts a change the user did not ask for and waits for it to end. It is marked
-   * `background`, its download has no time limit, and any start by the user stops it.
+   * `background`, and any start by the user stops it.
    */
   readonly startInBackground: (
     input: ProviderRuntimeStartInput & { readonly attempt: number },
@@ -188,6 +192,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const providerSessions = yield* ProviderSessionManagerV2;
   const lifecycleCoordinator = yield* ProviderLifecycleCoordinator;
   const activity = yield* ProviderActivity;
+  const requests = yield* ProviderRuntimeRequests;
   const random = yield* SecureRandom.SecureRandom;
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveRuntimeOperation>>(
     new Map(),
@@ -545,6 +550,14 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         message: "Another account is already changing this shared provider runtime.",
       });
     }
+    if (background === undefined) {
+      yield* requests.requested({
+        instanceId: input.instanceId,
+        driver: target.provider,
+        action: input.action,
+        catalogRevision: input.catalogRevision,
+      });
+    }
 
     const cleanupStartupExit = <A, E>(exit: Exit.Exit<A, E>): Effect.Effect<void> =>
       Exit.isSuccess(exit)
@@ -652,7 +665,6 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           input.catalogRevision,
           publishProgress,
           awaitActivationWindow,
-          { background: background !== undefined },
         ),
       ).pipe(Effect.tap(() => Ref.set(committedRef, true))),
     );
@@ -723,6 +735,18 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                 })
                 .pipe(
                   Effect.catchCause(() => publishUnexpectedFailure),
+                  Effect.andThen(
+                    requests.settled({
+                      instanceId: input.instanceId,
+                      driver: target.provider,
+                      outcome:
+                        completion._tag === "Success"
+                          ? "succeeded"
+                          : managedRuntimeFailureRetryable(completion.failure, lastStage)
+                            ? "retryable"
+                            : "failed",
+                    }),
+                  ),
                   Effect.andThen(
                     Deferred.succeed(
                       outcome,
@@ -862,6 +886,11 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         publishCancelled(input.instanceId, claim),
         "cancelled",
       );
+      yield* requests.settled({
+        instanceId: input.instanceId,
+        driver: target.provider,
+        outcome: "cancelled",
+      });
       return { providers };
     },
   );

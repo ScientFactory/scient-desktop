@@ -258,6 +258,18 @@ const LIFECYCLE_ACTIONS = new Set([
 ]);
 const LIFECYCLE_TRIGGERS = new Set(["user", "background"]);
 const DOWNLOAD_SOURCES = new Set(["primary", "fallback"]);
+const DOWNLOAD_SOURCE_KINDS = new Set(["scient_mirror", "github", "vendor"]);
+const DOWNLOAD_VARIANTS = new Set(["compressed", "raw"]);
+const DOWNLOAD_NETWORK_KINDS = new Set([
+  "dns",
+  "refused",
+  "reset",
+  "unreachable",
+  "connect_timeout",
+  "stalled",
+  "cut_off",
+  "other",
+]);
 const FIRST_PICK_STATES = new Set(["ready", "in_progress", "failed", "not_started"]);
 const LIFECYCLE_STAGES = new Set([
   "preparing",
@@ -302,6 +314,7 @@ const FAILURE_CLASSES = new Set([
   "extract",
   "cancelled",
   "busy",
+  "stalled",
   "other",
   // LaTeX builds
   "compile_error",
@@ -844,6 +857,17 @@ function byteBucket(value: unknown): string {
   return "over-100mb";
 }
 
+/** Bytes per second, bucketed in megabits per second as connections are quoted. */
+function throughputBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  const megabits = (value * 8) / 1_000_000;
+  if (megabits < 1) return "under-1mbps";
+  if (megabits < 5) return "1-5mbps";
+  if (megabits < 20) return "5-20mbps";
+  if (megabits < 100) return "20-100mbps";
+  return "over-100mbps";
+}
+
 function percentBucket(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
   if (value < 25) return "0-24";
@@ -1039,29 +1063,43 @@ function normalizeEvent(
     case "provider.lifecycle.started":
     case "provider.lifecycle.completed":
     case "provider.lifecycle.failed":
-    case "provider.lifecycle.cancelled":
+    case "provider.lifecycle.cancelled": {
+      const failed = name === "provider.lifecycle.failed";
+      // Read on every lifecycle event so a stray class never passes through on the others.
+      const failureClass = normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES);
       return {
         name,
-        privacyLevel: name === "provider.lifecycle.failed" ? "essential" : "product",
-        priority: name === "provider.lifecycle.failed" ? "critical" : "core",
+        privacyLevel: failed ? "essential" : "product",
+        priority: failed ? "critical" : "core",
         properties: {
           provider,
           action: normalizedEnum(property(input, "action"), LIFECYCLE_ACTIONS),
           runtimeSource: normalizedEnum(property(input, "source"), RUNTIME_SOURCES),
           stage: normalizedEnum(property(input, "stage"), LIFECYCLE_STAGES),
-          failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
+          ...(failed ? { failureClass } : {}),
           durationBucket: durationBucket(property(input, "durationMs")),
           trigger: normalizedEnum(property(input, "trigger"), LIFECYCLE_TRIGGERS, "user"),
           ...optionalProperties(input, {
             attempt: "count",
             downloadSource: DOWNLOAD_SOURCES,
-            compressed: "boolean",
+            sourceKind: DOWNLOAD_SOURCE_KINDS,
+            downloadVariant: DOWNLOAD_VARIANTS,
+            downloadAttempts: "count",
+            networkKind: DOWNLOAD_NETWORK_KINDS,
+            compressedFailure: FAILURE_CLASSES,
           }),
           ...(property(input, "resumedBytes") === undefined
             ? {}
             : { resumedBucket: byteBucket(property(input, "resumedBytes")) }),
+          ...(property(input, "progressPercent") === undefined
+            ? {}
+            : { progressBucket: percentBucket(property(input, "progressPercent")) }),
+          ...(property(input, "bytesPerSecond") === undefined
+            ? {}
+            : { throughputBucket: throughputBucket(property(input, "bytesPerSecond")) }),
         },
       };
+    }
     case "provider.runtime.first_pick":
       return {
         name,

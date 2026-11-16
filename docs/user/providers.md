@@ -111,6 +111,14 @@ says when Scient last checked its qualified-release catalog. If the latest check
 says so with the reason and the time of the last successful check, and Scient keeps using the
 catalog it already has. When automatic update checks are off, the line says that instead.
 
+A download has no overall time limit: on a slow connection it keeps going while data arrives, and
+continues from what it already has after a dropped connection. If an install, update, or repair you
+started fails in a way that usually passes (a lost connection, a busy server) or Scient closes
+during it, Scient tries the same reviewed release again on its own about 5 minutes, 30 minutes, and
+2 hours later, then every 4 hours. It stops once it succeeds, or when you cancel, remove the runtime,
+disable the provider, or start another change to it; a release that changed in the meantime is not
+installed in its place.
+
 Scient downloads, verifies, and tests a new runtime while you keep working. Switching to it restarts
 that provider, so while one of its turns or background tasks (subagents, workflows, monitors) is
 running, the button shows **Waiting**; your conversations continue on the next message. Cancel a
