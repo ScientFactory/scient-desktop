@@ -99,6 +99,8 @@ const OMP_FAILURE_KIND_PRIORITY = [
   "empty-response",
   "provider-finish-error",
   "timeout",
+  // Scient Agent: no response reached the provider (DNS, refused, offline), unlike an outage.
+  "network",
   "silent-abort",
   "user-interrupt",
   "abort",

@@ -179,21 +179,30 @@ speculative global probing during upstream alignment.
 
 Scient's desktop update control retains the inherited idle check icon and update
 actions. Its active states use a compact primary-colored button with Update,
-download percentage, Restart, or Retry copy. The labeled button is 28px tall and
+download percentage, or Retry copy. The labeled button is 28px tall and
 uses plain download/restart icons without status badges. Preserve the marked presentation
 seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
 `desktopUpdate.logic.ts`; updater state, IPC, release-note focus, and Electron
 installation remain inherited. Do not copy the updater into a second component
 or restore upstream's muted active-state styling during alignment.
-Scient replaces upstream's restart flow: a finished download shows a notice
-anchored above the update control, with a **Restart now** action and a 5-second
-timeout, falling back to the corner stack when the control is off screen; and
-Restart installs without the confirmation dialog in the sidebar, the legacy
-sidebar and Settings. The notice and the shared install call live in
-`apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; the three callers
-carry `SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
+Scient downloads an offered update in the background (`autoDownloadLoop` in
+`DesktopUpdates.ts`), through the same action reservation as a user's download. A failed
+download of one release retries after 1, 5 and 15 minutes, then hourly and every 4 hours; a
+check does not reset that schedule, and a newer release starts at once and replaces the pending
+download. electron-updater's own `autoDownload` stays off. Until the update is ready the control
+stays idle (its tooltip reports the download); a failed download shows Retry, whose download
+shows progress. A ready update shows **Update** ("Restart and update to …"), which opens a card
+anchored above the control with **Restart now**; that card stays until used, dismissed, pressed
+again, or its update stops being ready. A download the user started (Retry) announces its card
+with a 5-second timeout and never restarts by itself. Every install from the card, the footer,
+Settings or a pass names the version it showed, so a build that replaced it is refused, not
+installed. Restart installs without the confirmation dialog. The notice and the shared install
+call live in `apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; callers carry
+`SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
 `getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
-callers; do not reintroduce the confirmation during alignment.
+callers; do not reintroduce the confirmation during alignment. A managed policy's feed stays the
+update source on every channel. Install-on-quit and early native (Squirrel.Mac) preparation stay
+off: they need native-readiness tracking and packaged-build tests first.
 The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
 and Scient-managed runtimes appear in a Scient-owned circle and card
 (`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in
@@ -202,9 +211,9 @@ that downloads this app asks in a small card above the pill (`UpdateEverythingAs
 servers would stop running threads. Upstream's `SidebarUpdateCapsule` and `UpdateEverythingDialog`
 are retained unmounted (knip entries) so their changes still merge. Scient replaces upstream's
 5-second restart countdown with an idle check (`scient/desktopUpdate/restartWhenIdle.ts`): when a
-download the user started finishes, alone or at the end of a pass, this app restarts at once only
-while none of its own threads is working and Compute has no running work; otherwise the pill shows
-Restart. Upstream's `waitForUpdateRestart` stays in place, unused. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
+pass that downloads this app finishes, this app restarts at once only while none of its own
+threads is working and Compute has no running work; otherwise the pill shows Update. Upstream's
+`waitForUpdateRestart` stays in place, unused. Managed runtimes join the pass through marked blocks in `useUpdateEverything.ts`,
 where a server is left for later while its machine still updates a provider or runtime, and is
 admitted again when its restart is due. Scient's tests follow the circle's retry path; upstream's capsule tests stay unchanged.
 A marked root mount delegates browser "update available" toasts to Scient's
@@ -645,6 +654,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`47f90ee2e94086c86b1121eb004adc44b60f5aa9` is recorded in
+[the 2026-11-16 47f90ee2e9 receipt](docs/internals/t3-upstream-sync-20261116-47f90ee2e9.md).
+Literal merge `706e3515efbee577d2987dfc86b49797c6aa5a91` has owned base
+`301abac0beec5be6f037b6168a68faca83effde5` and the frozen official target as parents, retaining
+the 28 official commits after `6b7027b1f4`. The range is fixes: checkpoints stop rehashing unchanged
+untracked files, a busy thread's lock delays only its own reactions, Pi follows a session file an
+extension moves to, and model choices survive catalog gaps. Release remains separate.
+
+The previous committed alignment through
 `6b7027b1f43eebc4c7edf5304236a0775b2d8928` is recorded in
 [the 2026-11-16 6b7027b1f4 receipt](docs/internals/t3-upstream-sync-20261116-6b7027b1f4.md).
 Literal merge `8bcb5e3cb27745baf2a9bda2a5883235ca7dde94` has owned base

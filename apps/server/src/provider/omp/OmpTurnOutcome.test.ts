@@ -47,6 +47,21 @@ const cases: ReadonlyArray<readonly [string, OmpTurnEvidence, OmpTurnVerdict]> =
     },
   ],
   [
+    "a network failure is named apart from a transient provider error",
+    {
+      ...terminal,
+      promptStatus: "error",
+      promptError: "Couldn't reach chatgpt.com (getaddrinfo ENOTFOUND).",
+      promptErrorKinds: ["transient", "network"],
+    },
+    {
+      outcome: "failed",
+      stopReason: "error",
+      errorMessage: "Couldn't reach chatgpt.com (getaddrinfo ENOTFOUND).",
+      failureCode: "network",
+    },
+  ],
+  [
     "a kind names the failure without changing its class",
     {
       ...terminal,

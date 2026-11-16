@@ -15,6 +15,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics.ts";
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
 import { classifyCommand, shellCommandOf } from "./CommandCategories.ts";
@@ -25,7 +26,13 @@ type Observation = {
   readonly name: string;
   readonly properties: Readonly<Record<string, unknown>>;
 };
-type EventContext = { readonly driver?: ProviderDriverKind; readonly refork?: boolean };
+type EventContext = {
+  readonly driver?: ProviderDriverKind;
+  readonly refork?: boolean;
+  /** The provider runtime's own version, such as Scient Agent's. */
+  readonly providerVersion?: string;
+};
+
 const CAPACITY = 1_000;
 const MAX_COMMANDS_PER_RUN = 10_000;
 /** Scient's own progress rows, written as commands; they are not an agent's program. */
@@ -113,7 +120,9 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
     {
       provider: string;
       model: string;
-      startedAt: number;
+      providerVersion: string | undefined;
+      /** Null until the run starts; a run can fail while its session is still opening. */
+      startedAt: number | null;
       usedTools: boolean;
       hasAttachment: boolean;
       rootNodeId: string | null;
@@ -200,16 +209,27 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
           },
         });
       }
-      if (
-        (run.status === "running" || run.status === "waiting") &&
-        run.startedAt !== null &&
+      const live = !["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(
+        run.status,
+      );
+      const known = runs.get(key);
+      if (known !== undefined) {
+        known.rootNodeId = run.rootNodeId;
+        if (known.startedAt === null && run.startedAt !== null)
+          known.startedAt = DateTime.toEpochMillis(run.startedAt);
+      } else if (
         driver !== undefined &&
-        !runs.has(key)
+        (entry.type === "run.created"
+          ? live
+          : (run.status === "running" || run.status === "waiting") && run.startedAt !== null)
       ) {
+        // A run seen from its creation is followed even if it never starts, so a failure to open
+        // its session is reported too. Older runs are followed from when they start running.
         remember(runs, key, {
           provider: driver,
           model: run.modelSelection.model,
-          startedAt: DateTime.toEpochMillis(run.startedAt),
+          providerVersion: context.providerVersion,
+          startedAt: run.startedAt === null ? null : DateTime.toEpochMillis(run.startedAt),
           usedTools: false,
           hasAttachment: false,
           rootNodeId: run.rootNodeId,
@@ -226,14 +246,22 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
       const browser = browserCalls?.take(entry.threadId, DateTime.toEpochMillis(entry.occurredAt));
       const correlation = runs.get(key);
       runs.delete(key);
-      // A historical/consent-boundary terminal or failed workspace preparation
-      // is not evidence of an observed provider turn.
+      // A historical/consent-boundary terminal is not evidence of an observed provider turn.
       if (correlation === undefined) return [];
-      const elapsed = DateTime.toEpochMillis(entry.occurredAt) - correlation.startedAt;
+      // A run that never started only matters when it failed: stopping a queued run is not a turn.
+      if (correlation.startedAt === null && run.status !== "failed") return [];
+      const elapsed =
+        correlation.startedAt === null
+          ? undefined
+          : DateTime.toEpochMillis(entry.occurredAt) - correlation.startedAt;
       const properties = {
         provider: correlation.provider,
         model: correlation.model,
-        durationMs: elapsed >= 0 ? elapsed : undefined,
+        runRef: analyticsRunRef(key),
+        ...(correlation.providerVersion === undefined
+          ? {}
+          : { providerVersion: correlation.providerVersion }),
+        durationMs: elapsed !== undefined && elapsed >= 0 ? elapsed : undefined,
         ...(browser === undefined
           ? {}
           : { browserToolCalls: browser.calls, browserToolFailures: browser.failures }),
@@ -273,7 +301,12 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
                   name: "provider.turn.failed",
                   properties: {
                     ...properties,
-                    failureClass: failure?.class ?? "provider_error",
+                    // A run that failed before starting without a provider failure (its
+                    // workspace could not be prepared, say) is not the provider's error.
+                    failureClass:
+                      failure?.class ??
+                      (correlation.startedAt === null ? "unknown" : "provider_error"),
+                    started: correlation.startedAt !== null,
                     ...(failureCode === undefined ? {} : { failureCode }),
                     ...(failure?.httpStatus === undefined
                       ? {}
@@ -305,8 +338,13 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
           ].includes(item.type)
         )
           run.usedTools = true;
-        if (item.type === "error" && item.nodeId === run.rootNodeId) {
-          if (run.errors.has(item.id) || run.errors.size < MAX_ERROR_ITEMS_PER_RUN)
+        if (item.type === "error") {
+          // The run's failure is its root node's; retries are counted wherever the run made them,
+          // since native retry rows sit on their own nodes.
+          if (
+            item.nodeId === run.rootNodeId &&
+            (run.errors.has(item.id) || run.errors.size < MAX_ERROR_ITEMS_PER_RUN)
+          )
             run.errors.set(item.id, item);
           if (item.retry !== undefined) countRetry(run.retries, item);
         }
@@ -471,8 +509,16 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
     }),
     (unsubscribe) => Effect.sync(unsubscribe),
   );
-  yield* observer.providers(yield* providers.getProviders);
-  yield* providers.streamChanges.pipe(Stream.runForEach(observer.providers), Effect.forkScoped);
+  // Each instance's runtime version, so an outcome says which agent build produced it.
+  const versions = new Map<string, string>();
+  const observeProviders = (snapshot: ReadonlyArray<ServerProvider>) => {
+    versions.clear();
+    for (const provider of snapshot)
+      if (provider.version !== null) versions.set(provider.instanceId, provider.version);
+    return observer.providers(snapshot);
+  };
+  yield* observeProviders(yield* providers.getProviders);
+  yield* providers.streamChanges.pipe(Stream.runForEach(observeProviders), Effect.forkScoped);
   // The subscription cursor is immutable. Never pass the fail-closed Infinity
   // sentinel upstream: wait for a successful boundary, including recovery from
   // an unavailable initial read or a superseded registration.
@@ -493,6 +539,7 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
             : entry.providerInstanceId;
         const instance =
           instanceId === undefined ? undefined : yield* instances.getInstance(instanceId);
+        const providerVersion = instanceId === undefined ? undefined : versions.get(instanceId);
         const fork = entry.type === "thread.created" ? entry.payload.conversationFork : undefined;
         const origin =
           fork?.status === "pending"
@@ -504,6 +551,7 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
           entry,
           {
             ...(instance === undefined ? {} : { driver: instance.driverKind }),
+            ...(providerVersion === undefined ? {} : { providerVersion }),
             ...(origin === null ? {} : { refork: origin.forkLineage != null }),
           },
           expectedEpoch,

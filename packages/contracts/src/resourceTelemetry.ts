@@ -302,6 +302,10 @@ export const DesktopAppHealthReport = Schema.Struct({
   type: Schema.Literal("scientAppHealth"),
   component: Schema.Literals(["renderer", "desktop"]),
   failureClass: Schema.Literals(["process-crash", "resource-exhaustion", "unknown"]),
+  // SCIENT-FORK:START — how the process ended: exit code 5 on macOS is a Chromium CHECK (SIGTRAP).
+  exitReason: Schema.optionalKey(Schema.Literals(["crashed", "oom", "killed", "abnormal-exit"])),
+  exitCode: Schema.optionalKey(Schema.Int),
+  // SCIENT-FORK:END
 });
 export type DesktopAppHealthReport = typeof DesktopAppHealthReport.Type;
 

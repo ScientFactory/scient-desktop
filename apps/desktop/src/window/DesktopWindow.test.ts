@@ -761,6 +761,8 @@ describe("DesktopWindow", () => {
               type: "scientAppHealth",
               component: "renderer",
               failureClass: "resource-exhaustion",
+              exitReason: "oom",
+              exitCode: 137,
             },
           ]);
         }).pipe(Effect.provide(layer));

@@ -168,10 +168,12 @@ export const listen: Effect.Effect<
         if (!shouldStart) return;
 
         const now = yield* Clock.currentTimeMillis;
+        // SCIENT-FORK: a background download can replace the prepared build; that lease is over.
+        const downloadedNow = (yield* updates.getState).downloadedVersion;
         const prepared = yield* Ref.modify(preparedUpdateRef, (current) =>
           Option.isSome(current) &&
           current.value.status === "prepared" &&
-          current.value.expiresAt <= now
+          (current.value.expiresAt <= now || current.value.downloadedVersion !== downloadedNow)
             ? ([Option.none<typeof current.value>(), Option.none()] as const)
             : ([current, current] as const),
         );

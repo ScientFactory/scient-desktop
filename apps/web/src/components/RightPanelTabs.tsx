@@ -114,7 +114,7 @@ import { AllTabsMenu } from "~/scient/rightPanel/AllTabsMenu";
 import { useTabDragOut } from "~/scient/multiWindow/tabDragOut";
 // SCIENT-FORK:END
 import { useScientAnalyticsView } from "~/scient/analytics/client";
-import { panelCategory } from "~/scient/analytics/viewCategories";
+import { panelViewProperties } from "~/scient/analytics/viewCategories";
 
 import { fileTabTitles } from "./files/filePath";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
@@ -1289,11 +1289,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const analyticsSurface = props.open === false ? undefined : focusedSurface;
   useScientAnalyticsView(
     analyticsSurface
-      ? { name: "panel.viewed", properties: { category: panelCategory(analyticsSurface) } }
+      ? { name: "panel.viewed", properties: panelViewProperties(analyticsSurface) }
       : null,
     analyticsSurface?.kind === "pull-request" && analyticsSurface.environmentId
       ? (analyticsSurface.environmentId as EnvironmentId)
       : props.environmentId,
+    analyticsSurface?.id,
   );
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;

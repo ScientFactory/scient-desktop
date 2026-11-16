@@ -583,7 +583,9 @@ jobs:
         env:
           TEST_REPORT: ${{ runner.temp }}/vitest-web-${{ matrix.shard }}.json
           # SCIENT-FORK:START — attribute browser socket loss to lifecycle, heartbeat or Chromium exit.
-          DEBUG: "vitest:browser*,pw:browser"
+          # Vite's client reloads the page when its server socket drops or a dependency
+          # re-optimizes, which ends the shard; vite:hmr and vite:deps say which happened.
+          DEBUG: "vitest:browser*,pw:browser,vite:hmr,vite:deps,vite:optimize-deps"
           # SCIENT-FORK:END
         run: >-
           vp run --filter @t3tools/web test

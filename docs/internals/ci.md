@@ -69,8 +69,8 @@ still build, sign, package and check their actual release artifacts normally.
   the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
   SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, the root `package.json`
   that defines `lint:mobile`, or `ci.yml`. Otherwise the job is skipped, which GitHub reports as
-  success for the required check. Like the other change gates, it diffs the event's base against the
-  tested commit with Git on every event, not a PR's live file list. Renames are matched on both their
+  success for the required check. Like the other change gates, it diffs the run's comparison base
+  against the tested commit with Git on every event, not a PR's live file list. Renames are matched on both their
   old and new path. The gate fails open in every other case: if the base is missing, the
   changed-file list cannot be resolved, or the gate job itself fails, the lint runs. The macOS job installs only the dependency closure needed
   by `@t3tools/scripts`, does not restore or save the repository-wide dependency cache, and fails if
@@ -85,20 +85,24 @@ still build, sign, package and check their actual release artifacts normally.
   restores a dependency store: on these hosted runners restoring the whole-workspace store took
   longer than installing the server and desktop closures without one.
 
+Every change gate diffs the tested commit against one comparison base
+(`.github/scripts/ci-comparison-base.cjs`): the group's base for a queue run, `main` before the
+push for a push, and for a PR run the `main` its tested merge was made on, the merge's first
+parent. A PR event's `base.sha` can lag that merge (about one PR run in ten), so it is used only
+when the tested commit is not a merge of the PR head, and no receipt is then written.
+
 A fully successful run records a qualification receipt: the exact content it tested (the
 commit's tree) and the comparison base its change gates used, with its repository, workflow,
 run and attempt. Queue runs and PR runs from this repository record one; fork PRs never do.
 The receipt certifies all applicable lanes, including web browser tests and mobile static analysis.
 
 - **Queue candidate.** A `merge_group` run reuses the PR's passing run only when that run
-  tested the same content against the same base, and the PR head already holds that content:
-  the PR contained the latest `main` when its CI ran, nothing has landed since, and nothing is
-  queued ahead of it. The queue commit must merge exactly that PR head onto the group base, and
-  the PR run's tested merge commit, which its workflow ran from, must have the same tree and
-  parents. Every change gate compares the event's base with the tested commit, so equal base and
-  content give each gate the same input. Because the merge then changes nothing, a path-limited
-  history read such as Compute recipe sealing follows the PR head rather than the merge commit,
-  whose timestamp differs between the two merges. Otherwise the candidate runs normal CI.
+  tested the same content against the same base: nothing has landed on `main` since and nothing
+  is queued ahead of it. The queue commit must merge exactly that PR head onto the group base,
+  and the PR run's tested merge commit, which its workflow ran from, must have the same tree and
+  parents, so every change gate gets the same input. A path-limited history read, Compute recipe
+  sealing, would find each merge commit itself when both `main` and the PR changed the recipes;
+  that case, like any other mismatch, runs normal CI.
 - **Main push.** A push reuses queue qualification when every queue entry it lands qualified
   that exact commit from its first parent, back to the commit `main` held before the push. The
   queue lands up to `max_entries_to_merge` (6) entries in one push; a longer chain runs normal

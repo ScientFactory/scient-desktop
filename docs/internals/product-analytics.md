@@ -700,9 +700,22 @@ Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`,
   anything else, since a code that only looks like an identifier may be free text a provider sent.
 - `httpStatus`: the provider's HTTP status, 100 to 599, on the failure itself
   (`OrchestrationV2ProviderFailure.httpStatus`).
-- `retryAttempts`, also on `provider.turn.completed`: retry attempts the provider reported for the
-  turn's root, each retry cycle counted at its highest attempt. These are reported attempts, not
-  proven requests. Zero means none was reported.
+- `retryAttempts`, also on `provider.turn.completed`: retry attempts the provider reported anywhere
+  in the run (native retry rows sit on their own nodes, not the run's root), each retry cycle
+  counted at its highest attempt. These are reported attempts, not proven requests. Zero means none
+  was reported.
+- `started`: `false` when the run failed before its provider session started (the session would
+  not open, or its workspace could not be prepared). Such a run with no provider failure has
+  `failureClass` `unknown`. A run stopped before it started reports nothing.
+
+Every turn outcome (`provider.turn.completed`, `failed`, `stopped`) and `provider.request.completed`
+carry `runRef`, the first 16 hex characters of a SHA-256 of the local run id, so a run's outcome
+joins its request totals without sending the id. Turn outcomes also carry `providerVersion`, the
+provider runtime's own release (Scient Agent's version, for example), when it is a plain release
+number. `app.diagnostics` adds `oldestEventAgeBucket`, how long the delivered batch's oldest event
+waited on the computer, so an outage shows as late delivery rather than missing events. A renderer
+`app.health` termination adds `exitReason` (`crashed`, `oom`, `killed`, `abnormal-exit`) and
+`exitCode`; on macOS exit code 5 (SIGTRAP) is a Chromium `CHECK`, not memory pressure.
 
 The failure is the run's latest failed root error item, as `latestRootProviderFailure` picks it; a
 retry that recovered or a subagent's error is not the turn's failure. These fields explain a

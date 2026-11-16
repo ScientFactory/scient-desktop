@@ -503,6 +503,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   let commandRejected = false;
   /** Evidence for the open turn's outcome; reset when a turn begins. */
   let evidence: TurnEvidence = {};
+  /**
+   * A later run of the open turn started after its prompt's own run ended, for example when a
+   * background result woke the agent before the turn settled. prompt_result reports only the
+   * prompt's own run: when the later run ends normally, the turn recovered and completes.
+   */
+  let promptSuperseded = false;
   const settledPromptIds: Array<string> = [];
   /**
    * prompt_result and AsyncCommandFailure frames that arrived while the open
@@ -613,9 +619,24 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         ...(commandRejected ? { source: "command" as const, failureCode: "command_rejected" } : {}),
       };
     }
+    // After a later run, prompt_result describes only the prompt's own run, so the latest run's
+    // ending decides. Only a later run that failed after a failed prompt keeps the prompt's
+    // structured cause (a usage limit's reset time, for example).
+    const laterRunFailed =
+      evidence.stopReason === "error" ||
+      evidence.stopReason === "aborted" ||
+      evidence.retryExhausted === true;
+    const runOnly = promptSuperseded && !(laterRunFailed && evidence.promptStatus === "error");
     const verdict = classifyOmpTurnOutcome(input.target, {
       settlement: outcome === "unknown" ? "unconfirmed" : "terminal",
-      ...evidence,
+      ...(runOnly
+        ? {
+            stopReason: evidence.stopReason,
+            errorMessage: evidence.errorMessage,
+            retryExhausted: evidence.retryExhausted,
+            retryFinalError: evidence.retryFinalError,
+          }
+        : evidence),
     });
     if (verdict.outcome === "unknown") {
       return {
@@ -698,6 +719,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     promptReported = false;
     promptWaitStartedAt = undefined;
     evidence = {};
+    promptSuperseded = false;
     pendingOutcomes = [];
     yield* applySignal({
       type: "begin",
@@ -1015,8 +1037,21 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       ) {
         yield* startTurn(`${input.continuationIdPrefix}:${++continuationSequence}`, true);
       }
+      const followUpRun = turnIsOpen(turn) && turn.phase === "draining";
       openRunId = ++runSequence;
       yield* applySignal({ type: "agent-start", runId: openRunId });
+      if (followUpRun && turn.runId === openRunId) {
+        // Only this run's ending says whether the earlier run's failure was recovered from.
+        promptSuperseded = true;
+        evidence = {
+          ...evidence,
+          stopReason: undefined,
+          errorMessage: undefined,
+          assistantEnded: false,
+          retryExhausted: false,
+          retryFinalError: undefined,
+        };
+      }
       return;
     }
     if (event.type === "agent_end") {

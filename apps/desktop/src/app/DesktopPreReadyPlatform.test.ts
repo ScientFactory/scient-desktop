@@ -347,7 +347,11 @@ describe("DesktopPreReadyPlatform", () => {
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
         assert.equal(registerSchemesMock.mock.calls.length, 1);
-        assert.equal(appendSwitchMock.mock.calls.length, 0);
+        // SCIENT-FORK:START — outside Linux, the only switch turns off soft-navigation detection.
+        assert.deepEqual(appendSwitchMock.mock.calls, [
+          ["disable-features", "SoftNavigationDetection"],
+        ]);
+        // SCIENT-FORK:END
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );
