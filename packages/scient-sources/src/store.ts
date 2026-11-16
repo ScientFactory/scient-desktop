@@ -2262,6 +2262,7 @@ export async function updateSourceImportOperationItem(input: {
   readonly citationKeys?: ReadonlyArray<ScientSourceItemCitationKey>;
   readonly projectKey?: string;
   readonly authorList?: "completed" | "incomplete";
+  readonly attachedPdf?: boolean;
 }): Promise<ScientSourceImportOperation> {
   const paths = await sourceStorePaths(input.root);
   return withStoreLock(paths, input.operationId, async () => {
@@ -2290,6 +2291,7 @@ export async function updateSourceImportOperationItem(input: {
                 : {}),
               ...(input.projectKey ? { projectKey: input.projectKey } : {}),
               ...(input.authorList ? { authorList: input.authorList } : {}),
+              ...(input.attachedPdf ? { attachedPdf: true as const } : {}),
             }
           : item,
       ),
@@ -2924,6 +2926,8 @@ interface AttachPdfInput {
   readonly fileName?: string;
   readonly actor?: ScientSourceActor;
   readonly retrieval?: ScientSourceAttachmentRetrieval;
+  /** The file as it was judged: a PDF that changed since is refused, not attached. */
+  readonly expectedPdf?: ScientSourcePdfInspection;
 }
 
 export async function attachScientSourcePdf(
@@ -2968,6 +2972,7 @@ function stageInputPdf(paths: SourceStorePaths, input: AttachPdfInput) {
     sourcePath: input.pdfPath,
     ...(input.fileName ? { fileName: input.fileName } : {}),
     ...(input.retrieval ? { retrieval: input.retrieval } : {}),
+    ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
     importedAt: new Date().toISOString(),
   });
 }

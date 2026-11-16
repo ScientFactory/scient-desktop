@@ -23,6 +23,7 @@ import {
   readScientSourceStagedMaterial,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
   stagedScientSourcePdfAbsolutePath,
+  writeScientSourceStagedMaterial,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
@@ -344,6 +345,76 @@ describe("ScientSourcesCoordinator", () => {
       { state: "imported", duplicateKind: "new" },
     ]);
     await expect(listScientSourceRecords(root)).resolves.toHaveLength(2);
+  });
+
+  it("adds the PDF of a paper already here to that source, and nothing for the same file again", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-attach-"));
+    fixtures.push(root);
+    await initializeScientProject({ root });
+    // Filed earlier by arXiv's DOI, which its registry calls an article, without a PDF.
+    const filed = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: {
+        ...candidate,
+        sourceKey: "filed",
+        title: "Attention Is All You Need",
+        identifiers: [{ scheme: "doi", value: "10.48550/arXiv.1706.03762" }],
+        externalReferences: [],
+        pdfAvailable: false,
+        pdfFileName: null,
+        pdfAttachmentCount: 0,
+      },
+    });
+    const pdfPath = NodePath.join(root, "1706.03762.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nattention\n", "utf8");
+    const importPdf = async () => {
+      const { item } = await uploadLocalPdfSource({
+        root,
+        sourcePath: pdfPath,
+        fileName: "1706.03762.pdf",
+      });
+      // As its arXiv stamp names it (read in the adapter's own test).
+      const material = await readScientSourceStagedMaterial(root, item.candidate.sourceKey);
+      await writeScientSourceStagedMaterial(root, {
+        ...material,
+        candidate: {
+          ...material.candidate,
+          type: "preprint",
+          title: "Attention Is All You Need",
+          identifiers: [{ scheme: "arxiv", value: "1706.03762" }],
+        },
+      });
+      const operationId = NodeCrypto.randomUUID();
+      let operation = await beginLocalPdfImport({
+        root,
+        operationId,
+        itemKeys: [item.candidate.sourceKey],
+        possibleMetadataMatchOverrides: [],
+      });
+      while (operation.state === "running") {
+        operation = await advanceSourceImport({ root, operationId });
+      }
+      return operation.items;
+    };
+
+    expect(await importPdf()).toMatchObject([
+      {
+        state: "skipped",
+        duplicateKind: "same-identifier",
+        sourceId: filed.record?.sourceId,
+        attachedPdf: true,
+      },
+    ]);
+    const [withPdf] = await listScientSourceRecords(root);
+    expect(withPdf?.attachments).toMatchObject([{ kind: "pdf", fileName: "1706.03762.pdf" }]);
+
+    const [again] = await importPdf();
+    expect(again).toMatchObject({ state: "skipped", sourceId: filed.record?.sourceId });
+    expect(again).not.toHaveProperty("attachedPdf");
+    const records = await listScientSourceRecords(root);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.attachments).toHaveLength(1);
   });
 
   it("refuses a staged PDF that changed after the researcher reviewed it", async () => {

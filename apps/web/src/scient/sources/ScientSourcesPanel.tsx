@@ -1,4 +1,7 @@
-import type { ScientSourceIdentifierAddItem } from "@scientfactory/scient-sources";
+import {
+  scientSourcesMayBeVersions,
+  type ScientSourceIdentifierAddItem,
+} from "@scientfactory/scient-sources";
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
@@ -674,6 +677,18 @@ export function ScientSourcesPanel(props: {
       intake: receipt.intake,
       sourceTitle: (sourceId) =>
         sources.overview?.records.find((record) => record.sourceId === sourceId)?.title ?? null,
+      detailsMissing: (sourceId) => (diagnosticsBySourceId.get(sourceId)?.length ?? 0) > 0,
+      hasOtherVersion: (sourceId) => {
+        const records = sources.overview?.records ?? [];
+        const imported = records.find((record) => record.sourceId === sourceId);
+        return (
+          imported !== undefined &&
+          records.some(
+            (record) =>
+              record.sourceId !== sourceId && scientSourcesMayBeVersions(imported, record),
+          )
+        );
+      },
       ...(referenceFile && fileRest > 0
         ? { rest: { count: fileRest, onImport: () => importReferenceFile(referenceFile.file) } }
         : zoteroRest > 0

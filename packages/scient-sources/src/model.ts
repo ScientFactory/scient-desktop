@@ -955,6 +955,8 @@ export const ScientSourceOperationItem = Schema.Struct({
   projectKey: Schema.optionalKey(NonEmptyString),
   /** An author list the file ended with "and others": filled in from its DOI, or kept short. */
   authorList: Schema.optionalKey(Schema.Literals(["completed", "incomplete"])),
+  /** A PDF of a paper already here (`sourceId`), added to that source instead of a new one. */
+  attachedPdf: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 

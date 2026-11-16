@@ -155,6 +155,22 @@ describe("resolveSourceIdentifier", () => {
     expect(resolution?.status === "found" && resolution.metadata.title).toBe(
       "Cell wall hydrolases of Escherichia coli",
     );
+    // doi.org's content negotiation spells the type differently from Crossref's own API.
+    expect(resolution?.status === "found" && resolution.metadata.type).toBe("article");
+  });
+
+  it("calls a deposit at arXiv a preprint, as the DOI registry calls it an article", async () => {
+    const resolution = await resolveSourceIdentifier(
+      [{ scheme: "doi", value: "10.48550/arXiv.1706.03762" }],
+      {
+        request: respond(200, {
+          type: "article",
+          title: "Attention Is All You Need",
+          DOI: "10.48550/ARXIV.1706.03762",
+        }),
+      },
+    );
+    expect(resolution?.status === "found" && resolution.metadata.type).toBe("preprint");
   });
 
   it("prefers the DOI when a source also has a PMID", async () => {

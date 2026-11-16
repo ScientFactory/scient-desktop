@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { ScrollArea } from "../../components/ui/scroll-area";
+import { isExactSourceDuplicate } from "./importOutcome";
 import { SOURCES_COLUMN, PanelHeader, SourceErrorBanner } from "./PanelChrome";
 import type { useScientSources } from "./useScientSources";
 
@@ -45,10 +46,17 @@ export function ImportReview(props: {
   const [possibleMatchOverrides, setPossibleMatchOverrides] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const localFiles = props.adapter === "local-files";
   const itemKeys = props.preflight.items.flatMap((item) => {
     const itemKey = item.candidate.sourceKey;
     return item.duplicate.kind === "new" || possibleMatchOverrides.has(itemKey) ? [itemKey] : [];
   });
+  // A PDF of a paper already here goes in too, and is added to that source if it has no copy.
+  const alreadyHereKeys = localFiles
+    ? props.preflight.items.flatMap((item) =>
+        isExactSourceDuplicate(item.duplicate.kind) ? [item.candidate.sourceKey] : [],
+      )
+    : [];
   const overrideKeys = props.preflight.items.flatMap((item) => {
     const itemKey = item.candidate.sourceKey;
     return item.duplicate.kind === "possible-metadata-match" && possibleMatchOverrides.has(itemKey)
@@ -57,17 +65,18 @@ export function ImportReview(props: {
   });
   const importableKeys = new Set(itemKeys);
   const selectedCount = props.preflight.items.length;
-  const localFiles = props.adapter === "local-files";
   const hasMetadataWarnings = props.preflight.items.some(
     (item) => importableKeys.has(item.candidate.sourceKey) && item.metadataDiagnostics.length > 0,
   );
   const localActionLabel = props.busy
     ? "Adding…"
-    : hasMetadataWarnings
-      ? itemKeys.length > 1
-        ? `Add ${itemKeys.length} anyway`
-        : "Add anyway"
-      : "Add to Library";
+    : itemKeys.length === 0
+      ? "Continue"
+      : hasMetadataWarnings
+        ? itemKeys.length > 1
+          ? `Add ${itemKeys.length} anyway`
+          : "Add anyway"
+        : "Add to Library";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -110,13 +119,13 @@ export function ImportReview(props: {
                 ? "Nothing new to add"
                 : "Nothing new to import"}
           </span>
-          {localFiles && itemKeys.length > 0 ? (
+          {localFiles && itemKeys.length + alreadyHereKeys.length > 0 ? (
             <Button
               size="xs"
               variant="ghost"
               disabled={props.busy || props.readOnly}
               aria-busy={props.busy}
-              onClick={() => props.onImport(itemKeys, overrideKeys)}
+              onClick={() => props.onImport([...itemKeys, ...alreadyHereKeys], overrideKeys)}
             >
               {props.busy ? <LoaderCircle className="animate-spin" /> : <Download />}
               {localActionLabel}
@@ -140,6 +149,12 @@ export function ImportReview(props: {
                   : item.duplicate.kind === "same-pdf"
                     ? "This PDF is already in the Library"
                     : item.duplicate.reason;
+            const status =
+              localFiles &&
+              item.duplicate.kind !== "same-pdf" &&
+              isExactSourceDuplicate(item.duplicate.kind)
+                ? "Already in the Library: this PDF is added to it"
+                : duplicateStatus;
             return (
               <div key={itemKey} className={willImport ? "bg-accent/20 px-3 py-3" : "px-3 py-3"}>
                 <div className="flex min-w-0 items-start gap-3">
@@ -168,7 +183,7 @@ export function ImportReview(props: {
                             ? "Ready to import"
                             : importingPossibleMatch
                               ? "Will import as a separate source"
-                              : duplicateStatus}
+                              : status}
                         </span>
                       </div>
                     )}

@@ -88,6 +88,7 @@ import {
   revertScientSource,
   importScientSource,
   importScientSourceOperationItem,
+  attachScientSourcePaperPdf,
   attachScientSourcePdf,
   detachScientSourcePdf,
   inspectScientSourcePdf,
@@ -955,7 +956,7 @@ export async function refreshAndCheckSourceMetadata(input: {
   const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
   const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
   const hasResolvableIdentifier = record.identifiers.some((identifier) =>
-    ["doi", "pmid"].includes(identifier.scheme.trim().toLowerCase()),
+    ["doi", "pmid", "arxiv"].includes(identifier.scheme.trim().toLowerCase()),
   );
   if (!pdf && !hasResolvableIdentifier) {
     return unchecked({
@@ -965,15 +966,19 @@ export async function refreshAndCheckSourceMetadata(input: {
       message:
         materialSelection._tag === "SeveralMaterials"
           ? "This source has several PDFs. Metadata refresh needs an explicit material choice."
-          : "Add a PDF, DOI, or PMID before refreshing this source's metadata.",
+          : "Add a PDF, DOI, PMID or arXiv ID before refreshing this source's metadata.",
     });
   }
 
-  const candidate = await refreshExistingSourceCandidate({
-    record,
-    pdfMaterial: pdf,
-    pdfPath: pdf ? sourceAttachmentAbsolutePath(root, pdf) : null,
-  });
+  // The same registry lookup as the check below, so the two agree on what the work is.
+  const candidate = await refreshExistingSourceCandidate(
+    {
+      record,
+      pdfMaterial: pdf,
+      pdfPath: pdf ? sourceAttachmentAbsolutePath(root, pdf) : null,
+    },
+    input.resolveIdentifier,
+  );
   const latest = await readScientSourceRecord(root, input.sourceId);
   if (!latest) throw new Error("The source was removed while its metadata was being checked.");
   if (latest.revision !== input.expectedRevision) {
@@ -1736,6 +1741,45 @@ function importedOrSameWork(result: {
     : (result.duplicate.matchingSourceIds[0] ?? null);
 }
 
+/**
+ * A PDF whose paper is already here, found by its identifier or origin, is added to that source
+ * unless it already has this very file. The store judges again under its lock, as for a fetched
+ * paper's PDF, so a decision made meanwhile (an Undo, two kept apart) is kept.
+ */
+async function addPdfToSourceAlreadyHere(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly candidate: ScientSourceCandidate;
+  readonly pdfPath: string;
+  readonly expectedPdf: { readonly sha256: string; readonly byteLength: number };
+  readonly duplicate: ScientSourceDuplicateAssessment;
+  readonly actor: ScientSourceActor;
+}): Promise<boolean> {
+  const [sourceId] = input.duplicate.matchingSourceIds;
+  if (!sourceId || !STRONG_MATCHES.has(input.duplicate.kind)) return false;
+  const record = await readScientSourceRecord(input.root, sourceId);
+  if (!record || record.attachments.some((entry) => entry.sha256 === input.expectedPdf.sha256)) {
+    return false;
+  }
+  const attached = await attachScientSourcePaperPdf({
+    root: input.root,
+    sourceId,
+    expectedRevision: record.revision,
+    pdfPath: input.pdfPath,
+    ...(input.candidate.pdfFileName ? { fileName: input.candidate.pdfFileName } : {}),
+    actor: input.actor,
+    paper: input.candidate,
+    pdfSha256: input.expectedPdf.sha256,
+    expectedPdf: input.expectedPdf,
+  });
+  return attached.outcome === "attached";
+}
+
+const STRONG_MATCHES: ReadonlySet<ScientSourceDuplicateAssessment["kind"]> = new Set([
+  "same-origin",
+  "same-identifier",
+  "same-pdf",
+]);
+
 /** A settled library import that pins builds its project's managed files once. */
 async function settleLibraryImport(
   root: ScientSourceStoreLocation,
@@ -1770,6 +1814,7 @@ export async function advanceSourceImport(
     if (!pending) return operation;
     try {
       const fileItem: { outcome: FileItemOutcome | null } = { outcome: null };
+      const pdfItem = { attached: false };
       const result = await observeSourceImport(
         observer,
         async () => {
@@ -1797,7 +1842,7 @@ export async function advanceSourceImport(
             root,
             pending.itemKey,
           );
-          return importScientSourceOperationItem({
+          const imported = await importScientSourceOperationItem({
             root,
             operationId: input.operationId,
             candidate,
@@ -1807,6 +1852,17 @@ export async function advanceSourceImport(
             ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
           });
+          if (imported.outcome === "duplicate" && pdfPath && expectedPdf) {
+            pdfItem.attached = await addPdfToSourceAlreadyHere({
+              root,
+              candidate,
+              pdfPath,
+              expectedPdf,
+              duplicate: imported.duplicate,
+              actor: operation.actor,
+            });
+          }
+          return imported;
         },
         (result) => (result.outcome === "imported" ? "imported" : "skipped"),
       );
@@ -1845,8 +1901,12 @@ export async function advanceSourceImport(
         itemKey: pending.itemKey,
         state: result.outcome === "imported" ? "imported" : "skipped",
         duplicateKind: result.duplicate.kind,
-        ...(result.record ? { sourceId: result.record.sourceId } : {}),
-        message: result.duplicate.reason,
+        // The source it made, or the one that was certainly this work already.
+        ...(pinned ? { sourceId: pinned } : {}),
+        ...(pdfItem.attached ? { attachedPdf: true } : {}),
+        message: pdfItem.attached
+          ? "The paper was already here: its PDF was added to it."
+          : result.duplicate.reason,
         ...("notBrought" in result && Array.isArray(result.notBrought)
           ? { notBrought: result.notBrought }
           : {}),
