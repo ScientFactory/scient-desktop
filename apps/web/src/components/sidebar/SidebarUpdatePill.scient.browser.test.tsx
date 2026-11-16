@@ -30,26 +30,27 @@ vi.mock(import("../../scient/desktopUpdate/SidebarOtherUpdates"), async (origina
   SidebarOtherUpdates: () => null,
 }));
 
+// Offered updates download in the background, so the pill presents a ready one.
 function setup(channel: "beta" | "latest") {
   state.update = {
     enabled: true,
-    status: "available",
+    status: "downloaded",
     channel,
     currentVersion: "0.6.23",
     hostArch: "arm64",
     appArch: "arm64",
     runningUnderArm64Translation: false,
     availableVersion: "0.6.24-beta.20261020.1",
-    downloadedVersion: null,
+    downloadedVersion: "0.6.24-beta.20261020.1",
     releaseNotes: [
       { version: "0.6.24-beta.20261020.1", items: ["A reviewed Beta change"], totalItems: 1 },
     ],
     omittedReleaseCount: 0,
-    downloadPercent: null,
+    downloadPercent: 100,
     checkedAt: null,
     message: null,
     errorContext: null,
-    canRetry: false,
+    canRetry: true,
   };
 }
 

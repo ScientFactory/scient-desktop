@@ -312,6 +312,7 @@ const FAILURE_CLASSES = new Set([
   "publish",
   "workspace",
 ]);
+const PROCESS_EXIT_REASONS = new Set(["crashed", "oom", "killed", "abnormal-exit"]);
 const HEALTH_COMPONENTS = new Set(["desktop", "server", "renderer", "browser", "analytics"]);
 const HEALTH_OPERATIONS = new Set([
   "startup",
@@ -711,6 +712,21 @@ function optionalProperties(
   return properties;
 }
 
+/** Which run a turn outcome belongs to (a one-way hash), and the agent build that ran it. */
+function turnRunProperties(input: Readonly<Record<string, unknown>>): {
+  runRef?: string;
+  providerVersion?: string;
+} {
+  const runRef = property(input, "runRef");
+  const version = property(input, "providerVersion");
+  return {
+    ...(typeof runRef === "string" && /^[0-9a-f]{16}$/u.test(runRef) ? { runRef } : {}),
+    ...(typeof version === "string" && analyticsAppVersion(version) !== "unknown"
+      ? { providerVersion: version }
+      : {}),
+  };
+}
+
 /** A failure code, kept only when it is one of `provider`'s known categories. */
 function failureCodeProperty(
   provider: string,
@@ -747,6 +763,17 @@ function optionalModelKeys(
       return value === undefined ? [] : [[key, modelKey(value)]];
     }),
   );
+}
+
+/** How long an event waited on this computer before it was sent. */
+function ageBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 60_000) return "under-1m";
+  if (value < 600_000) return "1-10m";
+  if (value < 3_600_000) return "10-60m";
+  if (value < 21_600_000) return "1-6h";
+  if (value < 86_400_000) return "6-24h";
+  return "over-1d";
 }
 
 function countBucket(value: unknown): string {
@@ -869,6 +896,36 @@ const VIEW_PROPERTIES = {
   "feature.viewed": ["feature"],
 } as const;
 
+// The extensions a file tab reports. Any other extension is "other" and a name without one is
+// "none", so an unusual extension can never identify a file or a person.
+const FILE_TYPES: ReadonlySet<string> = new Set(
+  [
+    // Documents and writing
+    "pdf md mdx markdown txt rtf doc docx odt pages epub html htm tex bib sty cls bbl typ rst org",
+    // Slides and spreadsheets
+    "ppt pptx odp key xls xlsx xlsm ods numbers csv tsv",
+    // Structured text and configuration
+    "json jsonl ndjson yaml yml toml xml ini cfg conf log lock diff patch",
+    // Scientific and statistical data
+    "parquet feather arrow h5 hdf5 nc mat npy npz pkl rds rdata rda dta sav sas7bdat sqlite sqlite3 db duckdb",
+    "fits fit edf bdf nii dcm mzml fasta fa fastq fq bam sam vcf bed gff gtf pdb cif mol mol2 sdf xyz",
+    "geojson shp kml gpx",
+    // Code and notebooks
+    "py ipynb r rmd qmd jl m mlx stan do sas sql js mjs cjs ts tsx jsx java c h cpp cc hpp cs go rs swift kt rb php",
+    "sh bash zsh ps1 lua scala f f90 cu css scss vue svelte dart hs ex pl",
+    // Images, video and audio
+    "png jpg jpeg gif webp svg bmp tif tiff heic avif ico mp4 mov webm mkv avi mp3 wav m4a ogg flac",
+    // Diagrams, archives and fonts
+    "mmd mermaid drawio excalidraw zip tar gz tgz 7z rar bz2 xz ttf otf woff woff2",
+  ].flatMap((group) => group.split(" ")),
+);
+
+function normalizedFileType(value: unknown): string {
+  if (typeof value !== "string") return "other";
+  const type = value.toLowerCase();
+  return type === "none" || FILE_TYPES.has(type) ? type : "other";
+}
+
 /**
  * Converts inherited T3 analytics calls into Scient's bounded wire contract.
  * Unknown events are deliberately ignored until they receive a registered
@@ -897,6 +954,11 @@ function normalizeEvent(
           outcome: normalizedEnum(property(input, "outcome"), HEALTH_OUTCOMES),
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
+          // How a process ended: macOS exit code 5 (SIGTRAP) is a Chromium CHECK, not memory.
+          ...optionalProperties(input, { exitReason: PROCESS_EXIT_REASONS }),
+          ...(Number.isSafeInteger(property(input, "exitCode"))
+            ? { exitCode: property(input, "exitCode") as number }
+            : {}),
         },
       };
     case "app.diagnostics":
@@ -908,6 +970,7 @@ function normalizeEvent(
           queuedCountBucket: countBucket(property(input, "queuedCount")),
           droppedCountBucket: countBucket(property(input, "droppedCount")),
           retryCountBucket: countBucket(property(input, "retryCount")),
+          oldestEventAgeBucket: ageBucket(property(input, "oldestEventAgeMs")),
           deliveryClass: normalizedEnum(property(input, "deliveryClass"), DELIVERY_CLASSES),
         },
       };
@@ -1331,6 +1394,8 @@ function normalizeEvent(
       for (const key of VIEW_PROPERTIES[name]) {
         properties[key] = normalizedIdentifier(property(input, key), "other");
       }
+      if (name === "panel.viewed" && Object.hasOwn(input, "fileType"))
+        properties.fileType = normalizedFileType(property(input, "fileType"));
       return { name, privacyLevel: "product", priority: "core", properties };
     }
     case "provider.turn.usage": {
@@ -1415,6 +1480,7 @@ function normalizeEvent(
             browserToolFailures: "count",
             retryAttempts: "count",
           }),
+          ...turnRunProperties(input),
         },
       };
     case "provider.turn.failed":
@@ -1429,7 +1495,10 @@ function normalizeEvent(
             browserToolCalls: "count",
             browserToolFailures: "count",
             retryAttempts: "count",
+            // False when the run failed before its provider session started.
+            started: "boolean",
           }),
+          ...turnRunProperties(input),
           ...failureCodeProperty(provider, input),
           ...httpStatusProperty(input),
           failureClass: normalizedEnum(property(input, "failureClass"), TURN_FAILURE_CLASSES),
@@ -1445,6 +1514,7 @@ function normalizeEvent(
           provider,
           modelKey: modelKey(property(input, "model")),
           ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
+          ...turnRunProperties(input),
           durationBucket: durationBucket(property(input, "durationMs")),
           stopClass: normalizedEnum(property(input, "stopClass"), TURN_STOP_CLASSES),
         },

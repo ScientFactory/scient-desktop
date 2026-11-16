@@ -116,10 +116,17 @@ function curatedCauseMessages(cause: unknown): {
             category: categoryMessage(),
           };
         // A refused native turn left the session intact, and its adapter wrote and redacted the reason.
-        case "NativeSessionOperationError":
+        case "NativeSessionOperationError": {
           if ((cause as Record<string, unknown>).breaksSession === false)
             return { known: stringField(cause, "message"), category: categoryMessage() };
+          // Beneath the generic open wrapper, the adapter's redacted reason names what failed.
+          const detail = stringField(cause, "message")?.replace(/[\s.]+$/u, "");
+          if (category === PROVIDER_FAILURE_CATEGORIES.ProviderAdapterOpenSessionError && detail) {
+            reason = detail;
+            return { known: categoryMessage(), category: categoryMessage() };
+          }
           break;
+        }
         // SCIENT-FORK:END
         case "ContextHandoffBudgetError":
           return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };

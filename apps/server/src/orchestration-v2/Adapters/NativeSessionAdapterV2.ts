@@ -283,6 +283,8 @@ export interface NativeSession {
     input: ProviderAdapter.ProviderAdapterV2TurnInput,
     nativeTurnId: string,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /** Sent as the prompt of a manual continuation by a protocol that cannot continue without one. */
+  readonly continuationPrompt?: string;
   readonly steer?: (
     input: ProviderAdapter.ProviderAdapterV2SteerInput,
     validateOwner?: () => Effect.Effect<void, NativeSessionOperationError>,
@@ -1962,6 +1964,7 @@ export function makeNativeSessionAdapterV2(
         // SCIENT-FORK:END
         const steer = native.steer;
         const compact = native.compact;
+        const continuationPrompt = native.continuationPrompt;
         const startTurn = Effect.fn("NativeSessionAdapterV2.startTurn")(
           function* (
             request: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -2210,6 +2213,17 @@ export function makeNativeSessionAdapterV2(
               ),
           ),
           startTurn: (request) => startTurn(request, native.send),
+          ...(continuationPrompt === undefined
+            ? {}
+            : {
+                resumeTurn: (request: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) => {
+                  const turn = ProviderAdapter.resumeTurnInput(request);
+                  return startTurn(
+                    { ...turn, message: { ...turn.message, text: continuationPrompt } },
+                    native.send,
+                  );
+                },
+              }),
           ...(compact === undefined
             ? {}
             : {

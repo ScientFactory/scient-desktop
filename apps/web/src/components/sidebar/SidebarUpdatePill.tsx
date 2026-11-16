@@ -10,6 +10,7 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useScientDownloadProgress } from "../../hooks/useScientDownloadProgress";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { cn } from "../../lib/utils";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
@@ -18,10 +19,12 @@ import {
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
+  getDesktopUpdateBackgroundTooltip,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDownloadedVersion,
   getScientDesktopUpdateLabel,
   getDesktopUpdateIdleTooltip,
+  isBackgroundDesktopUpdate,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -222,17 +225,25 @@ function SidebarUpdateControl() {
   const releaseNotesTriggerId = useId();
   // SCIENT-FORK:START — one ready notice and install owner, anchored to this control.
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
+  // The card Update opens stays until Restart or dismissal; a second press closes it.
+  const restartCardOpenRef = useRef(false);
+  // A download the user started shows its progress; the desktop's own stays behind the idle control.
+  const [userStartedDownload, setUserStartedDownload] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the imperative ready notice when its owner unmounts
   useEffect(() => () => updateReadyNoticeRef.current?.close(), []);
   const localWorkBlocksRestart = useLocalWorkBlocksRestart();
   // Resolves true when the app is relaunching; a bulk pass passes `reportError` for its summary.
+  // A version installs only that downloaded build, never one that replaced it.
   const installFromFooter = (
     bridge: NonNullable<typeof window.desktopBridge>,
     reportError?: ReportLocalUpdateError,
+    expectedVersion?: string | null,
   ) => {
     updateReadyNoticeRef.current?.close();
     setIsActionPending(true);
-    return installDesktopUpdateNow(bridge, reportError).finally(() => setIsActionPending(false));
+    return installDesktopUpdateNow(bridge, reportError, expectedVersion).finally(() =>
+      setIsActionPending(false),
+    );
   };
   // SCIENT-FORK:END
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -260,23 +271,55 @@ function SidebarUpdateControl() {
     }
   }
 
-  const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
-  const isDownloading = state?.status === "downloading";
-  const localUpdateVersion =
-    state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
-  const everything = useUpdateEverything(localUpdateVersion);
-  const checkProviderUpdates = useCheckProviderUpdates();
   // SCIENT-FORK:START — the pill is this app's own update. Other updates join it only in a pass
   // that downloads this app, never in a running one, and only such a pass holds the pill.
   const run = useUpdateEverythingRun();
+  const isRunningEverything = run !== null && run.localVersion !== null;
+  // A download the desktop runs by itself leaves the control idle until the update is ready.
+  const backgroundUpdate = isBackgroundDesktopUpdate(
+    state,
+    userStartedDownload || isRunningEverything,
+  );
+  const updaterAction = state ? resolveDesktopUpdateButtonAction(state) : "none";
+  const action = backgroundUpdate ? "none" : updaterAction;
+  const isDownloading = state?.status === "downloading" && !backgroundUpdate;
+  const localUpdateVersion =
+    state && updaterAction !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
+  // SCIENT-FORK:END
+  const everything = useUpdateEverything(localUpdateVersion);
+  const checkProviderUpdates = useCheckProviderUpdates();
+  // SCIENT-FORK:START
   const runsEverything = shouldRunUpdateEverything(
     everything.hasUpdates && !isUpdateRunActive(run),
     isDownloading,
     action,
   );
-  const isRunningEverything = run !== null && run.localVersion !== null;
   // The question lasts only while Update would still run the pass; the next press asks again.
   if (!runsEverything && askingPass !== null) setAskingPass(null);
+  // A card for an update that is no longer ready would offer a refused restart.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the imperative restart card when its update stops being installable
+  useEffect(() => {
+    if (action !== "install" && restartCardOpenRef.current) updateReadyNoticeRef.current?.close();
+  }, [action]);
+  // Restart is explicit; no second confirmation. A pass for other machines running when Restart is
+  // chosen, even one started after the card opened, is saved first, so its summary and restarting
+  // servers follow the relaunch.
+  const installLocal = useStableCallback(
+    (bridge: NonNullable<typeof window.desktopBridge>, version: string | null) => {
+      if (!isUpdateRunActive(run)) return installFromFooter(bridge, undefined, version);
+      saveUpdateEverythingResult({
+        localVersion: version,
+        updatedServers: 0,
+        updatedProviders: 0,
+        failures: [],
+        restarting: [],
+      });
+      return installFromFooter(bridge, undefined, version).then((installed) => {
+        if (!installed) clearSavedUpdateEverythingResult();
+        return installed;
+      });
+    },
+  );
   // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
@@ -293,7 +336,12 @@ function SidebarUpdateControl() {
     showCheckIcon,
   });
   const idleTooltip =
-    !showUpdateDetails && !showCheckIcon ? getDesktopUpdateIdleTooltip(state, updatesDenial) : null;
+    !showUpdateDetails && !showCheckIcon
+      ? // SCIENT-FORK: an idle control still says when an update is downloading behind it.
+        backgroundUpdate && state && updatesDenial === undefined
+        ? { title: getDesktopUpdateBackgroundTooltip(state), detail: null }
+        : getDesktopUpdateIdleTooltip(state, updatesDenial)
+      : null;
   const tooltip = runsEverything
     ? everything.summary
     : showUpdateDetails
@@ -347,9 +395,35 @@ function SidebarUpdateControl() {
     }
 
     if (!bridge || !state) return;
+
+    if (action === "install" && state.errorContext !== "install") {
+      // SCIENT-FORK:START — Update opens the restart card; a second press closes it.
+      if (restartCardOpenRef.current) {
+        updateReadyNoticeRef.current?.close();
+        return;
+      }
+      releaseNotesPopoverHandle.close();
+      updateReadyNoticeRef.current?.close();
+      restartCardOpenRef.current = true;
+      updateReadyNoticeRef.current = showScientUpdateReadyNotice({
+        shell: bridge,
+        state,
+        anchor: document.getElementById(releaseNotesTriggerId),
+        install: (version) => installLocal(bridge, version),
+        persistent: true,
+        onClose: () => {
+          restartCardOpenRef.current = false;
+        },
+      });
+      // SCIENT-FORK:END
+      return;
+    }
+
     setIsActionPending(true);
 
     if (action === "download") {
+      // SCIENT-FORK: a download the user started shows its progress in the control.
+      setUserStartedDownload(true);
       void downloadLocalUpdate(bridge, {
         onDownloaded: (downloadedState) => {
           // SCIENT-FORK:START — offer Restart next to the button that started the download.
@@ -371,41 +445,25 @@ function SidebarUpdateControl() {
             releaseNotesPopoverHandle.close();
           }
           updateReadyNoticeRef.current?.close();
-          // Nothing here is working, so the update the user asked for installs now.
-          if (!localWorkBlocksRestart()) {
-            void installFromFooter(bridge);
-            return;
-          }
+          // The finished download offers Restart; restarting stays the user's choice.
           updateReadyNoticeRef.current = showScientUpdateReadyNotice({
             shell: bridge,
             state: downloadedState,
             anchor: document.getElementById(releaseNotesTriggerId),
-            install: () => installFromFooter(bridge),
+            install: (version) => installFromFooter(bridge, undefined, version),
           });
           // SCIENT-FORK:END
         },
-      }).finally(() => setIsActionPending(false));
+      }).finally(() => {
+        setIsActionPending(false);
+        setUserStartedDownload(false);
+      });
       return;
     }
 
     if (action === "install") {
-      // SCIENT-FORK:START — Restart is explicit; no second confirmation. A running pass for
-      // other machines is saved first, so its summary and restarting servers follow the relaunch.
-      if (isUpdateRunActive(run)) {
-        saveUpdateEverythingResult({
-          localVersion: localUpdateVersion,
-          updatedServers: 0,
-          updatedProviders: 0,
-          failures: [],
-          restarting: [],
-        });
-        void installFromFooter(bridge).then((installed) => {
-          if (!installed) clearSavedUpdateEverythingResult();
-        });
-      } else {
-        void installFromFooter(bridge);
-      }
-      // SCIENT-FORK:END
+      // SCIENT-FORK: a failed install retries directly.
+      void installLocal(bridge, state.downloadedVersion);
       return;
     }
 
@@ -455,7 +513,10 @@ function SidebarUpdateControl() {
           : {}),
         // SCIENT-FORK:START — bulk and explicit Restart share the existing installer.
         ...(bridge && action !== "none"
-          ? { installLocal: (reportError) => installFromFooter(bridge, reportError) }
+          ? {
+              installLocal: (reportError) =>
+                installFromFooter(bridge, reportError, localUpdateVersion),
+            }
           : {}),
         admitServer,
         localWorkBlocksRestart,

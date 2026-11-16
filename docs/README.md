@@ -96,6 +96,8 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 
 - [Architecture overview — live orchestration V2](./internals/overview.md)
 - [Effect services and transport boundaries](./internals/effect-services.md)
+- [Test-writing and browser harness conventions](./internals/testing.md)
+- [Web UI conventions](./internals/web-ui.md)
 - [Legacy orchestration import and recovery](./internals/legacy-orchestration-migration.md)
 - [Composer context references](./internals/composer-context-references.md)
 - [Assistant citations](./internals/assistant-citations.md)
@@ -196,6 +198,9 @@ Follow their linked successors for current behavior.
 ### Runbooks
 
 - [Scient local dev app](./operations/local-dev-app.md)
+- [Development commands and prerequisites](./operations/development.md)
+- [Stable dev-app review](./operations/dev-app-review.md)
+- [CI flake register and delivery limits](./operations/ci-flakes.md)
 - [Compute backend qualification](./operations/compute-backend-qualification.md)
 - [Windows dev app](./operations/local-dev-app-windows.md)
 - [Scenarios: real-app proof for a fix](./operations/scenarios.md)

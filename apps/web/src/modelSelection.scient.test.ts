@@ -214,6 +214,12 @@ describe("native agent model selection", () => {
         ),
       ).toEqual(["native/unknown"]);
       expect(getDefaultProviderInstanceModel([entry], entry.instanceId)).toBe("native/unknown");
+      // A saved selection is kept through catalog gaps, but not when Pi reports it unavailable.
+      expect(
+        resolveAppModelSelectionForInstance(entry.instanceId, settings, [entry], "native/blocked", {
+          preserveUnavailableSelection: true,
+        }),
+      ).toBe("native/unknown");
     },
   );
 

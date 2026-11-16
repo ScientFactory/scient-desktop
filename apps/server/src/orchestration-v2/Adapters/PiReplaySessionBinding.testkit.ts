@@ -229,8 +229,8 @@ export const piReplayFixtureProvenance = {
     reopened: false,
   },
   pi_compaction: {
-    liveDigest: "7b20a36515c95f0ee9b174970a1420146d6bfe18e6bb4c7e8189b3571a424182",
-    originalDigest: "26226612d6558dbb6a3bcc5ae696859a5106e1e2b3ab1b52a2138f2dae043a67",
+    liveDigest: "33fe5a6800d8a11f9d4cf1df5d30bb197ed0f180835e48645dbbf5bc8403ac14",
+    originalDigest: "45eb7813e5f3855f5ed30b47de4658dbe7966c47936fe4abd0946ccfb1e7c600",
     reopened: false,
   },
   provider_thread_resume: {
@@ -304,7 +304,7 @@ export function restorePiOriginalSkillDiscoveryRecording(input: {
   const queuedStartPromptLines: Readonly<Record<string, ReadonlyArray<number>>> = {
     simple: [18],
     multi_turn: [18, 53],
-    pi_compaction: [18, 74, 106, 156],
+    pi_compaction: [18, 72, 104, 154],
     provider_thread_resume: [18, 84],
     message_steering: [18],
     thread_rollback: [18, 64, 116],
@@ -521,8 +521,8 @@ const recordedPiSchedules: Readonly<
     states: [41, 74],
   },
   pi_compaction: {
-    digest: "f2114d37cc02f63aa45d5d626298f67b450e4d690e323d22477accce407bc064",
-    states: [44, 62, 94, 126, 144, 186],
+    digest: "0aed8ba0cf54f864f2a896b096f09f92243f5e29ca50fa958b5e431088e86c2a",
+    states: [44, 92, 124, 142, 184],
   },
   provider_thread_resume: {
     digest: "169e2165685d45ad0be48b704b873316e65274eab756b0cc621e2a470627e429",
@@ -622,7 +622,9 @@ export function reconcilePiRecordedSchedules(input: {
     )
       refuse();
     const confirmation = syntheticState(state, `t3-${910000 + ordinal}`, "settle-confirmation");
-    if (input.scenario === "pi_compaction" && (index === 62 || index === 144)) {
+    // A failed manual compaction fails its turn without settling, so only the
+    // successful one at 142 is confirmed, and it is probed twice.
+    if (input.scenario === "pi_compaction" && index === 142) {
       // compaction_end and the compact ACK independently probe idle state.
       // Gate both reads before replying so both tree cursors retain the same
       // pinned boundary. These extra replies are static fixture observations.
@@ -697,6 +699,34 @@ export function reconcilePiRecordedSchedules(input: {
           isCompacting: false,
           pendingMessageCount: 0,
         }),
+      );
+    }
+    if (input.scenario === "pi_compaction" && index === 65) {
+      // The compact ACK fails the turn and reads the tree and session stats. The
+      // settle probe compaction_end started reads them too, then confirms the same idle state.
+      for (const [request, command, id] of [
+        [61, "get_entries", "t3-940000"],
+        [63, "get_session_stats", "t3-940001"],
+      ] as const) {
+        const original = entries[request]!;
+        const reply = response(request + 1, command);
+        if (original.type !== "expect_outbound" || !Predicate.isObject(original.frame))
+          return refuse();
+        result.push(
+          {
+            ...original,
+            label: `synthetic:failed-compaction-probe:${command}`,
+            frame: { ...original.frame, id },
+          },
+          {
+            ...reply.entry,
+            label: `synthetic:failed-compaction-probe:response:${command}`,
+            frame: { ...reply.frame, id },
+          },
+        );
+      }
+      result.push(
+        ...syntheticState(response(60, "get_state"), "t3-940002", "failed-compaction-probe"),
       );
     }
     const replacement = replacements.get(index);

@@ -295,11 +295,14 @@ export function startAnalyticsWorker(
       return;
     }
     lastDiagnosticsAt = timestamp;
+    const oldest = Math.min(...events.map((event) => Date.parse(event.occurred_at)));
     post({
       type: "diagnostics",
       queuedCount: outbox.size(),
       droppedCount: outbox.takeDroppedCount(),
       retryCount: Math.max(...events.map((event) => event.attemptCount)),
+      // An outage shows as delayed delivery, not as missing events.
+      oldestEventAgeMs: Number.isFinite(oldest) ? Math.max(0, timestamp - oldest) : -1,
       deliveryClass: outcome.kind === "transport" ? outcome.deliveryClass : outcome.kind,
     });
   };

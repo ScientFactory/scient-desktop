@@ -29,6 +29,7 @@ import {
   makeV2AnalyticsObservers,
 } from "./AnalyticsEventObserversV2.ts";
 import { BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
+import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 import { EventSinkStreamError, EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
@@ -631,6 +632,7 @@ describe("native V2 analytics", () => {
         properties: {
           provider: "codex",
           model: "gpt-6",
+          runRef: analyticsRunRef(runId),
           durationMs: 5000,
           usedTools: true,
           hasAttachment: false,
@@ -724,8 +726,10 @@ describe("native V2 analytics", () => {
           properties: {
             provider: "codex",
             model: "gpt-6",
+            runRef: analyticsRunRef(runId),
             durationMs: 5000,
             failureClass: "provider_error",
+            started: true,
             // Codex never sets "auth-failed", so that code is dropped; its status is still a status.
             httpStatus: 401,
             retryAttempts: 2,
@@ -753,8 +757,10 @@ describe("native V2 analytics", () => {
           properties: {
             provider: "scient",
             model: "gpt-6",
+            runRef: analyticsRunRef(runId),
             durationMs: 5000,
             failureClass: "provider_error",
+            started: true,
             failureCode: "context-overflow",
             httpStatus: 400,
             retryAttempts: 0,
@@ -763,7 +769,39 @@ describe("native V2 analytics", () => {
       ]);
     });
 
-    it("counts each retry cycle's attempts, including a row a provider reuses after recovering", () => {
+    it("reports a run that fails while its session opens, and not one stopped before starting", () => {
+      const created = (status: OrchestrationV2Run["status"]) => ({
+        ...runEvent(status),
+        type: "run.created" as const,
+        payload: { ...rootRun, status, startedAt: null },
+      });
+      const failedBeforeStart = (status: OrchestrationV2Run["status"]) => ({
+        ...runAt(status),
+        payload: { ...rootRun, status, startedAt: null },
+      });
+      const mapper = createV2AnalyticsEventMapper();
+      mapper.event(created("queued"));
+      mapper.event(errorItem("open", "failed", { class: "provider_error", code: "process_exit" }));
+      expect(mapper.event(failedBeforeStart("failed"))).toEqual([
+        {
+          name: "provider.turn.failed",
+          properties: {
+            provider: "codex",
+            model: "gpt-6",
+            runRef: analyticsRunRef(runId),
+            durationMs: undefined,
+            failureClass: "provider_error",
+            started: false,
+            retryAttempts: 0,
+          },
+        },
+      ]);
+      const stopped = createV2AnalyticsEventMapper();
+      stopped.event(created("queued"));
+      expect(stopped.event(failedBeforeStart("cancelled"))).toEqual([]);
+    });
+
+    it("counts each retry cycle's attempts on any node, including a row a provider reuses after recovering", () => {
       const mapper = createV2AnalyticsEventMapper();
       mapper.event(runAt("running"));
       const transient = { class: "transport_error" as const, code: null };
@@ -777,8 +815,10 @@ describe("native V2 analytics", () => {
         ["completed", 1],
       ] as const)
         mapper.event(errorItem("reused-retry", status, transient, { attempt }));
-      mapper.event(errorItem("second-retry", "running", transient, { attempt: 1 }));
-      mapper.event(errorItem("second-retry", "completed", transient, { attempt: 1 }));
+      // A native retry row sits on its own node, not the run's root.
+      const nodeId = "native-retry-node";
+      mapper.event(errorItem("second-retry", "running", transient, { attempt: 1, nodeId }));
+      mapper.event(errorItem("second-retry", "completed", transient, { attempt: 1, nodeId }));
       expect(mapper.event(runAt("completed"))).toMatchObject([
         { name: "provider.turn.completed", properties: { retryAttempts: 5 } },
       ]);
@@ -914,7 +954,13 @@ describe("native V2 analytics", () => {
       expect(mapper.event(runEvent(status))).toEqual([
         {
           name: "provider.turn.stopped",
-          properties: { provider: "codex", model: "gpt-6", durationMs: 5000, stopClass: status },
+          properties: {
+            provider: "codex",
+            model: "gpt-6",
+            runRef: analyticsRunRef(runId),
+            durationMs: 5000,
+            stopClass: status,
+          },
         },
       ]);
     }

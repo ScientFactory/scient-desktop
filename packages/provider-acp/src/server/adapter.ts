@@ -6006,11 +6006,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const lateMonitorChatter =
                 /<monitor-event\b/i.test(text) ||
                 /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text);
-              if (
-                text.trim().length > 0 &&
-                lateBackgroundMutations.length === 0 &&
-                !lateMonitorChatter
-              ) {
+              if (lateBackgroundMutations.length === 0 && !lateMonitorChatter) {
                 yield* appendLoadedHistory(
                   notification,
                   update.sessionUpdate === "user_message_chunk"
@@ -8499,11 +8495,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "failed" = "completed",
+          options?: { readonly unstartedOnly?: boolean },
         ) {
           for (const tool of context.tools.values()) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
               continue;
+            if (options?.unstartedOnly === true && tool.status !== "pending") continue;
             yield* emitTool(context, tool, status);
+            // SCIENT-FORK: a tool ended here stays ended; a later failure path must not repeat it.
+            const ended = context.tools.get(tool.toolCallId);
+            if (ended !== undefined) context.tools.set(tool.toolCallId, { ...ended, status });
           }
         });
 
@@ -9720,12 +9721,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ) {
                       yield* Ref.set(runtimeRestartRequired, true);
                     }
-                    // An agent that answered with an error is still alive and may finish its
-                    // tools; any other failure means its process or pipe is gone.
+                    // An agent that answered with an error may still finish tools it started,
+                    // never pending ones; any other failure means its process or pipe is gone.
                     const agentAnswered =
                       Result.isSuccess(error) && error.success._tag === "AcpRequestError";
-                    if (!interrupted && !agentAnswered) {
-                      yield* terminalizeOpenForegroundTools(context, "failed");
+                    if (!interrupted) {
+                      yield* terminalizeOpenForegroundTools(context, "failed", {
+                        unstartedOnly: agentAnswered,
+                      });
                     }
                     yield* finalizeTurn(
                       context,
@@ -10557,7 +10560,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const state = yield* Ref.get(snapshot);
                   const messages = state.order.flatMap((key) => {
                     const message = state.messages.get(key);
-                    return message === undefined ? [] : [message];
+                    return message === undefined ||
+                      (message.text.trim().length === 0 && message.attachments.length === 0)
+                      ? []
+                      : [message];
                   });
                   const now = yield* DateTime.now;
                   return {
