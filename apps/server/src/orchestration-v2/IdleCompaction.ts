@@ -109,6 +109,7 @@ export function idleCompactionWindow(
   if (providerThread.driver === "scient") {
     const window = scientAgentIdleCompactionWindow({
       usage: usages[0],
+      warmingStopped: providerThread.promptCacheWarmingStopped,
       threadSelection: thread.modelSelection,
       runSelection: latestRun.modelSelection,
       nowMs,

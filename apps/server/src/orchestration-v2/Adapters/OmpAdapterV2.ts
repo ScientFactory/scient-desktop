@@ -55,8 +55,8 @@ import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
 // SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
 import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
-// SCIENT-FORK:START — a five-minute cache compacts when the agent's idle warming stops on it.
-import { ompShortCacheTtlMs, ompWarmingStopExpiry } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK:START — a five-minute cache compacts when the agent's warming stops on it.
+import { ompWarmingStopped } from "../../provider/omp/OmpPromptCache.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK: /goal drives Scient Agent's goal command.
 import { ompGoalUpdate, runOmpGoalTurn } from "../../provider/omp/OmpGoal.ts";
@@ -610,9 +610,6 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         let contextUsage: ThreadTokenUsageSnapshot | undefined;
         // A repeated message_end must not count its model request twice.
         const countedRequests = new Set<string>();
-        // SCIENT-FORK:START — the lifetime of the five-minute cache the last reply confirmed.
-        let shortCacheTtlMs: number | undefined;
-        // SCIENT-FORK:END
         let statsUnsupported = false;
         const contextWindow = (provider?: string, modelId?: string) => {
           const window = catalog.find(
@@ -885,9 +882,6 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             case "observation": {
               const event = update.event;
               if (event.type === "message_end" && isRecord(event.message)) {
-                // SCIENT-FORK:START — each reply replaces the five-minute cache lifetime it confirmed.
-                if (event.message.role === "assistant") shortCacheTtlMs = ompShortCacheTtlMs(event);
-                // SCIENT-FORK:END
                 const usage = ompMessageUsage(
                   event.message.usage,
                   contextWindow(
@@ -921,19 +915,17 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   ...(request === undefined ? {} : { request }),
                 });
               }
-              // SCIENT-FORK:START — idle warming that stopped on a refresh leaves the cache warm until then.
-              if (event.type === "cache_warming_end") {
-                const ttlMs = shortCacheTtlMs;
-                const marked = Effect.flatMap(DateTime.now, (now) => {
-                  const warmUntil = ompWarmingStopExpiry(event, ttlMs, DateTime.toEpochMillis(now));
-                  return warmUntil === undefined
-                    ? Effect.void
-                    : onUpdate({ type: "usage", promptCacheWarmUntil: warmUntil });
-                });
-                return marked.pipe(
-                  Effect.andThen(event.usage === undefined ? Effect.void : refreshUsage(false)),
+              // SCIENT-FORK:START — warming stopped: the five-minute entry it left times idle compaction.
+              if (event.type === "cache_warming_stopped")
+                return Effect.flatMap(DateTime.now, (now) =>
+                  onUpdate({
+                    type: "usage",
+                    promptCacheWarmingStopped: ompWarmingStopped(
+                      event,
+                      DateTime.toEpochMillis(now),
+                    ),
+                  }),
                 );
-              }
               // SCIENT-FORK:END
               if (event.type === "cache_warming_end")
                 return event.usage === undefined ? Effect.void : refreshUsage(false);

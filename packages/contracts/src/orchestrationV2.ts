@@ -1259,6 +1259,11 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   ),
   /** SCIENT-FORK: the agent is planning and changes nothing until a plan is approved. */
   planMode: Schema.optional(Schema.Boolean),
+  // SCIENT-FORK:START — Scient Agent's warming stopped while this five-minute cache entry was warm.
+  promptCacheWarmingStopped: Schema.optional(
+    Schema.NullOr(Schema.Struct({ stoppedAt: Schema.String, expiresAt: Schema.String })),
+  ),
+  // SCIENT-FORK:END
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
 });

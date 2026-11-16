@@ -16,9 +16,9 @@ const decodePromptCacheFrame = Schema.decodeUnknownOption(PromptCacheFrame);
 type TokenUsage = Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
 
 /**
- * A one-hour entry carries its expiry. A five-minute one gets an expiry only when the agent's idle
- * warming stops on a refresh (`ompWarmingStopExpiry`). No frame clears what an earlier reply of the
- * turn recorded, since the turn's usage merges each reply's.
+ * A one-hour entry carries its expiry; a five-minute one only its tier, since the agent keeps it warm
+ * (`ompWarmingStopped` says when that stops). No frame clears what an earlier reply of the turn
+ * recorded, since the turn's usage merges each reply's.
  */
 export const withOmpPromptCacheExpiry = (usage: TokenUsage, event: unknown): TokenUsage => {
   const frame = Option.getOrUndefined(decodePromptCacheFrame(event));
@@ -45,30 +45,26 @@ export const withOmpPromptCacheExpiry = (usage: TokenUsage, event: unknown): Tok
   };
 };
 
-/** The lifetime of a five-minute entry a reply confirmed; undefined for any other reply. */
-export const ompShortCacheTtlMs = (event: unknown): number | undefined => {
-  const frame = Option.getOrUndefined(decodePromptCacheFrame(event));
-  return frame?.promptCache.tier === "short" ? Math.trunc(frame.promptCache.ttlMs) : undefined;
-};
-
-// An idle refresh that hit, after which the agent stopped warming (its 30-minute idle limit).
-const WarmingStopFrame = Schema.Struct({
-  type: Schema.Literal("cache_warming_end"),
-  phase: Schema.Literal("idle"),
-  outcome: Schema.Literal("hit"),
-  warmingStopReason: Schema.String,
-});
-const decodeWarmingStopFrame = Schema.decodeUnknownOption(WarmingStopFrame);
+/** Scient Agent's warming stopped; the entry it left, when the next request would still read it. */
+export interface OmpWarmingStopped {
+  readonly stoppedAt: string;
+  readonly expiresAt: string;
+}
 
 /**
- * Until when a five-minute entry stays warm after the agent's last idle refresh, which restarted its
- * lifetime; nothing refreshes it again. The refresh was sent before `receivedAtMs`, so this errs late.
+ * What a `cache_warming_stopped` frame leaves for idle compaction: the five-minute entry warming left,
+ * which nothing refreshes any more, or null when there is none (expired, conversation changed, a
+ * one-hour entry, which compacts on its own schedule). `touchedAt` is the last refresh that hit.
  */
-export const ompWarmingStopExpiry = (
+export const ompWarmingStopped = (
   event: unknown,
-  ttlMs: number | undefined,
-  receivedAtMs: number,
-): string | undefined =>
-  ttlMs === undefined || Option.isNone(decodeWarmingStopFrame(event))
-    ? undefined
-    : DateTime.formatIso(DateTime.makeUnsafe(receivedAtMs + ttlMs));
+  stoppedAtMs: number,
+): OmpWarmingStopped | null => {
+  const frame = Option.getOrUndefined(decodePromptCacheFrame(event));
+  if (frame?.promptCache.tier !== "short") return null;
+  const { touchedAt, ttlMs } = frame.promptCache;
+  return {
+    stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAtMs)),
+    expiresAt: DateTime.formatIso(DateTime.makeUnsafe(touchedAt + ttlMs)),
+  };
+};

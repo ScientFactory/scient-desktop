@@ -125,8 +125,8 @@ const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2Pro
 export type NativeSessionUpdate =
   | {
       readonly type: "usage";
-      // SCIENT-FORK:START — when idle warming stopped on a warm five-minute cache, and until when.
-      readonly promptCacheWarmUntil?: string;
+      // SCIENT-FORK:START — the five-minute cache entry warming stopped on, or null for none.
+      readonly promptCacheWarmingStopped?: OrchestrationV2ProviderThread["promptCacheWarmingStopped"];
       // SCIENT-FORK:END
       readonly tokenUsage?: Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
       readonly contextUsage?: ThreadTokenUsageSnapshot;
@@ -1187,26 +1187,20 @@ export function makeNativeSessionAdapterV2(
                       providerTurn: active.turn,
                     });
                   }
-                  // SCIENT-FORK:START — idle warming that stopped on a refresh: the last turn's
-                  // five-minute cache stays warm until then, which times its idle compaction.
-                  if (!active && lastTurn && update.promptCacheWarmUntil !== undefined) {
-                    const turn = turns.get(lastTurn.turn.id) ?? lastTurn.turn;
-                    if (turn.tokenUsage?.promptCacheTier === "short") {
-                      lastTurn.turn = {
-                        ...turn,
-                        tokenUsage: {
-                          ...turn.tokenUsage,
-                          promptCacheExpiresAt: update.promptCacheWarmUntil,
-                        },
-                      };
-                      turns.set(turn.id, lastTurn.turn);
-                      yield* emit({
-                        type: "provider_turn.updated",
-                        driver,
-                        threadId: lastTurn.input.threadId,
-                        providerTurn: lastTurn.turn,
-                      });
-                    }
+                  // SCIENT-FORK:START — warming stopped, often long after the run's subscribers left:
+                  // session-scoped, so the thread keeps the entry that times its idle compaction.
+                  if (thread && update.promptCacheWarmingStopped !== undefined) {
+                    thread = {
+                      ...thread,
+                      promptCacheWarmingStopped: update.promptCacheWarmingStopped,
+                      updatedAt: now,
+                    };
+                    yield* emit({
+                      type: "provider_thread.updated",
+                      driver,
+                      providerThread: thread,
+                      sessionScoped: true,
+                    });
                   }
                   // SCIENT-FORK:END
                   return;

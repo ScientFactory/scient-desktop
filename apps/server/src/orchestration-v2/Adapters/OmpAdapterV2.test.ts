@@ -4526,67 +4526,50 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
       ),
   );
 
-  // SCIENT-FORK:START — idle warming that stops on a refresh times a five-minute cache's compaction.
-  it.effect(
-    "gives the finished turn's five-minute cache an expiry when idle warming stops on it",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const peer = scriptedOmpRpc({
-            models: [{ provider: "test", id: "selected", contextWindow: 200_000 }],
-            initial: { provider: "test", id: "selected" },
-          });
-          const h = yield* harness(false, {
-            target: scientAgentTarget,
-            makeProcess: peer.makeProcess,
-          });
-          yield* h.runtime.startTurn(h.input);
-          yield* peer.promptDelivered();
-          yield* peer.emit([
-            { type: "agent_start" },
-            {
-              type: "message_end",
-              messageId: "reply",
-              message: {
-                role: "assistant",
-                content: "done",
-                provider: "test",
-                model: "selected",
-                usage: { input: 10, output: 5, cacheRead: 20, cacheWrite: 30, totalTokens: 65 },
-              },
-              promptCache: { tier: "short", touchedAt: 1, ttlMs: 300_000 },
-            },
-          ]);
-          yield* peer.finish();
-          yield* h.takeUntil((event) => event.type === "turn.terminal");
-          yield* peer.emit([
-            {
-              type: "cache_warming_end",
-              phase: "idle",
-              outcome: "hit",
-              warmingStopReason: "30-minute idle safety limit reached",
-            },
-          ]);
-          const marked = yield* h.takeUntil(
-            (event) =>
-              event.type === "provider_turn.updated" &&
-              event.providerTurn.tokenUsage?.promptCacheExpiresAt !== undefined,
-          );
-          assert.isTrue(marked.type === "provider_turn.updated");
-          if (marked.type !== "provider_turn.updated") return;
-          assert.include(marked.providerTurn.tokenUsage, {
-            promptCacheTier: "short",
-            usedTokens: 65,
-          });
-          assert.equal(marked.providerTurn.status, "completed");
-          // The refresh's lifetime counts from when its end arrived (the test clock stands still).
-          const now = DateTime.toEpochMillis(yield* DateTime.now);
-          assert.equal(
-            Date.parse(marked.providerTurn.tokenUsage?.promptCacheExpiresAt ?? ""),
-            now + 300_000,
-          );
-        }),
-      ),
+  // SCIENT-FORK:START — warming that stops on a five-minute cache times its idle compaction.
+  it.effect("records the entry warming stopped on as a session-scoped thread update", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", contextWindow: 200_000 }],
+          initial: { provider: "test", id: "selected" },
+        });
+        const h = yield* harness(false, {
+          target: scientAgentTarget,
+          makeProcess: peer.makeProcess,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([{ type: "agent_start" }]);
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const stopped = (promptCache?: object) => ({
+          type: "cache_warming_stopped",
+          reason: "30-minute idle safety limit reached",
+          ...(promptCache === undefined ? {} : { promptCache }),
+        });
+        const recorded = (event: ProviderAdapterV2Event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.promptCacheWarmingStopped !== undefined;
+        yield* peer.emit([stopped({ tier: "short", touchedAt: 1_000, ttlMs: 300_000 })]);
+        const marked = yield* h.takeUntil(recorded);
+        assert.isTrue(marked.type === "provider_thread.updated");
+        if (marked.type !== "provider_thread.updated") return;
+        assert.isTrue(marked.sessionScoped);
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        assert.deepEqual(marked.providerThread.promptCacheWarmingStopped, {
+          stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(301_000)),
+        });
+        // A stop that left no readable entry clears it.
+        yield* peer.emit([stopped()]);
+        const cleared = yield* h.takeUntil(recorded);
+        assert.isTrue(
+          cleared.type === "provider_thread.updated" &&
+            cleared.providerThread.promptCacheWarmingStopped === null,
+        );
+      }),
+    ),
   );
   // SCIENT-FORK:END
 
