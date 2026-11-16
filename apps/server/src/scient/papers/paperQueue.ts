@@ -6,6 +6,7 @@ import {
   AccountsError,
   EnvironmentId,
   PaperItem,
+  ProjectId,
   ThreadId,
   type PaperAsked,
   type PaperQueueSummary,
@@ -54,6 +55,7 @@ const MOST_BROWSER_FAILURES = 5;
 const StoredRequester = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: Schema.optionalKey(ThreadId),
+  projectId: Schema.optionalKey(ProjectId),
   browser: Schema.Boolean,
   accounts: Schema.Union([Schema.Literal("all"), Schema.Array(AccountId)]),
 });
@@ -456,6 +458,17 @@ const sameAsked = (a: PaperAsked, b: PaperAsked) =>
   (a.doi !== undefined && a.doi.toLowerCase() === b.doi?.toLowerCase()) ||
   (a.doi === undefined && b.doi === undefined && a.url !== undefined && a.url === b.url);
 
+/** Two asked for one paper, so it may use what either may; the user's own request may use all. */
+const widened = (before: PaperRequester | undefined, after: PaperRequester): PaperRequester => {
+  if (before === undefined || after.accounts === "all") return after;
+  if (before.accounts === "all") return before;
+  return {
+    ...after,
+    browser: before.browser || after.browser,
+    accounts: [...new Set([...before.accounts, ...after.accounts])],
+  };
+};
+
 /** Adds papers to the project's queue and returns them; a paper already queued is not repeated. */
 export const requestPapers = Effect.fn("Papers.queue.request")(function* (
   root: string,
@@ -492,18 +505,28 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
     );
     const addsSource = existing?.source === undefined ? asked.source : undefined;
     const addsLibrary = asked.library === true && !existing?.library;
-    if (existing && existing.state !== "saved" && (addsSource || addsLibrary)) {
+    if (existing) {
+      const joins = existing.state !== "saved" && (addsSource || addsLibrary);
+      // Asked again, a paper that waited for the person tries again.
+      const retries = existing.state === "needs-you";
+      if (!joins && !retries) return existing;
+      const { needed: _, message: __, ...unanswered } = existing;
       const joined: PaperItem = {
-        ...existing,
+        ...(retries ? { ...unanswered, state: "waiting" as const } : existing),
         ...(addsSource ? { source: addsSource } : {}),
         ...(addsLibrary ? { library: true } : {}),
       };
       queue.items.set(existing.itemId, joined);
       // A named source outranks the Library, so a redundant Library request keeps its filer.
-      if (addsSource || existing.source === undefined) queue.filers.set(existing.itemId, requester);
+      if (joins && (addsSource || existing.source === undefined))
+        queue.filers.set(existing.itemId, requester);
+      if (retries)
+        queue.requesters.set(
+          existing.itemId,
+          widened(queue.requesters.get(existing.itemId), requester),
+        );
       return joined;
     }
-    if (existing) return existing;
     const item: PaperItem = { ...asked, itemId: NodeCrypto.randomUUID(), state: "waiting" };
     queue.items.set(item.itemId, item);
     queue.requesters.set(item.itemId, requester);
@@ -515,17 +538,27 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
 });
 
 /** The user signed in, passed a check or connected their university: everything waiting goes on. */
-export const continuePapers = Effect.fn("Papers.queue.continue")(function* (
+export const continuePapers = Effect.fn("Papers.queue.continue")(function* <R>(
   root: string,
   requester: PaperRequester,
+  /** What each paper's requester may use now that the user acted. */
+  refresh: (asker: PaperRequester) => Effect.Effect<PaperRequester, never, R>,
 ) {
   const queue = yield* load(root, requester);
   queue.requester = requester;
   clearHolds();
+  // Decided once per asker, not once per paper: each decision is recorded in Activity.
+  const decided = new Map<string, PaperRequester>();
   for (const item of queue.items.values())
     if (item.state === "needs-you") {
       const { needed: _, message: __, ...rest } = item;
       queue.items.set(item.itemId, { ...rest, state: "waiting" });
+      const asker = queue.requesters.get(item.itemId);
+      if (asker === undefined) continue;
+      const key = [asker.threadId, asker.projectId, asker.browser, asker.accounts].join("|");
+      const now = decided.get(key) ?? (yield* refresh(asker));
+      decided.set(key, now);
+      queue.requesters.set(item.itemId, now);
     }
   queue.retries = RETRIES_AFTER_ACTING;
   yield* announce(queue);
