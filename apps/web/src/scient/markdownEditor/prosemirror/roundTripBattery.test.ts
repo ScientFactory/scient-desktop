@@ -39,8 +39,13 @@ const COMMANDS: readonly ScientMarkdownCommand[] = [
 const SEQUENCES_PER_DOCUMENT = 120;
 const MAX_KNOWN_REFUSALS_PER_DOCUMENT = 5;
 
-/** A delimiter touching a span tag inside a word (or three delimiters in a row after one). */
-const KNOWN_REFUSAL = /[\p{L}\p{N}](?:\*{1,3}|~~)<span|<\/span>(?:\*{1,3}|~~)[\p{L}\p{N}]/u;
+/**
+ * The known families, tested only on sources the guard already refused: a delimiter touching a
+ * span tag inside a word, or a delimiter between a letter and punctuation (CommonMark cannot
+ * open or close emphasis there, with or without sizes).
+ */
+const KNOWN_REFUSAL =
+  /[\p{L}\p{N}](?:\*{1,3}|~~)<span|<\/span>(?:\*{1,3}|~~)[\p{L}\p{N}]|[\p{L}\p{N}](?:\*{1,3}|~~)\p{P}|\p{P}(?:\*{1,3}|~~)[\p{L}\p{N}]/u;
 
 function firstTextblock(session: ScientProseMirrorSession) {
   let found: { start: number; size: number } | null = null;
@@ -53,16 +58,24 @@ function firstTextblock(session: ScientProseMirrorSession) {
   return found as { start: number; size: number };
 }
 
+/** mulberry32: a small generator whose outputs are evenly spread, unlike a plain LCG in doubles. */
+function seededRandom(seed: number) {
+  let state = seed >>> 0;
+  return (limit: number) => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((((t ^ (t >>> 14)) >>> 0) / 4294967296) * limit) | 0;
+  };
+}
+
 describe("round trip of editing gestures", () => {
   it.each(Object.entries(DOCUMENTS))(
     "refuses nothing but the known family in: %s",
     (name, source) => {
       // A fixed seed per document keeps the sequences identical on every run.
-      let seed = 1000 + name.length * 7919;
-      const random = (limit: number) => {
-        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-        return seed % limit;
-      };
+      const random = seededRandom(1000 + name.length * 7919);
       const refused: string[] = [];
       for (let sequence = 0; sequence < SEQUENCES_PER_DOCUMENT; sequence += 1) {
         const session = new ScientProseMirrorSession({ source, revision: "r0" });

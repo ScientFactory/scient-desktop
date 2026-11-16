@@ -64,7 +64,7 @@ describe("font gestures in a real browser", () => {
     select(view, 5);
     await userEvent.keyboard(" more");
     expect(refused(controller)).toBe(false);
-    expect(draft(controller)).toContain("more");
+    expect(draft(controller)).toBe("**alpha more**\n");
   });
 
   it("holding Enter after a sized word never refuses and keeps the size on the first line only", async () => {

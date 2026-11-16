@@ -269,7 +269,10 @@ describe("Whitespace is not styled content", () => {
     select(session, 1, 4);
     run(session, "italic");
     expect(session.pendingWriteback).toBeNull();
-    expect(open(session.session.draftSource).session.draftSource).toBe(session.session.draftSource);
+    // The space between the two italic words carries no style, so each word has its own `*`.
+    expect(session.session.draftSource).toBe(
+      '<span style="font-size:14pt">a*a*</span> *<span style="font-size:20pt">b</span>*<span style="font-size:20pt">b</span> cc\n',
+    );
   });
 
   it("accepts removing bold from the last word of a bold phrase", () => {
@@ -297,7 +300,9 @@ describe("Whitespace is not styled content", () => {
     select(session, 0, 3);
     run(session, "font-size-14");
     expect(session.pendingWriteback).toBeNull();
-    expect(open(session.session.draftSource).session.draftSource).toBe(session.session.draftSource);
+    expect(session.session.draftSource).toBe(
+      '**<span style="font-size:14pt">a</span>** **<span style="font-size:14pt">b</span>**\n',
+    );
     expect(markedText(open(session.session.draftSource), "font_size")).toEqual(["a", "b"]);
   });
 
@@ -374,6 +379,71 @@ describe("Size and font shown for a selection", () => {
     select(session, 1, 4);
     expect(selectionMarkValue<number>(session.state, "font_size", "size", "number")).toEqual({
       value: null,
+      mixed: false,
+    });
+  });
+});
+
+describe("Whitespace rule: other marks and characters", () => {
+  it("keeps a link whole across bold text when the paragraph is edited", () => {
+    const session = open("[one **two** three](old.md) end\n");
+    type(session, 17, "X");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe("[one **two** three](old.md) endX\n");
+  });
+
+  it("drops the size when inline code is turned on over sized text, and accepts it", () => {
+    const session = open("aa bb cc\n");
+    select(session, 0, 8);
+    run(session, "font-size-14");
+    select(session, 3, 5);
+    run(session, "inline-code");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toContain("`bb`");
+    expect(markedText(session, "font_size")).not.toContain("bb");
+    expect(markedText(session, "code")).toEqual(["bb"]);
+  });
+
+  it("does not carry a typing size into inline code turned on at a caret", () => {
+    const session = open("aa bb\n");
+    select(session, 0, 2);
+    run(session, "font-size-14");
+    select(session, 2, 2);
+    run(session, "inline-code");
+    const stored = session.state.storedMarks ?? [];
+    expect(stored.map((mark) => mark.type.name)).toEqual(["code"]);
+  });
+
+  it("sizes a word whose accent is a combining character as a whole", () => {
+    const session = open("cafe\u0301 ok\n");
+    select(session, 2, 2);
+    run(session, "font-size-14");
+    expect(session.session.draftSource).toBe('<span style="font-size:14pt">cafe\u0301</span> ok\n');
+  });
+
+  it("sizes a Hebrew word and leaves the space after it unsized", () => {
+    const session = open("שלום עולם\n");
+    select(session, 0, 5);
+    run(session, "font-size-14");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe('<span style="font-size:14pt">שלום</span> עולם\n');
+  });
+
+  it("leaves a non-breaking space at the edge of a selection outside the span", () => {
+    const session = open("a\u00a0b c\n");
+    select(session, 0, 2);
+    run(session, "font-size-14");
+    expect(session.pendingWriteback).toBeNull();
+    expect(session.session.draftSource).toBe('<span style="font-size:14pt">a</span>\u00a0b c\n');
+  });
+
+  it("shows the shared size when the selection also holds inline code", () => {
+    const session = open("aa `bb` cc\n");
+    select(session, 0, 8);
+    run(session, "font-size-14");
+    select(session, 0, 8);
+    expect(selectionMarkValue<number>(session.state, "font_size", "size", "number")).toEqual({
+      value: 14,
       mixed: false,
     });
   });

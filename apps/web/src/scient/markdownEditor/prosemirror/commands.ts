@@ -496,7 +496,8 @@ function wordAroundCaret(state: EditorState): { from: number; to: number } | nul
   const { $from } = state.selection;
   if (!$from.parent.isTextblock) return null;
   const text = $from.parent.textBetween(0, $from.parent.content.size, undefined, "\ufffc");
-  const isWord = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}_]/u.test(char);
+  const isWord = (char: string | undefined) =>
+    char !== undefined && /[\p{L}\p{M}\p{N}_]/u.test(char);
   let start = $from.parentOffset;
   let end = start;
   while (isWord(text[start - 1])) start -= 1;
@@ -549,6 +550,33 @@ function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
     return true;
   };
 }
+
+/** Turn inline code on or off. The file cannot hold a font span around code, so turning it on drops the fonts. */
+const toggleInlineCode: Command = (state, dispatch) => {
+  const code = requiredMarkType("code");
+  const fonts = [requiredMarkType("font_size"), requiredMarkType("font_family")];
+  return toggleMark(code)(
+    state,
+    dispatch &&
+      ((transaction) => {
+        const ranges = state.selection.ranges.map((range) => [range.$from.pos, range.$to.pos]);
+        const turnedOn =
+          transaction.storedMarks?.some((mark) => mark.type === code) ||
+          ranges.some(([from, to]) => transaction.doc.rangeHasMark(from!, to!, code));
+        if (turnedOn) {
+          for (const font of fonts) {
+            for (const [from, to] of ranges) transaction.removeMark(from!, to!, font);
+          }
+          if (transaction.storedMarks) {
+            transaction.setStoredMarks(
+              transaction.storedMarks.filter((mark) => !fonts.includes(mark.type)),
+            );
+          }
+        }
+        dispatch(transaction);
+      }),
+  );
+};
 
 /** Parses `font-size-12`, `font-size-default`, `font-family-Arial`, `font-family-default`. */
 function fontCommand(command: string): Command {
@@ -644,7 +672,7 @@ function commandFor(command: ScientMarkdownCommand): Command {
     case "strike":
       return toggleMark(requiredMarkType("strike"));
     case "inline-code":
-      return toggleMark(requiredMarkType("code"));
+      return toggleInlineCode;
     case "undo":
       return undo;
     case "redo":

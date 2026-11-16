@@ -3,10 +3,8 @@ import type { EditorState } from "prosemirror-state";
 import { scientMarkdownSchema } from "./schema";
 
 /**
- * The shared value over the selection; `mixed` when the selection holds more than one value
- * (a null value then means "none", not "several"). Text made only of spaces is ignored: the
- * file never stores a style on a space at the edge of a run, so counting it would turn words
- * that were sized one by one into a mixed selection.
+ * The shared value over the selection; `mixed` when it holds more than one (a null value then
+ * means "none"). Inline code and whitespace-only text are ignored: the file holds no font there.
  */
 export function selectionMarkValue<T extends string | number>(
   state: EditorState,
@@ -25,6 +23,7 @@ export function selectionMarkValue<T extends string | number>(
   const values = new Set<T | null>();
   state.doc.nodesBetween(selection.from, selection.to, (node) => {
     if (!node.isText || /^\s*$/u.test(node.text ?? "")) return;
+    if (node.marks.some((m) => m.type.name === "code")) return;
     const value = node.marks.find((m) => m.type === type)?.attrs[attribute];
     values.add(valid(value) ? value : null);
   });
