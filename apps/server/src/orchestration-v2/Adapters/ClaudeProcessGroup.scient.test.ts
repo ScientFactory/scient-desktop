@@ -95,6 +95,8 @@ it.live.skipIf(isWindows)("stops the CLI's detached descendants when the server 
       // @effect-diagnostics-next-line abortControllerInEffect:off - The fixture closes its pipes itself.
       signal: new AbortController().signal,
     }) as NodeChildProcess.ChildProcess;
+    const exited = Promise.withResolvers<void>();
+    child.once("exit", () => exited.resolve());
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
         for (const pid of [grandchild, child.pid ?? 0]) {
@@ -110,6 +112,7 @@ it.live.skipIf(isWindows)("stops the CLI's detached descendants when the server 
     assert.isAbove(grandchild, 1);
     // A dying server's descriptors close; the kernel would do this for it.
     for (const pipe of child.stdio) pipe?.destroy();
+    yield* Effect.promise(() => exited.promise);
     yield* Effect.promise(() =>
       expect.poll(() => isAlive(grandchild), { timeout: 5_000 }).toBe(false),
     );
