@@ -155,6 +155,14 @@ credentials. Packaged-upgrade evidence should correlate by `attemptId` and
 verify the synthetic selected project's actual restored controls in addition
 to the `projectRestored: true` event.
 
+Qualification must use the release's actual platform filenames: a Linux `x64`
+host consumes the `x86_64.AppImage` asset, with its manifest size and SHA-512
+still verified. Managed updater feeds require HTTPS even on loopback, with a
+certificate trusted by the native updater; an HTTP policy can stop the backend
+before a workspace exists. A connecting splash or startup-error window is not
+the main workspace, and a fresh profile must finish or skip onboarding.
+An unsigned Windows build cannot supply a valid Authenticode qualification.
+
 Before native preparation and again before shutdown, the native update owner
 requests saves from every currently registered app window. Each request uses
 a fresh random nonce and waits at most 20 seconds. A response must come from

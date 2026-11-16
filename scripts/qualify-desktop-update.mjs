@@ -169,14 +169,15 @@ export function verifyHandoff(directory, expectedCommit) {
   return handoff;
 }
 
-function payload(directory, platform, arch) {
+export function payload(directory, platform, arch) {
   const manifest = parseYaml(
     NodeFS.readFileSync(NodePath.join(directory, platformManifest[platform]), "utf8"),
   );
   NodeAssert.equal(typeof manifest.version, "string");
   const extension = { darwin: ".zip", win32: ".exe", linux: ".AppImage" }[platform];
+  const artifactArch = platform === "linux" && arch === "x64" ? "x86_64" : arch;
   const file = manifest.files.find(
-    (entry) => entry.url.endsWith(extension) && entry.url.includes(`-${arch}`),
+    (entry) => entry.url.endsWith(extension) && entry.url.includes(`-${artifactArch}`),
   );
   NodeAssert.ok(file, `Manifest has no ${platform}/${arch} ${extension} payload`);
   NodeAssert.equal(

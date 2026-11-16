@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { test } from "vitest";
-import { qualifyTiming, timingEvents, verifyHandoff } from "./qualify-desktop-update.mjs";
+import { payload, qualifyTiming, timingEvents, verifyHandoff } from "./qualify-desktop-update.mjs";
 
 const sourceSha = "a".repeat(40);
 const identity = { attemptId: "attempt-1", fromVersion: "0.0.1", targetVersion: "0.0.2" };
@@ -133,6 +133,35 @@ test("refuses unsealed files instead of accidentally qualifying a substituted ma
   try {
     NodeFS.writeFileSync(NodePath.join(root, "latest-mac.yml"), "version: 9.9.9\n");
     NodeAssert.throws(() => verifyHandoff(root, sourceSha), /unsealed/);
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("selects the Linux x86_64 payload for an x64 host and rejects changed archive bytes", () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-update-payload-test-"));
+  const bytes = Buffer.from("synthetic AppImage payload");
+  const name = "Scient-0.0.119-x86_64.AppImage";
+  const filename = NodePath.join(root, name);
+  try {
+    NodeFS.writeFileSync(filename, bytes);
+    NodeFS.writeFileSync(
+      NodePath.join(root, "latest-linux.yml"),
+      JSON.stringify({
+        version: "0.0.119",
+        files: [
+          { url: "Scient-0.0.119-arm64.AppImage", size: 1, sha512: "not-the-host-architecture" },
+          {
+            url: name,
+            size: bytes.length,
+            sha512: NodeCrypto.createHash("sha512").update(bytes).digest("base64"),
+          },
+        ],
+      }),
+    );
+    NodeAssert.equal(payload(root, "linux", "x64").filename, filename);
+    NodeFS.writeFileSync(filename, bytes.fill(1));
+    NodeAssert.throws(() => payload(root, "linux", "x64"), NodeAssert.AssertionError);
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
