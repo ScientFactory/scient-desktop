@@ -242,6 +242,9 @@ export const OmpRpcEvent = Schema.Struct({
   usage: maybeUnknown,
   // SCIENT-FORK: Scient Agent's confirmed prompt-cache entry, for idle compaction.
   promptCache: maybeUnknown,
+  // SCIENT-FORK:START — the agent's stop time, independent of delivery latency.
+  stoppedAt: maybeNumber,
+  // SCIENT-FORK:END
   // SCIENT-FORK: goal_updated carries the goal the thread shows.
   goal: maybeUnknown,
 });
@@ -607,6 +610,7 @@ const OmpLifecycleEvent = Schema.Struct({
   goal: maybeUnknown,
   // SCIENT-FORK:START — cache_warming_stopped: the entry warming left, which times idle compaction.
   promptCache: maybeUnknown,
+  stoppedAt: maybeNumber,
   // SCIENT-FORK:END
 });
 export type OmpLifecycleEvent = typeof OmpLifecycleEvent.Type;

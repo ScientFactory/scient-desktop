@@ -917,15 +917,10 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               }
               // SCIENT-FORK:START — warming stopped: the five-minute entry it left times idle compaction.
               if (event.type === "cache_warming_stopped")
-                return Effect.flatMap(DateTime.now, (now) =>
-                  onUpdate({
-                    type: "usage",
-                    promptCacheWarmingStopped: ompWarmingStopped(
-                      event,
-                      DateTime.toEpochMillis(now),
-                    ),
-                  }),
-                );
+                return onUpdate({
+                  type: "usage",
+                  promptCacheWarmingStopped: ompWarmingStopped(event),
+                });
               // SCIENT-FORK:END
               if (event.type === "cache_warming_end")
                 return event.usage === undefined ? Effect.void : refreshUsage(false);

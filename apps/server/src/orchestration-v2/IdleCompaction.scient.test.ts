@@ -60,9 +60,7 @@ function scientRecords(
       : withOmpPromptCacheExpiry({ usedTokens: 1 }, options.earlierFrame);
   const tokenUsage = { ...earlier, ...withOmpPromptCacheExpiry({ usedTokens: 300_000 }, frame) };
   const promptCacheWarmingStopped =
-    options.stop === undefined
-      ? undefined
-      : ompWarmingStopped(options.stop.frame, options.stop.stoppedAtMs);
+    options.stop === undefined ? undefined : ompWarmingStopped(options.stop.frame);
   const records: IdleCompactionRecords = {
     thread: {
       id: threadId,
@@ -188,9 +186,14 @@ describe("Scient Agent idle compaction", () => {
   });
 
   /** The frame the agent sends when warming stops, with the entry as its last hitting refresh left it. */
-  const stopFrame = (touchedAtMs: number, tier: "short" | "long" = "short") => ({
+  const stopFrame = (
+    touchedAtMs: number,
+    stoppedAtMs: number,
+    tier: "short" | "long" = "short",
+  ) => ({
     type: "cache_warming_stopped",
     reason: "30-minute idle safety limit reached",
+    stoppedAt: stoppedAtMs,
     promptCache: {
       tier,
       touchedAt: touchedAtMs,
@@ -202,7 +205,7 @@ describe("Scient Agent idle compaction", () => {
     // Warming still running, or never ran: no stop recorded, so the cache may be cold by any fixed time.
     expect(idleCompactionWindow(scientRecords(short), NOW_MS)).toBeNull();
     const stop = {
-      frame: stopFrame(NOW_MS + 26 * MINUTE_MS),
+      frame: stopFrame(NOW_MS + 26 * MINUTE_MS, NOW_MS + 29 * MINUTE_MS),
       stoppedAtMs: NOW_MS + 29 * MINUTE_MS,
     };
     expect(idleCompactionWindow(scientRecords(short, { stop }), stop.stoppedAtMs)).toEqual({
@@ -218,26 +221,39 @@ describe("Scient Agent idle compaction", () => {
 
   it("lets the cache go when warming stopped soon after the reply or before it", () => {
     // Its savings rule stopped warming at the first refresh: the reader may still be reading.
-    const early = { frame: stopFrame(NOW_MS - MINUTE_MS), stoppedAtMs: NOW_MS + 4 * MINUTE_MS };
+    const early = {
+      frame: stopFrame(NOW_MS - MINUTE_MS, NOW_MS + 4 * MINUTE_MS),
+      stoppedAtMs: NOW_MS + 4 * MINUTE_MS,
+    };
     expect(
       idleCompactionWindow(scientRecords(short, { stop: early }), early.stoppedAtMs),
     ).toBeNull();
     // A stop from an earlier idle stretch, recorded before this reply.
     const stale = {
-      frame: stopFrame(NOW_MS - 40 * MINUTE_MS),
+      frame: stopFrame(NOW_MS - 40 * MINUTE_MS, NOW_MS - 30 * MINUTE_MS),
       stoppedAtMs: NOW_MS - 30 * MINUTE_MS,
     };
     expect(idleCompactionWindow(scientRecords(short, { stop: stale }), NOW_MS)).toBeNull();
   });
 
+  it("does not compact an early stop delivered after the minimum idle time", () => {
+    const stop = {
+      frame: stopFrame(NOW_MS + 18 * MINUTE_MS, NOW_MS + 19 * MINUTE_MS),
+      stoppedAtMs: NOW_MS + 19 * MINUTE_MS,
+    };
+    const arrivedAtMs = NOW_MS + 21 * MINUTE_MS;
+    expect(idleCompactionWindow(scientRecords(short, { stop }), arrivedAtMs)).toBeNull();
+  });
+
   it("records only a five-minute entry the stop frame still reports", () => {
-    expect(ompWarmingStopped(stopFrame(NOW_MS), NOW_MS + MINUTE_MS)).toEqual({
+    expect(ompWarmingStopped(stopFrame(NOW_MS, NOW_MS + MINUTE_MS))).toEqual({
       stoppedAt: DateTime.formatIso(at(MINUTE_MS)),
       expiresAt: DateTime.formatIso(at(5 * MINUTE_MS)),
     });
     // No entry (expired, or the conversation changed), or a one-hour entry with its own schedule.
-    expect(ompWarmingStopped({ type: "cache_warming_stopped", reason: "x" }, NOW_MS)).toBeNull();
-    expect(ompWarmingStopped(stopFrame(NOW_MS, "long"), NOW_MS)).toBeNull();
+    expect(ompWarmingStopped({ type: "cache_warming_stopped", reason: "x" })).toBeNull();
+    expect(ompWarmingStopped(stopFrame(NOW_MS, NOW_MS, "long"))).toBeNull();
+    expect(ompWarmingStopped({ ...stopFrame(NOW_MS, NOW_MS), stoppedAt: undefined })).toBeNull();
   });
 
   it("never compacts a turn whose last reply confirmed no expiring cache", () => {
@@ -292,7 +308,7 @@ describe("Scient Agent idle compaction", () => {
     () =>
       Effect.gen(function* () {
         const stop = {
-          frame: stopFrame(NOW_MS + 26 * MINUTE_MS),
+          frame: stopFrame(NOW_MS + 26 * MINUTE_MS, NOW_MS + 29 * MINUTE_MS),
           stoppedAtMs: NOW_MS + 29 * MINUTE_MS,
         };
         yield* TestClock.setTime(stop.stoppedAtMs);

@@ -4536,6 +4536,7 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
   it.effect("records the entry warming stopped on as a session-scoped thread update", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-11-16T12:21:00Z"));
         const peer = scriptedOmpRpc({
           models: [{ provider: "test", id: "selected", contextWindow: 200_000 }],
           initial: { provider: "test", id: "selected" },
@@ -4549,23 +4550,28 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
         yield* peer.emit([{ type: "agent_start" }]);
         yield* peer.finish();
         yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const arrivedAt = DateTime.toEpochMillis(yield* DateTime.now);
+        const stoppedAt = arrivedAt - 2 * 60_000;
         const stopped = (promptCache?: object) => ({
           type: "cache_warming_stopped",
           reason: "30-minute idle safety limit reached",
+          stoppedAt,
           ...(promptCache === undefined ? {} : { promptCache }),
         });
         const recorded = (event: ProviderAdapterV2Event) =>
           event.type === "provider_thread.updated" &&
           event.providerThread.promptCacheWarmingStopped !== undefined;
-        yield* peer.emit([stopped({ tier: "short", touchedAt: 1_000, ttlMs: 300_000 })]);
+        yield* peer.emit([
+          stopped({ tier: "short", touchedAt: stoppedAt - 60_000, ttlMs: 300_000 }),
+        ]);
         const marked = yield* h.takeUntil(recorded);
         assert.isTrue(marked.type === "provider_thread.updated");
         if (marked.type !== "provider_thread.updated") return;
         assert.isTrue(marked.sessionScoped);
-        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        // Delivery was delayed; persistence must retain the agent's earlier stop time.
         assert.deepEqual(marked.providerThread.promptCacheWarmingStopped, {
-          stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
-          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(301_000)),
+          stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt)),
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAt + 240_000)),
         });
         // A stop that left no readable entry clears it.
         yield* peer.emit([stopped()]);

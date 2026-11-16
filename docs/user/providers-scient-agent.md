@@ -154,12 +154,12 @@ compacts an idle thread over 200,000 tokens while the agent still holds the conv
 prompt cache. With an hour-long cache, as with a Claude sign-in, that is about 25 minutes after the
 last reply, before Scient stops an idle agent after 30 minutes. With a five-minute cache, the agent
 keeps the cache warm while it is worth it, and Scient compacts when that warming stops after at least
-20 minutes idle, while the last refresh still holds; if the agent stopped keeping the cache warm
-sooner, or never did, the thread is not compacted. A model whose cache never expires is never
-compacted for being idle, nor is a thread whose model you changed since its last reply. **When you
-return** offers the **Compact** chip after an hour idle. Compaction before the cache expires needs a
-Scient Agent that reports its prompt cache, and for a five-minute cache one that also reports when
-warming stops; with an older one, those threads only get the chip.
+20 minutes idle, measured at the agent rather than when its report arrives, while the last refresh
+still holds; if warming stopped sooner, or never ran, the thread is not compacted. A model whose cache
+never expires is never compacted for being idle, nor is a thread whose model you changed since its
+last reply. **When you return** offers the **Compact** chip after an hour idle. Compaction before the
+cache expires needs a Scient Agent that reports its prompt cache, and for a five-minute cache one
+that also reports the warming-stop time; with an older one, those threads only get the chip.
 
 Agent notices, retry progress and save failures appear in the conversation. Questions retain
 the agent's offered choices, editor text and timeout information; an expired question closes

@@ -12,6 +12,12 @@ const PromptCacheFrame = Schema.Struct({
   }),
 });
 const decodePromptCacheFrame = Schema.decodeUnknownOption(PromptCacheFrame);
+const decodeWarmingStoppedFrame = Schema.decodeUnknownOption(
+  Schema.Struct({
+    ...PromptCacheFrame.fields,
+    stoppedAt: Schema.Finite.check(Schema.isGreaterThan(0)),
+  }),
+);
 
 type TokenUsage = Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
 
@@ -56,15 +62,12 @@ export interface OmpWarmingStopped {
  * which nothing refreshes any more, or null when there is none (expired, conversation changed, a
  * one-hour entry, which compacts on its own schedule). `touchedAt` is the last refresh that hit.
  */
-export const ompWarmingStopped = (
-  event: unknown,
-  stoppedAtMs: number,
-): OmpWarmingStopped | null => {
-  const frame = Option.getOrUndefined(decodePromptCacheFrame(event));
+export const ompWarmingStopped = (event: unknown): OmpWarmingStopped | null => {
+  const frame = Option.getOrUndefined(decodeWarmingStoppedFrame(event));
   if (frame?.promptCache.tier !== "short") return null;
   const { touchedAt, ttlMs } = frame.promptCache;
   return {
-    stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(stoppedAtMs)),
+    stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(frame.stoppedAt)),
     expiresAt: DateTime.formatIso(DateTime.makeUnsafe(touchedAt + ttlMs)),
   };
 };
