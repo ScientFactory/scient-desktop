@@ -20,7 +20,7 @@ export type FollowIdentifier = (
 ) => Promise<IdentifierLookup>;
 
 // OpenAlex allows ten requests a second; Semantic Scholar one a second, with or without a key.
-const runWithOpenAlexLimit = createSerialRequestLane({ minimumStartIntervalMs: 110 });
+export const runWithOpenAlexLimit = createSerialRequestLane({ minimumStartIntervalMs: 110 });
 const runWithSemanticScholarLimit = createSerialRequestLane({ minimumStartIntervalMs: 1_000 });
 
 const Text = Schema.optional(Schema.NullOr(Schema.String));

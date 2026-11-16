@@ -21,6 +21,7 @@ import {
   requestMetadataText,
 } from "./metadataHttp.ts";
 import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
+import { runWithOpenAlexLimit } from "./ConnectorIdentifierLookup.ts";
 
 const ENRICHMENT_DEADLINE_MS = 6_500;
 
@@ -41,7 +42,16 @@ const EuropePmcSearchResponse = Schema.Struct({
   resultList: Schema.Struct({ result: Schema.Array(EuropePmcResult) }),
 });
 
+/** OpenAlex keeps an abstract as each word with its positions. */
+const OpenAlexAbstractResponse = Schema.Struct({
+  doi: Schema.optional(Schema.NullOr(Schema.String)),
+  abstract_inverted_index: Schema.optional(
+    Schema.NullOr(Schema.Record(Schema.String, Schema.Array(Schema.Int))),
+  ),
+});
+
 const decodeCrossrefResponse = Schema.decodeUnknownSync(CrossrefResponse);
+const decodeOpenAlexAbstractResponse = Schema.decodeUnknownSync(OpenAlexAbstractResponse);
 const decodeEuropePmcArticleResponse = Schema.decodeUnknownSync(EuropePmcArticleResponse);
 const decodeEuropePmcSearchResponse = Schema.decodeUnknownSync(EuropePmcSearchResponse);
 
@@ -58,7 +68,7 @@ const pubmedXmlParser = new XMLParser({
 
 type AbstractOrigin = Extract<
   ScientSourceFieldProvenance["origin"],
-  "crossref" | "europe-pmc" | "pubmed"
+  "crossref" | "europe-pmc" | "pubmed" | "openalex"
 >;
 
 interface AbstractEvidence {
@@ -73,6 +83,7 @@ export interface AbstractResolvers {
   readonly pubmed: (pmid: string) => Promise<AbstractEvidence | null>;
   readonly crossref: (doi: string) => Promise<AbstractEvidence | null>;
   readonly europePmc: (identifier: ScientSourceIdentifier) => Promise<AbstractEvidence | null>;
+  readonly openAlex: (doi: string) => Promise<AbstractEvidence | null>;
 }
 
 export interface EnrichmentOptions {
@@ -280,10 +291,52 @@ async function resolveEuropePmcAbstract(
   }
 }
 
+function evidenceFromOpenAlex(
+  work: typeof OpenAlexAbstractResponse.Type,
+  doi: string,
+): AbstractEvidence | null {
+  const found = work.doi?.replace(/^https?:\/\/(?:dx\.)?doi\.org\//iu, "") ?? "";
+  const index = work.abstract_inverted_index;
+  if (
+    !index ||
+    normalizePersistentIdentifier("doi", found) !== normalizePersistentIdentifier("doi", doi)
+  )
+    return null;
+  const words: string[] = [];
+  for (const [word, positions] of Object.entries(index))
+    for (const position of positions) words[position] = word;
+  const abstract = normalizeScientSourceAbstractDocument(
+    words.filter((word) => word !== undefined).join(" "),
+  );
+  return abstract
+    ? {
+        abstract: abstract.text,
+        sections: abstract.sections,
+        origin: "openalex",
+        sourceField: "works/{doi}/abstract_inverted_index",
+        sourceIdentifier: { scheme: "doi", value: doi },
+      }
+    : null;
+}
+
+async function resolveOpenAlexAbstract(doi: string): Promise<AbstractEvidence | null> {
+  try {
+    const url = new URL(`https://api.openalex.org/works/doi:${encodeURI(doi)}`);
+    url.searchParams.set("select", "doi,abstract_inverted_index");
+    const value = await runWithOpenAlexLimit(() =>
+      requestMetadataJson(url, { Accept: "application/json", "User-Agent": USER_AGENT }),
+    );
+    return evidenceFromOpenAlex(decodeOpenAlexAbstractResponse(value), doi);
+  } catch {
+    return null;
+  }
+}
+
 const defaultResolvers: AbstractResolvers = {
   pubmed: resolvePubmedAbstract,
   crossref: resolveCrossrefAbstract,
   europePmc: resolveEuropePmcAbstract,
+  openAlex: resolveOpenAlexAbstract,
 };
 
 function identifier(
@@ -318,6 +371,7 @@ export async function enrichScientSourceCandidate(
   if (doi) {
     attempts.push(() => resolvers.crossref(doi.value));
     if (!pmid) attempts.push(() => resolvers.europePmc(doi));
+    attempts.push(() => resolvers.openAlex(doi.value));
   }
   const deadlineAt = Date.now() + (options.deadlineMs ?? ENRICHMENT_DEADLINE_MS);
   let evidence: AbstractEvidence | null = null;
@@ -348,5 +402,6 @@ export async function enrichScientSourceCandidate(
 export const sourceMetadataEnricherInternals = {
   evidenceFromEuropePmc,
   parsePubmedAbstract,
+  evidenceFromOpenAlex,
   resolveCrossrefAbstract,
 };
