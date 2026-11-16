@@ -137,6 +137,11 @@ Code nodes do not participate, and every complete list keeps one direction.
 Fixed modes remain authoritative. The adapter is mounted at the existing
 composer seam and does not alter prompt serialization.
 
+Empty-composer placeholders, including next-prompt suggestions, resolve their
+direction from the same parsed composer document and selected mode as accepted
+text. File and skill chips do not count as prose. The Tab hint is isolated LTR
+with logical spacing; neither prompt text nor the empty-draft caret is changed.
+
 ## Upstream maintenance
 
 The setting contract and Scient bidi modules are Scient-owned. The only

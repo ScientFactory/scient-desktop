@@ -63,6 +63,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   caretLineDirection,
   composerContentDirectionKey,
+  composerTextDirections,
   ComposerTextDirectionExtension,
 } from "~/composer-text-direction";
 import {
@@ -1543,6 +1544,23 @@ function ComposerPromptEditorTiptapInner(
     [],
   );
 
+  // SCIENT-FORK:START — ghost text uses the same parsed blocks as an accepted prompt.
+  const placeholderDirection =
+    editor && isEmpty && contextRecords.size === 0 && placeholder
+      ? (composerTextDirections(
+          editor.schema.nodeFromJSON(
+            buildDocJson(placeholder, (name) => composerSkillMeta(skills, name), {
+              styling: richText,
+              literalText,
+              isKnownModel: (instanceId, model) =>
+                modelKeys.has(modelMentionKey(instanceId, model)),
+            }),
+          ),
+          contentDirection,
+        ).blocks[0] ?? undefined)
+      : undefined;
+  // SCIENT-FORK:END
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the disabled prop into the imperative Tiptap editor via setEditable
   useEffect(() => {
     editor?.setEditable(!disabled);
@@ -1951,6 +1969,7 @@ function ComposerPromptEditorTiptapInner(
             />
             {isEmpty && contextRecords.size === 0 && placeholder ? (
               <div
+                dir={placeholderDirection}
                 className={cn(
                   "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
                   placeholderClassName,
