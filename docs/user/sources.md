@@ -1000,6 +1000,10 @@ PDF uses Scient's normal [PDF reader](pdf-reader.md), so you can move between
 the library, source details, the document, and your conversation. **Back**
 returns to the list as you left it: search, order, view and selection.
 
+Incomplete metadata is marked by a small warning icon beside the source type,
+not a banner or an extra row. Hover or focus it to see the missing details;
+click it to keep those details open. **Edit** remains the place to correct them.
+
 Under the authors, one row holds **Mark read**, the star, **+ Tag** and **+
 Collection**, then the source's tags and collections. When the page is wide,
 the publication details, identifiers and categories stand in a column on the
