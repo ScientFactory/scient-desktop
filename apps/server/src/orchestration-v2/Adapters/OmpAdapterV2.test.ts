@@ -1255,7 +1255,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
   it.effect("reports the native OMP frame limit when even a file reference cannot fit", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const h = yield* imageHarness(1024);
+        // SCIENT-FORK:START — Scient's extra event types make the session's event filter line 1,031 bytes.
+        const h = yield* imageHarness(1280);
+        // SCIENT-FORK:END
         const failure = yield* Effect.result(
           h.runtime.startTurn({
             ...h.input,
@@ -1266,14 +1268,18 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               // names keep it over the limit however short the temp directory is.
               attachments: yield* Effect.forEach(
                 Array.from({ length: 8 }, (_, i) => i),
-                (i) => h.image(`frame-${i}-${"x".repeat(120)}`, 8192),
+                // SCIENT-FORK:START — longer names keep the reference over the larger limit.
+                (i) => h.image(`frame-${i}-${"x".repeat(200)}`, 8192),
+                // SCIENT-FORK:END
               ),
             },
           }),
         );
         assert.equal(failure._tag, "Failure");
         if (failure._tag !== "Failure") return yield* Effect.die("Oversized frame reached OMP");
-        assert.include(Cause.pretty(Cause.fail(failure.failure)), "1024-byte frame limit");
+        // SCIENT-FORK:START — the limit set above.
+        assert.include(Cause.pretty(Cause.fail(failure.failure)), "1280-byte frame limit");
+        // SCIENT-FORK:END
         assert.lengthOf(h.peer.state.prompts, 0);
       }),
     ),
