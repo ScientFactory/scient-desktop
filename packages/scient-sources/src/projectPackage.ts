@@ -808,7 +808,17 @@ async function placePackagedSource(
     }
     // An abstract only the package knows comes along, with where it came from.
     if (target.abstract === null && record.abstract !== null) {
-      const provenance = record.fieldProvenance.filter((entry) => entry.field === "abstract");
+      const abstractProvenance = record.fieldProvenance.filter(
+        (entry) => entry.field === "abstract",
+      );
+      // The update replaces the whole list: keep what the target knows of its other fields.
+      const provenance =
+        abstractProvenance.length === 0
+          ? []
+          : [
+              ...target.fieldProvenance.filter((entry) => entry.field !== "abstract"),
+              ...abstractProvenance,
+            ];
       const edited = await updateScientSourceMetadata({
         root: library,
         sourceId,

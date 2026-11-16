@@ -2485,9 +2485,13 @@ ID exists (`exists`) or another live source has the same identifier
 
 Neither removal nor detaching a PDF deletes PDF files. Permanent deletion
 (one trashed source, or the whole trash) deletes the trash entries and their
-revision history, then deletes every content-addressed PDF that no live or
-trashed record refers to. It deletes no file at all while any record or trash
-entry cannot be read, since that record might refer to it. Deleting one
+revision history, then deletes content-addressed PDFs that no live or
+trashed record refers to. Deleting one trashed source considers only the PDFs
+that source and its history named, and keeps any of them another source's kept
+revision still names, so reverting that source can bring it back. Emptying the
+whole trash considers every PDF and ignores history. It deletes no file at all
+while any record or trash entry cannot be read, since that record might refer
+to it. Deleting one
 trashed source takes the revision the caller saw and compares it under the
 same write lock that deletes, returning `stale` when the source was restored,
 edited or removed again in between; emptying the whole trash takes no

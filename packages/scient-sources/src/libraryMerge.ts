@@ -41,6 +41,7 @@ import {
   type ScientSourceRecord,
 } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
+import { scientPinCitationKnownFields } from "./pinCitation.ts";
 import { scientSourceTagKey } from "./organize.ts";
 import { workLevelIdentifierKey } from "./sourceIdentity.ts";
 import { scientSourceStoreInternals } from "./store.ts";
@@ -269,6 +270,13 @@ function planMerge(
   next.attachments = [...survivor.attachments, ...attachments];
   next.externalReferences = [...survivor.externalReferences, ...externalReferences];
   next.fieldProvenance = [...survivor.fieldProvenance, ...fieldProvenance];
+  // A project-file marker from the loser must not make the survivor's known citation inputs
+  // unknown again; the kept list outlives Undo, which removes only the merged markers.
+  const known = scientPinCitationKnownFields(survivor);
+  const merged = scientPinCitationKnownFields(next as unknown as ScientSourceRecord);
+  if (known.some((field) => !merged.includes(field))) {
+    next.hydratedCitationFields = [...new Set([...(survivor.hydratedCitationFields ?? []), ...known])];
+  }
   return {
     next: next as unknown as ScientSourceRecord,
     changes,

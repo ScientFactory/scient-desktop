@@ -40,6 +40,7 @@ import {
   updateScientSourceNote,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
+import { SCIENT_PIN_OPTIONAL_CITATION_FIELDS, scientPinCitationKnownFields } from "./pinCitation.ts";
 
 const fixtures: string[] = [];
 const originalRename = NodeFS.promises.rename;
@@ -1227,6 +1228,38 @@ describe("library merge engine", () => {
     expect(await undoScientLibraryMerge({ library, mergeId: merge!.mergeId })).toEqual({
       outcome: "already-undone",
     });
+  });
+
+  it("keeps an ordinary survivor's citation inputs known when a project-file copy merges in, through Undo", async () => {
+    const { root, library } = await newLibrary();
+    const doi = { scheme: "doi", value: "10.1000/knowledge" };
+    await seed(root, [
+      record("source_keep", { identifiers: [doi] }),
+      record("source_gone", {
+        identifiers: [doi],
+        publisher: "Press",
+        hydratedFromProjectSourceId: "project_source",
+        fieldProvenance: [
+          { field: "publisher", origin: "file", sourceField: "project-file:references.bib" },
+        ],
+      }),
+    ]);
+    const result = await mergeScientLibrarySources({
+      library,
+      sourceIds: ["source_keep", "source_gone"],
+      survivorId: "source_keep",
+    });
+    if (result.outcome !== "merged") throw new Error("Expected the copies to merge.");
+    const merged = await readScientSourceRecord(library, "source_keep");
+    expect(merged?.publisher).toBe("Press");
+    expect(scientPinCitationKnownFields(merged!)).toEqual(SCIENT_PIN_OPTIONAL_CITATION_FIELDS);
+
+    expect(await undoScientLibraryMerge({ library, mergeId: result.merge.mergeId })).toMatchObject({
+      outcome: "undone",
+    });
+    const undone = await readScientSourceRecord(library, "source_keep");
+    expect(undone?.publisher).toBeNull();
+    expect(scientPinCitationKnownFields(undone!)).toEqual(SCIENT_PIN_OPTIONAL_CITATION_FIELDS);
   });
 
   it("keeps a merged source read and starred if either was, and Undo restores each one's own", async () => {

@@ -232,13 +232,22 @@ export async function checkLibraryRules(
     }
   }
 
-  // Rule 3, the other way: a PDF no live or trashed source names is gone (delete for good).
+  // Rule 3, the other way: a PDF no live or trashed source names, now or in a kept revision, is
+  // gone (delete for good). Deleting one source keeps a PDF another source's history names, so
+  // reverting that source can still bring it back.
   if (settled && options.noUnreferencedPdfs) {
     const named = new Set(
       settled.works
         .filter((work) => work.state !== "deleted")
         .flatMap((work) => work.pdfs.map((pdf) => pdf.sha256)),
     );
+    for (const sourceId of [...live.keys(), ...trash.keys()]) {
+      await walk(NodePath.join(scenario.libraryRoot, "history", sourceId), async (path) => {
+        if (!path.endsWith(".json")) return;
+        const revision = JSON.parse(await NodeFSP.readFile(path, "utf8")) as ScientSourceRecord;
+        for (const attachment of revision.attachments) named.add(attachment.sha256);
+      });
+    }
     await walk(NodePath.join(scenario.libraryRoot, "files"), async (path) => {
       const name = NodePath.basename(path);
       if (name.endsWith(".pdf") && !named.has(name.slice(0, -".pdf".length))) {

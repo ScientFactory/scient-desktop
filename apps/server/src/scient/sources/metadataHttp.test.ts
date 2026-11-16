@@ -90,4 +90,28 @@ describe("metadata HTTP completion", () => {
     expect(response).toMatchObject({ status: 200, body: "complete" });
     expect(response.url.href).toBe("https://registry.example/complete");
   });
+
+  it("keeps an API key on the registry's host and drops it on a redirect elsewhere", async () => {
+    const received = new Map<string, Readonly<Record<string, string | string[] | undefined>>>();
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      received.set(request.url ?? "", request.headers);
+      if (request.url === "/same") {
+        response.writeHead(302, { Location: "https://registry.example/other" }).end();
+      } else if (request.url === "/other") {
+        response.writeHead(302, { Location: "https://mirror.example/final" }).end();
+      } else response.end("complete");
+    });
+    const request = makeMetadataRequest(fixture.send);
+    const response = await request(new URL("https://registry.example/same"), {
+      ...agent,
+      Accept: "application/json",
+      "x-api-key": "secret",
+    });
+    expect(response).toMatchObject({ status: 200, body: "complete" });
+    expect(received.get("/other")?.["x-api-key"]).toBe("secret");
+    expect(received.get("/final")?.["x-api-key"]).toBeUndefined();
+    expect(received.get("/final")?.["user-agent"]).toBe(METADATA_USER_AGENT);
+    expect(received.get("/final")?.accept).toBe("application/json");
+  });
 });
