@@ -280,7 +280,8 @@ export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: 
         step: "apply",
         outcome: result,
         targetVersion: install.targetVersion,
-        ...context,
+        // The prior process's download source is not stored in the install record.
+        ...(options.packageKind === undefined ? {} : { packageKind: options.packageKind }),
         ...(install.attemptRef === undefined ? {} : { attemptRef: install.attemptRef }),
         ...(install.startedAt === undefined
           ? {}

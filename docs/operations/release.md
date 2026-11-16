@@ -223,6 +223,10 @@ tag or release already exists.
    summary, not the release body, because the app shows the release body as
    release notes. Unsigned installers may trigger an Unknown Publisher or
    SmartScreen warning, which `docs/user/install.md` explains. The workflow
+   rechecks public Windows publisher pins after approval; a candidate that passed
+   assembly can still be refused if either channel has since shipped a signed app.
+   A failed final check leaves a draft; keep it private and build and accept a
+   signed replacement with a new release identity. The workflow
    publishes the already accepted assembled artifact, downloads the draft again,
    verifies every uploaded byte, and only then makes the release public and
    Latest. Existing tags or releases are never rebuilt, overwritten, or
@@ -289,8 +293,20 @@ only if its installer's signer CN matches the `publisherName` in the installed
   be Valid, its signer CN to equal `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`, and the
   packaged `app-update.yml` to pin exactly that name. An unsigned build must pin none.
 - Each release handoff records `windows: { signed, publisherName }`.
-- Before publishing on either channel, the gate reads the newest published Stable
-  and Beta handoffs. If either pins a publisher, the candidate must be signed by
+- Assembly checks the newest published Stable and Beta handoffs. After environment
+  approval and draft-byte verification, publication reads them again just before
+  making the release public and checks the Windows record in the exact downloaded,
+  identity-verified candidate handoff. It never rebuilds the installer
+  or substitutes a new signing attestation. Failed lookups, missing handoff assets
+  and invalid signing records stop publication; only a successful Beta inventory
+  with no published Beta means that channel pins nothing.
+- Stable and Beta publication jobs share concurrency group
+  `scient-desktop-stable-beta-publication`, covering the fresh pin check, draft
+  staging, uploaded-byte verification and public promotion. Builds retain their
+  separate channel concurrency, and `production`/`beta` protections still apply.
+  Scheduled Stable candidates, manual releases and Stable releases promoted from
+  accepted Beta source all use this same publication job.
+- If either channel pins a publisher, the candidate must be signed by
   that publisher, whatever `allow_unsigned_windows` says: users switch between
   Stable and Beta, so a pin on one binds both. Handoffs from before this record
   pin nothing, so today's unsigned releases are unaffected until the first signed

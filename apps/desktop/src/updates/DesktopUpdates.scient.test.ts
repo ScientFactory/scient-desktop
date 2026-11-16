@@ -168,7 +168,11 @@ describe("DesktopUpdates outcomes", () => {
         startedAt: 0,
         attemptRef: "0123456789abcdef",
       });
-      const first = recordingHarness({ installRecord: record });
+      const first = recordingHarness({
+        installRecord: record,
+        env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+        appUpdateYml: "provider: github\nowner: ScientFactory\nrepo: scient-desktop\n",
+      });
       yield* Effect.scoped(
         DesktopUpdates.DesktopUpdates.pipe(Effect.flatMap((updates) => updates.configure)),
       ).pipe(Effect.provide(first.layer));
@@ -185,7 +189,11 @@ describe("DesktopUpdates outcomes", () => {
       const kept = [...first.harness.installRecords.values()][0];
       assert.isDefined(kept);
 
-      const second = recordingHarness({ installRecord: kept });
+      const second = recordingHarness({
+        installRecord: kept,
+        env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+        appUpdateYml: "provider: generic\nurl: https://downloads.scientfactory.com/updates/\n",
+      });
       yield* Effect.scoped(
         DesktopUpdates.DesktopUpdates.pipe(Effect.flatMap((updates) => updates.configure)),
       ).pipe(Effect.provide(second.layer));

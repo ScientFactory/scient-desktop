@@ -5,7 +5,6 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
-import { parse } from "yaml";
 
 import { createScientReleaseHandoff } from "./create-scient-release-handoff.ts";
 import {
@@ -58,6 +57,21 @@ describe("Windows publication signing gate", () => {
     assert.isNull(
       decideWindowsPublication({ candidate: signed, pinned, allowUnsigned: false }).warning,
     );
+    const conflictingPins = pinnedWindowsPublishers([
+      { windows: { signed: true, publisherName: PUBLISHER } },
+      { windows: { signed: true, publisherName: "Different Channel Publisher" } },
+    ]);
+    for (const publisherName of conflictingPins) {
+      assert.throws(
+        () =>
+          decideWindowsPublication({
+            candidate: { signed: true, publisherName },
+            pinned: conflictingPins,
+            allowUnsigned: true,
+          }),
+        /would fail their update signature check/,
+      );
+    }
   });
 
   it("fails closed on attestations and records it cannot read", () => {
@@ -122,75 +136,214 @@ describe("Windows publication signing gate", () => {
   });
 });
 
-const workflow = parse(
-  NodeFS.readFileSync(
-    NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
-    "utf8",
-  ),
-) as { jobs: { assemble: { steps: Array<{ name?: string; run?: string }> } } };
-const gateStep = workflow.jobs.assemble.steps.find(
-  (entry) => entry.name === "Require signed macOS and explicitly approved Windows publication",
-)?.run;
+const stableRepository = "ScientFactory/scient-desktop";
+const betaRepository = "ScientFactory/scient-desktop-beta";
+const stableTag = "v0.6.30";
+const betaTag = "v0.6.31-beta.20261116.1";
+const betaRelease = { tag_name: betaTag, draft: false };
 
-// oxlint-disable-next-line t3code/no-global-process-runtime -- This synchronous platform gate skips the Linux Bash step on native Windows.
-describe.skipIf(process.platform === "win32")("Windows publication gate step", () => {
-  it("reads the newest Stable and Beta handoffs before deciding", () => {
-    if (!gateStep) throw new Error("Missing the publication signing step.");
-    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-windows-gate-"));
-    try {
-      const bin = NodePath.join(root, "bin");
-      NodeFS.mkdirSync(bin);
-      NodeFS.mkdirSync(NodePath.join(root, "release-assets"));
-      NodeFS.symlinkSync(import.meta.dirname, NodePath.join(root, "scripts"));
-      for (const arch of ["arm64", "x64"]) {
-        NodeFS.writeFileSync(
-          NodePath.join(root, `release-assets/signing-mac-${arch}.json`),
-          JSON.stringify({ platform: "mac", arch, signed: true }),
-        );
-      }
-      NodeFS.writeFileSync(
-        NodePath.join(root, "release-assets/signing-win-x64.json"),
-        JSON.stringify({ platform: "win", arch: "x64", signed: false }),
-      );
-      // Only the newest Beta is signed: its clients can switch to Stable, so Stable is bound too.
-      NodeFS.writeFileSync(
-        NodePath.join(bin, "gh"),
-        `#!/usr/bin/env node
+function publicationFixture() {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-windows-gate-"));
+  const bin = NodePath.join(root, "bin");
+  const assets = NodePath.join(root, "release-assets");
+  const attestation = NodePath.join(assets, "signing-win-x64.json");
+  const candidateHandoff = NodePath.join(assets, "scient-release-handoff.json");
+  const statePath = NodePath.join(root, "published.json");
+  NodeFS.mkdirSync(bin);
+  NodeFS.mkdirSync(assets);
+  NodeFS.writeFileSync(NodePath.join(assets, "Scient-0.6.31-x64.exe"), "fixture installer");
+  const setCandidate = (
+    windows: { signed: boolean; publisherName?: string },
+    channel: "stable" | "beta" = "stable",
+  ) => {
+    NodeFS.writeFileSync(attestation, JSON.stringify({ platform: "win", arch: "x64", ...windows }));
+    createScientReleaseHandoff([
+      "--assets-dir",
+      assets,
+      "--version",
+      channel === "beta" ? betaTag.slice(1) : "0.6.31",
+      "--channel",
+      channel,
+      "--repository",
+      stableRepository,
+      "--source-sha",
+      "a".repeat(40),
+      "--source-tree",
+      "b".repeat(40),
+      "--windows-signing",
+      attestation,
+      "--output",
+      candidateHandoff,
+    ]);
+  };
+  const setPublished = (state: {
+    betaPages?: unknown;
+    stableHandoff?: unknown;
+    betaHandoff?: unknown;
+    failure?: { key: string; status: number };
+  }) => NodeFS.writeFileSync(statePath, JSON.stringify(state));
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "gh"),
+    `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-if (args[0] === 'api' && args[1].endsWith('/scient-desktop/releases/latest')) process.stdout.write('v0.6.30\\n');
-else if (args[0] === 'api' && args[1].startsWith('repos/ScientFactory/scient-desktop-beta/releases')) process.stdout.write(process.env.BETA_TAG + '\\n');
-else if (args[0] === 'release' && args[1] === 'download') {
-  const handoff = args[2] === 'v0.6.30' ? { version: '0.6.30' } : { windows: { signed: true, publisherName: 'ScientFactory Ltd' } };
-  fs.writeFileSync(args[args.indexOf('--output') + 1], JSON.stringify(handoff));
-} else process.exit(2);
+const state = JSON.parse(fs.readFileSync(process.env.PUBLISHED_STATE, 'utf8'));
+const endpoint = args.find(arg => arg.startsWith('repos/'));
+let key;
+let result;
+if (args[0] === 'api' && endpoint === 'repos/${stableRepository}/releases/latest') {
+  key = 'stable';
+  result = { tag_name: '${stableTag}' };
+} else if (args[0] === 'api' && args.includes('--paginate') && args.includes('--slurp') && endpoint === 'repos/${betaRepository}/releases?per_page=100') {
+  key = 'beta';
+  result = state.betaPages ?? [[]];
+} else if (args[0] === 'release' && args[1] === 'download' && args[args.indexOf('--output') + 1] === '-') {
+  const repo = args[args.indexOf('--repo') + 1];
+  if (repo === '${stableRepository}' && args[2] === '${stableTag}') {
+    key = 'stable-handoff';
+    result = state.stableHandoff ?? { version: '0.6.30' };
+  } else if (repo === '${betaRepository}' && args[2] === '${betaTag}') {
+    key = 'beta-handoff';
+    result = state.betaHandoff ?? { windows: { signed: true, publisherName: '${PUBLISHER}' } };
+  }
+}
+if (!key) process.exit(2);
+if (state.failure?.key === key) {
+  process.stderr.write('HTTP ' + state.failure.status + '\\n');
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify(result));
 `,
-        { mode: 0o700 },
-      );
-      const run = (betaTag: string) =>
-        NodeChildProcess.spawnSync("bash", ["-c", gateStep], {
+    { mode: 0o700 },
+  );
+  setCandidate({ signed: false });
+  setPublished({});
+  return {
+    setCandidate,
+    setPublished,
+    candidateHandoff,
+    attestation,
+    run(phase: "assembly" | "publication", allowUnsigned = true) {
+      return NodeChildProcess.spawnSync(
+        process.execPath,
+        [
+          NodePath.join(import.meta.dirname, "windows-publication-signing.ts"),
+          phase === "assembly" ? "--attestation" : "--candidate-handoff",
+          phase === "assembly" ? attestation : candidateHandoff,
+          "--allow-unsigned",
+          String(allowUnsigned),
+          "--stable-repository",
+          stableRepository,
+          "--beta-repository",
+          betaRepository,
+        ],
+        {
           cwd: root,
           env: {
             ...process.env,
             PATH: `${bin}:${process.env.PATH}`,
-            RUNNER_TEMP: root,
-            BETA_TAG: betaTag,
-            ALLOW_UNSIGNED_WINDOWS: "true",
-            SCIENT_DESKTOP_CANONICAL_REPOSITORY: "ScientFactory/scient-desktop",
-            SCIENT_DESKTOP_BETA_REPOSITORY: "ScientFactory/scient-desktop-beta",
+            GH_TOKEN: "local-fixture",
+            PUBLISHED_STATE: statePath,
           },
           encoding: "utf8",
-        });
-
-      const pinned = run("v0.6.31-beta.20261116.1");
-      assert.notStrictEqual(pinned.status, 0);
-      assert.match(pinned.stderr, /pin publisher 'ScientFactory Ltd'/);
-      // With no Beta published, the explicit exception still allows today's unsigned build.
-      const none = run("");
-      assert.strictEqual(none.status, 0, none.stderr);
-      assert.match(none.stdout, /WARNING: Publishing an unsigned Windows installer/);
-    } finally {
+        },
+      );
+    },
+    [Symbol.dispose]() {
       NodeFS.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+// oxlint-disable-next-line t3code/no-global-process-runtime -- The gh fixture uses a POSIX shebang, like the Linux publication job.
+describe.skipIf(process.platform === "win32")("Windows publication gate CLI", () => {
+  it("reads the newest Stable and Beta handoffs before deciding", () => {
+    using fixture = publicationFixture();
+    // A full first page of drafts must not hide the newest published Beta on the next page.
+    fixture.setPublished({
+      betaPages: [
+        Array.from({ length: 100 }, () => ({ ...betaRelease, draft: true })),
+        [betaRelease],
+      ],
+    });
+    const pinned = fixture.run("assembly");
+    assert.notStrictEqual(pinned.status, 0);
+    assert.match(pinned.stderr, /pin publisher 'ScientFactory Ltd'/);
+    fixture.setPublished({});
+    const none = fixture.run("assembly");
+    assert.strictEqual(none.status, 0, none.stderr);
+    assert.match(none.stdout, /WARNING: Publishing an unsigned Windows installer/);
+    const unapproved = fixture.run("assembly", false);
+    assert.notStrictEqual(unapproved.status, 0);
+    assert.match(unapproved.stderr, /allow_unsigned_windows=true/);
+  });
+
+  it("rejects the same unsigned candidate when Beta gains a pin while Stable awaits approval", () => {
+    using fixture = publicationFixture();
+    const candidate = NodeFS.readFileSync(fixture.candidateHandoff, "utf8");
+    const assembled = fixture.run("assembly");
+    assert.strictEqual(assembled.status, 0, assembled.stderr);
+    NodeFS.unlinkSync(fixture.attestation);
+    const beforePin = fixture.run("publication");
+    assert.strictEqual(beforePin.status, 0, beforePin.stderr);
+
+    fixture.setPublished({ betaPages: [[betaRelease]] });
+    const afterPin = fixture.run("publication");
+    assert.notStrictEqual(afterPin.status, 0);
+    assert.match(afterPin.stderr, /cannot override/);
+    assert.strictEqual(NodeFS.readFileSync(fixture.candidateHandoff, "utf8"), candidate);
+
+    fixture.setCandidate({ signed: true, publisherName: PUBLISHER });
+    const compatible = fixture.run("publication", false);
+    assert.strictEqual(compatible.status, 0, compatible.stderr);
+    fixture.setCandidate({ signed: true, publisherName: "Someone Else" });
+    const incompatible = fixture.run("publication");
+    assert.notStrictEqual(incompatible.status, 0);
+    assert.match(incompatible.stderr, /signed by 'Someone Else'/);
+  });
+
+  it("also enforces a Stable pin when publishing Beta and refuses missing candidate signing", () => {
+    using fixture = publicationFixture();
+    fixture.setCandidate({ signed: false }, "beta");
+    fixture.setPublished({ stableHandoff: { windows: signed } });
+    const pinned = fixture.run("publication");
+    assert.notStrictEqual(pinned.status, 0);
+    assert.match(pinned.stderr, /pin publisher 'ScientFactory Ltd'/);
+
+    fixture.setPublished({});
+    const handoff = JSON.parse(NodeFS.readFileSync(fixture.candidateHandoff, "utf8"));
+    delete handoff.windows;
+    NodeFS.writeFileSync(fixture.candidateHandoff, JSON.stringify(handoff));
+    const missing = fixture.run("publication");
+    assert.notStrictEqual(missing.status, 0);
+    assert.match(missing.stderr, /candidate handoff must record Windows signing/);
+  });
+
+  it("fails closed on public lookup and download errors, including 404 and 5xx", () => {
+    using fixture = publicationFixture();
+    for (const key of ["stable", "beta", "stable-handoff", "beta-handoff"]) {
+      for (const status of [404, 503]) {
+        fixture.setPublished({ betaPages: [[betaRelease]], failure: { key, status } });
+        const failed = fixture.run("publication");
+        assert.notStrictEqual(failed.status, 0, `${key}: HTTP ${status}`);
+        assert.match(failed.stderr, new RegExp(`HTTP ${status}`));
+      }
+    }
+  });
+
+  it("fails closed on malformed public inventories and Windows signing records", () => {
+    using fixture = publicationFixture();
+    for (const state of [
+      { betaPages: {} },
+      { betaPages: [[{ tag_name: betaTag }]] },
+      { stableHandoff: [] },
+      { stableHandoff: { windows: null } },
+      { betaPages: [[betaRelease]], betaHandoff: { windows: { signed: true } } },
+    ]) {
+      fixture.setPublished(state);
+      const failed = fixture.run("publication");
+      assert.notStrictEqual(failed.status, 0, JSON.stringify(state));
+      assert.match(failed.stderr, /Cannot read|Invalid|must name its publisher/);
     }
   });
 });

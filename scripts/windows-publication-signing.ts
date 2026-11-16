@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off - Standalone release gate reads build attestations and published handoffs before publication.
 
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
@@ -12,7 +13,7 @@ export interface WindowsSigningRecord {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** The Windows build's signing attestation, as the release workflow writes it. */
@@ -46,12 +47,8 @@ export function readWindowsSigningAttestation(value: unknown): WindowsSigningRec
 export function pinnedWindowsPublishers(handoffs: ReadonlyArray<unknown>): ReadonlyArray<string> {
   const pinned = new Set<string>();
   for (const handoff of handoffs) {
-    if (!isRecord(handoff) || handoff.windows === undefined) continue;
-    const record = readWindowsSigningAttestation({
-      platform: "win",
-      arch: "x64",
-      ...(handoff.windows as object),
-    });
+    const record = readHandoffWindowsSigning(handoff);
+    if (record === null) continue;
     if (record.publisherName !== null) pinned.add(record.publisherName);
   }
   return [...pinned];
@@ -75,7 +72,7 @@ export function decideWindowsPublication(input: {
         `Installed Windows clients pin publisher ${names}; an unsigned installer would fail their update signature check on Stable and Beta. allow_unsigned_windows cannot override this.`,
       );
     }
-    if (!pinned.includes(candidate.publisherName!)) {
+    if (pinned.some((publisher) => publisher !== candidate.publisherName)) {
       throw new Error(
         `Installed Windows clients pin publisher ${names}; this installer is signed by '${candidate.publisherName}' and would fail their update signature check.`,
       );
@@ -99,13 +96,89 @@ function readJson(path: string): unknown {
   return JSON.parse(NodeFS.readFileSync(path, "utf8")) as unknown;
 }
 
+function readHandoffWindowsSigning(handoff: unknown): WindowsSigningRecord | null {
+  if (!isRecord(handoff)) throw new Error("Invalid release handoff.");
+  if (handoff.windows === undefined) return null;
+  if (!isRecord(handoff.windows)) throw new Error("Invalid Windows signing record in handoff.");
+  return readWindowsSigningAttestation({ platform: "win", arch: "x64", ...handoff.windows });
+}
+
+function githubJson(args: ReadonlyArray<string>): unknown {
+  return JSON.parse(
+    NodeChildProcess.execFileSync("gh", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 16 * 1024 * 1024,
+    }),
+  ) as unknown;
+}
+
+function newestPublishedHandoffs(stableRepository: string, betaRepository: string): unknown[] {
+  const stable = githubJson(["api", `repos/${stableRepository}/releases/latest`]);
+  if (!isRecord(stable) || typeof stable.tag_name !== "string" || !stable.tag_name) {
+    throw new Error("Cannot identify the newest published Stable release.");
+  }
+  const pages = githubJson([
+    "api",
+    "--paginate",
+    "--slurp",
+    `repos/${betaRepository}/releases?per_page=100`,
+  ]);
+  if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+    throw new Error("Cannot read published Beta releases.");
+  }
+  const releases: unknown[] = pages.flat();
+  let betaTag: string | null = null;
+  for (const release of releases) {
+    if (
+      !isRecord(release) ||
+      typeof release.draft !== "boolean" ||
+      typeof release.tag_name !== "string"
+    ) {
+      throw new Error("Invalid published Beta release record.");
+    }
+    if (!release.draft && release.tag_name.includes("-beta.")) {
+      betaTag = release.tag_name;
+      break;
+    }
+  }
+  const download = (repository: string, tag: string) =>
+    githubJson([
+      "release",
+      "download",
+      tag,
+      "--repo",
+      repository,
+      "--pattern",
+      "scient-release-handoff.json",
+      "--output",
+      "-",
+    ]);
+  return [
+    download(stableRepository, stable.tag_name),
+    ...(betaTag === null ? [] : [download(betaRepository, betaTag)]),
+  ];
+}
+
 export function runWindowsPublicationGate(args: ReadonlyArray<string>): string | null {
   const [attestation] = values(args, "--attestation");
-  if (!attestation) throw new Error("--attestation is required.");
+  const [candidateHandoff] = values(args, "--candidate-handoff");
+  if (Boolean(attestation) === Boolean(candidateHandoff)) {
+    throw new Error("Exactly one of --attestation or --candidate-handoff is required.");
+  }
+  const candidate = attestation
+    ? readWindowsSigningAttestation(readJson(attestation))
+    : readHandoffWindowsSigning(readJson(candidateHandoff!));
+  if (candidate === null) throw new Error("The candidate handoff must record Windows signing.");
+  const [stableRepository] = values(args, "--stable-repository");
+  const [betaRepository] = values(args, "--beta-repository");
+  if (!stableRepository || !betaRepository) {
+    throw new Error("--stable-repository and --beta-repository are required.");
+  }
   const allowUnsigned = values(args, "--allow-unsigned")[0] === "true";
   const { warning } = decideWindowsPublication({
-    candidate: readWindowsSigningAttestation(readJson(attestation)),
-    pinned: pinnedWindowsPublishers(values(args, "--published-handoff").map(readJson)),
+    candidate,
+    pinned: pinnedWindowsPublishers(newestPublishedHandoffs(stableRepository, betaRepository)),
     allowUnsigned,
   });
   return warning;

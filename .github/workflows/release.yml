@@ -1207,26 +1207,11 @@ jobs:
               exit 1
             }
           done
-          # Clients on either channel can switch to the other, so a publisher pinned by the newest
-          # Stable or Beta release binds this publication, whatever its channel or exception.
-          published="$RUNNER_TEMP/published-handoffs"
-          mkdir -p "$published"
-          handoffs=()
-          stable_tag="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
-          gh release download "$stable_tag" --repo "$SCIENT_DESKTOP_CANONICAL_REPOSITORY" \
-            --pattern scient-release-handoff.json --output "$published/stable.json"
-          handoffs+=(--published-handoff "$published/stable.json")
-          beta_tag="$(gh api "repos/$SCIENT_DESKTOP_BETA_REPOSITORY/releases?per_page=100" \
-            --jq '[.[] | select(.draft == false and (.tag_name | contains("-beta.")))][0].tag_name // empty')"
-          if [[ -n "$beta_tag" ]]; then
-            gh release download "$beta_tag" --repo "$SCIENT_DESKTOP_BETA_REPOSITORY" \
-              --pattern scient-release-handoff.json --output "$published/beta.json"
-            handoffs+=(--published-handoff "$published/beta.json")
-          fi
           node scripts/windows-publication-signing.ts \
             --attestation release-assets/signing-win-x64.json \
             --allow-unsigned "$ALLOW_UNSIGNED_WINDOWS" \
-            "${handoffs[@]}"
+            --stable-repository "$SCIENT_DESKTOP_CANONICAL_REPOSITORY" \
+            --beta-repository "$SCIENT_DESKTOP_BETA_REPOSITORY"
       - name: Remove internal build attestations
         shell: bash
         run: |
@@ -1310,6 +1295,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: ${{ needs.preflight.outputs.channel == 'beta' && 'beta' || 'production' }}
+    # Both channels share installed Windows publisher pins; hold through public promotion.
+    concurrency:
+      group: scient-desktop-stable-beta-publication
+      cancel-in-progress: false
     permissions:
       # SCIENT-FORK:START — write lets the stable publish dispatch the hosted app's deploy.
       actions: write
@@ -1332,6 +1321,12 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$BETA_TOKEN" ]] || { echo "SCIENT_BETA_RELEASE_TOKEN is required for the isolated artifact repository." >&2; exit 1; }
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: package.json
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: scient-release-v${{ needs.preflight.outputs.version }}
@@ -1393,6 +1388,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ needs.preflight.outputs.channel == 'beta' && secrets.SCIENT_BETA_RELEASE_TOKEN || github.token }}
+          PIN_READ_TOKEN: ${{ github.token }}
           DISTRIBUTION_REPOSITORY: ${{ needs.preflight.outputs.repository }}
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
@@ -1411,7 +1407,7 @@ jobs:
           release_args=(--draft --latest=false)
           if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
             [[ "$DISTRIBUTION_REPOSITORY" == "$SCIENT_DESKTOP_BETA_REPOSITORY" ]] || exit 1
-            stable_latest_before="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
+            stable_latest_before="$(GH_TOKEN="$PIN_READ_TOKEN" gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
             jq -ne --arg beta "$RELEASE_VERSION" --arg stable "$stable_latest_before" '
               ($beta | split("-")[0] | split(".") | map(tonumber)) >
               ($stable | ltrimstr("v") | split(".") | map(tonumber))
@@ -1434,10 +1430,17 @@ jobs:
           (cd published-assets && sha256sum -- * | sort) > "$RUNNER_TEMP/published-release-sha256.txt"
           diff -u "$RUNNER_TEMP/expected-release-sha256.txt" "$RUNNER_TEMP/published-release-sha256.txt"
 
+          # Read both public channels with the source token, not Beta's repository-only write token.
+          GH_TOKEN="$PIN_READ_TOKEN" node scripts/windows-publication-signing.ts \
+            --candidate-handoff release-assets/scient-release-handoff.json \
+            --allow-unsigned "$ALLOW_UNSIGNED_WINDOWS" \
+            --stable-repository "$SCIENT_DESKTOP_CANONICAL_REPOSITORY" \
+            --beta-repository "$SCIENT_DESKTOP_BETA_REPOSITORY"
+
           if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
             gh release edit "$RELEASE_TAG" --repo "$DISTRIBUTION_REPOSITORY" --draft=false --prerelease --latest=false
             gh release view "$RELEASE_TAG" --repo "$DISTRIBUTION_REPOSITORY" --json isDraft,isPrerelease | jq -e '.isDraft == false and .isPrerelease == true' >/dev/null
-            stable_latest_after="$(gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
+            stable_latest_after="$(GH_TOKEN="$PIN_READ_TOKEN" gh api "repos/$SCIENT_DESKTOP_CANONICAL_REPOSITORY/releases/latest" --jq .tag_name)"
             [[ "$stable_latest_before" == "$stable_latest_after" ]] || {
               echo "Stable Latest changed during Beta publication; investigate before accepting the release." >&2
               exit 1

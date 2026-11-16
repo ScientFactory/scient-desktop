@@ -777,6 +777,9 @@ over; the next launch reports `apply` with the same `attemptRef`: `completed` wh
 runs, `not-applied` when the old version runs again (once, not at every launch), `superseded`
 when another build runs. A handoff without a later outcome is unresolved, not a failure; there is
 no timer that restarts servers after the handoff.
+An `apply` outcome omits `sourceKind`: the install record does not retain the previous
+process's feed. Its `attemptRef` links to the original handoff instead of guessing from
+the new process's configured feed.
 
 `app.update.summary` is sent at launch, when the status settles somewhere new (a check in
 progress is not a change) and daily while running: `reason`, `status`, `channel`, `behind`
