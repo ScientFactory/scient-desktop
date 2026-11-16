@@ -274,7 +274,11 @@ profile.
   that for that PR, its head contains current `main`, every other check on that
   head passed, and each failure matches an open entry in
   [`docs/operations/ci-flakes.md`](docs/operations/ci-flakes.md). Wait for
-  checks still running. Use a merge commit and confirm it landed on `main`.
+  checks still running. The `Main merge queue` ruleset allows no bypass, so:
+  dequeue the PR, add the Repository admin role as its bypass actor, merge with
+  a merge commit, remove that bypass at once (in a `finally`), then confirm the
+  ruleset is restored and the merge landed on `main`. A PR merged this way
+  restarts the queue runs of entries already queued; tell the user.
 - Push a correction once its local checks pass, as one push. Each push cancels
   and restarts the PR's CI, so a series of pushes while CI runs wastes the runs.
 - Preserve literal upstream ancestry. Upstream merges use dedicated branches
