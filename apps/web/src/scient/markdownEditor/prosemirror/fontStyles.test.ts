@@ -454,4 +454,17 @@ describe("Whitespace rule: other marks and characters", () => {
     expect(session.pendingWriteback).toBeNull();
     expect(session.session.draftSource).toBe("aa bb\\\n dd ee\n");
   });
+
+  it("sizes a word with an apostrophe between letters as a whole, but not a lone apostrophe", () => {
+    const session = open("don't 'x' l\u2019arbre\n");
+    select(session, 2, 2);
+    run(session, "font-size-14");
+    expect(markedText(session, "font_size")).toEqual(["don't"]);
+    select(session, 8, 8);
+    run(session, "font-size-20");
+    expect(markedText(session, "font_size")).toEqual(["don't", "x"]);
+    select(session, 12, 12);
+    run(session, "font-size-18");
+    expect(markedText(session, "font_size")).toEqual(["don't", "x", "l\u2019arbre"]);
+  });
 });

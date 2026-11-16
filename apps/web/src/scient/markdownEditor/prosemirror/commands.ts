@@ -496,12 +496,16 @@ function wordAroundCaret(state: EditorState): { from: number; to: number } | nul
   const { $from } = state.selection;
   if (!$from.parent.isTextblock) return null;
   const text = $from.parent.textBetween(0, $from.parent.content.size, undefined, "\ufffc");
-  const isWord = (char: string | undefined) =>
+  const isLetter = (char: string | undefined) =>
     char !== undefined && /[\p{L}\p{M}\p{N}_]/u.test(char);
+  // An apostrophe between two letters belongs to the word ("don't", "l'arbre").
+  const isWord = (at: number) =>
+    isLetter(text[at]) ||
+    (/['\u2019]/u.test(text[at] ?? "") && isLetter(text[at - 1]) && isLetter(text[at + 1]));
   let start = $from.parentOffset;
   let end = start;
-  while (isWord(text[start - 1])) start -= 1;
-  while (isWord(text[end])) end += 1;
+  while (isWord(start - 1)) start -= 1;
+  while (isWord(end)) end += 1;
   return start === end ? null : { from: $from.start() + start, to: $from.start() + end };
 }
 
