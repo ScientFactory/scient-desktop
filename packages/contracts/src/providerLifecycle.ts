@@ -334,6 +334,16 @@ export const ProviderRuntimeSummary = Schema.Struct({
   /** For runtimes Scient can manage; optional so older servers keep decoding. */
   catalog: Schema.optionalKey(ProviderRuntimeCatalogFreshness),
   operation: Schema.NullOr(ProviderRuntimeOperation),
+  /** A requested change waiting for recovery; it is not a running operation. */
+  pendingRecovery: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        requestId: TrimmedNonEmptyString,
+        action: Schema.Literals(["install", "update", "repair"]),
+        nextRetryAt: IsoDateTime,
+      }),
+    ),
+  ),
   message: TrimmedNonEmptyString,
   /**
    * Whether the selected runtime passed the provider's own capability check, for a provider that
@@ -490,10 +500,10 @@ export const ProviderRuntimeStartInput = Schema.Struct({
 });
 export type ProviderRuntimeStartInput = typeof ProviderRuntimeStartInput.Type;
 
-export const ProviderRuntimeCancelInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  operationId: TrimmedNonEmptyString,
-});
+export const ProviderRuntimeCancelInput = Schema.Union([
+  Schema.Struct({ instanceId: ProviderInstanceId, operationId: TrimmedNonEmptyString }),
+  Schema.Struct({ instanceId: ProviderInstanceId, requestId: TrimmedNonEmptyString }),
+]);
 export type ProviderRuntimeCancelInput = typeof ProviderRuntimeCancelInput.Type;
 
 /** The user picked this provider in the composer, for "ready at first pick" analytics. */

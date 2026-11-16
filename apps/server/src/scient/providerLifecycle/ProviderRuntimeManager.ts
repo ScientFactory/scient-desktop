@@ -15,6 +15,7 @@ import {
 import {
   managedRuntimeFailureClass,
   managedRuntimeFailureRetryable,
+  managedRuntimeRetryAfterMs,
 } from "@scientfactory/provider-runtime";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -30,6 +31,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import type {
   ProviderManagedRuntimeActions,
@@ -40,7 +42,7 @@ import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSession
 import { ProviderActivity } from "./ProviderActivity.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
-import { ProviderRuntimeRequests } from "./ProviderRuntimeRequests.ts";
+import { ProviderRuntimeRequests, type RuntimeRequest } from "./ProviderRuntimeRequests.ts";
 
 export interface ProviderRuntimeManagerShape {
   readonly plan: (
@@ -64,11 +66,11 @@ export interface ProviderRuntimeManagerShape {
    */
   readonly reselect: (instanceId: ProviderInstanceId) => Effect.Effect<boolean>;
   /**
-   * Starts a change the user did not ask for and waits for it to end. It is marked
-   * `background`, and any start by the user stops it.
+   * Waits for a background recovery or Scient Agent provisioning attempt. A foreground
+   * start preempts it until its runtime change commits.
    */
   readonly startInBackground: (
-    input: ProviderRuntimeStartInput & { readonly attempt: number },
+    input: ProviderRuntimeStartInput & { readonly attempt: number; readonly requestId?: string },
   ) => Effect.Effect<ProviderRuntimeOutcome, ProviderConnectionError>;
 }
 
@@ -101,10 +103,18 @@ interface ActiveRuntimeOperation {
   readonly committedRef: Ref.Ref<boolean>;
   readonly fiberRef: Ref.Ref<Fiber.Fiber<void, never> | undefined>;
   readonly transitionLock: Semaphore.Semaphore;
-  readonly background: { readonly attempt: number } | undefined;
+  readonly background: { readonly attempt: number; readonly requestId?: string } | undefined;
+  readonly requestId: string | undefined;
   readonly outcome: Deferred.Deferred<ProviderRuntimeOutcome>;
   /** Set once the download is complete. */
   readonly downloadRef: Ref.Ref<ProviderRuntimeOperation["download"]>;
+}
+
+interface RuntimeStartup {
+  readonly instanceId: ProviderInstanceId;
+  readonly background: ActiveRuntimeOperation["background"];
+  readonly interrupt: Effect.Effect<void>;
+  readonly outcome: Deferred.Deferred<ProviderRuntimeOutcome>;
 }
 
 type ActiveRuntimeCleanupMode = "complete" | "interrupt";
@@ -197,6 +207,73 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveRuntimeOperation>>(
     new Map(),
   );
+  const startupsRef = yield* Ref.make<ReadonlyMap<string, RuntimeStartup>>(new Map());
+  const publicationLock = yield* Semaphore.make(1);
+
+  const pendingRecovery = (
+    runtime: ProviderRuntimeSummary,
+    request: RuntimeRequest | undefined,
+  ): NonNullable<ProviderRuntimeSummary["pendingRecovery"]> | null =>
+    request && !ACTIVE_RUNTIME_STATUSES.has(runtime.operation?.status ?? "failed")
+      ? {
+          requestId: request.requestId,
+          action: request.action,
+          nextRetryAt: DateTime.formatIso(DateTime.makeUnsafe(request.dueAt)),
+        }
+      : null;
+
+  const publishRuntime: typeof providerRegistry.setProviderManagedRuntimeSummary = Effect.fn(
+    "ProviderRuntimeManager.publishRuntime",
+  )(function* (input) {
+    return yield* publicationLock.withPermits(1)(
+      Effect.gen(function* () {
+        const request = (yield* requests.list).find(
+          (candidate) => candidate.instanceId === input.instanceId,
+        );
+        return yield* providerRegistry.setProviderManagedRuntimeSummary({
+          ...input,
+          runtime: input.runtime
+            ? { ...input.runtime, pendingRecovery: pendingRecovery(input.runtime, request) }
+            : null,
+        });
+      }),
+    );
+  });
+
+  const syncPendingRecovery = Effect.fn("ProviderRuntimeManager.syncPendingRecovery")(function* () {
+    yield* publicationLock.withPermits(1)(
+      Effect.gen(function* () {
+        const providers = yield* providerRegistry.getProviders;
+        const pending = yield* requests.list;
+        for (const request of pending) {
+          const provider = providers.find(
+            (candidate) => candidate.instanceId === request.instanceId,
+          );
+          if (!provider?.enabled || provider.driver !== request.driver) {
+            yield* requests.update(request.requestId, () => undefined);
+          }
+        }
+        const current = yield* requests.list;
+        for (const provider of providers) {
+          const runtime = provider.connection?.runtime;
+          if (!runtime) continue;
+          const next = pendingRecovery(
+            runtime,
+            current.find((request) => request.instanceId === provider.instanceId),
+          );
+          if (
+            (runtime.pendingRecovery?.requestId ?? null) === (next?.requestId ?? null) &&
+            runtime.pendingRecovery?.nextRetryAt === next?.nextRetryAt
+          )
+            continue;
+          yield* providerRegistry.setProviderManagedRuntimeSummary({
+            instanceId: provider.instanceId,
+            runtime: { ...runtime, pendingRecovery: next },
+          });
+        }
+      }),
+    );
+  });
 
   const readTarget = Effect.fn("ProviderRuntimeManager.readTarget")(function* (
     instanceId: ProviderInstanceId,
@@ -286,7 +363,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       Effect.orElseSucceed(() => active.baseSummary),
     );
     const finishedAt = yield* nowIso;
-    return yield* providerRegistry.setProviderManagedRuntimeSummary({
+    return yield* publishRuntime({
       instanceId,
       runtime: {
         ...latestSummary,
@@ -306,7 +383,14 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
 
   const cleanupInterruptedStart = Effect.fn("ProviderRuntimeManager.cleanupInterruptedStart")(
     function* (instanceId: ProviderInstanceId, operationId: string) {
-      const active = yield* takeIfCurrent(instanceId, operationId);
+      const candidate = (yield* Ref.get(activeRef)).get(instanceId);
+      if (candidate?.operationId !== operationId) return;
+      const active = yield* candidate.transitionLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (yield* Ref.get(candidate.committedRef)) return undefined;
+          return yield* takeIfCurrent(instanceId, operationId);
+        }),
+      );
       if (!active) return;
       yield* settleActive(
         active,
@@ -420,7 +504,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             );
             if (actions) {
               const summary = yield* actions.getSummary;
-              yield* providerRegistry.setProviderManagedRuntimeSummary({
+              yield* publishRuntime({
                 instanceId: candidate.instanceId,
                 runtime: {
                   ...summary,
@@ -463,6 +547,8 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     input: ProviderRuntimeStartInput,
     background: ActiveRuntimeOperation["background"],
     outcome: Deferred.Deferred<ProviderRuntimeOutcome>,
+    operationId: string,
+    registeredActiveRef: Ref.Ref<boolean>,
   ) {
     const target = yield* readTarget(input.instanceId);
     const planned = yield* plan({ instanceId: input.instanceId, action: input.action });
@@ -474,7 +560,13 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         message: "The provider setup plan changed. Review it again before continuing.",
       });
     }
-    const operationId = `runtime-${yield* random.uuidV4()}`;
+    if (
+      background?.requestId &&
+      !(yield* requests.list).some((request) => request.requestId === background.requestId)
+    ) {
+      yield* Deferred.succeed(outcome, "cancelled");
+      return yield* Effect.interrupt;
+    }
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
       provider: target.provider,
@@ -488,10 +580,18 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         message: "Another setup or connection operation is already running for this provider.",
       });
     }
+    if (background === undefined) {
+      yield* requests.requested({
+        requestId: operationId,
+        instanceId: input.instanceId,
+        driver: target.provider,
+        action: input.action,
+        catalogRevision: input.catalogRevision,
+      });
+    }
     const startedAt = yield* nowIso;
     const baseSummary = yield* target.actions.getSummary.pipe(
-      // Nothing is published yet, so Cancel cannot reach a stalled read; the
-      // bound keeps it from holding the reservation indefinitely.
+      // Bound discovery even when no client cancels the pending request.
       Effect.timeoutOrElse({
         duration: STARTUP_SUMMARY_TIMEOUT,
         orElse: () =>
@@ -515,6 +615,25 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           : lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid),
       ),
     );
+    if (background?.requestId) {
+      const current = yield* readTarget(input.instanceId);
+      const requested = (yield* requests.list).find(
+        (request) => request.requestId === background.requestId,
+      );
+      if (
+        !requested ||
+        !current.snapshot.enabled ||
+        current.provider !== target.provider ||
+        current.actions !== target.actions ||
+        requested.driver !== target.provider ||
+        requested.action !== input.action ||
+        requested.catalogRevision !== input.catalogRevision
+      ) {
+        yield* requests.update(background.requestId, () => undefined);
+        yield* Deferred.succeed(outcome, "cancelled");
+        return yield* Effect.interrupt;
+      }
+    }
     const fiberRef = yield* Ref.make<Fiber.Fiber<void, never> | undefined>(undefined);
     const committedRef = yield* Ref.make(false);
     const transitionLock = yield* Semaphore.make(1);
@@ -530,17 +649,22 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       fiberRef,
       transitionLock,
       background,
+      requestId: background === undefined ? operationId : background.requestId,
       outcome,
       downloadRef,
     };
-    const runtimeReserved = yield* Ref.modify(activeRef, (current) => {
-      if ([...current.values()].some((candidate) => candidate.provider === target.provider)) {
-        return [false, current] as const;
-      }
-      const next = new Map(current);
-      next.set(input.instanceId, active);
-      return [true, next] as const;
-    });
+    const runtimeReserved = yield* Effect.uninterruptible(
+      Ref.modify(activeRef, (current) => {
+        if ([...current.values()].some((candidate) => candidate.provider === target.provider)) {
+          return [false, current] as const;
+        }
+        const next = new Map(current);
+        next.set(input.instanceId, active);
+        return [true, next] as const;
+      }).pipe(
+        Effect.tap((reserved) => (reserved ? Ref.set(registeredActiveRef, true) : Effect.void)),
+      ),
+    );
     if (!runtimeReserved) {
       yield* lifecycleCoordinator.release({ operationId });
       return yield* makeError({
@@ -548,14 +672,6 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         instanceId: input.instanceId,
         reason: "runtime_busy",
         message: "Another account is already changing this shared provider runtime.",
-      });
-    }
-    if (background === undefined) {
-      yield* requests.requested({
-        instanceId: input.instanceId,
-        driver: target.provider,
-        action: input.action,
-        catalogRevision: input.catalogRevision,
       });
     }
 
@@ -575,7 +691,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       if (progress.download) yield* Ref.set(downloadRef, progress.download);
       const current = (yield* Ref.get(activeRef)).get(input.instanceId);
       if (current?.operationId !== operationId) return;
-      yield* providerRegistry.setProviderManagedRuntimeSummary({
+      yield* publishRuntime({
         instanceId: input.instanceId,
         runtime: {
           ...baseSummary,
@@ -619,26 +735,24 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       ),
     );
 
-    const initialProviders = yield* providerRegistry
-      .setProviderManagedRuntimeSummary({
-        instanceId: input.instanceId,
-        runtime: {
-          ...baseSummary,
-          operation: operation({
-            operationId,
-            action: input.action,
-            status: "preparing",
-            startedAt,
-            message: "Preparing the provider runtime operation.",
-            background,
-          }),
-        },
-      })
-      .pipe(Effect.onExit(cleanupStartupExit));
+    const initialProviders = yield* publishRuntime({
+      instanceId: input.instanceId,
+      runtime: {
+        ...baseSummary,
+        operation: operation({
+          operationId,
+          action: input.action,
+          status: "preparing",
+          startedAt,
+          message: "Preparing the provider runtime operation.",
+          background,
+        }),
+      },
+    }).pipe(Effect.onExit(cleanupStartupExit));
 
     const publishUnexpectedFailure = Effect.gen(function* () {
       const finishedAt = yield* nowIso;
-      yield* providerRegistry.setProviderManagedRuntimeSummary({
+      yield* publishRuntime({
         instanceId: input.instanceId,
         runtime: {
           ...baseSummary,
@@ -698,6 +812,10 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           }
           const finishedAt = yield* nowIso;
           const download = yield* Ref.get(downloadRef);
+          const retryAfterMs =
+            completion._tag === "Failure"
+              ? managedRuntimeRetryAfterMs(completion.failure)
+              : undefined;
           const latestSummary =
             result._tag === "Success"
               ? ((yield* providerRegistry.getProviders).find(
@@ -708,55 +826,52 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
             Effect.gen(function* () {
               const current = (yield* Ref.get(activeRef)).get(input.instanceId);
               if (current?.operationId !== operationId) return;
-              yield* providerRegistry
-                .setProviderManagedRuntimeSummary({
-                  instanceId: input.instanceId,
-                  runtime: {
-                    ...latestSummary,
-                    operation: operation({
-                      operationId,
-                      action: input.action,
-                      status: completion._tag === "Success" ? "succeeded" : "failed",
-                      startedAt,
-                      finishedAt,
-                      message:
-                        completion._tag === "Success"
-                          ? runtimeSuccessMessage(input.action)
-                          : completion.failure.message,
-                      ...(completion._tag === "Success"
-                        ? {}
-                        : {
-                            failureClass: managedRuntimeFailureClass(completion.failure, lastStage),
-                          }),
-                      background,
-                      download,
-                    }),
-                  },
-                })
-                .pipe(
-                  Effect.catchCause(() => publishUnexpectedFailure),
-                  Effect.andThen(
-                    requests.settled({
-                      instanceId: input.instanceId,
-                      driver: target.provider,
-                      outcome:
-                        completion._tag === "Success"
-                          ? "succeeded"
-                          : managedRuntimeFailureRetryable(completion.failure, lastStage)
-                            ? "retryable"
-                            : "failed",
-                    }),
-                  ),
-                  Effect.andThen(
-                    Deferred.succeed(
-                      outcome,
-                      completion._tag === "Success" ? "succeeded" : "failed",
-                    ),
-                  ),
-                  Effect.ensuring(
-                    cleanupIfCurrent(input.instanceId, operationId, "complete").pipe(Effect.asVoid),
-                  ),
-                );
+              yield* publishRuntime({
+                instanceId: input.instanceId,
+                runtime: {
+                  ...latestSummary,
+                  operation: operation({
+                    operationId,
+                    action: input.action,
+                    status: completion._tag === "Success" ? "succeeded" : "failed",
+                    startedAt,
+                    finishedAt,
+                    message:
+                      completion._tag === "Success"
+                        ? runtimeSuccessMessage(input.action)
+                        : completion.failure.message,
+                    ...(completion._tag === "Success"
+                      ? {}
+                      : {
+                          failureClass: managedRuntimeFailureClass(completion.failure, lastStage),
+                        }),
+                    background,
+                    download,
+                  }),
+                },
+              }).pipe(
+                Effect.catchCause(() => publishUnexpectedFailure),
+                Effect.andThen(
+                  requests.settled({
+                    instanceId: input.instanceId,
+                    driver: target.provider,
+                    ...(active.requestId ? { requestId: active.requestId } : {}),
+                    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+                    outcome:
+                      completion._tag === "Success"
+                        ? "succeeded"
+                        : managedRuntimeFailureRetryable(completion.failure, lastStage)
+                          ? "retryable"
+                          : "failed",
+                  }),
+                ),
+                Effect.andThen(
+                  Deferred.succeed(outcome, completion._tag === "Success" ? "succeeded" : "failed"),
+                ),
+                Effect.ensuring(
+                  cleanupIfCurrent(input.instanceId, operationId, "complete").pipe(Effect.asVoid),
+                ),
+              );
             }),
           );
         }),
@@ -791,64 +906,174 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     return { providers: initialProviders };
   });
 
-  // Once asked, a runtime change belongs to the manager: planning can stall for
-  // a long time on a loaded machine, and a client that reconnects meanwhile only
-  // detaches from the reply. Cancel and manager shutdown still stop it.
+  const startupAdmission = yield* Semaphore.make(1);
+
+  const interruptStartup = Effect.fn("ProviderRuntimeManager.interruptStartup")(function* (
+    operationId: string,
+    outcome: ProviderRuntimeOutcome,
+  ) {
+    const starting = (yield* Ref.get(startupsRef)).get(operationId);
+    if (!starting) return;
+    yield* Deferred.succeed(starting.outcome, outcome);
+    yield* starting.interrupt;
+  });
+
+  const beginStartup = Effect.fn("ProviderRuntimeManager.beginStartup")(function* (
+    input: ProviderRuntimeStartInput,
+    background: ActiveRuntimeOperation["background"],
+    outcome: Deferred.Deferred<ProviderRuntimeOutcome>,
+  ) {
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const operationId = `runtime-${yield* random.uuidV4()}`;
+        const registered = yield* Deferred.make<void>();
+        const registeredActiveRef = yield* Ref.make(false);
+        const fiber = yield* restore(
+          Deferred.await(registered).pipe(
+            Effect.andThen(startup(input, background, outcome, operationId, registeredActiveRef)),
+          ),
+        ).pipe(
+          Effect.onExit((exit) =>
+            Effect.gen(function* () {
+              if (Exit.isFailure(exit)) {
+                yield* cleanupInterruptedStart(input.instanceId, operationId);
+                // After registration, the active operation's claimant owns release through publication.
+                if (!(yield* Ref.get(registeredActiveRef))) {
+                  const reservation = yield* lifecycleCoordinator.current(input.instanceId);
+                  if (reservation?.operationId === operationId) {
+                    yield* lifecycleCoordinator.release({ operationId });
+                  }
+                }
+                yield* Deferred.succeed(outcome, "interrupted");
+              }
+              yield* Ref.update(startupsRef, (current) => {
+                const next = new Map(current);
+                next.delete(operationId);
+                return next;
+              });
+            }),
+          ),
+          Effect.forkIn(managerScope),
+        );
+        yield* Ref.update(startupsRef, (current) =>
+          new Map(current).set(operationId, {
+            instanceId: input.instanceId,
+            background,
+            interrupt: Fiber.interrupt(fiber).pipe(Effect.asVoid),
+            outcome,
+          }),
+        );
+        yield* Deferred.succeed(registered, undefined);
+        return fiber;
+      }),
+    );
+  });
+
+  const yieldBackgroundWork = Effect.fn("ProviderRuntimeManager.yieldBackgroundWork")(function* () {
+    const background = [...(yield* Ref.get(activeRef))].filter(
+      ([, active]) => active.background !== undefined,
+    );
+    for (const [instanceId, active] of background) {
+      const claim = yield* active.transitionLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (yield* Ref.get(active.committedRef)) return undefined;
+          return yield* takeIfCurrent(instanceId, active.operationId);
+        }),
+      );
+      if (!claim) continue;
+      yield* interruptStartup(active.operationId, "yielded");
+      yield* settleActive(claim, "interrupt", publishCancelled(instanceId, claim), "yielded").pipe(
+        Effect.ignore,
+      );
+    }
+    for (const [operationId, starting] of yield* Ref.get(startupsRef)) {
+      if (!starting.background) continue;
+      // Committed changes must finish reconciliation; only unregistered startup is left to yield.
+      if ((yield* Ref.get(activeRef)).get(starting.instanceId)?.operationId === operationId)
+        continue;
+      yield* interruptStartup(operationId, "yielded");
+    }
+  });
+
+  // A disconnected caller detaches from the reply; the manager still owns the startup.
   const start: ProviderRuntimeManagerShape["start"] = Effect.fn("ProviderRuntimeManager.start")(
     function* (input) {
-      yield* yieldBackgroundWork(input.instanceId);
       const outcome = yield* Deferred.make<ProviderRuntimeOutcome>();
-      const fiber = yield* startup(input, undefined, outcome).pipe(Effect.forkIn(managerScope));
+      const fiber = yield* startupAdmission.withPermits(1)(
+        Effect.gen(function* () {
+          yield* yieldBackgroundWork();
+          return yield* beginStartup(input, undefined, outcome);
+        }),
+      );
       return yield* Fiber.join(fiber);
     },
   );
-
-  // The user's own change comes first: a background change of another provider stops
-  // and keeps its partial download for its next try.
-  const yieldBackgroundWork = Effect.fn("ProviderRuntimeManager.yieldBackgroundWork")(function* (
-    instanceId: ProviderInstanceId,
-  ) {
-    const background = [...(yield* Ref.get(activeRef))].filter(
-      ([candidate, active]) => candidate !== instanceId && active.background !== undefined,
-    );
-    yield* Effect.forEach(
-      background,
-      ([candidate, active]) =>
-        active.transitionLock
-          .withPermits(1)(
-            Effect.gen(function* () {
-              if (yield* Ref.get(active.committedRef)) return undefined;
-              return yield* takeIfCurrent(candidate, active.operationId);
-            }),
-          )
-          .pipe(
-            Effect.flatMap((claim) =>
-              claim
-                ? settleActive(claim, "interrupt", publishCancelled(candidate, claim), "yielded")
-                : Effect.void,
-            ),
-            Effect.ignore,
-          ),
-      { discard: true },
-    );
-  });
 
   const startInBackground: ProviderRuntimeManagerShape["startInBackground"] = Effect.fn(
     "ProviderRuntimeManager.startInBackground",
   )(function* (input) {
     const outcome = yield* Deferred.make<ProviderRuntimeOutcome>();
-    yield* startup(input, { attempt: input.attempt }, outcome).pipe(
-      Effect.forkIn(managerScope),
-      Effect.flatMap(Fiber.join),
+    const fiber = yield* startupAdmission.withPermits(1)(
+      Effect.gen(function* () {
+        if ([...(yield* Ref.get(startupsRef)).values()].some((starting) => !starting.background)) {
+          return yield* makeError({
+            provider: ProviderDriverKind.make("unknown"),
+            instanceId: input.instanceId,
+            reason: "runtime_busy",
+            message: "A requested runtime change is starting.",
+          });
+        }
+        return yield* beginStartup(
+          input,
+          {
+            attempt: input.attempt,
+            ...(input.requestId ? { requestId: input.requestId } : {}),
+          },
+          outcome,
+        );
+      }),
     );
+    const exit = yield* Fiber.await(fiber);
+    if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+      return yield* Effect.failCause(exit.cause);
+    }
     return yield* Deferred.await(outcome);
   });
 
   const cancel: ProviderRuntimeManagerShape["cancel"] = Effect.fn("ProviderRuntimeManager.cancel")(
     function* (input) {
       const target = yield* readTarget(input.instanceId);
-      const candidate = (yield* Ref.get(activeRef)).get(input.instanceId);
-      if (!candidate || candidate.operationId !== input.operationId) {
+      let candidate = (yield* Ref.get(activeRef)).get(input.instanceId);
+      const pending =
+        "requestId" in input
+          ? (yield* requests.list).find(
+              (request) =>
+                request.instanceId === input.instanceId && request.requestId === input.requestId,
+            )
+          : undefined;
+      let matchesActive =
+        candidate &&
+        ("operationId" in input
+          ? candidate.operationId === input.operationId
+          : pending !== undefined && candidate.requestId === input.requestId);
+      if (!matchesActive && pending) {
+        yield* requests.update(pending.requestId, () => undefined);
+        for (const [operationId, starting] of yield* Ref.get(startupsRef)) {
+          if (
+            operationId === pending.requestId ||
+            starting.background?.requestId === pending.requestId
+          ) {
+            yield* interruptStartup(operationId, "cancelled");
+          }
+        }
+        candidate = (yield* Ref.get(activeRef)).get(input.instanceId);
+        if (candidate?.requestId !== pending.requestId) {
+          yield* syncPendingRecovery();
+          return { providers: yield* providerRegistry.getProviders };
+        }
+        matchesActive = true;
+      }
+      if (!candidate || !matchesActive) {
         return yield* makeError({
           provider: target.provider,
           instanceId: input.instanceId,
@@ -856,12 +1081,13 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider runtime operation is no longer active.",
         });
       }
+      const operationId = candidate.operationId;
       const claim = yield* candidate.transitionLock.withPermits(1)(
         Effect.gen(function* () {
           const current = (yield* Ref.get(activeRef)).get(input.instanceId);
-          if (current?.operationId !== input.operationId) return undefined;
+          if (current?.operationId !== operationId) return undefined;
           if (yield* Ref.get(current.committedRef)) return "committed" as const;
-          return yield* takeIfCurrent(input.instanceId, input.operationId);
+          return yield* takeIfCurrent(input.instanceId, operationId);
         }),
       );
       if (claim === "committed") {
@@ -880,17 +1106,19 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           message: "The provider runtime operation is no longer active.",
         });
       }
+      yield* requests.settled({
+        instanceId: input.instanceId,
+        driver: target.provider,
+        outcome: "cancelled",
+        ...(claim.requestId ? { requestId: claim.requestId } : {}),
+      });
+      yield* interruptStartup(claim.operationId, "cancelled");
       const providers = yield* settleActive(
         claim,
         "interrupt",
         publishCancelled(input.instanceId, claim),
         "cancelled",
       );
-      yield* requests.settled({
-        instanceId: input.instanceId,
-        driver: target.provider,
-        outcome: "cancelled",
-      });
       return { providers };
     },
   );
@@ -982,6 +1210,16 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       { discard: true },
     );
   }).pipe(Effect.delay(RESELECT_INTERVAL), Effect.forever, Effect.forkScoped);
+
+  yield* syncPendingRecovery();
+  yield* requests.changes.pipe(
+    Stream.runForEach(() => syncPendingRecovery()),
+    Effect.forkScoped,
+  );
+  yield* providerRegistry.streamChanges.pipe(
+    Stream.runForEach(() => syncPendingRecovery()),
+    Effect.forkScoped,
+  );
 
   return ProviderRuntimeManager.of({ plan, start, cancel, reselect, startInBackground });
 });

@@ -582,9 +582,23 @@ client therefore does not duplicate or orphan an operation.
 
 A managed runtime change starts in a manager-owned fiber from the first step, including planning,
 which can take tens of seconds on a loaded Windows machine. A reload or disconnect only detaches the
-start request; cancel and manager teardown still end it. Before the operation is published, nothing
-can cancel it, so its first runtime-state read gives up after two minutes and releases the
-reservation.
+start request; cancel and manager teardown still end it. Its first runtime-state read gives up after
+two minutes. Background startup is tracked before it reserves the lifecycle, so a foreground runtime
+change can interrupt it even while that read is blocked. Cleanup releases only its own reservation.
+
+Requested installs, updates and repairs retain their reviewed plan and a stable request identity
+across transient failures and process restarts. While waiting, the runtime snapshot exposes scheduled
+recovery separately from a running operation. Settings shows the next retry time and **Cancel retry**;
+cancel clears the durable request, including during background startup. Success, removal, disabling
+the instance, or a superseding choice also clears it. Recovery rechecks the enabled instance, runtime
+identity and exact reviewed plan before running. It never provisions a new third-party runtime on
+its own; Scient Agent retains its existing automatic provisioning policy.
+
+Recovery waits a jittered five minutes, thirty minutes, then two hours after failures, followed by a
+four-hour cooldown. A server's Retry-After delay, capped at four hours of remaining time, can extend
+the next wait: recovery uses the later of its jittered backoff and that remaining delay. A foreground change
+takes priority over uncommitted background work; yielding preserves the reviewed request and partial
+download for a later try.
 
 One lifecycle coordinator serializes connection, managed runtime mutation, and inherited provider
 maintenance for the same instance. Shared runtime mutation also takes a driver-wide reservation
@@ -645,9 +659,9 @@ presentation rules; provider views retain their real authentication and recovery
 - Settings Install and managed Update run the existing plan/start command directly from the click,
   without opening a dialog. The same button shows concise server-derived progress and remains
   clickable for details. Percentages represent download bytes only and disappear after download.
-  A failed runtime operation opens existing recovery controls, not an implicit retry. Preflight/start
-  errors retain the existing toast. This presentation does not alter backend retry, failure, or
-  rollback behavior; sign-in and external updater flows retain their existing behavior.
+  A failed runtime operation opens recovery controls. Eligible requested changes also show their
+  scheduled retry and **Cancel retry**. Preflight/start errors retain the existing toast. Sign-in and
+  external updater flows retain their existing behavior.
 - **Composer** is the fastest safe setup path. An unavailable selected provider can show Enable,
   Install, or Sign in in place of its model list. Full maintenance remains in Manage.
 - A disabled provider opens one shared disabled state. A permitted Enable action keeps the surface

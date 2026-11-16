@@ -1,6 +1,7 @@
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -64,6 +65,7 @@ const plan = (catalogRevision: string) => ({
 });
 
 const request = {
+  requestId: "requested-install",
   instanceId: INSTANCE,
   driver: CODEX,
   action: "install" as const,
@@ -85,10 +87,36 @@ describe("ProviderRuntimeRequests", () => {
     }).pipe(
       Effect.provide(
         ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-requests-" }).pipe(
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     ),
+  );
+
+  it.effect.each([1_000, 2 * 60 * MINUTE])(
+    "persists the later of retry jitter and the source cooldown (%s ms)",
+    (retryAfterMs) =>
+      Effect.gen(function* () {
+        const requests = yield* makeRequests();
+        yield* requests.requested(request);
+        const now = yield* Clock.currentTimeMillis;
+        yield* requests.settled({ ...request, outcome: "retryable", retryAfterMs });
+        const [kept] = yield* (yield* makeRequests()).list;
+        assert.deepInclude(kept, request);
+        assert.isAtLeast(kept!.dueAt, now + Math.max(retryAfterMs, 4 * MINUTE));
+        assert.isAtMost(kept!.dueAt, now + Math.max(retryAfterMs, 6 * MINUTE));
+        const replacement = { ...request, requestId: "replacement", catalogRevision: "reviewed:2" };
+        yield* requests.requested(replacement);
+        yield* requests.settled({ ...request, outcome: "cancelled" });
+        yield* requests.update(request.requestId, () => undefined);
+        assert.deepInclude((yield* requests.list)[0], replacement);
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-source-cooldown-" }).pipe(
+            Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+      ),
   );
 });
 
@@ -135,7 +163,7 @@ describe("ProviderRuntimeRecovery", () => {
     }).pipe(
       Effect.provide(
         ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-recovery-" }).pipe(
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
     );

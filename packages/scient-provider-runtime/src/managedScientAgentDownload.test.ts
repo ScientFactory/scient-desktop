@@ -12,6 +12,7 @@ import type { ManagedProviderRuntimeProgress } from "./managedProviderRuntime.ts
 import { hydrateManagedRuntimeArtifact } from "./managedRuntimeArtifact.ts";
 import { ManagedScientAgentRuntime } from "./managedScientAgentRuntime.ts";
 import { resolveScientAgentArtifactPolicy } from "./scientAgentManifest.ts";
+import { managedRuntimeFailureRetryable, managedRuntimeRetryAfterMs } from "./runtimeFiles.ts";
 
 vi.mock("node:timers/promises", { spy: true });
 // The transient-response backoff resolves at once but still honours cancellation.
@@ -63,6 +64,7 @@ async function installedFixture() {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   await Promise.all(
     roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
@@ -334,6 +336,49 @@ describe("installing from the compressed copy", () => {
       await expectInstalled(runtime, root, "0.2.0");
     },
   );
+
+  it("carries a compressed source cooldown through raw fallback and the terminal failure", async () => {
+    const { root, previousState } = await installedFixture();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+    using wait = vi.spyOn(NodeTimersPromises, "setTimeout");
+    wait.mockClear();
+    const urls: string[] = [];
+    const fetch = vi.fn(async (url: URL) => {
+      urls.push(String(url));
+      return url.hostname === "downloads.scientfactory.com"
+        ? new Response("busy", { status: 429, headers: { "retry-after": "3600" } })
+        : new Response("missing", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const runtime = new ManagedScientAgentRuntime(root, { smoke: async () => undefined });
+    const compressedFailures: unknown[] = [];
+    const failure = await runtime
+      .install({
+        artifact: compressedArtifact("0.2.0"),
+        signal: new AbortController().signal,
+        onCompressedFallback: (cause) => {
+          compressedFailures.push(cause);
+          vi.advanceTimersByTime(10_000);
+        },
+      })
+      .catch((cause: unknown) => cause);
+    expect(compressedFailures).toHaveLength(1);
+    expect(managedRuntimeRetryAfterMs(compressedFailures[0])).toBe(3_590_000);
+    expect(managedRuntimeRetryAfterMs(new Error("wrapped", { cause: failure }))).toBe(3_590_000);
+    expect(managedRuntimeFailureRetryable(failure)).toBe(true);
+    expect(String(failure)).toContain("github.com Managed runtime download failed with HTTP 404");
+    expect(urls).toEqual([
+      "https://downloads.scientfactory.com/scient-agent/v0.2.0/scient-agent-darwin-arm64.zst",
+      "https://github.com/ScientFactory/scient-agent/releases/download/v0.2.0/scient-agent-darwin-arm64.zst",
+      "https://github.com/ScientFactory/scient-agent/releases/download/v0.2.0/scient-agent-darwin-arm64",
+    ]);
+    expect(wait).not.toHaveBeenCalled();
+    expect(await runtime.readState()).toEqual(previousState);
+    expect(
+      await NodeFSP.readdir(NodePath.join(root, "provider-runtimes", "scient-agent", "staging")),
+    ).toEqual([]);
+  });
 
   it("stops without the binary when told not to fall back, or when cancelled", async () => {
     const { root, previousState } = await installedFixture();

@@ -17,6 +17,9 @@ import {
   type ManagedRuntimeDownloadRetry,
   type ManagedRuntimeFailureClass,
   managedRuntimeFailureClass,
+  managedRuntimeFailureRetryable,
+  managedRuntimeRetryAfterMs,
+  ManagedRuntimeFileError,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
   unpackManagedRuntimeZstd,
@@ -700,6 +703,8 @@ export class ManagedProviderRuntime {
     const compressed = artifact.compressed;
     const unpack = this.#dependencies.unpackZstd;
     let compressedFailure: ManagedRuntimeFailureClass | undefined;
+    let compressedCause: unknown;
+    const sourceCooldowns = new Map<string, number>();
     const fetchVerified = async (copy: {
       readonly url: string;
       readonly mirrorUrl?: string | undefined;
@@ -728,6 +733,7 @@ export class ManagedProviderRuntime {
               allowedHosts: [...artifact.allowedHosts, new URL(copy.mirrorUrl).hostname],
             }
           : { url: copy.url, allowedHosts: artifact.allowedHosts }),
+        sourceCooldowns,
         checksum: copy.checksum,
         destination: copy.destination,
         partialPath: this.#partialDownloadPath(copy.checksum),
@@ -765,21 +771,49 @@ export class ManagedProviderRuntime {
       } catch (cause) {
         if (signal.aborted) throw cause;
         await NodeFSP.rm(archivePath, { force: true });
+        compressedCause = cause;
         compressedFailure = managedRuntimeFailureClass(cause);
         input.onCompressedFallback?.(cause);
       } finally {
         await NodeFSP.rm(compressedPath, { force: true });
       }
     }
-    await fetchVerified({
-      url: artifact.url,
-      mirrorUrl: managedRuntimeMirrorUrl(artifact),
-      checksum: artifact.checksum,
-      size: artifact.size,
-      destination: archivePath,
-      compressed: false,
-    });
-    await this.#dependencies.verify(archivePath, artifact.checksum);
+    try {
+      await fetchVerified({
+        url: artifact.url,
+        mirrorUrl: managedRuntimeMirrorUrl(artifact),
+        checksum: artifact.checksum,
+        size: artifact.size,
+        destination: archivePath,
+        compressed: false,
+      });
+      await this.#dependencies.verify(archivePath, artifact.checksum);
+    } catch (cause) {
+      if (signal.aborted || compressedCause === undefined) throw cause;
+      const failureClass = managedRuntimeFailureClass(cause);
+      const sourceFailure =
+        failureClass === "http_4xx" ||
+        failureClass === "http_5xx" ||
+        failureClass === "network" ||
+        failureClass === "timeout" ||
+        failureClass === "checksum" ||
+        failureClass === "size_mismatch" ||
+        failureClass === "certificate";
+      throw new ManagedRuntimeFileError(
+        cause instanceof Error ? cause.message : "Managed runtime download failed.",
+        {
+          cause,
+          failureClass,
+          retryable:
+            managedRuntimeFailureRetryable(cause) ||
+            (sourceFailure && managedRuntimeFailureRetryable(compressedCause)),
+          retryAfterMs: Math.max(
+            managedRuntimeRetryAfterMs(cause) ?? 0,
+            managedRuntimeRetryAfterMs(compressedCause) ?? 0,
+          ),
+        },
+      );
+    }
   }
 
   async #installOwned(

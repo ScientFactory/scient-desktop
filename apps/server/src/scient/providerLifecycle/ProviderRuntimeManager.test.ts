@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeOS from "node:os";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -48,7 +49,9 @@ import {
   make,
   ProviderRuntimeManager,
 } from "./ProviderRuntimeManager.ts";
-import { ProviderRuntimeRequests } from "./ProviderRuntimeRequests.ts";
+import { make as makeRequests, ProviderRuntimeRequests } from "./ProviderRuntimeRequests.ts";
+import { make as makeRecovery } from "./ProviderRuntimeRecovery.ts";
+import * as ServerConfig from "../../config.ts";
 
 const CODEX = ProviderDriverKind.make("codex");
 const INSTANCE = ProviderInstanceId.make("codex");
@@ -135,6 +138,7 @@ function makeHarness(
     readonly useProductionLayer?: boolean;
     readonly isBusy?: ProviderActivityShape["isBusy"];
     readonly closeInstance?: ProviderSessionManagerV2Shape["closeInstance"];
+    readonly requests?: ProviderRuntimeRequests["Service"];
   } = {},
 ) {
   return Effect.gen(function* () {
@@ -226,12 +230,16 @@ function makeHarness(
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
     const requestLogRef = yield* SubscriptionRef.make<ReadonlyArray<string>>([]);
-    const requestsLayer = Layer.mock(ProviderRuntimeRequests)({
-      requested: (input) =>
-        SubscriptionRef.update(requestLogRef, (log) => [...log, `requested:${input.action}`]),
-      settled: (input) =>
-        SubscriptionRef.update(requestLogRef, (log) => [...log, `settled:${input.outcome}`]),
-    });
+    const requestsLayer = hooks.requests
+      ? Layer.succeed(ProviderRuntimeRequests, hooks.requests)
+      : Layer.mock(ProviderRuntimeRequests)({
+          list: Effect.succeed([]),
+          changes: Stream.empty,
+          requested: (input) =>
+            SubscriptionRef.update(requestLogRef, (log) => [...log, `requested:${input.action}`]),
+          settled: (input) =>
+            SubscriptionRef.update(requestLogRef, (log) => [...log, `settled:${input.outcome}`]),
+        });
     const providerSessionsLayer = Layer.mock(ProviderSessionManagerV2)({
       closeInstance: (instanceId) =>
         Ref.update(stopCountRef, (count) => count + 1).pipe(
@@ -274,6 +282,7 @@ function makeHarness(
         );
     return {
       manager,
+      registry,
       providersRef,
       reloadCountRef,
       reloadedInstancesRef,
@@ -1187,6 +1196,193 @@ describe("ProviderRuntimeManager", () => {
         yield* manager.cancel({ instanceId: INSTANCE, operationId });
         assert.strictEqual(yield* Fiber.join(cancelled), "cancelled");
       }),
+  );
+
+  it.effect.each(["same instance", "another provider"] as const)(
+    "gives foreground startup priority during background summary discovery: %s",
+    (choice) =>
+      Effect.gen(function* () {
+        const summaryStarted = yield* Deferred.make<void>();
+        const summaries = yield* Ref.make(0);
+        const runs = yield* SubscriptionRef.make(0);
+        const actions: ProviderManagedRuntimeActions = {
+          getSummary: Ref.getAndUpdate(summaries, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 0
+                ? Deferred.succeed(summaryStarted, undefined).pipe(Effect.andThen(Effect.never))
+                : Effect.succeed(missingRuntime),
+            ),
+          ),
+          plan: () => Effect.succeed(installPlan()),
+          run: () =>
+            SubscriptionRef.update(runs, (count) => count + 1).pipe(Effect.andThen(Effect.never)),
+        };
+        const other: ServerProvider = {
+          ...provider,
+          instanceId: ProviderInstanceId.make("claude"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+        };
+        const { manager, providersRef, coordinator, lifecycleReleaseCountRef } = yield* makeHarness(
+          actions,
+          [provider, other],
+        );
+        const background = yield* manager
+          .startInBackground({
+            instanceId: INSTANCE,
+            action: "install",
+            catalogRevision: "reviewed:1",
+            attempt: 1,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(summaryStarted);
+        const reserved = yield* coordinator.current(INSTANCE);
+        assert.ok(reserved);
+        assert.strictEqual(
+          (yield* SubscriptionRef.get(providersRef))[0]?.connection?.runtime?.operation,
+          null,
+        );
+        const foregroundInstance = choice === "same instance" ? INSTANCE : other.instanceId;
+        const foreground = yield* manager.start({
+          instanceId: foregroundInstance,
+          action: "install",
+          catalogRevision: "reviewed:1",
+        });
+        assert.strictEqual(yield* Fiber.join(background), "yielded");
+        const operation = foreground.providers.find(
+          (candidate) => candidate.instanceId === foregroundInstance,
+        )?.connection?.runtime?.operation;
+        assert.ok(operation);
+        assert.notStrictEqual(operation.operationId, reserved.operationId);
+        assert.strictEqual(
+          (yield* coordinator.current(foregroundInstance))?.operationId,
+          operation.operationId,
+        );
+        yield* awaitState(runs, (count) => count === 1);
+        assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 1);
+        if (choice === "another provider")
+          assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+        yield* manager.cancel({
+          instanceId: foregroundInstance,
+          operationId: operation.operationId,
+        });
+        assert.strictEqual(yield* coordinator.current(foregroundInstance), undefined);
+        assert.strictEqual(yield* SubscriptionRef.get(lifecycleReleaseCountRef), 2);
+      }),
+  );
+
+  it.effect.each(["waiting", "starting"] as const)(
+    "exposes and durably cancels restarted pending recovery while %s",
+    (phase) =>
+      Effect.gen(function* () {
+        const before = yield* makeRequests();
+        const request = {
+          requestId: "requested-before-restart",
+          instanceId: INSTANCE,
+          driver: CODEX,
+          action: "install" as const,
+          catalogRevision: "reviewed:1",
+        };
+        yield* before.requested(request);
+        yield* before.settled({ ...request, outcome: "retryable" });
+        const requests = yield* makeRequests();
+        const summaryStarted = yield* Deferred.make<void>();
+        const runs = yield* Ref.make(0);
+        const actions: ProviderManagedRuntimeActions = {
+          getSummary: Deferred.succeed(summaryStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+          plan: () => Effect.succeed(installPlan()),
+          run: () => Ref.update(runs, (count) => count + 1),
+        };
+        const { manager, registry, providersRef, coordinator } = yield* makeHarness(
+          actions,
+          [provider],
+          () => Effect.void,
+          undefined,
+          Effect.void,
+          { requests },
+        );
+        const pending = (yield* SubscriptionRef.get(providersRef))[0]?.connection?.runtime;
+        assert.strictEqual(pending?.operation, null);
+        assert.strictEqual(pending?.pendingRecovery?.requestId, request.requestId);
+        const background =
+          phase === "starting"
+            ? yield* manager.startInBackground({ ...request, attempt: 1 }).pipe(Effect.forkChild)
+            : undefined;
+        if (background) yield* Deferred.await(summaryStarted);
+        const cancelled = yield* manager.cancel({
+          instanceId: INSTANCE,
+          requestId: request.requestId,
+        });
+        assert.isNull(cancelled.providers[0]?.connection?.runtime?.pendingRecovery);
+        assert.strictEqual(cancelled.providers[0]?.connection?.runtime?.operation, null);
+        if (background) assert.strictEqual(yield* Fiber.join(background), "cancelled");
+        assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+        assert.deepStrictEqual(yield* requests.list, []);
+        assert.deepStrictEqual(yield* (yield* makeRequests()).list, []);
+        yield* makeRecovery().pipe(
+          Effect.provideService(ProviderRuntimeRequests, requests),
+          Effect.provideService(ProviderRuntimeManager, manager),
+          Effect.provideService(ProviderRegistry, registry),
+        );
+        yield* TestClock.adjust("10 minutes");
+        assert.strictEqual(yield* Ref.get(runs), 0);
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-restarted-recovery-" }).pipe(
+            Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("cancels a requested foreground startup before its operation is published", () =>
+    Effect.gen(function* () {
+      const requests = yield* makeRequests();
+      const summaryStarted = yield* Deferred.make<void>();
+      const runs = yield* Ref.make(0);
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Deferred.succeed(summaryStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        plan: () => Effect.succeed(installPlan()),
+        run: () => Ref.update(runs, (count) => count + 1),
+      };
+      const { manager, providersRef, coordinator } = yield* makeHarness(
+        actions,
+        [provider],
+        () => Effect.void,
+        undefined,
+        Effect.void,
+        { requests },
+      );
+      const caller = yield* manager
+        .start({
+          instanceId: INSTANCE,
+          action: "install",
+          catalogRevision: "reviewed:1",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(summaryStarted);
+      const pending = (yield* awaitState(
+        providersRef,
+        (providers) => providers[0]?.connection?.runtime?.pendingRecovery != null,
+      ))[0]!.connection!.runtime!;
+      assert.strictEqual(pending.operation, null);
+      const cancelled = yield* manager.cancel({
+        instanceId: INSTANCE,
+        requestId: pending.pendingRecovery!.requestId,
+      });
+      assert.isTrue(Exit.isFailure(yield* Fiber.await(caller)));
+      assert.isNull(cancelled.providers[0]?.connection?.runtime?.pendingRecovery);
+      assert.strictEqual(yield* coordinator.current(INSTANCE), undefined);
+      assert.strictEqual(yield* Ref.get(runs), 0);
+      assert.deepStrictEqual(yield* (yield* makeRequests()).list, []);
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-cancel-startup-" }).pipe(
+          Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
   );
 
   it.effect("holds the lifecycle reservation until cancelled runtime state is published", () =>

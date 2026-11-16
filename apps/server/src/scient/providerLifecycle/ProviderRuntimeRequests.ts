@@ -7,14 +7,16 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Random from "effect/Random";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { ServerConfig } from "../../config.ts";
 
@@ -25,6 +27,7 @@ const ACP_REGISTRY = ProviderDriverKind.make("acpRegistry");
 
 /** An install, update or repair the user asked for that has not succeeded yet. */
 const RuntimeRequest = Schema.Struct({
+  requestId: Schema.String,
   instanceId: ProviderInstanceId,
   driver: ProviderDriverKind,
   action: Schema.Literals(["install", "update", "repair"]),
@@ -37,7 +40,13 @@ const RuntimeRequest = Schema.Struct({
 });
 export type RuntimeRequest = typeof RuntimeRequest.Type;
 const RequestsJson = Schema.fromJsonString(Schema.Array(RuntimeRequest));
-const decodeRequests = Schema.decodeEffect(RequestsJson);
+const decodeRequests = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({ ...RuntimeRequest.fields, requestId: Schema.optionalKey(Schema.String) }),
+    ),
+  ),
+);
 const encodeRequests = Schema.encodeEffect(RequestsJson);
 
 /** How a change of a runtime ended; `retryable` failed in a way a later try may not. */
@@ -67,6 +76,7 @@ export class ProviderRuntimeRequests extends Context.Service<
   {
     /** The user started a change: it replaces any request for the same runtime; Remove only clears. */
     readonly requested: (input: {
+      readonly requestId: string;
       readonly instanceId: ProviderInstanceId;
       readonly driver: ProviderDriverKind;
       readonly action: ProviderManagedRuntimeAction;
@@ -76,11 +86,14 @@ export class ProviderRuntimeRequests extends Context.Service<
       readonly instanceId: ProviderInstanceId;
       readonly driver: ProviderDriverKind;
       readonly outcome: RuntimeChangeOutcome;
+      readonly requestId?: string;
+      readonly retryAfterMs?: number;
     }) => Effect.Effect<void>;
     readonly list: Effect.Effect<ReadonlyArray<RuntimeRequest>>;
-    /** Changes the instance's request if there still is one; `undefined` drops it. */
+    readonly changes: Stream.Stream<ReadonlyArray<RuntimeRequest>>;
+    /** Changes this exact request if it still exists; `undefined` drops it. */
     readonly update: (
-      instanceId: ProviderInstanceId,
+      requestId: string,
       change: (request: RuntimeRequest) => RuntimeRequest | undefined,
     ) => Effect.Effect<void>;
   }
@@ -91,12 +104,18 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
+  const random = yield* SecureRandom.SecureRandom;
   // Kept outside the runtime folders, which Remove deletes.
   const filePath = path.join(config.baseDir, "provider-runtimes", ".background", "requests.json");
-  const requestsRef = yield* Ref.make<ReadonlyArray<RuntimeRequest>>(
-    yield* fs.readFileString(filePath).pipe(
-      Effect.flatMap(decodeRequests),
-      Effect.orElseSucceed((): ReadonlyArray<RuntimeRequest> => []),
+  const stored = yield* fs.readFileString(filePath).pipe(
+    Effect.flatMap(decodeRequests),
+    Effect.orElseSucceed(() => []),
+  );
+  const requestsRef = yield* SubscriptionRef.make<ReadonlyArray<RuntimeRequest>>(
+    yield* Effect.forEach(stored, (request) =>
+      Effect.gen(function* () {
+        return { ...request, requestId: request.requestId ?? `request-${yield* random.uuidV4()}` };
+      }),
     ),
   );
   const lock = yield* Semaphore.make(1);
@@ -105,28 +124,36 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
     next: (requests: ReadonlyArray<RuntimeRequest>) => Effect.Effect<ReadonlyArray<RuntimeRequest>>,
   ) =>
     lock.withPermits(1)(
-      Effect.gen(function* () {
-        const updated = yield* next(yield* Ref.get(requestsRef));
-        yield* Ref.set(requestsRef, updated);
-        yield* encodeRequests(updated).pipe(
-          Effect.flatMap((contents) =>
-            writeFileStringAtomically({ filePath, contents, mode: 0o600 }),
-          ),
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(HostProcess.Platform, platform),
-          Effect.ignoreCause({ log: true }),
-        );
-      }),
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const current = yield* SubscriptionRef.get(requestsRef);
+          const updated = yield* next(current);
+          if (updated === current) return;
+          yield* encodeRequests(updated).pipe(
+            Effect.flatMap((contents) =>
+              writeFileStringAtomically({ filePath, contents, mode: 0o600 }),
+            ),
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(HostProcess.Platform, platform),
+            Effect.ignoreCause({ log: true }),
+          );
+          yield* SubscriptionRef.set(requestsRef, updated);
+        }),
+      ),
     );
+
+  if (stored.some((request) => request.requestId === undefined)) {
+    yield* change((requests) => Effect.succeed([...requests]));
+  }
 
   const updateEach = (
     requests: ReadonlyArray<RuntimeRequest>,
-    instanceId: ProviderInstanceId,
+    requestId: string,
     next: (request: RuntimeRequest) => RuntimeRequest | undefined,
   ) =>
     requests.flatMap((request) => {
-      if (request.instanceId !== instanceId) return [request];
+      if (request.requestId !== requestId) return [request];
       const updated = next(request);
       return updated ? [updated] : [];
     });
@@ -138,10 +165,10 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
     yield* change((requests) => {
       const others = requests.filter((request) => !sameRuntime(request, input));
       if (input.action === "remove") return Effect.succeed(others);
-      const { instanceId, driver, action, catalogRevision } = input;
+      const { requestId, instanceId, driver, action, catalogRevision } = input;
       return Effect.succeed([
         ...others,
-        { instanceId, driver, action, catalogRevision, retries: 0, dueAt },
+        { requestId, instanceId, driver, action, catalogRevision, retries: 0, dueAt },
       ]);
     });
   });
@@ -151,17 +178,24 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
   ) {
     yield* change((requests) =>
       Effect.gen(function* () {
+        const request = requests.find((candidate) =>
+          input.requestId === undefined
+            ? candidate.instanceId === input.instanceId && sameRuntime(candidate, input)
+            : candidate.requestId === input.requestId,
+        );
+        if (!request) return requests;
         switch (input.outcome) {
           case "succeeded":
             return requests.filter((request) => !sameRuntime(request, input));
           case "cancelled":
           case "failed":
-            return updateEach(requests, input.instanceId, () => undefined);
+            return updateEach(requests, request.requestId, () => undefined);
           case "retryable": {
-            const request = requests.find((candidate) => candidate.instanceId === input.instanceId);
-            if (!request) return requests;
-            const dueAt = yield* nextTryAt(request.retries);
-            return updateEach(requests, input.instanceId, (current) => ({ ...current, dueAt }));
+            const dueAt = Math.max(
+              yield* nextTryAt(request.retries),
+              (yield* Clock.currentTimeMillis) + (input.retryAfterMs ?? 0),
+            );
+            return updateEach(requests, request.requestId, (current) => ({ ...current, dueAt }));
           }
         }
       }),
@@ -169,13 +203,25 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
   });
 
   const update = Effect.fn("ProviderRuntimeRequests.update")(function* (
-    instanceId: ProviderInstanceId,
+    requestId: string,
     next: (request: RuntimeRequest) => RuntimeRequest | undefined,
   ) {
-    yield* change((requests) => Effect.succeed(updateEach(requests, instanceId, next)));
+    yield* change((requests) =>
+      Effect.succeed(
+        requests.some((request) => request.requestId === requestId)
+          ? updateEach(requests, requestId, next)
+          : requests,
+      ),
+    );
   });
 
-  return ProviderRuntimeRequests.of({ requested, settled, list: Ref.get(requestsRef), update });
+  return ProviderRuntimeRequests.of({
+    requested,
+    settled,
+    list: SubscriptionRef.get(requestsRef),
+    changes: SubscriptionRef.changes(requestsRef),
+    update,
+  });
 });
 
 export const layer = Layer.effect(ProviderRuntimeRequests, make());

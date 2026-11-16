@@ -47,15 +47,16 @@ export const make = Effect.fn("ProviderRuntimeRecovery.make")(function* () {
             .pipe(Effect.option)
         : Option.none();
     if (Option.isNone(planned) || planned.value.catalogRevision !== request.catalogRevision) {
-      return yield* requests.update(request.instanceId, () => undefined);
+      return yield* requests.update(request.requestId, () => undefined);
     }
     const attempt = request.retries + 1;
     const lease = yield* nextTryAt(attempt);
-    yield* requests.update(request.instanceId, (current) => ({
+    yield* requests.update(request.requestId, (current) => ({
       ...current,
       retries: attempt,
       dueAt: lease,
     }));
+    if (!(yield* requests.list).some((current) => current.requestId === request.requestId)) return;
     // The manager settles the request when the change ends; only a try that never ran is undone.
     const outcome = yield* manager
       .startInBackground({
@@ -63,12 +64,13 @@ export const make = Effect.fn("ProviderRuntimeRecovery.make")(function* () {
         action: request.action,
         catalogRevision: request.catalogRevision,
         attempt,
+        requestId: request.requestId,
       })
       .pipe(Effect.orElseSucceed(() => "busy" as const));
     if (outcome === "interrupted") return yield* Effect.interrupt;
     if (outcome === "yielded" || outcome === "busy") {
       const later = (yield* Clock.currentTimeMillis) + BUSY_DELAY_MS;
-      yield* requests.update(request.instanceId, (current) =>
+      yield* requests.update(request.requestId, (current) =>
         current.retries === attempt
           ? { ...current, retries: request.retries, dueAt: later }
           : current,
