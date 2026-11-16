@@ -285,6 +285,22 @@ export const DesktopUpdateRemoteOutcome = Schema.Literals([
 ]);
 export type DesktopUpdateRemoteOutcome = typeof DesktopUpdateRemoteOutcome.Type;
 
+// SCIENT-FORK:START — update facts the desktop journaled, delivered to one backend's analytics.
+export const DESKTOP_UPDATE_FACTS_LIMIT = 64;
+export const DesktopUpdateFact = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: Schema.Literals(["app.update.outcome", "app.update.summary"]),
+  occurredAt: TrimmedNonEmptyString,
+  appVersion: TrimmedNonEmptyString,
+  buildChannel: Schema.Literals(["stable", "beta", "nightly", "development", "unknown"]),
+  properties: Schema.Record(
+    Schema.String,
+    Schema.Union([Schema.String, Schema.Number, Schema.Boolean]),
+  ),
+});
+export type DesktopUpdateFact = typeof DesktopUpdateFact.Type;
+// SCIENT-FORK:END
+
 export const DesktopUpdateStatusReport = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("desktopUpdateStatus"),
@@ -293,6 +309,11 @@ export const DesktopUpdateStatusReport = Schema.Struct({
   outcome: Schema.optionalKey(DesktopUpdateRemoteOutcome),
   reason: Schema.optionalKey(TrimmedNonEmptyString),
   state: DesktopUpdateStateSchema,
+  // SCIENT-FORK:START — a report carrying facts delivers them; it is not a status change.
+  facts: Schema.optionalKey(
+    Schema.Array(DesktopUpdateFact).check(Schema.isMaxLength(DESKTOP_UPDATE_FACTS_LIMIT)),
+  ),
+  // SCIENT-FORK:END
 });
 export type DesktopUpdateStatusReport = typeof DesktopUpdateStatusReport.Type;
 
@@ -407,6 +428,16 @@ export const DesktopTelemetryServerReady = Schema.Struct({
 });
 export type DesktopTelemetryServerReady = typeof DesktopTelemetryServerReady.Type;
 
+// SCIENT-FORK:START — the backend's analytics outbox holds these facts, or must never send them.
+export const DesktopTelemetryAckDesktopUpdateFacts = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("ackDesktopUpdateFacts"),
+  ids: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(DESKTOP_UPDATE_FACTS_LIMIT)),
+});
+export type DesktopTelemetryAckDesktopUpdateFacts =
+  typeof DesktopTelemetryAckDesktopUpdateFacts.Type;
+// SCIENT-FORK:END
+
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetryServerReady,
   DesktopTelemetrySetDiagnosticsDemand,
@@ -414,6 +445,8 @@ export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetryRequestDesktopUpdate,
   DesktopTelemetryCommitDesktopUpdate,
   DesktopTelemetryCancelDesktopUpdate,
+  // SCIENT-FORK: acknowledges journaled update facts.
+  DesktopTelemetryAckDesktopUpdateFacts,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 

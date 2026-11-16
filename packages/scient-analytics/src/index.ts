@@ -15,5 +15,6 @@ export {
   createAnalyticsRuntime,
   type AnalyticsRuntime,
   type AnalyticsRuntimeOptions,
+  type RecordedAnalyticsEvent,
 } from "./runtime.ts";
 export type { AnalyticsWorkerInput } from "./workerProtocol.ts";

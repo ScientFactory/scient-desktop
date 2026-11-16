@@ -37,6 +37,9 @@ import { eventVersion as messageVersion } from "./NativeTelemetryClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
+// SCIENT-FORK:START — journaled desktop update facts
+import { ingestDesktopUpdateFacts } from "../telemetry/DesktopUpdateFacts.ts";
+// SCIENT-FORK:END
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
 const INITIAL_SAMPLE_DEADLINE_MS = 90_000;
@@ -604,6 +607,25 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           return recordContact.pipe(Effect.andThen(applyShellSnapshot(message)));
         }
 
+        // SCIENT-FORK:START — a report carrying facts delivers them; the desktop forgets them only
+        // after this backend's outbox holds them, and their status is not a change.
+        if (message.type === "desktopUpdateStatus" && message.facts !== undefined) {
+          const facts = message.facts;
+          return recordContact.pipe(
+            Effect.andThen(
+              ingestDesktopUpdateFacts(analytics, facts).pipe(
+                Effect.flatMap((ids) =>
+                  ids.length === 0
+                    ? Effect.void
+                    : sendControlMessage({ version: 1, type: "ackDesktopUpdateFacts", ids }),
+                ),
+                Effect.ignoreCause(),
+              ),
+            ),
+            Effect.asVoid,
+          );
+        }
+        // SCIENT-FORK:END
         if (message.type === "desktopUpdateStatus") {
           return recordContact.pipe(
             Effect.andThen(Ref.set(latestUpdateReport, Option.some(message))),

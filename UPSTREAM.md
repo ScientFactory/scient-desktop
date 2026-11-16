@@ -203,6 +203,11 @@ call live in `apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; callers 
 callers; do not reintroduce the confirmation during alignment. A managed policy's feed stays the
 update source on every channel. Install-on-quit and early native (Squirrel.Mac) preparation stay
 off: they need native-readiness tracking and packaged-build tests first.
+Update outcomes and summaries (`app.update.*`, see `docs/internals/product-analytics.md`) live in
+`apps/desktop/src/scient/updateOutcomes/`; `DesktopUpdates.ts`, `DesktopTelemetryPublisher.ts`,
+`DesktopBackendManager.ts`, `main.ts`, the telemetry contract and `DesktopTelemetryReceiver.ts`
+carry only marked calls into them. The four-hour poller contains an unexpected failure per
+iteration instead of ending; keep that when aligning upstream's poller.
 The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
 and Scient-managed runtimes appear in a Scient-owned circle and card
 (`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in

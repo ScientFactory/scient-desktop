@@ -515,7 +515,7 @@ kind. Its private summary and payload are never read; the failure class remains
 memory. This covers reported outcomes, not an unreported server crash.
 
 Registered operation kinds without producers are not usage evidence. Non-PDF
-document/figure exports, desktop updater,
+document/figure exports,
 migration, desktop main-process crash, and cloud/mobile coverage still require their own
 authoritative seams and proof. `client.connected`/`client.turn.requested` remain
 unregistered as described below. Failure categories not known from a safe typed
@@ -753,6 +753,50 @@ item counts as failed.
 The contract reads these fields with closed lists, so free text becomes `unknown` or is dropped.
 The gateway accepts them unchanged; reference queries on the ledger live in the website's
 `workers/events/src/attributionPipeline.test.ts`.
+
+## Desktop app updates
+
+The desktop updater records two Essential events, both fully closed: their normalizers read every
+field, so nothing passes through as recorded. Versions are public release numbers or omitted;
+URLs, hosts, paths, raw errors and the updater's `message` never enter them.
+
+`app.update.outcome` is one outcome per step attempt, with `step` and `outcome`: `check`
+(`available`, `up-to-date`, `failed`), `download` (`started`, `completed`, `failed`), `install`
+(`handoff-attempted`, `failed`) and `apply` (`completed`, `not-applied`, `superseded`). `trigger`
+is `user` or `background` (startup and four-hourly checks, the background download).
+`failureClass` (failed only) comes from electron-updater's codes, HTTP statuses and Node/Chromium
+network errors: `network`, `timeout`, `certificate`, `http_4xx`, `http_5xx`, `feed` (the feed lacks
+a channel file, release or asset), `checksum`, `signature`, `disk_full`, `permission`,
+`configuration`, `cancelled`, `internal` or `unknown`; a feed error wrapping a transport cause
+reports the transport cause. `targetVersion`, `sourceKind` (`github`, `scient_mirror`,
+`administrator`), `packageKind` (`zip`, `nsis`, `appimage`, `deb`; omitted when unknown), a random
+per-attempt `attemptRef` and `durationBucket` complete it. The rejected promise, not the updater's
+matching `error` event, is a check's or download's outcome; an install records one failure
+however many paths report it. `handoff-attempted` is recorded just before the installer takes
+over; the next launch reports `apply` with the same `attemptRef`: `completed` when the target
+runs, `not-applied` when the old version runs again (once, not at every launch), `superseded`
+when another build runs. A handoff without a later outcome is unresolved, not a failure; there is
+no timer that restarts servers after the handoff.
+
+`app.update.summary` is sent at launch, when the status settles somewhere new (a check in
+progress is not a change) and daily while running: `reason`, `status`, `channel`, `behind`
+(`yes` when a newer offer is known, `no` after a successful check found none, otherwise
+`unknown`), `stageAgeBucket`, `lastCheckAgeBucket` (last successful check, or `never`),
+`errorContext` on errors, `progressBucket` and `sinceProgressBucket` while downloading,
+`readyAgeBucket` when downloaded, `disabledClass` when off and `droppedFactsBucket`. A ready
+update waiting for days is not a failed install.
+
+Installs run with every backend stopped and an apply outcome is known before any backend starts,
+so both events wait in a persisted journal in the desktop process
+([`DesktopUpdateFacts.ts`](../../apps/desktop/src/scient/updateOutcomes/DesktopUpdateFacts.ts):
+at most 64 facts and 14 days; drops are counted into the next summary). It records nothing while
+analytics is off for that launch (release metadata, `SCIENT_ANALYTICS_ENABLED`, or a managed
+policy without telemetry) and deletes what an earlier launch kept. Facts travel on the telemetry
+pipe's `desktopUpdateStatus` report to one backend (the primary when ready, else the first ready
+one; two backends have two installation identities). That backend's `ingestRecorded` queues them
+with their own event ids and times, through the normal consent and shape checks, and the desktop
+forgets them only after the outbox persisted them or analytics there must never send them. A fact
+offered again stays one event: the outbox and gateway both ignore a repeated id.
 
 ## Privacy invariants
 

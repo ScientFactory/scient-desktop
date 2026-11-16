@@ -6,6 +6,7 @@ import {
   type AnalyticsConsent,
   type AnalyticsPriority,
   consentAllows,
+  type EventPrivacyLevel,
   type NormalizationContext,
   normalizeInheritedEvent,
 } from "./contract.ts";
@@ -25,6 +26,9 @@ const MAX_IN_FLIGHT_BATCHES = 2;
 const WRITE_COALESCE_MS = 100;
 const CONTROL_TIMEOUT_MS = 3_500;
 const LOCAL_SHUTDOWN_BUDGET_MS = 300;
+const RECORDED_EVENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+const RECORDED_EVENT_MAX_AGE_MS = 30 * 86_400_000;
+const RECORDED_EVENT_MAX_SKEW_MS = 86_400_000;
 
 const PRIORITY_RANK: Readonly<Record<AnalyticsPriority, number>> = {
   critical: 0,
@@ -46,9 +50,22 @@ export interface AnalyticsRuntimeOptions extends NormalizationContext {
   readonly controlTimeoutMs?: number;
 }
 
+/** An event another Scient process recorded; it keeps its own id, time and release. */
+export interface RecordedAnalyticsEvent extends NormalizationContext {
+  readonly id: string;
+  readonly name: string;
+  readonly occurredAt: string;
+  readonly properties: Readonly<Record<string, unknown>>;
+}
+
 export interface AnalyticsRuntime {
   readonly enabled: boolean;
   readonly record: (name: string, properties?: Readonly<Record<string, unknown>>) => boolean;
+  /**
+   * True once the outbox holds these events or none of them may be sent (consent, shape, age);
+   * false when that is unconfirmed, so the caller keeps them to offer again.
+   */
+  readonly ingest: (events: ReadonlyArray<RecordedAnalyticsEvent>) => Promise<boolean>;
   readonly flush: () => Promise<number>;
   readonly setConsent: (consent: AnalyticsConsent) => Promise<number>;
   readonly pendingCount: () => Promise<number>;
@@ -60,6 +77,7 @@ function disabledRuntime(): AnalyticsRuntime {
   return {
     enabled: false,
     record: () => false,
+    ingest: async () => true,
     flush: async () => 0,
     setConsent: async () => 0,
     pendingCount: async () => 0,
@@ -115,6 +133,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   let nextRequestId = 1;
   const queue: AnalyticsEventDraft[] = [];
   const inFlight = new Map<number, ReadonlyArray<AnalyticsEventDraft>>();
+  const ingestions = new Map<number, (persisted: boolean) => void>();
   const requests = new Map<
     number,
     {
@@ -144,6 +163,8 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
     }
     queue.length = 0;
     inFlight.clear();
+    for (const settle of ingestions.values()) settle(false);
+    ingestions.clear();
     settleRequests();
   };
 
@@ -220,6 +241,8 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
         return;
       case "persisted":
         inFlight.delete(response.batchId);
+        ingestions.get(response.batchId)?.(true);
+        ingestions.delete(response.batchId);
         drain();
         return;
       case "result": {
@@ -280,11 +303,72 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
     return accepted;
   };
 
+  const recordedDraft = (
+    event: RecordedAnalyticsEvent,
+    level: EventPrivacyLevel,
+  ): AnalyticsEventDraft | null => {
+    const occurredAt = Date.parse(event.occurredAt);
+    const nowMs = now().valueOf();
+    if (
+      !RECORDED_EVENT_ID.test(event.id) ||
+      !Number.isFinite(occurredAt) ||
+      occurredAt > nowMs + RECORDED_EVENT_MAX_SKEW_MS ||
+      occurredAt < nowMs - RECORDED_EVENT_MAX_AGE_MS
+    ) {
+      return null;
+    }
+    const normalized = normalizeInheritedEvent(event.name, event.properties, {
+      appVersion: event.appVersion,
+      buildChannel: event.buildChannel,
+    });
+    if (!normalized || !consentAllows(level, normalized.privacyLevel)) return null;
+    return {
+      id: event.id,
+      name: normalized.name,
+      session_id: sessionId,
+      occurred_at: new Date(occurredAt).toISOString(),
+      privacy_level: normalized.privacyLevel,
+      consent_level: level,
+      properties: normalized.properties,
+      priority: normalized.priority,
+    };
+  };
+
+  const ingest: AnalyticsRuntime["ingest"] = async (events) => {
+    if (closed || deleting || !available) return false;
+    const level = consent;
+    if (level === "off" || purpose === "deletion") return true;
+    const drafts = events.flatMap((event) => recordedDraft(event, level) ?? []);
+    if (drafts.length === 0) return true;
+    await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
+    if (!ready || !available || closed || deleting) return false;
+    const batchId = nextBatchId++;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        ingestions.delete(batchId);
+        resolve(false);
+      }, controlTimeoutMs);
+      timer.unref();
+      ingestions.set(batchId, (persisted) => {
+        clearTimeout(timer);
+        resolve(persisted);
+      });
+      inFlight.set(batchId, drafts);
+      if (!post({ type: "enqueue", batchId, events: drafts })) {
+        inFlight.delete(batchId);
+        ingestions.delete(batchId);
+        clearTimeout(timer);
+        resolve(false);
+      }
+    });
+  };
+
   return {
     get enabled() {
       return available && !closed;
     },
     record,
+    ingest,
     flush: async () => {
       if (closed || deleting || !available || consent === "off" || purpose === "deletion") return 0;
       await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);

@@ -22,6 +22,8 @@ export const ANALYTICS_EVENT_NAMES = [
   "app.session.ended",
   "app.health",
   "app.diagnostics",
+  "app.update.outcome",
+  "app.update.summary",
   "server.boot.heartbeat",
   "install.owner_observed",
   "install.account_observed",
@@ -336,6 +338,50 @@ const HEALTH_OPERATIONS = new Set([
   "update",
 ]);
 const HEALTH_OUTCOMES = new Set(["started", "completed", "failed", "abnormal"]);
+// Desktop app updates: each step's outcomes, and why a step failed.
+const UPDATE_STEP_OUTCOMES: Readonly<Record<string, ReadonlyArray<string>>> = {
+  check: ["available", "up-to-date", "failed"],
+  download: ["started", "completed", "failed"],
+  install: ["handoff-attempted", "failed"],
+  apply: ["completed", "not-applied", "superseded"],
+};
+const UPDATE_FAILURE_CLASSES = [
+  "network",
+  "timeout",
+  "certificate",
+  "http_4xx",
+  "http_5xx",
+  "feed",
+  "checksum",
+  "signature",
+  "disk_full",
+  "permission",
+  "configuration",
+  "cancelled",
+  "internal",
+  "unknown",
+];
+const UPDATE_STATUSES = [
+  "disabled",
+  "idle",
+  "checking",
+  "up-to-date",
+  "available",
+  "downloading",
+  "downloaded",
+  "error",
+];
+const UPDATE_DISABLED_CLASSES = [
+  "policy",
+  "channel-policy",
+  "safety",
+  "no-feed",
+  "development",
+  "environment",
+  "linux-package",
+  "other",
+];
+const UPDATE_ATTEMPT_REF_PATTERN = /^[0-9a-f]{16}$/u;
 const OPERATION_KINDS = new Set([
   "file-preview",
   "pdf-open",
@@ -887,6 +933,98 @@ export function durationBucket(value: unknown): string {
   return "over-10m";
 }
 
+/** How long an update stage or offer has lasted: minutes while transferring, days while waiting. */
+function updateAgeBucket(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 60_000) return "under-1m";
+  if (value < 600_000) return "1-10m";
+  if (value < 3_600_000) return "10-60m";
+  if (value < 21_600_000) return "1-6h";
+  if (value < 86_400_000) return "6-24h";
+  if (value < 3 * 86_400_000) return "1-3d";
+  if (value < 7 * 86_400_000) return "3-7d";
+  return "over-7d";
+}
+
+/** Copies a field only when it is one of `allowed`; any other value stays absent. */
+function optionalClosed(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+  allowed: ReadonlyArray<string>,
+): Record<string, string> {
+  const value = property(input, key);
+  return typeof value === "string" && allowed.includes(value) ? { [key]: value } : {};
+}
+
+/** Marks every field read, so an event sends only what its normalizer sets. */
+function closedEvent(input: Readonly<Record<string, unknown>>): void {
+  for (const key of Object.keys(input)) property(input, key);
+}
+
+function updateOutcomeProperties(input: Readonly<Record<string, unknown>>) {
+  closedEvent(input);
+  const step = closedCategory(property(input, "step"), Object.keys(UPDATE_STEP_OUTCOMES));
+  const outcome = closedCategory(property(input, "outcome"), UPDATE_STEP_OUTCOMES[step] ?? []);
+  const failureClass = closedCategory(property(input, "failureClass"), UPDATE_FAILURE_CLASSES);
+  const trigger = property(input, "trigger");
+  const targetVersion = property(input, "targetVersion");
+  const attemptRef = property(input, "attemptRef");
+  const durationMs = property(input, "durationMs");
+  return {
+    step,
+    outcome,
+    ...(outcome === "failed" ? { failureClass } : {}),
+    ...(step !== "apply" && (trigger === "user" || trigger === "background") ? { trigger } : {}),
+    ...(typeof targetVersion === "string" && analyticsAppVersion(targetVersion) !== "unknown"
+      ? { targetVersion }
+      : {}),
+    ...optionalClosed(input, "sourceKind", ["github", "scient_mirror", "administrator"]),
+    ...optionalClosed(input, "packageKind", ["zip", "nsis", "appimage", "deb"]),
+    ...(typeof attemptRef === "string" && UPDATE_ATTEMPT_REF_PATTERN.test(attemptRef)
+      ? { attemptRef }
+      : {}),
+    ...(durationMs === undefined ? {} : { durationBucket: updateAgeBucket(durationMs) }),
+  };
+}
+
+function updateSummaryProperties(input: Readonly<Record<string, unknown>>) {
+  closedEvent(input);
+  const status = closedCategory(property(input, "status"), UPDATE_STATUSES);
+  const lastCheckAgeMs = property(input, "lastCheckAgeMs");
+  return {
+    reason: closedCategory(property(input, "reason"), ["launch", "change", "daily"]),
+    status,
+    channel: closedCategory(property(input, "channel"), ["latest", "beta", "nightly"]),
+    behind: closedCategory(property(input, "behind"), ["yes", "no", "unknown"]),
+    stageAgeBucket: updateAgeBucket(property(input, "stageAgeMs")),
+    lastCheckAgeBucket: lastCheckAgeMs === undefined ? "never" : updateAgeBucket(lastCheckAgeMs),
+    droppedFactsBucket: countBucket(property(input, "droppedFactCount") ?? 0),
+    ...(status === "error"
+      ? {
+          errorContext: closedCategory(property(input, "errorContext"), [
+            "check",
+            "download",
+            "install",
+          ]),
+        }
+      : {}),
+    ...(status === "downloading"
+      ? {
+          progressBucket: percentBucket(property(input, "downloadPercent")),
+          sinceProgressBucket: updateAgeBucket(property(input, "sinceProgressMs")),
+        }
+      : {}),
+    ...(status === "downloaded"
+      ? { readyAgeBucket: updateAgeBucket(property(input, "readyAgeMs")) }
+      : {}),
+    ...(status === "disabled"
+      ? {
+          disabledClass: closedCategory(property(input, "disabledClass"), UPDATE_DISABLED_CLASSES),
+        }
+      : {}),
+  };
+}
+
 function turnTerminalStatus(value: unknown): string {
   if (value === "cancelled" || value === "interrupted") return "stopped";
   return normalizedEnum(value, new Set(["completed", "failed", "stopped"]), "other");
@@ -1151,6 +1289,23 @@ function normalizeEvent(
           failedCount: countOrZero(property(input, "failedCount")),
           ...optionalProperties(input, { stoppedCount: "count" }),
         },
+      };
+    case "app.update.outcome": {
+      const properties = updateOutcomeProperties(input);
+      return {
+        name,
+        privacyLevel: "essential",
+        priority:
+          properties.step === "install" || properties.step === "apply" ? "critical" : "core",
+        properties,
+      };
+    }
+    case "app.update.summary":
+      return {
+        name,
+        privacyLevel: "essential",
+        priority: "summary",
+        properties: updateSummaryProperties(input),
       };
     case "app.session.started":
       return {

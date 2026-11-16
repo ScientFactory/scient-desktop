@@ -8,6 +8,7 @@ import {
   AnalyticsConsent,
   createAnalyticsRuntime,
   type AnalyticsRuntime,
+  type RecordedAnalyticsEvent,
 } from "@scientfactory/analytics";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
@@ -61,6 +62,14 @@ export interface ScientAnalyticsControls {
   /** Internal observer fence; never part of a wire event or public identity. */
   readonly collectionEpoch: Effect.Effect<number>;
 
+  /**
+   * Queues events another Scient process recorded, keeping their ids and times. True once the
+   * outbox holds them or analytics must never send them; false asks the sender to offer again.
+   */
+  readonly ingestRecorded?: (
+    events: ReadonlyArray<RecordedAnalyticsEvent>,
+  ) => Effect.Effect<boolean>;
+
   /** In-memory boundary watermark acquisition; not telemetry or a public API. */
   readonly observeCollectionBoundary?: (
     listener: (epoch: number, phase: AnalyticsCollectionBoundaryPhase) => Promise<void>,
@@ -113,6 +122,7 @@ export const disabledAnalyticsService: AnalyticsService["Service"] = {
   record: () => Effect.void,
   recordOwners: () => Effect.void,
   flush: Effect.void,
+  ingestRecorded: () => Effect.succeed(true),
   status: Effect.succeed({ available: false, consent: "off" }),
   collectionEpoch: Effect.succeed(0),
 };
@@ -233,6 +243,12 @@ export const make = Effect.gen(function* () {
     Effect.asVoid,
   );
 
+  const ingestRecorded: NonNullable<ScientAnalyticsControls["ingestRecorded"]> = (events) =>
+    Effect.tryPromise({
+      try: () => runtime.ingest(events),
+      catch: () => "analytics-ingest-failed" as const,
+    }).pipe(Effect.orElseSucceed(() => false));
+
   const status: AnalyticsService["Service"]["status"] = Effect.sync(() => ({
     available: analyticsConfig.enabled,
     consent: analyticsConfig.enabled ? consent : "off",
@@ -242,6 +258,7 @@ export const make = Effect.gen(function* () {
     record,
     recordOwners,
     flush,
+    ingestRecorded,
     status,
     collectionEpoch: Effect.succeed(collectionEpoch),
     observeCollectionBoundary,

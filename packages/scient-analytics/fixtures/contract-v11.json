@@ -119,6 +119,69 @@
       }
     },
     {
+      "case": "app.update.outcome:fallbacks",
+      "name": "app.update.outcome",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "step": "unknown",
+        "outcome": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.outcome:representative",
+      "name": "app.update.outcome",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "step": "unknown",
+        "outcome": "unknown",
+        "durationBucket": "under-1m",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.summary:fallbacks",
+      "name": "app.update.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "unknown",
+        "status": "unknown",
+        "channel": "unknown",
+        "behind": "unknown",
+        "stageAgeBucket": "unknown",
+        "lastCheckAgeBucket": "never",
+        "droppedFactsBucket": "0",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.summary:representative",
+      "name": "app.update.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "unknown",
+        "status": "unknown",
+        "channel": "unknown",
+        "behind": "unknown",
+        "stageAgeBucket": "unknown",
+        "lastCheckAgeBucket": "never",
+        "droppedFactsBucket": "0",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
       "case": "server.boot.heartbeat:fallbacks",
       "name": "server.boot.heartbeat",
       "privacyLevel": "essential",
@@ -2074,6 +2137,114 @@
         "commandCategory": "unknown",
         "commandCount": 0,
         "failedCount": 0,
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.outcome:download-failed",
+      "name": "app.update.outcome",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "step": "download",
+        "outcome": "failed",
+        "failureClass": "signature",
+        "trigger": "background",
+        "targetVersion": "0.6.30",
+        "sourceKind": "github",
+        "packageKind": "nsis",
+        "attemptRef": "3f9a0c1d2e4b5a67",
+        "durationBucket": "1-10m",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.outcome:apply-not-applied",
+      "name": "app.update.outcome",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "step": "apply",
+        "outcome": "not-applied",
+        "targetVersion": "0.6.30",
+        "packageKind": "zip",
+        "attemptRef": "3f9a0c1d2e4b5a67",
+        "durationBucket": "1-3d",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.outcome:outcome-hostile",
+      "name": "app.update.outcome",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "step": "install",
+        "outcome": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.summary:summary-downloading",
+      "name": "app.update.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "change",
+        "status": "downloading",
+        "channel": "latest",
+        "behind": "yes",
+        "stageAgeBucket": "10-60m",
+        "lastCheckAgeBucket": "10-60m",
+        "droppedFactsBucket": "0",
+        "progressBucket": "25-49",
+        "sinceProgressBucket": "10-60m",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.summary:summary-ready",
+      "name": "app.update.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "daily",
+        "status": "downloaded",
+        "channel": "beta",
+        "behind": "yes",
+        "stageAgeBucket": "3-7d",
+        "lastCheckAgeBucket": "1-6h",
+        "droppedFactsBucket": "11-50",
+        "readyAgeBucket": "3-7d",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "app.update.summary:summary-disabled",
+      "name": "app.update.summary",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "reason": "launch",
+        "status": "disabled",
+        "channel": "latest",
+        "behind": "unknown",
+        "stageAgeBucket": "under-1m",
+        "lastCheckAgeBucket": "never",
+        "droppedFactsBucket": "0",
+        "disabledClass": "policy",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"
