@@ -56,6 +56,7 @@ import {
   PopoverDescription,
   PopoverPopup,
   PopoverTitle,
+  PopoverTrigger,
 } from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { toastManager } from "../../components/ui/toast";
@@ -817,7 +818,7 @@ export function SourceDetails(props: {
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
   );
-  const hasLead = props.diagnostics.length > 0 || Boolean(record.abstract);
+  const hasLead = Boolean(record.abstract);
   // Edition, place, series and the like: shown under the names a person knows them by.
   const moreDetails = SCIENT_SOURCE_MORE_FIELDS.filter(({ name }) => record.more?.[name]);
   const externalUrl = safeSourceExternalUrl(record.url);
@@ -1084,7 +1085,35 @@ export function SourceDetails(props: {
       <ScrollArea className="min-h-0 flex-1">
         <article className={`${SOURCES_COLUMN} space-y-6 p-4`}>
           <header className="space-y-2">
-            <Badge variant="secondary">{sourceTypeLabel(record)}</Badge>
+            <div className="relative w-fit">
+              <Badge variant="secondary">{sourceTypeLabel(record)}</Badge>
+              {props.diagnostics.length > 0 ? (
+                <Popover>
+                  <ScientTooltip
+                    content={`Metadata needs review: ${props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}`}
+                    className="max-w-72"
+                  >
+                    <PopoverTrigger
+                      render={
+                        <button
+                          type="button"
+                          className="absolute -end-6 top-1/2 -translate-y-1/2 rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
+                          aria-label="Metadata needs review"
+                        >
+                          <AlertCircle className="size-4" aria-hidden />
+                        </button>
+                      }
+                    />
+                  </ScientTooltip>
+                  <PopoverPopup side="bottom" align="start" className="max-w-72">
+                    <PopoverTitle>Metadata needs review</PopoverTitle>
+                    <PopoverDescription>
+                      {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
+                    </PopoverDescription>
+                  </PopoverPopup>
+                </Popover>
+              ) : null}
+            </div>
             <h2 className="text-lg font-semibold leading-snug">
               {record.title ?? "Untitled source"}
             </h2>
@@ -1113,18 +1142,6 @@ export function SourceDetails(props: {
             <div className="grid gap-x-10 gap-y-6 @[48rem]/source-body:grid-cols-[minmax(0,1fr)_17rem] @[48rem]/source-body:grid-rows-[auto_1fr]">
               {hasLead ? (
                 <div className="min-w-0 space-y-6 @[48rem]/source-body:col-start-1 @[48rem]/source-body:row-start-1">
-                  {props.diagnostics.length > 0 ? (
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-                      <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-                      <div>
-                        <div className="font-medium">Metadata needs review</div>
-                        <div className="mt-0.5 text-xs text-muted-foreground">
-                          {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
                   {record.abstract ? (
                     <DetailsSection title="Abstract">
                       <AbstractPreview text={record.abstract} sections={record.abstractSections} />
