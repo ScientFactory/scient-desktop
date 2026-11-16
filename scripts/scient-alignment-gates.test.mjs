@@ -38,13 +38,16 @@ if (args.includes("test") && filter === "!t3" && list("FAKE_FAILING_PACKAGES").l
   // vp's summary: the failing package ran to its failure and "a" was cancelled.
   if (!process.env.FAKE_NO_SUMMARY) {
     const failed = (exit_code) => ({ Spawned: { outcome: { Failed: { exit_code } } } });
-    const tasks = list("FAKE_FAILING_PACKAGES").map((name) => ({ package_name: name, task_name: "test", result: failed(1) }));
+    const code = Number(process.env.FAKE_FAIL_CODE ?? 1);
+    const tasks = list("FAKE_FAILING_PACKAGES").map((name) => ({ package_name: name, task_name: "test", result: failed(code) }));
     tasks.push({ package_name: "a", task_name: "test", result: failed(137) });
-    NodeFS.mkdirSync("node_modules/.vite/task-cache/v18", { recursive: true });
-    NodeFS.writeFileSync("node_modules/.vite/task-cache/v18/last-summary.json", JSON.stringify({ tasks, exit_code: 1 }));
+    const dir = NodePath.join(process.env.VITE_CACHE_PATH, "v18");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(dir, "last-summary.json"), JSON.stringify({ tasks, exit_code: 1 }));
   }
   process.exit(1);
 }
+if (process.env.FAKE_PASS_ALONE && args.includes("test")) process.exit(0);
 if (args.includes("test") && list("FAKE_FAILING_PACKAGES").includes(filter)) process.exit(1);
 if (args.includes("test") && filter === "t3") {
   const report = args.find((arg) => arg.startsWith("--outputFile.json=")).slice(18);
@@ -146,22 +149,30 @@ test("one failing gate does not stop the rest, and host variables never reach a 
 });
 
 test.each([
-  ["vp's summary", {}, ["!t3", "a", "t3"], ["a"]],
-  ["no summary", { FAKE_NO_SUMMARY: "1" }, ["!t3", "a", "b", "t3"], ["a", "b"]],
+  ["vp's summary", {}, ["!t3", "a", "t3"], ["a"], ["b"]],
+  ["a crash in the summary", { FAKE_FAIL_CODE: "134" }, ["!t3", "a", "t3"], ["a"], ["b"]],
+  ["no summary", { FAKE_NO_SUMMARY: "1" }, ["!t3", "a", "b", "t3"], ["a", "b"], ["b"]],
+  [
+    "no summary and passes alone",
+    { FAKE_NO_SUMMARY: "1", FAKE_PASS_ALONE: "1" },
+    ["!t3", "a", "b", "t3"],
+    ["a", "b"],
+    ["(the aggregate failed, yet no package failed on its own)"],
+  ],
 ])(
   "with %s, packages the aggregate did not finish rerun alone and the server still runs",
-  (_name, extra, expectedFilters, rerun) => {
+  (_name, extra, expectedFilters, rerun, failedPackages) => {
     const gates = fixture();
     const env = { FAKE_FAILING_PACKAGES: "b", FAKE_CALLS: NodePath.join(gates.bin, "calls.jsonl") };
     const result = run(gates, ["--only", "test", "--server-workers", "3"], { ...env, ...extra });
     NodeAssert.equal(result.status, 1, result.stderr);
-    NodeAssert.deepEqual(result.record.gates[0].tests.packagesFailed, ["b"]);
+    NodeAssert.deepEqual(result.record.gates[0].tests.packagesFailed, failedPackages);
     NodeAssert.deepEqual(result.record.gates[0].tests.packagesRerun, rerun);
     const calls = NodeFS.readFileSync(env.FAKE_CALLS, "utf8").trim().split("\n").map(JSON.parse);
     const filters = calls.filter((args) => args.includes("--filter")).map((args) => args[4]);
     NodeAssert.deepEqual(filters, expectedFilters);
     NodeAssert.ok(calls.at(-1).includes("--maxWorkers=3"));
-    NodeAssert.match(result.stdout, /server \d+ s, 3 files at a time; failed packages: b; rerun/u);
+    NodeAssert.match(result.stdout, /server \d+ s, 3 files at a time; failed packages: .+; rerun/u);
   },
 );
 
@@ -211,6 +222,19 @@ test("gates runs queue behind a live holder and take over a dead one's lock", ()
     NodeFS.existsSync(NodePath.join(commonDir, "scient-alignment-gates.lock")),
     false,
   );
+});
+
+test("a run whose lock was taken over leaves the new owner's lock when it ends", () => {
+  const commonDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-lock-"));
+  directories.push(commonDir);
+  const lock = NodePath.join(commonDir, "scient-alignment-gates.lock");
+  const first = acquireGatesLock(commonDir, { root: "first" });
+  NodeFS.rmSync(lock, { recursive: true });
+  const second = acquireGatesLock(commonDir, { root: "second" });
+  first();
+  NodeAssert.equal(NodeFS.existsSync(lock), true);
+  second();
+  NodeAssert.equal(NodeFS.existsSync(lock), false);
 });
 
 test("server workers leave half the cores free, need 4 GiB each, and stay between 1 and 6", () => {

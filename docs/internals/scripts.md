@@ -186,10 +186,11 @@ smoke run that leaves its temporary home empty resolved state elsewhere and fail
 The test gate is `pnpm run test` in two parts:
 
 - **Every package except the server** runs in one workspace aggregate. After a failure, that
-  aggregate cancels running packages and skips their dependents. The gate reads vp's run summary:
-  a package that ran to its own failure is a complete result, and the cancelled and skipped
-  packages run again on their own (all of them if the summary cannot be read). The receipt
-  names every failed package.
+  aggregate cancels running packages and skips their dependents. The gate reads vp's run summary
+  from a cache directory only that run used. A package that exited with its own failure is a
+  complete result, and killed (cancelled) or skipped packages run again on their own. All
+  packages run again if the summary cannot be read, and the aggregate's failure still fails the
+  gate. The receipt names every failed package.
 - **The server suite** runs alone with files in parallel, like hosted CI's server shards:
   half the CPUs, at most six, and at least 4 GiB of memory per worker (`--server-workers N`
   overrides it; `1` is the serial run). The server's config keeps `fileParallelism: false`, so
@@ -201,7 +202,8 @@ The test gate is `pnpm run test` in two parts:
 A run that includes typecheck, test, build or smoke first takes a lock in the repository's
 shared Git directory, so full runs from different worktrees queue instead of slowing each other
 down and failing under load. It prints which worktree it is waiting for. A lock whose process has
-exited is taken over. Focused `vp test run` commands do not take the lock.
+exited is taken over, and a run only ever removes its own lock. Focused `vp test run`
+commands do not take the lock.
 
 On Windows the repository-wide test aggregate is reported as not run: the local aggregate
 is not a supported Windows lane yet (see `windows-tests.yml`), so hosted test

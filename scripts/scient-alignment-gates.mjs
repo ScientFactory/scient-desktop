@@ -4,6 +4,7 @@
 // SCIENT-FORK: the server suite runs its files in parallel, and one gates run per
 // repository at a time (docs/internals/scripts.md#alignment-gates-and-receipt-facts).
 
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -54,10 +55,10 @@ const HEAVY_GATES = new Set(["typecheck", "test", "build", "smoke"]);
 export const serverWorkers = (cores = NodeOS.availableParallelism(), memory = NodeOS.totalmem()) =>
   Math.max(1, Math.min(6, Math.floor(cores / 2), Math.floor(memory / (4 * GiB))));
 
-const runLogged = (argv, { root, home, log }) => {
+const runLogged = (argv, { root, home, log, env }) => {
   const fd = NodeFS.openSync(log, "a");
   try {
-    return runTool(argv, { cwd: root, home, stdio: ["ignore", fd, fd] });
+    return runTool(argv, { cwd: root, home, env, stdio: ["ignore", fd, fd] });
   } finally {
     NodeFS.closeSync(fd);
   }
@@ -76,23 +77,19 @@ const failedFiles = (reportPath, cwd) => {
 };
 
 /**
- * vp's summary of the aggregate it just ran: package name -> exit code, 0 for a pass.
- * A cancelled package is killed (137) and a skipped dependent is absent. Unreadable,
- * or not this run's: null, and every package reruns.
+ * vp's summary of the aggregate, from the empty cache directory that run alone used:
+ * package name -> exit code, 0 for a pass. Cancelled packages are killed (137, or
+ * 143) and skipped dependents are absent. Unreadable: null.
  */
-export function readAggregateOutcomes(root, status) {
-  const cacheRoot =
-    process.env.VITE_CACHE_PATH || NodePath.join(root, "node_modules/.vite/task-cache");
+export function readAggregateOutcomes(cacheRoot) {
   try {
-    const [latest] = NodeFS.readdirSync(cacheRoot)
+    const [summary, ...others] = NodeFS.readdirSync(cacheRoot)
       .map((entry) => NodePath.join(cacheRoot, entry, "last-summary.json"))
-      .filter((file) => NodeFS.existsSync(file))
-      .toSorted((a, b) => NodeFS.statSync(b).mtimeMs - NodeFS.statSync(a).mtimeMs);
-    const summary = JSON.parse(NodeFS.readFileSync(latest, "utf8"));
-    if (summary.exit_code !== status || summary.tasks.some((task) => task.task_name !== "test"))
-      return null;
+      .filter((file) => NodeFS.existsSync(file));
+    if (!summary || others.length) return null;
+    const { tasks } = JSON.parse(NodeFS.readFileSync(summary, "utf8"));
     return new Map(
-      summary.tasks.map((task) => {
+      tasks.map((task) => {
         const outcome = task.result?.Spawned?.outcome;
         return [task.package_name, outcome?.Success ? 0 : (outcome?.Failed?.exit_code ?? -1)];
       }),
@@ -101,6 +98,7 @@ export function readAggregateOutcomes(root, status) {
     return null;
   }
 }
+const CANCELLED = new Set([137, 143]);
 
 /**
  * Packages other than the server run in one aggregate. One failure there cancels
@@ -111,14 +109,15 @@ export function readAggregateOutcomes(root, status) {
 function runTests({ root, home, out, log, workers }) {
   const packagesLog = log;
   const started = performance.now();
+  const cacheRoot = NodePath.join(out, "aggregate-task-cache");
   const aggregate = runLogged(
     ["pnpm", "exec", "vp", "run", "--filter", `!${SERVER.name}`, "test"],
-    { root, home, log: packagesLog },
+    { root, home, log: packagesLog, env: { VITE_CACHE_PATH: cacheRoot } },
   );
   const packagesFailed = [];
   const packagesRerun = [];
   if (aggregate.status !== 0 || aggregate.error) {
-    const outcomes = readAggregateOutcomes(root, aggregate.status);
+    const outcomes = readAggregateOutcomes(cacheRoot);
     const listed = runTool(["pnpm", "-r", "ls", "--depth", "-1", "--json"], {
       cwd: root,
       encoding: "utf8",
@@ -134,9 +133,9 @@ function runTests({ root, home, out, log, workers }) {
     if (packages.length === 0) packagesFailed.push("(the workspace listing failed)");
     for (const entry of packages) {
       const exit = outcomes?.get(entry.name);
-      // A package that ran to its own failure is a complete result.
       if (exit === 0) continue;
-      if (exit === 1) {
+      // A package that ran to its own failure is a complete result.
+      if (exit !== undefined && !CANCELLED.has(exit)) {
         packagesFailed.push(entry.name);
         continue;
       }
@@ -149,6 +148,8 @@ function runTests({ root, home, out, log, workers }) {
       });
       if (result.status !== 0 || result.error) packagesFailed.push(entry.name);
     }
+    if (packagesFailed.length === 0)
+      packagesFailed.push("(the aggregate failed, yet no package failed on its own)");
   }
 
   const packagesSeconds = Math.round((performance.now() - started) / 1000);
@@ -239,24 +240,31 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
  */
 export function acquireGatesLock(commonDir, { root, wait = sleep, log = console.log } = {}) {
   const lock = NodePath.join(commonDir, "scient-alignment-gates.lock");
-  const owner = NodePath.join(lock, "owner.json");
+  const ownerOf = (dir) => {
+    try {
+      return JSON.parse(NodeFS.readFileSync(NodePath.join(dir, "owner.json"), "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const token = NodeCrypto.randomUUID();
   let announced = false;
   for (;;) {
     try {
       NodeFS.mkdirSync(lock);
       NodeFS.writeFileSync(
-        owner,
-        JSON.stringify({ pid: process.pid, root, started: new Date().toISOString() }),
+        NodePath.join(lock, "owner.json"),
+        JSON.stringify({ pid: process.pid, root, token, started: new Date().toISOString() }),
       );
-      const release = () => NodeFS.rmSync(lock, { recursive: true, force: true });
-      return release;
+      // Only this run's lock: after a takeover, a late release leaves the new owner's.
+      return () => {
+        if (ownerOf(lock)?.token === token) NodeFS.rmSync(lock, { recursive: true, force: true });
+      };
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
-    let holder = null;
-    try {
-      holder = JSON.parse(NodeFS.readFileSync(owner, "utf8"));
-    } catch {
+    const holder = ownerOf(lock);
+    if (holder === null) {
       // Created a moment ago and not yet written, or left empty by a crash.
       const age = Date.now() - NodeFS.statSync(lock, { throwIfNoEntry: false })?.mtimeMs;
       if (!(age > 60_000)) {
@@ -265,7 +273,24 @@ export function acquireGatesLock(commonDir, { root, wait = sleep, log = console.
       }
     }
     if (holder === null || !alive(holder.pid)) {
-      NodeFS.rmSync(lock, { recursive: true, force: true });
+      // Moving the lock aside is atomic: of several waiters, one moves it. A waiter that
+      // moved a lock someone took meanwhile puts it back.
+      const aside = `${lock}.stale-${token}`;
+      try {
+        NodeFS.renameSync(lock, aside);
+      } catch {
+        continue;
+      }
+      const moved = ownerOf(aside);
+      if (moved !== null && moved.token !== holder?.token) {
+        try {
+          NodeFS.renameSync(aside, lock);
+          continue;
+        } catch {
+          // Yet another run holds the lock now; the moved one's release leaves it alone.
+        }
+      }
+      NodeFS.rmSync(aside, { recursive: true, force: true });
       continue;
     }
     if (!announced) {
