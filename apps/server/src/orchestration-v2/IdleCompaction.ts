@@ -105,9 +105,14 @@ export function idleCompactionWindow(
     .map((turn) => turn.tokenUsage!)
     .toSorted((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   if ((usages[0]?.usedTokens ?? 0) < MIN_CONTEXT_TOKENS) return null;
-  // SCIENT-FORK:START — Scient Agent compacts before its idle session is released.
+  // SCIENT-FORK:START — Scient Agent compacts while its agent still holds a warm cache.
   if (providerThread.driver === "scient") {
-    const window = scientAgentIdleCompactionWindow(usages[0], nowMs);
+    const window = scientAgentIdleCompactionWindow({
+      usage: usages[0],
+      threadSelection: thread.modelSelection,
+      runSelection: latestRun.modelSelection,
+      nowMs,
+    });
     return window === null ? null : { runId: latestRun.id, ...window };
   }
   // SCIENT-FORK:END

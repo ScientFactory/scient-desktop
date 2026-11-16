@@ -244,6 +244,10 @@ export const OmpRpcEvent = Schema.Struct({
   promptCache: maybeUnknown,
   // SCIENT-FORK: goal_updated carries the goal the thread shows.
   goal: maybeUnknown,
+  // SCIENT-FORK:START — cache_warming_end: an idle refresh that hit and stopped warming times idle compaction.
+  outcome: maybeString,
+  warmingStopReason: maybeString,
+  // SCIENT-FORK:END
 });
 export type OmpRpcEvent = typeof OmpRpcEvent.Type;
 
@@ -602,6 +606,11 @@ const OmpLifecycleEvent = Schema.Struct({
   thinkingLevel: maybeString,
   // SCIENT-FORK: goal_updated carries the goal the thread shows.
   goal: maybeUnknown,
+  // SCIENT-FORK:START — cache_warming_end: an idle refresh that hit and stopped warming times idle compaction.
+  phase: maybeString,
+  outcome: maybeString,
+  warmingStopReason: maybeString,
+  // SCIENT-FORK:END
 });
 export type OmpLifecycleEvent = typeof OmpLifecycleEvent.Type;
 

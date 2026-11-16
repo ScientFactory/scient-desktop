@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { withOmpPromptCacheExpiry } from "../provider/omp/OmpPromptCache.ts";
+import { ompWarmingStopExpiry, withOmpPromptCacheExpiry } from "../provider/omp/OmpPromptCache.ts";
 import { idleCompactionWindow, type IdleCompactionRecords } from "./IdleCompaction.ts";
 
 const NOW_MS = Date.parse("2026-11-13T12:00:00.000Z");
@@ -28,13 +28,31 @@ const messageId = MessageId.make("message-1");
 const nodeId = NodeId.make("root-node");
 const modelSelection = { instanceId, model: "anthropic/claude-opus-5-5" };
 
-/** A completed Scient Agent turn whose last reply carried `frame` on its message_end. */
-function scientRecords(frame: unknown, earlierFrame?: unknown): IdleCompactionRecords {
+/**
+ * A completed Scient Agent turn whose last reply carried `frame` on its message_end; `warmUntil`
+ * is the expiry the agent's stopped idle warming left on a five-minute cache.
+ */
+function scientRecords(
+  frame: unknown,
+  options: {
+    readonly earlierFrame?: unknown;
+    readonly warmUntil?: number;
+    readonly model?: string;
+  } = {},
+): IdleCompactionRecords {
   // The turn's usage merges each reply's, as the native adapter does.
   const earlier =
-    earlierFrame === undefined ? {} : withOmpPromptCacheExpiry({ usedTokens: 1 }, earlierFrame);
-  const tokenUsage = { ...earlier, ...withOmpPromptCacheExpiry({ usedTokens: 300_000 }, frame) };
-  return {
+    options.earlierFrame === undefined
+      ? {}
+      : withOmpPromptCacheExpiry({ usedTokens: 1 }, options.earlierFrame);
+  const tokenUsage = {
+    ...earlier,
+    ...withOmpPromptCacheExpiry({ usedTokens: 300_000 }, frame),
+    ...(options.warmUntil === undefined
+      ? {}
+      : { promptCacheExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(options.warmUntil)) }),
+  };
+  const records: IdleCompactionRecords = {
     thread: {
       id: threadId,
       projectId: ProjectId.make("project"),
@@ -131,6 +149,13 @@ function scientRecords(frame: unknown, earlierFrame?: unknown): IdleCompactionRe
     turnItems: [],
     contextTransfers: [],
   };
+  // The selection the next message would run on, after a model change.
+  return options.model === undefined
+    ? records
+    : {
+        ...records,
+        thread: { ...records.thread, modelSelection: { instanceId, model: options.model } },
+      };
 }
 
 const promptCache = (tier: "short" | "long", ttlMs: number) => ({
@@ -139,21 +164,49 @@ const promptCache = (tier: "short" | "long", ttlMs: number) => ({
 });
 
 const MINUTE_MS = 60_000;
+const short = promptCache("short", 5 * MINUTE_MS);
 
 describe("Scient Agent idle compaction", () => {
-  it("compacts 25 minutes after the last reply, before the idle session is released", () => {
-    for (const frame of [promptCache("long", HOUR_MS), promptCache("short", 5 * MINUTE_MS)]) {
-      expect(idleCompactionWindow(scientRecords(frame), NOW_MS)).toEqual({
-        runId,
-        startMs: NOW_MS + 25 * MINUTE_MS,
-        endMs: NOW_MS + 30 * MINUTE_MS,
-      });
-    }
+  it("compacts a one-hour cache 25 minutes after the last reply, before the session is released", () => {
+    expect(idleCompactionWindow(scientRecords(promptCache("long", HOUR_MS)), NOW_MS)).toEqual({
+      runId,
+      startMs: NOW_MS + 25 * MINUTE_MS,
+      endMs: NOW_MS + 30 * MINUTE_MS,
+    });
   });
 
-  it("skips once the session would have been released", () => {
-    const frame = promptCache("short", 5 * MINUTE_MS);
-    expect(idleCompactionWindow(scientRecords(frame), NOW_MS + 30 * MINUTE_MS)).toBeNull();
+  it("compacts a five-minute cache only once the agent's idle warming stopped on it", () => {
+    // Warming still running, or never ran: the cache may be cold by any fixed time.
+    expect(idleCompactionWindow(scientRecords(short), NOW_MS)).toBeNull();
+    const warmUntil = NOW_MS + 31 * MINUTE_MS;
+    expect(
+      idleCompactionWindow(scientRecords(short, { warmUntil }), NOW_MS + 27 * MINUTE_MS),
+    ).toEqual({ runId, startMs: NOW_MS, endMs: warmUntil - MINUTE_MS });
+    // Too close to the expiry to start reading the cache in time.
+    expect(
+      idleCompactionWindow(scientRecords(short, { warmUntil }), warmUntil - MINUTE_MS),
+    ).toBeNull();
+  });
+
+  it("reads the expiry only from a refresh that hit and stopped idle warming", () => {
+    const stop = {
+      type: "cache_warming_end",
+      phase: "idle",
+      outcome: "hit",
+      warmingStopReason: "30-minute idle safety limit reached",
+    };
+    const ttl = 5 * MINUTE_MS;
+    expect(ompWarmingStopExpiry(stop, ttl, NOW_MS)).toBe(
+      DateTime.formatIso(DateTime.makeUnsafe(NOW_MS + ttl)),
+    );
+    for (const event of [
+      { ...stop, warmingStopReason: undefined },
+      { ...stop, outcome: "miss" },
+      { ...stop, phase: "streaming" },
+    ])
+      expect(ompWarmingStopExpiry(event, ttl, NOW_MS)).toBeUndefined();
+    // The last reply confirmed no five-minute cache.
+    expect(ompWarmingStopExpiry(stop, undefined, NOW_MS)).toBeUndefined();
   });
 
   it("never compacts a turn whose last reply confirmed no expiring cache", () => {
@@ -161,14 +214,21 @@ describe("Scient Agent idle compaction", () => {
     // An earlier reply's cache does not outlive a later reply that confirmed none.
     expect(
       idleCompactionWindow(
-        scientRecords({ type: "message_end" }, promptCache("short", 5 * MINUTE_MS)),
+        scientRecords({ type: "message_end" }, { earlierFrame: promptCache("long", HOUR_MS) }),
         NOW_MS,
       ),
     ).toBeNull();
   });
 
+  it("does not compact after a model change the last reply's cache does not serve", () => {
+    const frame = promptCache("long", HOUR_MS);
+    expect(
+      idleCompactionWindow(scientRecords(frame, { model: "openai-codex/gpt-6.1-sol" }), NOW_MS),
+    ).toBeNull();
+  });
+
   it("keeps the five-minute lifetime off the usage the resume chip reads", () => {
-    const usage = withOmpPromptCacheExpiry({ usedTokens: 1 }, promptCache("short", 5 * MINUTE_MS));
+    const usage = withOmpPromptCacheExpiry({ usedTokens: 1 }, short);
     expect(usage.promptCacheTtlMs).toBeUndefined();
     expect(usage.promptCacheExpiresAt).toBeUndefined();
   });

@@ -75,12 +75,14 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
     { order: ["binaryPath", "homePath", "profile"] },
   );
 
-  // The modes of Claude's `idleCompaction`; `resolveIdleCompaction` reads either provider's.
+  // The modes of Claude's `idleCompaction`; `resolveIdleCompaction` reads either provider's. The
+  // form shows the first option for a missing key and removes the key when it is chosen, so the
+  // first option is the mode a missing key resolves to, and "Use default" is stored explicitly.
   const SCIENT_AGENT_IDLE_COMPACTION_MODES = [
-    { value: "default", label: "Use default" },
+    { value: SCIENT_AGENT_DEFAULT_IDLE_COMPACTION, label: "Before the cache expires" },
     { value: "onReturn", label: "When you return" },
-    { value: "beforeCacheExpires", label: "Before the cache expires" },
     { value: "off", label: "Never" },
+    { value: "default", label: "Use default" },
   ] as const;
 
   /**
