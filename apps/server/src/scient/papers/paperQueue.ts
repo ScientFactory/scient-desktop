@@ -42,10 +42,11 @@ import {
   clearHolds,
   fetchOnePaper,
   pausedPublishers,
+  releaseHolds,
   type PaperRequester,
 } from "./paperAttempt.ts";
 import { paperFileName, type Paper } from "./paperLookup.ts";
-import { pdfVerdict, readPdfFacts } from "./pdfCheck.ts";
+import { pdfNamesPaper, readPdfFacts } from "./pdfCheck.ts";
 
 export type { PaperRequester } from "./paperAttempt.ts";
 
@@ -69,6 +70,8 @@ const SavedFile = Schema.Struct({
   doi: Schema.optionalKey(Schema.String),
   url: Schema.optionalKey(Schema.String),
   version: PaperVersion,
+  /** Its bytes when saved: a file replaced since is not that copy any more. */
+  sha256: Schema.String,
 });
 type SavedFile = typeof SavedFile.Type;
 const Stored = Schema.Struct({
@@ -205,19 +208,30 @@ const store = Effect.fn("Papers.queue.store")(function* (queue: Queue) {
   ).pipe(queue.writes.withPermits(1));
 });
 
+const unreadable = () =>
+  new AccountsError({ reason: "unavailable", message: "This project's paper list can't be read." });
+
+/** The stored queue, none when there is no file; a file that can't be read is never replaced. */
 const readStored = Effect.fn("Papers.queue.read")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const file = path.join(root, ...QUEUE_FILE);
-  const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => undefined));
-  if (text === undefined) return Option.none();
-  const stored = decodeStored(text);
+  const text = yield* fs.readFileString(file).pipe(
+    Effect.asSome,
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(Option.none<string>()),
+    ),
+    Effect.mapError(unreadable),
+  );
+  if (Option.isNone(text)) return Option.none();
+  const stored = decodeStored(text.value);
   // Kept aside rather than overwritten, so the papers it listed can still be read.
   if (Option.isNone(stored)) {
+    yield* fs.rename(file, `${file}.unreadable`).pipe(Effect.mapError(unreadable));
     yield* Effect.logWarning("A project's paper queue could not be read; it was set aside.", {
       file,
     });
-    yield* fs.rename(file, `${file}.unreadable`).pipe(Effect.ignore);
   }
   return stored;
 });
@@ -375,27 +389,32 @@ const intoLibrary = Effect.fn("Papers.intoLibrary")(function* (
   }).pipe(Effect.catch(Effect.succeed));
 });
 
-/** The copy of this paper the queue saved before, or one already in papers/ that reads as it. */
+const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+
+/** The copy of this paper the queue saved before, or one already in papers/ that names it. */
 const savedBefore = Effect.fn("Papers.queue.savedBefore")(function* (queue: Queue, paper: Paper) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const present = (relative: string) =>
     fs.exists(path.join(queue.root, relative)).pipe(Effect.orElseSucceed(() => false));
+  const bytesOf = (relative: string) =>
+    fs.readFile(path.join(queue.root, relative)).pipe(Effect.option);
   const doi = paper.doi?.toLowerCase();
-  for (const [relative, file] of queue.files)
-    if (
-      ((doi !== undefined && file.doi?.toLowerCase() === doi) ||
-        (doi === undefined && file.url !== undefined && file.url === paper.landingUrl)) &&
-      (yield* present(relative))
-    )
+  for (const [relative, file] of queue.files) {
+    const same =
+      (doi !== undefined && file.doi?.toLowerCase() === doi) ||
+      (doi === undefined && file.url !== undefined && file.url === paper.landingUrl);
+    const bytes = same ? yield* bytesOf(relative) : Option.none();
+    if (Option.isSome(bytes) && sha256(bytes.value) === file.sha256)
       return { path: relative, version: file.version };
-  // A file the queue didn't record is this paper only if its own text says so.
+  }
+  // A file the queue didn't record is this paper only if its own text names it.
   const relative = `papers/${paperFileName(paper)}`;
   if (queue.files.has(relative) || !(yield* present(relative))) return undefined;
-  const bytes = yield* fs.readFile(path.join(queue.root, relative)).pipe(Effect.option);
+  const bytes = yield* bytesOf(relative);
   if (Option.isNone(bytes)) return undefined;
   const facts = yield* readPdfFacts(bytes.value);
-  return facts && pdfVerdict(paper, facts) === "the-paper"
+  return facts && pdfNamesPaper(paper, facts)
     ? { path: relative, version: "unknown" as const }
     : undefined;
 });
@@ -451,10 +470,12 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
         : ({ ...known, state: fetched.state, message: fetched.message } as const);
     const saved = fetched.path ?? (yield* savePdf(queue.root, fetched.paper, fetched.bytes!));
     const { version } = fetched;
+    const savedBytes = fetched.bytes ?? (yield* fs.readFile(path.join(queue.root, saved)));
     queue.files.set(saved, {
       ...(fetched.paper.doi ? { doi: fetched.paper.doi } : {}),
       url: fetched.paper.landingUrl,
       version,
+      sha256: sha256(savedBytes),
     });
     const retrieval =
       fetched.route === "saved-before" ? undefined : { route: fetched.route, version };
@@ -546,7 +567,7 @@ const work = Effect.fn("Papers.queue.work")(function* (queue: Queue) {
     );
     if ((yield* Clock.currentTimeMillis) >= queue.retryUntil || !stuck) break;
     yield* Effect.sleep(RETRY_GAP);
-    clearHolds();
+    releaseHolds([...queue.items.values()].flatMap(({ needed }) => (needed ? [needed] : [])));
     wake(queue);
     yield* announce(queue);
   }
@@ -614,6 +635,17 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
       const joins = existing.state !== "saved" && (addsSource || addsLibrary);
       // Asked again, a paper that waited for the person tries again.
       const retries = existing.state === "needs-you";
+      const before = queue.requesters.get(existing.itemId);
+      // The user's own request for an agent's unfinished paper makes it theirs; one already
+      // underway goes again as theirs if it comes back waiting on them.
+      const claims =
+        requester.threadId === undefined &&
+        existing.state !== "saved" &&
+        before?.threadId !== undefined;
+      if (claims) {
+        queue.requesters.set(existing.itemId, requester);
+        queue.acted += 1;
+      }
       if (!joins && !retries) return existing;
       const { needed: _, message: __, ...unanswered } = existing;
       const joined: PaperItem = {
@@ -626,8 +658,7 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
       if (joins && (addsSource || existing.source === undefined))
         queue.filers.set(existing.itemId, requester);
       // It runs as whoever asked last; the user's own request stays theirs.
-      const before = queue.requesters.get(existing.itemId);
-      if (retries && (before === undefined || before.threadId !== undefined))
+      if (retries && !claims && (before === undefined || before.threadId !== undefined))
         queue.requesters.set(existing.itemId, requester);
       return joined;
     }
@@ -665,11 +696,10 @@ export const continuePapers = Effect.fn("Papers.queue.continue")(function* (
   yield* ensureRunning(queue);
 });
 
-/** The projects with papers waiting for the person, those a restart left on disk included. */
+/** The projects with unfinished papers, those a restart left on disk included. */
 export const waitingPaperRoots = Effect.fn("Papers.queue.waitingRoots")(function* () {
-  const loaded = [...queues.values()]
-    .filter(({ items }) => [...items.values()].some((item) => item.state === "needs-you"))
-    .map(({ root }) => root);
+  // Unfinished, not only waiting on the person: an attempt underway may yet ask for what was done.
+  const loaded = [...queues.values()].filter(unfinished).map(({ root }) => root);
   const stored = (yield* unfinishedRoots).filter((root) => !queues.has(root));
   return [...loaded, ...stored];
 });

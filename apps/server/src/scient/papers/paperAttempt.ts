@@ -3,6 +3,7 @@ import {
   type AccountId,
   type AccountSummary,
   type AccountTarget,
+  type AccountsSnapshot,
   type EnvironmentId,
   type PaperAsked,
   type PaperItem,
@@ -125,6 +126,14 @@ export const clearHolds = (signedIn?: AccountId) => {
   for (const lane of lanes.values()) lane.checks.clear();
 };
 
+/** Lets these requests be tried again, and no others: another project's wait stays. */
+export const releaseHolds = (needs: ReadonlyArray<Needed>) => {
+  for (const need of needs)
+    if (need.kind === "sign-in" && need.accountId) signInHolds.delete(need.accountId);
+    else if (need.kind === "check" && need.site && need.profileId)
+      lanes.get(need.site)?.checks.delete(need.profileId);
+};
+
 export const PAPERS_THREAD = ThreadId.make("scient-paper-get");
 
 /** The conversation an attempt acts for; no one is there to answer a card. */
@@ -134,9 +143,22 @@ const scopeOf = (requester: PaperRequester): AccountSessionScope => ({
   unattended: true,
 });
 
-/** How long one decision is reused, so a long list doesn't fill Activity; Settings apply within it. */
-const DECISION_REUSE_MS = 60_000;
+/** How long one decision or use is reused, so a long list doesn't fill Activity. */
+const REUSE_MS = 60_000;
 const decisions = new Map<string, { readonly allowed: boolean; readonly at: number }>();
+const usesNoted = new Map<string, number>();
+
+/** The controls a decision rests on; a change there decides afresh at once. */
+const controlsOf = (snapshot: AccountsSnapshot, target: AccountTarget) => {
+  const controls =
+    target.type === "account"
+      ? snapshot.accounts.find(({ accountId }) => accountId === target.accountId)?.controls
+      : snapshot.profiles.find(({ profileId }) => profileId === target.profileId);
+  if (!controls) return "default";
+  const { access, scope, allowedProjects = [] } = controls;
+  const projects = scope.type === "projects" ? scope.projectIds.join(",") : "";
+  return [snapshot.agentAccess, access, scope.type, projects, allowedProjects.join(",")].join("/");
+};
 
 /**
  * Whether this request may use an account or a browser profile now. The user's own may use any;
@@ -148,18 +170,33 @@ const mayUse = Effect.fn("Papers.mayUse")(function* (
   action: "sign-in" | "open-profile",
 ) {
   if (requester.threadId === undefined) return true;
+  const accounts = yield* AccountsService;
   const id = target.type === "account" ? target.accountId : target.profileId;
-  const key = [requester.threadId, requester.projectId, target.type, id, action].join("|");
+  const controls = controlsOf(yield* accounts.snapshot, target);
+  const key = [requester.threadId, requester.projectId, id, action, controls].join("|");
   const now = yield* Clock.currentTimeMillis;
   const known = decisions.get(key);
-  if (known && now - known.at < DECISION_REUSE_MS) return known.allowed;
-  const accounts = yield* AccountsService;
+  if (known && now - known.at < REUSE_MS) return known.allowed;
   const allowed = yield* accounts.authorize(scopeOf(requester), target, action).pipe(
     Effect.map(({ decision }) => decision === "allowed"),
     Effect.orElseSucceed(() => false),
   );
   decisions.set(key, { allowed, at: now });
   return allowed;
+});
+
+/** Whether this use is the first of its kind this minute, so a long list adds one Activity row. */
+const firstUseIn = Effect.fn("Papers.firstUseIn")(function* (
+  account: AccountSummary,
+  ok: boolean,
+  requester: PaperRequester,
+) {
+  const key = [requester.threadId, account.accountId, ok].join("|");
+  const now = yield* Clock.currentTimeMillis;
+  const last = usesNoted.get(key);
+  if (last !== undefined && now - last < REUSE_MS) return false;
+  usesNoted.set(key, now);
+  return true;
 });
 
 /** One page at a time per publisher, at a reader's pace; publishers run side by side. */
@@ -285,23 +322,50 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
       if (heldBefore.kind === "check") checked = heldBefore;
       continue;
     }
-    // Checked again on its turn: another paper may have met a sign-in or a check meanwhile.
+    // Checked again on its turn, which can come much later: another paper may have met a sign-in
+    // or a check meanwhile, and the user may have changed what this conversation may use.
     const turn = yield* inLane(
       lane,
       Effect.gen(function* () {
         const held = holdOn(step, profileId);
         if (held) return { held } as const;
+        const allowed = step.account
+          ? (yield* mayUse(
+              requester,
+              { type: "account", accountId: step.account.accountId },
+              "sign-in",
+            )) && (yield* opens(profileId))
+          : yield* opens(profileId);
+        if (!allowed) return { withdrawn: true } as const;
         const fetched = yield* fetchFromPage({
           url: step.url,
           profileId,
           caller: { kind: "paper", scope: scopeOf(requester), requester },
           accept: (bytes) => isThePaper(paper, bytes),
         }).pipe(Effect.timeoutOption(ROUTE_DEADLINE));
+        // Held before the lane is let go, so the next paper doesn't meet the same wall.
+        if (Option.isSome(fetched) && fetched.value.status !== "saved") {
+          const met = fetched.value;
+          const signInTo =
+            step.account ?? known.find(({ accountId }) => accountId === met.signInAccountId);
+          if (met.reason === "sign-in" && signInTo)
+            signInHolds.set(signInTo.accountId, {
+              kind: "sign-in",
+              site: signInTo.name,
+              accountId: signInTo.accountId,
+            });
+          if (met.reason === "bot-check")
+            lane.checks.set(profileId, { kind: "check", site, openUrl: met.openUrl, profileId });
+        }
         return { fetched } as const;
       }),
     );
     if ("held" in turn) {
       if (turn.held.kind === "check") checked = turn.held;
+      continue;
+    }
+    if ("withdrawn" in turn) {
+      if (step.account) usable.set(step.account.accountId, false);
       continue;
     }
     const result: FetchResult = Option.isSome(turn.fetched)
@@ -319,7 +383,11 @@ const tryRoutes = Effect.fn("Papers.tryRoutes")(function* (
       status: result.status,
       ...(result.status === "saved" ? {} : { reason: result.reason }),
     });
-    if (step.account && requester.threadId !== undefined)
+    if (
+      step.account &&
+      requester.threadId !== undefined &&
+      (yield* firstUseIn(step.account, result.status === "saved", requester))
+    )
       yield* accounts.recordUse({
         target: { type: "account", accountId: step.account.accountId },
         action: "sign-in",
