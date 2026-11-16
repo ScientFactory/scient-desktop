@@ -645,6 +645,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`47f90ee2e94086c86b1121eb004adc44b60f5aa9` is recorded in
+[the 2026-11-16 47f90ee2e9 receipt](docs/internals/t3-upstream-sync-20261116-47f90ee2e9.md).
+Literal merge `706e3515efbee577d2987dfc86b49797c6aa5a91` has owned base
+`301abac0beec5be6f037b6168a68faca83effde5` and the frozen official target as parents, retaining
+the 28 official commits after `6b7027b1f4`. The range is fixes: checkpoints stop rehashing unchanged
+untracked files, a busy thread's lock delays only its own reactions, Pi follows a session file an
+extension moves to, and model choices survive catalog gaps. Release remains separate.
+
+The previous committed alignment through
 `6b7027b1f43eebc4c7edf5304236a0775b2d8928` is recorded in
 [the 2026-11-16 6b7027b1f4 receipt](docs/internals/t3-upstream-sync-20261116-6b7027b1f4.md).
 Literal merge `8bcb5e3cb27745baf2a9bda2a5883235ca7dde94` has owned base
