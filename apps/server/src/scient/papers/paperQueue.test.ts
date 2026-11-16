@@ -361,9 +361,14 @@ it.effect("reuses only a copy it recorded for this paper, with its version", () 
       ]);
       // Replaced since, the file is no longer the copy it saved.
       yield* fs.writeFileString(path.join(root, "papers", "A-preprint.pdf"), "%PDF-1.7\nother\n");
-      yield* requestPapers(root, [{ doi: "10.1/preprint" }, { doi: "10.1/another" }], user);
+      // Asked for alone, the paper it lists as saved is fetched again too.
+      const [again] = yield* requestPapers(root, [{ doi: "10.1/preprint" }], user);
       yield* settled(root);
-      expect(yield* listPapers(root)).toMatchObject([{ route: "open-access" }, {}]);
+      expect(
+        (yield* listPapers(root)).find(({ itemId }) => itemId === again?.itemId),
+      ).toMatchObject({
+        route: "open-access",
+      });
       // A file of the same name the queue didn't save, that doesn't read as this paper, isn't it.
       const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
       yield* fs.makeDirectory(path.join(elsewhere, "papers"));

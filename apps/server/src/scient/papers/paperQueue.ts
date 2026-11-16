@@ -391,6 +391,15 @@ const intoLibrary = Effect.fn("Papers.intoLibrary")(function* (
 
 const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
+/** Whether a file the queue saved is still the bytes it saved. */
+const intact = Effect.fn("Papers.queue.intact")(function* (queue: Queue, relative: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const recorded = queue.files.get(relative);
+  const bytes = yield* fs.readFile(path.join(queue.root, relative)).pipe(Effect.option);
+  return recorded !== undefined && Option.isSome(bytes) && sha256(bytes.value) === recorded.sha256;
+});
+
 /** The copy of this paper the queue saved before, or one already in papers/ that names it. */
 const savedBefore = Effect.fn("Papers.queue.savedBefore")(function* (queue: Queue, paper: Paper) {
   const fs = yield* FileSystem.FileSystem;
@@ -614,6 +623,16 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
     queue.requesters.clear();
     queue.filers.clear();
   }
+  // A saved paper whose file was replaced or removed since is fetched again.
+  const gone = new Set<string>();
+  for (const item of queue.items.values())
+    if (
+      item.state === "saved" &&
+      item.path !== undefined &&
+      papers.some((asked) => sameAsked(item, asked)) &&
+      !(yield* intact(queue, item.path))
+    )
+      gone.add(item.itemId);
   const items = papers.map((asked) => {
     const filed = (item: PaperItem) =>
       asked.source
@@ -622,6 +641,7 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
     const existing = [...queue.items.values()].find(
       (item) =>
         sameAsked(item, asked) &&
+        !gone.has(item.itemId) &&
         item.state !== "no-access" &&
         item.state !== "not-found" &&
         // A saved paper not yet where this request files it goes again, to file its saved copy.
