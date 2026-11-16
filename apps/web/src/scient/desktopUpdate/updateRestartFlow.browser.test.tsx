@@ -5,7 +5,7 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 import type { UpdateEverythingRun } from "../../components/sidebar/updateEverything.logic";
 
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vitest/browser";
+import { userEvent } from "vite-plus/test/browser";
 
 const updateStore = vi.hoisted(() => {
   let state: DesktopUpdateState | null = null;
@@ -274,6 +274,41 @@ describe("update restart flow", () => {
     // Finishing in the background announces nothing; the footer is the way in.
     expect(anchoredNotice()).toBeNull();
     expect(cornerNotice()).toBeNull();
+  });
+
+  it("keeps native preparation compact and prevents another restart or check", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    updateStore.set(downloaded());
+    await mount(_fixture);
+    const pending = Promise.withResolvers<DesktopUpdateActionResult>();
+    bridge.installUpdate.mockImplementationOnce(() => {
+      updateStore.set({
+        ...downloaded(),
+        status: "preparing",
+        message: "Preparing update… Verifying the authorized release.",
+      });
+      return pending.promise;
+    });
+    await userEvent.click(footerButton(_fixture));
+    await vi.waitFor(() => expect(anchoredNotice()).not.toBeNull());
+    await userEvent.click(restartNow(anchoredNotice()!)!);
+    await vi.waitFor(() => expect(footerButton(_fixture).getAttribute("aria-busy")).toBe("true"));
+    expect(footerButton(_fixture).textContent).toBe("");
+    expect(footerButton(_fixture).getAttribute("aria-disabled")).toBe("true");
+    expect(footerButton(_fixture).getAttribute("aria-label")).toContain("Preparing update");
+    await userEvent.unhover(footerButton(_fixture).parentElement!);
+    await userEvent.hover(footerButton(_fixture).parentElement!);
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
+        "Preparing update",
+      ),
+    );
+    footerButton(_fixture).click();
+    expect(bridge.installUpdate).toHaveBeenCalledOnce();
+    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
+    pending.resolve(result(downloaded(), false));
   });
 
   it("a retried download offers Restart even when nothing here is working", async () => {

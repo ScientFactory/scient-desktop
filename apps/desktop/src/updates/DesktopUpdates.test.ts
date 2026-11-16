@@ -897,7 +897,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("installs a release published after the retained download", () => {
+  it.effect("refuses a replacement release discovered after the prepared offer", () => {
     let published = "1.2.4";
     let lastChecked: string | undefined;
     let installedVersion: string | null | undefined;
@@ -925,13 +925,36 @@ describe("DesktopUpdates", () => {
         assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
 
         published = "1.2.5";
+        yield* updates.check("poll");
+        yield* flushCallbacks;
         const checksBefore = harness.checkCount();
         const result = yield* updates.installPrepared("1.2.4");
-        assert.isTrue(result.accepted);
-        // A second check before downloading could find a stale feed's older release.
-        assert.equal(harness.checkCount(), checksBefore + 1);
-        assert.equal(harness.quitAndInstalls(), 1);
-        assert.equal(installedVersion, "1.2.5");
+        assert.isFalse(result.accepted);
+        assert.equal(harness.checkCount(), checksBefore);
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.isUndefined(installedVersion);
+        assert.equal(result.state.downloadedVersion, "1.2.5");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("commits the consented downloaded version without waiting for feed discovery", () => {
+    let installedVersion: string | null | undefined;
+    const harness = makeHarness({
+      checkForUpdates: Effect.never,
+      quitAndInstall: Effect.sync(() => {
+        installedVersion = harness.sentStates.at(-1)?.downloadedVersion;
+      }),
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const { changes } = yield* updates.subscribe;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* Stream.runHead(changes);
+        assert.isTrue((yield* updates.installPrepared("1.2.4")).accepted);
+        assert.equal(installedVersion, "1.2.4");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

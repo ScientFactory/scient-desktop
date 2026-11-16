@@ -203,6 +203,42 @@ tag or release already exists.
    `0.0.<run number>` Stable-shaped candidate from that commit, skips the exact-main
    CI and release-note checks, and never reaches the publication job. Keep `allow_note_free=false`
    unless Yaacov explicitly accepts a note-free release.
+   For native restart qualification, complete one signed rehearsal first, then
+   run a second rehearsal of the candidate with `upgrade_from_run` set to the
+   first run's ID. Both versions must contain the restart-readiness protocol.
+   On the first pre-merge run, leave `upgrade_linux_only=false` to qualify the
+   full matrix inline through the existing release workflow. Once the new
+   qualification workflow is on the default branch, `upgrade_linux_only=true`
+   permits an initial Linux trial, followed by a manual dispatch with the same
+   run IDs and `linux_only=false` for the mandatory full matrix.
+   The second run calls `desktop-update-qualification.yml` after assembly;
+   publication remains disabled. Each macOS arm64/x64, Windows x64 and Linux
+   x64 target runs three installed upgrades, an ordinary-quit-without-consent
+   check, and a corrupt-download/retry upgrade on separate disposable runners.
+   The harness checks candidate hashes and source commits, uses a loopback
+   managed feed and synthetic project, drives the real restart controls, and
+   temporarily freezes autosave to type and confirm an actual unsaved file edit,
+   then resumes the renderer's timers before consent so save RPCs can run normally.
+   After native relaunch, the harness checks the edit on disk and attaches with Node's PID inspector
+   to verify the real restored project's visible controls and unlocked input.
+   Attachment happens after the measured workspace-ready receipt; no debug hook
+   or launch switch is added to production. The disposable Linux runner permits
+   unprivileged user namespaces so Chromium's sandbox can start under AppArmor.
+   macOS additionally requires signature, Gatekeeper and stapling checks; Windows
+   requires valid Authenticode signatures. Missing signing cannot become a
+   successful unsigned native receipt.
+   macOS also rejects a synthetically damaged code signature after a valid
+   download checksum, verifies that preparation did not shut down the app,
+   then downloads the genuine target and completes a fresh consented restart.
+
+   Retain the per-target `native-update-*` artifacts: the JSON receipt, before/after
+   screenshots, and recorded restart interaction. Compare repeated
+   `confirmToReadyMs`, `preparationAndSaveMs`, `shutdownMs`, `handoffToLaunchMs`
+   and `launchToReadyMs` rather than treating process launch as usability.
+   These receipts do not establish physical low-end-machine performance,
+   interactive UAC behavior, WSL session restoration, or every interrupted
+   installer recovery case; qualify those separately before making those claims.
+
 4. Wait for assembly, then inspect the `scient-release-v<version>` artifact from
    that same pending workflow run. It contains macOS arm64/x64, Linux x64,
    Windows x64, updater manifests, the exact server tarball,

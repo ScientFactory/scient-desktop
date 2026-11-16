@@ -133,3 +133,18 @@ index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..708a1fa7d740192944f04259cde6d6bf
      async getLatestTagName(cancellationToken) {
          const options = this.options;
          // do not use API for GitHub to avoid limit, only for custom host or GitHub Enterprise
+diff --git a/out/MacUpdater.js b/out/MacUpdater.js
+--- a/out/MacUpdater.js
++++ b/out/MacUpdater.js
+@@ -222,7 +222,10 @@ class MacUpdater extends AppUpdater_1.AppUpdater {
+                 });
+                 // The update has been downloaded and is ready to be served to Squirrel
+-                this.dispatchUpdateDownloaded(event);
++                this.dispatchUpdateDownloaded({
++                    ...event,
++                    nativeUpdateUrl: `${getServerUrl(this.server)}${fileUrl}`,
++                });
+                 if (this.autoInstallOnAppQuit) {
+                     this.nativeUpdater.once("error", reject);
+                     // This will trigger fetching and installing the file on Squirrel side
+                     this.nativeUpdater.checkForUpdates();

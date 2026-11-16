@@ -34,6 +34,8 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopRestartTiming from "../app/DesktopRestartTiming.ts";
+import * as DesktopUpdateSave from "../app/DesktopUpdateSave.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
@@ -388,6 +390,8 @@ export const make = Effect.gen(function* () {
   const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
+  const restartTiming = yield* DesktopRestartTiming.DesktopRestartTiming;
+  const updateSave = yield* DesktopUpdateSave.DesktopUpdateSave;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -403,6 +407,7 @@ export const make = Effect.gen(function* () {
   >([]);
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
+  const nativePreparingRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
   // SCIENT-FORK:START — the background download loop runs in configure's scope, one at a time.
@@ -527,6 +532,13 @@ export const make = Effect.gen(function* () {
     resolveDisabledReason.pipe(Effect.map(Option.orElse(() => channelBlockedReason(channel))));
 
   const activeUpdateAction = Ref.get(activeUpdateActionRef);
+  const installerReserved = activeUpdateAction.pipe(
+    Effect.map(
+      (action) =>
+        Option.isSome(action) &&
+        (action.value === "install" || action.value === "install-recovery"),
+    ),
+  );
 
   const tryStartUpdateAction = (action: UpdateAction): Effect.Effect<boolean> =>
     Ref.modify(activeUpdateActionRef, (activeAction) =>
@@ -612,6 +624,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.annotateCurrentSpan({ reason });
     if (yield* Ref.get(desktopState.quitting)) return false;
     if (!(yield* Ref.get(updaterConfiguredRef))) return false;
+    if ((yield* electronUpdater.authorizedNativeVersion) !== null) return false;
 
     const state = yield* Ref.get(updateStateRef);
     // A configured updater is disabled only by a channel the managed policy blocks.
@@ -804,8 +817,8 @@ export const make = Effect.gen(function* () {
           );
           continue;
         }
-        // A check offered this update just now, so the download needs no refresh first.
-        const result = yield* downloadAvailableUpdate(false);
+        // A retry refreshes the feed before trusting a cached archive again.
+        const result = yield* downloadAvailableUpdate(Option.isSome(backoff));
         if (result.completed) {
           yield* Ref.set(autoDownloadBackoffRef, Option.none());
           return;
@@ -983,16 +996,28 @@ export const make = Effect.gen(function* () {
     [
       finishUpdateAction("install"),
       Ref.set(desktopState.quitting, false),
+      Ref.set(nativePreparingRef, false),
+      updateSave.release,
       Ref.set(installRunningBackendsRef, []),
       removeUpdateRestartMarker,
       removeUpdateInProgressMarker,
       removeInstallRecord,
+      restartTiming.cancel("install-cancelled"),
+      updateState((state) =>
+        state.status === "preparing"
+          ? reduceDesktopUpdateStateOnInstallFailure(
+              state,
+              "Update preparation was interrupted. Retry the update.",
+            )
+          : state,
+      ),
     ],
     { discard: true },
   );
 
   const recoverFailedInstall = Effect.fn("desktop.updates.recoverFailedInstall")(function* (
     message: string,
+    retryDownload = false,
   ) {
     const ownsRecovery = yield* Ref.modify(activeUpdateActionRef, (activeAction) =>
       Option.isSome(activeAction) && activeAction.value === "install"
@@ -1001,10 +1026,24 @@ export const make = Effect.gen(function* () {
     );
     if (!ownsRecovery) return;
 
+    yield* restartTiming.cancel("install-failed");
+    yield* Ref.set(nativePreparingRef, false);
     yield* Ref.set(desktopState.quitting, false);
+    yield* updateSave.release;
     yield* removeUpdateRestartMarker;
     yield* removeUpdateInProgressMarker;
     yield* removeInstallRecord;
+    if (retryDownload) {
+      yield* Ref.set(
+        autoDownloadBackoffRef,
+        Option.some({
+          version: (yield* Ref.get(updateStateRef)).availableVersion,
+          failures: 1,
+          nextAttemptAt:
+            (yield* Clock.currentTimeMillis) + Duration.toMillis(autoDownloadRetryDelay(1)),
+        }),
+      );
+    }
     yield* Effect.gen(function* () {
       const runningInstances = yield* Ref.getAndSet(installRunningBackendsRef, []);
       const instances = (yield* pool.list).filter((instance) =>
@@ -1014,7 +1053,14 @@ export const make = Effect.gen(function* () {
         concurrency: "unbounded",
         discard: true,
       }).pipe(Effect.exit);
-      yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
+      yield* updateState((current) =>
+        retryDownload
+          ? reduceDesktopUpdateStateOnDownloadFailure(
+              { ...current, downloadedVersion: null },
+              message,
+            )
+          : reduceDesktopUpdateStateOnInstallFailure(current, message),
+      );
       if (Exit.isFailure(restartExit)) {
         yield* logUpdaterError("Desktop update install recovery could not restart every backend.");
       }
@@ -1062,10 +1108,64 @@ export const make = Effect.gen(function* () {
           return { accepted: false, completed: false, failed: false };
         }
 
-        yield* Ref.set(desktopState.quitting, true);
         yield* Ref.set(installRunningBackendsRef, []);
 
         return yield* Effect.gen(function* () {
+          const targetVersion = (yield* Ref.get(updateStateRef)).downloadedVersion;
+          if (targetVersion === null) {
+            return yield* Effect.die(new Error("The admitted update is no longer downloaded."));
+          }
+          yield* restartTiming.begin(targetVersion);
+          yield* updateState((state) => ({
+            ...state,
+            status: "preparing",
+            message:
+              "Preparing update… Verifying the authorized release while Scient keeps running.",
+            errorContext: null,
+            canRetry: false,
+          }));
+          yield* Ref.set(nativePreparingRef, true);
+          if (!(yield* updateSave.prepare)) {
+            yield* Ref.set(nativePreparingRef, false);
+            yield* recoverFailedInstall(
+              "Scient could not save every open workspace. Save your changes and retry the update.",
+            );
+            return { accepted: true, completed: false, failed: true };
+          }
+          yield* electronUpdater.prepareUpdate(targetVersion).pipe(
+            Effect.timeoutOrElse({
+              duration: "5 minutes",
+              orElse: () =>
+                Effect.fail(
+                  new ElectronUpdater.ElectronUpdaterPrepareUpdateError({
+                    channel: null,
+                    cause: new Error(
+                      "Native preparation timed out. Retry to await the same authorized update.",
+                    ),
+                  }),
+                ),
+            }),
+          );
+          yield* logUpdaterInfo("update preparation ready", {
+            version: targetVersion,
+            nativePreparation: environment.platform === "darwin",
+          });
+          yield* updateState((state) => ({
+            ...state,
+            message: "Preparing update… Saving open workspaces before restarting.",
+          }));
+          yield* Ref.set(desktopState.quitting, true);
+          if (!(yield* updateSave.prepareForRestart)) {
+            yield* Ref.set(nativePreparingRef, false);
+            yield* recoverFailedInstall(
+              "The update is prepared, but a workspace could not be saved. Save your changes and retry the update." +
+                (environment.platform === "darwin"
+                  ? " This update is already authorized; quitting Scient can install it."
+                  : ""),
+            );
+            return { accepted: true, completed: false, failed: true };
+          }
+          yield* Ref.set(nativePreparingRef, false);
           yield* writeUpdateRestartMarker;
           yield* writeUpdateInProgressMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
@@ -1077,6 +1177,7 @@ export const make = Effect.gen(function* () {
             instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
           );
           yield* Ref.set(installRunningBackendsRef, runningInstances);
+          yield* restartTiming.shutdownStarted;
           yield* Effect.all(
             [
               Effect.forEach(
@@ -1089,13 +1190,25 @@ export const make = Effect.gen(function* () {
             ],
             { concurrency: "unbounded" },
           );
+          yield* restartTiming.nativeHandoff;
           yield* electronUpdater.quitAndInstall({
+            expectedVersion: targetVersion,
             isSilent: true,
             isForceRunAfter: true,
           });
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
+            ElectronUpdaterPrepareUpdateError: Effect.fn(
+              "desktop.updates.handlePreparationFailure",
+            )(function* (error) {
+              yield* recoverFailedInstall(error.message, error.retryDownload ?? false);
+              yield* logUpdaterWarning(error.message, {
+                errorTag: error._tag,
+                cause: describeUpdateErrorCause(error.cause),
+              });
+              return { accepted: true, completed: false, failed: true };
+            }),
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
                 yield* recoverFailedInstall(error.message);
@@ -1141,12 +1254,11 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }
-    let installVersion = expectedVersion;
     // A download can be hours old: a release published since replaces it before restarting.
     const retained = yield* Ref.get(updateStateRef);
     if (
+      expectedVersion === undefined &&
       retained.downloadedVersion !== null &&
-      (expectedVersion === undefined || retained.downloadedVersion === expectedVersion) &&
       (yield* checkForUpdates(
         "install",
         "acquire",
@@ -1172,12 +1284,9 @@ export const make = Effect.gen(function* () {
             state: yield* Ref.get(updateStateRef),
           };
         }
-        if (expectedVersion !== undefined) {
-          installVersion = (yield* Ref.get(updateStateRef)).downloadedVersion ?? expectedVersion;
-        }
       }
     }
-    const result = yield* installDownloadedUpdate(installVersion);
+    const result = yield* installDownloadedUpdate(expectedVersion);
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -1226,6 +1335,9 @@ export const make = Effect.gen(function* () {
     yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateAvailable")(function* (info) {
+          if (yield* installerReserved) return;
+          const authorizedVersion = yield* electronUpdater.authorizedNativeVersion;
+          if (authorizedVersion !== null && authorizedVersion !== info.version) return;
           const state = yield* Ref.get(updateStateRef);
           if (!(yield* offerable(info.version, state))) {
             yield* logUpdaterInfo("ignoring update outside the selected channel or its floor", {
@@ -1278,6 +1390,7 @@ export const make = Effect.gen(function* () {
   });
 
   const handleUpdateNotAvailable = Effect.gen(function* () {
+    if (yield* installerReserved) return;
     const checkedAt = yield* currentIsoTimestamp;
     const state = yield* Ref.get(updateStateRef);
     yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
@@ -1300,6 +1413,8 @@ export const make = Effect.gen(function* () {
       }),
       cause,
     });
+    // The awaited preparation owns its error and recovery; a duplicate native event cannot release its lease.
+    if (yield* Ref.get(nativePreparingRef)) return;
     if (Option.isSome(activeAction) && activeAction.value === "install") {
       yield* recoverFailedInstall(error.message);
       yield* logUpdaterError(error.message, {
@@ -1336,6 +1451,7 @@ export const make = Effect.gen(function* () {
     yield* decodeDownloadProgressInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyDownloadProgress")(function* (progress) {
+          if (yield* installerReserved) return;
           const state = yield* Ref.get(updateStateRef);
           const percent = Math.floor(progress.percent);
           // SCIENT-FORK: publish every real progress event; only logs use 10% milestones.
@@ -1368,7 +1484,15 @@ export const make = Effect.gen(function* () {
     yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
+          if (yield* installerReserved) return;
           const state = yield* Ref.get(updateStateRef);
+          if (state.availableVersion !== null && state.availableVersion !== info.version) {
+            yield* logUpdaterInfo("ignoring superseded update download", {
+              version: info.version,
+              availableVersion: state.availableVersion,
+            });
+            return;
+          }
           // A download can finish after its track switch moved on; never offer that build.
           if (!(yield* offerable(info.version, state))) {
             yield* logUpdaterInfo("ignoring download outside the selected channel or its floor", {
@@ -1514,6 +1638,12 @@ export const make = Effect.gen(function* () {
       options?: { readonly minimumVersion?: string | undefined },
     ) {
       yield* Effect.annotateCurrentSpan({ channel: nextChannel });
+      if ((yield* electronUpdater.authorizedNativeVersion) !== null) {
+        return yield* new DesktopUpdateActionInProgressError({
+          action: "install",
+          requestedChannel: nextChannel,
+        });
+      }
       if (Option.isSome(channelBlockedReason(nextChannel))) {
         return yield* new DesktopUpdateChannelManagedError({
           channel: nextChannel,

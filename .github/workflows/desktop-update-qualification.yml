@@ -1,0 +1,141 @@
+name: Native desktop update qualification
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        type: string
+        required: true
+      target_run_id:
+        type: string
+        required: true
+      linux_only:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Completed signed release rehearsal containing the installed source
+        type: string
+        required: true
+      target_run_id:
+        description: Signed release rehearsal containing the newer target
+        type: string
+        required: true
+      linux_only:
+        description: Exercise the Linux UI/save/relaunch chain before spending the full native matrix
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  installed_upgrade:
+    name: Native update / ${{ matrix.host.label }} / ${{ matrix.scenario }}
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ${{ fromJSON(inputs.linux_only && '[{"label":"Linux-x64","runner":"ubuntu-24.04"}]' || '[{"label":"macOS-arm64","runner":"macos-26"},{"label":"macOS-x64","runner":"macos-26-intel"},{"label":"Windows-x64","runner":"windows-2025"},{"label":"Linux-x64","runner":"ubuntu-24.04"}]') }}
+        scenario: [upgrade-1, upgrade-2, upgrade-3, ordinary-quit, checksum-recovery]
+        include: ${{ fromJSON(inputs.linux_only && '[]' || '[{"host":{"label":"macOS-arm64","runner":"macos-26"},"scenario":"preparation-recovery"},{"host":{"label":"macOS-x64","runner":"macos-26-intel"},"scenario":"preparation-recovery"}]') }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+      - name: Install the pinned Playwright video recorder
+        run: node scripts/node_modules/playwright-core/cli.js install ffmpeg
+      - name: Verify rehearsal run identity
+        id: runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.source_run_id }}
+          TARGET_RUN: ${{ inputs.target_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ && "$TARGET_RUN" =~ ^[0-9]+$ && "$SOURCE_RUN" != "$TARGET_RUN" ]]
+          for kind in source target; do
+            run="$SOURCE_RUN"
+            [[ "$kind" != target ]] || run="$TARGET_RUN"
+            metadata="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"
+            jq -e '.path == ".github/workflows/release.yml" and .event == "workflow_dispatch" and (.head_branch | startswith("release-rehearsal/"))' <<<"$metadata"
+            if [[ "$kind" == source || "$TARGET_RUN" != "$GITHUB_RUN_ID" ]]; then
+              jq -e '.conclusion == "success"' <<<"$metadata"
+              gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+                | jq -e '[.[].jobs[] | select(.name == "Publish GitHub release")] | length == 1 and .[0].conclusion == "skipped"'
+            fi
+            sha="$(jq -er '.head_sha | select(test("^[0-9a-f]{40}$"))' <<<"$metadata")"
+            echo "${kind}_sha=$sha" >> "$GITHUB_OUTPUT"
+          done
+      - name: Download immutable source candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+          pattern: scient-release-v*
+          merge-multiple: true
+          path: update-source
+      - name: Download immutable target candidate
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.target_run_id }}
+          pattern: scient-release-v*
+          merge-multiple: true
+          path: update-target
+      - name: Install Linux graphical prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb libfuse2 libasound2t64
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Pin the disposable machine to the loopback feed
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          policy='/etc/scient/policy.json'
+          [[ "$RUNNER_OS" != macOS ]] || policy='/Library/Application Support/Scient/policy.json'
+          [[ ! -e "$policy" ]]
+          printf '%s\n' '{"schemaVersion":1,"organization":"Synthetic update qualification","limits":{"connect":false,"telemetry":false,"webhookTasks":false,"updates":{"mode":"auto","feedUrl":"http://127.0.0.1:3000","allowNightly":false}}}' > "$RUNNER_TEMP/update-policy.json"
+          sudo mkdir -p "$(dirname "$policy")"
+          sudo cp "$RUNNER_TEMP/update-policy.json" "$policy"
+      - name: Pin the disposable Windows machine to the loopback feed
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $policy = 'C:\Program Files\Scient\policy.json'
+          if (Test-Path $policy) { throw 'Refusing an existing managed policy' }
+          New-Item -ItemType Directory -Force -Path (Split-Path $policy) | Out-Null
+          '{"schemaVersion":1,"organization":"Synthetic update qualification","limits":{"connect":false,"telemetry":false,"webhookTasks":false,"updates":{"mode":"auto","feedUrl":"http://127.0.0.1:3000","allowNightly":false}}}' | Set-Content -LiteralPath $policy -Encoding utf8NoBOM
+      - name: Exercise installed app, explicit restart, and workspace restoration
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.runs.outputs.source_sha }}
+          TARGET_SHA: ${{ steps.runs.outputs.target_sha }}
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          set -euo pipefail
+          scenario="$SCENARIO"
+          [[ "$scenario" != upgrade-* ]] || scenario=upgrade
+          command=(node scripts/qualify-desktop-update.mjs --source update-source --source-sha "$SOURCE_SHA" --target update-target --target-sha "$TARGET_SHA" --scenario "$scenario" --output "update-evidence/$SCENARIO.json")
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run --auto-servernum "${command[@]}"
+          else
+            "${command[@]}"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: native-update-${{ matrix.host.label }}-${{ matrix.scenario }}
+          path: update-evidence/
+          if-no-files-found: warn
+          retention-days: 14

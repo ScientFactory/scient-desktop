@@ -4,6 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateReleaseUrl,
+  canCheckForUpdate,
+  getDesktopUpdateButtonTooltip,
+  isDesktopUpdateButtonDisabled,
+  resolveDesktopUpdateButtonAction,
 } from "./desktopUpdate.logic";
 
 // Restored from the upstream-deleted desktopUpdate.toast.test.tsx against the live helpers: the
@@ -42,4 +46,16 @@ describe("desktop update release notes", () => {
       "0.6.8",
     );
   });
+});
+
+it("native preparation blocks every update action even while the archive remains downloaded", () => {
+  const preparing: DesktopUpdateState = {
+    ...downloaded,
+    status: "preparing",
+    message: "Preparing update… Verifying the authorized release.",
+  };
+  expect(resolveDesktopUpdateButtonAction(preparing)).toBe("none");
+  expect(canCheckForUpdate(preparing)).toBe(false);
+  expect(isDesktopUpdateButtonDisabled(preparing)).toBe(true);
+  expect(getDesktopUpdateButtonTooltip(preparing)).toBe(preparing.message);
 });

@@ -187,3 +187,9 @@ export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
 
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
+
+export const GET_RESTART_READINESS_TOKEN_CHANNEL = "scient:restart:readiness-token";
+export const REPORT_WORKSPACE_READY_CHANNEL = "scient:restart:workspace-ready";
+export const PREPARE_UPDATE_SAVE_CHANNEL = "scient:update:prepare-save";
+export const COMPLETE_UPDATE_SAVE_CHANNEL = "scient:update:complete-save";
+export const RELEASE_UPDATE_SAVE_CHANNEL = "scient:update:release-save";

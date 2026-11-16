@@ -283,6 +283,7 @@ function SidebarUpdateControl() {
   const updaterAction = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const action = backgroundUpdate ? "none" : updaterAction;
   const isDownloading = state?.status === "downloading" && !backgroundUpdate;
+  const isPreparing = state?.status === "preparing";
   const localUpdateVersion =
     state && updaterAction !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   // SCIENT-FORK:END
@@ -342,15 +343,18 @@ function SidebarUpdateControl() {
         ? { title: getDesktopUpdateBackgroundTooltip(state), detail: null }
         : getDesktopUpdateIdleTooltip(state, updatesDenial)
       : null;
-  const tooltip = runsEverything
-    ? everything.summary
-    : showUpdateDetails
-      ? state
-        ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
-      : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+  const tooltip =
+    isPreparing && state
+      ? getDesktopUpdateButtonTooltip(state)
+      : runsEverything
+        ? everything.summary
+        : showUpdateDetails
+          ? state
+            ? getDesktopUpdateButtonTooltip(state)
+            : "Update available"
+          : showCheckIcon
+            ? "Checking for updates…"
+            : (idleTooltip?.title ?? "Check for updates");
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -358,9 +362,11 @@ function SidebarUpdateControl() {
       : showUpdateDetails
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
-  const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
+  const isInteractionDisabled = isPreparing || disabled || isActionPending || isRunningEverything;
   const showReleaseNotesPopover =
-    !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
+    !isPreparing &&
+    !isRunningEverything &&
+    shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
 
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [releaseNotesTriggerFocusVisible, setReleaseNotesTriggerFocusVisible] = useState(false);
@@ -548,7 +554,7 @@ function SidebarUpdateControl() {
   // SCIENT-FORK:START — compact labels for this app's own update. Other machines and providers
   // have their own circle, which is all a browser shows.
   const updateLabel =
-    showUpdateIconState && state
+    !isPreparing && showUpdateIconState && state
       ? getScientDesktopUpdateLabel({ ...state, downloadPercent: displayedDownloadPercent })
       : null;
   const updateOthers = (admitServer: (target: ServerUpdateTarget) => boolean) =>
@@ -581,10 +587,11 @@ function SidebarUpdateControl() {
             : tooltip
       }
       aria-disabled={isInteractionDisabled || undefined}
+      aria-busy={isPreparing || undefined}
       className={cn(
         "inline-flex items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-        showUpdateIconState
+        showUpdateIconState || isPreparing
           ? cn(
               // SCIENT-FORK: lab-verified compact pill dimensions, type and spacing.
               "h-5 rounded-(--control-radius) bg-primary text-2xs font-medium whitespace-nowrap text-primary-foreground",
@@ -622,7 +629,13 @@ function SidebarUpdateControl() {
         );
       }}
     >
-      {iconStatus === "available" ? (
+      {isPreparing ? (
+        <LoaderCircleIcon
+          aria-hidden="true"
+          className="size-[13px] shrink-0 animate-spin motion-reduce:animate-none"
+          strokeWidth={2.25}
+        />
+      ) : iconStatus === "available" ? (
         <DownloadIcon aria-hidden="true" className="size-[13px] shrink-0" strokeWidth={2.25} />
       ) : iconStatus === "downloaded" ? (
         // SCIENT-FORK: the clean ready-to-restart state is text-only, but the
@@ -681,24 +694,28 @@ function SidebarUpdateControl() {
           if (!details.isCanceled) setReleaseNotesOpen(open);
         }}
       >
-        <Tooltip disabled={showReleaseNotesPopover}>
+        <Tooltip key={isPreparing ? "preparing" : "update"} disabled={showReleaseNotesPopover}>
           <TooltipTrigger
             id={releaseNotesTriggerId}
             render={
-              <PopoverTrigger
-                {...(!showReleaseNotesPopover
-                  ? {
-                      "aria-controls": undefined,
-                      "aria-expanded": undefined,
-                      "aria-haspopup": undefined,
-                    }
-                  : {})}
-                closeDelay={150}
-                handle={releaseNotesPopoverHandle}
-                id={releaseNotesTriggerId}
-                openOnHover={showReleaseNotesPopover}
-                render={updateButton}
-              />
+              isPreparing ? (
+                <span className="inline-flex">{updateButton}</span>
+              ) : (
+                <PopoverTrigger
+                  {...(!showReleaseNotesPopover
+                    ? {
+                        "aria-controls": undefined,
+                        "aria-expanded": undefined,
+                        "aria-haspopup": undefined,
+                      }
+                    : {})}
+                  closeDelay={150}
+                  handle={releaseNotesPopoverHandle}
+                  id={releaseNotesTriggerId}
+                  openOnHover={showReleaseNotesPopover}
+                  render={updateButton}
+                />
+              )
             }
           />
           {!showReleaseNotesPopover ? (
@@ -708,7 +725,7 @@ function SidebarUpdateControl() {
               side="top"
               variant={showUpdateDetails ? "glass" : "default"}
             >
-              {idleTooltip?.detail ? (
+              {!isPreparing && idleTooltip?.detail ? (
                 <div className="text-left">
                   <div className="font-medium">{idleTooltip.title}</div>
                   <div className="text-muted-foreground">{idleTooltip.detail}</div>

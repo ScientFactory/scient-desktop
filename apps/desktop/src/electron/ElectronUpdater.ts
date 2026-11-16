@@ -4,7 +4,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { AppImageUpdater, autoUpdater } from "electron-updater";
+import { AppImageUpdater, MacUpdater, autoUpdater } from "electron-updater";
+import { autoUpdater as nativeUpdater } from "electron";
+import { MacUpdatePreparation } from "./MacUpdatePreparation.ts";
+
+let macPreparation: MacUpdatePreparation | undefined;
+const getMacPreparation = () => (macPreparation ??= new MacUpdatePreparation(nativeUpdater));
 
 type AutoUpdater = typeof autoUpdater;
 type SpawnLog = (cmd: string, args?: Array<string>, ...rest: Array<unknown>) => Promise<boolean>;
@@ -54,6 +59,21 @@ export class ElectronUpdaterDownloadUpdateError extends Schema.TaggedError<Elect
   }
 }
 
+export class ElectronUpdaterPrepareUpdateError extends Schema.TaggedError<ElectronUpdaterPrepareUpdateError>()(
+  "ElectronUpdaterPrepareUpdateError",
+  {
+    channel: Schema.NullOr(Schema.String),
+    cause: Schema.Defect(),
+    retryDownload: Schema.optionalKey(Schema.Boolean),
+  },
+) {
+  override get message(): string {
+    return this.retryDownload
+      ? "The update could not finish native preparation. Scient is still running; download the update again and retry."
+      : "Native preparation has not finished. Retry to keep waiting, or quit and reopen Scient. The authorized update may install when you quit.";
+  }
+}
+
 export class ElectronUpdaterQuitAndInstallError extends Schema.TaggedError<ElectronUpdaterQuitAndInstallError>()(
   "ElectronUpdaterQuitAndInstallError",
   {
@@ -71,6 +91,7 @@ export class ElectronUpdaterQuitAndInstallError extends Schema.TaggedError<Elect
 export const ElectronUpdaterError = Schema.Union([
   ElectronUpdaterCheckForUpdatesError,
   ElectronUpdaterDownloadUpdateError,
+  ElectronUpdaterPrepareUpdateError,
   ElectronUpdaterQuitAndInstallError,
 ]);
 export type ElectronUpdaterError = typeof ElectronUpdaterError.Type;
@@ -89,7 +110,12 @@ export class ElectronUpdater extends Context.Service<
     readonly setDisableDifferentialDownload: (value: boolean) => Effect.Effect<void>;
     readonly checkForUpdates: Effect.Effect<void, ElectronUpdaterCheckForUpdatesError>;
     readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
+    readonly prepareUpdate: (
+      expectedVersion: string,
+    ) => Effect.Effect<void, ElectronUpdaterPrepareUpdateError>;
+    readonly authorizedNativeVersion: Effect.Effect<string | null>;
     readonly quitAndInstall: (options: {
+      readonly expectedVersion: string;
       readonly isSilent: boolean;
       readonly isForceRunAfter: boolean;
     }) => Effect.Effect<void, ElectronUpdaterQuitAndInstallError>;
@@ -163,11 +189,31 @@ export const make = ElectronUpdater.of({
   downloadUpdate: Effect.suspend(() => {
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
-      try: () => autoUpdater.downloadUpdate(),
+      // Native preparation arms install-on-quit; never replace its consent-bound generation.
+      try: () => {
+        if (autoUpdater instanceof MacUpdater) getMacPreparation().assertCanDownload();
+        return autoUpdater.downloadUpdate();
+      },
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
     }).pipe(Effect.asVoid);
   }),
+  prepareUpdate: Effect.fn("ElectronUpdater.prepareUpdate")(function (expectedVersion) {
+    if (!(autoUpdater instanceof MacUpdater)) return Effect.void;
+    return Effect.tryPromise({
+      try: () => getMacPreparation().prepare(expectedVersion),
+      catch: (cause) =>
+        new ElectronUpdaterPrepareUpdateError({
+          channel: autoUpdater.channel,
+          cause,
+          retryDownload: getMacPreparation().authorizedVersion === null,
+        }),
+    });
+  }),
+  authorizedNativeVersion: Effect.sync(() =>
+    autoUpdater instanceof MacUpdater ? getMacPreparation().authorizedVersion : null,
+  ),
   quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
+    expectedVersion,
     isSilent,
     isForceRunAfter,
   }) {
@@ -175,7 +221,11 @@ export const make = ElectronUpdater.of({
       const channel = autoUpdater.channel;
       if (autoUpdater instanceof AppImageUpdater) relaunchWithoutInheritedDescriptors(autoUpdater);
       return Effect.try({
-        try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+        try: () => {
+          if (autoUpdater instanceof MacUpdater)
+            getMacPreparation().quitAndInstall(expectedVersion);
+          else autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+        },
         catch: (cause) =>
           new ElectronUpdaterQuitAndInstallError({
             channel,
@@ -191,7 +241,12 @@ export const make = ElectronUpdater.of({
       on: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
       removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
     };
-    const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
+    const untypedListener = (...args: Array<unknown>) => {
+      if (eventName === "update-downloaded" && autoUpdater instanceof MacUpdater) {
+        getMacPreparation().recordDownloaded(args[0]);
+      }
+      (listener as unknown as (...args: Array<unknown>) => void)(...args);
+    };
     return Effect.acquireRelease(
       Effect.sync(() => {
         eventTarget.on(eventName, untypedListener);

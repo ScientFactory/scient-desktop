@@ -108,6 +108,8 @@ import * as PreviewIpc from "./methods/preview.ts";
 import * as VoiceIpc from "./methods/voice.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import * as WebLinksIpc from "./methods/webLinks.ts";
+import * as RestartReadinessIpc from "./methods/restartReadiness.ts";
+import * as UpdateSaveIpc from "./methods/updateSave.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 import {
   getCliCommandState,
@@ -139,6 +141,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
   yield* ipc.handle(WebLinksIpc.setReady);
+  yield* ipc.handle(RestartReadinessIpc.getToken);
+  yield* ipc.handle(RestartReadinessIpc.reportReady);
+  yield* ipc.handle(UpdateSaveIpc.complete);
 
   yield* ipc.handleSync(getAppBranding);
   yield* installRelayTelemetryEnabled();

@@ -37,6 +37,15 @@ on:
         required: true
         default: false
         type: boolean
+      upgrade_from_run:
+        description: "Rehearsal only: completed signed rehearsal run to upgrade from on all four native targets"
+        required: false
+        type: string
+      upgrade_linux_only:
+        description: "Rehearsal qualification: exercise Linux first before dispatching the full matrix"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -1250,6 +1259,16 @@ jobs:
               echo "This is a non-publishing rehearsal. It cannot be promoted by rerunning publication against rebuilt artifacts."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  qualify_installed_updates:
+    name: Qualify installed update restarts
+    needs: [preflight, assemble]
+    if: ${{ !cancelled() && needs.assemble.result == 'success' && needs.preflight.outputs.rehearsal == 'true' && inputs.upgrade_from_run != '' }}
+    uses: ./.github/workflows/desktop-update-qualification.yml
+    with:
+      source_run_id: ${{ inputs.upgrade_from_run }}
+      target_run_id: ${{ github.run_id }}
+      linux_only: ${{ inputs.upgrade_linux_only }}
 
   publish:
     name: Publish GitHub release

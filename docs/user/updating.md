@@ -41,9 +41,27 @@ row.
 
 Scient installs an update only after you choose **Restart now** or
 **Install**, or run an update of everything that includes this app (below).
-Quitting Scient does not install a downloaded update. Restarting interrupts
-running agent turns and terminal commands, so let them finish first.
+Quitting Scient before that consent does not install a downloaded archive.
+Restarting interrupts running agent turns and terminal commands, so let them finish first.
 Threads, settings, and project files remain in their existing locations.
+
+On macOS, choosing **Restart now** first saves open workspaces and prepares the
+exact downloaded update with the native installer while Scient and its servers
+keep running. The compact update control shows a spinner; its tooltip explains
+**Preparing update…**. Native verification must finish, and every open workspace
+must save again, before servers stop and the app restarts. During that final save
+and restart, editing is temporarily locked so no new edits can be lost. Windows
+and Linux keep their supported installer paths rather than replacing the running installation early.
+
+If preparation or a workspace save fails, Scient stays open, unlocks editing,
+and offers **Retry**. A terminal native verification failure requires downloading
+the archive again, then choosing **Restart now** again.
+A preparation wait ends after five minutes; retrying waits for that same
+authorized update rather than starting a competing native operation. On macOS,
+native preparation itself arms installation on quit: after you have authorized
+it, quitting normally can apply that update even if automatic restart did not
+finish. Changing tracks or replacing an already-authorized native update waits
+until that operation ends or you restart Scient.
 
 If the app restarts on its old version, Scient tells you the update did not
 apply. It does not install that version again on its own, even when another

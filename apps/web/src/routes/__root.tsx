@@ -52,6 +52,7 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
+import { useDesktopUpdateSaveHandling } from "../components/desktop/useDesktopUpdateSaveHandling";
 import { SettingsAnalyticsObserver } from "../scient/analytics/SettingsAnalyticsObserver";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
@@ -167,6 +168,7 @@ function RootRouteNotFoundView() {
 }
 
 function RootRouteBranch() {
+  useDesktopUpdateSaveHandling();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
