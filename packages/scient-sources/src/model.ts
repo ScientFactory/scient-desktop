@@ -215,6 +215,10 @@ export const ScientSourceRecord = Schema.Struct({
   projectId: Schema.optionalKey(NonEmptyString),
   /** Stable project origin for hydration or package import, including alternate Library IDs. */
   hydratedFromProjectSourceId: Schema.optionalKey(NonEmptyString),
+  /** Citation inputs explicitly known at hydration; edits add knowledge through field provenance. */
+  hydratedCitationFields: Schema.optionalKey(
+    Schema.Array(NonEmptyString).check(Schema.isMaxLength(64)),
+  ),
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,

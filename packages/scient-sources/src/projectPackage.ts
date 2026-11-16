@@ -57,6 +57,7 @@ import {
 import { atomicWriteJson, ensureDirectory, isNodeError, readBoundedJson } from "./storeFiles.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import { scientLibraryIdentityProblem } from "./sourceIdentity.ts";
+import { scientPinCitationKnownFields } from "./pinCitation.ts";
 import { ScientSystematicReview } from "./systematicReview.ts";
 
 const PROJECT_LIBRARY = ".scient/library";
@@ -715,6 +716,7 @@ async function packageTarget(
       allowPossibleMetadataMatch: true,
       incomingSourceId: record.sourceId,
       hydratedFromProjectSourceId: projectSourceId,
+      hydratedCitationFields: scientPinCitationKnownFields(record),
       refusedSourceIds: [...refused],
       ...carried(record, context.importedAt),
     });
