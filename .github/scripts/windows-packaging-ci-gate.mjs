@@ -1,6 +1,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
+import { resolveComparisonBase } from "./ci-comparison-base.cjs";
 import { testGatePasses } from "./compute-ci-gate.mjs";
 
 /**
@@ -110,8 +111,8 @@ export function needsLinuxPackaging(paths) {
 function detectChanges() {
   try {
     const event = JSON.parse(NodeFS.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
-    const base = event.pull_request?.base.sha ?? event.merge_group?.base_sha ?? event.before;
     const head = process.env.GITHUB_SHA;
+    const base = resolveComparisonBase({ event, head });
     if (![base, head].every((sha) => typeof sha === "string" && /^[a-f0-9]{40}$/.test(sha)))
       throw new Error("Missing immutable diff bounds");
     // No rename detection: moving a runtime file out of its directory must

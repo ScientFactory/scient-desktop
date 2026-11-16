@@ -491,7 +491,9 @@ git diff --check
 ```
 
 `pnpm alignment:gates` runs this list without the desktop host's live-profile variables,
-continues past failures and prints the receipt table. Its typecheck includes workspace Vite
+continues past failures and prints the receipt table. Its test gate runs every package even
+when one fails and runs the server files in parallel, then reruns a few failed server files
+alone as a diagnostic. Full runs from different worktrees queue behind one lock. Its typecheck includes workspace Vite
 tasks, but a failed aggregate can leave packages unscheduled; record task coverage and qualify
 missing packages separately ([details](./scripts.md#alignment-gates-and-receipt-facts)). On Windows,
 where the repository-wide aggregate is not yet a supported local lane, record the test row as

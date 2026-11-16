@@ -34,10 +34,19 @@ vi.mock("@t3tools/client-runtime/state/scient-analytics", () => ({
 }));
 import { useScientAnalyticsView } from "./client";
 
-function View({ visible, environment }: { visible: boolean; environment: string }) {
+function View({
+  visible,
+  environment,
+  viewKey,
+}: {
+  visible: boolean;
+  environment: string;
+  viewKey?: string;
+}) {
   useScientAnalyticsView(
     visible ? { name: "feature.viewed", properties: { feature: "latex-visual" } } : null,
     EnvironmentId.make(environment),
+    viewKey,
   );
   return null;
 }
@@ -84,6 +93,11 @@ describe("analytics view hook lifecycle", () => {
     transport.connection = {};
     await show(true);
     expect(transport.record).toHaveBeenCalledTimes(3);
+    // Another tab of the same kind is a new view; its key is never sent.
+    for (let i = 0; i < 2; i++)
+      await screen.rerender(<View visible environment="remote" viewKey="tab:PRIVATE" />);
+    expect(transport.record).toHaveBeenCalledTimes(4);
+    expect(JSON.stringify(transport.record.mock.calls)).not.toContain("PRIVATE");
   });
 
   it("only observes the current view after consent discovery and document visibility changes", async () => {

@@ -183,6 +183,29 @@ prove every workspace was checked. Record task coverage and qualify missing pack
 smoke run that leaves its temporary home empty resolved state elsewhere and fails.
 `--only fmt,lint` runs a subset and labels the result partial.
 
+The test gate is `pnpm run test` in two parts:
+
+- **Every package except the server** runs in one workspace aggregate. After a failure, that
+  aggregate cancels running packages and skips their dependents. The gate reads vp's run summary
+  from a cache directory only that run used. A package that exited with its own failure is a
+  complete result, and killed (cancelled) or skipped packages run again on their own. All
+  packages run again if the summary cannot be read, and the aggregate's failure still fails the
+  gate. The receipt names every failed package.
+- **The server suite** runs alone with files in parallel, like hosted CI's server shards:
+  half the CPUs, at most six, and at least 4 GiB of memory per worker (`--server-workers N`
+  overrides it; `1` is the serial run). The server's config keeps `fileParallelism: false`, so
+  ordinary and targeted local runs are unchanged. When up to 20 files fail, each runs once
+  more, alone, and the receipt lists it under "failed again alone" or "passed when rerun alone".
+  Both fail the gate. One passing rerun does not show why the file failed; treat it as a
+  fault to investigate, not a pass. More failures are listed without a rerun.
+
+A run that includes typecheck, test, build or smoke first takes a lock in the repository's
+shared Git directory, so full runs from different worktrees queue instead of slowing each other
+down and failing under load. It prints which worktree it is waiting for. A lock whose process has
+exited, or whose run has finished, is taken over by claiming the next numbered slot; the highest
+slot is the lock, no timeout decides, and no run removes a slot another run may hold. Focused `vp test run`
+commands do not take the lock.
+
 On Windows the repository-wide test aggregate is reported as not run: the local aggregate
 is not a supported Windows lane yet (see `windows-tests.yml`), so hosted test
 qualification of the pushed candidate remains pending. `--tests` runs it anyway. Run

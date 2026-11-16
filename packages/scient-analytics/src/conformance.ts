@@ -397,6 +397,14 @@ export function buildAnalyticsConformanceFixture() {
       ),
     );
   }
+  for (const fileType of ["csv", "none", "PRIVATE"]) {
+    cases.push(
+      fixtureCase(`file-${fileType.toLowerCase()}`, "panel.viewed", {
+        category: "file-preview",
+        fileType,
+      }),
+    );
+  }
   for (const provider of ["scient", "omp", "muse", "acpRegistry"]) {
     for (const name of [
       "provider.turn.sent",

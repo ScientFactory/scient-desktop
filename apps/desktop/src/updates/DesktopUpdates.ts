@@ -10,6 +10,7 @@ import {
   type DesktopUpdateState,
 } from "@t3tools/contracts";
 import { errorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -66,6 +67,21 @@ const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
 const UPDATE_CHECK_WAIT = Duration.seconds(90);
+// SCIENT-FORK:START — offered updates download in the background; failures of one release retry
+// on this schedule, and the last delay repeats.
+const AUTO_DOWNLOAD_RETRY_DELAYS = [
+  Duration.minutes(1),
+  Duration.minutes(5),
+  Duration.minutes(15),
+  Duration.hours(1),
+  Duration.hours(4),
+] as const;
+
+function autoDownloadRetryDelay(failures: number): Duration.Duration {
+  const index = Math.min(Math.max(failures, 1), AUTO_DOWNLOAD_RETRY_DELAYS.length) - 1;
+  return AUTO_DOWNLOAD_RETRY_DELAYS[index] ?? Duration.hours(4);
+}
+// SCIENT-FORK:END
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -89,7 +105,12 @@ const DownloadProgressInfo = Schema.Struct({
 });
 export const DESKTOP_UPDATE_INSTALL_RECORD_FILE = "desktop-update-install.json";
 const DesktopUpdateInstallRecord = Schema.fromJsonString(
-  Schema.Struct({ fromVersion: Schema.String, targetVersion: Schema.String }),
+  Schema.Struct({
+    fromVersion: Schema.String,
+    targetVersion: Schema.String,
+    // SCIENT-FORK: when the install began, so the next launch can report how long it took.
+    startedAt: Schema.optionalKey(Schema.Number),
+  }),
 );
 const decodeInstallRecord = Schema.decodeUnknownEffect(DesktopUpdateInstallRecord);
 const encodeInstallRecord = Schema.encodeEffect(DesktopUpdateInstallRecord);
@@ -384,6 +405,17 @@ export const make = Effect.gen(function* () {
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
+  // SCIENT-FORK:START — the background download loop runs in configure's scope, one at a time.
+  const autoDownloadScopeRef = yield* Ref.make(Option.none<Scope.Scope>());
+  const autoDownloadRunningRef = yield* Ref.make(false);
+  const autoDownloadBackoffRef = yield* Ref.make(
+    Option.none<{
+      readonly version: string | null;
+      readonly failures: number;
+      readonly nextAttemptAt: number;
+    }>(),
+  );
+  // SCIENT-FORK:END
   // The release a track switch's database check cleared. A build crosses to another track only
   // through such a switch, and never below that release: version order alone cannot tell whether
   // a Stable knows a Nightly's migrations.
@@ -513,7 +545,12 @@ export const make = Effect.gen(function* () {
       return [finished, finished ? Option.none() : activeAction] as const;
     }).pipe(
       Effect.flatMap((finished) =>
-        finished ? PubSub.publish(finishedUpdateActions, action).pipe(Effect.asVoid) : Effect.void,
+        finished
+          ? PubSub.publish(finishedUpdateActions, action).pipe(
+              // SCIENT-FORK: a finished action can leave an offer that nothing is downloading yet.
+              Effect.andThen(Effect.suspend(() => startAutoDownload)),
+            )
+          : Effect.void,
       ),
     );
 
@@ -539,7 +576,8 @@ export const make = Effect.gen(function* () {
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
     const allowsPrerelease = channel === "beta";
-    if (!config.mockUpdates) {
+    // SCIENT-FORK: an administrator's mirror stays the update source on every channel.
+    if (!config.mockUpdates && policy.feedUrl === undefined) {
       yield* electronUpdater.setFeedURL(scientDesktopUpdateFeed(channel));
     }
     yield* electronUpdater.setChannel(channel);
@@ -553,6 +591,17 @@ export const make = Effect.gen(function* () {
       allowPrerelease: allowsPrerelease,
       fullChangelog: allowsPrerelease,
     });
+  });
+
+  // The flag is shared updater state, so callers flip it only while holding a reservation.
+  const runUpdaterCheck = Effect.fn("desktop.updates.runUpdaterCheck")(function* (
+    allowDowngrade: boolean,
+  ) {
+    const restoreDowngrade = yield* electronUpdater.allowDowngrade;
+    if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
+    return yield* electronUpdater.checkForUpdates.pipe(
+      Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
+    );
   });
 
   const checkForUpdates = Effect.fn("desktop.updates.checkForUpdates")(function* (
@@ -584,11 +633,7 @@ export const make = Effect.gen(function* () {
       }
       yield* logUpdaterInfo("checking for updates", { reason });
 
-      // The flag is shared updater state, so it flips only while this check holds the reservation.
-      const restoreDowngrade = yield* electronUpdater.allowDowngrade;
-      if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
-      return yield* electronUpdater.checkForUpdates.pipe(
-        Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
+      return yield* runUpdaterCheck(allowDowngrade).pipe(
         Effect.as(true),
         Effect.catchTags({
           ElectronUpdaterCheckForUpdatesError: Effect.fn(
@@ -625,7 +670,10 @@ export const make = Effect.gen(function* () {
         );
   });
 
-  const downloadAvailableUpdate = Effect.gen(function* () {
+  // Install refreshes before downloading, and a second check could pick a stale, older release.
+  const downloadAvailableUpdate = Effect.fn("desktop.updates.downloadAvailableUpdate")(function* (
+    refresh: boolean,
+  ) {
     const admission = yield* Effect.scoped(
       admitAfterCheck(
         Effect.gen(function* () {
@@ -649,8 +697,28 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
-    const state = yield* Ref.get(updateStateRef);
+    const offered = yield* Ref.get(updateStateRef);
+    let state = offered;
     return yield* Effect.gen(function* () {
+      if (refresh) {
+        // electron-updater downloads what its last check found, which can be hours old.
+        yield* logUpdaterInfo("checking for updates", { reason: "download" });
+        // SCIENT-FORK: Scient's channels (with Beta) come from its own version parser.
+        yield* runUpdaterCheck(offered.channel !== runningChannel).pipe(
+          // A failed check keeps electron-updater's earlier result, so the known offer still downloads.
+          Effect.catchTags({
+            ElectronUpdaterCheckForUpdatesError: (error) =>
+              logUpdaterWarning(error.message, {
+                errorTag: error._tag,
+                cause: describeUpdateErrorCause(error.cause),
+              }),
+          }),
+        );
+      }
+      state = yield* Ref.get(updateStateRef);
+      if (state.status !== "available") {
+        return { accepted: true, completed: false };
+      }
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
@@ -699,7 +767,102 @@ export const make = Effect.gen(function* () {
       }),
       Effect.ensuring(finishUpdateAction("download")),
     );
-  }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
+  });
+
+  // SCIENT-FORK:START — an offered update downloads in the background, so the user's only step is
+  // the restart. The loop takes the same action reservation as a user's download, so checks,
+  // installs, channel changes and remote requests stay exclusive with it.
+  const autoDownloadWanted = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return false;
+    if (!(yield* Ref.get(updaterConfiguredRef))) return false;
+    return (yield* Ref.get(updateStateRef)).status === "available";
+  });
+
+  const autoDownloadLoop = Effect.scoped(
+    Effect.gen(function* () {
+      const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
+      const stateUpdates = yield* PubSub.subscribe(stateChanges);
+      while (yield* autoDownloadWanted) {
+        const version = (yield* Ref.get(updateStateRef)).availableVersion;
+        const backoff = yield* Ref.get(autoDownloadBackoffRef);
+        const now = yield* Clock.currentTimeMillis;
+        if (
+          Option.isSome(backoff) &&
+          backoff.value.version === version &&
+          now < backoff.value.nextAttemptAt
+        ) {
+          // Wait out this release's retry delay, but a different offer starts at once.
+          const offerChanged = Effect.gen(function* () {
+            while (true) {
+              const next = yield* PubSub.take(stateUpdates);
+              if (next.status !== "available" || next.availableVersion !== version) return;
+            }
+          });
+          yield* Effect.raceFirst(
+            Effect.sleep(Duration.millis(backoff.value.nextAttemptAt - now)),
+            offerChanged,
+          );
+          continue;
+        }
+        // A check offered this update just now, so the download needs no refresh first.
+        const result = yield* downloadAvailableUpdate(false);
+        if (result.completed) {
+          yield* Ref.set(autoDownloadBackoffRef, Option.none());
+          return;
+        }
+        if (!result.accepted) {
+          // Another update action holds the updater; try again once one finishes.
+          yield* PubSub.take(actionCompletions).pipe(Effect.timeoutOption(UPDATE_CHECK_WAIT));
+          continue;
+        }
+        // Failures count per release, so a check or a restart of this loop never resets them.
+        const failures =
+          Option.isSome(backoff) && backoff.value.version === version
+            ? backoff.value.failures + 1
+            : 1;
+        const delay = autoDownloadRetryDelay(failures);
+        yield* Ref.set(
+          autoDownloadBackoffRef,
+          Option.some({
+            version,
+            failures,
+            nextAttemptAt: (yield* Clock.currentTimeMillis) + Duration.toMillis(delay),
+          }),
+        );
+        yield* logUpdaterInfo("background update download failed; retrying later", {
+          version,
+          failures,
+          retryInMs: Duration.toMillis(delay),
+        });
+      }
+    }),
+  ).pipe(Effect.withSpan("desktop.updates.autoDownload"));
+
+  const startAutoDownload: Effect.Effect<void> = Effect.suspend(() =>
+    Effect.gen(function* () {
+      const scope = yield* Ref.get(autoDownloadScopeRef);
+      if (Option.isNone(scope) || !(yield* autoDownloadWanted)) return;
+      const claimed = yield* Ref.modify(autoDownloadRunningRef, (running) => [!running, true]);
+      if (!claimed) return;
+      yield* autoDownloadLoop.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : logUpdaterError("Background update download stopped unexpectedly.", {
+                cause: describeUpdateErrorCause(cause),
+              }),
+        ),
+        // A trigger that arrived while this loop was exiting found it still running; look again.
+        Effect.ensuring(
+          Ref.set(autoDownloadRunningRef, false).pipe(
+            Effect.andThen(Effect.suspend(() => startAutoDownload)),
+          ),
+        ),
+        Effect.forkIn(scope.value),
+      );
+    }),
+  ).pipe(Effect.ignore);
+  // SCIENT-FORK:END
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
   const updateRestartMarkerPath = environment.path.join(
@@ -753,7 +916,10 @@ export const make = Effect.gen(function* () {
     DESKTOP_UPDATE_INSTALL_RECORD_FILE,
   );
   const writeInstallRecord = (targetVersion: string) =>
-    encodeInstallRecord({ fromVersion: environment.appVersion, targetVersion }).pipe(
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((startedAt) =>
+        encodeInstallRecord({ fromVersion: environment.appVersion, targetVersion, startedAt }),
+      ),
       Effect.flatMap((text) => fileSystem.writeFileString(installRecordPath, text)),
       Effect.catch((error) =>
         logUpdaterWarning("Could not record the update install.", { errorTag: error._tag }),
@@ -763,9 +929,30 @@ export const make = Effect.gen(function* () {
     .remove(installRecordPath, { force: true })
     .pipe(Effect.ignore);
 
+  // SCIENT-FORK:START — an install that reached its target reports how long it took, from the
+  // install's start to this launch (time the app stayed closed included).
+  const logAppliedInstall = (record: typeof DesktopUpdateInstallRecord.Type) =>
+    record.targetVersion === environment.appVersion && record.fromVersion !== record.targetVersion
+      ? Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) =>
+            logUpdaterInfo("update applied", {
+              fromVersion: record.fromVersion,
+              targetVersion: record.targetVersion,
+              platform: environment.platform,
+              appArch: environment.runtimeInfo.appArch,
+              ...(record.startedAt === undefined
+                ? {}
+                : { installToLaunchMs: Math.max(0, now - record.startedAt) }),
+            }),
+          ),
+        )
+      : Effect.void;
+  // SCIENT-FORK:END
+
   const readNotAppliedInstallVersion = fileSystem.readFileString(installRecordPath).pipe(
     Effect.flatMap(decodeInstallRecord),
     Effect.option,
+    Effect.tap((record) => (Option.isSome(record) ? logAppliedInstall(record.value) : Effect.void)),
     Effect.map((record) =>
       Option.flatMap(record, (value) =>
         Option.fromNullishOr(resolveNotAppliedInstallVersion(value, environment.appVersion)),
@@ -954,7 +1141,43 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }
-    const result = yield* installDownloadedUpdate(expectedVersion);
+    let installVersion = expectedVersion;
+    // A download can be hours old: a release published since replaces it before restarting.
+    const retained = yield* Ref.get(updateStateRef);
+    if (
+      retained.downloadedVersion !== null &&
+      (expectedVersion === undefined || retained.downloadedVersion === expectedVersion) &&
+      (yield* checkForUpdates(
+        "install",
+        "acquire",
+        // SCIENT-FORK: Scient's channels (with Beta) come from its own version parser.
+        retained.channel !== runningChannel,
+      )) &&
+      (yield* Ref.get(updateStateRef)).status === "available"
+    ) {
+      const refreshed = yield* Ref.get(updateStateRef);
+      // electron-updater compares a stale feed with the running build, not the retained download.
+      if (
+        refreshed.availableVersion === null ||
+        compareSemverVersions(refreshed.availableVersion, retained.downloadedVersion) <= 0
+      ) {
+        yield* setState(retained);
+      } else {
+        const download = yield* downloadAvailableUpdate(false);
+        if (!download.completed) {
+          return {
+            accepted: download.accepted,
+            completed: false,
+            failed: download.accepted,
+            state: yield* Ref.get(updateStateRef),
+          };
+        }
+        if (expectedVersion !== undefined) {
+          installVersion = (yield* Ref.get(updateStateRef)).downloadedVersion ?? expectedVersion;
+        }
+      }
+    }
+    const result = yield* installDownloadedUpdate(installVersion);
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -1245,6 +1468,8 @@ export const make = Effect.gen(function* () {
         return;
       }
       yield* Ref.set(updaterConfiguredRef, true);
+      // SCIENT-FORK: background downloads live as long as the configured updater.
+      yield* Ref.set(autoDownloadScopeRef, Option.some(yield* Scope.Scope));
 
       yield* electronUpdater.setAutoDownload(false);
       yield* electronUpdater.setAutoInstallOnAppQuit(false);
@@ -1375,7 +1600,7 @@ export const make = Effect.gen(function* () {
       };
     }),
     download: Effect.gen(function* () {
-      const result = yield* downloadAvailableUpdate;
+      const result = yield* downloadAvailableUpdate(true);
       return {
         accepted: result.accepted,
         completed: result.completed,

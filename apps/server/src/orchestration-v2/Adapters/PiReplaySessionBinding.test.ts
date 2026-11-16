@@ -489,7 +489,7 @@ describe("Pi pinned native read schedules", () => {
                   Object.entries({
                     multi_turn: 2,
                     simple: 1,
-                    pi_compaction: 8,
+                    pi_compaction: 6,
                     provider_thread_resume: 2,
                     message_steering: 1,
                     thread_rollback: 3,
@@ -528,7 +528,7 @@ describe("Pi pinned native read schedules", () => {
                 });
                 const dualProbe =
                   scenario === "pi_compaction" &&
-                  ["t3-910001", "t3-930005", "t3-910004", "t3-930014"].includes(String(frame.id));
+                  ["t3-910003", "t3-930011"].includes(String(frame.id));
                 if (dualProbe) {
                   const reads = prepared
                     .slice(0, position)

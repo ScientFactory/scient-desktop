@@ -141,6 +141,10 @@ pnpm run test:desktop-smoke
 git diff --check
 ```
 
+`pnpm alignment:gates` runs this list (plus knip and brand) without the desktop
+host's live-profile variables. It runs every package's tests even after a failure
+and the server suite's files in parallel, and full runs from different worktrees
+queue behind its lock.
 Run the complete local gate once the candidate has stabilized. Record the
 commands, revision or working diff, environment, results, and any remaining
 gaps so later reviews can reuse evidence for the same candidate. After a

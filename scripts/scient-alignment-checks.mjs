@@ -36,11 +36,11 @@ export const makeCheckHome = () =>
   NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-check-home-"));
 
 /** Run a repository tool with the check environment. Windows reaches `pnpm.cmd` through its shell. */
-export function runTool(argv, { home, ...options } = {}) {
+export function runTool(argv, { home, env = {}, ...options } = {}) {
   const spawnOptions = {
     stdio: "inherit",
     ...options,
-    env: checkEnvironment(process.env, home),
+    env: { ...checkEnvironment(process.env, home), ...env },
   };
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone alignment CLI has no Effect runtime.
   if (NodeOS.platform() !== "win32") {
