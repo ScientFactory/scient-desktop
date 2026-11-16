@@ -11,6 +11,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as DesktopUpdateFacts from "../scient/updateOutcomes/DesktopUpdateFacts.ts";
 import * as DesktopUpdateOutcomes from "../scient/updateOutcomes/DesktopUpdateOutcomes.ts";
+import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness, type UpdatesHarnessOptions } from "./updatesTestHarness.ts";
 import { createInitialDesktopUpdateState } from "./updateMachine.ts";
@@ -52,6 +53,59 @@ function recordingHarness(options: UpdatesHarnessOptions = {}) {
 }
 
 describe("DesktopUpdates outcomes", () => {
+  it.effect.each([
+    { name: "Stable", channel: "latest", administrator: false },
+    { name: "Beta", channel: "beta", administrator: false },
+    { name: "Nightly", channel: "nightly", administrator: false },
+    {
+      name: "an administrator's feed with the mock flag set",
+      channel: "latest",
+      administrator: true,
+    },
+  ] as const)(
+    "attributes checks to the selected feed starting on $name",
+    ({ channel, administrator }) => {
+      const { outcomes, layer } = recordingHarness({
+        env: { T3CODE_DESKTOP_MOCK_UPDATES: administrator ? "true" : "false" },
+        appUpdateYml: "provider: github\nowner: ScientFactory\nrepo: scient-desktop\n",
+        savedChannel: channel,
+        ...(administrator
+          ? {
+              policy: {
+                ...DesktopUpdatePolicy.unmanagedUpdatePolicy,
+                feedUrl: "https://updates.example.com/scient/",
+                message: "Example Corp manages Scient updates.",
+              },
+            }
+          : {}),
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.check("menu");
+          const expectedSource = (track: string) =>
+            administrator ? "administrator" : track === "nightly" ? "github" : "scient_mirror";
+          assert.deepEqual(
+            outcomes("check").map((check) => check.sourceKind),
+            [expectedSource(channel), expectedSource(channel)],
+          );
+          for (const nextChannel of ["nightly", "beta", "latest"] as const) {
+            const before = outcomes("check").length;
+            yield* updates.setChannel(nextChannel);
+            yield* updates.check("menu");
+            const checks = outcomes("check").slice(before);
+            assert.isAtLeast(checks.length, 2);
+            assert.deepEqual(
+              checks.map((check) => check.sourceKind),
+              checks.map(() => expectedSource(nextChannel)),
+            );
+          }
+        }),
+      ).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("records one outcome for a check the updater reports twice", () => {
     const offline = newError(
       "Unable to find latest version on GitHub (https://github.com/x/y/releases/latest), please ensure a production release exists: Error: net::ERR_INTERNET_DISCONNECTED",
@@ -86,6 +140,7 @@ describe("DesktopUpdates outcomes", () => {
           trigger: "user",
           attemptRef: checks[0]?.attemptRef,
         });
+        assert.isFalse(checks.some((check) => "sourceKind" in check));
       }),
     ).pipe(Effect.provide(layer));
   });
@@ -96,7 +151,7 @@ describe("DesktopUpdates outcomes", () => {
       const outcomes = yield* DesktopUpdateOutcomes.make({
         facts: Option.some(yield* DesktopUpdateFacts.DesktopUpdateFacts),
         packageKind: "zip",
-        sourceKind: "github",
+        sourceKind: Effect.succeed("github"),
         policyOff: false,
       });
       const state = {
@@ -125,6 +180,8 @@ describe("DesktopUpdates outcomes", () => {
   it.effect("records one failed install after the handoff, however many paths report it", () => {
     const refused = Object.assign(new Error("spawn EACCES"), { code: "EACCES" });
     const { harness, outcomes, layer } = recordingHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      appUpdateYml: "provider: github\nowner: ScientFactory\nrepo: scient-desktop\n",
       quitAndInstall: Effect.suspend(() => {
         harness.emit("error", refused);
         return Effect.fail(
@@ -153,6 +210,7 @@ describe("DesktopUpdates outcomes", () => {
         );
         assert.include(installs[1], {
           failureClass: "permission",
+          sourceKind: "scient_mirror",
           targetVersion: "1.2.4",
           attemptRef: installs[0]?.attemptRef,
         });

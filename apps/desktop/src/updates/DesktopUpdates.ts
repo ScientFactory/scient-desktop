@@ -499,6 +499,9 @@ export const make = Effect.gen(function* () {
       : false;
 
   // SCIENT-FORK:START — update outcomes and summaries for product analytics.
+  const updateSourceKindRef = yield* Ref.make<DesktopUpdateOutcomes.UpdateSourceKind | undefined>(
+    policy.feedUrl === undefined ? undefined : "administrator",
+  );
   const outcomes = yield* DesktopUpdateOutcomes.make({
     facts: yield* Effect.serviceOption(DesktopUpdateFacts.DesktopUpdateFacts),
     packageKind: DesktopUpdateOutcomes.updatePackageKind({
@@ -506,12 +509,7 @@ export const make = Effect.gen(function* () {
       appImage: Option.isSome(config.appImagePath),
       debPackage: isDebPackage,
     }),
-    sourceKind: mockUpdates
-      ? undefined
-      : DesktopUpdateOutcomes.updateSourceKind({
-          administratorFeed: policy.feedUrl !== undefined,
-          defaultProvider: scientDesktopUpdateFeed("latest").provider,
-        }),
+    sourceKind: Ref.get(updateSourceKindRef),
     policyOff: policy.mode === "off",
   });
   // SCIENT-FORK:END
@@ -602,9 +600,18 @@ export const make = Effect.gen(function* () {
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
     const allowsPrerelease = channel === "beta";
-    // SCIENT-FORK: Scient's mirror feeds replace GitHub; an administrator's feed wins on every channel.
+    // SCIENT-FORK: Stable/Beta use Scient's mirror; an administrator's feed wins on every channel.
     if (!config.mockUpdates && policy.feedUrl === undefined) {
-      yield* electronUpdater.setFeedURL(scientDesktopRuntimeUpdateFeed(channel));
+      const feed = scientDesktopRuntimeUpdateFeed(channel);
+      yield* electronUpdater.setFeedURL(feed);
+      // SCIENT-FORK: outcomes read the feed actually selected, including after a track switch.
+      yield* Ref.set(
+        updateSourceKindRef,
+        DesktopUpdateOutcomes.updateSourceKind({
+          administratorFeed: false,
+          defaultProvider: feed.provider,
+        }),
+      );
     }
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
@@ -1517,6 +1524,19 @@ export const make = Effect.gen(function* () {
 
       const appUpdateYmlConfig = yield* readAppUpdateYml;
       yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
+      // SCIENT-FORK: before runtime selection, the packaged feed is the active default.
+      const packagedProvider = Option.isSome(appUpdateYmlConfig)
+        ? appUpdateYmlConfig.value.provider
+        : undefined;
+      if (!mockUpdates && policy.feedUrl === undefined && packagedProvider !== undefined) {
+        yield* Ref.set(
+          updateSourceKindRef,
+          DesktopUpdateOutcomes.updateSourceKind({
+            administratorFeed: false,
+            defaultProvider: packagedProvider,
+          }),
+        );
+      }
 
       const notAppliedVersion = yield* readNotAppliedInstallVersion;
       yield* Ref.set(notAppliedVersionRef, notAppliedVersion);
