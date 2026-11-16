@@ -506,7 +506,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
   /**
    * A later run of the open turn started after its prompt's own run ended, for example when a
    * background result woke the agent before the turn settled. prompt_result reports only the
-   * prompt's own run, so the latest run's evidence decides the turn instead.
+   * prompt's own run: when the later run ends normally, the turn recovered and completes.
    */
   let promptSuperseded = false;
   const settledPromptIds: Array<string> = [];
@@ -619,9 +619,16 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         ...(commandRejected ? { source: "command" as const, failureCode: "command_rejected" } : {}),
       };
     }
+    // A later run that ended normally recovered from the prompt's own failed run. A later run that
+    // failed too keeps the prompt's structured cause (a usage limit's reset time, for example).
+    const recovered =
+      promptSuperseded &&
+      evidence.stopReason !== "error" &&
+      evidence.stopReason !== "aborted" &&
+      evidence.retryExhausted !== true;
     const verdict = classifyOmpTurnOutcome(input.target, {
       settlement: outcome === "unknown" ? "unconfirmed" : "terminal",
-      ...evidence,
+      ...(recovered ? { stopReason: evidence.stopReason } : evidence),
     });
     if (verdict.outcome === "unknown") {
       return {
@@ -1026,9 +1033,16 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       openRunId = ++runSequence;
       yield* applySignal({ type: "agent-start", runId: openRunId });
       if (followUpRun && turn.runId === openRunId) {
-        // The earlier run's failure was recovered from or replaced; only this run's ending counts.
+        // Only this run's ending says whether the earlier run's failure was recovered from.
         promptSuperseded = true;
-        evidence = {};
+        evidence = {
+          ...evidence,
+          stopReason: undefined,
+          errorMessage: undefined,
+          assistantEnded: false,
+          retryExhausted: false,
+          retryFinalError: undefined,
+        };
       }
       return;
     }
@@ -1100,14 +1114,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (event.sessionSettled) sessionSettled();
         yield* publish({ type: "background-work", pending: !event.sessionSettled });
       }
-      if (!promptSuperseded) {
-        evidence.promptStatus = event.status;
-        evidence.promptError = event.promptError?.message;
-        evidence.promptErrorCode = event.promptError?.code;
-        evidence.promptHttpStatus = event.promptError?.httpStatus;
-        evidence.promptResetAt = event.promptError?.resetAt;
-        evidence.promptErrorKinds = event.promptError?.kinds;
-      }
+      evidence.promptStatus = event.status;
+      evidence.promptError = event.promptError?.message;
+      evidence.promptErrorCode = event.promptError?.code;
+      evidence.promptHttpStatus = event.promptError?.httpStatus;
+      evidence.promptResetAt = event.promptError?.resetAt;
+      evidence.promptErrorKinds = event.promptError?.kinds;
       if (typeof event.agentInvoked === "boolean") {
         yield* applySignal({
           type: "prompt-result",

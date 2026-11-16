@@ -929,7 +929,7 @@ describe("Oh My Pi session runtime outcomes", () => {
           id: "prompt-recovered",
           agentInvoked: true,
           status: "error",
-          error: { message: "Couldn't reach chatgpt.com", kinds: ["transient"] },
+          error: { message: "Couldn't reach chatgpt.com", retryable: true, kinds: ["transient"] },
           sessionSettled: false,
         },
         { type: "agent_start" },
@@ -942,6 +942,43 @@ describe("Oh My Pi session runtime outcomes", () => {
         type: "turn-outcome",
         outcome: "completed",
         requestId: "prompt-recovered",
+      });
+    }),
+  );
+
+  it.effect("a later run that fails too keeps the prompt's usage limit and reset time", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      yield* h.runtime.begin("limited");
+      yield* h.runtime.accepted("prompt-limited", true);
+      const limited = assistantEnd({ stopReason: "error", errorMessage: "429 rate limited" });
+      yield* h.wire.send(
+        { type: "agent_start" },
+        limited,
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+        {
+          type: "prompt_result",
+          id: "prompt-limited",
+          agentInvoked: true,
+          status: "error",
+          error: {
+            message: "429 rate limited",
+            retryable: false,
+            httpStatus: 429,
+            resetAt: Date.UTC(2026, 10, 17),
+          },
+          sessionSettled: false,
+        },
+        { type: "agent_start" },
+        limited,
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+      );
+      const outcome = yield* h.outcome;
+      yield* Scope.close(h.scope, Exit.void);
+      expect(outcome).toMatchObject({
+        outcome: "failed",
+        failureClass: "usage_limit",
+        resetAt: "2026-11-17T00:00:00.000Z",
       });
     }),
   );
