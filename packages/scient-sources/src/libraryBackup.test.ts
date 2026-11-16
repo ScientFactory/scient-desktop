@@ -6,7 +6,11 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { backUpScientLibrary, checkScientLibraryBackup } from "./libraryBackup.ts";
+import {
+  backUpScientLibrary,
+  checkScientLibraryBackup,
+  type ScientLibraryBackupManifest,
+} from "./libraryBackup.ts";
 import { withScientFileLock } from "./libraryLock.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
@@ -247,6 +251,85 @@ describe("backing up the Library", () => {
       unlisted: ["records/stray.json"],
     });
     expect(await checkScientLibraryBackup(base)).toEqual({ outcome: "not-a-backup" });
+  });
+
+  it("rejects escaping manifest entries even when their external payload hashes match", async () => {
+    const { library, destination } = await fixture();
+    const result = await backUpScientLibrary({ library, destination });
+    if (result.outcome !== "backed-up") throw new Error(`Not backed up: ${result.outcome}`);
+    const manifestPath = NodePath.join(result.path, "backup.json");
+    const manifest = JSON.parse(
+      await NodeFSP.readFile(manifestPath, "utf8"),
+    ) as ScientLibraryBackupManifest;
+    const outside = NodePath.join(result.path, "outside.json");
+    const bytes = "outside the payload";
+    await NodeFSP.writeFile(outside, bytes);
+    const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+    for (const path of [
+      "../outside.json",
+      outside,
+      "C:/outside.json",
+      "records\\outside.json",
+      "records/\u0000outside.json",
+    ]) {
+      await NodeFSP.writeFile(
+        manifestPath,
+        JSON.stringify({
+          ...manifest,
+          files: [...manifest.files, { path, sha256, bytes: Buffer.byteLength(bytes) }],
+        }),
+      );
+      expect(await checkScientLibraryBackup(result.path)).toEqual({
+        outcome: "damaged",
+        changed: [path],
+        unlisted: [],
+      });
+    }
+  });
+
+  it("rejects linked or non-file backup payloads", async () => {
+    const { library, destination, base } = await fixture();
+    const result = await backUpScientLibrary({ library, destination });
+    if (result.outcome !== "backed-up") throw new Error(`Not backed up: ${result.outcome}`);
+    const payload = NodePath.join(result.path, "library");
+    const manifestPath = NodePath.join(result.path, "backup.json");
+    const manifest = JSON.parse(
+      await NodeFSP.readFile(manifestPath, "utf8"),
+    ) as ScientLibraryBackupManifest;
+    const outside = NodePath.join(base, "outside");
+    await NodeFSP.mkdir(outside);
+    const bytes = "outside the payload";
+    await NodeFSP.writeFile(NodePath.join(outside, "secret.json"), bytes);
+    const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+    await NodeFSP.symlink(
+      NodePath.join(outside, "secret.json"),
+      NodePath.join(payload, "link.json"),
+    );
+    await NodeFSP.symlink(outside, NodePath.join(payload, "linked-folder"), "dir");
+    await NodeFSP.mkdir(NodePath.join(payload, "not-a-file"));
+    const paths = ["link.json", "linked-folder/secret.json", "not-a-file"];
+    await NodeFSP.writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...manifest,
+        files: [
+          ...manifest.files,
+          ...paths.map((path) => ({ path, sha256, bytes: Buffer.byteLength(bytes) })),
+        ],
+      }),
+    );
+    expect(await checkScientLibraryBackup(result.path)).toEqual({
+      outcome: "damaged",
+      changed: paths,
+      unlisted: ["linked-folder"],
+    });
+    await NodeFSP.rename(payload, NodePath.join(base, "moved-payload"));
+    await NodeFSP.symlink(NodePath.join(base, "moved-payload"), payload, "dir");
+    expect(await checkScientLibraryBackup(result.path)).toEqual({
+      outcome: "damaged",
+      changed: ["library"],
+      unlisted: [],
+    });
   });
 
   it("keeps a PDF that is deleted for good while the backup runs", async () => {

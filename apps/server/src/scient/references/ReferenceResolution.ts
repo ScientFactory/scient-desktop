@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Fixes rewrite project .bib files in place, atomically.
 // @effect-diagnostics globalDate:off -- Ignore entries carry interoperable timestamps.
-import * as NodeCrypto from "node:crypto";
+import * as NodeBuffer from "node:buffer";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import {
   editableMetadataFromRecord,
@@ -12,7 +13,10 @@ import {
   type ScientSourceActor,
 } from "@scientfactory/scient-sources";
 import { bibtexEntries } from "@scientfactory/scient-sources/bibtex";
-import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
+import {
+  publishScientProjectFile,
+  resolveScientProjectFile,
+} from "@scientfactory/scient-sources/project-files";
 import {
   readScientSourceRecord,
   updateScientSourceMetadata,
@@ -54,7 +58,14 @@ async function applyBibtexFix(
       message: error instanceof Error ? error.message : "The bibliography file could not be read.",
     });
   });
-  const source = await NodeFSP.readFile(file.absolutePath, "utf8");
+  const bytes = await NodeFSP.readFile(file.absolutePath);
+  if (!NodeBuffer.isUtf8(bytes)) {
+    return {
+      outcome: "failed",
+      message: `${file.relativePath} is not valid UTF-8; left unchanged to preserve the file's encoding.`,
+    };
+  }
+  const source = bytes.toString("utf8");
   const entries = bibtexEntries(source).entries.filter((candidate) => candidate.key === fix.key);
   if (entries.length === 0)
     return { outcome: "not-found", message: `${fix.key} is no longer in ${file.relativePath}.` };
@@ -89,12 +100,20 @@ async function applyBibtexFix(
     next = `${kept}${separator}${newline}  ${fix.field} = {${value}}${trailing.includes("\n") ? trailing : newline}${source.slice(entry.bodyTo)}`;
   }
   const stats = await NodeFSP.stat(file.absolutePath);
-  const temporary = `${file.absolutePath}.tmp-${NodeCrypto.randomUUID()}`;
-  try {
-    await NodeFSP.writeFile(temporary, next, { flag: "wx", mode: stats.mode & 0o777 });
-    await NodeFSP.rename(temporary, file.absolutePath);
-  } finally {
-    await NodeFSP.rm(temporary, { force: true });
+  const published = await publishScientProjectFile({
+    filePath: file.absolutePath,
+    expected: source,
+    contents: next,
+    mode: stats.mode & 0o777,
+  });
+  if (published.outcome === "changed") {
+    return {
+      outcome: "stale",
+      message:
+        published.keptPath === null
+          ? `${file.relativePath} changed before Scient could apply the fix. Check the references again.`
+          : `${file.relativePath} changed before Scient could apply the fix; that version is kept in ${NodePath.basename(published.keptPath)}. Check the references again.`,
+    };
   }
   return { outcome: "applied", message: `Set ${fix.key}'s ${fix.field} in ${file.relativePath}.` };
 }

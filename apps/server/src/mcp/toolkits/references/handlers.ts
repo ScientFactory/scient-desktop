@@ -56,7 +56,7 @@ export const resolveReferencesForInvocation = Effect.fn("ScientReferencesToolkit
     readonly ignore?: ReadonlyArray<string>;
     readonly restore?: ReadonlyArray<string>;
   }) {
-    const store = yield* resolveScientSourcesStore();
+    const store = yield* resolveScientSourcesStore("write");
     const library = store.kind === "library" && store.access === "write" ? store : null;
     return yield* attempt(() =>
       resolveReferenceFindings({ root: store.root, library, ...input, actor: "agent" }),

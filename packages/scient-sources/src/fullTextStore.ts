@@ -6,25 +6,38 @@ import * as Schema from "effect/Schema";
 
 import { ScientSourceFullText } from "./fullText.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
-import { isScientLibraryLocation, type ScientSourceStoreLocation } from "./libraryRoot.ts";
-import { assertScientProjectDirectory } from "./projectFiles.ts";
-import { canonicalizeScientSourceRoot, SCIENT_SOURCES_DIRECTORY } from "./store.ts";
+import {
+  isScientLibraryLocation,
+  scientLibraryLocation,
+  type ScientSourceStoreLocation,
+} from "./libraryRoot.ts";
+import {
+  assertScientProjectDirectory,
+  scientSourceMaterialDirectories,
+  scientSourcePdfMaterialPaths,
+} from "./projectFiles.ts";
+import { canonicalizeScientSourceRoot } from "./store.ts";
 import { ensureDirectory, replaceFileAtomically, snapshot } from "./storeFiles.ts";
 
-export const SCIENT_SOURCE_TEXT_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/text/sha256`;
-const LIBRARY_TEXT_DIRECTORY = "text/sha256";
+export { SCIENT_SOURCE_TEXT_DIRECTORY } from "./projectFiles.ts";
 
 interface TextStore {
   readonly root: string;
   readonly base: string;
   readonly library: boolean;
+  readonly location: ScientSourceStoreLocation;
 }
 
 async function textStore(location: ScientSourceStoreLocation): Promise<TextStore> {
   const library = isScientLibraryLocation(location);
   const root = await canonicalizeScientSourceRoot(library ? location.root : location);
-  const relative = library ? LIBRARY_TEXT_DIRECTORY : SCIENT_SOURCE_TEXT_DIRECTORY;
-  return { root, base: NodePath.join(root, ...relative.split("/")), library };
+  const canonicalLocation = library ? scientLibraryLocation(root) : root;
+  return {
+    root,
+    base: scientSourceMaterialDirectories(canonicalLocation).text,
+    library,
+    location: canonicalLocation,
+  };
 }
 
 /** A project folder is checked for links on the way; the library folder is Scient's own. */
@@ -62,7 +75,7 @@ function isNodeError(error: unknown, code: string): boolean {
 
 function textPath(store: TextStore, sha256: string): string {
   if (!SHA256_PATTERN.test(sha256)) throw new Error("The full-text key is not a SHA-256 digest.");
-  return NodePath.join(store.base, sha256.slice(0, 2), `${sha256}.json`);
+  return scientSourcePdfMaterialPaths(store.location, sha256).text;
 }
 
 /** The stored text for a PDF hash, or null when none is stored or it no longer decodes. */

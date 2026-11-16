@@ -154,7 +154,7 @@ export function PdfAnnotationLayer(props: {
           onQuote={(annotation, citationKey) => {
             const pages = annotation.anchor.selector.pages.map((page) => page.page);
             void documentPageLabels(runtimeRef.current).then((labels) =>
-              quoteInDocument(pdf.root, {
+              quoteInDocument(pdf.environmentId, pdf.root, {
                 quote: scientAnnotationQuote(annotation),
                 pages,
                 pageLabels: quotePageLabels(pages, labels),

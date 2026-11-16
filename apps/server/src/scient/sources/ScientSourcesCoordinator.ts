@@ -97,6 +97,8 @@ import {
   readScientSourceIntakeAssessor,
   listScientSourceRecords,
   readScientSourceRecord,
+  readScientSourceRecordsAfter,
+  readScientSourceZoteroSync,
   readSourceImportOperation,
   readSourceImportParts,
   endSourceImportRun,
@@ -107,6 +109,7 @@ import {
   updateScientSourceMetadata,
   updateScientSourceNote,
   sourceAttachmentAbsolutePath,
+  scientSourceIdFor,
 } from "@scientfactory/scient-sources/store";
 
 import {
@@ -1290,7 +1293,11 @@ async function beginZoteroRunPart(input: {
       state === "pending" || (state === "failed" && input.retryFailed) ? [] : [itemKey],
     ),
   );
-  const rest = inScope.filter((key) => !here.has(key) && !handled.has(key));
+  const rest = inScope.filter(
+    (key) =>
+      !handled.has(key) &&
+      (!here.has(key) || last.get(key) === "pending" || last.get(key) === "failed"),
+  );
   if (large && rest.length === 0) {
     // What remained left the scope in Zotero meanwhile: the run is over, and that is no error.
     const latest = parts.at(-1);
@@ -1526,6 +1533,69 @@ async function addToZoteroCollections(input: {
   return input.collectionKeys.length - filed;
 }
 
+/** Origin plus the item's deterministic source ID proves ownership, not a duplicate match. */
+async function partiallyImportedRecord(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly operation: ScientSourceImportOperation;
+  readonly itemKey: string;
+  readonly candidate: ScientSourceCandidate;
+  readonly matchingSourceIds?: ReadonlyArray<string>;
+}): Promise<ScientSourceRecord | null> {
+  const owner = input.operation.libraryId ?? input.operation.projectId;
+  if (!owner) throw new Error("The source import has no store identity.");
+  const baseId = scientSourceIdFor(owner, input.candidate.sourceKey);
+  const sourceIds = new Set([
+    baseId,
+    scientSourceIdFor(owner, `${input.candidate.sourceKey}\0${input.operation.operationId}`),
+    ...(input.matchingSourceIds ?? []),
+  ]);
+  for (const sourceId of sourceIds) {
+    const record = await readScientSourceRecord(input.root, sourceId);
+    const operationId = record?.origin?.operationId;
+    if (!record || !operationId) continue;
+    if (
+      sourceId !== baseId &&
+      sourceId !== scientSourceIdFor(owner, `${input.candidate.sourceKey}\0${operationId}`)
+    ) {
+      continue;
+    }
+    if (operationId === input.operation.operationId) return record;
+    if (!input.operation.run) continue;
+    const part = await readSourceImportOperation(input.root, operationId);
+    if (
+      part?.run?.runId === input.operation.run.runId &&
+      part.items.some((item) => item.itemKey === input.itemKey)
+    ) {
+      return record;
+    }
+  }
+  return null;
+}
+
+async function attachRemainingImportPdfs(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly record: ScientSourceRecord;
+  readonly pdfs: ReadonlyArray<{ readonly path: string; readonly fileName?: string | null }>;
+  readonly actor: ScientSourceActor;
+}): Promise<ScientSourceRecord> {
+  let record = input.record;
+  for (const pdf of input.pdfs) {
+    const attached = await attachScientSourcePdf({
+      root: input.root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      pdfPath: pdf.path,
+      ...(pdf.fileName ? { fileName: pdf.fileName } : {}),
+      actor: input.actor,
+    });
+    if (attached.outcome === "stale") {
+      throw new Error("The source changed while its PDFs were being added. Try again.");
+    }
+    record = attached.record;
+  }
+  return record;
+}
+
 /** What a reference-file item brings besides its source: its keys, and how its author list ended. */
 interface FileItemOutcome {
   readonly citationKeys: ReadonlyArray<string>;
@@ -1549,8 +1619,10 @@ async function importFileOperationItem(input: {
     input.itemKey,
   );
   const { pdfs, citationKeys } = material;
+  let partial = await partiallyImportedRecord({ ...input, candidate: material.candidate });
   // Only a new work is completed: a work the Library has keeps its record as it is.
   const completed =
+    !partial &&
     scientCreatorRoleIncomplete(material.candidate.incompleteCreatorRoles, "author") &&
     (await assessScientSourceIntake({ root: input.root, candidate: material.candidate })).kind ===
       "new"
@@ -1558,41 +1630,65 @@ async function importFileOperationItem(input: {
       : null;
   const candidate = completed?.candidate ?? material.candidate;
   const [primary, ...extra] = pdfs;
-  const result = await importScientSourceOperationItem({
-    root: input.root,
-    operationId: input.operation.operationId,
-    candidate: primary
-      ? {
-          ...candidate,
-          pdfAvailable: true,
-          pdfFileName: primary.fileName,
-          pdfAttachmentCount: pdfs.length,
-        }
-      : candidate,
-    actor: input.operation.actor,
-    intake: input.operation.intake,
-    verification: fileImportVerification(candidate),
-    ...(primary ? { pdfPath: primary.path } : {}),
-    allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
-  });
+  let result = partial
+    ? {
+        outcome: "imported" as const,
+        record: partial,
+        duplicate: {
+          kind: "new" as const,
+          matchingSourceIds: [],
+          reason: "The source was imported.",
+        },
+      }
+    : await importScientSourceOperationItem({
+        root: input.root,
+        operationId: input.operation.operationId,
+        candidate: primary
+          ? {
+              ...candidate,
+              pdfAvailable: true,
+              pdfFileName: primary.fileName,
+              pdfAttachmentCount: pdfs.length,
+            }
+          : candidate,
+        actor: input.operation.actor,
+        intake: input.operation.intake,
+        verification: fileImportVerification(candidate),
+        ...(primary ? { pdfPath: primary.path } : {}),
+        allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
+      });
+  if (result.outcome === "duplicate") {
+    partial = await partiallyImportedRecord({
+      ...input,
+      candidate,
+      matchingSourceIds: result.duplicate.matchingSourceIds,
+    });
+    if (partial) result = { ...result, outcome: "imported", record: partial };
+  }
+  const original =
+    partial && scientCreatorRoleIncomplete(material.candidate.incompleteCreatorRoles, "author")
+      ? (await readScientSourceRecordsAfter(input.root, partial.sourceId, 0))?.find(
+          (record) => record.origin?.operationId === partial.origin?.operationId,
+        )
+      : null;
   const file: FileItemOutcome = {
     citationKeys,
     ...(completed && result.outcome === "imported" ? { authorList: completed.authorList } : {}),
+    ...(original
+      ? {
+          authorList: scientCreatorRoleIncomplete(original.incompleteCreatorRoles, "author")
+            ? ("incomplete" as const)
+            : ("completed" as const),
+        }
+      : {}),
   };
-  let record = result.record;
-  if (result.outcome !== "imported") return { ...result, file };
-  for (const pdf of extra) {
-    if (!record) break;
-    const attached = await attachScientSourcePdf({
-      root: input.root,
-      sourceId: record.sourceId,
-      expectedRevision: record.revision,
-      pdfPath: pdf.path,
-      fileName: pdf.fileName,
-      actor: input.operation.actor,
-    });
-    record = attached.record;
-  }
+  if (result.outcome !== "imported" || !result.record) return { ...result, file };
+  const record = await attachRemainingImportPdfs({
+    root: input.root,
+    record: result.record,
+    pdfs: partial ? pdfs : extra,
+    actor: input.operation.actor,
+  });
   return { ...result, record, file };
 }
 
@@ -1640,29 +1736,44 @@ async function importZoteroOperationItem(input: {
   const { material, files } = imported;
   const candidate = zoteroImportCandidate(imported.candidate, groupId, input.itemKey);
   try {
+    let partial = await partiallyImportedRecord({ ...input, candidate });
     const [primary, ...extra] = files;
-    const result = await importScientSourceOperationItem({
-      root: input.root,
-      operationId: input.operation.operationId,
-      candidate,
-      actor: input.operation.actor,
-      intake: input.operation.intake,
-      ...(primary ? { pdfPath: primary.path } : {}),
-      allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
-    });
-    let record = result.record;
-    for (const file of extra) {
-      if (!record) break;
-      const attached = await attachScientSourcePdf({
-        root: input.root,
-        sourceId: record.sourceId,
-        expectedRevision: record.revision,
-        pdfPath: file.path,
-        ...(file.fileName ? { fileName: file.fileName } : {}),
-        actor: input.operation.actor,
+    let result = partial
+      ? {
+          outcome: "imported" as const,
+          record: partial,
+          duplicate: {
+            kind: "new" as const,
+            matchingSourceIds: [],
+            reason: "The source was imported.",
+          },
+        }
+      : await importScientSourceOperationItem({
+          root: input.root,
+          operationId: input.operation.operationId,
+          candidate,
+          actor: input.operation.actor,
+          intake: input.operation.intake,
+          ...(primary ? { pdfPath: primary.path } : {}),
+          allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
+        });
+    if (result.outcome === "duplicate") {
+      partial = await partiallyImportedRecord({
+        ...input,
+        candidate,
+        matchingSourceIds: result.duplicate.matchingSourceIds,
       });
-      record = attached.record;
+      if (partial) result = { ...result, outcome: "imported", record: partial };
     }
+    const record =
+      result.outcome === "imported" && result.record
+        ? await attachRemainingImportPdfs({
+            root: input.root,
+            record: result.record,
+            pdfs: partial ? files : extra,
+            actor: input.operation.actor,
+          })
+        : result.record;
     if (result.outcome === "imported" && record) {
       // Which PDF here each Zotero file with highlights is, before its copy goes.
       const highlighted = new Set(material.annotations.map((entry) => entry.attachmentKey));
@@ -1676,13 +1787,15 @@ async function importZoteroOperationItem(input: {
             ),
         ),
       );
-      await recordZoteroSync({
-        root: input.root,
-        record,
-        material,
-        attachmentKeys: files.map((file) => file.attachmentKey),
-        pdfs: Object.fromEntries(pdfs),
-      });
+      if (!(await readScientSourceZoteroSync(input.root, record.sourceId))) {
+        await recordZoteroSync({
+          root: input.root,
+          record,
+          material,
+          attachmentKeys: files.map((file) => file.attachmentKey),
+          pdfs: Object.fromEntries(pdfs),
+        });
+      }
       const unfiled = await addToZoteroCollections({
         root: input.root,
         operation: input.operation,

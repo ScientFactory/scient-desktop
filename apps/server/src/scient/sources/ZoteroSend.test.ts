@@ -13,11 +13,13 @@ import {
   attachScientSourcePdf,
   importScientSource,
   readScientSourceRecord,
+  readScientSourceZoteroSync,
   updateScientSourceMetadata,
+  writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { zoteroItem } from "./Zotero.testkit.ts";
+import { fakeZoteroTransport, zoteroItem } from "./Zotero.testkit.ts";
 import type { ZoteroAccess } from "./ZoteroConnections.ts";
 import type { ZoteroRawItem } from "./ZoteroItems.ts";
 import { refreshZoteroSources, sendSourcesToZotero } from "./ZoteroSync.ts";
@@ -113,6 +115,7 @@ function zoteroOrg(
   options: {
     readonly write?: boolean;
     readonly groups?: Record<string, object>;
+    readonly groupId?: string;
     /** False: zotero.org does not say what a type accepts, as before these were asked for. */
     readonly templates?: boolean;
     /** False: the key has no file access. */
@@ -125,8 +128,10 @@ function zoteroOrg(
     readonly readFailures?: number;
   } = {},
 ) {
+  const libraryPath = options.groupId ? `/groups/${options.groupId}` : `/users/${USER}`;
   const items = new Map<string, ZoteroRawItem>();
   const writes: ZoteroWebRequest[] = [];
+  const requests: ZoteroWebRequest[] = [];
   let version = 10;
   let keyCount = 0;
   const nextKey = () => `NEW${"ABCDEFGHIJKLMNOP"[keyCount++] ?? "Z"}2345`;
@@ -154,6 +159,7 @@ function zoteroOrg(
       return 201;
     },
     request: async (request) => {
+      requests.push(request);
       const path = request.url.pathname;
       if (path === "/keys/current") {
         return json({
@@ -184,7 +190,7 @@ function zoteroOrg(
           "total-results": "1",
         });
       }
-      if (request.method === "POST" && path === `/users/${USER}/items`) {
+      if (request.method === "POST" && path === `${libraryPath}/items`) {
         writes.push(request);
         const token = request.headers["Zotero-Write-Token"];
         if (token && usedTokens.has(token)) {
@@ -198,14 +204,16 @@ function zoteroOrg(
           items.set(key, {
             key,
             version,
-            library: { type: "user", id: USER },
+            library: options.groupId
+              ? { type: "group", id: Number(options.groupId) }
+              : { type: "user", id: USER },
             data: { ...(entry as ZoteroRawItem["data"]), key, version },
           });
           successful[String(index)] = { key, version };
         }
         return json({ successful, failed: {} });
       }
-      const file = /^\/users\/\d+\/items\/([A-Z0-9]{8})\/file$/u.exec(path);
+      const file = /^\/(?:users|groups)\/\d+\/items\/([A-Z0-9]{8})\/file$/u.exec(path);
       const attachment = file?.[1] ? items.get(file[1]) : undefined;
       if (request.method === "POST" && attachment) {
         if (request.headers["If-None-Match"] !== "*") return empty(428);
@@ -244,7 +252,7 @@ function zoteroOrg(
           uploadKey,
         });
       }
-      const match = /^\/users\/\d+\/items\/([A-Z0-9]{8})(\/children)?$/u.exec(path);
+      const match = /^\/(?:users|groups)\/\d+\/items\/([A-Z0-9]{8})(\/children)?$/u.exec(path);
       const item = match?.[1] ? items.get(match[1]) : undefined;
       if (request.method === "DELETE" && item) {
         if (request.headers["If-Unmodified-Since-Version"] !== String(item.version)) {
@@ -284,6 +292,7 @@ function zoteroOrg(
     items,
     stored,
     writes,
+    requests,
     editInZotero,
     zotero: {
       webKey: async () => "synthetic-key",
@@ -417,6 +426,283 @@ describe("Send to Zotero", () => {
       expect.objectContaining({ system: "zotero", libraryId: String(USER), itemKey: "NEWA2345" }),
     ]);
   });
+
+  it.each([
+    { libraryId: String(USER + 1), kind: "another personal owner" },
+    { libraryId: "groups/77", kind: "a group" },
+  ])(
+    "creates in My Library without reading or replacing a link to $kind",
+    async ({ libraryId }) => {
+      const oldReference = {
+        system: "zotero",
+        libraryId,
+        itemKey: "SAME2345",
+        itemVersion: 10,
+        rawItemType: "journalArticle",
+      };
+      const { root, sourceId } = await sourceInScient({ externalReferences: [oldReference] });
+      const before = await readScientSourceRecord(root, sourceId);
+      if (!before) throw new Error("The fixture source was not added.");
+      await writeScientSourceZoteroSync(root, {
+        formatVersion: 1,
+        sourceId,
+        libraryId,
+        annotationLibraryId: libraryId.startsWith("groups/") ? libraryId : "0",
+        itemKey: oldReference.itemKey,
+        itemVersion: oldReference.itemVersion,
+        syncedAt: "2026-11-15T10:00:00.000Z",
+        metadata: editableMetadataFromRecord(before),
+        note: null,
+        attachmentKeys: [],
+      });
+      const org = zoteroOrg();
+      const unrelated = zoteroItem("SAME2345", { version: 10, title: "Unrelated work" }, USER);
+      org.items.set(unrelated.key, unrelated);
+
+      const result = await sendSourcesToZotero({
+        root,
+        sourceIds: [sourceId],
+        actor: "user",
+        zotero: org.zotero,
+      });
+
+      expect(result.items[0]).toMatchObject({ outcome: "created", itemKey: "NEWA2345" });
+      expect(org.items.get(unrelated.key)).toEqual(unrelated);
+      expect(
+        org.requests.filter((request) => request.url.pathname.includes(`/items/${unrelated.key}`)),
+      ).toEqual([]);
+      expect((await readScientSourceRecord(root, sourceId))?.externalReferences).toEqual([
+        expect.objectContaining({ libraryId: String(USER), itemKey: "NEWA2345" }),
+        oldReference,
+      ]);
+      const sentBase = await readScientSourceZoteroSync(root, sourceId);
+      expect(sentBase).toMatchObject({ libraryId: String(USER), itemKey: "NEWA2345" });
+      expect(sentBase?.annotationLibraryId ?? sentBase?.libraryId).toBe(String(USER));
+      const second = await sendSourcesToZotero({
+        root,
+        sourceIds: [sourceId],
+        actor: "user",
+        zotero: org.zotero,
+      });
+      expect(second.items[0]?.outcome).toBe("unchanged");
+    },
+  );
+
+  it("keeps two group libraries separate when their item keys and versions coincide", async () => {
+    const oldReference = {
+      system: "zotero",
+      libraryId: "groups/88",
+      itemKey: "SAME2345",
+      itemVersion: 10,
+      rawItemType: "journalArticle",
+    };
+    const { root, sourceId } = await sourceInScient({ externalReferences: [oldReference] });
+    const org = zoteroOrg({
+      groupId: "77",
+      groups: { "77": { library: true, write: true } },
+    });
+    const unrelated = {
+      ...zoteroItem("SAME2345", { version: 10, title: "Another group's work" }),
+      library: { type: "group", id: 77 },
+    };
+    org.items.set(unrelated.key, unrelated);
+
+    const result = await sendSourcesToZotero({
+      root,
+      sourceIds: [sourceId],
+      groupId: "77",
+      actor: "user",
+      zotero: org.zotero,
+    });
+
+    expect(result.items[0]).toMatchObject({ outcome: "created", itemKey: "NEWA2345" });
+    expect(org.items.get(unrelated.key)).toEqual(unrelated);
+    expect(
+      org.requests.filter((request) => request.url.pathname.includes(`/items/${unrelated.key}`)),
+    ).toEqual([]);
+    expect((await readScientSourceRecord(root, sourceId))?.externalReferences).toEqual([
+      expect.objectContaining({ libraryId: "groups/77", itemKey: "NEWA2345" }),
+      oldReference,
+    ]);
+  });
+
+  it("refreshes only the recorded personal owner, even when another account has its key and version", async () => {
+    const { root, sourceId } = await sourceInScient({
+      externalReferences: [
+        {
+          system: "zotero",
+          libraryId: String(USER + 1),
+          itemKey: "SAME2345",
+          itemVersion: 10,
+          rawItemType: "journalArticle",
+        },
+      ],
+    });
+    const org = zoteroOrg();
+    org.items.set(
+      "SAME2345",
+      zoteroItem("SAME2345", { version: 10, title: "Unrelated work" }, USER),
+    );
+    const before = await readScientSourceRecord(root, sourceId);
+
+    const result = await refreshZoteroSources({
+      root,
+      sourceIds: [sourceId],
+      connection: "web",
+      actor: "user",
+      zotero: org.zotero,
+    });
+
+    expect(result.items[0]?.outcome).toBe("failed");
+    expect(await readScientSourceRecord(root, sourceId)).toEqual(before);
+    expect(
+      org.requests.filter((request) => request.url.pathname.includes("/items/SAME2345")),
+    ).toEqual([]);
+  });
+
+  it.each([
+    { localOwner: USER, sameWork: true, boundOwner: null, outcome: "updated", verified: true },
+    { localOwner: USER + 1, sameWork: true, boundOwner: null, outcome: "created", verified: false },
+    { localOwner: 0, sameWork: true, boundOwner: null, outcome: "created", verified: false },
+    { localOwner: USER, sameWork: false, boundOwner: null, outcome: "created", verified: false },
+    { localOwner: USER, sameWork: false, boundOwner: USER, outcome: "updated", verified: true },
+    { localOwner: USER, sameWork: true, boundOwner: USER + 1, outcome: "created", verified: false },
+  ])(
+    "corroborates legacy work $sameWork with owner $localOwner or stored binding $boundOwner",
+    async ({ localOwner, sameWork, boundOwner, outcome, verified }) => {
+      const legacy = {
+        system: "zotero",
+        libraryId: "0",
+        itemKey: "SAME2345",
+        itemVersion: 10,
+        rawItemType: "journalArticle",
+      };
+      const { root, sourceId } = await sourceInScient({ externalReferences: [legacy] });
+      if (boundOwner !== null) {
+        const record = await readScientSourceRecord(root, sourceId);
+        if (!record) throw new Error("The fixture source was not added.");
+        await writeScientSourceZoteroSync(root, {
+          formatVersion: 1,
+          sourceId,
+          libraryId: String(boundOwner),
+          annotationLibraryId: "0",
+          itemKey: legacy.itemKey,
+          itemVersion: legacy.itemVersion,
+          syncedAt: "2026-11-15T10:00:00.000Z",
+          metadata: editableMetadataFromRecord(record),
+          note: null,
+          attachmentKeys: [],
+        });
+      }
+      const org = zoteroOrg();
+      const current = zoteroItem("SAME2345", { version: 10, title: "Before sending" }, USER);
+      org.items.set(current.key, current);
+      const local = fakeZoteroTransport({
+        items: new Map([
+          [
+            current.key,
+            {
+              item: zoteroItem(
+                current.key,
+                {
+                  version: 10,
+                  title: sameWork ? "Written in Scient" : "An unrelated local work",
+                  DOI: sameWork ? "10.1000/notes" : "10.1000/unrelated",
+                },
+                localOwner,
+              ),
+              children: [],
+            },
+          ],
+        ]),
+      });
+      const zotero = { ...org.zotero, local };
+
+      const result = await sendSourcesToZotero({
+        root,
+        sourceIds: [sourceId],
+        actor: "user",
+        zotero,
+      });
+
+      expect(result.items[0]?.outcome).toBe(outcome);
+      const references = (await readScientSourceRecord(root, sourceId))?.externalReferences ?? [];
+      expect(references[0]).toMatchObject({
+        libraryId: String(USER),
+        itemKey: verified ? current.key : "NEWA2345",
+      });
+      expect(references.some((entry) => entry.libraryId === "0")).toBe(!verified);
+      const sentBase = await readScientSourceZoteroSync(root, sourceId);
+      expect(sentBase?.libraryId).toBe(String(USER));
+      expect(sentBase?.annotationLibraryId ?? sentBase?.libraryId).toBe(
+        verified ? "0" : String(USER),
+      );
+      if (!verified) {
+        expect(org.items.get(current.key)).toEqual(current);
+        expect(
+          org.requests.filter((request) => request.url.pathname.includes(`/items/${current.key}`)),
+        ).toEqual([]);
+      }
+    },
+  );
+
+  it.each([true, false])(
+    "refreshes a legacy local link only when its work is corroborated: %s",
+    async (sameWork) => {
+      const { root, sourceId } = await sourceInScient({
+        externalReferences: [
+          {
+            system: "zotero",
+            libraryId: "0",
+            itemKey: "SAME2345",
+            itemVersion: 10,
+            rawItemType: "journalArticle",
+          },
+        ],
+      });
+      const org = zoteroOrg();
+      const item = zoteroItem("SAME2345", { version: 10, title: "Verified owner's title" }, USER);
+      org.items.set(item.key, item);
+      const local = fakeZoteroTransport({
+        items: new Map([
+          [
+            item.key,
+            {
+              item: zoteroItem(
+                item.key,
+                {
+                  version: 10,
+                  title: sameWork ? "Written in Scient" : "An unrelated local work",
+                  DOI: sameWork ? "10.1000/notes" : "10.1000/unrelated",
+                },
+                USER,
+              ),
+              children: [],
+            },
+          ],
+        ]),
+      });
+      const before = await readScientSourceRecord(root, sourceId);
+      const result = await refreshZoteroSources({
+        root,
+        sourceIds: [sourceId],
+        connection: "web",
+        actor: "user",
+        zotero: { ...org.zotero, local },
+      });
+      expect(result.items[0]?.outcome).toBe(sameWork ? "updated" : "failed");
+      if (sameWork) {
+        expect((await readScientSourceRecord(root, sourceId))?.externalReferences).toEqual([
+          expect.objectContaining({ libraryId: String(USER), itemKey: item.key }),
+        ]);
+      } else {
+        expect(await readScientSourceRecord(root, sourceId)).toEqual(before);
+        expect(
+          org.requests.filter((request) => request.url.pathname.includes(`/items/${item.key}`)),
+        ).toEqual([]);
+      }
+    },
+  );
 
   it("sends every further detail to the field the item's type has for it, the rest to Extra", async () => {
     const { root, sourceId } = await sourceInScient({

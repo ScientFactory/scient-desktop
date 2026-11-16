@@ -7,11 +7,18 @@ import * as NodePath from "node:path";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject } from "@scientfactory/project-init";
-import { importScientSource } from "@scientfactory/scient-sources/store";
+import { importScientSource, listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
+import {
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { McpSchema } from "effect/ai";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as ServerConfig from "../../../config.ts";
@@ -25,8 +32,13 @@ import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts"
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import type * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
+import { ScientSourcesListResult } from "./tools.ts";
 
 const fixtures: string[] = [];
+const decodeToolEnvelope = Schema.decodeUnknownEffect(
+  Schema.Struct({ result: McpSchema.CallToolResult }),
+);
+const decodeSourceList = Schema.decodeUnknownEffect(ScientSourcesListResult);
 
 afterEach(async () => {
   await Promise.all(
@@ -106,6 +118,14 @@ it.effect("a library-mode agent tool runs through the real MCP layers with the s
         capabilities: new Set(["sources:read", "sources:write"]),
         issuedAt: 1,
       };
+      const config = yield* ServerConfig.ServerConfig.pipe(
+        Effect.provide(
+          ServerConfig.ServerConfig.layerTest(base, { prefix: "library-layers-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      );
+      const library = scientLibraryLocation(scientLibraryRootFor(config.stateDir));
       const serverLayer = McpHttpServer.layerMcpTransport(
         McpHttpServer.ScientSourcesToolkitRegistrationLive,
       ).pipe(
@@ -129,7 +149,7 @@ it.effect("a library-mode agent tool runs through the real MCP layers with the s
           }),
         ),
         Layer.provide(Layer.succeed(ScientSourcesBackend, "library")),
-        Layer.provide(ServerConfig.ServerConfig.layerTest(base, { prefix: "library-layers-" })),
+        Layer.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
         Layer.provide(NodeServices.layer),
       );
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
@@ -148,26 +168,71 @@ it.effect("a library-mode agent tool runs through the real MCP layers with the s
         ),
       });
       expect(initialize.status).toBe(200);
-      const called = yield* httpClient.post("/mcp", {
-        headers: {
-          ...headers,
-          "mcp-session-id": initialize.headers["mcp-session-id"]!,
-          "mcp-protocol-version": "2025-06-18",
-        },
-        body: HttpBody.text(
-          `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scient_sources_list","arguments":{}}}`,
-          "application/json",
-        ),
+      const call = Effect.fn("libraryLayers.call")(function* (id: number, name: string) {
+        const response = yield* httpClient.post("/mcp", {
+          headers: {
+            ...headers,
+            "mcp-session-id": initialize.headers["mcp-session-id"]!,
+            "mcp-protocol-version": "2025-06-18",
+          },
+          body: HttpBody.text(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id,
+              method: "tools/call",
+              params: { name, arguments: {} },
+            }),
+            "application/json",
+          ),
+        });
+        expect(response.status).toBe(200);
+        const text = yield* response.text;
+        const envelope: unknown = text
+          .split("\n")
+          .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
+          .map((line) => JSON.parse(line.replace(/^data: /u, "")) as { id?: number })
+          .find((message) => message.id === id);
+        const { result } = yield* decodeToolEnvelope(envelope);
+        expect(result.isError).not.toBe(true);
+        if (result.structuredContent !== undefined) return result.structuredContent;
+        const content = result.content.find((entry) => entry.type === "text");
+        if (content?.type !== "text") throw new Error("Expected a JSON tool result.");
+        return JSON.parse(content.text) as unknown;
       });
-      const text = yield* called.text;
-      // The write-authorized call moved the project and lists its pin.
-      expect(text).toContain('\\"pinned\\":true');
-      expect(text).not.toContain('"isError":true');
+      const before = yield* call(2, "scient_sources_list");
+      const beforeList = yield* decodeSourceList(before);
+      expect(beforeList.records).toMatchObject([{ title: "Study through the server layers" }]);
+      expect(beforeList.records[0]?.pinned).not.toBe(true);
+      expect(yield* Effect.promise(() => readScientProjectPins(root))).toEqual([]);
       expect(
         yield* Effect.promise(() =>
-          NodeFSP.readFile(NodePath.join(root, ".scient/library/pins.json"), "utf8"),
+          NodeFSP.stat(library.root).then(
+            () => true,
+            () => false,
+          ),
         ),
-      ).toContain("Study through the server layers");
+      ).toBe(false);
+
+      yield* call(3, "scient_sources_bibliography");
+      const after = yield* call(4, "scient_sources_list");
+      const afterList = yield* decodeSourceList(after);
+      expect(afterList.records).toMatchObject([
+        { sourceId: beforeList.records[0]!.sourceId, pinned: true },
+      ]);
+      const pins = yield* Effect.promise(() => readScientProjectPins(root));
+      expect(pins).toHaveLength(1);
+      expect(pins[0]?.sourceId).toBe(beforeList.records[0]!.sourceId);
+      expect(yield* Effect.promise(() => listScientSourceRecords(library))).toMatchObject([
+        { sourceId: beforeList.records[0]!.sourceId, title: "Study through the server layers" },
+      ]);
+      expect(
+        yield* Effect.promise(() =>
+          NodeFSP.stat(NodePath.join(root, ".scient/sources")).then(
+            () => true,
+            () => false,
+          ),
+        ),
+      ).toBe(false);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

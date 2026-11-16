@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Rewrites project documents beside the Promise-based Sources store.
+import * as NodeBuffer from "node:buffer";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -71,8 +72,8 @@ export interface CitationKeyRenameScan {
 }
 
 /**
- * Every Markdown and LaTeX document a rename must reach, at any depth. Links
- * are never followed; anything the rename cannot read is listed, not dropped.
+ * Markdown and LaTeX documents outside ignored and hidden folders, at any depth.
+ * Hidden folders are reported, except .git and .scient; links are never followed.
  */
 export async function scanCitationKeyRenameDocuments(root: string): Promise<CitationKeyRenameScan> {
   const base = await canonicalizeScientSourceRoot(root);
@@ -91,10 +92,12 @@ export async function scanCitationKeyRenameDocuments(root: string): Promise<Cita
       continue;
     }
     for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
-      if (entry.name.startsWith(".")) continue;
+      if (entry.name === ".git" || entry.name === ".scient") continue;
       const relative = directory ? `${directory}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        if (!SKIPPED_DIRECTORIES.has(entry.name)) queue.push(relative);
+        if (entry.name.startsWith(".")) {
+          skipped.push({ path: relative, reason: "Not searched: a hidden folder." });
+        } else if (!SKIPPED_DIRECTORIES.has(entry.name)) queue.push(relative);
         continue;
       }
       if (documentKind(entry.name) === null) continue;
@@ -127,8 +130,11 @@ async function renameInDocument(
     const stats = await NodeFSP.lstat(absolutePath).catch(() => null);
     if (!stats?.isFile()) return "The file could not be read.";
     if (stats.size > MAX_RENAMED_DOCUMENT_BYTES) return "Larger than 16 MB.";
-    const text = await NodeFSP.readFile(absolutePath, "utf8").catch(() => null);
-    if (text === null) return "The file could not be read.";
+    const bytes = await NodeFSP.readFile(absolutePath).catch(() => null);
+    if (bytes === null) return "The file could not be read.";
+    if (!NodeBuffer.isUtf8(bytes))
+      return "Not valid UTF-8; left unchanged to preserve the file's encoding.";
+    const text = bytes.toString("utf8");
     if (!text.includes(from)) return "unchanged";
     const next = renameCitationKeyInDocument(kind, text, from, to);
     if (next === text) return "unchanged";

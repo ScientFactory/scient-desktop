@@ -176,8 +176,10 @@ the deliberate upstream-maintenance tradeoff. JSON writes use a temporary file,
 `fsync`, and atomic promotion. New source records use exclusive creation. PDF
 copies are size-bounded, require a regular non-symlinked `%PDF-` file, are
 hashed while copying, and are promoted before a source record can refer to
-them. A crash can leave harmless unreferenced content, but never a committed
-record pointing to a partial PDF.
+them. A process crash can leave unreferenced content, but never a committed
+record pointing to a partial PDF. These guarantees cover process interruption,
+not sudden power loss: parent directories are not fsynced after every promotion,
+and filesystem/hardware power-loss durability has not been qualified.
 
 Direct uploads use the selected environment's authenticated HTTP channel and a
 bounded multipart body rather than an Electron-only filesystem path or a
@@ -969,16 +971,16 @@ call its store: the project root, or the project root plus
 comes only from the thread's workspace binding (`resolveScientSourcesProject`),
 so tools take no project argument. The same reference picks the advertised
 tool list (`ScientSourcesToolkit` or `ScientSourcesLibraryToolkit`); both
-share operations and handlers. `agentContextBudget.scient.json` measures the
-library list (118,899 bytes); `libraryToolList.test.ts` measures the project list
-at 114,721. These are generated from the registered tool definitions; package
-paths use the same environment authority for people and agents.
+share operations and handlers. The agent-context budget tests measure the
+complete advertised tool list against `agentContextBudget.scient.json`; output
+schemas are not part of that input-context metric. Package paths use the same
+environment authority for people and agents.
 
-- Write authority is the invocation's `sources:write`. With it a call creates
-  the library once, resolves pins and review records in `write` mode
-  (recording the instance map, hydrating unresolved pins) and may write.
-  Without it nothing is written anywhere: unresolved pins come from their
-  `work` snapshot, review records from the review's snapshot.
+- Write authority is the invocation's `sources:write`, not the call's intent.
+  The resolver defaults to read even when that grant is present. Only actual
+  mutations request write admission; absent write authority they fail closed.
+  Read admission neither creates the Library nor records instance mappings or
+  hydrates pins: unresolved pins and review records use their saved snapshots.
 - Any tool that takes a source ID accepts a library ID or a project source ID
   of this project; both resolve through aliases and the instance map.
 - `scient_sources_list` lists this project's pins under their project keys
@@ -1163,10 +1165,13 @@ through the library backend. On the `"project"` backend nothing calls it, no jou
 **When it runs.** `resolveScientSourcesStoreFor` (`SourcesBackend.ts`) on the
 library backend:
 
-- A call with write authority (a route that needs `orchestration:operate`, an
-  agent call with `sources:write`) first runs `moveProjectIntoLibrary`
-  (`LibraryMove.ts`). A project with nothing to move costs a journal read and a
-  folder listing; git runs only when a move runs.
+- A mutation with write authority (a route that needs `orchestration:operate`,
+  or a mutating agent call with `sources:write`) first settles interrupted
+  Library merges. A failed recovery blocks the new write with
+  `ScientLibraryRecoveryError`, without turning it into a project-store fallback;
+  read admission does not attempt recovery. The mutation then runs
+  `moveProjectIntoLibrary` (`LibraryMove.ts`). A project with nothing to move
+  costs a journal read and a folder listing; git runs only when a move runs.
 - A read-only call never starts a move. It reads the v1 store while the
   project is not moved (`readScientLibraryMoveState`), and writes nothing.
 - A project that was moved back, or whose v1 store has an import another
@@ -2647,11 +2652,14 @@ out because they multiply the file size and turn every registry refresh into a
 large diff, and nothing that builds a document reads them; explicit export
 keeps them. The first sync after this change rewrote each file once: the file
 still matched the written copy, so it was replaced quietly (no `edited`, no
-`kept-` copy). Word
-export and reference formatting read sources through the same CSL-JSON writer. The store reports every settled write through
-`onScientSourceRecordsChanged`; the server coalesces those into one sync per
-project, so writes from people, agents and every import path keep both files
-current. A sync first gives keyless legacy records a key (oldest first).
+`kept-` copy). Word export and reference formatting use the same CSL-JSON writer.
+Under the project backend, `onScientSourceRecordsChanged` coalesces settled
+record writes into a bibliography sync. Under the Library backend, mutation
+routes refresh the current project's pin snapshots and reviews, then sync its
+bibliography; imports sync when their operation settles. Other projects catch
+up on their next write. A failed refresh does not undo a committed Library
+change and is retried by the next project write, including restoring a source.
+A sync first gives keyless legacy records a key (oldest first).
 
 Scient keeps a copy of what it last wrote in `.scient/sources/bibliography/`.
 A project file that differs from that copy was edited by hand and is kept

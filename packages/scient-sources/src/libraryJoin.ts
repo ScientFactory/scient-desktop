@@ -1392,7 +1392,7 @@ export type ScientLibraryJoinUndo =
       readonly outcome: "undone";
       /** Sources the join added that were still as it left them: now in the Trash. */
       readonly trashed: number;
-      /** Sources the join added that were changed or used since, and collections in use: left. */
+      /** Sources and created collections kept because later use or unreadable state prevents Undo. */
       readonly left: number;
     }
   /** `running`: that join, another one, or another Undo is under way. */
@@ -1408,6 +1408,10 @@ export async function undoScientLibraryJoin(input: {
   readonly library: ScientLibraryLocation;
   readonly joinId: string;
   readonly actor: ScientSourceActor;
+  /** Tests only: pauses after reading a created collection, while its deletion lock is held. */
+  readonly faults?: {
+    readonly afterCollectionRead?: () => Promise<void>;
+  };
 }): Promise<ScientLibraryJoinUndo> {
   const libraryRoot = await NodeFSP.realpath(input.library.root);
   const library = scientLibraryLocation(libraryRoot);
@@ -1435,6 +1439,7 @@ export async function undoScientLibraryJoin(input: {
           const placed = new Set(arrived.collections);
           const untouched =
             record !== null &&
+            organization.issue === undefined &&
             fingerprintOf(record) === planned.get(sourceId) &&
             !used.has(sourceId) &&
             organization.collections.every(
@@ -1467,23 +1472,31 @@ export async function undoScientLibraryJoin(input: {
     const created = header.collections.filter((entry) => entry.created).toReversed();
     for (const { collectionId } of created) {
       if (!collectionId) continue;
-      const present = new Set((await listScientSourceRecords(library)).map((r) => r.sourceId));
-      const organization = await readScientSourcesOrganization(library, present);
-      const collection = organization.collections.find(
-        (entry) => entry.collectionId === collectionId,
-      );
-      if (!collection) continue;
-      const inUse =
-        collection.sourceIds.some((sourceId) => present.has(sourceId)) ||
-        organization.collections.some((entry) => entry.parentCollectionId === collectionId);
-      if (inUse) left += 1;
-      else {
-        await deleteScientSourceCollection({
-          root: library,
-          collectionId,
-          actor: input.actor,
-        }).catch(() => undefined);
-      }
+      await withScientLibraryLock(libraryRoot, async () => {
+        const present = new Set((await listScientSourceRecords(library)).map((r) => r.sourceId));
+        const organization = await readScientSourcesOrganization(library, present);
+        if (organization.issue !== undefined) {
+          left += 1;
+          return;
+        }
+        const collection = organization.collections.find(
+          (entry) => entry.collectionId === collectionId,
+        );
+        if (!collection) return;
+        await input.faults?.afterCollectionRead?.();
+        const inUse =
+          collection.sourceIds.some((sourceId) => present.has(sourceId)) ||
+          organization.collections.some((entry) => entry.parentCollectionId === collectionId);
+        if (inUse) left += 1;
+        else {
+          const removed = await deleteScientSourceCollection({
+            root: library,
+            collectionId,
+            actor: input.actor,
+          }).catch(() => null);
+          if (removed?.outcome !== "deleted" && removed?.outcome !== "not-found") left += 1;
+        }
+      });
     }
     await atomicWriteJson(
       NodePath.join(directory, HEADER_FILE),

@@ -14,6 +14,7 @@ import {
   ScientLibraryBackupManifest,
   scientLibraryBackupEntries,
   scientLibraryBackupLeavesOut,
+  scientLibraryBackupPathIsUnsafe,
 } from "./libraryBackup.ts";
 import { ScientLibraryBusyError, withScientFileLock } from "./libraryLock.ts";
 import { carryScientLibraryMoveBacks } from "./libraryMove.ts";
@@ -204,12 +205,10 @@ function unsafePath(files: ScientLibraryBackupManifest["files"]): string | null 
   for (const file of files) {
     const parts = file.path.split("/");
     if (
+      scientLibraryBackupPathIsUnsafe(file.path) ||
       parts.some(
         (part) =>
-          part === "" ||
-          part === "." ||
-          part === ".." ||
-          /[\\:*?"<>|\u0000-\u001f]/u.test(part) ||
+          /[:*?"<>|\u0001-\u001f]/u.test(part) ||
           /[. ]$/u.test(part) ||
           RESERVED.test(part) ||
           Buffer.byteLength(part) > 255,

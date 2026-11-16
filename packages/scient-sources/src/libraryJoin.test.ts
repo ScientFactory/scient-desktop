@@ -26,6 +26,7 @@ import {
 import { editableMetadataFromRecord } from "./editable.ts";
 import { readScientLibraryDistinctPairs } from "./libraryExclusions.ts";
 import { mergeScientLibrarySources } from "./libraryMerge.ts";
+import { withScientFileLock } from "./libraryLock.ts";
 import { finishScientLibraryRestore, prepareScientLibraryRestore } from "./libraryRestore.ts";
 import { pinScientLibrarySource } from "./projectPins.ts";
 import {
@@ -88,6 +89,28 @@ async function backUp(scenario: Scenario): Promise<string> {
   const result = await backUpScientLibrary({ library: libraryOf(scenario), destination });
   if (result.outcome !== "backed-up") throw new Error(`Not backed up: ${result.outcome}`);
   return result.path;
+}
+
+async function joinedCollection() {
+  const theirs = await built([{ op: "add", label: "arrived", pdf: false }]);
+  const sourceId = workOf(theirs.model, "arrived").sourceId;
+  await createScientSourceCollection({
+    root: theirs.library,
+    name: "Joined collection",
+    sourceIds: [sourceId],
+    actor: "user",
+  });
+  const ours = await built([{ op: "add", label: "mine", pdf: false }]);
+  const joined = await joinScientLibrary({
+    library: ours.library,
+    folder: await backUp(theirs.scenario),
+    actor: "user",
+  });
+  if (joined.outcome !== "joined") throw new Error(`Not joined: ${joined.outcome}`);
+  const collection = (await readScientSourcesOrganization(ours.library)).collections.find(
+    (entry) => entry.name === "Joined collection",
+  )!;
+  return { ...ours, joinId: joined.joinId, sourceId, collectionId: collection.collectionId };
 }
 
 /** Every file the Library keeps, with its hash, apart from the joins' own records. */
@@ -317,6 +340,117 @@ describe("adding what another Library holds", () => {
     expect(
       await joinScientLibrary({ library: ours.library, folder: backup, actor: "user" }),
     ).toMatchObject({ outcome: "joined", added: 0, removedHere: 2, identical: 1, different: 0 });
+  });
+
+  it("leaves sources and created collections on Undo when saved searches hide later filing", async () => {
+    const { scenario, library, joinId, sourceId } = await joinedCollection();
+    await createScientSourceCollection({
+      root: library,
+      name: "Filed later",
+      sourceIds: [sourceId],
+      actor: "user",
+    });
+    const record = await readScientSourceRecord(library, sourceId);
+    const organization = await readScientSourcesOrganization(library);
+    const searchesPath = NodePath.join(scenario.libraryRoot, "saved-searches.json");
+    const damaged = "{ damaged saved searches";
+    await NodeFSP.writeFile(searchesPath, damaged);
+    expect((await readScientSourcesOrganization(library)).issue).toBeDefined();
+
+    expect(await undoScientLibraryJoin({ library, joinId, actor: "user" })).toEqual({
+      outcome: "undone",
+      trashed: 0,
+      left: 2,
+    });
+    expect(await undoScientLibraryJoin({ library, joinId, actor: "user" })).toEqual({
+      outcome: "already-undone",
+    });
+    expect(await readScientSourceRecord(library, sourceId)).toEqual(record);
+    expect(await readScientSourceTrashEntries(library)).toEqual([]);
+    expect(await NodeFSP.readFile(searchesPath, "utf8")).toBe(damaged);
+    expect(await listScientLibraryJoins(library)).toMatchObject([
+      { joinId, state: "undone", added: 1, left: 2 },
+    ]);
+
+    await NodeFSP.rm(searchesPath);
+    expect(await readScientSourcesOrganization(library)).toEqual(organization);
+  });
+
+  it.each(["member", "child"] as const)(
+    "serializes Undo's empty-collection decision with a concurrent %s addition",
+    async (addition) => {
+      const { scenario, model, library, joinId, sourceId, collectionId } = await joinedCollection();
+      const checked = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      const undoing = undoScientLibraryJoin({
+        library,
+        joinId,
+        actor: "user",
+        faults: {
+          afterCollectionRead: async () => {
+            checked.resolve();
+            await resume.promise;
+          },
+        },
+      });
+      await checked.promise;
+      // Enqueue before resuming Undo, without yielding to a filesystem path lookup first.
+      const changing = withScientFileLock(
+        NodePath.join(scenario.libraryRoot, "library.lock"),
+        () =>
+          addition === "member"
+            ? changeScientSourceCollectionMembers({
+                root: library,
+                collectionId,
+                add: [workOf(model, "mine").sourceId],
+                actor: "user",
+              })
+            : createScientSourceCollection({
+                root: library,
+                name: "Added child",
+                parentCollectionId: collectionId,
+                actor: "user",
+              }),
+      );
+      resume.resolve();
+      const [undone, changed] = await Promise.all([undoing, changing]);
+      expect(undone).toEqual({ outcome: "undone", trashed: 1, left: 0 });
+      expect(changed.outcome).toBe("not-found");
+      expect((await readScientSourcesOrganization(library)).collections).toEqual([]);
+      expect(await ids(scenario)).toEqual([workOf(model, "mine").sourceId]);
+      expect((await readScientSourceTrashEntries(library)).map((entry) => entry.sourceId)).toEqual([
+        sourceId,
+      ]);
+    },
+  );
+
+  it("counts a created collection left when its deletion fails after Undo reads it", async () => {
+    const { scenario, library, joinId, collectionId } = await joinedCollection();
+    const collectionPath = NodePath.join(
+      scenario.libraryRoot,
+      "collections",
+      `${collectionId}.json`,
+    );
+    const collectionBytes = await NodeFSP.readFile(collectionPath);
+    const searchesPath = NodePath.join(scenario.libraryRoot, "saved-searches.json");
+    expect(
+      await undoScientLibraryJoin({
+        library,
+        joinId,
+        actor: "user",
+        faults: {
+          afterCollectionRead: () => NodeFSP.writeFile(searchesPath, "{ damaged saved searches"),
+        },
+      }),
+    ).toEqual({ outcome: "undone", trashed: 1, left: 1 });
+    expect(await NodeFSP.readFile(collectionPath)).toEqual(collectionBytes);
+    expect(await listScientLibraryJoins(library)).toMatchObject([
+      { joinId, state: "undone", added: 1, left: 1 },
+    ]);
+    await NodeFSP.rm(searchesPath);
+    expect((await readScientSourcesOrganization(library)).collections).toMatchObject([
+      { collectionId, sourceIds: [] },
+    ]);
   });
 
   it("shows, and never changes, a source both Libraries hold; and never revives one removed here", async () => {

@@ -164,7 +164,7 @@ that is not in this project has only My note.
 
 A note is Markdown. When you read it, headings, lists, links, quotes, tables
 and code are shown as such; when you edit it, you see and type the Markdown
-itself (`# Heading`, `- item`, `[text](address)`), with bold and italic shown
+itself (`# Heading`, `- item`, `[text](https://example.org)`), with bold and italic shown
 as you type. An edit changes only what you typed. Each note's explanation sits
 under its box, so the two boxes line up.
 
@@ -405,6 +405,11 @@ had chosen before it.
    **Try failed items again** takes the failures of every part. Nothing is
    imported twice. After Scient was closed in the middle, the summary counts
    from where the import went on; the line in Recent changes counts all of it.
+   A retry completes remaining PDFs and import steps for a source that this
+   import already added, without replacing metadata or notes edited since then.
+   Retrying Zotero intake also reapplies its original collection filing; it can
+   therefore put a source back into a collection you manually removed it from
+   after the partial import. Highlights you deleted stay deleted.
 
 Scient copies each reference's metadata, tags, notes and every PDF attachment
 into your Library, and adds the references to this project unless **All** is
@@ -532,10 +537,17 @@ not open), the dialog says what to do; **Check again** then refreshes without
 leaving it. A refresh does not file sources again: a reference you moved
 between collections in Zotero stays in its collections here.
 
+Scient checks the Zotero account or group identity, not only an item's key.
+Changing accounts never refreshes an unrelated item with a coincident key.
+A local library that reports no bound owner (user ID `0`) cannot be refreshed
+until Zotero supplies a verifiable owner; Scient says so and leaves it unchanged.
+
 ### Send to Zotero
 
 Choose **Send to Zotero** from a source's actions to add it to your zotero.org
 library, or to update the Zotero item it came from with your changes here.
+Sending to another account or group creates a link there rather than updating
+an identically keyed item from a different library; the earlier link is kept.
 Only fields that differ are sent, and an empty field here never clears one in
 Zotero. Every detail goes to the field Zotero has for it in that kind of item
 (a legal case's name, court and reporter; a book's edition and place; a
@@ -1090,6 +1102,10 @@ project**, which keeps the paper in your Library. Choose
 **Trash** in the **⋯** menu at the top of the Library later to restore it. Its PDFs stay in
 your Library while it is in the trash. **Empty trash** deletes the sources in
 it for good, with their saved versions and any PDF no other source uses.
+When the last retained reference to a collected PDF is gone, Scient also removes
+its extracted text and highlights. This is not secure erasure: an interrupted
+cleanup or an unreadable file can leave orphaned material, and existing backups,
+sealed migration copies and project snapshots are not erased.
 Removing a source never changes Zotero. Moving a paper to the Trash removes it
 from your Library, not only from this project. Projects that have it, this one
 included, keep its citation details and list it as "Not in this Library" until

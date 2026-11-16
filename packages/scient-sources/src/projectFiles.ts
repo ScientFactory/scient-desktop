@@ -2,6 +2,35 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import { isScientLibraryLocation, type ScientSourceStoreLocation } from "./libraryRoot.ts";
+
+export const SCIENT_SOURCE_TEXT_DIRECTORY = ".scient/sources/text/sha256";
+
+/** Persisted PDF-derived material stays beside Sources in a Library, inside .scient in a project. */
+export function scientSourceMaterialDirectories(location: ScientSourceStoreLocation) {
+  const library = isScientLibraryLocation(location);
+  const root = library ? location.root : location;
+  return {
+    text: NodePath.join(
+      root,
+      ...(library ? "text/sha256" : SCIENT_SOURCE_TEXT_DIRECTORY).split("/"),
+    ),
+    annotations: NodePath.join(
+      root,
+      ...(library ? "annotations/v1" : ".scient/annotations/v1").split("/"),
+    ),
+  };
+}
+
+export function scientSourcePdfMaterialPaths(location: ScientSourceStoreLocation, sha256: string) {
+  if (!/^[0-9a-f]{64}$/u.test(sha256)) throw new Error("The PDF hash is not a SHA-256 digest.");
+  const directories = scientSourceMaterialDirectories(location);
+  return {
+    text: NodePath.join(directories.text, sha256.slice(0, 2), `${sha256}.json`),
+    annotations: NodePath.join(directories.annotations, `${sha256}.json`),
+  };
+}
+
 export {
   publishScientProjectFile,
   scientProjectFilePublicationHooks,

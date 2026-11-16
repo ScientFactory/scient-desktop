@@ -5,7 +5,6 @@ const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const PositiveInt = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 }));
 const Timestamp = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
 
-export const SCIENT_ANNOTATIONS_DIRECTORY = ".scient/annotations/v1";
 const SCIENT_ANNOTATION_NOTE_LIMIT = 8_000;
 
 export const ScientAnnotationActor = Schema.Literals(["user", "agent"]);

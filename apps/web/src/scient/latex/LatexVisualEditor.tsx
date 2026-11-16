@@ -8396,8 +8396,9 @@ function LatexVisualEditorReady(
     requestAnimationFrame(focusFirstCell);
   };
   useDocumentQuoteTarget(
-    props.cwd && props.relativePath && editor
+    props.environmentId && props.cwd && props.relativePath && editor
       ? {
+          environmentId: props.environmentId,
           root: props.cwd,
           label: props.relativePath.split("/").at(-1) ?? props.relativePath,
           element: () => editor.view.dom,

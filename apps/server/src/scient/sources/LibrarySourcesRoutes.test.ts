@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import { checkScientLibraryBackup } from "@scientfactory/scient-sources/library-backup";
+import { mergeScientLibrarySources } from "@scientfactory/scient-sources/library-merge";
 import { recordScientLibraryNoticeCheck } from "@scientfactory/scient-sources/library-notice-watch";
 import { changeScientLibraryReview } from "@scientfactory/scient-sources/library-reviews";
 import {
@@ -59,6 +60,7 @@ import {
   librarySourceDetail,
   organizeLibrarySources,
   removeLibrarySource,
+  restoreLibrarySource,
   updateLibraryPersonalNote,
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
@@ -224,6 +226,56 @@ async function threeSources(fixture: Fixture) {
 }
 
 describe("Library routes on the library backend", () => {
+  it.effect(
+    "blocks writes until an interrupted merge can finish, while keeping reads available",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const store = yield* storeFor(fixture, "write");
+        const recovery = yield* Effect.promise(async () => {
+          const identifier = { scheme: "doi", value: "10.1000/recovery" };
+          const first = await libraryRecord(fixture, "first", {
+            title: "Interrupted merge",
+            identifiers: [identifier],
+          });
+          const second = await libraryRecord(fixture, "second", { title: "Interrupted merge" });
+          const merged = await mergeScientLibrarySources({
+            library: fixture.library,
+            sourceIds: [first.sourceId, second.sourceId],
+            survivorId: first.sourceId,
+          });
+          if (merged.outcome !== "merged") throw new Error("Expected the source pair to merge.");
+          const directory = NodePath.join(fixture.library.root, "merges", "pending");
+          await NodeFSP.mkdir(directory, { recursive: true });
+          const pending = NodePath.join(directory, `${merged.merge.mergeId}.json`);
+          await NodeFSP.writeFile(pending, JSON.stringify({ ...merged.merge, state: "pending" }));
+          const aliasesPath = NodePath.join(fixture.library.root, "aliases.json");
+          const aliases = await NodeFSP.readFile(aliasesPath);
+          await NodeFSP.unlink(aliasesPath);
+          await NodeFSP.mkdir(aliasesPath);
+          return { pending, aliasesPath, aliases, first };
+        });
+
+        const read = yield* storeFor(fixture, "read");
+        expect(read.library).toEqual(store.library);
+        const failure = yield* Effect.flip(storeFor(fixture, "write"));
+        expect(failure).toMatchObject({ _tag: "ScientLibraryRecoveryError" });
+        yield* Effect.promise(async () => {
+          expect(
+            (await readScientSourceRecord(fixture.library, recovery.first.sourceId))?.title,
+          ).toBe(recovery.first.title);
+          expect(await NodeFSP.readFile(recovery.pending, "utf8")).toContain('"state":"pending"');
+          await NodeFSP.rmdir(recovery.aliasesPath);
+          await NodeFSP.writeFile(recovery.aliasesPath, recovery.aliases);
+        });
+        const recovered = yield* storeFor(fixture, "write");
+        expect(recovered.library).toEqual(store.library);
+        yield* Effect.promise(async () => {
+          await expect(NodeFSP.stat(recovery.pending)).rejects.toMatchObject({ code: "ENOENT" });
+        });
+      }),
+  );
+
   it.effect("sends list diagnostics only for the sources that have one", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);
@@ -989,6 +1041,16 @@ describe("Library routes on the library backend", () => {
         await makeStale();
         await retitle(edited.revision + 1, "Lactate clearance, again");
         expect(await titleOf(edited.sourceId)).toBe("Lactate clearance, again");
+        expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
+
+        const removed = await removeLibrarySource(store, {
+          sourceId: edited.sourceId,
+          expectedRevision: edited.revision + 2,
+        });
+        expect(removed.outcome).toBe("removed");
+        await makeStale();
+        const restored = await restoreLibrarySource(store, { sourceId: edited.sourceId });
+        expect(restored.outcome).toBe("restored");
         expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
       });
     }),

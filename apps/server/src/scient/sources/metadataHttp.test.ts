@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
   contactedRegistryRequest,
+  makeMetadataRequest,
   METADATA_USER_AGENT,
   registryContactEmail,
   setRegistryContactEmail,
 } from "./metadataHttp.ts";
+import { startHttpTransport, truncateHttpResponse } from "./nodeHttpResponse.testkit.ts";
 
 afterEach(() => setRegistryContactEmail(null));
 
@@ -35,5 +37,57 @@ describe("registry contact", () => {
       expect(request.url.href).toBe(other);
       expect(request.headers).toBe(agent);
     }
+  });
+});
+
+describe("metadata HTTP completion", () => {
+  it.each([200, 503, 302])(
+    "rejects a truncated HTTP %s body before returning or following it",
+    async (status) => {
+      await using fixture = await startHttpTransport((request, response) => {
+        request.resume();
+        if (request.url === "/truncated") {
+          if (status === 302) response.setHeader("Location", "https://registry.example/complete");
+          truncateHttpResponse(response, status);
+        } else response.end("complete");
+      });
+      const request = makeMetadataRequest(fixture.send);
+
+      await expect(request(new URL("https://registry.example/truncated"), agent)).rejects.toThrow();
+      expect(fixture.targets).toHaveLength(1);
+      expect(await request(new URL("https://registry.example/complete"), agent)).toMatchObject({
+        status: 200,
+        body: "complete",
+      });
+    },
+  );
+
+  it.each([200, 503])("bounds an HTTP %s body even when it will be discarded", async (status) => {
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      response.writeHead(status).end("too many bytes");
+    });
+    const request = makeMetadataRequest(fixture.send);
+
+    await expect(
+      request(new URL("https://registry.example/oversized"), agent, { maxBytes: 8 }),
+    ).rejects.toThrow(/too much data/);
+  });
+
+  it("follows complete HTTPS redirects and still refuses plain HTTP before opening a socket", async () => {
+    await using fixture = await startHttpTransport((request, response) => {
+      request.resume();
+      if (request.url === "/redirect") {
+        response.writeHead(302, { Location: "https://registry.example/complete" }).end("redirect");
+      } else response.end("complete");
+    });
+    const request = makeMetadataRequest(fixture.send);
+    await expect(request(new URL("http://registry.example/complete"), agent)).rejects.toThrow(
+      /HTTPS/,
+    );
+    expect(fixture.targets).toEqual([]);
+    const response = await request(new URL("https://registry.example/redirect"), agent);
+    expect(response).toMatchObject({ status: 200, body: "complete" });
+    expect(response.url.href).toBe("https://registry.example/complete");
   });
 });

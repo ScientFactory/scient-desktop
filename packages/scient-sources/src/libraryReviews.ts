@@ -618,7 +618,7 @@ function filledEntries(
 /**
  * The library-mode entry point for review changes. Same rules as `changeScientSystematicReview`;
  * before any write that names a new source ID, the review's record snapshot is published and read
- * back, so a review never names a record its snapshot lacks. Nothing calls this until the switch.
+ * back, so a review never names a record its snapshot lacks.
  */
 export async function changeScientLibraryReview(input: {
   readonly projectRoot: string;

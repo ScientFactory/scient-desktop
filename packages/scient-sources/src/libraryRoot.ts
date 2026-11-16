@@ -26,7 +26,7 @@ const NonEmptyString = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty
 
 /**
  * A personal library root. Store functions take either a project root (a string) or one of these,
- * so the same code serves both. Nothing routes a request to a library until the switch (5e).
+ * so the same code serves both project stores and the Library backend.
  */
 export interface ScientLibraryLocation {
   readonly kind: "scient-library";

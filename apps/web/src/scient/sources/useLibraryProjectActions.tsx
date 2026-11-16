@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScientSourcesReadingStateResult } from "@t3tools/contracts";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import {
   AlertDialog,
@@ -39,21 +39,49 @@ type ProjectRemoval = {
   readonly fromSnapshot?: boolean | undefined;
 };
 
+type ProjectContext = {
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+  readonly refreshOverview: () => Promise<unknown>;
+};
+
+type SnapshotRemoval = {
+  readonly context: ProjectContext;
+  readonly records: ReadonlyArray<ProjectRemoval>;
+  readonly snapshots: number;
+  readonly resolve: (removed: boolean) => void;
+};
+
 /**
  * The personal Library's actions on this project's sources and on reading state, with their
  * toasts. Removing a pin's snapshot asks first through `SnapshotRemovalDialog`.
  */
-export function useLibraryProjectActions(input: {
-  readonly environmentId: EnvironmentId;
-  readonly root: string;
-  readonly refreshOverview: () => Promise<unknown>;
-  readonly applyReadingState: (result: ScientSourcesReadingStateResult) => void;
-}) {
-  const [snapshotRemoval, setSnapshotRemoval] = useState<{
-    readonly records: ReadonlyArray<ProjectRemoval>;
-    readonly snapshots: number;
-    readonly resolve: (ran: boolean) => void;
+export function useLibraryProjectActions(
+  input: ProjectContext & {
+    readonly applyReadingState: (result: ScientSourcesReadingStateResult) => void;
+  },
+) {
+  const [snapshotRemoval, setSnapshotRemoval] = useState<SnapshotRemoval | null>(null);
+  const pendingRemovalRef = useRef<{
+    readonly request: SnapshotRemoval;
+    confirming: boolean;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settles the pending removal interaction when its project context leaves or unmounts
+  useLayoutEffect(
+    () => () => {
+      const pending = pendingRemovalRef.current;
+      if (
+        !pending ||
+        pending.request.context.environmentId !== input.environmentId ||
+        pending.request.context.root !== input.root
+      )
+        return;
+      pendingRemovalRef.current = null;
+      pending.request.resolve(false);
+      setSnapshotRemoval(null);
+    },
+    [input.environmentId, input.root],
+  );
 
   const announceProjectChange = (
     kind: "add" | "remove",
@@ -108,30 +136,39 @@ export function useLibraryProjectActions(input: {
       "add",
       records.map((record) => ({ action: "pin", sourceId: record.sourceId })),
     );
-  const unpinFromProject = async (records: ReadonlyArray<ProjectRemoval>) => {
+  const unpinFromProject = async (
+    records: ReadonlyArray<ProjectRemoval>,
+    context: ProjectContext,
+  ) => {
     const outcome = await changeProjectSources({
-      environmentId: input.environmentId,
-      root: input.root,
+      environmentId: context.environmentId,
+      root: context.root,
       changes: records.flatMap((record) =>
         projectKeys(record).map((citationKey) => ({ action: "unpin" as const, citationKey })),
       ),
     });
-    await input.refreshOverview().catch(() => undefined);
+    await context.refreshOverview().catch(() => undefined);
     announceProjectChange(
       "remove",
       { ...outcome, changed: removedSourceCount(records, outcome) },
       removedSnapshotCount(records, outcome),
     );
+    return outcome.failed === 0;
   };
-  // A snapshot is only kept for this project, so its removal asks first; false means cancelled.
+  // A snapshot is only kept for this project; cancellation or failure keeps the selection.
   const removeFromProject = (records: ReadonlyArray<ProjectRemoval>): Promise<boolean> => {
+    pendingRemovalRef.current?.request.resolve(false);
+    pendingRemovalRef.current = null;
+    setSnapshotRemoval(null);
     const snapshots = records.filter((record) => record.fromSnapshot === true).length;
     if (snapshots > 0) {
-      return new Promise<boolean>((resolve) => {
-        setSnapshotRemoval({ records, snapshots, resolve });
-      });
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      const pending: SnapshotRemoval = { context: input, records, snapshots, resolve };
+      pendingRemovalRef.current = { request: pending, confirming: false };
+      setSnapshotRemoval(pending);
+      return promise;
     }
-    return unpinFromProject(records).then(() => true);
+    return unpinFromProject(records, input);
   };
   const setReadingState = async (
     sourceIds: ReadonlyArray<string>,
@@ -161,16 +198,31 @@ export function useLibraryProjectActions(input: {
     setReadingState,
     snapshotRemoval,
     cancelSnapshotRemoval: () => {
-      snapshotRemoval?.resolve(false);
+      const active = pendingRemovalRef.current;
+      if (!snapshotRemoval || active?.request !== snapshotRemoval || active.confirming) return;
+      pendingRemovalRef.current = null;
+      snapshotRemoval.resolve(false);
       setSnapshotRemoval(null);
     },
     confirmSnapshotRemoval: () => {
-      const pendingRemoval = snapshotRemoval;
+      const pending = snapshotRemoval;
+      const active = pendingRemovalRef.current;
+      if (
+        !pending ||
+        active?.request !== pending ||
+        active.confirming ||
+        pending.context.environmentId !== input.environmentId ||
+        pending.context.root !== input.root
+      )
+        return;
+      active.confirming = true;
       setSnapshotRemoval(null);
-      if (pendingRemoval) {
-        pendingRemoval.resolve(true);
-        void unpinFromProject(pendingRemoval.records);
-      }
+      const settle = (removed: boolean) => {
+        if (pendingRemovalRef.current?.request !== pending) return;
+        pendingRemovalRef.current = null;
+        pending.resolve(removed);
+      };
+      void unpinFromProject(pending.records, pending.context).then(settle, () => settle(false));
     },
   };
 }

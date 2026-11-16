@@ -24,6 +24,7 @@ import {
   pinScientLibrarySource,
   readScientProjectPins,
   refreshScientProjectPinSnapshots,
+  setScientProjectPinNote,
 } from "@scientfactory/scient-sources/project-pins";
 import {
   importScientSource,
@@ -34,6 +35,8 @@ import {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { ScientSourceAgentDetail } from "./tools.ts";
 
 import { ServerConfig } from "../../../config.ts";
 import { exportLibraryProjectPackage } from "../../../scient/sources/LibraryProjectPackage.ts";
@@ -88,6 +91,7 @@ const fixtures: string[] = [];
 const environmentId = EnvironmentId.make("environment-sources-library");
 const threadId = ThreadId.make("thread-sources-library");
 const ada = { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null };
+const decodeAgentDetail = Schema.decodeEffect(ScientSourceAgentDetail);
 
 afterEach(async () => {
   await Promise.all(
@@ -608,6 +612,7 @@ describe("Sources tools on the library backend", () => {
         expect(read.records.map((record) => record.sourceId)).toEqual([own.record!.sourceId]);
         expect(yield* trees()).toEqual(before);
 
+        yield* run(syncScientBibliographyForInvocation({}), fixture);
         const written = yield* run(listScientSourcesForInvocation({}), fixture);
         expect(written.records).toMatchObject([
           { sourceId: own.record!.sourceId, citationKey: "lovelace2026v1", pinned: true },
@@ -620,57 +625,128 @@ describe("Sources tools on the library backend", () => {
       }),
   );
 
-  it.effect(
-    "without sources:write an unresolved pin comes from its snapshot and nothing is written",
-    () =>
-      Effect.gen(function* () {
-        const fixture = yield* Effect.promise(setup);
-        // The pin was made on a collaborator's computer; this library has never seen the record.
-        const theirs = scientLibraryLocation(
-          scientLibraryRootFor(NodePath.join(fixture.base, "theirs")),
-        );
-        yield* Effect.promise(() => ensureScientLibrary(theirs.root));
-        const imported = yield* Effect.promise(() =>
-          importScientSource({
-            root: theirs,
-            operationId: NodeCrypto.randomUUID(),
-            candidate: candidate("collaborator", { citationKey: "collab2026" }),
-          }),
-        );
-        yield* Effect.promise(() =>
-          pinScientLibrarySource({
-            projectRoot: fixture.root,
-            library: theirs,
-            sourceId: imported.record!.sourceId,
-            actor: "user",
-          }),
-        );
-        yield* Effect.promise(() => ensureScientLibrary(fixture.libraryRoot));
-        const before = yield* Effect.promise(() =>
-          Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
-        );
-
-        const read = yield* run(listScientSourcesForInvocation({}), fixture, { write: false });
-        expect(read.records).toMatchObject([
-          {
-            sourceId: imported.record!.sourceId,
+  it.effect("reads unresolved pins without creating the Library even with sources:write", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      // The pin was made on a collaborator's computer; this library has never seen the record.
+      const theirs = scientLibraryLocation(
+        scientLibraryRootFor(NodePath.join(fixture.base, "theirs")),
+      );
+      yield* Effect.promise(() => ensureScientLibrary(theirs.root));
+      const imported = yield* Effect.promise(() =>
+        importScientSource({
+          root: theirs,
+          operationId: NodeCrypto.randomUUID(),
+          candidate: candidate("collaborator", {
             citationKey: "collab2026",
-            pinned: true,
-            fromSnapshot: true,
-          },
-        ]);
-        expect(
-          yield* Effect.promise(() =>
-            Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
-          ),
-        ).toEqual(before);
+            note: "Private collaborator note",
+          }),
+        }),
+      );
+      yield* Effect.promise(() =>
+        pinScientLibrarySource({
+          projectRoot: fixture.root,
+          library: theirs,
+          sourceId: imported.record!.sourceId,
+          actor: "user",
+        }),
+      );
+      yield* Effect.promise(() =>
+        setScientProjectPinNote({
+          projectRoot: fixture.root,
+          citationKey: "collab2026",
+          note: "Shared project note",
+          actor: "user",
+        }),
+      );
+      const before = yield* Effect.promise(() =>
+        Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
+      );
 
-        const written = yield* run(listScientSourcesForInvocation({}), fixture);
-        expect(written.records[0]).not.toHaveProperty("fromSnapshot");
-        expect(yield* Effect.promise(() => listScientSourceRecords(fixture.library))).toHaveLength(
-          1,
-        );
-      }),
+      const read = yield* run(listScientSourcesForInvocation({}), fixture, { write: false });
+      expect(read.records).toMatchObject([
+        {
+          sourceId: imported.record!.sourceId,
+          citationKey: "collab2026",
+          pinned: true,
+          fromSnapshot: true,
+        },
+      ]);
+      const detail = yield* decodeAgentDetail(
+        yield* run(getScientSourceForInvocation({ sourceId: read.records[0]!.sourceId }), fixture, {
+          write: false,
+        }),
+      );
+      expect(detail).toMatchObject({
+        sourceId: imported.record!.sourceId,
+        citationKey: "collab2026",
+        pinned: true,
+        fromSnapshot: true,
+        projectNote: "Shared project note",
+        note: null,
+        attachments: [],
+        revisions: [],
+      });
+      expect(JSON.stringify(detail)).not.toContain("Private collaborator note");
+      const broadlyGranted = yield* run(listScientSourcesForInvocation({}), fixture);
+      expect(broadlyGranted.records).toEqual(read.records);
+      const broadlyGrantedDetail = yield* decodeAgentDetail(
+        yield* run(getScientSourceForInvocation({ sourceId: read.records[0]!.sourceId }), fixture),
+      );
+      expect(broadlyGrantedDetail).toEqual(detail);
+      expect(
+        yield* Effect.promise(() =>
+          Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
+        ),
+      ).toEqual(before);
+
+      yield* run(syncScientBibliographyForInvocation({}), fixture);
+      const written = yield* run(listScientSourcesForInvocation({}), fixture);
+      expect(written.records[0]?.fromSnapshot).not.toBe(true);
+      expect(yield* Effect.promise(() => listScientSourceRecords(fixture.library))).toHaveLength(1);
+    }),
+  );
+
+  it.effect("reads bypass failed merge recovery while mutations fail closed", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      yield* Effect.promise(async () => {
+        await ensureScientLibrary(fixture.libraryRoot);
+        const pending = NodePath.join(fixture.libraryRoot, "merges", "pending");
+        await NodeFSP.mkdir(pending, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(pending, "interrupted.json"), "{}");
+        // Recovery must acquire the Library lock; this obstruction fails without timed waits.
+        await NodeFSP.mkdir(NodePath.join(fixture.libraryRoot, "library.lock"));
+      });
+      const before = yield* Effect.promise(() =>
+        Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
+      );
+      expect((yield* run(listScientSourcesForInvocation({}), fixture)).records).toEqual([]);
+      expect(
+        yield* Effect.promise(() =>
+          Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
+        ),
+      ).toEqual(before);
+      const denied = yield* run(
+        addScientSourceForInvocation({ title: "Not authorized", type: "article" }),
+        fixture,
+        { write: false },
+      ).pipe(Effect.flip);
+      expect(denied.message).toBe("This operation needs sources:write access.");
+      const blocked = yield* run(
+        addScientSourceForInvocation({ title: "Must not be added", type: "article" }),
+        fixture,
+      ).pipe(Effect.flip);
+      expect(blocked).toMatchObject({
+        code: "operation-failed",
+        message: "The Library's interrupted merge could not finish. No new write was started.",
+      });
+      expect(
+        yield* Effect.promise(() =>
+          Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
+        ),
+      ).toEqual(before);
+    }),
   );
 
   it.effect(
@@ -752,10 +828,17 @@ describe("Sources tools on the library backend", () => {
         }),
       );
       const local = yield* Effect.promise(() =>
-        libraryRecord(fixture, "local", { title: "Soil carbon", identifiers: doi }),
+        libraryRecord(fixture, "local", {
+          title: "Soil carbon",
+          identifiers: doi,
+          note: "Private Library note",
+        }),
+      );
+      const beforeRead = yield* Effect.promise(() =>
+        Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
       );
 
-      const listed = yield* run(listScientSourcesForInvocation({}), fixture);
+      const listed = yield* run(listScientSourcesForInvocation({}), fixture, { write: false });
       expect(listed.records).toMatchObject([
         {
           sourceId: cited.record!.sourceId,
@@ -767,6 +850,34 @@ describe("Sources tools on the library backend", () => {
           },
         },
       ]);
+      const detail = yield* decodeAgentDetail(
+        yield* run(
+          getScientSourceForInvocation({ sourceId: listed.records[0]!.sourceId }),
+          fixture,
+          { write: false },
+        ),
+      );
+      expect(detail).toMatchObject({
+        sourceId: cited.record!.sourceId,
+        title: "Early therapy",
+        citationKey: pin.outcome === "not-found" ? null : pin.pin.citationKey,
+        fromSnapshot: true,
+        note: null,
+        attachments: [],
+        revisions: [],
+      });
+      const localDetail = yield* run(
+        getScientSourceForInvocation({ sourceId: local.sourceId }),
+        fixture,
+        { write: false },
+      );
+      expect(localDetail.note).toBeNull();
+      expect(JSON.stringify([detail, localDetail])).not.toContain("Private Library note");
+      expect(
+        yield* Effect.promise(() =>
+          Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
+        ),
+      ).toEqual(beforeRead);
 
       const linked = yield* run(
         organizeLibrarySourcesForInvocation({
@@ -1038,13 +1149,35 @@ describe("Sources tools on the library backend", () => {
 
         expect(yield* trees()).toEqual(before);
 
-        // Negative control: the same read with write access stores the text in the library.
-        const written = yield* run(
+        const broadlyGranted = yield* run(
           readScientSourceTextForInvocation({ sourceId: record.sourceId }),
           fixture,
         );
-        expect(written).toMatchObject({ outcome: "read" });
+        expect(broadlyGranted).toMatchObject({ outcome: "read" });
+        expect(
+          yield* run(
+            searchScientSourcesForInvocation({ query: "Read only library text" }),
+            fixture,
+          ),
+        ).toEqual(found);
+        expect(
+          yield* run(
+            checkScientSourceQuotesForInvocation({
+              quotes: [{ quote: "Read only library text", sourceId: record.sourceId }],
+            }),
+            fixture,
+          ),
+        ).toEqual(checked);
+        expect(yield* trees()).toEqual(before);
+
+        yield* Effect.promise(() => indexSourceFullText(fixture.library));
         expect(yield* trees()).not.toEqual(before);
+        expect(
+          (yield* run(
+            searchScientSourcesForInvocation({ query: "Read only library text" }),
+            fixture,
+          )).hits.map((hit) => hit.sourceId),
+        ).toEqual([record.sourceId]);
       }),
   );
 
@@ -1275,7 +1408,7 @@ describe("Sources tools on the library backend", () => {
           candidate: candidate("v1"),
         }),
       );
-      yield* run(listScientSourcesForInvocation({}), fixture);
+      yield* run(syncScientBibliographyForInvocation({}), fixture);
       const records = NodePath.join(fixture.root, ".scient/sources/records");
       expect(yield* Effect.promise(() => exists(records))).toBe(false);
       expect(
@@ -1469,13 +1602,9 @@ describe("Sources tools on the library backend", () => {
       const readOnly = yield* run(listScientSourcesForInvocation({}), fixture, { write: false });
       expect(moveOf(readOnly)).toMatchObject({ state: "waiting" });
 
+      yield* run(syncScientBibliographyForInvocation({}), fixture);
       const moved = yield* run(listScientSourcesForInvocation({}), fixture);
-      expect(moveOf(moved)).toEqual({
-        state: "done",
-        message: expect.stringMatching(
-          /^Your Library is in .+\. A copy of this project's sources from before the move is kept in \.scient\/library\/retained-before-library\/move_[0-9a-f]+\. Undo for bulk edits made before the move was not kept\.$/u,
-        ),
-      });
+      expect(moveOf(moved)).toMatchObject({ state: "done" });
       expect(
         yield* run(
           organizeLibrarySourcesForInvocation({ change: { action: "dismiss-move-summary" } }),
@@ -1550,7 +1679,7 @@ describe("Sources tools on the library backend", () => {
           },
         ],
       });
-      const store = yield* run(resolveScientSourcesStore(), fixture);
+      const store = yield* run(resolveScientSourcesStore("write"), fixture);
       if (store.kind !== "library") throw new Error("Expected the library backend.");
 
       const combined = yield* plant(excludedElsewhere);

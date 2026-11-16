@@ -59,6 +59,8 @@ const libraryAt = (root: string, access: "read" | "write") =>
       ScientLibraryProjectError: () => Effect.succeed(null),
       ScientLibraryMoveBusyError: (cause) =>
         failEnvironmentInternal("scient_references_operation_failed", cause),
+      ScientLibraryRecoveryError: (cause) =>
+        failEnvironmentInternal("scient_references_operation_failed", cause),
     }),
   );
 
