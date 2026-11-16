@@ -30,7 +30,7 @@ const EMPTY_IMPORT_COUNTS: ScientSourcesImportCounts = {
   failed: 0,
 };
 
-function isExactSourceDuplicate(kind: ScientSourceDuplicateKind): boolean {
+export function isExactSourceDuplicate(kind: ScientSourceDuplicateKind): boolean {
   return kind === "same-origin" || kind === "same-identifier" || kind === "same-pdf";
 }
 
@@ -53,13 +53,10 @@ export function reviewedImportCounts(
   let alreadyPresent = 0;
   let reviewRequired = 0;
   for (const item of preflight.items) {
-    if (isExactSourceDuplicate(item.duplicate.kind)) alreadyPresent += 1;
-    if (
-      item.duplicate.kind === "possible-metadata-match" &&
-      !selectedItemKeys.has(item.candidate.sourceKey)
-    ) {
-      reviewRequired += 1;
-    }
+    const selected = selectedItemKeys.has(item.candidate.sourceKey);
+    // A selected PDF of a paper already here goes into the import, which counts it.
+    if (isExactSourceDuplicate(item.duplicate.kind) && !selected) alreadyPresent += 1;
+    if (item.duplicate.kind === "possible-metadata-match" && !selected) reviewRequired += 1;
   }
   return { imported: 0, alreadyPresent, reviewRequired, failed: 0 };
 }
@@ -128,6 +125,10 @@ export interface ImportReceiptInput {
   readonly intake?: ScientSourceImportOperation["intake"] | undefined;
   /** A source's title, to name a work in place of its citation key. */
   readonly sourceTitle?: ((sourceId: string) => string | null) | undefined;
+  /** Whether a source lacks details a PDF import looks for (authors, year, an identifier). */
+  readonly detailsMissing?: ((sourceId: string) => boolean) | undefined;
+  /** Whether another source here may be another version of it (a preprint, its paper). */
+  readonly hasOtherVersion?: ((sourceId: string) => boolean) | undefined;
 }
 
 export interface ImportReceipt {
@@ -145,6 +146,8 @@ export interface ImportReceipt {
   readonly libraryOnlySourceIds: ReadonlyArray<string>;
   /** The one source that was already present, to open. */
   readonly existingSourceId: string | null;
+  /** Sources a PDF import made whose details were not all found, to check. */
+  readonly detailsToCheckSourceIds: ReadonlyArray<string>;
 }
 
 const were = (count: number) => (count === 1 ? "was" : "were");
@@ -171,6 +174,7 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
   let review = 0;
   let failed = 0;
   let unprocessed = 0;
+  let attached = 0;
   const freshIds: string[] = [];
   const presentIds: string[] = [];
   const failures: string[] = [];
@@ -185,6 +189,9 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
       unprocessed += 1;
     } else if (!item.duplicateKind || !isExactSourceDuplicate(item.duplicateKind)) {
       review += 1;
+    } else if (item.attachedPdf) {
+      attached += 1;
+      if (item.sourceId) presentIds.push(item.sourceId);
     } else {
       if (item.sourceId) presentIds.push(item.sourceId);
       const keys = item.citationKeys ?? [];
@@ -221,6 +228,8 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
   const notes: string[] = [];
   let headline: string;
   const added = fresh + fromLibrary;
+  const attachedTo = (count: number) =>
+    `added to ${count === 1 ? "its source" : "their sources"}, already in ${target === "project-folder" ? "this project" : "My Library"}`;
   if (referenceFile && referenceFile.report.entryCount === 0) {
     headline = `No references found in ${referenceFile.name}`;
   } else if (added > 0) {
@@ -232,6 +241,8 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
           : fresh === 0
             ? `${noun(fromLibrary)} added to this project from My Library`
             : `${noun(added)} added to this project: ${fresh.toLocaleString()} imported, ${fromLibrary.toLocaleString()} already in My Library`;
+  } else if (attached > 0) {
+    headline = `${noun(attached)} ${attachedTo(attached)}`;
   } else if (present.length > 0) {
     const [first] = present.splice(0, 1);
     headline = `${noun(first!.count)} ${first!.place(first!.count)}`;
@@ -242,9 +253,26 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
       ? `Nothing was imported from ${referenceFile.name}`
       : "Nothing was imported";
   }
+  if (added > 0 && attached > 0) {
+    notes.push(`${attached.toLocaleString()} ${were(attached)} ${attachedTo(attached)}`);
+  }
   notes.push(
     ...present.map((entry) => `${entry.count.toLocaleString()} ${entry.place(entry.count)}`),
   );
+  // What a PDF import could not find is said here, not left for the person to come across.
+  const toCheck = pdfs && input.detailsMissing ? freshIds.filter(input.detailsMissing) : [];
+  if (toCheck.length > 0) {
+    notes.push(
+      `${toCheck.length.toLocaleString()} ${toCheck.length === 1 ? "has" : "have"} details Scient could not find: check ${toCheck.length === 1 ? "it" : "them"}`,
+    );
+  }
+  // Kept as its own source; Possible duplicates offers the merge.
+  const versions = input.hasOtherVersion ? freshIds.filter(input.hasOtherVersion).length : 0;
+  if (versions > 0) {
+    notes.push(
+      `${versions.toLocaleString()} may be another version of a source already here (a preprint and its published paper): see Possible duplicates`,
+    );
+  }
   const file =
     referenceFile && referenceFile.report.entryCount > 0
       ? referenceFileNotes({
@@ -279,5 +307,6 @@ export function describeImport(input: ImportReceiptInput): ImportReceipt {
         : added === 0 && !operation
           ? (outcome?.existingSourceId ?? null)
           : null,
+    detailsToCheckSourceIds: toCheck,
   };
 }

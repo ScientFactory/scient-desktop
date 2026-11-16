@@ -34,7 +34,6 @@ import {
   verifiableSourceIdentifier,
   type ResolveSourceIdentifier,
 } from "../../../scient/sources/SourceIdentifierResolver.ts";
-import * as MetadataHttp from "../../../scient/sources/metadataHttp.ts";
 import { SourceIdentifierBatchLookup } from "../../../scient/sources/SourceIdentifierAdd.ts";
 import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import {
@@ -536,90 +535,69 @@ describe("Scient Sources MCP handlers", () => {
   );
 
   it.effect("refreshes a source from its DOI registry record and reports what changed", () =>
-    Effect.acquireUseRelease(
-      Effect.sync(() =>
-        vi.spyOn(MetadataHttp, "requestMetadataJson").mockImplementation(async (url) => {
-          if (url.href !== "https://doi.org/10.1000/source_refresh") {
-            throw new Error("No recorded response.");
-          }
-          return {
-            type: "article-journal",
-            DOI: "10.1000/source_refresh",
-            title: "Registered Title of the Work",
-            author: [{ given: "Grace", family: "Hopper" }],
-            issued: { "date-parts": [[1952, 5, 1]] },
-            "container-title": "Registry Journal",
-            volume: "7",
-            abstract: "<p>Recorded abstract.</p>",
-          };
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-refresh-"));
+      yield* Effect.promise(() =>
+        writeSource(root, { sourceId: "source_refresh", title: "Check" }),
+      );
+      const projectId = ProjectId.make("project-refresh");
+      const threadId = ThreadId.make("thread-refresh");
+      const identifier = { scheme: "doi", value: "10.1000/source_refresh" };
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
         }),
-      ),
-      () =>
-        Effect.gen(function* () {
-          const root = yield* Effect.promise(() => fixture("scient-sources-agent-refresh-"));
-          yield* Effect.promise(() =>
-            writeSource(root, { sourceId: "source_refresh", title: "Check" }),
-          );
-          const projectId = ProjectId.make("project-refresh");
-          const threadId = ThreadId.make("thread-refresh");
-          const identifier = { scheme: "doi", value: "10.1000/source_refresh" };
-          const context = {
-            invocation: makeInvocation(threadId),
-            query: makeQuery({
-              project: makeProject(projectId, root),
-              thread: makeThread({ threadId, projectId }),
-            }),
-            lookup: (async () => ({
-              status: "found",
-              identifier,
-              retrievedAt: now,
-              metadata: {
-                type: "article",
-                title: "Registered Title of the Work",
-                creators: [],
-                issuedRaw: null,
-                issuedYear: null,
-                identifiers: [identifier],
-                abstract: null,
-                abstractSections: [],
-                containerTitle: null,
-                publisher: null,
-                volume: null,
-                issue: null,
-                pages: null,
-                language: null,
-                url: null,
+        lookup: (async () => ({
+          status: "found",
+          identifier,
+          retrievedAt: now,
+          metadata: {
+            type: "article",
+            title: "Registered Title of the Work",
+            creators: [
+              {
+                creatorType: "author",
+                givenName: "Grace",
+                familyName: "Hopper",
+                literalName: null,
               },
-            })) satisfies ResolveSourceIdentifier,
-          };
-          const refreshed = yield* provideContext(
-            checkScientSourceForInvocation({ sourceId: "source_refresh", refresh: true }),
-            context,
-          );
-          const record = yield* Effect.promise(() =>
-            readScientSourceRecord(root, "source_refresh"),
-          );
-          expect(refreshed).toMatchObject({
-            outcome: "refreshed",
-            revision: record?.revision,
-            registry: "found",
-            verification: { state: "verified", identifier },
-            changedFields: expect.arrayContaining([
-              "title",
-              "creators",
-              "containerTitle",
-              "volume",
-            ]),
-          });
-          expect(record).toMatchObject({
-            title: "Registered Title of the Work",
-            creators: [{ givenName: "Grace", familyName: "Hopper" }],
+            ],
+            issuedRaw: "1952-05-01",
+            issuedYear: 1952,
+            identifiers: [identifier],
+            abstract: "Recorded abstract.",
+            abstractSections: [],
             containerTitle: "Registry Journal",
-            updatedBy: "agent",
-          });
-        }),
-      (probe) => Effect.sync(() => probe.mockRestore()),
-    ),
+            publisher: null,
+            volume: "7",
+            issue: null,
+            pages: null,
+            language: null,
+            url: null,
+          },
+        })) satisfies ResolveSourceIdentifier,
+      };
+      const refreshed = yield* provideContext(
+        checkScientSourceForInvocation({ sourceId: "source_refresh", refresh: true }),
+        context,
+      );
+      const record = yield* Effect.promise(() => readScientSourceRecord(root, "source_refresh"));
+      expect(refreshed).toMatchObject({
+        outcome: "refreshed",
+        revision: record?.revision,
+        registry: "found",
+        verification: { state: "verified", identifier },
+        changedFields: expect.arrayContaining(["title", "creators", "containerTitle", "volume"]),
+      });
+      expect(record).toMatchObject({
+        title: "Registered Title of the Work",
+        creators: [{ givenName: "Grace", familyName: "Hopper" }],
+        containerTitle: "Registry Journal",
+        updatedBy: "agent",
+      });
+    }),
   );
 
   it.effect("refreshes a source without a DOI or PMID from its PDF", () =>

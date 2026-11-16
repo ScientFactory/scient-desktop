@@ -85,6 +85,17 @@ describe("Scient Sources import outcomes", () => {
     });
   });
 
+  it("leaves a PDF of a paper already here for the import to count, once it goes in", () => {
+    // Sent to the import, which adds it to that source or finds the very file there.
+    const result = preflight(["new", "same-identifier", "same-pdf"]);
+    expect(reviewedImportCounts(result, new Set(["source-0", "source-1", "source-2"]))).toEqual({
+      imported: 0,
+      alreadyPresent: 0,
+      reviewRequired: 0,
+      failed: 0,
+    });
+  });
+
   it("reports imported, already-present, review-required, and failed items separately", () => {
     expect(
       completedImportCounts(
@@ -320,6 +331,63 @@ describe("what a finished import says it did", () => {
       headline: "1 reference imported and added to My Library",
       notes: ["2 were already in My Library"],
       libraryOnlySourceIds: ["source-one"],
+    });
+  });
+
+  it("says which PDFs went to papers already here, and which new sources lack details", () => {
+    const pdfImport = (items: ReadonlyArray<Item>) => ({
+      ...fileImport(items),
+      adapter: "local-files" as const,
+      intake: "local-pdf" as const,
+    });
+    const receipt = describeImport({
+      operation: pdfImport([
+        { itemKey: "a", state: "imported", sourceId: "found", message: null },
+        { itemKey: "b", state: "imported", sourceId: "unnamed", message: null },
+        {
+          itemKey: "c",
+          state: "skipped",
+          duplicateKind: "same-identifier",
+          sourceId: "filed",
+          attachedPdf: true,
+          message: null,
+        },
+      ]),
+      outcome: null,
+      referenceFile: null,
+      target: "project",
+      detailsMissing: (sourceId) => sourceId === "unnamed",
+      hasOtherVersion: (sourceId) => sourceId === "found",
+    });
+    expect(receipt).toMatchObject({
+      headline: "2 PDFs imported and added to this project",
+      notes: [
+        "1 was added to its source, already in My Library",
+        "1 has details Scient could not find: check it",
+        "1 may be another version of a source already here (a preprint and its published paper): see Possible duplicates",
+      ],
+      detailsToCheckSourceIds: ["unnamed"],
+    });
+
+    const onlyAttached = describeImport({
+      operation: pdfImport([
+        {
+          itemKey: "c",
+          state: "skipped",
+          duplicateKind: "same-identifier",
+          sourceId: "filed",
+          attachedPdf: true,
+          message: null,
+        },
+      ]),
+      outcome: null,
+      referenceFile: null,
+      target: "project",
+    });
+    expect(onlyAttached).toMatchObject({
+      headline: "1 PDF added to its source, already in My Library",
+      notes: [],
+      existingSourceId: "filed",
     });
   });
 

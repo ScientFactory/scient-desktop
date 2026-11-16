@@ -329,6 +329,8 @@ Scient lists a pair for you to decide instead when:
 - they share an ISBN or ISSN and have the same title, or both are whole books
   with the same ISBN, and no identifiers disagree. Chapters of one book and
   articles of one journal are not listed just for sharing it.
+- one is a preprint and the other a published paper with the same title and
+  first author, and no identifiers disagree, even when their years differ.
 
 Open them with **Possible duplicates** in the **⋯** menu. Each pair
 shows both copies side by side, with what differs between them stressed.
@@ -580,15 +582,34 @@ asks whether to import the item separately.
 
 Scient copies each PDF into your Library and creates editable source details;
 when you import a single new PDF, its details open so you can check them.
-It first uses metadata embedded in the file. When the PDF contains one clear
-DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
-better bibliographic metadata or an abstract from PubMed, Europe PMC,
-Crossref or OpenAlex. It does not use fuzzy title matching, OCR, or an AI model to invent
+It first uses metadata embedded in the file. Then it looks the paper up by the
+identifier the PDF gives for itself: a PDF from arXiv names its own arXiv ID in
+the line down the margin of its first page; any other PDF, one clear DOI or
+explicitly labelled PMID. The paper's details come from arXiv, the DOI's
+registry or PubMed, as when you add a paper by its identifier, and a missing
+abstract from PubMed, Europe PMC, Crossref or OpenAlex. A DOI in an arXiv PDF's
+text is not used: it is the published version's, or a paper it cites. Scient
+does not use fuzzy title matching, OCR, or an AI model to invent
 missing facts. The date a PDF file was made is not taken as the publication
 date; only a publication date the publisher embedded counts. A PDF remains
 importable when metadata cannot be resolved; the unknown fields stay visible
 for correction. A PDF that names no title is titled by its file name, and its
-details say so until the paper's details are found or you edit the title.
+details say so until the paper's details are found or you edit the title. A
+file name is never taken for a paper's title when Scient compares sources.
+
+When the paper is already in your Library, by the rule in
+[Possible duplicates](#possible-duplicates), no second copy is made: the PDF is
+added to that source, unless it already has this very file, and the source is
+added to the project you import into. A paper filed by arXiv's own DOI
+(`10.48550/arXiv.…`) is found by its arXiv ID, and the other way round. A
+preprint and its published paper stay two sources, as their pages and text can
+differ; the import says when it found such a pair, and
+[Possible duplicates](#possible-duplicates) lists it so you can merge the two.
+
+The result says how many PDFs became new sources, how many were added to
+sources already in your Library, and how many new sources have details Scient
+could not find (authors, year or an identifier). **Check details** shows those
+sources.
 
 To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
 a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
@@ -1050,7 +1071,7 @@ number of pages, a report's number, the date you accessed a page and the
 like. Change one, remove it, or choose **Add a detail…** to add one from the
 list. These are used when the source is cited (a book's edition, a report's
 number), and each is recorded in the source's History like any other edit. Use **Refresh metadata** when you want
-Scient to recheck the existing PDF and exact DOI or PMID; review the warning
+Scient to recheck the existing PDF and exact DOI, PMID or arXiv ID; review the warning
 first because refreshed fields can replace manual corrections. Scient blocks
 conflicting exact identifiers and asks before accepting a possible duplicate
 as a separate source. An agent can refresh a source's metadata the same way;

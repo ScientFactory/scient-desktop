@@ -26,17 +26,27 @@ function escapePdfText(text: string): string {
   return text.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
 }
 
-/** A small valid PDF with one page per entry, each line drawn in Helvetica. */
-export function textPdf(pages: ReadonlyArray<ReadonlyArray<string>>): Uint8Array {
+/**
+ * A small valid PDF with one page per entry, each line drawn in Helvetica. `margin` is drawn
+ * turned up the first page's left margin, as arXiv prints its stamp.
+ */
+export function textPdf(
+  pages: ReadonlyArray<ReadonlyArray<string>>,
+  options: { readonly margin?: string } = {},
+): Uint8Array {
   const objects: string[] = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     `<< /Type /Pages /Kids [${pages.map((_, index) => `${4 + index * 2} 0 R`).join(" ")}] /Count ${pages.length} >>`,
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ];
   pages.forEach((lines, index) => {
+    const margin =
+      index === 0 && options.margin
+        ? ` BT /F1 20 Tf 0 1 -1 0 32 237 Tm (${escapePdfText(options.margin)}) Tj ET`
+        : "";
     const content = `BT /F1 12 Tf 72 720 Td 14 TL ${lines
       .map((line) => `(${escapePdfText(line)}) Tj T*`)
-      .join(" ")} ET`;
+      .join(" ")} ET${margin}`;
     objects.push(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5 + index * 2} 0 R >>`,
       `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,

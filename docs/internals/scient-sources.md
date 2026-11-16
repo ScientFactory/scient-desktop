@@ -75,7 +75,16 @@ Normal local-PDF and Zotero intake use one user action after selection:
 preflight runs as part of the import pipeline, new items are imported
 immediately, and a single completed source opens in the existing details state.
 The preflight surface is retained only for the weak possible-metadata-match
-decision that cannot be made safely on the researcher's behalf.
+decision that cannot be made safely on the researcher's behalf. A local PDF
+the preflight finds already here (same origin, identifier or PDF) goes into
+the operation too: `importOrAttachScientSourceOperationItem` judges it and,
+when it is certainly a work here that lacks this very file, attaches it in the
+same store lock (staging checks the expected hash; a stale record there fails
+the item and keeps its staged file for Try again), and the item is marked
+`attachedPdf`. Every skipped item that is certainly a work here
+records its `sourceId`. `describeImport` counts attached PDFs apart, and for a
+PDF import names new sources with metadata diagnostics (**Check details**) and
+those `scientSourcesMayBeVersions` pairs with another record.
 
 Journal artwork is optional presentation, not source truth. The bundled catalog
 contains complete marks with documented redistribution provenance, not cropped
@@ -400,10 +409,18 @@ the Library's current exclusions; it never takes the target's type. An
 identifier add that only resembles a stored record (`possibleMatch`) is not
 added to the project.
 
-Two kinds of match are only listed as `possibleDuplicates`, never merged:
-title, lead author and year (`possible-metadata-match`), and a shared ISBN or
+Three kinds of match are only listed as `possibleDuplicates`, never merged:
+title, lead author and year (`possible-metadata-match`), a shared ISBN or
 ISSN plus the same title between records with no work-level identifier
-(`possible-container-match`). Chapters of one book share an ISBN and articles
+(`possible-container-match`), and a preprint with a published paper of the
+same title and first author whose identifiers do not disagree
+(`possible-version-match`, reason `preprint-and-published`; years may differ;
+`scientSourcesMayBeVersions`, which the PDF import's result also uses).
+`workLevelIdentifierKey` reads arXiv's own DOI (`10.48550/arXiv.<id>`) as that
+arXiv ID, and a record whose only DOIs are arXiv's counts as a preprint for
+identity, whatever type its registry gave (arXiv's DOI registry says
+"article"), unless a person or agent set the type (type provenance `user` or
+`agent`); the DOI resolver types such a DOI as a preprint. Chapters of one book share an ISBN and articles
 of one journal an ISSN, so a shared container identifier alone lists nothing.
 Pairs in `distinct-pairs.json` (`marked-distinct` from a person or agent,
 `divergent-copies` from the move) are never grouped, not even through a third
@@ -2154,9 +2171,26 @@ simultaneous reviews of the same bytes from overwriting each other's staged
 metadata. It normalizes scalar and array-valued XMP fields independently, so a
 malformed optional field cannot discard already readable metadata or prevent
 first-page identifier extraction. It reads bounded document metadata and text
-from at most the first two pages. A single unambiguous DOI or explicitly
-labelled PMID may be resolved through the public DOI CSL JSON or NCBI ESummary
-endpoint for bibliographic identity. The embedded date counts as the
+from at most the first two pages. Its identity evidence is the arXiv stamp on
+page 1 (`arxivStamp` over page 1's vertical text only, `isVertical` on each
+text item's matrix: `arXiv:<id>vN` followed by `[category]` or a date, the line
+arXiv prints turned up the left margin; a stamp quoted in the body is
+horizontal, a cited ID has neither; two different stamps name none; the
+version is kept on the identifier, so two versions stay apart by the existing
+arXiv-version rule, while the lookup asks arXiv for the deposit), else a
+single unambiguous DOI (with its shorter spellings from `doiCandidates`) or an
+explicitly labelled PMID. With a stamp, DOIs and PMIDs in the text are not
+used. `withRegistryRecord` looks the evidence up through
+`resolveSourceIdentifier`, the resolver every intake uses, and applies the
+first record found with `applyResolvedSourceMetadata`; a DOI answer is taken
+only when the registry's record names the DOI asked, and the registry's DOI
+replaces the spelling read from text. The shared resolver keeps an unknown CSL
+type's name as `customType`. `refreshExistingSourceCandidate` uses the
+same path with the PDF's evidence first, then the record's own DOI, PMID and
+arXiv ID, and takes the refresh's injected lookup, so a refresh and the check
+that follows it agree. A file-name title (`SCIENT_SOURCE_FILE_NAME_TITLE`
+provenance) counts as no title for identity (`scientLibraryIdentityFacts`) and
+as a missing title in `sourceMetadataDiagnostics`. The embedded date counts as the
 publication date only from XMP `prism:coverDate` or `prism:publicationDate`;
 the document-info `CreationDate` and Dublin Core `dc:date` describe the file
 and are ignored. Records imported before this keep their stored date.

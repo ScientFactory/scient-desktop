@@ -1,13 +1,20 @@
 import { canonicalConnectorIdentifier } from "./connectorIdentifiers.ts";
 import { isbn13 } from "./identifierInput.ts";
-import type { ScientSourceIdentifier } from "./model.ts";
-import { normalizePersistentIdentifier } from "./normalize.ts";
+import type { ScientSourceFieldProvenance, ScientSourceIdentifier } from "./model.ts";
+import { normalizePersistentIdentifier, scientSourceTitleIsFileName } from "./normalize.ts";
 
 // These schemes identify one scholarly work. Container-level identifiers such
 // as ISSN and ISBN are still preserved as metadata, but they must never prove
 // that two articles or chapters are the same work. OpenAlex and Semantic Scholar IDs name one
 // work in their catalogue.
 const WORK_LEVEL_IDENTIFIER_SCHEMES = new Set(["arxiv", "doi", "pmcid", "pmid", "openalex", "s2"]);
+
+/** The arXiv ID a DOI of arXiv's own names (`10.48550/arXiv.1706.03762`); null for any other DOI. */
+export function arxivIdOfDoi(doi: string): string | null {
+  return (
+    /^doi:10\.48550\/arxiv\.(.+)$/u.exec(normalizePersistentIdentifier("doi", doi))?.[1] ?? null
+  );
+}
 
 export function workLevelIdentifierKey(scheme: string, value: string): string | null {
   const normalizedScheme = scheme.trim().toLowerCase();
@@ -16,7 +23,9 @@ export function workLevelIdentifierKey(scheme: string, value: string): string | 
     normalizedScheme === "openalex" || normalizedScheme === "s2"
       ? (canonicalConnectorIdentifier(normalizedScheme, value) ?? value)
       : value;
-  return normalizePersistentIdentifier(normalizedScheme, canonical);
+  // arXiv's DOI for a deposit and its arXiv ID are one identity, however a source names it.
+  const arxiv = normalizedScheme === "doi" ? arxivIdOfDoi(canonical) : null;
+  return normalizePersistentIdentifier(arxiv ? "arxiv" : normalizedScheme, arxiv ?? canonical);
 }
 
 /**
@@ -112,6 +121,27 @@ export interface ScientLibraryIdentityFields {
   readonly type: string;
   readonly title: string | null;
   readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
+  /** Where its fields came from: a title that is only the file's name is no title here. */
+  readonly fieldProvenance?: ReadonlyArray<
+    Pick<ScientSourceFieldProvenance, "field" | "origin" | "sourceField">
+  >;
+}
+
+/**
+ * A source whose only DOIs are arXiv's names a deposit there, a preprint, whatever a registry
+ * called it. A type a person or an agent set stands.
+ */
+function identityType(fields: ScientLibraryIdentityFields): string {
+  const chosen = fields.fieldProvenance?.some(
+    (entry) => entry.field === "type" && (entry.origin === "user" || entry.origin === "agent"),
+  );
+  if (chosen) return fields.type;
+  const dois = fields.identifiers.filter(
+    (identifier) => identifier.scheme.trim().toLowerCase() === "doi",
+  );
+  return dois.length > 0 && dois.every((identifier) => arxivIdOfDoi(identifier.value) !== null)
+    ? "preprint"
+    : fields.type;
 }
 
 export interface ScientLibraryIdentityFacts {
@@ -125,8 +155,8 @@ export function scientLibraryIdentityFacts(
   fields: ScientLibraryIdentityFields,
 ): ScientLibraryIdentityFacts {
   return {
-    title: scientSourceTitleKey(fields),
-    type: fields.type,
+    title: scientSourceTitleIsFileName(fields) ? "" : scientSourceTitleKey(fields),
+    type: identityType(fields),
     keys: identifierKeysByScheme(fields.identifiers),
     arxiv: arxivVersions(fields.identifiers),
   };
@@ -196,6 +226,40 @@ export function scientSourceIntakeProblem(
       title: known(right.title, left.title, "") ?? "?",
       type: known(right.type, left.type, "other") ?? "?",
     },
+  );
+}
+
+/** The first creator's family name (or whole name), for telling two versions of one work. */
+export function scientSourceFirstCreatorKey(source: {
+  readonly creators: ReadonlyArray<{
+    readonly familyName: string | null;
+    readonly literalName: string | null;
+  }>;
+}): string {
+  const [first] = source.creators;
+  return (first?.familyName ?? first?.literalName ?? "").trim().toLocaleLowerCase();
+}
+
+/**
+ * A preprint and a paper published since, with one title and first author and no identifier
+ * that disagrees: likely two versions of one work (years can differ). Listed for the person;
+ * a preprint is never merged into its published paper on its own.
+ */
+export function scientSourcesMayBeVersions(
+  left: ScientLibraryIdentityFields & Parameters<typeof scientSourceFirstCreatorKey>[0],
+  right: ScientLibraryIdentityFields & Parameters<typeof scientSourceFirstCreatorKey>[0],
+): boolean {
+  const [one, other] = [scientLibraryIdentityFacts(left), scientLibraryIdentityFacts(right)];
+  const creator = scientSourceFirstCreatorKey(left);
+  const types = [one.type, other.type];
+  return (
+    one.title !== "" &&
+    one.title === other.title &&
+    creator !== "" &&
+    creator === scientSourceFirstCreatorKey(right) &&
+    types.filter((type) => type === "preprint").length === 1 &&
+    !types.includes("other") &&
+    !scientSourceIdentifiersConflict(left.identifiers, right.identifiers)
   );
 }
 

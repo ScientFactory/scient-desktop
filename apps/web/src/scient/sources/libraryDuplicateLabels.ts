@@ -176,6 +176,7 @@ const MATCH_WORDS: Readonly<Record<string, string>> = {
   "possible-item-match": "Same Zotero item",
   "possible-identifier-match": "Same identifier",
   "possible-pdf-match": "Same PDF",
+  "possible-version-match": "Same title and first author",
 };
 
 const REASON_WORDS: Readonly<Record<ScientSourcesDuplicateReason, string>> = {
