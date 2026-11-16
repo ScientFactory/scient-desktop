@@ -10,7 +10,7 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 import { LIBRARY_LABELS } from "./libraryLabels";
 import { SourceJournalIcon } from "./SourceJournalIcon";
 import { sourceTrustLabel } from "./sourceLifecycleLabels";
-import { agentVerificationLabel, sourceAddedLabel, sourcePinLabel } from "./sourceLabels";
+import { sourceAddedLabel, sourcePinLabel } from "./sourceLabels";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 type SourceDiagnostic =
@@ -202,20 +202,14 @@ export function SourceMenuButton(props: {
   );
 }
 
-/** When and by whom the source was added, how it was checked, and whose copy it is. */
 export function SourceProvenance(props: {
   readonly record: SourceRecord;
   readonly row: SourceRowContext;
 }) {
   const { record, row } = props;
   const justAdded = row.recentlyAddedSourceIds.has(record.sourceId) && !record.fromSnapshot;
-  return (
-    <>
-      {sourceAddedLabel(record.importedAt, justAdded, record.origin?.actor === "agent")}
-      {agentVerificationLabel(record)}
-      {sourcePinLabel(record, row.listed)}
-    </>
-  );
+  const membership = row.listed === "library" ? sourcePinLabel(record, row.listed) : "";
+  return `${sourceAddedLabel(record.importedAt, justAdded)}${membership}`;
 }
 
 export function SourceRow(props: {

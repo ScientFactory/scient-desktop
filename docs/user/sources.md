@@ -30,7 +30,8 @@ An empty project says **No sources in this project** and how to add some:
 import PDFs, a reference file or sources from Zotero. When My Library has
 sources, **Choose from Library** lets you add them to this project. Collections
 in **Filter** only narrow that scope. Rows show authors, year, unread status and real
-warnings; hover a row or open its details for when and how it was added.
+warnings. Hover a row or card for when it was added. In **My Library**, the hover also
+says **In this project** when linked here. Open its details for provenance and verification.
 
 Source details and imported PDFs are stored in your personal Library on the
 computer that runs the project, in the Scient data folder (`scient/library/`
