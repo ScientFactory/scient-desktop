@@ -19,6 +19,8 @@ import * as Option from "effect/Option";
 import type { SetStateAction } from "react";
 import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
 import { getProviderModelCapabilities } from "../providerModels";
+// SCIENT-FORK: shared quota recovery policy for the displayed resume action.
+import { resolveUsageLimitFallback } from "@t3tools/shared/usageLimits";
 import { sanitizeThreadErrorMessage } from "@t3tools/client-runtime/errors";
 import type {
   EnvironmentThreadShell,
@@ -429,6 +431,23 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
     ...(branchChanged ? { branch: input.nextBranch, worktreePath: null } : {}),
   };
 }
+
+// SCIENT-FORK:START — keep the resume selection and its displayed model together.
+export function resolveUsageLimitContinueWith(
+  input: Parameters<typeof resolveUsageLimitFallback>[0],
+) {
+  const selection = resolveUsageLimitFallback(input);
+  const model = selection
+    ? input.providers
+        .find((provider) => provider.instanceId === selection.instanceId)
+        ?.models.find(
+          (candidate) =>
+            candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
+        )
+    : undefined;
+  return selection && model ? { selection, modelName: model.name } : undefined;
+}
+// SCIENT-FORK:END
 
 export function buildLocalDraftThread(
   threadId: ThreadId,

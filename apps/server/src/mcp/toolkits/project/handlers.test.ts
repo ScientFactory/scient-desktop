@@ -1119,7 +1119,10 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
       version: null,
       auth: { status: "authenticated" },
       checkedAt: "2026-01-01T00:00:00Z",
-      models: [],
+      models:
+        driver === "codex"
+          ? [{ slug: fallbackModel.model, name: "Sol", isCustom: false, capabilities: null }]
+          : [],
       slashCommands: [],
       skills: [],
       ...(driver === "claudeAgent"
