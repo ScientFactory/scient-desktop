@@ -139,9 +139,8 @@ composer seam and does not alter prompt serialization.
 
 Empty-composer placeholders, including next-prompt suggestions, resolve their
 direction from the same parsed composer document and selected mode as accepted
-text. File and skill chips do not count as prose. The plain `Tab` keycap has no
-directional glyph and stays isolated LTR with logical spacing; neither prompt
-text nor the empty-draft caret is changed.
+text. File and skill chips do not count as prose. The Tab hint is isolated LTR
+with logical spacing; neither prompt text nor the empty-draft caret is changed.
 
 ## Upstream maintenance
 
