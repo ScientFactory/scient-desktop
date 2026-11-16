@@ -64,8 +64,8 @@ const fetchWith = (page: Partial<PaperPage>, accounts: ReadonlyArray<AccountSumm
   const { broker, operations } = browser(page);
   return fetchFromPage({
     url: "https://journal.example.org/article/1",
-    profileId: undefined,
-    caller: { kind: "paper", scope, requester: { accounts: "all" } },
+    profileId: "main",
+    caller: { kind: "paper", scope, requester: {} },
     accept: () => Effect.succeed(true),
   }).pipe(
     Effect.map((result) => ({ result, operations })),

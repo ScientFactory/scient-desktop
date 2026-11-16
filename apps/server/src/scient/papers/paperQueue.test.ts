@@ -1,11 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  AccountId,
-  EnvironmentId,
-  ThreadId,
-  type AccountSummary,
-  type PaperQueueSummary,
-} from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type PaperQueueSummary } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,12 +13,12 @@ import { vi } from "vite-plus/test";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import type * as PaperAttempt from "./paperAttempt.ts";
-import { continuePapersAsUser } from "./getPaper.ts";
 import {
   continuePapers,
   listPapers,
   requestPapers,
   resumePapers,
+  waitingPaperRoots,
   type PaperRequester,
 } from "./paperQueue.ts";
 import { initializeScientProject } from "@scientfactory/project-init";
@@ -48,47 +42,68 @@ const fetched = vi.hoisted(() => ({
   calls: [] as Array<{ doi: string | undefined; requester: PaperRequester }>,
   /** A paper whose DOI ends in "later" needs the person until this is set. */
   released: false,
+  /** A paper whose DOI ends in "slow" says it started, then waits for this. */
+  slow: Promise.resolve(),
+  started: () => {},
 }));
 
+// vi.mock factories are hoisted above this file's imports, so they import what they use.
 /** No real fetching: each paper ends as its DOI says, and who it ran as is kept. */
 vi.mock("./paperAttempt.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof PaperAttempt>();
-  const { succeed } = await import("effect/Effect");
-  const paper = { landingUrl: "https://doi.org/10.1/x", openAccess: [] };
-  const fetchOnePaper: typeof actual.fetchOnePaper = (asked, requester) => {
-    fetched.calls.push({ doi: asked.doi, requester });
-    const later = asked.doi?.endsWith("later") === true;
-    if (asked.doi?.endsWith("preprint") || (later && fetched.released))
-      return succeed({
-        state: "saved" as const,
-        paper: { ...paper, doi: asked.doi, title: "A preprint", openAccess: [] },
-        bytes: Buffer.from("%PDF-1.7\npreprint\n"),
-        route: "open-access" as const,
-        published: false,
-        version: "preprint" as const,
+  const { gen, promise } = await import("effect/Effect");
+  const fetchOnePaper: typeof actual.fetchOnePaper = (asked, requester, savedBefore) =>
+    gen(function* () {
+      fetched.calls.push({ doi: asked.doi, requester });
+      const paper = { landingUrl: `https://doi.org/${asked.doi}`, openAccess: [] };
+      const before = yield* savedBefore({
+        ...paper,
+        ...(asked.doi ? { doi: asked.doi } : {}),
+        title: "A preprint",
       });
-    return succeed(
-      asked.doi?.endsWith("needs-you") || later
+      if (before)
+        return {
+          state: "saved" as const,
+          paper,
+          path: before.path,
+          route: "saved-before" as const,
+          published: before.version === "published",
+          version: before.version,
+        };
+      const later = asked.doi?.endsWith("later") === true;
+      if (asked.doi?.endsWith("preprint") || (later && fetched.released))
+        return {
+          state: "saved" as const,
+          paper: { ...paper, doi: asked.doi, title: "A preprint" },
+          bytes: Buffer.from("%PDF-1.7\npreprint\n"),
+          route: "open-access" as const,
+          published: false,
+          version: "preprint" as const,
+        };
+      if (asked.doi?.endsWith("slow")) {
+        fetched.started();
+        yield* promise(() => fetched.slow);
+      }
+      return asked.doi?.endsWith("needs-you") || asked.doi?.endsWith("slow") || later
         ? {
             state: "needs-you" as const,
             paper,
             message: "Sign in.",
             needed: { kind: "sign-in" as const, site: "Fixture University" },
           }
-        : { state: "not-found" as const, message: "Not found." },
-    );
-  };
+        : { state: "not-found" as const, message: "Not found." };
+    });
   return { ...actual, fetchOnePaper };
 });
 
 const environmentId = EnvironmentId.make("env-fixture");
-const user: PaperRequester = { environmentId, browser: true, accounts: "all" };
+const user: PaperRequester = { environmentId, browser: true };
 const agent: PaperRequester = {
   environmentId,
   threadId: ThreadId.make("thread-fixture"),
   browser: true,
-  accounts: [AccountId.make("acc_fixture1")],
 };
+const otherAgent: PaperRequester = { ...agent, threadId: ThreadId.make("thread-other") };
 
 const queueFile = (root: string) =>
   Effect.gen(function* () {
@@ -160,9 +175,10 @@ const withServices = <A, E>(
     | PreviewAutomationBroker
     | Scope.Scope
   >,
-  accounts: Parameters<typeof fakeAccounts>[0] = {},
 ) =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-state-" });
     const announced = yield* Queue.unbounded<PaperQueueSummary>();
     const settled = (root: string): Effect.Effect<void> =>
       Queue.take(announced).pipe(
@@ -172,8 +188,9 @@ const withServices = <A, E>(
       );
     return yield* test(settled).pipe(
       Effect.provideService(ScientSourcesBackend, "project"),
+      Effect.provideService(ServerConfig, { stateDir } as ServerConfig["Service"]),
       Effect.provideService(AccountsService, {
-        ...fakeAccounts(accounts).service,
+        ...fakeAccounts().service,
         setPaperQueue: (summary) => Queue.offer(announced, summary).pipe(Effect.asVoid),
       }),
       // The fetching is stubbed, so neither the network nor the browser is ever reached.
@@ -232,70 +249,119 @@ it.effect("runs a paper from an older queue file with free copies only", () =>
       yield* resumePapers(root, user);
       yield* settled(root);
       expect(fetched.calls).toEqual([
-        { doi: "10.1/older", requester: { environmentId, browser: false, accounts: [] } },
+        { doi: "10.1/older", requester: { environmentId, browser: false } },
       ]);
     }),
   ),
 );
 
+it.effect("asked again, a paper that waited for the person tries again as whoever asked", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      yield* requestPapers(root, [{ doi: "10.1/needs-you" }], agent);
+      yield* settled(root);
+      fetched.calls.length = 0;
+      yield* requestPapers(root, [{ doi: "10.1/needs-you" }], otherAgent);
+      yield* settled(root);
+      expect(fetched.calls).toEqual([{ doi: "10.1/needs-you", requester: otherAgent }]);
+      // The user's own request stays theirs when an agent asks for the same paper.
+      const mine = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      yield* requestPapers(mine, [{ doi: "10.1/needs-you" }], user);
+      yield* settled(mine);
+      fetched.calls.length = 0;
+      yield* requestPapers(mine, [{ doi: "10.1/needs-you" }], agent);
+      yield* settled(mine);
+      expect(fetched.calls).toEqual([{ doi: "10.1/needs-you", requester: user }]);
+    }),
+  ),
+);
+
 it.effect(
-  "asked again, a paper that waited for the person tries again with either asker's access",
+  "an attempt that began before the user acted doesn't leave its paper waiting on them",
   () =>
     withServices((settled) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
-        yield* requestPapers(root, [{ doi: "10.1/needs-you" }], agent);
-        yield* settled(root);
+        const slow = Promise.withResolvers<void>();
+        fetched.slow = slow.promise;
         fetched.calls.length = 0;
-        const later = { ...agent, accounts: [AccountId.make("acc_fixture2")] };
-        yield* requestPapers(root, [{ doi: "10.1/needs-you" }], later);
+        const started = Promise.withResolvers<void>();
+        fetched.started = started.resolve;
+        yield* requestPapers(root, [{ doi: "10.1/slow" }], agent);
+        yield* Effect.promise(() => started.promise);
+        // The user connects while the first attempt is still out; it then comes back unanswered.
+        yield* continuePapers(root, user);
+        fetched.slow = Promise.resolve();
+        slow.resolve();
         yield* settled(root);
+        // So it goes once more, as its requester, instead of waiting on what was just done.
         expect(fetched.calls).toEqual([
-          {
-            doi: "10.1/needs-you",
-            requester: { ...later, accounts: [...agent.accounts, ...later.accounts] },
-          },
+          { doi: "10.1/slow", requester: agent },
+          { doi: "10.1/slow", requester: agent },
         ]);
       }),
     ),
 );
 
-const university = {
-  accountId: AccountId.make("acc_university"),
-  name: "Hebrew University",
-  details: {
-    kind: "website",
-    sites: ["huji.ac.il"],
-    institution: { name: "Hebrew University", entityId: "x", domain: "huji.ac.il" },
-  },
-} as unknown as AccountSummary;
+it.effect("reuses only a copy it recorded for this paper, with its version", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      yield* requestPapers(root, [{ doi: "10.1/preprint" }], agent);
+      yield* settled(root);
+      yield* requestPapers(root, [{ doi: "10.1/preprint" }, { doi: "10.1/other" }], user);
+      yield* settled(root);
+      expect(yield* listPapers(root)).toMatchObject([
+        { doi: "10.1/preprint", route: "saved-before", published: false, version: "preprint" },
+        { doi: "10.1/other", state: "not-found" },
+      ]);
+      // A file of the same name the queue didn't save, that doesn't read as this paper, isn't it.
+      const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      yield* fs.makeDirectory(path.join(elsewhere, "papers"));
+      yield* fs.writeFileString(path.join(elsewhere, "papers", "A-preprint.pdf"), "not a PDF");
+      yield* requestPapers(elsewhere, [{ doi: "10.1/preprint" }], agent);
+      yield* settled(elsewhere);
+      expect(yield* listPapers(elsewhere)).toMatchObject([
+        { route: "open-access", path: "papers/A-preprint-2.pdf" },
+      ]);
+    }),
+  ),
+);
 
-/** An agent's paper waits for a university; the user connects one, then releases the paper. */
-const releasedAfterConnecting = (denied: boolean) =>
-  withServices(
-    (settled) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
-        yield* requestPapers(root, [{ doi: "10.1/needs-you" }], agent);
-        yield* settled(root);
-        fetched.calls.length = 0;
-        yield* continuePapersAsUser(root, environmentId);
-        yield* settled(root);
-        return fetched.calls.map(({ requester }) => requester.accounts);
-      }),
-    { accounts: [university], denied },
-  );
+it.effect("sets an unreadable queue file aside instead of overwriting it", () =>
+  withServices(() =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* restarted("{ not json");
+      expect(yield* listPapers(root)).toEqual([]);
+      expect(yield* fs.readFileString(`${yield* queueFile(root)}.unreadable`)).toBe(
+        JSON.stringify("{ not json"),
+      );
+    }),
+  ),
+);
 
-it.effect("lets an agent's waiting paper use a university the user connected since", () =>
-  Effect.gen(function* () {
-    expect(yield* releasedAfterConnecting(false)).toEqual([
-      [...agent.accounts, university.accountId],
-    ]);
-    // Its controls still decide: one the conversation may not use stays out.
-    expect(yield* releasedAfterConnecting(true)).toEqual([agent.accounts]);
-  }),
+it.effect("finds a project's papers waiting on the user after a restart, until they finish", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      fetched.released = false;
+      yield* requestPapers(root, [{ doi: "10.1/listed-later" }], agent);
+      yield* settled(root);
+      expect(yield* waitingPaperRoots()).toContain(root);
+      fetched.released = true;
+      yield* continuePapers(root, user);
+      yield* settled(root);
+      expect(yield* waitingPaperRoots()).not.toContain(root);
+      fetched.released = false;
+    }),
+  ),
 );
 
 it.effect("forgets who asked once a paper is finished", () =>
@@ -426,7 +492,7 @@ it.effect("files a waiting paper on the source a later request names", () =>
       yield* requestPapers(root, [{ doi: "10.1/later", source }], agent);
       yield* settled(root);
       fetched.released = true;
-      yield* continuePapers(root, user, Effect.succeed);
+      yield* continuePapers(root, user);
       yield* settled(root);
 
       expect(yield* listPapers(root)).toMatchObject([
@@ -451,7 +517,7 @@ it.effect("keeps the credit of a named source when a Library request joins it", 
       yield* requestPapers(root, [{ doi: "10.1/joined-later", library: true }], agent);
       yield* settled(root);
       fetched.released = true;
-      yield* continuePapers(root, user, Effect.succeed);
+      yield* continuePapers(root, user);
       yield* settled(root);
 
       expect(yield* Effect.promise(() => listScientSourceRecords(root))).toMatchObject([

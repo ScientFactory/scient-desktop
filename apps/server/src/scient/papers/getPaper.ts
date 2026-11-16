@@ -1,8 +1,7 @@
 import {
   AccountsError,
   type AccountPaperForSourceInput,
-  type AccountSummary,
-  type AccountTarget,
+  type AccountId,
   type EnvironmentId,
   type PaperAsked,
   type PaperItemState,
@@ -29,6 +28,7 @@ import {
   paperQueueRunning,
   requestPapers,
   resumePapers,
+  showUnfinishedPapers,
   waitForPaper,
   waitingPaperRoots,
   type PaperRequester,
@@ -39,66 +39,9 @@ const ONE_PAPER_WAIT = "150 seconds";
 
 const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
 
-const noteUniversitiesUsed = Effect.fn("Papers.noteUniversitiesUsed")(function* (
-  scope: AccountSessionScope,
-  universities: ReadonlyArray<AccountSummary>,
-) {
-  const accounts = yield* AccountsService;
-  for (const university of universities)
-    yield* accounts.recordUse({
-      target: { type: "account", accountId: university.accountId },
-      action: "sign-in",
-      threadId: scope.threadId,
-      ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
-      outcome: "ok",
-    });
-});
-
 /**
- * The user just did what an agent's waiting papers asked. A university connected since joins
- * them when its controls let that conversation use it without asking; an agent kept out of the
- * browser still gets free copies only.
- */
-const withUniversitiesNow = Effect.fn("Papers.withUniversitiesNow")(function* (
-  requester: PaperRequester,
-) {
-  const { threadId, accounts: allowed } = requester;
-  if (allowed === "all" || threadId === undefined || !requester.browser) return requester;
-  const scope: AccountSessionScope = { threadId, projectId: requester.projectId, unattended: true };
-  const accounts = yield* AccountsService;
-  const usable = (target: AccountTarget, action: "open-profile" | "sign-in") =>
-    accounts.authorize(scope, target, action).pipe(
-      Effect.map(({ decision }) => decision === "allowed"),
-      Effect.orElseSucceed(() => false),
-    );
-  const session = yield* accounts.forSession(scope).pipe(Effect.option);
-  const connected = Option.match(session, {
-    onNone: () => [],
-    onSome: (found) => universitiesOf(found.accounts),
-  }).filter(({ accountId }) => !allowed.includes(accountId));
-  const added = yield* Effect.filter(connected, (account) => {
-    const profileId = universityDetails(account.details)?.profileId;
-    return (
-      profileId === undefined
-        ? Effect.succeed(true)
-        : usable({ type: "profile", profileId }, "open-profile")
-    ).pipe(
-      Effect.flatMap((browses) =>
-        browses
-          ? usable({ type: "account", accountId: account.accountId }, "sign-in")
-          : Effect.succeed(false),
-      ),
-    );
-  });
-  yield* noteUniversitiesUsed(scope, added);
-  return added.length === 0
-    ? requester
-    : { ...requester, accounts: [...allowed, ...added.map(({ accountId }) => accountId)] };
-});
-
-/**
- * An agent's request is decided here: its session's access to the browser profile and to each
- * saved sign-in. What it may use travels with its papers, which keep going after its turn.
+ * Who an agent's request is: its conversation, and whether that may use the browser. Asked while
+ * the agent waits, a university on Ask shows the user its card; each attempt decides again.
  */
 const agentRequester = Effect.fn("Papers.agentRequester")(function* () {
   const scope: AccountSessionScope = yield* accountSessionScope();
@@ -141,21 +84,11 @@ const agentRequester = Effect.fn("Papers.agentRequester")(function* () {
       ),
     ),
   );
-  yield* noteUniversitiesUsed(scope, universities);
-  const reachable = new Set(universities.map((account) => account.accountId));
   return {
     environmentId: invocation.environmentId,
     threadId: scope.threadId,
     ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
     browser: universities.length > 0 || (yield* mayBrowse(undefined)),
-    accounts:
-      universities.length > 0
-        ? allowed
-            .filter(
-              ({ accountId, details }) => !universityDetails(details) || reachable.has(accountId),
-            )
-            .map((account) => account.accountId)
-        : [],
   } satisfies PaperRequester;
 });
 
@@ -288,10 +221,10 @@ export const paperStatus = Effect.fn("Papers.status")(function* (input: {
   };
 }, Effect.provide(FetchHttpClient.layer));
 
+/** The user's own request: no conversation, so every saved sign-in that isn't Off. */
 const userRequester = (environmentId: EnvironmentId): PaperRequester => ({
   environmentId,
   browser: true,
-  accounts: "all",
 });
 
 /** The user's Get PDF on a source: the same queue, saved and attached to the source. */
@@ -329,15 +262,25 @@ export const listPapersAsUser = (root: string, environmentId: EnvironmentId) =>
   resumePapers(root, userRequester(environmentId)).pipe(Effect.provide(FetchHttpClient.layer));
 
 export const continuePapersAsUser = (root: string, environmentId: EnvironmentId) =>
-  continuePapers(root, userRequester(environmentId), withUniversitiesNow).pipe(
+  continuePapers(root, userRequester(environmentId)).pipe(
     Effect.as({}),
     Effect.provide(FetchHttpClient.layer),
   );
 
-/** A sign-in just finished, so every paper that waited for one goes again. */
-export const continueWaitingPapers = (environmentId: EnvironmentId) =>
-  Effect.forEach(
-    waitingPaperRoots(),
-    (root) => continuePapers(root, userRequester(environmentId), withUniversitiesNow),
-    { discard: true },
-  ).pipe(Effect.ignore, Effect.provide(FetchHttpClient.layer));
+/** A sign-in or a check just worked, so every paper that waited on the user goes again. */
+export const continueWaitingPapers = (environmentId: EnvironmentId, signedIn?: AccountId) =>
+  waitingPaperRoots().pipe(
+    Effect.flatMap((roots) =>
+      Effect.forEach(
+        roots,
+        (root) => continuePapers(root, userRequester(environmentId), signedIn),
+        { discard: true },
+      ),
+    ),
+    Effect.ignore,
+    Effect.provide(FetchHttpClient.layer),
+  );
+
+/** After a restart, what every project's papers wait for shows again. */
+export const showPapersAfterRestart = (environmentId: EnvironmentId) =>
+  showUnfinishedPapers(userRequester(environmentId)).pipe(Effect.ignore);

@@ -6,6 +6,7 @@ import type {
   PaperRequest,
   ThreadId,
 } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "~/components/ui/button";
@@ -25,6 +26,8 @@ function requestLine(request: PaperRequest) {
       return `${waitingWord(request.count)} for you to sign in to ${request.site}.`;
     case "check":
       return `${waitingWord(request.count)} for you to pass ${request.site}'s check.`;
+    case "access":
+      return `${waitingWord(request.count)}: this conversation may not use ${request.site}.`;
   }
 }
 
@@ -32,6 +35,7 @@ const ACTION_LABELS: Readonly<Record<PaperRequest["kind"], string>> = {
   university: "Connect your university",
   "sign-in": "Sign in",
   check: "Open",
+  access: "Allow in Settings",
 };
 
 /** One line per thing only the user can do; acting on it releases every paper waiting on it. */
@@ -50,9 +54,12 @@ function Requests({
   const resume = useAccountCommand(accountsState.continuePapers, environmentId);
   const openBrowser = useAccountBrowser(environmentId);
   const signIn = useSignIn(environmentId);
+  const navigate = useNavigate();
   const [connecting, setConnecting] = useState(false);
   const act = (request: PaperRequest) => {
     if (request.kind === "university") return setConnecting((current) => !current);
+    // The papers keep trying for a while, so a change made there lets them through.
+    if (request.kind === "access") void navigate({ to: "/settings/accounts" });
     // Papers go on by themselves when the sign-in finishes.
     if (request.kind === "sign-in" && request.accountId)
       return void signIn(request.accountId, threadId ? { threadId } : {});

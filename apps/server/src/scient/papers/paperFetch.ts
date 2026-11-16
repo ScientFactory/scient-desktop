@@ -77,12 +77,30 @@ export type FetchResult =
 
 export interface PageRequest {
   readonly url: string;
-  /** Where the university's session lives; the default profile otherwise. */
-  readonly profileId: string | undefined;
+  /** The profile it opens in, decided and allowed by the caller. */
+  readonly profileId: string;
   /** Who the sign-in on a page that asks for one is for. */
   readonly caller: Extract<SignInCaller, { kind: "paper" }>;
   readonly accept: (bytes: Uint8Array) => Effect.Effect<boolean>;
 }
+
+/** The profile a page opens in when no university names one: the browser's default. */
+export const defaultPaperProfile = Effect.gen(function* () {
+  const invocation = yield* AgentInvocationContext;
+  const broker = yield* PreviewAutomationBroker;
+  const status = yield* broker
+    .invoke<PreviewAutomationStatus>({
+      scope: invocation,
+      operation: "status",
+      input: {},
+      updateCurrentTab: false,
+    })
+    .pipe(Effect.option);
+  return Option.match(status, {
+    onNone: () => DEFAULT_BROWSER_PROFILE_ID,
+    onSome: ({ defaultProfileId }) => defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
+  });
+});
 
 /**
  * Opens a page in a hidden tab and follows it to the PDF. It tries the PDF first and reads the
@@ -113,13 +131,11 @@ export const fetchFromPage = Effect.fn("Papers.fetchFromPage")(function* (reques
             new AccountsError({ reason: "unavailable", message: "The page could not be opened." }),
         ),
       );
-  const status = yield* invoke<PreviewAutomationStatus>("status", {});
+  const { profileId } = request;
   const open = { url, reuseExistingTab: false, open: false };
-  const chosen = request.profileId ?? status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID;
-  const opened = yield* invoke<PreviewAutomationStatus>("open", { ...open, profileId: chosen });
+  const opened = yield* invoke<PreviewAutomationStatus>("open", { ...open, profileId });
   const tab = opened.tabId;
   if (!tab) return yield* new AccountsError({ reason: "unavailable", message: "No browser tab." });
-  const profileId = chosen;
   const known = new Set((opened.downloads ?? []).map((item) => item.path));
 
   const stopped = (
