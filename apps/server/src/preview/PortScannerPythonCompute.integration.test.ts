@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { FetchHttpClient } from "effect/http";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import * as OwnedLocalEndpoints from "../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -172,6 +173,11 @@ describe.runIf(Boolean(TEST_PYTHON) && NodeProcess.platform !== "win32")(
               Layer.succeed(OwnedLocalEndpoints.OwnedLocalEndpointRegistry, scannerOwnedEndpoints),
             ),
             Layer.provide(scannerFetchLayer(requestedUrls)),
+            Layer.provide(
+              Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+                shouldRunOpportunisticWork: Effect.succeed(true),
+              }),
+            ),
           );
 
           yield* Effect.gen(function* () {

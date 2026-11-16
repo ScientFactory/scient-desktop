@@ -185,3 +185,17 @@ export const resolveCliCommand = Effect.fn("invocation.resolveCliCommand")(funct
 /** An absolute invocation stays reachable after sudo resets PATH and HOME. */
 export const resolveRootCliCommand = (args: ReadonlyArray<string>) =>
   Effect.map(resolveCliCommand(args), (command) => `sudo ${command}`);
+
+// SCIENT-FORK:START — hints name this installation through resolveCliCommand.
+/** A hint's command, run against the caller's `--base-dir` when one was given. */
+export const resolveHostCliHint = (
+  subcommand: string,
+  baseDir: Option.Option<string>,
+  args: ReadonlyArray<string> = [],
+) =>
+  resolveCliCommand([
+    ...subcommand.split(" ").filter((word) => word.length > 0),
+    ...Option.match(baseDir, { onNone: () => [], onSome: (dir) => ["--base-dir", dir] }),
+    ...args,
+  ]);
+// SCIENT-FORK:END

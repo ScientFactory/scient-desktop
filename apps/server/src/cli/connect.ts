@@ -59,7 +59,7 @@ import {
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveCliCommand } from "./invocation.ts";
+import { resolveCliCommand, resolveHostCliHint } from "./invocation.ts";
 import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
@@ -189,7 +189,18 @@ function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): Rea
   }
 }
 
-function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: boolean }): string {
+function formatCloudStatus(
+  status: CloudCliStatus,
+  commands: {
+    readonly link: string;
+    readonly serviceStatus: string;
+    // SCIENT-FORK:START — Scient's offline hint starts the server in the foreground.
+    readonly serve: string;
+    readonly status: string;
+    // SCIENT-FORK:END
+  },
+  options?: { readonly json?: boolean },
+): string {
   if (options?.json) {
     return JSON.stringify(status, null, 2);
   }
@@ -203,11 +214,11 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
         : "not provisioned";
   const publishOnly = status.desired && status.linkMode === "publish_only";
   const nextStep = !status.authenticated
-    ? "Run `scient connect link` to authorize and enable Scient Connect."
+    ? `Run \`${commands.link}\` to authorize and enable Scient Connect.`
     : status.revoked
-      ? "Run `scient connect link` to link this environment again."
+      ? `Run \`${commands.link}\` to link this environment again.`
       : !status.desired
-        ? "Run `scient connect link` to enable Scient Connect."
+        ? `Run \`${commands.link}\` to enable Scient Connect.`
         : !status.linked
           ? publishOnly
             ? "Start Scient to provision the environment link."
@@ -232,7 +243,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
         : status.reachability === null
           ? [
               "",
-              "No running server answered, so reachability was not checked. Start Scient (the desktop app or `scient serve`), then run `scient connect status` again.",
+              `No running server answered, so reachability was not checked. Start Scient (the desktop app or \`${commands.serve}\`), then run \`${commands.status}\` again.`,
             ]
           : status.reachability.status === "reachable"
             ? [
@@ -736,7 +747,15 @@ const connectStatusCommand = Command.make("status", {
           linkMode,
           reachability,
         };
-        yield* Console.log(formatCloudStatus(status, { json: flags.json }));
+        const commands = {
+          link: yield* resolveHostCliHint("connect link", flags.baseDir),
+          serviceStatus: yield* resolveHostCliHint("service status", flags.baseDir),
+          // SCIENT-FORK:START
+          serve: yield* resolveHostCliHint("serve", flags.baseDir),
+          status: yield* resolveHostCliHint("connect status", flags.baseDir),
+          // SCIENT-FORK:END
+        };
+        yield* Console.log(formatCloudStatus(status, commands, { json: flags.json }));
       }),
       {
         quietLogs: flags.json,
@@ -786,8 +805,9 @@ const connectPublishCommand = Command.make("publish", {
         }
 
         if (!(yield* tokens.hasCredential)) {
+          const loginCommand = yield* resolveHostCliHint("connect login", flags.baseDir);
           yield* Console.log(
-            "Run `scient connect login` first so this environment can be authorized to publish.",
+            `Run \`${loginCommand}\` first so this environment can be authorized to publish.`,
           );
           return;
         }

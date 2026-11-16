@@ -115,6 +115,7 @@ export function useRoomComposerPost(input: {
         environmentId: input.environmentId,
         attachments: [...images, ...files],
         usesAttachmentUploads: true,
+        draftTarget: target,
       });
     } catch (error) {
       restore(error instanceof Error ? error.message : "A file failed to upload.");

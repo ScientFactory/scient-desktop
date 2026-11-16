@@ -142,8 +142,8 @@ import {
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
-  awaitAttachmentUploads,
   getUploadedAttachments,
+  refreshExpiredAttachmentUploads,
   readAttachmentUpload,
   releaseDraftAttachments,
   retryAttachmentUpload,
@@ -250,7 +250,7 @@ export interface ComposerSendInput {
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
   readonly pendingApprovals: PendingThreadSendState["pendingApprovals"];
   readonly respondingRequestIds: PendingThreadSendState["respondingRequestIds"];
-  readonly activePendingProgress: PendingThreadSendState["activePendingProgress"];
+  readonly activePendingUserInput: PendingThreadSendState["activePendingUserInput"];
   readonly onAdvanceActivePendingUserInput: PendingThreadSendState["onAdvanceActivePendingUserInput"];
   readonly onRespondToApproval: PendingThreadSendState["onRespondToApproval"];
   readonly beginLocalDispatch: LocalDispatchActions["beginLocalDispatch"];
@@ -340,7 +340,7 @@ export function useComposerSend(input: ComposerSendInput) {
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
-    activePendingProgress,
+    activePendingUserInput,
     onAdvanceActivePendingUserInput,
     onRespondToApproval: onRespondToApprovalStable,
     beginLocalDispatch,
@@ -538,7 +538,7 @@ export function useComposerSend(input: ComposerSendInput) {
           ? parseSideChatCommand(promptAtSend)
           : null;
       const answeringQuestion =
-        Boolean(activePendingProgress) && sendCtx?.answeringPendingUserInput !== false;
+        Boolean(activePendingUserInput) && sendCtx?.answeringPendingUserInput !== false;
       const startsSideChat =
         onSideChat !== undefined && sideChatCommand !== null && sideChatDisabledReason === null;
       // An answer responds to the open request rather than starting a turn, so the new-message
@@ -742,7 +742,7 @@ export function useComposerSend(input: ComposerSendInput) {
             });
             return;
           }
-          if (activePendingProgress && sendCtx?.answeringPendingUserInput !== false) {
+          if (activePendingUserInput && sendCtx?.answeringPendingUserInput !== false) {
             if (directAnnotation) {
               notifyDirectAnnotationAttached();
               return;
@@ -1322,9 +1322,12 @@ export function useComposerSend(input: ComposerSendInput) {
               composerAttachmentsSnapshot.length > 0 &&
               (sendCtx?.shownPendingApprovalIds.length ?? 0) > 0
             ) {
-              await awaitAttachmentUploads(
-                composerAttachmentsSnapshot.map((attachment) => attachment.id),
-              );
+              await refreshExpiredAttachmentUploads({
+                environmentId,
+                images: composerAttachmentsSnapshot,
+                draftTarget: composerDraftTarget,
+              });
+              assertCurrentDraft();
               const uploadBlockReason =
                 readLiveAttachmentCapabilities().fileBlockReason ??
                 (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) ===
@@ -1416,6 +1419,7 @@ export function useComposerSend(input: ComposerSendInput) {
               environmentId,
               attachments: composerAttachmentsSnapshot,
               usesAttachmentUploads: turnUsesAttachmentUploads,
+              draftTarget: composerDraftTarget,
             });
             if (multipleModelSelections !== null && activeProject) {
               await sendToMultipleModels({
@@ -2044,7 +2048,7 @@ export function useComposerSend(input: ComposerSendInput) {
           useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
             ?.extractedIntent !== undefined,
         answering:
-          (Boolean(activePendingProgress) && roomSendCtx?.answeringPendingUserInput !== false) ||
+          (Boolean(activePendingUserInput) && roomSendCtx?.answeringPendingUserInput !== false) ||
           (roomSendCtx?.shownPendingApprovalIds.length ?? 0) > 0,
         prompt: promptRef.current,
       })

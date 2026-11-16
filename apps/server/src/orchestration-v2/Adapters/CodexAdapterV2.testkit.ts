@@ -401,6 +401,9 @@ export function withIssuedCodexMcpReplayExpectations(
                     ...native,
                     ...params,
                     input: codexInput,
+                    // The scope's runtime policy owns the approval policy; recordings predate T3's
+                    // full-access policy that keeps MCP prompts interactive.
+                    approvalPolicy: native.approvalPolicy,
                     additionalContext: native.additionalContext,
                     collaborationMode: native.collaborationMode,
                   },

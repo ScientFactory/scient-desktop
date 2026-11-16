@@ -601,10 +601,9 @@ describe("Restored bin.test.ts", () => {
         assert.include(output, "Scient Connect\n  Exposure: disabled");
         assert.include(output, "  Authorization: missing");
         assert.include(output, "  Environment link: not provisioned");
-        assert.include(
-          output,
-          "Next: Run `scient connect link` to authorize and enable Scient Connect.",
-        );
+        // SCIENT-FORK: the hint names this installation's command and keeps `--base-dir`.
+        assert.match(output, /\nNext: Run `[^`\n]+ connect link --base-dir [^`\n]+` to authorize/);
+        assert.include(output, `--base-dir ${baseDir}\` to authorize and enable Scient Connect.`);
       }),
     );
     // regression: 7a820abfdd feat: add headless `t3 connect` setup for SSH hosts (#3749)

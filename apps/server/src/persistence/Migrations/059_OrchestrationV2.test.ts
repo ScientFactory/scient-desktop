@@ -16,7 +16,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 98 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 99 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -70,6 +70,7 @@ layer("059_OrchestrationV2", (it) => {
         [96, "QueuedTurnInputIndexJsonValid"],
         [97, "ProviderTurnAttemptIndex"],
         [98, "TurnItemMessageOrdinalIndex"],
+        [99, "TurnItemInlineWorkOutput"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -133,6 +134,7 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 96, name: "QueuedTurnInputIndexJsonValid" },
         { migration_id: 97, name: "ProviderTurnAttemptIndex" },
         { migration_id: 98, name: "TurnItemMessageOrdinalIndex" },
+        { migration_id: 99, name: "TurnItemInlineWorkOutput" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

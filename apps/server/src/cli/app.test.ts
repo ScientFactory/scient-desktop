@@ -355,7 +355,7 @@ describe("t3 server command safety", () => {
             Effect.flip,
           );
           expect(String(error)).toContain(
-            `A Scient server is already running for ${baseDir} (pid ${child.pid}, http://127.0.0.1:3773). Connect to that server, stop it before starting another, or use a different --base-dir.`,
+            `A Scient server is already running for ${baseDir} (pid ${child.pid}, http://127.0.0.1:3773). To open it, run `,
           );
           expect(yield* Effect.promise(() => NodeFSP.readFile(statePath, "utf8"))).toBe(record);
           expect(yield* pathExists(newDirectory)).toBe(false);

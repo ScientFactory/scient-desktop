@@ -148,12 +148,19 @@ export const layer: Layer.Layer<
           const perThreadWorkspace =
             negotiatedCapabilities?.sessions.supportsMultipleProviderThreadsPerSession === true &&
             negotiatedCapabilities.sessions.supportsPerThreadWorkspace === true;
-          const currentWorkspace =
-            (perThreadWorkspace ? currentProviderThread?.nativeMetadata?.cwd : undefined) ??
-            currentSession?.cwd ??
-            projection.thread.worktreePath ??
-            "<unresolved-workspace>";
-          let targetWorkspace = targetPolicy.cwd ?? currentSession?.cwd ?? "<unresolved-workspace>";
+          // A selection change keeps the thread where it is. A shared session's cwd is the
+          // workspace of whichever thread opened it, not a move of this thread.
+          const keepsWorkspace =
+            selectionTransition !== undefined && targetThread === projection.thread;
+          const currentWorkspace = keepsWorkspace
+            ? (projection.thread.worktreePath ?? currentSession?.cwd ?? "<unresolved-workspace>")
+            : ((perThreadWorkspace ? currentProviderThread?.nativeMetadata?.cwd : undefined) ??
+              currentSession?.cwd ??
+              projection.thread.worktreePath ??
+              "<unresolved-workspace>");
+          let targetWorkspace = keepsWorkspace
+            ? currentWorkspace
+            : (targetPolicy.cwd ?? currentSession?.cwd ?? "<unresolved-workspace>");
           if (currentWorkspace !== targetWorkspace) {
             const sameWorkspace = yield* Effect.all([
               fileSystem.realPath(currentWorkspace),

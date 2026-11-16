@@ -5065,13 +5065,16 @@ it.live.each(["failed", "interrupted"] as const)(
             ["resume", undefined],
             ["send-row", queued.id],
           ] as const) {
-            yield* orchestrator.dispatch({
-              type: "queue.resume",
-              commandId: CommandId.make(`${threadId}:${action}`),
-              threadId,
-              ...(runId === undefined ? {} : { runId }),
-            });
-            // Production outbox/worker completion establishes that no accepted
+            const refused = yield* orchestrator
+              .dispatch({
+                type: "queue.resume",
+                commandId: CommandId.make(`${threadId}:${action}`),
+                threadId,
+                ...(runId === undefined ? {} : { runId }),
+              })
+              .pipe(Effect.flip);
+            assert.include(String(refused.cause), "Retry worktree setup");
+            // Production outbox/worker completion establishes that no refused
             // queue command has scheduled a hidden checkout provider start.
             yield* worker.drain();
             const held = yield* orchestrator.getThreadProjection(threadId);

@@ -25,6 +25,7 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { acquireRelayClientForLink, reportServiceOnboarding } from "./connect.ts";
+import { resolveCliCommand } from "./invocation.ts";
 import { offerServiceDuringOnboarding } from "./service.ts";
 
 const unreachableBootService = BootService.BootService.of({
@@ -120,6 +121,42 @@ it.effect("does not install the relay client when the user declines the managed 
     assert.isTrue(Option.isNone(result));
     assert.equal(installCalls, 0);
   }),
+);
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
+  "t3 connect next steps",
+  (it) => {
+    it.effect.each([
+      { subcommand: "status", hint: "connect link" },
+      { subcommand: "publish", hint: "connect login" },
+    ])("t3 connect $subcommand names `t3 $hint` with --base-dir", ({ subcommand, hint }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-hint-test-" });
+
+        yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
+          "connect",
+          subcommand,
+          "--base-dir",
+          baseDir,
+        ]);
+
+        // SCIENT-FORK:START — Scient names this installation's own command.
+        const command = yield* resolveCliCommand([...hint.split(" "), "--base-dir", baseDir]);
+        // SCIENT-FORK:END
+        assert.include((yield* TestConsole.logLines).join("\n"), `\`${command}\``);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      ),
+    );
+  },
 );
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
