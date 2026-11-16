@@ -2,6 +2,9 @@ import type { BrowserSearchEngine } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { isLocalLoopbackHost } from "./hostClassification.ts";
+// SCIENT-FORK:START — typed hosts lose characters no domain can hold.
+import { cleanTypedHost } from "./scientAddressInput.ts";
+// SCIENT-FORK:END
 
 const TAB_ID_PREFIX = "tab_";
 let nextPreviewTabSequence = 0;
@@ -180,7 +183,10 @@ export function resolveAddressBarInput(
   rawInput: string,
   searchUrlTemplate: string = BROWSER_SEARCH_URL_TEMPLATES.duckduckgo,
 ): string {
-  const trimmed = rawInput.trim();
+  // SCIENT-FORK:START — typed hosts lose characters no domain can hold; searches stay as typed.
+  const typed = rawInput.trim();
+  const trimmed = cleanTypedHost(typed);
+  // SCIENT-FORK:END
   if (URL_SCHEME_WITH_AUTHORITY_PATTERN.test(trimmed) || trimmed.length === 0)
     return normalizePreviewUrl(trimmed);
   // SCIENT-FORK:START — a pasted paper ID opens the paper.
@@ -215,7 +221,8 @@ export function resolveAddressBarInput(
       } catch {}
     }
   }
-  return fillSearchUrlTemplate(searchUrlTemplate, trimmed);
+  // SCIENT-FORK: a search uses exactly what was typed.
+  return fillSearchUrlTemplate(searchUrlTemplate, typed);
 }
 
 export function normalizePreviewUrl(rawUrl: string): string {
