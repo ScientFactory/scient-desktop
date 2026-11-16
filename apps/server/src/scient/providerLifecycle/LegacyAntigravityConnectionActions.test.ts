@@ -361,7 +361,7 @@ describe("Antigravity connection actions", () => {
             return handle;
           }),
         );
-        const writes: string[] = [];
+        const writes: Array<string | Buffer> = [];
         let kills = 0;
         const spawnInputs: Array<{
           readonly shell: string;

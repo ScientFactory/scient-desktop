@@ -1640,6 +1640,38 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect(
+    "brings the window back after the renderer dies more often than the reload budget",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const renderProcessGone = fakeWindow.webContentsListeners.get("render-process-gone");
+          if (!renderProcessGone) {
+            return yield* Effect.die("render-process-gone listener was not registered");
+          }
+          for (let crash = 1; crash <= 4; crash++) {
+            const loadsBefore = fakeWindow.loadURL.mock.calls.length;
+            renderProcessGone({}, { reason: "oom", exitCode: -536870904 });
+            yield* TestClock.adjust(crash < 4 ? 1_000 : 60_000);
+            yield* Effect.promise(() => Promise.resolve());
+            assert.isAbove(
+              fakeWindow.loadURL.mock.calls.length,
+              loadsBefore,
+              `window shows nothing after renderer crash ${crash}`,
+            );
+          }
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
   it.effect("updates title bar overlays only on windows created with one", () =>
     Effect.gen(function* () {
       const framed = makeFakeBrowserWindow();
@@ -1827,45 +1859,44 @@ describe("DesktopWindow", () => {
   // SCIENT-FORK:START scient-window-fix-guards - upstream's snap dropped this fix guard
 
   // regression: 15ca727b17 fix(desktop): reload the main renderer after it is killed (#20300)
-  it.effect(
-    "recovers killed renderers without reloading indefinitely or reviving closed windows",
-    () =>
-      Effect.gen(function* () {
-        const fakeWindow = makeFakeBrowserWindow();
-        const createCount = yield* Ref.make(0);
-        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
-        yield* Effect.gen(function* () {
-          const desktopWindow = yield* DesktopWindow.DesktopWindow;
-          yield* desktopWindow.createMain;
-          const onGone = fakeWindow.webContentsListeners.get("render-process-gone");
-          const onLoaded = fakeWindow.webContentsListeners.get("did-finish-load");
-          if (!onGone || !onLoaded)
-            return yield* Effect.die("renderer lifecycle listeners missing");
+  it.effect("recovers killed renderers with a backoff and without reviving closed windows", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.createMain;
+        const onGone = fakeWindow.webContentsListeners.get("render-process-gone");
+        const onLoaded = fakeWindow.webContentsListeners.get("did-finish-load");
+        if (!onGone || !onLoaded) return yield* Effect.die("renderer lifecycle listeners missing");
 
-          onGone({}, { reason: "clean-exit", exitCode: 0 });
-          yield* TestClock.adjust(500);
-          assert.equal(fakeWindow.loadURL.mock.calls.length, 1);
+        onGone({}, { reason: "clean-exit", exitCode: 0 });
+        yield* TestClock.adjust(500);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 1);
 
-          for (let attempt = 0; attempt < 4; attempt += 1) {
-            onGone({}, { reason: "killed", exitCode: 9 });
-            yield* TestClock.adjust(500);
-            onLoaded();
-          }
-          assert.equal(fakeWindow.loadURL.mock.calls.length, 4);
-
-          yield* TestClock.adjust(60_000);
+        for (let attempt = 0; attempt < 4; attempt += 1) {
           onGone({}, { reason: "killed", exitCode: 9 });
           yield* TestClock.adjust(500);
-          assert.equal(fakeWindow.loadURL.mock.calls.length, 5);
-          assert.equal(yield* Ref.get(createCount), 1);
+          onLoaded();
+        }
+        // Past the reload budget the fourth reload waits for the oldest attempt to age out.
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 4);
 
-          onGone({}, { reason: "killed", exitCode: 9 });
-          fakeWindow.isDestroyed.mockReturnValue(true);
-          yield* TestClock.adjust(500);
-          assert.equal(fakeWindow.loadURL.mock.calls.length, 5);
-        }).pipe(Effect.provide(layer));
-      }),
+        yield* TestClock.adjust(60_000);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 5);
+        onGone({}, { reason: "killed", exitCode: 9 });
+        yield* TestClock.adjust(500);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 6);
+        assert.equal(yield* Ref.get(createCount), 1);
+
+        onGone({}, { reason: "killed", exitCode: 9 });
+        fakeWindow.isDestroyed.mockReturnValue(true);
+        yield* TestClock.adjust(500);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 6);
+      }).pipe(Effect.provide(layer));
+    }),
   );
   // SCIENT-FORK:END scient-window-fix-guards
 

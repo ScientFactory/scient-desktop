@@ -3190,6 +3190,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               { slug: "claude-opus-4-1", isLegacy: true },
               ...Array.from({ length: 9 }, (_, index) => ({ slug: `claude-opus-5-${index + 1}` })),
             ].map((model) => ({ ...model, name: model.slug, isCustom: false, capabilities: null })),
+            version: "2.1.302",
+            updateRequiredModels: [
+              { slug: "claude-fable-5-2", name: "Claude Fable 5.2", minVersion: "2.1.321" },
+            ],
           },
         ]),
         adapterRegistryLayer([codexInstanceId]),
@@ -3227,6 +3231,11 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         assert.include(unmatched.message, "`orchestrator_capabilities`");
         // SCIENT-FORK:END
+
+        const updateRequired = yield* refuse("claude-fable-5-2");
+        assert.equal(updateRequired.code, "model_unavailable");
+        assert.include(updateRequired.message, "v2.1.302");
+        assert.include(updateRequired.message, "2.1.321");
       }).pipe(
         Effect.provide(
           layerOrchestratorService.pipe(
@@ -4662,6 +4671,10 @@ describe("OrchestratorMcpService provider resolution", () => {
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
       inputs?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
+      defaults: {
+        readonly project: ScheduledTask["modelSelection"] | null;
+        readonly environment?: ScheduledTask["modelSelection"];
+      } = { project: existing.modelSelection },
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(fullAccessCapturedPolicyLayer),
@@ -4674,7 +4687,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadShell: () => Effect.succeed(null),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest(
+              defaults.environment === undefined
+                ? {}
+                : { defaultModelSelection: defaults.environment },
+            ),
             Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
             Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
               list: () => Effect.succeed([]),
@@ -4684,7 +4701,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Effect.succeedSome({
                   id: projectId,
                   workspaceRoot,
-                  defaultModelSelection: existing.modelSelection,
+                  defaultModelSelection: defaults.project,
                 } as never),
             }),
             Layer.mock(SecretRequests.SecretRequests)({}),
@@ -4722,6 +4739,32 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
+      }),
+    );
+
+    it.effect("uses the environment's default model when the project inherits it", () =>
+      Effect.gen(function* () {
+        const environmentDefault = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+        };
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              existing,
+              inputs,
+              { project: null, environment: environmentDefault },
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.modelSelection),
+          [environmentDefault],
+        );
       }),
     );
 

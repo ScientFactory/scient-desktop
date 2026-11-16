@@ -253,6 +253,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         createdAt: "2026-10-20T00:00:00Z",
         updatedAt: "2026-10-20T00:00:00Z",
       },
+      activeProjectIsScratch: false,
       activeProjectDefaultModelSelection: null,
       activeMessageCount: 1,
       isServerThread: true,
