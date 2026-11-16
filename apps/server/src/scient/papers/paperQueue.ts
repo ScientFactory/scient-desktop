@@ -11,6 +11,8 @@ import {
   type AccountId,
   type PaperAsked,
   type PaperQueueSummary,
+  type PaperQueueContinueInput,
+  type PreviewAutomationStatus,
   type PaperRequest,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -23,6 +25,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "../../config.ts";
+import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { userRunInvocation } from "../accounts/checkAccounts.ts";
@@ -45,6 +48,7 @@ import {
   releaseHolds,
   type PaperRequester,
 } from "./paperAttempt.ts";
+import { ownsPaperTermsTab } from "./paperFetch.ts";
 import { paperFileName, type Paper } from "./paperLookup.ts";
 import { pdfNamesPaper, readPdfFacts } from "./pdfCheck.ts";
 
@@ -264,7 +268,7 @@ const summary = (queue: Queue, now: number): PaperQueueSummary => {
   const requests = new Map<string, PaperRequest>();
   for (const { needed } of items) {
     if (!needed) continue;
-    const key = `${needed.kind}|${needed.site ?? ""}`;
+    const key = `${needed.kind}|${needed.site ?? ""}|${needed.profileId ?? ""}`;
     requests.set(key, { ...needed, count: (requests.get(key)?.count ?? 0) + 1 });
   }
   return {
@@ -535,7 +539,11 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
   }
   // The user acted while this attempt ran: what it asked them for may already be done.
   if (result.state === "needs-you" && queue.acted !== acted) {
-    queue.items.set(itemId, { ...known, state: "waiting" });
+    queue.items.set(itemId, {
+      ...known,
+      state: "waiting",
+      ...(result.needed.kind === "terms" ? { needed: result.needed } : {}),
+    });
     yield* announce(queue);
     return;
   }
@@ -551,7 +559,7 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
 const wake = (queue: Queue) => {
   for (const item of queue.items.values())
     if (item.state === "needs-you" && item.needed?.kind !== "university") {
-      const { needed: _, message: __, ...rest } = item;
+      const { message: _, ...rest } = item;
       queue.items.set(item.itemId, { ...rest, state: "waiting" });
     }
 };
@@ -670,6 +678,7 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
       const { needed: _, message: __, ...unanswered } = existing;
       const joined: PaperItem = {
         ...(retries ? { ...unanswered, state: "waiting" as const } : existing),
+        ...(existing.needed?.kind === "terms" ? { needed: existing.needed } : {}),
         ...(addsSource ? { source: addsSource } : {}),
         ...(addsLibrary ? { library: true } : {}),
       };
@@ -701,14 +710,63 @@ export const continuePapers = Effect.fn("Papers.queue.continue")(function* (
   root: string,
   requester: PaperRequester,
   signedIn?: AccountId,
+  terms?: PaperQueueContinueInput["terms"],
 ) {
   const queue = yield* load(root, requester);
   queue.requester = requester;
+  if (terms) {
+    const broker = yield* PreviewAutomationBroker;
+    for (const item of queue.items.values()) {
+      const need = item.needed;
+      if (
+        need?.kind !== "terms" ||
+        need.site !== terms.site ||
+        need.profileId !== terms.profileId ||
+        !need.tabId
+      )
+        continue;
+      const target = {
+        scope: userRunInvocation(PAPERS_THREAD, requester.environmentId),
+        tabId: need.tabId,
+        updateCurrentTab: false,
+      };
+      const live = ownsPaperTermsTab(need.tabId, requester.environmentId, terms.profileId)
+        ? yield* broker
+            .invoke<PreviewAutomationStatus>({
+              ...target,
+              operation: "status",
+              input: {},
+            })
+            .pipe(Effect.option)
+        : Option.none();
+      if (Option.isSome(live) && live.value.tabId === need.tabId) {
+        yield* broker
+          .invoke({
+            ...target,
+            operation: "open",
+            input: { tabId: need.tabId, reuseExistingTab: true, open: true },
+          })
+          .pipe(
+            Effect.mapError(
+              () =>
+                new AccountsError({
+                  reason: "unavailable",
+                  message: "The publisher's terms page could not be shown.",
+                }),
+            ),
+          );
+      } else {
+        const { tabId: _, ...withoutTab } = need;
+        queue.items.set(item.itemId, { ...item, needed: withoutTab });
+      }
+      break;
+    }
+  }
   clearHolds(signedIn);
   queue.acted += 1;
   for (const item of queue.items.values())
     if (item.state === "needs-you") {
-      const { needed: _, message: __, ...rest } = item;
+      const { message: _, ...rest } = item;
       queue.items.set(item.itemId, { ...rest, state: "waiting" });
     }
   queue.retryUntil = (yield* Clock.currentTimeMillis) + RETRY_FOR_MS;

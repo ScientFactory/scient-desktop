@@ -4,6 +4,7 @@ import {
   ThreadId,
   type AccountSummary,
   type AccountTarget,
+  type PaperItem,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,7 @@ import { AccountsService } from "../accounts/AccountsService.ts";
 import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import type * as PaperFetch from "./paperFetch.ts";
 import type * as PaperLookup from "./paperLookup.ts";
-import { fetchOnePaper, type PaperRequester } from "./paperAttempt.ts";
+import { clearHolds, fetchOnePaper, type PaperRequester } from "./paperAttempt.ts";
 
 const opened = vi.hoisted(() => [] as Array<{ url: string; profileId: string }>);
 
@@ -95,13 +96,18 @@ const fetchAs = (
   accounts: ReadonlyArray<AccountSummary> = [university],
   later = true,
   agentAccess = true,
+  needed?: PaperItem["needed"],
 ) =>
   Effect.gen(function* () {
     opened.length = 0;
     // Long after any earlier failure at the publisher, so its own page is tried first.
     if (later) yield* TestClock.adjust("2 hours");
     const fake = fakeAccounts({ accounts: [...accounts], agentAccess });
-    const fiber = yield* fetchOnePaper({ doi }, requester, () => Effect.undefined).pipe(
+    const fiber = yield* fetchOnePaper(
+      { doi, ...(needed ? { needed } : {}) },
+      requester,
+      () => Effect.undefined,
+    ).pipe(
       Effect.provideService(AccountsService, {
         ...fake.service,
         authorize: (_scope, target) =>
@@ -191,5 +197,39 @@ it.effect("stops at once when the user turns agents' access off, default profile
       false,
     );
     expect(next.opened).toEqual([]);
+  }),
+);
+
+it.effect("resumes a terms gate in its profile, but never after that profile is denied", () =>
+  Effect.gen(function* () {
+    clearHolds();
+    const other = {
+      ...university,
+      accountId: AccountId.make("acc_other_university"),
+      details: { ...university.details, profileId: "other" },
+    } as AccountSummary;
+    const needed = { kind: "terms" as const, site: "ai.nejm.org", profileId: "work" };
+    const first = yield* fetchAs(
+      "10.1/terms-profile",
+      () => false,
+      undefined,
+      [other, university],
+      true,
+      true,
+      needed,
+    );
+    expect(first.outcome).toMatchObject({ state: "saved", route: "university" });
+    expect(first.opened.map(({ profileId }) => profileId)).toEqual(["work", "work"]);
+    const denied = yield* fetchAs(
+      "10.1/terms-denied",
+      (target) => target.type === "profile" && target.profileId === "work",
+      undefined,
+      [other, university],
+      true,
+      true,
+      needed,
+    );
+    expect(denied.outcome.state).not.toBe("saved");
+    expect(denied.opened).toEqual([]);
   }),
 );

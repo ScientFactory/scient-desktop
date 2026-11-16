@@ -767,12 +767,14 @@ export type PaperAsked = typeof PaperAsked.Type;
 
 const PaperNeed = {
   /** "access": a university is connected, but the conversation that asked may not use it. */
-  kind: Schema.Literals(["university", "sign-in", "check", "access"]),
+  kind: Schema.Literals(["university", "sign-in", "check", "terms", "access"]),
   site: Schema.optional(Schema.String),
   /** The university to sign in to, for a "sign-in", or to allow, for an "access". */
   accountId: Schema.optional(AccountId),
   openUrl: Schema.optional(Schema.String),
   profileId: Schema.optional(Schema.String),
+  /** The live consent form: its SAML POST cannot be reconstructed from a URL. */
+  tabId: Schema.optional(PreviewTabId),
 } as const;
 
 export const PaperItem = Schema.Struct({
@@ -823,6 +825,12 @@ export const PaperQueueInput = Schema.Struct({
   root: Schema.String.check(Schema.isMaxLength(4096)),
 });
 export type PaperQueueInput = typeof PaperQueueInput.Type;
+
+export const PaperQueueContinueInput = Schema.Struct({
+  ...PaperQueueInput.fields,
+  terms: Schema.optional(Schema.Struct({ site: Schema.String, profileId: Schema.String })),
+});
+export type PaperQueueContinueInput = typeof PaperQueueContinueInput.Type;
 
 export const UniversitySearchInput = Schema.Struct({
   query: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),

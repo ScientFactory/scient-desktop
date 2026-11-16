@@ -26,6 +26,8 @@ function requestLine(request: PaperRequest) {
       return `${waitingWord(request.count)} for you to sign in to ${request.site}.`;
     case "check":
       return `${waitingWord(request.count)} for you to pass ${request.site}'s check.`;
+    case "terms":
+      return `${waitingWord(request.count)} for you to review and accept ${request.site}'s terms.`;
     case "access":
       return `${waitingWord(request.count)}: this conversation may not use ${request.site}.`;
   }
@@ -35,6 +37,7 @@ const ACTION_LABELS: Readonly<Record<PaperRequest["kind"], string>> = {
   university: "Connect your university",
   "sign-in": "Sign in",
   check: "Open",
+  terms: "Open",
   access: "Allow in Settings",
 };
 
@@ -58,6 +61,11 @@ function Requests({
   const [connecting, setConnecting] = useState(false);
   const act = (request: PaperRequest) => {
     if (request.kind === "university") return setConnecting((current) => !current);
+    if (request.kind === "terms" && request.site && request.profileId)
+      return void resume({
+        root: queue.root,
+        terms: { site: request.site, profileId: request.profileId },
+      });
     // The papers keep trying for a while, so a change made there lets them through.
     if (request.kind === "access") void navigate({ to: "/settings/accounts" });
     // Papers go on by themselves when the sign-in finishes.
@@ -74,7 +82,10 @@ function Requests({
   return (
     <>
       {queue.requests.map((request) => (
-        <div key={`${request.kind}:${request.site ?? ""}`} className="flex items-center gap-2">
+        <div
+          key={`${request.kind}:${request.site ?? ""}:${request.profileId ?? ""}`}
+          className="flex items-center gap-2"
+        >
           <span className="min-w-0 flex-1 text-sm text-muted-foreground">
             {requestLine(request)}
           </span>
