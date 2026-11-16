@@ -40,7 +40,10 @@ import {
   updateScientSourceNote,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
-import { SCIENT_PIN_OPTIONAL_CITATION_FIELDS, scientPinCitationKnownFields } from "./pinCitation.ts";
+import {
+  SCIENT_PIN_OPTIONAL_CITATION_FIELDS,
+  scientPinCitationKnownFields,
+} from "./pinCitation.ts";
 
 const fixtures: string[] = [];
 const originalRename = NodeFS.promises.rename;

@@ -275,7 +275,9 @@ function planMerge(
   const known = scientPinCitationKnownFields(survivor);
   const merged = scientPinCitationKnownFields(next as unknown as ScientSourceRecord);
   if (known.some((field) => !merged.includes(field))) {
-    next.hydratedCitationFields = [...new Set([...(survivor.hydratedCitationFields ?? []), ...known])];
+    next.hydratedCitationFields = [
+      ...new Set([...(survivor.hydratedCitationFields ?? []), ...known]),
+    ];
   }
   return {
     next: next as unknown as ScientSourceRecord,
