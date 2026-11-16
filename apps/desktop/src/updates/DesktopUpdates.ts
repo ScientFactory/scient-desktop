@@ -49,7 +49,7 @@ import {
   releaseNotesOfOfferedVersion,
 } from "./releaseNotes.ts";
 import { isEmptyBetaFeedError, resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
-import { scientDesktopUpdateFeed } from "@t3tools/shared/scientRelease";
+import { scientDesktopRuntimeUpdateFeed } from "@t3tools/shared/scientRelease";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
@@ -602,9 +602,9 @@ export const make = Effect.gen(function* () {
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
     const allowsPrerelease = channel === "beta";
-    // SCIENT-FORK: an administrator's mirror stays the update source on every channel.
+    // SCIENT-FORK: Scient's mirror feeds replace GitHub; an administrator's feed wins on every channel.
     if (!config.mockUpdates && policy.feedUrl === undefined) {
-      yield* electronUpdater.setFeedURL(scientDesktopUpdateFeed(channel));
+      yield* electronUpdater.setFeedURL(scientDesktopRuntimeUpdateFeed(channel));
     }
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
