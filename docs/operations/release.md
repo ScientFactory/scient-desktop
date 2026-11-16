@@ -281,6 +281,22 @@ It labels them unsigned and cannot publish them unless the explicit
 the same owner-approved Windows exception automatically. That exception applies
 only to Windows; macOS signing and notarization remain mandatory.
 
+A signed Windows app pins its publisher: electron-updater installs a later update
+only if its installer's signer CN matches the `publisherName` in the installed
+`app-update.yml`. So the exception ends once a signed build ships:
+
+- The native Windows verifier requires a signed installer's Authenticode status to
+  be Valid, its signer CN to equal `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`, and the
+  packaged `app-update.yml` to pin exactly that name. An unsigned build must pin none.
+- Each release handoff records `windows: { signed, publisherName }`.
+- Before publishing on either channel, the gate reads the newest published Stable
+  and Beta handoffs. If either pins a publisher, the candidate must be signed by
+  that publisher, whatever `allow_unsigned_windows` says: users switch between
+  Stable and Beta, so a pin on one binds both. Handoffs from before this record
+  pin nothing, so today's unsigned releases are unaffected until the first signed
+  one ships. Changing the publisher later needs a planned transition, not a
+  release that installed clients would reject.
+
 Release jobs expose Apple credentials only to macOS packaging and Azure
 credentials only to the Linux-hosted Windows packaging job. Publication additionally verifies the
 final Windows Authenticode signature and the final macOS app signatures,
