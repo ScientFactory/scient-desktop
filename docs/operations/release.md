@@ -313,6 +313,11 @@ only if its installer's signer CN matches the `publisherName` in the installed
   one ships. Changing the publisher later needs a planned transition, not a
   release that installed clients would reject.
 
+The local publisher rehearsal runs the production signing helper against synthetic
+candidate/public handoffs, including a publisher pin that appears before promotion.
+It must withhold public promotion on either a changed upload or an incompatible pin;
+the helper is not replaced with a successful stub.
+
 Release jobs expose Apple credentials only to macOS packaging and Azure
 credentials only to the Linux-hosted Windows packaging job. Publication additionally verifies the
 final Windows Authenticode signature and the final macOS app signatures,
