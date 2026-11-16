@@ -171,53 +171,56 @@ describe("local PDF source adapter", () => {
     );
   });
 
-  it("reads a PDF's own arXiv ID from its stamp, not one it cites", () => {
+  it("reads a PDF's own arXiv ID, with its version, from its stamp, not one it cites", () => {
     const { arxivStamp } = localPdfSourceInternals;
-    expect(arxivStamp("Long Beach, CA, USA.  arXiv:1706.03762v7  [cs.CL]  2 Aug 2023")).toBe(
-      "1706.03762",
-    );
-    expect(arxivStamp("arXiv:hep-th/9901001v1 6 Jan 1999 Abstract")).toBe("hep-th/9901001");
-    // A citation in the text, and two stamps that disagree, name no deposit.
-    expect(arxivStamp("as in BERT (arXiv preprint arXiv:1810.04805, 2018)")).toBeNull();
-    expect(arxivStamp("arXiv:1706.03762v7 [cs.CL] … arXiv:1810.04805v2 [cs.CL]")).toBeNull();
+    expect(arxivStamp("arXiv:1706.03762v7  [cs.CL]  2 Aug 2023")).toBe("1706.03762v7");
+    expect(arxivStamp("arXiv:hep-th/9901001v1 6 Jan 1999")).toBe("hep-th/9901001v1");
+    // A citation, and two stamps that disagree, name no deposit.
+    expect(arxivStamp("arXiv preprint arXiv:1810.04805, 2018")).toBeNull();
+    expect(arxivStamp("arXiv:1706.03762v7 [cs.CL] arXiv:1810.04805v2 [cs.CL]")).toBeNull();
   });
 
-  it("looks a PDF up by its arXiv stamp, and by a DOI in its text only without one", async () => {
+  it("looks a PDF up by the stamp in its margin, and by a DOI in its text otherwise", async () => {
     const folder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pdf-arxiv-"));
     try {
       const asked: string[] = [];
       const resolve = async (identifiers: ReadonlyArray<ScientSourceIdentifier>) => {
         const [identifier] = identifiers;
         asked.push(`${identifier?.scheme}:${identifier?.value}`);
-        return identifier && registry[`${identifier.scheme}:${identifier.value}`]
-          ? found(identifier, registry[`${identifier.scheme}:${identifier.value}`]!)
-          : null;
+        // As the resolver asks arXiv: for the deposit, without its version.
+        const key = `${identifier?.scheme}:${identifier?.value.replace(/v\d+$/u, "")}`;
+        return identifier && registry[key] ? found(identifier, registry[key]) : null;
       };
-      const read = async (fileName: string, lines: ReadonlyArray<string>) => {
+      const read = async (fileName: string, lines: ReadonlyArray<string>, margin?: string) => {
         const pdfPath = NodePath.join(folder, fileName);
-        await NodeFSP.writeFile(pdfPath, textPdf([lines]));
+        await NodeFSP.writeFile(pdfPath, textPdf([lines], margin ? { margin } : {}));
         return localPdfSourceInternals.extractPdfMetadata(
           { sourceKey: `local_${fileName}`, fileName, pdfPath },
           resolve,
         );
       };
+      const stamp = "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023";
 
-      // arXiv's copy: the stamp names the deposit; the published version's DOI is not asked.
-      const preprint = await read("1706.03762.pdf", [
-        "Published as doi:10.5555/published.1",
-        "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023",
-      ]);
-      expect(asked).toEqual(["arxiv:1706.03762"]);
+      // arXiv's copy: its margin stamp names the deposit and version; the published DOI waits.
+      const preprint = await read(
+        "1706.03762.pdf",
+        ["Published as doi:10.5555/published.1"],
+        stamp,
+      );
+      expect(asked).toEqual(["arxiv:1706.03762v7"]);
       expect(preprint).toMatchObject({
         type: "preprint",
         title: "Attention Is All You Need",
-        issuedYear: 2017,
-        identifiers: [{ scheme: "arxiv", value: "1706.03762" }],
-        pdfFileName: "1706.03762.pdf",
+        identifiers: [{ scheme: "arxiv", value: "1706.03762v7" }],
       });
       expect(preprint.fieldProvenance).not.toContainEqual(
         expect.objectContaining({ field: "title", sourceField: "file-name" }),
       );
+
+      // The same stamp quoted in a page's text is not this PDF's: its own DOI is looked up.
+      asked.length = 0;
+      await read("report.pdf", [`The stamp ${stamp} is quoted here.`, "doi:10.5555/report.1"]);
+      expect(asked).toEqual(["doi:10.5555/report.1"]);
 
       // A DOI read with what follows it: its shorter spelling is the registry's, and replaces it.
       asked.length = 0;
@@ -234,6 +237,11 @@ describe("local PDF source adapter", () => {
       expect(article.fieldProvenance).toContainEqual(
         expect.objectContaining({ field: "title", origin: "doi" }),
       );
+
+      // A registry that answers for another DOI is not taken: the PDF keeps what it says.
+      const answeredOther = await read("other.pdf", ["doi:10.5555/asked.1"]);
+      expect(answeredOther.title).toBe("other");
+      expect(answeredOther.identifiers).toEqual([{ scheme: "doi", value: "10.5555/asked.1" }]);
     } finally {
       await NodeFSP.rm(folder, { recursive: true, force: true });
     }
@@ -253,6 +261,11 @@ const registry: Record<string, Partial<ResolvedSourceMetadata>> = {
     type: "article",
     title: "A resolved article",
     identifiers: [{ scheme: "doi", value: "10.1001/jamanetworkopen.2024.8895" }],
+  },
+  "doi:10.5555/asked.1": {
+    type: "article",
+    title: "Another work",
+    identifiers: [{ scheme: "doi", value: "10.5555/answered.2" }],
   },
 };
 

@@ -173,6 +173,41 @@ describe("resolveSourceIdentifier", () => {
     expect(resolution?.status === "found" && resolution.metadata.type).toBe("preprint");
   });
 
+  it("keeps a registry's own name for a type Scient has none for", async () => {
+    const resolution = await resolveSourceIdentifier([{ scheme: "doi", value: "10.5555/iso.1" }], {
+      request: respond(200, { type: "standard", title: "A standard", DOI: "10.5555/iso.1" }),
+    });
+    if (resolution?.status !== "found") throw new Error("Expected the DOI to resolve.");
+    const candidate = applyResolvedSourceMetadata(
+      {
+        sourceKey: "pdf",
+        type: "other",
+        customType: null,
+        title: null,
+        creators: [],
+        issuedRaw: null,
+        issuedYear: null,
+        identifiers: [],
+        abstract: null,
+        containerTitle: null,
+        publisher: null,
+        volume: null,
+        issue: null,
+        pages: null,
+        language: null,
+        url: null,
+        tags: [],
+        externalReferences: [],
+        fieldProvenance: [],
+        pdfAvailable: true,
+        pdfFileName: "standard.pdf",
+        pdfAttachmentCount: 1,
+      },
+      resolution,
+    );
+    expect([candidate.type, candidate.customType]).toEqual(["other", "standard"]);
+  });
+
   it("prefers the DOI when a source also has a PMID", async () => {
     const request = vi.fn<MetadataRequest>(respond(404, ""));
     await resolveSourceIdentifier([...pmid, ...doi], { request });

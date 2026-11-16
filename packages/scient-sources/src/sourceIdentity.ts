@@ -123,12 +123,19 @@ export interface ScientLibraryIdentityFields {
   readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
   /** Where its fields came from: a title that is only the file's name is no title here. */
   readonly fieldProvenance?: ReadonlyArray<
-    Pick<ScientSourceFieldProvenance, "field" | "sourceField">
+    Pick<ScientSourceFieldProvenance, "field" | "origin" | "sourceField">
   >;
 }
 
-/** A source whose only DOIs are arXiv's names a deposit there, a preprint, whatever a registry calls it. */
+/**
+ * A source whose only DOIs are arXiv's names a deposit there, a preprint, whatever a registry
+ * called it. A type a person or an agent set stands.
+ */
 function identityType(fields: ScientLibraryIdentityFields): string {
+  const chosen = fields.fieldProvenance?.some(
+    (entry) => entry.field === "type" && (entry.origin === "user" || entry.origin === "agent"),
+  );
+  if (chosen) return fields.type;
   const dois = fields.identifiers.filter(
     (identifier) => identifier.scheme.trim().toLowerCase() === "doi",
   );

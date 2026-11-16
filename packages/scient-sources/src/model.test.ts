@@ -164,6 +164,15 @@ describe("Scient source model", () => {
       kind: "same-identifier",
       matchingSourceIds: ["source_123"],
     });
+    // A type a person chose stands: their article is not taken for the preprint.
+    const typedByHand = {
+      ...filed,
+      fieldProvenance: [{ field: "type", origin: "user" as const }],
+    };
+    expect(assessSourceDuplicate({ candidate: preprint, existing: [typedByHand] })).toMatchObject({
+      kind: "new",
+      matchingSourceIds: ["source_123"],
+    });
     // A published version that names the same arXiv ID is still another source.
     const published = record({
       type: "conference-paper",

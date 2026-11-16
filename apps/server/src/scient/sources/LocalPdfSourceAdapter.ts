@@ -245,20 +245,25 @@ function uniquePmid(textValue: string): string | null {
 }
 
 /**
- * The deposit a PDF arXiv served names in the stamp down its first page's margin:
- * `arXiv:1706.03762v7 [cs.CL] 2 Aug 2023`, or `arXiv:hep-th/9901001v1 6 Jan 1999` for an old ID.
- * A paper it cites has no category or date beside its ID. Two different stamps name none.
+ * The deposit a PDF arXiv served names in the stamp it prints up its first page's margin:
+ * `arXiv:1706.03762v7 [cs.CL] 2 Aug 2023` (`arXiv:hep-th/9901001v1 6 Jan 1999` for an old ID),
+ * with its version. `margin` is page 1's vertical text only: a stamp quoted in a page's body is
+ * horizontal, and an ID cited has no category or date beside it. Two different stamps name none.
  */
-function arxivStamp(firstPage: string): string | null {
+function arxivStamp(margin: string): string | null {
   const ids = new Set(
     [
-      ...firstPage.matchAll(
-        /\barXiv:\s?(\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?\s+(?:\[[a-z-]+(?:\.[A-Za-z-]+)?\]|\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4})/gu,
+      ...margin.matchAll(
+        /\barXiv:\s?((?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?)\s+(?:\[[a-z-]+(?:\.[A-Za-z-]+)?\]|\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4})/gu,
       ),
     ].flatMap((match) => (match[1] ? [match[1]] : [])),
   );
   return ids.size === 1 ? [...ids][0]! : null;
 }
+
+/** Text drawn turned a quarter (its matrix maps the line's direction onto the page's height). */
+const isVertical = (transform: unknown) =>
+  Array.isArray(transform) && Math.abs(Number(transform[1])) > Math.abs(Number(transform[0]));
 
 function candidateFromEmbeddedPdf(input: {
   readonly sourceKey: string;
@@ -338,7 +343,7 @@ async function readPdfEvidence(input: {
   let keywords: ReadonlyArray<string> = [];
   let issuedRaw: string | null = null;
   let extractedText = "";
-  let firstPageText = "";
+  let firstPageMargin = "";
   let pdfParsingFailed = false;
 
   try {
@@ -389,7 +394,18 @@ async function readPdfEvidence(input: {
                     : [],
                 )
                 .join(" ");
-              if (pageNumber === 1) firstPageText = pageText;
+              if (pageNumber === 1) {
+                firstPageMargin = content.items
+                  .flatMap((item) =>
+                    Predicate.hasProperty(item, "str") &&
+                    Predicate.isString(item.str) &&
+                    Predicate.hasProperty(item, "transform") &&
+                    isVertical(item.transform)
+                      ? [item.str]
+                      : [],
+                  )
+                  .join(" ");
+              }
               extractedText = `${extractedText} ${pageText}`.slice(0, MAX_EXTRACTED_TEXT_LENGTH);
             } finally {
               page.cleanup();
@@ -412,7 +428,7 @@ async function readPdfEvidence(input: {
   }
 
   const searchable = [title, documentDescription, extractedText].filter(Boolean).join("\n");
-  const arxiv = arxivStamp(firstPageText);
+  const arxiv = arxivStamp(firstPageMargin);
   // A PDF from arXiv is that deposit: a DOI in its text is a published version's or a citation's.
   const doi = arxiv ? null : uniqueDoi(searchable);
   const pmid = arxiv ? null : uniquePmid(searchable);
@@ -465,6 +481,16 @@ async function withRegistryRecord(
   for (const identifier of lookups) {
     const resolution = await resolve([identifier]);
     if (resolution?.status !== "found") continue;
+    // A DOI read from text is taken only when the registry answers for that very DOI.
+    const asked = normalizePersistentIdentifier(identifier.scheme, identifier.value);
+    if (
+      identifier.scheme === "doi" &&
+      !resolution.metadata.identifiers.some(
+        (entry) => normalizePersistentIdentifier(entry.scheme, entry.value) === asked,
+      )
+    ) {
+      continue;
+    }
     // The registry's DOI stands for the spelling the text gave.
     const rest =
       identifier.scheme === "doi"

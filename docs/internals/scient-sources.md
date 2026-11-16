@@ -77,10 +77,11 @@ immediately, and a single completed source opens in the existing details state.
 The preflight surface is retained only for the weak possible-metadata-match
 decision that cannot be made safely on the researcher's behalf. A local PDF
 the preflight finds already here (same origin, identifier or PDF) goes into
-the operation too: `addPdfToSourceAlreadyHere` attaches it through
-`attachScientSourcePaperPdf` (judged again under the store lock, with the
-staged file's expected hash), unless the source has that very file, and marks
-the item `attachedPdf`. Every skipped item that is certainly a work here
+the operation too: `importOrAttachScientSourceOperationItem` judges it and,
+when it is certainly a work here that lacks this very file, attaches it in the
+same store lock (staging checks the expected hash; a stale record there fails
+the item and keeps its staged file for Try again), and the item is marked
+`attachedPdf`. Every skipped item that is certainly a work here
 records its `sourceId`. `describeImport` counts attached PDFs apart, and for a
 PDF import names new sources with metadata diagnostics (**Check details**) and
 those `scientSourcesMayBeVersions` pairs with another record.
@@ -394,7 +395,8 @@ same title and first author whose identifiers do not disagree
 `workLevelIdentifierKey` reads arXiv's own DOI (`10.48550/arXiv.<id>`) as that
 arXiv ID, and a record whose only DOIs are arXiv's counts as a preprint for
 identity, whatever type its registry gave (arXiv's DOI registry says
-"article"); the DOI resolver types such a DOI as a preprint. Chapters of one book share an ISBN and articles
+"article"), unless a person or agent set the type (type provenance `user` or
+`agent`); the DOI resolver types such a DOI as a preprint. Chapters of one book share an ISBN and articles
 of one journal an ISSN, so a shared container identifier alone lists nothing.
 Pairs in `distinct-pairs.json` (`marked-distinct` from a person or agent,
 `divergent-copies` from the move) are never grouped, not even through a third
@@ -2146,14 +2148,20 @@ metadata. It normalizes scalar and array-valued XMP fields independently, so a
 malformed optional field cannot discard already readable metadata or prevent
 first-page identifier extraction. It reads bounded document metadata and text
 from at most the first two pages. Its identity evidence is the arXiv stamp on
-page 1 (`arxivStamp`: `arXiv:<id>vN` followed by `[category]` or a date, the
-form arXiv prints down the margin; a cited ID has neither; two different stamps
-name none), else a single unambiguous DOI (with its shorter spellings from
-`doiCandidates`) or an explicitly labelled PMID. With a stamp, DOIs and PMIDs
-in the text are not used. `withRegistryRecord` looks the evidence up through
+page 1 (`arxivStamp` over page 1's vertical text only, `isVertical` on each
+text item's matrix: `arXiv:<id>vN` followed by `[category]` or a date, the line
+arXiv prints turned up the left margin; a stamp quoted in the body is
+horizontal, a cited ID has neither; two different stamps name none; the
+version is kept on the identifier, so two versions stay apart by the existing
+arXiv-version rule, while the lookup asks arXiv for the deposit), else a
+single unambiguous DOI (with its shorter spellings from `doiCandidates`) or an
+explicitly labelled PMID. With a stamp, DOIs and PMIDs in the text are not
+used. `withRegistryRecord` looks the evidence up through
 `resolveSourceIdentifier`, the resolver every intake uses, and applies the
-first record found with `applyResolvedSourceMetadata`; the registry's DOI
-replaces the spelling read from text. `refreshExistingSourceCandidate` uses the
+first record found with `applyResolvedSourceMetadata`; a DOI answer is taken
+only when the registry's record names the DOI asked, and the registry's DOI
+replaces the spelling read from text. The shared resolver keeps an unknown CSL
+type's name as `customType`. `refreshExistingSourceCandidate` uses the
 same path with the PDF's evidence first, then the record's own DOI, PMID and
 arXiv ID, and takes the refresh's injected lookup, so a refresh and the check
 that follows it agree. A file-name title (`SCIENT_SOURCE_FILE_NAME_TITLE`

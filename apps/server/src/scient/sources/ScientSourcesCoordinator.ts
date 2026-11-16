@@ -87,8 +87,8 @@ import {
   restoreScientSource,
   revertScientSource,
   importScientSource,
+  importOrAttachScientSourceOperationItem,
   importScientSourceOperationItem,
-  attachScientSourcePaperPdf,
   attachScientSourcePdf,
   detachScientSourcePdf,
   inspectScientSourcePdf,
@@ -1741,45 +1741,6 @@ function importedOrSameWork(result: {
     : (result.duplicate.matchingSourceIds[0] ?? null);
 }
 
-/**
- * A PDF whose paper is already here, found by its identifier or origin, is added to that source
- * unless it already has this very file. The store judges again under its lock, as for a fetched
- * paper's PDF, so a decision made meanwhile (an Undo, two kept apart) is kept.
- */
-async function addPdfToSourceAlreadyHere(input: {
-  readonly root: ScientSourceStoreLocation;
-  readonly candidate: ScientSourceCandidate;
-  readonly pdfPath: string;
-  readonly expectedPdf: { readonly sha256: string; readonly byteLength: number };
-  readonly duplicate: ScientSourceDuplicateAssessment;
-  readonly actor: ScientSourceActor;
-}): Promise<boolean> {
-  const [sourceId] = input.duplicate.matchingSourceIds;
-  if (!sourceId || !STRONG_MATCHES.has(input.duplicate.kind)) return false;
-  const record = await readScientSourceRecord(input.root, sourceId);
-  if (!record || record.attachments.some((entry) => entry.sha256 === input.expectedPdf.sha256)) {
-    return false;
-  }
-  const attached = await attachScientSourcePaperPdf({
-    root: input.root,
-    sourceId,
-    expectedRevision: record.revision,
-    pdfPath: input.pdfPath,
-    ...(input.candidate.pdfFileName ? { fileName: input.candidate.pdfFileName } : {}),
-    actor: input.actor,
-    paper: input.candidate,
-    pdfSha256: input.expectedPdf.sha256,
-    expectedPdf: input.expectedPdf,
-  });
-  return attached.outcome === "attached";
-}
-
-const STRONG_MATCHES: ReadonlySet<ScientSourceDuplicateAssessment["kind"]> = new Set([
-  "same-origin",
-  "same-identifier",
-  "same-pdf",
-]);
-
 /** A settled library import that pins builds its project's managed files once. */
 async function settleLibraryImport(
   root: ScientSourceStoreLocation,
@@ -1814,7 +1775,6 @@ export async function advanceSourceImport(
     if (!pending) return operation;
     try {
       const fileItem: { outcome: FileItemOutcome | null } = { outcome: null };
-      const pdfItem = { attached: false };
       const result = await observeSourceImport(
         observer,
         async () => {
@@ -1842,27 +1802,17 @@ export async function advanceSourceImport(
             root,
             pending.itemKey,
           );
-          const imported = await importScientSourceOperationItem({
+          const item = {
             root,
             operationId: input.operationId,
             candidate,
             actor: operation.actor,
             intake: operation.intake,
-            ...(pdfPath ? { pdfPath } : {}),
-            ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
-          });
-          if (imported.outcome === "duplicate" && pdfPath && expectedPdf) {
-            pdfItem.attached = await addPdfToSourceAlreadyHere({
-              root,
-              candidate,
-              pdfPath,
-              expectedPdf,
-              duplicate: imported.duplicate,
-              actor: operation.actor,
-            });
-          }
-          return imported;
+          };
+          return pdfPath && expectedPdf
+            ? importOrAttachScientSourceOperationItem({ ...item, pdfPath, expectedPdf })
+            : importScientSourceOperationItem(item);
         },
         (result) => (result.outcome === "imported" ? "imported" : "skipped"),
       );
@@ -1903,10 +1853,11 @@ export async function advanceSourceImport(
         duplicateKind: result.duplicate.kind,
         // The source it made, or the one that was certainly this work already.
         ...(pinned ? { sourceId: pinned } : {}),
-        ...(pdfItem.attached ? { attachedPdf: true } : {}),
-        message: pdfItem.attached
-          ? "The paper was already here: its PDF was added to it."
-          : result.duplicate.reason,
+        ...(result.outcome === "attached" ? { attachedPdf: true } : {}),
+        message:
+          result.outcome === "attached"
+            ? "The paper was already here: its PDF was added to it."
+            : result.duplicate.reason,
         ...("notBrought" in result && Array.isArray(result.notBrought)
           ? { notBrought: result.notBrought }
           : {}),

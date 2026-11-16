@@ -236,6 +236,8 @@ export interface RegistryRelation {
 /** Registry metadata in candidate field shapes; null or empty means the registry omitted it. */
 export interface ResolvedSourceMetadata {
   readonly type: ScientSourceType | null;
+  /** The registry's own name for a type Scient has no type for ("standard"). */
+  readonly customType?: string | null;
   readonly title: string | null;
   readonly creators: ReadonlyArray<ScientSourceCreator>;
   readonly issuedRaw: string | null;
@@ -326,8 +328,10 @@ function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata 
   const isbn = text(csl.ISBN);
   const abstract = normalizeScientSourceAbstractDocument(csl.abstract);
   const updates = cslUpdates(csl["updated-by"]);
+  const customType = type === "other" ? text(csl.type) : null;
   return {
     type: type === "other" ? null : type,
+    ...(customType ? { customType } : {}),
     title: cslTitle(csl.title),
     creators: cslCreators(csl.author),
     issuedRaw: issued.raw,
@@ -979,7 +983,11 @@ export function applyResolvedSourceMetadata(
     ...withoutSections,
     ...abstractSections,
     type: metadata.type ?? candidate.type,
-    ...(metadata.type ? { customType: null } : {}),
+    ...(metadata.type
+      ? { customType: null }
+      : metadata.customType && candidate.type === "other" && !candidate.customType
+        ? { customType: metadata.customType }
+        : {}),
     title: metadata.title ?? candidate.title,
     creators: supplied.creators ? metadata.creators : candidate.creators,
     // The registry's list is the work's own; the file's "and others" no longer applies.

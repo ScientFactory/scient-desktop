@@ -142,6 +142,24 @@ export interface ImportedSourceResult {
   readonly duplicate: ScientSourceDuplicateAssessment;
 }
 
+/** The record a candidate is certainly the same work as, when it lacks this PDF. */
+function sameWorkWithoutPdf(
+  duplicate: ScientSourceDuplicateAssessment,
+  existing: ReadonlyArray<ScientSourceRecord>,
+  pdfSha256: string | undefined,
+): ScientSourceRecord | null {
+  if (duplicate.kind === "new" || duplicate.kind === "possible-metadata-match" || !pdfSha256) {
+    return null;
+  }
+  const record = existing.find((entry) => entry.sourceId === duplicate.matchingSourceIds[0]);
+  return record && !record.attachments.some((entry) => entry.sha256 === pdfSha256) ? record : null;
+}
+
+/** `attached`: the work was here already, and the PDF was added to `record`. */
+export interface ImportedOrAttachedSourceResult extends Omit<ImportedSourceResult, "outcome"> {
+  readonly outcome: ImportedSourceResult["outcome"] | "attached";
+}
+
 function duplicateBlocksImport(
   duplicate: ScientSourceDuplicateAssessment,
   allowPossibleMetadataMatch: boolean,
@@ -3267,10 +3285,21 @@ export async function assessScientSourceIntake(input: {
   );
 }
 
+function importScientSourceWithRecordLookup(
+  input: ImportScientSourceInput,
+  lookup: "complete" | "operation-snapshot",
+  attachToSameWork?: false,
+): Promise<ImportedSourceResult>;
+function importScientSourceWithRecordLookup(
+  input: ImportScientSourceInput,
+  lookup: "operation-snapshot",
+  attachToSameWork: true,
+): Promise<ImportedOrAttachedSourceResult>;
 async function importScientSourceWithRecordLookup(
   input: ImportScientSourceInput,
   lookup: "complete" | "operation-snapshot",
-): Promise<ImportedSourceResult> {
+  attachToSameWork = false,
+): Promise<ImportedOrAttachedSourceResult> {
   assertSafeIdentifier(input.operationId, "Operation ID");
   assertStorableSourceType(input.candidate.type);
   const paths = await sourceStorePaths(input.root);
@@ -3290,6 +3319,36 @@ async function importScientSourceWithRecordLookup(
       )(input.candidate, pdfSha256);
     const importedAt = new Date().toISOString();
     const preliminaryDuplicate = assess(existing, input.expectedPdf?.sha256);
+    const sameWork = attachToSameWork
+      ? sameWorkWithoutPdf(preliminaryDuplicate, existing, input.expectedPdf?.sha256)
+      : null;
+    if (sameWork && input.pdfPath && input.expectedPdf) {
+      const { pdfPath, expectedPdf } = input;
+      const attached = await attachPdfLocked(
+        paths,
+        {
+          sourceId: sameWork.sourceId,
+          expectedRevision: sameWork.revision,
+          ...(input.actor ? { actor: input.actor } : {}),
+        },
+        () =>
+          stagePdf({
+            paths,
+            operationId: input.operationId,
+            sourcePath: pdfPath,
+            ...(input.candidate.pdfFileName ? { fileName: input.candidate.pdfFileName } : {}),
+            expectedPdf,
+            importedAt,
+          }),
+      );
+      if (attached.outcome === "stale") {
+        // The lock is held and the ledger checked, so this is damage; the PDF stays staged.
+        throw new Error("The source changed while its PDF was being added. Try again.");
+      }
+      if (attached.outcome === "attached") {
+        return { outcome: "attached", record: attached.record, duplicate: preliminaryDuplicate };
+      }
+    }
     if (duplicateBlocksImport(preliminaryDuplicate, input.allowPossibleMetadataMatch ?? false)) {
       return { outcome: "duplicate", record: null, duplicate: preliminaryDuplicate };
     }
@@ -3419,6 +3478,19 @@ export async function importScientSourceOperationItem(
   input: ImportScientSourceInput,
 ): Promise<ImportedSourceResult> {
   return importScientSourceWithRecordLookup(input, "operation-snapshot");
+}
+
+/**
+ * `importScientSourceOperationItem` for a PDF: when the work is certainly here already and that
+ * source lacks this very file, the PDF is added to it, judged and written under the same lock.
+ */
+export async function importOrAttachScientSourceOperationItem(
+  input: ImportScientSourceInput & {
+    readonly pdfPath: string;
+    readonly expectedPdf: ScientSourcePdfInspection;
+  },
+): Promise<ImportedOrAttachedSourceResult> {
+  return importScientSourceWithRecordLookup(input, "operation-snapshot", true);
 }
 
 export function sourceAttachmentAbsolutePath(
