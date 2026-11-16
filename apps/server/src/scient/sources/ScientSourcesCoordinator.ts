@@ -1806,7 +1806,10 @@ async function importZoteroOperationItem(input: {
       const annotationLibraryId =
         base?.annotationLibraryId ??
         base?.libraryId ??
-        record.externalReferences.find((reference) => reference.system === "zotero")!.libraryId;
+        record.externalReferences.find((reference) => reference.system === "zotero")?.libraryId;
+      if (annotationLibraryId === undefined) {
+        throw new Error("This source is not linked to a Zotero item.");
+      }
       if (!base) {
         await recordZoteroSync({
           root: input.root,

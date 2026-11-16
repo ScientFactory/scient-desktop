@@ -968,6 +968,36 @@ describe("importing a project package", () => {
     ]);
   });
 
+  it("brings an abstract with its provenance and keeps what this computer knows of other fields", async () => {
+    const { base, mine, source } = await setup();
+    const doi = { scheme: "doi", value: "10.1000/abstract-provenance" };
+    const abstractProvenance = { field: "abstract", origin: "crossref", sourceField: "abstract" } as const;
+    const paper = await add(mine, "paper", {
+      identifiers: [doi],
+      abstract: "Why it matters.",
+      fieldProvenance: [abstractProvenance],
+    });
+    await pinned(mine, source, paper.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+
+    const theirs = await computer(base, "theirs");
+    const clearedPublisher = { field: "publisher", origin: "user", sourceField: null } as const;
+    await add(theirs, "local", {
+      title: paper.title,
+      identifiers: [doi],
+      fieldProvenance: [clearedPublisher],
+    });
+    expect(await importInto(await project(base, "received"), theirs, handoff)).toMatchObject({
+      sources: { added: 0, matched: 1 },
+    });
+    const [record] = await listScientSourceRecords(theirs);
+    expect(record?.abstract).toBe("Why it matters.");
+    expect(record?.fieldProvenance).toEqual(
+      expect.arrayContaining([clearedPublisher, abstractProvenance]),
+    );
+  });
+
   it("brings a retraction and an abstract to a paper this computer checked as clear", async () => {
     const { base, mine, source } = await setup();
     const doi = { scheme: "doi", value: "10.1000/retracted" };

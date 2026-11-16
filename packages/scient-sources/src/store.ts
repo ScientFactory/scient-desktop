@@ -1386,7 +1386,7 @@ const REVERT_IGNORED_FIELDS = new Set([
   "readingStatus",
   "starred",
 ]);
-const UNLISTED_CHANGE_FIELDS = new Set(["fieldProvenance"]);
+const UNLISTED_CHANGE_FIELDS = new Set(["fieldProvenance", "hydratedCitationFields"]);
 
 /**
  * Fields that describe the source rather than one revision of it; reverting keeps them current.

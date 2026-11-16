@@ -109,9 +109,10 @@ async function requestFollowing(
         discardBody: status < 200 || status >= 300,
       });
       if (status >= 300 && status < 400 && response.headers.location) {
+        const next = new URL(response.headers.location, url);
         return requestFollowing(
-          new URL(response.headers.location, url),
-          headers,
+          next,
+          next.hostname === url.hostname ? headers : publicHeaders(headers),
           redirects + 1,
           limits,
           send,
@@ -130,6 +131,13 @@ async function requestFollowing(
   request.on("error", reject);
   request.end();
   return promise;
+}
+
+/** A redirect to another host carries no key or token, only what any client sends. */
+function publicHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([name]) => /^(?:user-agent|accept)$/iu.test(name)),
+  );
 }
 
 export async function requestMetadataText(
