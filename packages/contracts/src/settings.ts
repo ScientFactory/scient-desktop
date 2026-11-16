@@ -92,6 +92,9 @@ import { PullRequestMergeMethod } from "./pullRequest.ts";
 // SCIENT-FORK: conversation-fork preferences.
 import { ScientForkSettings, ScientForkSettingsPatch } from "./scientForkSettings.ts";
 import { ScientSourcesSettings, ScientSourcesSettingsPatch } from "./scient/sourcesSettings.ts";
+// SCIENT-FORK:START — Scient Agent's own idle compaction default.
+import { scientAgentIdleCompactionDefault } from "./scient/idleCompaction.ts";
+// SCIENT-FORK:END
 import {
   CloudSpeechModelId,
   SpeechAcceleration,
@@ -1883,6 +1886,13 @@ export const resolveIdleCompaction = (
   const instance = Object.hasOwn(settings.providerInstances, instanceId)
     ? settings.providerInstances[instanceId]
     : undefined;
+  // SCIENT-FORK:START — an unset Scient Agent instance compacts before the cache expires.
+  const scientDefault = scientAgentIdleCompactionDefault(
+    instance?.driver ?? instanceId,
+    instance?.config,
+  );
+  if (scientDefault !== undefined) return scientDefault;
+  // SCIENT-FORK:END
   const override = decodeClaudeSettings(instance?.config ?? {}).pipe(
     Option.map((config) => config.idleCompaction),
     Option.getOrElse(() => "default" as const),

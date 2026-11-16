@@ -55,6 +55,9 @@ import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
 // SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
 import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK:START — a five-minute cache compacts when the agent's warming stops on it.
+import { ompWarmingStopped } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK: /goal drives Scient Agent's goal command.
 import { ompGoalUpdate, runOmpGoalTurn } from "../../provider/omp/OmpGoal.ts";
 // SCIENT-FORK: /plan drives Scient Agent's plan mode.
@@ -920,6 +923,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   ...(request === undefined ? {} : { request }),
                 });
               }
+              // SCIENT-FORK:START — warming stopped: the five-minute entry it left times idle compaction.
+              if (event.type === "cache_warming_stopped")
+                return onUpdate({
+                  type: "usage",
+                  promptCacheWarmingStopped: ompWarmingStopped(event),
+                });
+              // SCIENT-FORK:END
               if (event.type === "cache_warming_end")
                 return event.usage === undefined ? Effect.void : refreshUsage(false);
               // SCIENT-FORK: the thread's goal row follows the agent's goal.

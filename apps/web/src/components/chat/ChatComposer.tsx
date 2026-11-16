@@ -4070,8 +4070,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     placeholderSuffix={
                       // SCIENT-FORK: a Goal or Plan chip's placeholder takes no suggestion.
                       offeredPromptSuggestion !== null && composerMode === null ? (
-                        <span className="ml-2 inline-flex align-[1px]">
-                          <Kbd variant="outline">⇥ Tab</Kbd>
+                        <span className="ms-2 inline-flex align-[1px]">
+                          <Kbd variant="outline" dir="ltr">
+                            ⇥ Tab
+                          </Kbd>
                         </span>
                       ) : undefined
                     }
