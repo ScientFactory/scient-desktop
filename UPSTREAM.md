@@ -149,7 +149,7 @@ Chat Markdown (Scient): code blocks render through Scient's `MarkdownCodeBlock`
 `CodeBlockTitle.tsx`), a copy of T3's code block and Shiki highlighter mounted in
 `ChatMarkdown.tsx`. Upstream fixes to that code do not arrive through merges; port them by
 hand. T3's invisible placeholder while a language loads (#11062), the copy button that swaps its
-icon without morphing (#33985) and the pressed wrap toggle (#13208) are ported. Sharing the generic implementation with
+icon without morphing (#33985) and the pressed wrap toggle (#13208) and the copy that leaves out the fence's closing newline (#37284) are ported. Sharing the generic implementation with
 upstream's extracted `chat/MarkdownCodeBlock.tsx` remains an open follow-up. Closed Mermaid fences render
 even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
 through `scient/presentation/ScientRichFence.tsx`. Its Mermaid card, document previews and Word
@@ -645,6 +645,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`6b7027b1f43eebc4c7edf5304236a0775b2d8928` is recorded in
+[the 2026-11-16 6b7027b1f4 receipt](docs/internals/t3-upstream-sync-20261116-6b7027b1f4.md).
+Literal merge `8bcb5e3cb27745baf2a9bda2a5883235ca7dde94` has owned base
+`fd426be8f43870f1df67a3382959e62dff9b89d6` and the frozen official target as parents, retaining
+the 53 official commits after `5070931521`. The range is fixes: work a dead provider process was
+running ends instead of staying Running, one thread's lock no longer stalls other threads' wakes
+and queued runs, file tabs keep their scroll position, and T3's migration 96 lands as Scient's 100. Release remains separate.
+
+The previous committed alignment through
 `507093152148c0d31c09bcd40e3ce4b5214a8557` is recorded in
 [the 2026-11-15 5070931521 receipt](docs/internals/t3-upstream-sync-20261115-5070931521.md).
 Literal merge `ef92b7b172029310fd364c57547fe2ae72dbafba` has owned base
