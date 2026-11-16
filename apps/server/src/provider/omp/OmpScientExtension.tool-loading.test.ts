@@ -13,6 +13,7 @@ import { scientTools } from "../../mcp/ScientOperationCatalog.ts";
 import { scientAgentToolCopy } from "../ScientAgentCopy.ts";
 import { scientAgentTarget } from "../scient/ScientAgentTarget.ts";
 import {
+  SCIENT_ALWAYS_LOADED_TOOLS,
   SCIENT_CONNECTOR_LOAD_MODE_ENV,
   scientConnectorLoadMode,
 } from "../scient/ScientAgentToolLoading.ts";
@@ -115,7 +116,7 @@ const connectorTools = Array.from({ length: 30 }, (_, index) => ({
   },
 }));
 
-it("bounds always-sent connector schemas on capable Scient runtimes and preserves legacy calls", async () => {
+it("bounds always-sent schemas on capable runtimes and preserves deferred and legacy calls", async () => {
   const catalog = [...scientTools, ...hostMcpTools].map((tool) =>
     scientAgentToolCopy({
       name: tool.name,
@@ -152,6 +153,7 @@ it("bounds always-sent connector schemas on capable Scient runtimes and preserve
       ["0.1.3", "18.13.0", scientAgentTarget],
       ["0.1.4", "18.4.8", scientAgentTarget],
       ["18.18.0", "18.18.0", ompTarget],
+      ["18.17.0", "18.17.0", ompTarget],
     ] as const) {
       const identity =
         target === scientAgentTarget
@@ -200,17 +202,34 @@ it("bounds always-sent connector schemas on capable Scient runtimes and preserve
         hosts.push(tools);
         expect(tools).toHaveLength(catalog.length + 450);
         expect(tools.filter((tool) => tool.loadMode === "essential")).toHaveLength(
-          mode === "discoverable" ? catalog.length : catalog.length + 450,
+          mode === "discoverable" ? SCIENT_ALWAYS_LOADED_TOOLS.length : catalog.length + 450,
         );
-        expect(tools.find((tool) => tool.name === "tool_search")?.loadMode).toBe("essential");
+        expect(tools.find((tool) => tool.name === "tool_search")?.loadMode).toBe(
+          mode === "discoverable" ? "discoverable" : "essential",
+        );
         expect(tools.find((tool) => tool.name === "delegate_task")?.loadMode).toBe("essential");
         expect(
           tools
             .filter((tool) => catalog.some(({ name }) => name === tool.name))
-            .every((tool) => tool.loadMode === "essential"),
+            .every(
+              (tool) =>
+                tool.loadMode ===
+                (mode === "discoverable" && !SCIENT_ALWAYS_LOADED_TOOLS.includes(tool.name)
+                  ? "discoverable"
+                  : "essential"),
+            ),
         ).toBe(true);
+        const awareness = handlers.get("before_agent_start")!({ systemPrompt: ["base"] });
+        expect(awareness).toBeDefined();
         // Both a continuation and a subagent re-import must retain executable connector routes.
         for (const prompt of ["first", "continue"]) {
+          expect(
+            await tools.find((tool) => tool.name === "scient_connector_list")!.execute("call", {}),
+          ).toMatchObject({
+            content: [
+              { type: "text", text: "https://fixture.invalid/scient:scient_connector_list" },
+            ],
+          });
           handlers.get("before_agent_start")!({ systemPrompt: [prompt] });
           expect(
             await tools.find((tool) => tool.name === "github__search_records")!.execute("call", {}),
@@ -239,7 +258,7 @@ it("bounds always-sent connector schemas on capable Scient runtimes and preserve
         bytes,
         estimatedTokens: Math.ceil(bytes / 4),
       });
-      if (mode === "discoverable") expect(bytes).toBeLessThan(128_000);
+      if (mode === "discoverable") expect(bytes).toBeLessThan(32_000);
       else expect(bytes).toBeGreaterThan(800_000);
     }
     process.stdout.write(
