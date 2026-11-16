@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -257,6 +258,20 @@ test("a run that saw an older slot cannot claim beside the live holder", () => {
   NodeAssert.equal(claimGatesSlot(commonDir, 0, stale), null);
   NodeAssert.deepEqual(slots(), [2]);
   NodeAssert.equal(owner(2).root, "later");
+  // Its rename onto slot 1 failed, and slot 1 was cleared before it looked again.
+  const fs = NodeModule.createRequire(import.meta.url)("node:fs");
+  const renameSync = fs.renameSync;
+  fs.renameSync = () => {
+    throw Object.assign(new Error("taken"), { code: "EPERM" });
+  };
+  NodeModule.syncBuiltinESMExports();
+  try {
+    NodeAssert.equal(claimGatesSlot(commonDir, 0, stale), null);
+  } finally {
+    fs.renameSync = renameSync;
+    NodeModule.syncBuiltinESMExports();
+  }
+  NodeAssert.deepEqual(slots(), [2]);
   later();
 });
 

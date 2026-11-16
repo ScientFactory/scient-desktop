@@ -271,7 +271,8 @@ export function claimGatesSlot(commonDir, seen, owner) {
     NodeFS.renameSync(staging, NodePath.join(lock, String(slot)));
   } catch (error) {
     NodeFS.rmSync(staging, { recursive: true, force: true });
-    if (NodeFS.existsSync(NodePath.join(lock, String(slot)))) return null;
+    // Taken: that slot, or a later one once its holder cleared it. The highest slot stays.
+    if (slots(lock).some((taken) => taken >= slot)) return null;
     throw error;
   }
   if (Math.max(...slots(lock)) === slot) return slot;
