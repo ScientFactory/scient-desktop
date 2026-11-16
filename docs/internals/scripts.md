@@ -183,6 +183,26 @@ prove every workspace was checked. Record task coverage and qualify missing pack
 smoke run that leaves its temporary home empty resolved state elsewhere and fails.
 `--only fmt,lint` runs a subset and labels the result partial.
 
+The test gate is `pnpm run test` in two parts:
+
+- **Every package except the server** runs in one workspace aggregate. After a failure, that
+  aggregate cancels running packages and skips their dependents. The gate reads vp's run summary:
+  a package that ran to its own failure is a complete result, and the cancelled and skipped
+  packages run again on their own (all of them if the summary cannot be read). The receipt
+  names every failed package.
+- **The server suite** runs alone with files in parallel, like hosted CI's server shards:
+  half the CPUs, at most six, and at least 4 GiB of memory per worker (`--server-workers N`
+  overrides it; `1` is the serial run). The server's config keeps `fileParallelism: false`, so
+  ordinary and targeted local runs are unchanged. When up to 20 files fail, each runs once
+  more, alone, and the receipt lists it under "failed again alone" or "passed when rerun alone".
+  Both fail the gate. One passing rerun does not show why the file failed; treat it as a
+  fault to investigate, not a pass. More failures are listed without a rerun.
+
+A run that includes typecheck, test, build or smoke first takes a lock in the repository's
+shared Git directory, so full runs from different worktrees queue instead of slowing each other
+down and failing under load. It prints which worktree it is waiting for. A lock whose process has
+exited is taken over. Focused `vp test run` commands do not take the lock.
+
 On Windows the repository-wide test aggregate is reported as not run: the local aggregate
 is not a supported Windows lane yet (see `windows-tests.yml`), so hosted test
 qualification of the pushed candidate remains pending. `--tests` runs it anyway. Run
