@@ -14,6 +14,23 @@ export function panelCategory(surface: RightPanelSurface): string {
   }
 }
 
+function fileTabName(surface: RightPanelSurface): string | null {
+  if (surface.kind === "file") return surface.attachment?.name ?? surface.relativePath;
+  return surface.kind === "scient" && surface.module === "file" ? surface.path : null;
+}
+
+/**
+ * What a right-panel tab reports when it is shown. A file tab adds its extension, which the
+ * analytics contract keeps only when it is on its list of known file types.
+ */
+export function panelViewProperties(surface: RightPanelSurface): Record<string, string> {
+  const category = panelCategory(surface);
+  const name = fileTabName(surface)?.split(/[\\/]/).at(-1);
+  if (name === undefined) return { category };
+  const dot = name.lastIndexOf(".");
+  return { category, fileType: dot > 0 ? name.slice(dot + 1).toLowerCase() : "none" };
+}
+
 // Pages split or renamed from a page the deployed gateway's contract names report as that page.
 const CONTRACT_SECTION_BY_PAGE: Readonly<Record<string, string>> = {
   about: "general",

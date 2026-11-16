@@ -2363,6 +2363,45 @@
       }
     },
     {
+      "case": "panel.viewed:file-csv",
+      "name": "panel.viewed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "category": "file-preview",
+        "fileType": "csv",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "panel.viewed:file-none",
+      "name": "panel.viewed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "category": "file-preview",
+        "fileType": "none",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "panel.viewed:file-private",
+      "name": "panel.viewed",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "category": "file-preview",
+        "fileType": "other",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
       "case": "provider.turn.sent:scient",
       "name": "provider.turn.sent",
       "privacyLevel": "product",

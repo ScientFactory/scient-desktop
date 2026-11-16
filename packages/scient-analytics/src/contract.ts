@@ -869,6 +869,36 @@ const VIEW_PROPERTIES = {
   "feature.viewed": ["feature"],
 } as const;
 
+// The extensions a file tab reports. Any other extension is "other" and a name without one is
+// "none", so an unusual extension can never identify a file or a person.
+const FILE_TYPES: ReadonlySet<string> = new Set(
+  [
+    // Documents and writing
+    "pdf md mdx markdown txt rtf doc docx odt pages epub html htm tex bib sty cls bbl typ rst org",
+    // Slides and spreadsheets
+    "ppt pptx odp key xls xlsx xlsm ods numbers csv tsv",
+    // Structured text and configuration
+    "json jsonl ndjson yaml yml toml xml ini cfg conf log lock diff patch",
+    // Scientific and statistical data
+    "parquet feather arrow h5 hdf5 nc mat npy npz pkl rds rdata rda dta sav sas7bdat sqlite sqlite3 db duckdb",
+    "fits fit edf bdf nii dcm mzml fasta fa fastq fq bam sam vcf bed gff gtf pdb cif mol mol2 sdf xyz",
+    "geojson shp kml gpx",
+    // Code and notebooks
+    "py ipynb r rmd qmd jl m mlx stan do sas sql js mjs cjs ts tsx jsx java c h cpp cc hpp cs go rs swift kt rb php",
+    "sh bash zsh ps1 lua scala f f90 cu css scss vue svelte dart hs ex pl",
+    // Images, video and audio
+    "png jpg jpeg gif webp svg bmp tif tiff heic avif ico mp4 mov webm mkv avi mp3 wav m4a ogg flac",
+    // Diagrams, archives and fonts
+    "mmd mermaid drawio excalidraw zip tar gz tgz 7z rar bz2 xz ttf otf woff woff2",
+  ].flatMap((group) => group.split(" ")),
+);
+
+function normalizedFileType(value: unknown): string {
+  if (typeof value !== "string") return "other";
+  const type = value.toLowerCase();
+  return type === "none" || FILE_TYPES.has(type) ? type : "other";
+}
+
 /**
  * Converts inherited T3 analytics calls into Scient's bounded wire contract.
  * Unknown events are deliberately ignored until they receive a registered
@@ -1331,6 +1361,8 @@ function normalizeEvent(
       for (const key of VIEW_PROPERTIES[name]) {
         properties[key] = normalizedIdentifier(property(input, key), "other");
       }
+      if (name === "panel.viewed" && Object.hasOwn(input, "fileType"))
+        properties.fileType = normalizedFileType(property(input, "fileType"));
       return { name, privacyLevel: "product", priority: "core", properties };
     }
     case "provider.turn.usage": {
