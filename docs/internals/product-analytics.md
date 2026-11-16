@@ -760,9 +760,9 @@ The desktop updater records two Essential events, both fully closed: their norma
 field, so nothing passes through as recorded. Versions are public release numbers or omitted;
 URLs, hosts, paths, raw errors and the updater's `message` never enter them.
 
-`app.update.outcome` is one outcome per step attempt, with `step` and `outcome`: `check`
-(`available`, `up-to-date`, `failed`), `download` (`started`, `completed`, `failed`), `install`
-(`handoff-attempted`, `failed`) and `apply` (`completed`, `not-applied`, `superseded`). `trigger`
+`app.update.outcome` records a start and one terminal outcome per check/download attempt:
+`check` and `download` (`started`, `completed`, `failed`), `install` (`handoff-attempted`,
+`failed`) and `apply` (`completed`, `not-applied`, `superseded`). `trigger`
 is `user` or `background` (startup and four-hourly checks, the background download).
 `failureClass` (failed only) comes from electron-updater's codes, HTTP statuses and Node/Chromium
 network errors: `network`, `timeout`, `certificate`, `http_4xx`, `http_5xx`, `feed` (the feed lacks
@@ -780,8 +780,9 @@ no timer that restarts servers after the handoff.
 
 `app.update.summary` is sent at launch, when the status settles somewhere new (a check in
 progress is not a change) and daily while running: `reason`, `status`, `channel`, `behind`
-(`yes` when a newer offer is known, `no` after a successful check found none, otherwise
-`unknown`), `stageAgeBucket`, `lastCheckAgeBucket` (last successful check, or `never`),
+(`yes` when a newer offer is known, `no` for an approved older/equal target or a
+successful check that found none, and `unknown` after a failed check even if an older
+offer remains retained), `stageAgeBucket`, `lastCheckAgeBucket` (last successful check, or `never`),
 `errorContext` on errors, `progressBucket` and `sinceProgressBucket` while downloading,
 `readyAgeBucket` when downloaded, `disabledClass` when off and `droppedFactsBucket`. A ready
 update waiting for days is not a failed install.

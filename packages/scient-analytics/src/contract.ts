@@ -340,7 +340,7 @@ const HEALTH_OPERATIONS = new Set([
 const HEALTH_OUTCOMES = new Set(["started", "completed", "failed", "abnormal"]);
 // Desktop app updates: each step's outcomes, and why a step failed.
 const UPDATE_STEP_OUTCOMES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  check: ["available", "up-to-date", "failed"],
+  check: ["started", "completed", "failed"],
   download: ["started", "completed", "failed"],
   install: ["handoff-attempted", "failed"],
   apply: ["completed", "not-applied", "superseded"],

@@ -170,7 +170,7 @@ describe("DesktopUpdateFacts", () => {
       const journal = yield* inLaunch(home, "true", (facts) =>
         Effect.gen(function* () {
           for (let index = 0; index < 66; index += 1) {
-            yield* facts.record("app.update.outcome", { step: "check", outcome: "up-to-date" });
+            yield* facts.record("app.update.outcome", { step: "check", outcome: "completed" });
           }
           yield* facts.record("app.update.summary", { reason: "daily", status: "up-to-date" });
           return yield* nextOffers(facts, facts.sourceReady(PRIMARY_INSTANCE_ID));

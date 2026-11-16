@@ -6,6 +6,7 @@
  * @module DesktopUpdateOutcomes
  */
 import type { DesktopUpdateState } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -199,12 +200,21 @@ export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: 
     const now = yield* Clock.currentTimeMillis;
     const lastCheck = yield* Ref.get(lastCheckRef);
     const lastSuccessfulCheckAt = yield* Ref.get(lastSuccessfulCheckAtRef);
-    const offered = state.availableVersion !== null || state.downloadedVersion !== null;
+    const targetVersion = state.downloadedVersion ?? state.availableVersion;
     yield* record("app.update.summary", {
       reason,
       status: state.status,
       channel: state.channel,
-      behind: offered ? "yes" : Option.isSome(lastCheck) && lastCheck.value.ok ? "no" : "unknown",
+      behind:
+        Option.isSome(lastCheck) && !lastCheck.value.ok
+          ? "unknown"
+          : targetVersion !== null
+            ? compareSemverVersions(targetVersion, state.currentVersion) > 0
+              ? "yes"
+              : "no"
+            : Option.isSome(lastCheck)
+              ? "no"
+              : "unknown",
       stageAgeMs: Math.max(0, now - times.statusSince),
       ...Option.match(lastSuccessfulCheckAt, {
         onNone: () => ({}),
@@ -232,10 +242,10 @@ export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: 
     checkStarted: (reason: string) =>
       begin("check", null).pipe(
         Effect.provideService(CurrentUpdateTrigger, checkTrigger(reason)),
-        Effect.asVoid,
+        Effect.flatMap((attempt) => outcome("check", attempt, "started")),
       ),
     checkFinished: (state: DesktopUpdateState) =>
-      finish("check", state.availableVersion === null ? "up-to-date" : "available", {
+      finish("check", "completed", {
         targetVersion: state.availableVersion,
       }),
     checkFailed: (cause: unknown) => finish("check", "failed", { cause }),

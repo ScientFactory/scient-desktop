@@ -1,15 +1,19 @@
 import * as NodeModule from "node:module";
 
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as DesktopUpdateFacts from "../scient/updateOutcomes/DesktopUpdateFacts.ts";
+import * as DesktopUpdateOutcomes from "../scient/updateOutcomes/DesktopUpdateOutcomes.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness, type UpdatesHarnessOptions } from "./updatesTestHarness.ts";
+import { createInitialDesktopUpdateState } from "./updateMachine.ts";
 
 const requireFromUpdater = NodeModule.createRequire(
   NodeModule.createRequire(import.meta.url).resolve("electron-updater"),
@@ -41,6 +45,8 @@ function recordingHarness(options: UpdatesHarnessOptions = {}) {
   return {
     harness,
     outcomes,
+    facts,
+    recorded,
     layer: Layer.merge(TestClock.layer(), harness.layer.pipe(Layer.provide(facts))),
   };
 }
@@ -71,10 +77,49 @@ describe("DesktopUpdates outcomes", () => {
         yield* updates.check("menu");
         yield* flushCallbacks;
         const checks = outcomes("check");
-        assert.lengthOf(checks, 1);
-        assert.include(checks[0], { outcome: "failed", failureClass: "network", trigger: "user" });
+        assert.deepEqual(
+          checks.map((check) => check.outcome),
+          ["started", "failed"],
+        );
+        assert.include(checks[1], {
+          failureClass: "network",
+          trigger: "user",
+          attemptRef: checks[0]?.attemptRef,
+        });
       }),
     ).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not label an approved downgrade or an unreachable feed as behind", () => {
+    const { facts, recorded, layer } = recordingHarness();
+    return Effect.gen(function* () {
+      const outcomes = yield* DesktopUpdateOutcomes.make({
+        facts: Option.some(yield* DesktopUpdateFacts.DesktopUpdateFacts),
+        packageKind: "zip",
+        sourceKind: "github",
+        policyOff: false,
+      });
+      const state = {
+        ...createInitialDesktopUpdateState(
+          "1.2.4-nightly.20261027.1",
+          { appArch: "x64", hostArch: "x64", runningUnderArm64Translation: false },
+          "latest",
+        ),
+        status: "available" as const,
+        availableVersion: "1.2.3",
+      };
+      yield* outcomes.checkStarted("menu");
+      yield* outcomes.checkFinished(state);
+      yield* outcomes.summaries(state, Stream.empty);
+      assert.equal(recorded.at(-1)?.properties.behind, "no");
+      yield* outcomes.checkStarted("menu");
+      yield* outcomes.checkFailed(Object.assign(new Error("offline"), { code: "ENETUNREACH" }));
+      yield* outcomes.summaries(
+        { ...state, status: "error", availableVersion: "1.2.5" },
+        Stream.empty,
+      );
+      assert.equal(recorded.at(-1)?.properties.behind, "unknown");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(layer, facts, NodeCrypto.layer)));
   });
 
   it.effect("records one failed install after the handoff, however many paths report it", () => {
