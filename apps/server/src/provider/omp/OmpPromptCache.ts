@@ -12,21 +12,62 @@ const PromptCacheFrame = Schema.Struct({
   }),
 });
 const decodePromptCacheFrame = Schema.decodeUnknownOption(PromptCacheFrame);
+const decodeWarmingStoppedFrame = Schema.decodeUnknownOption(
+  Schema.Struct({
+    ...PromptCacheFrame.fields,
+    stoppedAt: Schema.Finite.check(Schema.isGreaterThan(0)),
+  }),
+);
 
 type TokenUsage = Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
 
 /**
- * `usage` with when its one-hour prompt cache expires, which idle compaction
- * times itself against. A five-minute entry would compact after every short
- * pause, so only the one-hour tier carries an expiry.
+ * A one-hour entry carries its expiry; a five-minute one only its tier, since the agent keeps it warm
+ * (`ompWarmingStopped` says when that stops). No frame clears what an earlier reply of the turn
+ * recorded, since the turn's usage merges each reply's.
  */
 export const withOmpPromptCacheExpiry = (usage: TokenUsage, event: unknown): TokenUsage => {
   const frame = Option.getOrUndefined(decodePromptCacheFrame(event));
-  if (frame?.promptCache.tier !== "long") return usage;
-  const { touchedAt, ttlMs } = frame.promptCache;
+  if (frame === undefined)
+    return {
+      ...usage,
+      promptCacheTier: undefined,
+      promptCacheTtlMs: undefined,
+      promptCacheExpiresAt: undefined,
+    };
+  const { tier, touchedAt, ttlMs } = frame.promptCache;
+  if (tier === "short")
+    return {
+      ...usage,
+      promptCacheTier: tier,
+      promptCacheTtlMs: undefined,
+      promptCacheExpiresAt: undefined,
+    };
   return {
     ...usage,
+    promptCacheTier: tier,
     promptCacheTtlMs: Math.trunc(ttlMs),
     promptCacheExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(touchedAt + ttlMs)),
+  };
+};
+
+/** Scient Agent's warming stopped; the entry it left, when the next request would still read it. */
+export interface OmpWarmingStopped {
+  readonly stoppedAt: string;
+  readonly expiresAt: string;
+}
+
+/**
+ * What a `cache_warming_stopped` frame leaves for idle compaction: the five-minute entry warming left,
+ * which nothing refreshes any more, or null when there is none (expired, conversation changed, a
+ * one-hour entry, which compacts on its own schedule). `touchedAt` is the last refresh that hit.
+ */
+export const ompWarmingStopped = (event: unknown): OmpWarmingStopped | null => {
+  const frame = Option.getOrUndefined(decodeWarmingStoppedFrame(event));
+  if (frame?.promptCache.tier !== "short") return null;
+  const { touchedAt, ttlMs } = frame.promptCache;
+  return {
+    stoppedAt: DateTime.formatIso(DateTime.makeUnsafe(frame.stoppedAt)),
+    expiresAt: DateTime.formatIso(DateTime.makeUnsafe(touchedAt + ttlMs)),
   };
 };

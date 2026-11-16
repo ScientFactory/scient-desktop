@@ -79,7 +79,9 @@ it.live(
         const peer = scriptedOmpRpc({
           models: [{ provider: "test", id: "selected", input: ["text"] }],
           initial: { provider: "test", id: "selected" },
-          maxFrameBytes: 1024,
+          // SCIENT-FORK:START — the extended event filter must fit before prompt preflight.
+          maxFrameBytes: 1280,
+          // SCIENT-FORK:END
         });
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const adapter = yield* makeOmpAdapterV2({
@@ -121,7 +123,9 @@ it.live(
           const attachment = {
             type: "file" as const,
             id: ChatAttachmentId.make(id),
-            name: `archive-${index}.zip`,
+            // SCIENT-FORK:START — keep the file-backed prompt above the larger frame limit.
+            name: `archive-${index}-${"x".repeat(200)}.zip`,
+            // SCIENT-FORK:END
             mimeType: "application/zip",
             sizeBytes: 1024,
           };

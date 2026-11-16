@@ -125,6 +125,9 @@ const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2Pro
 export type NativeSessionUpdate =
   | {
       readonly type: "usage";
+      // SCIENT-FORK:START — the five-minute cache entry warming stopped on, or null for none.
+      readonly promptCacheWarmingStopped?: OrchestrationV2ProviderThread["promptCacheWarmingStopped"];
+      // SCIENT-FORK:END
       readonly tokenUsage?: Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">;
       readonly contextUsage?: ThreadTokenUsageSnapshot;
       // SCIENT-FORK: one model request's counts, added up into the turn's usage.
@@ -1186,6 +1189,22 @@ export function makeNativeSessionAdapterV2(
                       providerTurn: active.turn,
                     });
                   }
+                  // SCIENT-FORK:START — warming stopped, often long after the run's subscribers left:
+                  // session-scoped, so the thread keeps the entry that times its idle compaction.
+                  if (thread && update.promptCacheWarmingStopped !== undefined) {
+                    thread = {
+                      ...thread,
+                      promptCacheWarmingStopped: update.promptCacheWarmingStopped,
+                      updatedAt: now,
+                    };
+                    yield* emit({
+                      type: "provider_thread.updated",
+                      driver,
+                      providerThread: thread,
+                      sessionScoped: true,
+                    });
+                  }
+                  // SCIENT-FORK:END
                   return;
                 }
                 let running = active;
