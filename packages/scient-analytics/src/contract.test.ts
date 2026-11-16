@@ -209,6 +209,20 @@ describe("Scient analytics contract", () => {
         failureClass: "unknown",
       },
     });
+    // The run's hash and the agent build pass; anything shaped otherwise is dropped.
+    const run = (runRef: string, providerVersion: string) =>
+      normalizeInheritedEvent(
+        "provider.turn.failed",
+        { provider: "scient", runRef, providerVersion, started: false },
+        context,
+      )?.properties;
+    expect(run("0123456789abcdef", "0.1.11")).toMatchObject({
+      runRef: "0123456789abcdef",
+      providerVersion: "0.1.11",
+      started: false,
+    });
+    expect(run("private-run-id", "custom build")).not.toHaveProperty("runRef");
+    expect(run("private-run-id", "custom build")).not.toHaveProperty("providerVersion");
   });
 
   it("records events and fields without a Scient normalizer, as T3 does", () => {

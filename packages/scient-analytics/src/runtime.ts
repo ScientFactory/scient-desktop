@@ -214,6 +214,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
           queuedCount: response.queuedCount,
           droppedCount: response.droppedCount,
           retryCount: response.retryCount,
+          oldestEventAgeMs: response.oldestEventAgeMs,
           deliveryClass: response.deliveryClass,
         });
         return;

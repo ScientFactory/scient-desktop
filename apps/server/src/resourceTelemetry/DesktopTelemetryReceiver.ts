@@ -622,6 +622,12 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
                       operation: "termination",
                       outcome: "abnormal",
                       failureClass: message.failureClass,
+                      // SCIENT-FORK:START — how the process ended
+                      ...(message.exitReason === undefined
+                        ? {}
+                        : { exitReason: message.exitReason }),
+                      ...(message.exitCode === undefined ? {} : { exitCode: message.exitCode }),
+                      // SCIENT-FORK:END
                     })
                     .pipe(Effect.ignoreCause())
                 : Effect.void,

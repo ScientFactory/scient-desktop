@@ -23,6 +23,9 @@ import { enableAutomaticSpellingLanguages } from "../scient/spelling/macSpelling
 // SCIENT-FORK:START — development builds can trust a local test site's certificate.
 import { developmentTrustedCertificates } from "../scient/browser/developmentCertificates.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — soft-navigation detection can crash a renderer.
+import { disableFeaturesWithSoftNavigation } from "../scient/chromium/softNavigation.ts";
+// SCIENT-FORK:END
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
@@ -202,6 +205,15 @@ export const make = Effect.gen(function* () {
         Electron.app.commandLine.appendSwitch("disable-features", disableFeatures);
       }
     }
+
+    // SCIENT-FORK:START — soft-navigation detection can crash a renderer, on every platform.
+    // Runs after the Linux merge: Chromium keeps only the last --disable-features value.
+    const disableFeatures = disableFeaturesWithSoftNavigation(
+      readCommandLineSwitchValue(Electron.app.commandLine, "disable-features"),
+    );
+    if (disableFeatures !== null)
+      Electron.app.commandLine.appendSwitch("disable-features", disableFeatures);
+    // SCIENT-FORK:END
 
     return { linux, linuxPasswordStoreCommandLine };
   });

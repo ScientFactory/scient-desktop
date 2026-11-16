@@ -1038,6 +1038,9 @@ export const make = Effect.gen(function* () {
               type: "scientAppHealth",
               component: "renderer",
               failureClass: details.reason === "oom" ? "resource-exhaustion" : "process-crash",
+              // `recoverable` admitted only these reasons.
+              exitReason: details.reason as "crashed" | "oom" | "killed" | "abnormal-exit",
+              exitCode: details.exitCode,
             })
             .pipe(Effect.ignoreCause()),
         );
