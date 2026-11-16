@@ -5,7 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterEach, test, vi } from "vite-plus/test";
-import { acquireGatesLock, main, serverWorkers } from "./scient-alignment-gates.mjs";
+import {
+  acquireGatesLock,
+  claimGatesSlot,
+  main,
+  serverWorkers,
+} from "./scient-alignment-gates.mjs";
 
 const cli = NodeURL.fileURLToPath(new URL("./scient-alignment-gates.mjs", import.meta.url));
 const directories = [];
@@ -191,24 +196,37 @@ test("a failed server file runs once more alone, and the gate fails either way",
   );
 });
 
-test("gates runs queue behind a live holder and take over a dead one's lock", () => {
+const lockFixture = () => {
   const commonDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-lock-"));
   directories.push(commonDir);
-  const release = acquireGatesLock(commonDir, { root: "first" });
+  const lock = NodePath.join(commonDir, "scient-alignment-gates.lock");
+  const slots = () =>
+    NodeFS.readdirSync(lock)
+      .filter((name) => /^\d+$/u.test(name))
+      .map(Number)
+      .sort((a, b) => a - b);
+  const owner = (slot) =>
+    JSON.parse(NodeFS.readFileSync(NodePath.join(lock, String(slot), "owner.json"), "utf8"));
   const dead = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
+  return { commonDir, lock, slots, owner, dead };
+};
+
+test("gates runs queue behind a live holder and take over a dead one's slot", () => {
+  const { commonDir, lock, slots, owner, dead } = lockFixture();
+  const release = acquireGatesLock(commonDir, { root: "first" });
   let waits = 0;
   const messages = [];
   const second = acquireGatesLock(commonDir, {
     root: "second",
     log: (line) => messages.push(line),
-    // The live holder finishes during the second wait, then a crashed run leaves its lock.
+    // The live holder finishes during the second wait, then a crashed run takes the next slot.
     wait: () => {
       waits++;
       if (waits === 2) {
         release();
-        NodeFS.mkdirSync(NodePath.join(commonDir, "scient-alignment-gates.lock"));
+        NodeFS.mkdirSync(NodePath.join(lock, "2"));
         NodeFS.writeFileSync(
-          NodePath.join(commonDir, "scient-alignment-gates.lock", "owner.json"),
+          NodePath.join(lock, "2", "owner.json"),
           JSON.stringify({ pid: dead, root: "crashed", started: "" }),
         );
       }
@@ -217,47 +235,40 @@ test("gates runs queue behind a live holder and take over a dead one's lock", ()
   NodeAssert.equal(waits, 2);
   NodeAssert.equal(messages.length, 1);
   NodeAssert.match(messages[0], /Waiting for the gates run in first/u);
+  NodeAssert.deepEqual(slots(), [3]);
+  NodeAssert.equal(owner(3).root, "second");
   second();
-  NodeAssert.equal(
-    NodeFS.existsSync(NodePath.join(commonDir, "scient-alignment-gates.lock")),
-    false,
-  );
+  const third = acquireGatesLock(commonDir, { root: "third", wait: () => NodeAssert.fail() });
+  NodeAssert.deepEqual(slots(), [4]);
+  third();
 });
 
-test("a dead run's lock is cleared only by one recovery at a time", () => {
-  const commonDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-lock-"));
-  directories.push(commonDir);
-  const lock = NodePath.join(commonDir, "scient-alignment-gates.lock");
-  const dead = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
-  NodeFS.mkdirSync(lock);
-  NodeFS.writeFileSync(NodePath.join(lock, "owner.json"), JSON.stringify({ pid: dead }));
-  NodeFS.mkdirSync(`${lock}.recovery`);
-  let waits = 0;
-  const release = acquireGatesLock(commonDir, {
-    root: "next",
-    // Another waiter's recovery is in progress; it ends during the first wait.
-    wait: () => {
-      waits++;
-      NodeAssert.equal(NodeFS.existsSync(NodePath.join(lock, "owner.json")), true);
-      NodeFS.rmSync(`${lock}.recovery`, { recursive: true });
-    },
-  });
-  NodeAssert.equal(waits, 1);
+test("a run that saw an older slot cannot claim beside the live holder", () => {
+  const { commonDir, slots, owner, dead } = lockFixture();
+  const stale = { pid: dead, root: "stale", token: "stale", started: "" };
+  const release = acquireGatesLock(commonDir, { root: "live" });
+  // It saw no slot, then paused while the live run claimed slot 1.
+  NodeAssert.equal(claimGatesSlot(commonDir, 0, stale), null);
+  NodeAssert.deepEqual(slots(), [1]);
+  // It saw slot 1 before a later run cleared it, then claims into the gap below that run.
   release();
-  NodeAssert.equal(NodeFS.existsSync(`${lock}.recovery`), false);
+  const later = acquireGatesLock(commonDir, { root: "later" });
+  NodeAssert.deepEqual(slots(), [2]);
+  NodeAssert.equal(claimGatesSlot(commonDir, 0, stale), null);
+  NodeAssert.deepEqual(slots(), [2]);
+  NodeAssert.equal(owner(2).root, "later");
+  later();
 });
 
-test("a run whose lock was taken over leaves the new owner's lock when it ends", () => {
-  const commonDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-gates-lock-"));
-  directories.push(commonDir);
-  const lock = NodePath.join(commonDir, "scient-alignment-gates.lock");
+test("a run whose lock folder was deleted leaves the next owner's slot when it ends", () => {
+  const { commonDir, lock, slots } = lockFixture();
   const first = acquireGatesLock(commonDir, { root: "first" });
   NodeFS.rmSync(lock, { recursive: true });
   const second = acquireGatesLock(commonDir, { root: "second" });
   first();
-  NodeAssert.equal(NodeFS.existsSync(lock), true);
+  NodeAssert.equal(NodeFS.existsSync(NodePath.join(lock, String(slots()[0]), "released")), false);
   second();
-  NodeAssert.equal(NodeFS.existsSync(lock), false);
+  NodeAssert.equal(NodeFS.existsSync(NodePath.join(lock, String(slots()[0]), "released")), true);
 });
 
 test("server workers leave half the cores free, need 4 GiB each, and stay between 1 and 6", () => {

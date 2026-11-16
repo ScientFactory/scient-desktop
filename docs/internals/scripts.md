@@ -202,7 +202,8 @@ The test gate is `pnpm run test` in two parts:
 A run that includes typecheck, test, build or smoke first takes a lock in the repository's
 shared Git directory, so full runs from different worktrees queue instead of slowing each other
 down and failing under load. It prints which worktree it is waiting for. A lock whose process has
-exited is taken over, and a run only ever removes its own lock. Focused `vp test run`
+exited, or whose run has finished, is taken over by claiming the next numbered slot; the highest
+slot is the lock, no timeout decides, and no run removes a slot another run may hold. Focused `vp test run`
 commands do not take the lock.
 
 On Windows the repository-wide test aggregate is reported as not run: the local aggregate

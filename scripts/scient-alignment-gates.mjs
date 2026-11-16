@@ -234,64 +234,79 @@ const alive = (pid) => {
 };
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+const gatesLock = (commonDir) => NodePath.join(commonDir, "scient-alignment-gates.lock");
+const slots = (lock) =>
+  NodeFS.readdirSync(lock)
+    .filter((name) => /^\d+$/u.test(name))
+    .map(Number);
+const ownerOf = (lock, slot) => {
+  try {
+    return JSON.parse(NodeFS.readFileSync(NodePath.join(lock, String(slot), "owner.json"), "utf8"));
+  } catch {
+    return null;
+  }
+};
+const discard = (lock, slot) => {
+  const gone = NodePath.join(lock, `.gone-${NodeCrypto.randomUUID()}`);
+  try {
+    NodeFS.renameSync(NodePath.join(lock, String(slot)), gone);
+  } catch {
+    return;
+  }
+  NodeFS.rmSync(gone, { recursive: true, force: true });
+};
+
 /**
- * One gates run per repository, across its worktrees: the lock lives in the
- * shared Git directory. A lock whose process has exited is taken over.
+ * Claims slot `seen + 1` for `owner`, the slot after the highest one the caller saw.
+ * Returns it if it is now the highest slot, otherwise removes it and returns null.
+ */
+export function claimGatesSlot(commonDir, seen, owner) {
+  const lock = gatesLock(commonDir);
+  const slot = seen + 1;
+  const staging = NodePath.join(lock, `.claim-${owner.token}`);
+  NodeFS.mkdirSync(staging);
+  NodeFS.writeFileSync(NodePath.join(staging, "owner.json"), JSON.stringify(owner));
+  try {
+    // A slot always holds its owner, so renaming onto a taken one fails.
+    NodeFS.renameSync(staging, NodePath.join(lock, String(slot)));
+  } catch (error) {
+    NodeFS.rmSync(staging, { recursive: true, force: true });
+    if (NodeFS.existsSync(NodePath.join(lock, String(slot)))) return null;
+    throw error;
+  }
+  if (Math.max(...slots(lock)) === slot) return slot;
+  discard(lock, slot);
+  return null;
+}
+
+/**
+ * One gates run per repository, across its worktrees: the lock lives in the shared Git
+ * directory as numbered slots, and the highest slot is the lock. That slot is never
+ * removed, only marked released, and it is free once released or its process has exited.
+ * No timeout decides, and no run removes a slot another run may still hold.
  */
 export function acquireGatesLock(commonDir, { root, wait = sleep, log = console.log } = {}) {
-  const lock = NodePath.join(commonDir, "scient-alignment-gates.lock");
-  const ownerOf = (dir) => {
-    try {
-      return JSON.parse(NodeFS.readFileSync(NodePath.join(dir, "owner.json"), "utf8"));
-    } catch {
-      return null;
-    }
-  };
-  const recovery = `${lock}.recovery`;
+  const lock = gatesLock(commonDir);
+  NodeFS.mkdirSync(lock, { recursive: true });
   const token = NodeCrypto.randomUUID();
   let announced = false;
   for (;;) {
-    try {
-      NodeFS.mkdirSync(lock);
-      NodeFS.writeFileSync(
-        NodePath.join(lock, "owner.json"),
-        JSON.stringify({ pid: process.pid, root, token, started: new Date().toISOString() }),
-      );
-      // Only this run's lock: after a takeover, a late release leaves the new owner's.
+    const top = Math.max(0, ...slots(lock));
+    const holder = top === 0 ? null : ownerOf(lock, top);
+    const free =
+      holder === null ||
+      NodeFS.existsSync(NodePath.join(lock, String(top), "released")) ||
+      !alive(holder.pid);
+    if (free) {
+      const owner = { pid: process.pid, root, token, started: new Date().toISOString() };
+      const slot = claimGatesSlot(commonDir, top, owner);
+      if (slot === null) continue;
+      for (const older of slots(lock)) if (older < slot) discard(lock, older);
       return () => {
-        if (ownerOf(lock)?.token === token) NodeFS.rmSync(lock, { recursive: true, force: true });
+        // Only this run's slot: the lock folder may have been deleted by hand meanwhile.
+        if (ownerOf(lock, slot)?.token !== token) return;
+        NodeFS.writeFileSync(NodePath.join(lock, String(slot), "released"), "");
       };
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-    }
-    const holder = ownerOf(lock);
-    const ageOf = (dir) => Date.now() - NodeFS.statSync(dir, { throwIfNoEntry: false })?.mtimeMs;
-    // Unreadable: created a moment ago and not yet written, or left empty by a crash.
-    const dead = holder === null ? ageOf(lock) > 60_000 : !alive(holder.pid);
-    if (holder === null && !dead) {
-      wait(1000);
-      continue;
-    }
-    if (dead) {
-      // One recovery at a time, and the owner is checked again inside it: while the dead
-      // lock exists nobody else can take it, so only that lock is ever removed.
-      try {
-        NodeFS.mkdirSync(recovery);
-      } catch (error) {
-        if (error.code !== "EEXIST") throw error;
-        // A recovery holds this for milliseconds; one this old crashed.
-        if (ageOf(recovery) > 60_000) NodeFS.rmSync(recovery, { recursive: true, force: true });
-        else wait(1000);
-        continue;
-      }
-      try {
-        const current = ownerOf(lock);
-        if (current === null ? ageOf(lock) > 60_000 : current.token === holder?.token)
-          NodeFS.rmSync(lock, { recursive: true, force: true });
-      } finally {
-        NodeFS.rmSync(recovery, { recursive: true, force: true });
-      }
-      continue;
     }
     if (!announced) {
       log(
