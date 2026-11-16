@@ -804,7 +804,8 @@ export const make = Effect.gen(function* () {
           );
           continue;
         }
-        const result = yield* downloadAvailableUpdate;
+        // A check offered this update just now, so the download needs no refresh first.
+        const result = yield* downloadAvailableUpdate(false);
         if (result.completed) {
           yield* Ref.set(autoDownloadBackoffRef, Option.none());
           return;

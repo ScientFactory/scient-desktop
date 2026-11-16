@@ -863,13 +863,20 @@ describe("DesktopUpdates", () => {
     // electron-updater downloads the release its last checkForUpdates found.
     let published = "1.2.4";
     let lastChecked: string | undefined;
+    // SCIENT-FORK: the background download fails once, so the user's download is the next one.
+    let backgroundFailed = false;
     const harness = makeHarness({
       checkForUpdates: Effect.sync(() => {
         lastChecked = published;
         harness.emit("update-available", { version: published });
       }),
-      downloadUpdate: Effect.sync(() => {
+      downloadUpdate: Effect.suspend(() => {
+        if (!backgroundFailed) {
+          backgroundFailed = true;
+          return Effect.fail(downloadFailure);
+        }
         harness.emit("update-downloaded", { version: lastChecked });
+        return Effect.void;
       }),
     });
 
@@ -931,6 +938,7 @@ describe("DesktopUpdates", () => {
 
   it.effect("downloads the known offer when the check before downloading fails", () => {
     let checks = 0;
+    let backgroundFailed = false;
     const harness = makeHarness({
       checkForUpdates: Effect.suspend(() => {
         checks += 1;
@@ -945,8 +953,14 @@ describe("DesktopUpdates", () => {
         harness.emit("update-available", { version: "1.2.4" });
         return Effect.void;
       }),
-      downloadUpdate: Effect.sync(() => {
+      // SCIENT-FORK: the background download fails once, so the user's download is the next one.
+      downloadUpdate: Effect.suspend(() => {
+        if (!backgroundFailed) {
+          backgroundFailed = true;
+          return Effect.fail(downloadFailure);
+        }
         harness.emit("update-downloaded", { version: "1.2.4" });
+        return Effect.void;
       }),
     });
 
