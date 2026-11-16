@@ -45,7 +45,7 @@ it.effect("reports a saved paper as attached to its source, as the user's own re
       {
         root: "/project",
         papers: [{ doi: "10.1/x", source: { sourceId: "source-1", expectedRevision: 3 } }],
-        requester: { environmentId, browser: true, accounts: "all" },
+        requester: { environmentId, browser: true },
       },
     ]);
   }).pipe(

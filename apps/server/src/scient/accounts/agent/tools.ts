@@ -106,8 +106,11 @@ const credentials = metadata(
 const signIn = metadata(
   Tool.make("scient_account_sign_in", {
     ...common,
+    // A sign-in that works releases the papers waiting for it.
     dependencies: [
       ...common.dependencies,
+      FileSystem.FileSystem,
+      Path.Path,
       McpInvocationContext,
       OrchestratorMcpService,
       SecretRequests,
@@ -210,6 +213,8 @@ const add = metadata(
     failure: AccountsError,
     dependencies: [
       ...common.dependencies,
+      FileSystem.FileSystem,
+      Path.Path,
       McpInvocationContext,
       OrchestratorMcpService,
       SecretRequests,

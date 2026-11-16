@@ -186,7 +186,10 @@ scripts can't take your university sign-in's session.
 **Get PDF** attaches a source's paper; **Get missing PDFs** fetches a project's whole list, and
 agents queue any number. One queue runs every paper, one at a time per publisher, and pauses a
 publisher that refuses several in a row. A sign-in or a publisher's check asks you once, then every
-paper waiting on it continues, even after a restart. Many university licences forbid systematic
+paper waiting on it continues, even after a restart; so does connecting your university after an
+agent asked. What an agent's papers may use is decided each time one is tried, from that
+conversation's access in **Settings → Accounts & secrets**: a university it may not use is
+skipped, and its papers say "this conversation may not use …" until you allow it there. Many university licences forbid systematic
 downloading, so how many papers you fetch is your call. Scient saves only a PDF that is the paper,
 in the project's `papers` folder, and never fetches one twice. Papers an agent gets for your
 library also go on their source in the [Library](sources.md), which is added when missing.

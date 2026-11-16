@@ -260,6 +260,7 @@ import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDoc
 import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
 import { libraryIndexWarmLayer } from "./scient/sources/LibraryIndexWarm.ts";
+import { paperQueueRecoveryLayer } from "./scient/papers/PaperQueueRecovery.ts";
 import { libraryMovePassLayer } from "./scient/sources/LibraryMovePass.ts";
 import { finishLibraryRestoreAtStart } from "./scient/sources/LibraryRestoreRuns.ts";
 // SCIENT-FORK:START — generated-image temp files a crash left behind.
@@ -973,6 +974,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     documentCaptureStartupSweepLayer,
     libraryMovePassLayer,
     libraryIndexWarmLayer,
+    paperQueueRecoveryLayer,
     // SCIENT-FORK:START — generated-image temp files a crash left behind.
     generatedImageTempSweepLayer,
     // SCIENT-FORK:END

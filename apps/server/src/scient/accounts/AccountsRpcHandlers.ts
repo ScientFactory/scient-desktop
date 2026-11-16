@@ -24,6 +24,7 @@ import { endedWebsiteSessions } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
 import {
   continuePapersAsUser,
+  continueWaitingPapers,
   getPaperForSource,
   listPapersAsUser,
   requestPapersAsUser,
@@ -544,8 +545,13 @@ export const accountsUserRunsForRpc = Effect.gen(function* () {
           Effect.provideService(Path.Path, path),
         );
   return {
+    // A check can find sessions back, so papers waiting on the user go on.
     check: (input: AccountsCheckInput) =>
-      run((environmentId) => checkAccounts(input, environmentId)),
+      run((environmentId) =>
+        checkAccounts(input, environmentId).pipe(
+          Effect.tap(() => continueWaitingPapers(environmentId)),
+        ),
+      ),
     paperForSource: (input: AccountPaperForSourceInput) =>
       run((environmentId) =>
         getPaperForSource(input, environmentId).pipe(

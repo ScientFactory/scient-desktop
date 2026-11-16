@@ -766,9 +766,10 @@ export const PaperAsked = Schema.Struct({
 export type PaperAsked = typeof PaperAsked.Type;
 
 const PaperNeed = {
-  kind: Schema.Literals(["university", "sign-in", "check"]),
+  /** "access": a university is connected, but the conversation that asked may not use it. */
+  kind: Schema.Literals(["university", "sign-in", "check", "access"]),
   site: Schema.optional(Schema.String),
-  /** The university to sign in to, for a "sign-in". */
+  /** The university to sign in to, for a "sign-in", or to allow, for an "access". */
   accountId: Schema.optional(AccountId),
   openUrl: Schema.optional(Schema.String),
   profileId: Schema.optional(Schema.String),
