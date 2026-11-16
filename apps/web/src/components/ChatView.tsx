@@ -9,11 +9,11 @@ import {
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
-// SCIENT-FORK:START — Scient Agent's other signed-in accounts on a usage limit.
-import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
-import { scientAgentAlternativeModel } from "@t3tools/shared/scientAgentModelFallback";
-// SCIENT-FORK:END
+import {
+  resolveNewThreadModelSelection,
+  // SCIENT-FORK: the draft and resume banners share subscription eligibility.
+  resolveUsageLimitFallback,
+} from "@t3tools/shared/usageLimits";
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
 import { Button } from "./ui/button";
@@ -3359,19 +3359,22 @@ function ChatViewContent(props: ChatViewProps) {
     setThreadError,
   });
   const failedModel = activeThread?.modelSelection;
-  const failedProvider = providerStatuses.find(
-    (provider) => provider.instanceId === failedModel?.instanceId,
-  );
-  const continueModel =
+  const continueSelection =
     limitRecoveryRun !== null && canResume && failedModel
-      ? scientAgentAlternativeModel(
-          failedProvider,
-          failedModel.model,
-          (slug) =>
-            exhaustedUsageWindow(failedProvider, Date.parse(`${nowMinute}:00Z`), slug) !==
-            undefined,
-        )
+      ? resolveUsageLimitFallback({
+          currentSelection: failedModel,
+          fallbackSelection: settings.fallbackModelSelection,
+          providers: providerStatuses,
+          now: Date.parse(`${nowMinute}:00Z`),
+          settings,
+          projectId: activeThread?.projectId ?? null,
+        })
       : undefined;
+  const continueModel = continueSelection
+    ? providerStatuses
+        .find((provider) => provider.instanceId === continueSelection.instanceId)
+        ?.models.find((model) => model.slug === continueSelection.model)
+    : undefined;
   // SCIENT-FORK:END
   const limitRecoveryBanner =
     limitRecoveryRun !== null && activeThreadShell !== null
@@ -3386,15 +3389,11 @@ function ChatViewContent(props: ChatViewProps) {
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
           // SCIENT-FORK:START — continue at once with another signed-in model.
-          ...(continueModel && failedModel
+          ...(continueModel && continueSelection
             ? {
                 continueWith: {
                   modelName: continueModel.name,
-                  onContinue: () =>
-                    void onResumeWith({
-                      instanceId: failedModel.instanceId,
-                      model: continueModel.slug,
-                    }),
+                  onContinue: () => void onResumeWith(continueSelection),
                 },
               }
             : {}),

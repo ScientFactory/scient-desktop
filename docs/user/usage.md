@@ -205,6 +205,22 @@ Until then it shows no limits. Readings are not kept across a server restart.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Subscription quota fallback
+
+For Scient Agent, a new turn that needs a quota fallback and the explicit resume-after-limit
+action use the same selection policy. Scient first tries your explicitly configured fallback.
+It then considers eligible subscription accounts in this order: **OpenAI → Anthropic →
+Antigravity → Muse Code**, using each subscription's
+[preferred model](./providers.md#model-visibility-and-subscription-defaults), not catalog order.
+It skips hidden or unavailable models, signed-out accounts, exhausted quota, and models
+the provider reports as unsuitable for text generation.
+
+Automatic fallback never silently routes work to a metered API account. If no eligible
+subscription choice remains, choose a model or account explicitly or wait for quota to refill.
+Resuming a limited conversation remains an explicit action; the policy does not silently
+resume it or rewrite its saved model. Subscription defaults also leave existing threads,
+explicit selections, and your global default unchanged.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
