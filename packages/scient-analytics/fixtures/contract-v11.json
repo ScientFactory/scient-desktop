@@ -139,6 +139,7 @@
       "properties": {
         "step": "unknown",
         "outcome": "unknown",
+        "sourceKind": "github",
         "durationBucket": "under-1m",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
