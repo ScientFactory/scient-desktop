@@ -4051,7 +4051,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       offeredPromptSuggestion !== null && composerMode === null ? (
                         <span className="ms-2 inline-flex align-[1px]">
                           <Kbd variant="outline" dir="ltr">
-                            ⇥ Tab
+                            Tab
                           </Kbd>
                         </span>
                       ) : undefined
