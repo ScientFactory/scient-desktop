@@ -21,6 +21,7 @@ import {
 } from "../pdf/anchors/pdfRevealRequests";
 import { workspacePdfSource } from "../pdf/pdfSource";
 import { SourceAnnotations } from "./SourceAnnotations";
+import { readPdfPageLabels } from "./pdfQuotePageLabels";
 
 const client = vi.hoisted(() => ({
   read: vi.fn(),
@@ -243,6 +244,13 @@ describe("Source highlights and notes", () => {
       new Blob([new Uint8Array(await journal.save())], { type: "application/pdf" }),
     );
     using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(url) };
+    // pdf.js's worker starts once, under its own key: on a loaded machine its start alone can
+    // outlast the quote's 1.5 s, which then cites PDF page numbers by design.
+    await readPdfPageLabels({
+      contentKey: "worker-start",
+      url: async () => url,
+      timeoutMs: 30_000,
+    });
     assets.url.mockReset().mockResolvedValue(url);
     using copied = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     await using _screen = await render(
