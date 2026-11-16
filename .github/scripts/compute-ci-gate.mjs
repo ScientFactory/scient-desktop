@@ -1,6 +1,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
+import { resolveComparisonBase } from "./ci-comparison-base.cjs";
 
 // Unit tests run in the ordinary test lanes and no native suite imports them, so
 // changing one proves nothing the native suites would add. Integration and live
@@ -100,8 +101,8 @@ export function testGatePasses({ workspace, detection, changed, native }) {
 function detectChanges() {
   try {
     const event = JSON.parse(NodeFS.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
-    const base = event.pull_request?.base.sha ?? event.merge_group?.base_sha ?? event.before;
     const head = process.env.GITHUB_SHA;
+    const base = resolveComparisonBase({ event, head });
     if (![base, head].every((sha) => typeof sha === "string" && /^[a-f0-9]{40,64}$/.test(sha)))
       throw new Error("Missing comparison revision");
     // Disabling rename detection includes both the removed and added paths.

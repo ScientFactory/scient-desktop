@@ -1,6 +1,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
+import { resolveComparisonBase } from "./ci-comparison-base.cjs";
 
 export const catalogPath = "apps/web/src/scient/releaseNotes/catalog.ts";
 const allowed = new Set([
@@ -34,7 +35,7 @@ export function isLiteralCatalog(source) {
 
 export function detectReleaseNotesOnly({ event, head, cwd = process.cwd() }) {
   try {
-    const base = event.pull_request?.base.sha ?? event.merge_group?.base_sha ?? event.before;
+    const base = resolveComparisonBase({ event, head, cwd });
     if (![base, head].every((sha) => typeof sha === "string" && /^[a-f0-9]{40}$/.test(sha)))
       return false;
     const git = (...args) =>
