@@ -210,6 +210,7 @@ export interface ComposerSendInput {
   readonly activeThreadKey: string | null;
   readonly activeThreadBranch: string | null;
   readonly activeProject: EnvironmentProject | null;
+  readonly activeProjectIsScratch: boolean;
   readonly activeProjectDefaultModelSelection: ModelSelection | null;
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
@@ -304,6 +305,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activeThreadKey,
     activeThreadBranch,
     activeProject,
+    activeProjectIsScratch,
     activeProjectDefaultModelSelection,
     activeMessageCount,
     isServerThread,
@@ -537,6 +539,20 @@ export function useComposerSend(input: ComposerSendInput) {
         sendCtx && !directAnnotation && directPrompt === null && !queueEdit
           ? parseSideChatCommand(promptAtSend)
           : null;
+      // SCIENT-FORK:START — a queue edit keeps its message in this thread, so `/side` would
+      // send it to main.
+      if (queueEdit && sendCtx && !directAnnotation && parseSideChatCommand(promptAtSend)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Queued message not updated",
+            description:
+              "A queued message can't move to a side chat. Remove /side or /btw to save it.",
+          }),
+        );
+        return;
+      }
+      // SCIENT-FORK:END
       const answeringQuestion =
         Boolean(activePendingUserInput) && sendCtx?.answeringPendingUserInput !== false;
       const startsSideChat =
@@ -1060,6 +1076,7 @@ export function useComposerSend(input: ComposerSendInput) {
               sendEnvMode,
               worktreePath: activeThread.worktreePath,
               activeThreadBranch,
+              isScratchProject: activeProjectIsScratch,
               // Scient owns eligibility; the shared planner owns worktree and dispatch mechanics.
               resumeCompactionTokens: compactBeforeSend ? resumeCompactionTokens : null,
               keepFullHistory,
