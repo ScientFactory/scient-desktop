@@ -21,3 +21,12 @@ Windows packaging's "Installed desktop must survive the smoke interval and drain
 from source control discovery) inherited the app's output pipes and could hold them past the 8 s
 drain after a forced stop. The smoke now captures output to files and requires the app's own
 processes to end, and also checks a normal quit.
+
+Claude process cleanup's "stops the CLI's detached descendants when the server goes away"
+failed in [queue run 43942817923](https://github.com/ScientFactory/scient-desktop/actions/runs/43942817923/job/133565081200)
+on 2026-11-16 with `the CLI stopped too: expected true to be false`. The adapter and test were
+unchanged from the green PR head. The test awaited the descendant's exit, then assumed the CLI
+had already exited too; those process exits have no ordering guarantee. The correction awaits
+both within the existing 5 s budget, without changing runtime cleanup. Owner: orchestration
+lifecycle. Fixed in the same change as this record; no open flake exemption or unchanged-head
+requeue is needed.
