@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { editableMetadataFromRecord } from "./editable.ts";
 import { SCIENT_SOURCE_IMPORT_ITEM_LIMIT, type ScientSourceCandidate } from "./model.ts";
+import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
 import {
   cancelSourceImportOperation,
   attachScientSourcePdf,
@@ -20,6 +21,7 @@ import {
   importScientSource,
   importScientSourceOperationItem,
   inspectScientSourcePdf,
+  inspectScientLibrarySources,
   inspectScientSources,
   listScientSourceRecords,
   listScientSourceTrash,
@@ -33,6 +35,7 @@ import {
   SCIENT_SOURCE_OPERATIONS_DIRECTORY,
   SCIENT_SOURCE_RECEIPTS_DIRECTORY,
   SCIENT_SOURCE_HISTORY_DIRECTORY,
+  scientSourceStoreInternals,
   sourceAttachmentAbsolutePath,
   stageScientSourcePdfUpload,
   updateSourceImportOperationItem,
@@ -1328,6 +1331,80 @@ describe("Scient source store", () => {
       unprocessedItemKeys: [],
     });
   });
+
+  it.each(["project", "library"] as const)(
+    "keeps cached and uncached %s inspection pure until authorized import admission",
+    async (kind) => {
+      const root = await fixture();
+      if (kind === "project") await initializeScientProject({ root });
+      else await ensureScientLibrary(root);
+      const location = (path: string) => (kind === "project" ? path : scientLibraryLocation(path));
+      const operationId = NodeCrypto.randomUUID();
+      const operation = await createSourceImportOperation({
+        root: location(root),
+        operationId,
+        adapter: "zotero",
+        itemKeys: [candidate.sourceKey],
+      });
+      const imported = await importScientSourceOperationItem({
+        root: location(root),
+        operationId,
+        candidate,
+      });
+      if (!imported.record) throw new Error("The fixture source was not imported.");
+      const importedSourceId = imported.record.sourceId;
+      const paths = await scientSourceStoreInternals.sourceStorePaths(location(root));
+      await NodeFSP.writeFile(
+        NodePath.join(paths.operations, `${operationId}.json`),
+        JSON.stringify({
+          ...operation,
+          items: operation.items.map((item) => ({
+            ...item,
+            state: "imported",
+            sourceId: importedSourceId,
+          })),
+        }),
+      );
+      const reloadedRoot = await fixture();
+      await NodeFSP.cp(root, reloadedRoot, { recursive: true });
+      for (const inspectedRoot of [root, reloadedRoot]) {
+        const inspectedLocation = location(inspectedRoot);
+        const inspectedPaths = await scientSourceStoreInternals.sourceStorePaths(inspectedLocation);
+        const operationPath = NodePath.join(inspectedPaths.operations, `${operationId}.json`);
+        const receiptPath = NodePath.join(inspectedPaths.receipts, `${operationId}.json`);
+        const before = await NodeFSP.readFile(operationPath);
+        const overview =
+          kind === "project"
+            ? await inspectScientSources(inspectedRoot)
+            : await inspectScientLibrarySources(scientLibraryLocation(inspectedRoot));
+        expect(overview.activeOperation).toMatchObject({
+          operationId,
+          state: "running",
+          items: [{ state: "imported", sourceId: importedSourceId }],
+        });
+        expect(await NodeFSP.readFile(operationPath)).toEqual(before);
+        await expect(NodeFSP.stat(receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+        const next = await createSourceImportOperation({
+          root: inspectedLocation,
+          operationId: NodeCrypto.randomUUID(),
+          adapter: "local-files",
+          itemKeys: ["next.pdf"],
+        });
+        expect(next.state).toBe("running");
+        expect(await readSourceImportOperation(inspectedLocation, operationId)).toMatchObject({
+          state: "completed",
+        });
+        const receipt = JSON.parse(await NodeFSP.readFile(receiptPath, "utf8"));
+        expect(receipt).toMatchObject({
+          outcome: "completed",
+          importedSourceIds: [importedSourceId],
+          unprocessedItemKeys: [],
+        });
+        await cancelSourceImportOperation(inspectedLocation, next.operationId);
+      }
+    },
+  );
 
   it("finalizes failed items and allows an explicit retry", async () => {
     const root = await fixture();

@@ -305,7 +305,9 @@ export async function prepareScientLibraryRestore(input: {
   if ((await snapshot(payload)) !== "directory") return { outcome: "damaged", file: "library" };
   const listed = new Set(manifest.files.map((file) => file.path));
   const found = await scientLibraryBackupEntries(payload);
-  const stray = [...found.files, ...found.others].find((path) => !listed.has(path));
+  if (found.others.length > 0) return { outcome: "damaged", file: found.others[0]! };
+  const regular = new Set(found.files);
+  const stray = found.files.find((path) => !listed.has(path));
   if (stray !== undefined) return { outcome: "damaged", file: stray };
 
   const restoreId = newRestoreId();
@@ -329,6 +331,18 @@ export async function prepareScientLibraryRestore(input: {
             return { outcome: "stopped" };
           }
           const from = NodePath.join(payload, ...file.path.split("/"));
+          // Enumeration is not a copy boundary: a payload may have been replaced since then.
+          // Require the same canonical, regular-file boundary as the backup checker.
+          const canonical = regular.has(file.path)
+            ? await NodeFSP.realpath(from).catch((error: unknown) => {
+                if (isNodeError(error, "ENOENT")) return null;
+                throw error;
+              })
+            : null;
+          if (canonical !== from || (await snapshot(from)) !== "file") {
+            await discard();
+            return { outcome: "damaged", file: file.path };
+          }
           const to = NodePath.join(staged, ...file.path.split("/"));
           await NodeFSP.mkdir(NodePath.dirname(to), { recursive: true });
           const hash = NodeCrypto.createHash("sha256");

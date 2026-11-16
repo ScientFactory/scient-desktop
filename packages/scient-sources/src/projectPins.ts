@@ -29,6 +29,7 @@ import {
   ScientSourceCreator,
   ScientSourceIdentifier,
   ScientSourceIncompleteCreatorRoles,
+  ScientSourceMore,
   type ScientSourceRecord,
 } from "./model.ts";
 import {
@@ -36,6 +37,7 @@ import {
   scientPinWorkIsComplete,
   scientPinCitationStillUnknown,
   scientPinWorkKeepingUnknown,
+  scientPinMoreFromRecord,
   withKnownPinCitationValues,
 } from "./pinCitation.ts";
 import {
@@ -87,6 +89,7 @@ export const ScientPinWork = Schema.Struct({
   pages: Schema.optionalKey(NullableText),
   language: Schema.optionalKey(NullableText),
   url: Schema.optionalKey(NullableText),
+  more: Schema.optionalKey(ScientSourceMore),
   tags: Schema.optionalKey(Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(256)))),
 });
 export type ScientPinWork = typeof ScientPinWork.Type;
@@ -173,6 +176,7 @@ function encodeWork(work: ScientPinWork, extra: JsonObject) {
         work[field] !== undefined ? [[field, work[field]]] : [],
       ),
     ),
+    ...(work.more !== undefined ? { more: sortedExtra(work.more) } : {}),
     ...(work.tags !== undefined ? { tags: [...work.tags] } : {}),
     ...sortedExtra(extra),
   };
@@ -308,6 +312,7 @@ function unmergedSourceWork(earlier: ScientPinWork, record: ScientSourceRecord):
 }
 
 export function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWork {
+  const more = scientPinMoreFromRecord(record);
   return {
     type: record.type,
     title: record.title,
@@ -326,6 +331,7 @@ export function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWo
     pages: record.pages,
     language: record.language,
     url: record.url,
+    ...(more !== undefined ? { more } : {}),
     tags: record.tags,
   };
 }
@@ -1135,6 +1141,7 @@ function recordFromSnapshot(pin: ScientProjectPin): ScientSourceRecord {
     pages: work.pages ?? null,
     language: work.language ?? null,
     url: work.url ?? null,
+    ...(work.more !== undefined ? { more: work.more } : {}),
     tags: work.tags ?? [],
     externalReferences: [],
     attachments: [],

@@ -383,9 +383,13 @@ function hydrationCandidate(
 ): ScientSourceCandidate {
   const { work } = request;
   const candidate = {
+    type: scientSourceTypeFromSnapshot(work.type),
     customType: work.customType ?? null,
     title: work.title,
     creators: work.creators,
+    ...(work.incompleteCreatorRoles?.length
+      ? { incompleteCreatorRoles: work.incompleteCreatorRoles }
+      : {}),
     issuedRaw: work.issuedRaw ?? (work.issuedYear === null ? null : String(work.issuedYear)),
     issuedYear: work.issuedYear,
     identifiers: work.identifiers,
@@ -396,15 +400,18 @@ function hydrationCandidate(
     pages: work.pages ?? null,
     language: work.language ?? null,
     url: work.url ?? null,
+    ...(work.more !== undefined ? { more: work.more } : {}),
     tags: work.tags ?? [],
   };
   const filled = Object.entries(candidate).filter(
-    ([, value]) => value !== null && !(Array.isArray(value) && value.length === 0),
+    ([field, value]) =>
+      field !== "incompleteCreatorRoles" &&
+      value !== null &&
+      !(Array.isArray(value) && value.length === 0),
   );
   return {
     sourceKey: hydrationSourceKey(request.projectSourceId),
     ...(citationKey ? { citationKey } : {}),
-    type: scientSourceTypeFromSnapshot(work.type),
     ...candidate,
     abstract: null,
     externalReferences: [],

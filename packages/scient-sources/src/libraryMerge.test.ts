@@ -19,6 +19,7 @@ import {
   mergeScientLibrarySources,
   readScientLibraryDuplicates,
   readScientLibraryMergeReceipt,
+  settleScientLibraryMerges,
   undoScientLibraryMerge,
 } from "./libraryMerge.ts";
 import { runScientLibraryMove } from "./libraryMove.ts";
@@ -43,10 +44,14 @@ import { editableMetadataFromRecord } from "./editable.ts";
 const fixtures: string[] = [];
 const originalRename = NodeFS.promises.rename;
 const originalUnlink = NodeFS.promises.unlink;
+const originalReadFile = NodeFS.promises.readFile;
+const originalReaddir = NodeFS.promises.readdir;
 
 function restoreFileOperations(): void {
   NodeFS.promises.rename = originalRename;
   NodeFS.promises.unlink = originalUnlink;
+  NodeFS.promises.readFile = originalReadFile;
+  NodeFS.promises.readdir = originalReaddir;
   NodeModule.syncBuiltinESMExports();
 }
 
@@ -67,6 +72,26 @@ function failNext(operation: "rename" | "unlink", target: RegExp): void {
       fail(path);
       return originalUnlink(path);
     };
+  }
+  NodeModule.syncBuiltinESMExports();
+}
+
+function failNextRead(operation: "readFile" | "readdir", target: string): void {
+  const fail = (path: unknown) => {
+    if (String(path) !== target) return;
+    restoreFileOperations();
+    throw Object.assign(new Error("Injected read failure."), { code: "EACCES" });
+  };
+  if (operation === "readFile") {
+    NodeFS.promises.readFile = ((...args: Parameters<typeof originalReadFile>) => {
+      fail(args[0]);
+      return originalReadFile(...args);
+    }) as typeof originalReadFile;
+  } else {
+    NodeFS.promises.readdir = ((...args: Parameters<typeof originalReaddir>) => {
+      fail(args[0]);
+      return originalReaddir(...args);
+    }) as typeof originalReaddir;
   }
   NodeModule.syncBuiltinESMExports();
 }
@@ -145,7 +170,297 @@ async function seed(root: string, records: ReadonlyArray<ScientSourceRecord>) {
 const liveIds = async (library: ReturnType<typeof scientLibraryLocation>) =>
   (await listScientSourceRecords(library)).map((entry) => entry.sourceId).toSorted();
 
+async function mergePair(interrupted = false) {
+  const fixture = await newLibrary();
+  await seed(fixture.root, [
+    record("source_keep", { title: "Recovery" }),
+    record("source_gone", { title: "Recovery", publisher: "Press" }),
+  ]);
+  const directory = NodePath.join(fixture.root, "merges", "pending");
+  if (interrupted) failNext("rename", /merges[\\/]merge_[^\\/]+\.json$/u);
+  const merging = mergeScientLibrarySources({
+    library: fixture.library,
+    sourceIds: ["source_keep", "source_gone"],
+    survivorId: "source_keep",
+  });
+  let mergeId: string;
+  if (interrupted) {
+    await expect(merging).rejects.toThrow("Injected");
+    mergeId = (await NodeFSP.readdir(directory))
+      .find((name) => name.startsWith("merge_"))!
+      .slice(0, -5);
+  } else {
+    const merged = await merging;
+    if (merged.outcome !== "merged") throw new Error("Expected a merged recovery fixture.");
+    mergeId = merged.merge.mergeId;
+  }
+  return {
+    ...fixture,
+    mergeId,
+    directory,
+    pendingPath: NodePath.join(directory, `${mergeId}.json`),
+    receiptPath: NodePath.join(fixture.root, "merges", `${mergeId}.json`),
+  };
+}
+
 describe("library merge engine", () => {
+  it.each(["json", "schema", "unreadable", "trash-unreadable"] as const)(
+    "retains an interrupted merge when its recovery evidence is %s",
+    async (damage) => {
+      const { root, library, pendingPath, receiptPath, mergeId } = await mergePair(true);
+      const intent = await NodeFSP.readFile(pendingPath, "utf8");
+      if (damage === "json" || damage === "schema") {
+        await NodeFSP.writeFile(pendingPath, damage === "json" ? "{" : "{}");
+      } else {
+        failNextRead(
+          "readFile",
+          damage === "unreadable" ? pendingPath : NodePath.join(root, "trash", "source_gone.json"),
+        );
+      }
+      const unresolved = await originalReadFile(pendingPath, "utf8");
+
+      await expect(settleScientLibraryMerges(library)).rejects.toThrow();
+
+      expect(await NodeFSP.readFile(pendingPath, "utf8")).toBe(unresolved);
+      expect(await liveIds(library)).toEqual(["source_keep"]);
+      expect(await NodeFSP.stat(receiptPath).catch(() => null)).toBeNull();
+      expect(
+        resolveScientLibraryAlias(await readScientLibraryAliases(library), "source_gone"),
+      ).toBe("source_keep");
+      await NodeFSP.writeFile(pendingPath, intent);
+      await settleScientLibraryMerges(library);
+      expect(await readScientLibraryMergeReceipt({ library, mergeId })).toMatchObject({
+        undo: "available",
+        merge: { state: "done" },
+      });
+    },
+  );
+
+  it.each(["unreadable", "not-directory"] as const)(
+    "rejects a %s pending directory without losing the recovery intent",
+    async (damage) => {
+      const { library, directory, pendingPath, mergeId } = await mergePair(true);
+      const intent = await NodeFSP.readFile(pendingPath, "utf8");
+      const savedDirectory = `${directory}.saved`;
+      if (damage === "unreadable") {
+        failNextRead("readdir", directory);
+      } else {
+        await NodeFSP.rename(directory, savedDirectory);
+        await NodeFSP.writeFile(directory, "not a directory");
+      }
+
+      await expect(settleScientLibraryMerges(library)).rejects.toThrow();
+      if (damage === "unreadable") failNextRead("readdir", directory);
+      await expect(undoScientLibraryMerge({ library, mergeId: "merge_none" })).rejects.toThrow();
+      expect(
+        await NodeFSP.readFile(
+          damage === "unreadable" ? pendingPath : NodePath.join(savedDirectory, `${mergeId}.json`),
+          "utf8",
+        ),
+      ).toBe(intent);
+
+      if (damage === "not-directory") {
+        await NodeFSP.rm(directory);
+        await NodeFSP.rename(savedDirectory, directory);
+      }
+      await settleScientLibraryMerges(library);
+      expect(await readScientLibraryMergeReceipt({ library, mergeId })).toMatchObject({
+        merge: { state: "done" },
+      });
+    },
+  );
+
+  it.each([
+    "intent-json",
+    "intent-schema",
+    "intent-unreadable",
+    "receipt-json",
+    "receipt-schema",
+    "receipt-unreadable",
+    "receipt-missing",
+  ] as const)("keeps an interrupted Undo unresolved after %s damage", async (damage) => {
+    const { root, library, directory, receiptPath, mergeId } = await mergePair();
+    const receipt = await NodeFSP.readFile(receiptPath, "utf8");
+    failNext("rename", /aliases\.json$/u);
+    await expect(undoScientLibraryMerge({ library, mergeId })).rejects.toThrow("Injected");
+    const intentPath = NodePath.join(directory, `undo_${mergeId}.json`);
+    const intent = await NodeFSP.readFile(intentPath, "utf8");
+    const survivorPath = NodePath.join(root, "records", "source_keep.json");
+    const survivor = await NodeFSP.readFile(survivorPath, "utf8");
+    const target = damage.startsWith("intent-") ? intentPath : receiptPath;
+    if (damage.endsWith("-json") || damage.endsWith("-schema")) {
+      await NodeFSP.writeFile(target, damage.endsWith("-json") ? "{" : "{}");
+    } else if (damage === "receipt-missing") {
+      await NodeFSP.rm(receiptPath);
+    } else {
+      failNextRead("readFile", target);
+    }
+    const unresolved = await originalReadFile(intentPath, "utf8");
+
+    await expect(settleScientLibraryMerges(library)).rejects.toThrow();
+
+    expect(await NodeFSP.readFile(intentPath, "utf8")).toBe(unresolved);
+    expect(await NodeFSP.readFile(survivorPath, "utf8")).toBe(survivor);
+    expect(await liveIds(library)).toEqual(["source_gone", "source_keep"]);
+    expect(resolveScientLibraryAlias(await readScientLibraryAliases(library), "source_gone")).toBe(
+      "source_keep",
+    );
+    await NodeFSP.writeFile(intentPath, intent);
+    await NodeFSP.writeFile(receiptPath, receipt);
+    await settleScientLibraryMerges(library);
+    expect(await readScientLibraryMergeReceipt({ library, mergeId })).toMatchObject({
+      undo: "undone",
+      merge: { state: "undone" },
+    });
+    expect(resolveScientLibraryAlias(await readScientLibraryAliases(library), "source_gone")).toBe(
+      "source_gone",
+    );
+  });
+
+  it("carries partial report authors and each further detail, and Undo restores the original facts", async () => {
+    const { root, library } = await newLibrary();
+    const kept = record("source_keep", { type: "report", title: "Report", creators: [] });
+    const offered = record("source_gone", {
+      type: "report",
+      title: "Report",
+      incompleteCreatorRoles: ["author"],
+      more: { number: "TR-17", edition: "2", "publisher-place": "London" },
+      fieldProvenance: [
+        { field: "creators", origin: "file", sourceField: "author" },
+        { field: "more.number", origin: "file", sourceField: "number" },
+      ],
+    });
+    await seed(root, [kept, offered]);
+    const result = await mergeScientLibrarySources({
+      library,
+      sourceIds: [kept.sourceId, offered.sourceId],
+      survivorId: kept.sourceId,
+    });
+    if (result.outcome !== "merged") throw new Error("Expected a merged report.");
+    const receipt = await readScientLibraryMergeReceipt({ library, mergeId: result.merge.mergeId });
+    expect(receipt?.kept).toMatchObject({
+      creators: offered.creators,
+      incompleteCreatorRoles: ["author"],
+      more: offered.more,
+      fieldProvenance: offered.fieldProvenance,
+    });
+    expect(receipt?.merge.conflicts).toEqual([]);
+    expect(receipt?.merge.changes).toEqual([
+      { field: "creators", before: [], after: offered.creators },
+      { field: "incompleteCreatorRoles", after: ["author"] },
+      { field: "more.number", after: "TR-17" },
+      { field: "more.edition", after: "2" },
+      { field: "more.publisher-place", after: "London" },
+    ]);
+
+    const undone = await undoScientLibraryMerge({ library, mergeId: result.merge.mergeId });
+    expect(undone).toMatchObject({ outcome: "undone", unrevertedFields: [] });
+    const restored = await readScientSourceRecord(library, kept.sourceId);
+    expect(restored?.creators).toEqual([]);
+    expect(restored).not.toHaveProperty("incompleteCreatorRoles");
+    expect(restored).not.toHaveProperty("more");
+    expect(restored?.fieldProvenance).toEqual([]);
+    expect(await readScientSourceRecord(library, offered.sourceId)).toMatchObject({
+      ...offered,
+      revision: offered.revision + 1,
+    });
+  });
+
+  it("reports individual detail and completeness conflicts, and Undo preserves later detail edits", async () => {
+    const { root, library } = await newLibrary();
+    await seed(root, [
+      record("source_keep", { more: { edition: "1", "publisher-place": "Paris" } }),
+      record("source_gone", {
+        incompleteCreatorRoles: ["author"],
+        more: { edition: "2", number: "TR-17", "publisher-place": "London", genre: "Report" },
+      }),
+    ]);
+    const result = await mergeScientLibrarySources({
+      library,
+      sourceIds: ["source_keep", "source_gone"],
+      survivorId: "source_keep",
+    });
+    if (result.outcome !== "merged") throw new Error("Expected a merged report.");
+    expect(result.merge.conflicts).toEqual([
+      { field: "title", kept: "Title of source_keep", other: "Title of source_gone" },
+      { field: "incompleteCreatorRoles", kept: [], other: ["author"] },
+      { field: "more.edition", kept: "1", other: "2" },
+      { field: "more.publisher-place", kept: "Paris", other: "London" },
+    ]);
+    expect(result.survivor.more).toEqual({
+      edition: "1",
+      "publisher-place": "Paris",
+      number: "TR-17",
+      genre: "Report",
+    });
+    expect(result.survivor).not.toHaveProperty("incompleteCreatorRoles");
+    const edited = await updateScientSourceMetadata({
+      root: library,
+      sourceId: "source_keep",
+      expectedRevision: result.survivor.revision,
+      metadata: {
+        ...editableMetadataFromRecord(result.survivor),
+        more: { ...result.survivor.more, number: "Corrected-18", license: "CC-BY" },
+      },
+    });
+    expect(edited.outcome).toBe("updated");
+
+    expect(await undoScientLibraryMerge({ library, mergeId: result.merge.mergeId })).toMatchObject({
+      outcome: "undone",
+      unrevertedFields: ["more.number"],
+    });
+    expect((await readScientSourceRecord(library, "source_keep"))?.more).toEqual({
+      edition: "1",
+      "publisher-place": "Paris",
+      number: "Corrected-18",
+      license: "CC-BY",
+    });
+  });
+
+  it.each(["names", "completeness"] as const)(
+    "keeps chosen creators and their completeness together after a later %s edit",
+    async (edit) => {
+      const { root, library } = await newLibrary();
+      await seed(root, [
+        record("source_keep", { creators: [] }),
+        record("source_gone", { incompleteCreatorRoles: ["author"] }),
+      ]);
+      const result = await mergeScientLibrarySources({
+        library,
+        sourceIds: ["source_keep", "source_gone"],
+        survivorId: "source_keep",
+      });
+      if (result.outcome !== "merged") throw new Error("Expected merged creators.");
+      const creators =
+        edit === "names"
+          ? [{ creatorType: "author", givenName: "Grace", familyName: "Hopper", literalName: null }]
+          : result.survivor.creators;
+      const incompleteCreatorRoles = edit === "names" ? ["author"] : [];
+      expect(
+        await updateScientSourceMetadata({
+          root: library,
+          sourceId: "source_keep",
+          expectedRevision: result.survivor.revision,
+          metadata: {
+            ...editableMetadataFromRecord(result.survivor),
+            creators,
+            incompleteCreatorRoles,
+          },
+        }),
+      ).toMatchObject({ outcome: "updated" });
+
+      expect(
+        await undoScientLibraryMerge({ library, mergeId: result.merge.mergeId }),
+      ).toMatchObject({
+        outcome: "undone",
+        unrevertedFields: ["creators", "incompleteCreatorRoles"],
+      });
+      const restored = await readScientSourceRecord(library, "source_keep");
+      expect(restored?.creators).toEqual(creators);
+      expect(restored?.incompleteCreatorRoles ?? []).toEqual(incompleteCreatorRoles);
+    },
+  );
+
   it("keeps two chapters of one book apart though they share an ISBN and the book's PDF", async () => {
     const { root, library } = await newLibrary();
     const chapter = (sourceId: string, title: string, doi: string) =>

@@ -2099,11 +2099,16 @@ async function readSourceImportOperationFromPaths(
 
 async function findActiveOperation(
   paths: SourceStorePaths,
+  access: "read" | "write",
 ): Promise<ScientSourceImportOperation | null> {
   const cachedOperationId = activeOperationIds.get(paths.root);
   if (cachedOperationId) {
     let cached = await readSourceImportOperationFromPaths(paths, cachedOperationId);
-    if (cached?.state === "running" && cached.items.every((item) => item.state !== "pending")) {
+    if (
+      access === "write" &&
+      cached?.state === "running" &&
+      cached.items.every((item) => item.state !== "pending")
+    ) {
       cached = await withStoreLock(paths, cachedOperationId, async () => {
         const current = await readSourceImportOperationFromPaths(paths, cachedOperationId);
         if (!current) return null;
@@ -2125,6 +2130,7 @@ async function findActiveOperation(
       throw new Error(storeOwnerMessage(paths, `Source operation ${entry.name}`));
     }
     if (
+      access === "write" &&
       operation.state === "running" &&
       operation.items.every((item) => item.state !== "pending")
     ) {
@@ -2157,7 +2163,7 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
   const paths = await sourceStorePaths(project.root);
   const [scan, activeOperation, trash] = await Promise.all([
     scanScientSourceRecords(paths),
-    findActiveOperation(paths),
+    findActiveOperation(paths, "read"),
     scanTrash(paths),
   ]);
   return {
@@ -2180,7 +2186,7 @@ export async function inspectScientLibrarySources(library: ScientLibraryLocation
   const paths = await sourceStorePaths(library);
   const [scan, activeOperation, trash] = await Promise.all([
     scanScientSourceRecords(paths),
-    findActiveOperation(paths),
+    findActiveOperation(paths, "read"),
     scanTrash(paths),
   ]);
   return {
@@ -2257,7 +2263,7 @@ export async function createSourceImportOperation(input: {
       }
       return existing;
     }
-    const active = await findActiveOperation(paths);
+    const active = await findActiveOperation(paths, "write");
     if (active) {
       throw new Error(
         paths.owner.kind === "library"

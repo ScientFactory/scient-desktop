@@ -1,4 +1,9 @@
-import type { ScientSourceCreator, ScientSourceIdentifier, ScientSourceRecord } from "./model.ts";
+import type {
+  ScientSourceCreator,
+  ScientSourceIdentifier,
+  ScientSourceMore,
+  ScientSourceRecord,
+} from "./model.ts";
 
 /**
  * The citation inputs a pin snapshot carries beyond its first six fields: what the bibliography
@@ -22,15 +27,21 @@ export type ScientPinCitationWork = {
   readonly type: string;
   readonly title: string | null;
   readonly creators: ReadonlyArray<ScientSourceCreator>;
+  readonly incompleteCreatorRoles?: NonNullable<ScientSourceRecord["incompleteCreatorRoles"]>;
   readonly issuedYear: number | null;
   readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
   readonly containerTitle: string | null;
   readonly tags?: ReadonlyArray<string>;
+  readonly more?: ScientSourceMore;
 } & { readonly [Field in CitationTextField]?: string | null };
 
 /** Whether the snapshot knows every citation input, as one written by this version does. */
 export function scientPinWorkIsComplete(work: ScientPinCitationWork): boolean {
-  return work.tags !== undefined && SCIENT_PIN_CITATION_TEXT_FIELDS.every((field) => field in work);
+  return (
+    work.tags !== undefined &&
+    work.more !== undefined &&
+    SCIENT_PIN_CITATION_TEXT_FIELDS.every((field) => field in work)
+  );
 }
 
 const isEmpty = (value: unknown) =>
@@ -64,12 +75,27 @@ export function withKnownPinCitationValues(
     if (isEmpty(record[field]) && !isEmpty(known) && !editedEmpty(record, [field])) {
       filled[field] = known;
     }
+    if (field === "creators" && filled[field] !== undefined) {
+      filled["incompleteCreatorRoles"] = work.incompleteCreatorRoles;
+    }
   };
   for (const field of ["title", "creators", "identifiers", "containerTitle", "tags"] as const) {
     take(field);
   }
   for (const field of SCIENT_PIN_CITATION_TEXT_FIELDS) {
     if (field !== "issuedRaw") take(field);
+  }
+  for (const [name, value] of Object.entries(work.more ?? {})) {
+    if (!record.more?.[name] && !editedEmpty(record, ["more", `more.${name}`])) {
+      filled["more"] = {
+        ...record.more,
+        ...(filled["more"] as ScientSourceMore | undefined),
+        [name]: value,
+      };
+    }
+  }
+  if (work.more !== undefined && Object.keys(work.more).length === 0 && record.more === undefined) {
+    filled["more"] = work.more;
   }
   // The date is one input; a bare year is less than a full date of the same year.
   const recordDate = record.issuedRaw?.trim() ?? "";
@@ -93,6 +119,24 @@ export function withKnownPinCitationValues(
 const fromProjectFile = (sourceField: string | null) =>
   sourceField?.startsWith("project-file:") ?? false;
 
+/** A hydrated record without this newer field cannot say that the detail map was empty. */
+export function scientPinMoreFromRecord(record: ScientSourceRecord): ScientSourceMore | undefined {
+  if (record.more !== undefined) return record.more;
+  return record.fieldProvenance.some((entry) => fromProjectFile(entry.sourceField)) &&
+    !record.fieldProvenance.some(
+      (entry) => entry.field === "more" || entry.field.startsWith("more."),
+    )
+    ? undefined
+    : {};
+}
+
+const hasIndependentCitationValue = (record: ScientSourceRecord, field: string) =>
+  record.fieldProvenance.some(
+    (entry) =>
+      (entry.field === field || (field === "more" && entry.field.startsWith("more."))) &&
+      !fromProjectFile(entry.sourceField),
+  );
+
 /**
  * Whether an older snapshot's managed entry must be kept for this record: it was hydrated from
  * that snapshot and a citation input the snapshot lacks is still unknown. A correction of another
@@ -106,10 +150,8 @@ export function scientPinCitationStillUnknown(
   if (scientPinWorkIsComplete(work)) return false;
   const provenance = record.fieldProvenance;
   if (!provenance.some((entry) => fromProjectFile(entry.sourceField))) return false;
-  return [...SCIENT_PIN_CITATION_TEXT_FIELDS, "tags" as const].some(
-    (field) =>
-      !(field in work) &&
-      !provenance.some((entry) => entry.field === field && !fromProjectFile(entry.sourceField)),
+  return [...SCIENT_PIN_CITATION_TEXT_FIELDS, "tags", "more"].some(
+    (field) => !(field in work) && !hasIndependentCitationValue(record, field),
   );
 }
 
@@ -124,13 +166,12 @@ export function scientPinWorkKeepingUnknown<W extends ScientPinCitationWork>(
   record: ScientSourceRecord,
 ): W {
   if (!record.fieldProvenance.some((entry) => fromProjectFile(entry.sourceField))) return next;
-  const unknown = [...SCIENT_PIN_CITATION_TEXT_FIELDS, "tags" as const].filter(
+  const unknown = ([...SCIENT_PIN_CITATION_TEXT_FIELDS, "tags", "more"] as const).filter(
     (field) =>
       !(field in earlier) &&
-      !record.fieldProvenance.some(
-        (entry) => entry.field === field && !fromProjectFile(entry.sourceField),
-      ) &&
+      !hasIndependentCitationValue(record, field) &&
       (isEmpty(next[field]) ||
+        (field === "more" && Object.keys(next.more ?? {}).length === 0) ||
         (field === "issuedRaw" && next.issuedRaw === String(next.issuedYear))),
   );
   if (unknown.length === 0) return next;

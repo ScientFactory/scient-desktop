@@ -8,6 +8,7 @@ import { initializeScientProject, readScientProjectIdentity } from "@scientfacto
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
+import { cslJsonItem, formatBibliography } from "./bibliography/index.ts";
 import {
   changeScientSourceCollectionMembers,
   organizeScientSources,
@@ -46,9 +47,12 @@ import {
   undoScientProjectPackageImport,
 } from "./projectPackage.ts";
 import {
+  listScientProjectPinnedWorks,
   pinScientLibrarySource,
   readScientProjectPinNoteHistory,
   readScientProjectPins,
+  refreshScientProjectPinSnapshots,
+  resolveScientProjectPins,
   setScientProjectPinNote,
 } from "./projectPins.ts";
 import {
@@ -172,6 +176,73 @@ const importInto = (root: string, library: ScientLibraryLocation, folder: string
   importScientProjectPackage({ projectRoot: root, library, folder, actor: "user" });
 
 describe("importing a project package", () => {
+  it.each(["record", "snapshot"] as const)(
+    "preserves report details and partial authors from packaged %s material in an empty Library",
+    async (material) => {
+      const { base, mine, source } = await setup();
+      const paper = await add(mine, "report", {
+        type: "report",
+        incompleteCreatorRoles: ["author"],
+        more: { number: "TR-42", edition: "2", "publisher-place": "London" },
+      });
+      const pin = await pinned(mine, source, paper.sourceId);
+      const handoff = NodePath.join(base, "handoff");
+      await exportTo(
+        source,
+        material === "record" ? mine : await computer(base, "without-record"),
+        handoff,
+      );
+      const theirs = await computer(base, "theirs");
+      const received = await project(base, "received");
+      expect(await importInto(received, theirs, handoff)).toMatchObject({
+        outcome: "imported",
+        sources: { added: material === "record" ? 1 : 0 },
+        failed: [],
+      });
+      const [beforeHydration] = await listScientProjectPinnedWorks({
+        projectRoot: received,
+        library: theirs,
+      });
+      const original = { record: paper, citationKey: pin.citationKey };
+      expect(beforeHydration?.incompleteSnapshot).toBe(false);
+      expect(cslJsonItem(beforeHydration!, { includeNotes: false })).toEqual(
+        cslJsonItem(original, { includeNotes: false }),
+      );
+      await resolveScientProjectPins({
+        projectRoot: received,
+        library: theirs,
+        mode: "write",
+        actor: "user",
+      });
+      await refreshScientProjectPinSnapshots({ projectRoot: received, library: theirs });
+      const [record] = await listScientSourceRecords(theirs);
+      expect(record).toMatchObject({
+        incompleteCreatorRoles: ["author"],
+        more: { number: "TR-42", edition: "2", "publisher-place": "London" },
+      });
+      const [cited] = await listScientProjectPinnedWorks({
+        projectRoot: received,
+        library: theirs,
+      });
+      expect(cslJsonItem(cited!, { includeNotes: false })).toEqual(
+        cslJsonItem(original, { includeNotes: false }),
+      );
+      expect(
+        formatBibliography([cited!], "bibtex", { includeAbstracts: false, includeNotes: false }),
+      ).toBe(
+        formatBibliography([original], "bibtex", { includeAbstracts: false, includeNotes: false }),
+      );
+      const [snapshot] = await listScientProjectPinnedWorks({
+        projectRoot: received,
+        library: null,
+      });
+      expect(snapshot?.incompleteSnapshot).toBe(false);
+      expect(cslJsonItem(snapshot!, { includeNotes: false })).toEqual(
+        cslJsonItem(original, { includeNotes: false }),
+      );
+    },
+  );
+
   it("lists only this project's durable imports and keeps the full Undo report reachable", async () => {
     const { base, mine, source } = await setup();
     const paper = await add(mine, "history");

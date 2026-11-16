@@ -440,6 +440,9 @@ pairs and what is left as possible duplicates. One merge:
   keeps the survivor's and goes into the report. The citation key,
   verification and editorial status fill when empty and are never reported.
   Abstract sections come along only with the abstract they belong to.
+  Each extended `more` detail follows that rule independently. Creator
+  incompleteness follows the creator list actually selected, rather than the
+  other record's list. Both participate in change receipts and guarded Undo.
 - Tags (case-insensitive), identifiers, attachments (by hash) and external
   references are united. A second value of a work-level scheme, such as
   another DOI, is reported instead of added. Personal notes are joined, each
@@ -474,14 +477,14 @@ every server write call (`finishInterruptedLibraryMerges` in
 gets read-only sessions. With nothing pending, settling reads one directory and
 takes no lock. So neither a killed process nor an error in a process that
 stays up (a full disk) leaves a merged source in the Trash without its alias,
-or a restored one with an alias to the survivor, past the next write. A failed
-settle is logged and tried again on the next write call; it never fails that
-call. Known limit: settling and the write that follows are not one step under
-the lock. If, between a write call's check and its write, another process
-stops halfway through an Undo (or the settle itself fails), and that write
-changes the same collection's membership of the two sources or sets a merged
-field back to the merged value, the later settle replays the Undo over that
-change.
+or a restored one with an alias to the survivor, past the next successful write.
+A failed settle is logged and blocks that server write with
+`ScientLibraryRecoveryError`; unresolved intent is retained for a later attempt.
+The background pass logs failures and retries. Known limit: settling and the
+write that follows are not one step under the lock. If another process stops
+halfway through an Undo between admission and the write, and that write changes
+the same collection's membership or sets a merged field back to its merged
+value, the later settle can replay the Undo over that change.
 
 `undoScientLibraryMerge` restores the loser as a new revision, reverts each
 field the merge set only where the survivor still holds the merged value,
@@ -687,10 +690,12 @@ sources in `<project>/.scient/library/pins.json`:
   `scient_sources_get` return the versions; restoring is an ordinary checked
   write of an earlier text.
 - `work` snapshots every citation input the formatter reads (type, title,
-  creators with roles, issued year, identifiers, container title, and the
-  optional `customType`, `issuedRaw`, `publisher`, `volume`, `issue`, `pages`,
-  `language`, `url`, `tags`); never an abstract, note or PDF. An older
-  snapshot lacks the optional keys: unknown, not empty (`pinCitation.ts`).
+  creators with roles and incompleteness, issued year, identifiers, container
+  title, and the optional `customType`, `issuedRaw`, `publisher`, `volume`,
+  `issue`, `pages`, `language`, `url`, `tags`, `more`); never an abstract, note
+  or PDF. Missing optional keys are unknown, not empty (`pinCitation.ts`);
+  explicit `more: {}` is known-empty. Hydration and repinning preserve that
+  distinction, including snapshots with no other populated citation values.
   `refreshScientProjectPinSnapshots` and `listScientProjectPinnedWorks` take a
   known snapshot value when the resolving record lacks it
   (`withKnownPinCitationValues`; a bare year, or a year with no stored date, is
@@ -1422,6 +1427,9 @@ read needs a manifest entry with its recorded hash and size and canonical
 containment in the package. An unlisted PDF is reported as unavailable without
 opening it, even through a linked parent. Containment is checked again at the
 PDF read boundary.
+The imported candidate retains extended citation details and creator-list
+incompleteness from the packaged record; successful transport must not turn a
+partial author list into a complete one or discard report numbers and editions.
 
 For each paper, `preparePackagedPdfs` reads, hashes, verifies and copies its
 PDFs to private staging before taking the Library lock. The store publishes
