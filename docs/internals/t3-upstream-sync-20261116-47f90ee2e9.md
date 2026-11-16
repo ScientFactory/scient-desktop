@@ -90,7 +90,10 @@ The branch is `codex/t3-sync-47f90ee2e9-20261116`. The `upstream` push URL stays
 ### Desktop updates
 
 - **Download and install refresh (#37476):** taken; the channel comparison uses Scient's own
-  version parser, which knows Beta.
+  version parser, which knows Beta. Scient's background download (#961, merged during this
+  alignment) starts right after a check found the update, so it does not check again; a download
+  the user starts still does. T3's two refresh tests let the background attempt fail once, so
+  the user's download is the one they observe.
 
 ### Server
 
@@ -153,3 +156,9 @@ live-profile variables.
 - **Codex review (GPT-6.1 Sol, high):** the merge review found the update-channel parser, the
   unavailable-model path, the Pi file lease, the dead queue-edit hook and the missing verification
   record; all are fixed or listed above. A second review of the fixes found nothing.
+- **Live review:** a clean dev app at `30c8e197ded` on a throwaway project, driven by Codex
+  GPT-6.1 Terra, with rechecks by Claude (`reviews/t3-sync-47f9-20261116/RECORD.md` in the
+  workspace). Claude and Codex turns, the stopped run without a Done badge, the stash preview
+  naming a mentioned thread, non-Latin underscores, two checkpoint diffs beside a 20 MB untracked
+  file, the model picker and all 27 Settings pages pass; no "T3" product naming. Queued-message
+  editing is Scient's own path, unchanged here, and is checked with its follow-up PR.
