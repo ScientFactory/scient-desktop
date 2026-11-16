@@ -607,6 +607,11 @@ takes priority over uncommitted background work; yielding preserves the reviewed
 download for a later try. The request store publishes mutations only after an atomic durable write.
 If settlement cannot persist, the manager still finishes operation cleanup and keeps the previous
 request and retry deadline. A failed recovery write ends that pass, and the next pass can try again.
+An unreadable or malformed recovery journal does not block server startup. Managed-runtime
+changes and recovery fail closed while that store is unavailable, preserving the file;
+repair its permissions/content and restart to re-enable them. Startup pruning errors are
+contained without discarding intent. Automatic Agent admission rechecks the current durable
+stop/skip policy after planning, including across instances sharing one runtime.
 
 One lifecycle coordinator serializes connection, managed runtime mutation, and inherited provider
 maintenance for the same instance. Shared runtime mutation also takes a driver-wide reservation

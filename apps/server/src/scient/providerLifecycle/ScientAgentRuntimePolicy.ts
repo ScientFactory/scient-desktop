@@ -1,4 +1,8 @@
-import type { ProviderRuntimeSummary } from "@t3tools/contracts";
+import type {
+  ProviderManagedRuntimeAction,
+  ProviderRuntimeSummary,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -24,7 +28,41 @@ export type BackgroundRecord = typeof BackgroundRecord.Type;
 const BackgroundRecordJson = Schema.fromJsonString(BackgroundRecord);
 const decodeRecord = Schema.decodeEffect(BackgroundRecordJson);
 const encodeRecord = Schema.encodeEffect(BackgroundRecordJson);
+const MAX_FAILED_ATTEMPTS_PER_RELEASE = 5;
 
+type BackgroundCheck =
+  | { readonly kind: "start"; readonly action: "install" | "update"; readonly version: string }
+  | { readonly kind: "wait"; readonly reason: string };
+
+/** What, if anything, Scient may get ready on its own for this instance. */
+export function backgroundRuntimeAction(
+  provider: ServerProvider,
+  record: BackgroundRecord,
+): BackgroundCheck {
+  const runtime = provider.connection?.runtime;
+  if (runtime?.pendingRecovery) return { kind: "wait", reason: "requested-recovery" };
+  if (!provider.enabled || !runtime) return { kind: "wait", reason: "unavailable" };
+  const action: ProviderManagedRuntimeAction | undefined =
+    runtime.source === "missing" && runtime.actions.includes("install")
+      ? "install"
+      : runtime.source === "scient_managed" && runtime.actions.includes("update")
+        ? "update"
+        : undefined;
+  const version =
+    action === "update"
+      ? runtime.availableManagedVersion
+      : (runtime.availableManagedVersion ?? runtime.qualifiedVersion);
+  if (action === undefined || !version) return { kind: "wait", reason: "nothing-to-do" };
+  if (action === "install" && record.userStopped) return { kind: "wait", reason: "user-stopped" };
+  if (action === "update" && record.skippedVersion === version)
+    return { kind: "wait", reason: "user-stopped" };
+  if (
+    record.failures?.version === version &&
+    record.failures.count >= MAX_FAILED_ATTEMPTS_PER_RELEASE
+  )
+    return { kind: "wait", reason: "gave-up" };
+  return { kind: "start", action, version };
+}
 /**
  * Remove or cancelled install stops automatic installs; cancelled update skips that release.
  * Cancelled repair does both. A successful requested change lets automatic setup resume.

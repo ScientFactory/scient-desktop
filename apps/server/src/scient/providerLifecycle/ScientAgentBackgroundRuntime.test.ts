@@ -21,14 +21,13 @@ import { ProcessRunner } from "../../processRunner.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import { ProviderRuntimeManager, type ProviderRuntimeOutcome } from "./ProviderRuntimeManager.ts";
+import { firstPickState, make, parseMeteredOutput } from "./ScientAgentBackgroundRuntime.ts";
+
 import {
   backgroundRuntimeAction,
-  firstPickState,
-  make,
-  parseMeteredOutput,
-} from "./ScientAgentBackgroundRuntime.ts";
-
-import { recordAfterUserChange, ScientAgentRuntimePolicy } from "./ScientAgentRuntimePolicy.ts";
+  recordAfterUserChange,
+  ScientAgentRuntimePolicy,
+} from "./ScientAgentRuntimePolicy.ts";
 
 const INSTANCE = ProviderInstanceId.make("scient");
 

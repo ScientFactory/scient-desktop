@@ -4,7 +4,6 @@ import * as NodeFSP from "node:fs/promises";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
-  type ProviderManagedRuntimeAction,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -21,7 +20,11 @@ import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import { ProviderRuntimeManager } from "./ProviderRuntimeManager.ts";
 import * as ScientAgentRuntimePolicy from "./ScientAgentRuntimePolicy.ts";
-import { recordAfterUserChange, type BackgroundRecord } from "./ScientAgentRuntimePolicy.ts";
+import {
+  backgroundRuntimeAction,
+  recordAfterUserChange,
+  type BackgroundRecord,
+} from "./ScientAgentRuntimePolicy.ts";
 
 const SCIENT_AGENT = ProviderDriverKind.make("scient");
 const START_DELAY = "60 seconds";
@@ -30,43 +33,8 @@ const RECHECK_INTERVAL = "1 hour";
 const FAILURE_BACKOFF = ["5 minutes", "30 minutes", "2 hours"] as const;
 /** Busy with other work, or stopped for the user's own change. */
 const BUSY_RETRY = "5 minutes";
-const MAX_FAILED_ATTEMPTS_PER_RELEASE = 5;
 /** The download, the binary, the add-on it unpacks on first run, and staging. */
 const MIN_FREE_BYTES = 2 * 1024 ** 3;
-
-export type BackgroundCheck =
-  | { readonly kind: "start"; readonly action: "install" | "update"; readonly version: string }
-  | { readonly kind: "wait"; readonly reason: string };
-
-/** What, if anything, Scient may get ready on its own for this instance. */
-export function backgroundRuntimeAction(
-  provider: ServerProvider,
-  record: BackgroundRecord,
-): BackgroundCheck {
-  const runtime = provider.connection?.runtime;
-  if (runtime?.pendingRecovery) return { kind: "wait", reason: "requested-recovery" };
-  if (!provider.enabled || !runtime) return { kind: "wait", reason: "unavailable" };
-  const action: ProviderManagedRuntimeAction | undefined =
-    runtime.source === "missing" && runtime.actions.includes("install")
-      ? "install"
-      : runtime.source === "scient_managed" && runtime.actions.includes("update")
-        ? "update"
-        : undefined;
-  const version =
-    action === "update"
-      ? runtime.availableManagedVersion
-      : (runtime.availableManagedVersion ?? runtime.qualifiedVersion);
-  if (action === undefined || !version) return { kind: "wait", reason: "nothing-to-do" };
-  if (action === "install" && record.userStopped) return { kind: "wait", reason: "user-stopped" };
-  if (action === "update" && record.skippedVersion === version)
-    return { kind: "wait", reason: "user-stopped" };
-  if (
-    record.failures?.version === version &&
-    record.failures.count >= MAX_FAILED_ATTEMPTS_PER_RELEASE
-  )
-    return { kind: "wait", reason: "gave-up" };
-  return { kind: "start", action, version };
-}
 
 /** True when the OS says the connection is metered. Unknown counts as not metered. */
 export function parseMeteredOutput(platform: NodeJS.Platform, output: string): boolean {

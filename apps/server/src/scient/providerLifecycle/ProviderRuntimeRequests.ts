@@ -13,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Random from "effect/Random";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -98,6 +99,8 @@ export class ProviderRuntimeRequests extends Context.Service<
       readonly requestId?: string;
       readonly retryAfterMs?: number;
     }) => Effect.Effect<void, ProviderRuntimeRequestsPersistenceError>;
+    /** Unreadable state disables managed changes, not the rest of the server. */
+    readonly assertAvailable: Effect.Effect<void, ProviderRuntimeRequestsPersistenceError>;
     readonly list: Effect.Effect<ReadonlyArray<RuntimeRequest>>;
     readonly changes: Stream.Stream<ReadonlyArray<RuntimeRequest>>;
     /** Changes this exact request if it still exists; `undefined` drops it. */
@@ -116,7 +119,7 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
   const random = yield* SecureRandom.SecureRandom;
   // Kept outside the runtime folders, which Remove deletes.
   const filePath = path.join(config.baseDir, "provider-runtimes", ".background", "requests.json");
-  const stored = yield* fs.readFileString(filePath).pipe(
+  const loaded = yield* fs.readFileString(filePath).pipe(
     Effect.catchIf(
       (error) => error.reason._tag === "NotFound",
       () => Effect.succeed("[]"),
@@ -125,6 +128,14 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
     Effect.mapError(
       (cause) => new ProviderRuntimeRequestsPersistenceError({ path: filePath, cause }),
     ),
+    Effect.result,
+  );
+  const stored = loaded._tag === "Success" ? loaded.success : [];
+  const unavailable = yield* Ref.make<ProviderRuntimeRequestsPersistenceError | undefined>(
+    loaded._tag === "Failure" ? loaded.failure : undefined,
+  );
+  const assertAvailable = Ref.get(unavailable).pipe(
+    Effect.flatMap((error) => (error === undefined ? Effect.void : Effect.fail(error))),
   );
   const requestsRef = yield* SubscriptionRef.make<ReadonlyArray<RuntimeRequest>>(
     yield* Effect.forEach(stored, (request) =>
@@ -141,6 +152,7 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
     lock.withPermits(1)(
       Effect.uninterruptible(
         Effect.gen(function* () {
+          yield* assertAvailable;
           const current = yield* SubscriptionRef.get(requestsRef);
           const updated = yield* next(current);
           if (updated === current) return;
@@ -161,7 +173,11 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
     );
 
   if (stored.some((request) => request.requestId === undefined)) {
-    yield* change((requests) => Effect.succeed([...requests]));
+    yield* change((requests) => Effect.succeed([...requests])).pipe(
+      Effect.catchTags({
+        ProviderRuntimeRequestsPersistenceError: (error) => Ref.set(unavailable, error),
+      }),
+    );
   }
 
   const updateEach = (
@@ -233,6 +249,7 @@ export const make = Effect.fn("ProviderRuntimeRequests.make")(function* () {
   });
 
   return ProviderRuntimeRequests.of({
+    assertAvailable,
     requested,
     settled,
     list: SubscriptionRef.get(requestsRef),

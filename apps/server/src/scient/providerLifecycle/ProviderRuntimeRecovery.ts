@@ -32,6 +32,7 @@ export const make = Effect.fn("ProviderRuntimeRecovery.make")(function* () {
   const registry = yield* ProviderRegistry;
 
   const tryDue = Effect.fn("ProviderRuntimeRecovery.tryDue")(function* () {
+    yield* requests.assertAvailable;
     const now = yield* Clock.currentTimeMillis;
     const request = (yield* requests.list)
       .filter((candidate) => candidate.dueAt <= now)

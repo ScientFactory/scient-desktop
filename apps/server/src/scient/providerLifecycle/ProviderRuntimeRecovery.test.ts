@@ -13,6 +13,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
@@ -138,6 +139,58 @@ describe("ProviderRuntimeRequests", () => {
       }).pipe(
         Effect.provide(
           ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-requests-denied-" }).pipe(
+            Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["malformed", "denied"] as const)(
+    "preserves an unreadable journal and disables only managed changes (%s)",
+    (mode) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        const file = path.join(config.baseDir, "provider-runtimes", ".background", "requests.json");
+        const contents = mode === "malformed" ? "{broken" : "[]";
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, contents);
+        const guardedFs = FileSystem.FileSystem.of({
+          ...fs,
+          readFileString: (target, encoding) =>
+            mode === "denied" && target === file
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "readFileString",
+                    pathOrDescriptor: target,
+                  }),
+                )
+              : fs.readFileString(target, encoding),
+        });
+        const requests = yield* makeRequests().pipe(
+          Effect.provideService(FileSystem.FileSystem, guardedFs),
+        );
+        const unavailable = yield* requests.assertAvailable.pipe(Effect.flip);
+        assert.strictEqual(unavailable._tag, "ProviderRuntimeRequestsPersistenceError");
+        for (const mutation of [
+          requests.requested(request),
+          requests.update(request.requestId, () => undefined),
+          requests.settled({ ...request, outcome: "cancelled" }),
+        ]) {
+          assert.strictEqual((yield* mutation.pipe(Effect.flip))._tag, unavailable._tag);
+        }
+        assert.strictEqual(yield* fs.readFileString(file), contents);
+        yield* fs.writeFileString(file, "[]");
+        const restarted = yield* makeRequests();
+        yield* restarted.assertAvailable;
+        yield* restarted.requested(request);
+        assert.deepInclude((yield* (yield* makeRequests()).list)[0], request);
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "scient-requests-unavailable-" }).pipe(
             Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
           ),
         ),

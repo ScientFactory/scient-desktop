@@ -250,6 +250,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const syncPendingRecovery = Effect.fn("ProviderRuntimeManager.syncPendingRecovery")(function* () {
     yield* publicationLock.withPermits(1)(
       Effect.gen(function* () {
+        yield* requests.assertAvailable;
         const providers = yield* providerRegistry.getProviders;
         const pending = yield* requests.list;
         for (const request of pending) {
@@ -587,6 +588,9 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     registeredActiveRef: Ref.Ref<boolean>,
   ) {
     const target = yield* readTarget(input.instanceId);
+    yield* requests.assertAvailable.pipe(
+      Effect.mapError((error) => persistenceActionError(target, error.message)),
+    );
     const planned = yield* plan({ instanceId: input.instanceId, action: input.action });
     if (planned.catalogRevision !== input.catalogRevision) {
       return yield* makeError({
@@ -616,6 +620,29 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
         reason: "runtime_busy",
         message: "A requested runtime recovery owns this runtime.",
       });
+    }
+    if (
+      background &&
+      !background.requestId &&
+      target.provider === ProviderDriverKind.make("scient")
+    ) {
+      const latest = yield* readTarget(input.instanceId);
+      const record = yield* agentPolicy.read.pipe(
+        Effect.mapError((error) => persistenceActionError(target, error.message)),
+      );
+      const eligible = ScientAgentRuntimePolicy.backgroundRuntimeAction(latest.snapshot, record);
+      if (
+        eligible.kind !== "start" ||
+        eligible.action !== input.action ||
+        eligible.version !== planned.version
+      ) {
+        return yield* makeError({
+          provider: target.provider,
+          instanceId: input.instanceId,
+          reason: "runtime_plan_stale",
+          message: "Automatic Agent setup policy changed. No runtime was started.",
+        });
+      }
     }
     const reserved = yield* lifecycleCoordinator.reserve({
       instanceId: input.instanceId,
@@ -1106,6 +1133,9 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const cancel: ProviderRuntimeManagerShape["cancel"] = Effect.fn("ProviderRuntimeManager.cancel")(
     function* (input) {
       const target = yield* readTarget(input.instanceId);
+      yield* requests.assertAvailable.pipe(
+        Effect.mapError((error) => persistenceActionError(target, error.message)),
+      );
       let candidate = (yield* Ref.get(activeRef)).get(input.instanceId);
       const pending =
         "requestId" in input
@@ -1279,7 +1309,12 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     );
   }).pipe(Effect.delay(RESELECT_INTERVAL), Effect.forever, Effect.forkScoped);
 
-  yield* syncPendingRecovery();
+  yield* syncPendingRecovery().pipe(
+    Effect.catchTags({
+      ProviderRuntimeRequestsPersistenceError: () =>
+        Effect.logWarning("Runtime recovery intent is unavailable; managed changes are disabled"),
+    }),
+  );
   yield* requests.changes.pipe(
     Stream.runForEach(() =>
       syncPendingRecovery().pipe(

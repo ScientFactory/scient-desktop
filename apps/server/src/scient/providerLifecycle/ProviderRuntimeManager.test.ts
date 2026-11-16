@@ -243,6 +243,7 @@ function makeHarness(
     const requestsLayer = hooks.requests
       ? Layer.succeed(ProviderRuntimeRequests, hooks.requests)
       : Layer.mock(ProviderRuntimeRequests)({
+          assertAvailable: Effect.void,
           list: Effect.succeed([]),
           changes: Stream.empty,
           requested: (input) =>
@@ -1536,6 +1537,168 @@ describe("ProviderRuntimeManager", () => {
         }
         assert.deepStrictEqual(yield* (yield* makeRequests()).list, []);
       }).pipe(Effect.provide(agentTestLayer("scient-agent-cooldown-"))),
+  );
+
+  it.effect(
+    "rechecks Agent stop policy after another instance cancels during automatic planning",
+    () =>
+      Effect.gen(function* () {
+        const requests = yield* makeRequests();
+        const pending = {
+          requestId: "cancel-other-instance",
+          instanceId: SECOND_INSTANCE,
+          driver: AGENT,
+          action: "install" as const,
+          catalogRevision: "reviewed:1",
+        };
+        yield* requests.requested(pending);
+        const policy = yield* loadAgentPolicy;
+        const planning = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const runs = yield* Ref.make(0);
+        const { manager } = yield* makeHarness(
+          {
+            getSummary: Effect.succeed(agentRuntime),
+            plan: () =>
+              Deferred.succeed(planning, undefined).pipe(
+                Effect.andThen(Deferred.await(resume)),
+                Effect.as({ ...installPlan(), version: "0.1.6" }),
+              ),
+            run: () => Ref.update(runs, (count) => count + 1),
+          },
+          [agentProvider, { ...agentProvider, instanceId: SECOND_INSTANCE }],
+          undefined,
+          undefined,
+          undefined,
+          { requests, agentPolicy: policy },
+        );
+        const automatic = yield* manager
+          .startInBackground({
+            instanceId: INSTANCE,
+            action: "install",
+            catalogRevision: "reviewed:1",
+            attempt: 1,
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(planning);
+        yield* manager.cancel({ instanceId: SECOND_INSTANCE, requestId: pending.requestId });
+        assert.deepStrictEqual(yield* policy.read, { userStopped: true });
+        assert.deepStrictEqual(yield* requests.list, []);
+        yield* Deferred.succeed(resume, undefined);
+        const result = yield* Fiber.join(automatic);
+        assert.strictEqual(result._tag, "Failure");
+        if (result._tag === "Failure")
+          assert.strictEqual(result.failure.reason, "runtime_plan_stale");
+        assert.strictEqual(yield* Ref.get(runs), 0);
+      }).pipe(Effect.provide(agentTestLayer("scient-agent-policy-race-"))),
+  );
+
+  it.effect("starts the manager with an unavailable journal but rejects runtime mutations", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const guardedFs = FileSystem.FileSystem.of({
+        ...fs,
+        readFileString: (path, encoding) =>
+          path.endsWith("requests.json")
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readFileString",
+                  pathOrDescriptor: path,
+                }),
+              )
+            : fs.readFileString(path, encoding),
+      });
+      const requests = yield* makeRequests().pipe(
+        Effect.provideService(FileSystem.FileSystem, guardedFs),
+      );
+      const runs = yield* Ref.make(0);
+      const { manager, registry } = yield* makeHarness(
+        {
+          getSummary: Effect.succeed(missingRuntime),
+          plan: () => Effect.succeed(installPlan()),
+          run: () => Ref.update(runs, (count) => count + 1),
+        },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { requests },
+      );
+      assert.strictEqual(
+        (yield* manager.plan({ instanceId: INSTANCE, action: "install" })).version,
+        "0.147.0",
+      );
+      const input = {
+        instanceId: INSTANCE,
+        action: "install" as const,
+        catalogRevision: "reviewed:1",
+      };
+      for (const action of [
+        manager.start(input).pipe(Effect.asVoid),
+        manager.startInBackground({ ...input, attempt: 1 }).pipe(Effect.asVoid),
+        manager
+          .cancel({ instanceId: INSTANCE, requestId: "unreadable-request" })
+          .pipe(Effect.asVoid),
+      ]) {
+        const failure = yield* action.pipe(Effect.flip);
+        assert.strictEqual(failure.reason, "runtime_operation_failed");
+      }
+      assert.strictEqual(yield* Ref.get(runs), 0);
+      assert.strictEqual((yield* registry.getProviders)[0]?.connection?.runtime?.operation, null);
+    }).pipe(Effect.provide(agentTestLayer("scient-manager-unavailable-"))),
+  );
+
+  it.effect("keeps the server usable and retains intent when initial pruning cannot persist", () =>
+    Effect.gen(function* () {
+      const before = yield* makeRequests();
+      const orphan = {
+        requestId: "removed-instance",
+        instanceId: ProviderInstanceId.make("removed"),
+        driver: CODEX,
+        action: "install" as const,
+        catalogRevision: "reviewed:1",
+      };
+      yield* before.requested(orphan);
+      const fs = yield* FileSystem.FileSystem;
+      const guardedFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          to.endsWith("requests.json")
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: to,
+                }),
+              )
+            : fs.rename(from, to),
+      });
+      const requests = yield* makeRequests().pipe(
+        Effect.provideService(FileSystem.FileSystem, guardedFs),
+      );
+      const { manager, registry } = yield* makeHarness(
+        {
+          getSummary: Effect.succeed(missingRuntime),
+          plan: () => Effect.succeed(installPlan()),
+          run: () => Effect.die("Unexpected runtime mutation"),
+        },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { requests },
+      );
+      assert.strictEqual(
+        (yield* manager.plan({ instanceId: INSTANCE, action: "install" })).catalogRevision,
+        "reviewed:1",
+      );
+      assert.strictEqual((yield* registry.getProviders)[0]?.instanceId, INSTANCE);
+      assert.deepInclude((yield* requests.list)[0], orphan);
+      assert.deepInclude((yield* (yield* makeRequests()).list)[0], orphan);
+    }).pipe(Effect.provide(agentTestLayer("scient-manager-prune-denied-"))),
   );
 
   it.effect.each([
