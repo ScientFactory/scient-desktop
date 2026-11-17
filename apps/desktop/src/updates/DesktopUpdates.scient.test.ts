@@ -2,6 +2,7 @@ import * as NodeModule from "node:module";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -208,6 +209,47 @@ describe("DesktopUpdates outcomes", () => {
           // A track switch keeps the run on GitHub.
           yield* updates.setChannel("beta");
           assert.deepEqual(harness.feedUrls().at(-1), { ...github, repo: "scient-desktop-beta" });
+        }),
+      ).pipe(Effect.provide(layer));
+    });
+
+    it.effect("retries a failed mirror download in the background from GitHub", () => {
+      // electron-updater downloads from the feed its last successful check used.
+      let checkedFeed: unknown;
+      const { harness, layer } = recordingHarness({
+        ...realFeeds,
+        checkForUpdates: Effect.sync(() => {
+          checkedFeed = harness.feedUrls().at(-1);
+          harness.emit("update-available", { version: "1.2.4" });
+        }),
+        downloadUpdate: Effect.suspend(() =>
+          isMirror(checkedFeed)
+            ? Effect.fail(
+                new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+                  channel: "latest",
+                  cause: new Error("net::ERR_CONTENT_LENGTH_MISMATCH"),
+                }),
+              )
+            : Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
+        ),
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          // The startup check finds the update on the mirror; its download fails.
+          yield* TestClock.adjust(Duration.seconds(15));
+          yield* flushCallbacks;
+          assert.equal(harness.checkCount(), 1);
+          assert.equal(harness.downloadCount(), 1);
+          assert.isNull((yield* updates.getState).downloadedVersion);
+          // The first retry comes a minute later, with no scheduled check before it.
+          yield* TestClock.adjust(Duration.minutes(1));
+          yield* flushCallbacks;
+          assert.equal(harness.checkCount(), 2);
+          assert.deepEqual(checkedFeed, github);
+          assert.equal(harness.downloadCount(), 2);
+          assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
         }),
       ).pipe(Effect.provide(layer));
     });

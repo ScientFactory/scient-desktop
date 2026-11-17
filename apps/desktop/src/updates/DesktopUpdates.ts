@@ -563,6 +563,10 @@ export const make = Effect.gen(function* () {
     yield* useScientFeed(channel.value, "github");
     return yield* electronUpdater.checkForUpdates;
   });
+  const lastCheckUsedSkippedMirror = Effect.gen(function* () {
+    if (Option.isNone(yield* mirrorChannel) || !(yield* Ref.get(mirrorSkippedRef))) return false;
+    return (yield* Ref.get(updateSourceKindRef)) === "scient_mirror";
+  });
   // A download the mirror failed leaves the next checks and downloads to GitHub.
   const skipMirrorAfterDownloadFailure = Effect.gen(function* () {
     if (Option.isNone(yield* mirrorChannel)) return;
@@ -791,8 +795,11 @@ export const make = Effect.gen(function* () {
 
     const offered = yield* Ref.get(updateStateRef);
     let state = offered;
+    // SCIENT-FORK: electron-updater downloads from the feed its last check used, so a retry after
+    // a failed mirror download first finds the update on GitHub.
+    const refreshFromGitHub = !refresh && (yield* lastCheckUsedSkippedMirror);
     return yield* Effect.gen(function* () {
-      if (refresh) {
+      if (refresh || refreshFromGitHub) {
         // electron-updater downloads what its last check found, which can be hours old.
         yield* logUpdaterInfo("checking for updates", { reason: "download" });
         // SCIENT-FORK: Scient's channels (with Beta) come from its own version parser.
