@@ -22,6 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import * as ScientAnalytics from "./ScientAnalytics.ts";
 import {
   createV2AnalyticsEventMapper,
   launchV2AnalyticsEventObservers,
@@ -135,21 +136,20 @@ function metadata(update: Partial<OrchestrationV2AppThread>): OrchestrationV2Dom
 }
 function analyticsFixture() {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let available = true;
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
   const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      available = next;
+      availability.available = next;
     });
-  return { service, events, setAvailable };
+  return { service, availability, events, setAvailable };
 }
 
 describe("native V2 analytics", () => {
@@ -163,6 +163,7 @@ describe("native V2 analytics", () => {
         yield* launchV2AnalyticsEventObservers.pipe(
           Effect.provide(
             Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
               Layer.succeed(AnalyticsService, {
                 ...fixture.service,
                 record: (name, properties) =>
@@ -215,6 +216,7 @@ describe("native V2 analytics", () => {
         yield* launchV2AnalyticsEventObservers.pipe(
           Effect.provide(
             Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
               Layer.succeed(AnalyticsService, fixture.service),
               Layer.mock(EventSinkV2)({
                 latestSequence: () =>
@@ -253,6 +255,7 @@ describe("native V2 analytics", () => {
         yield* launchV2AnalyticsEventObservers.pipe(
           Effect.provide(
             Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
               Layer.succeed(AnalyticsService, {
                 ...fixture.service,
                 record: (name, properties) =>
@@ -399,7 +402,10 @@ describe("native V2 analytics", () => {
       expect(fixture.events).toMatchObject([
         { name: "provider.turn.sent", properties: { provider: "droid" } },
       ]);
-    }).pipe(Effect.provideService(AnalyticsService, fixture.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, fixture.service),
+      Effect.provideService(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+    );
   });
   it("ignores restored terminal admissions and progress as new prompts", () => {
     for (const status of [
@@ -872,13 +878,16 @@ describe("native V2 analytics", () => {
         payload: { ...run, id: RunId.make("third"), status: "completed" },
       });
       expect(fixture.events).toHaveLength(1);
-    }).pipe(Effect.provideService(AnalyticsService, fixture.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, fixture.service),
+      Effect.provideService(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+    );
   });
   it.effect("does not acquire provider or orchestration observers when unavailable", () =>
     launchV2AnalyticsEventObservers.pipe(
       Effect.provide(
         Layer.mergeAll(
-          AnalyticsService.layerDisabled,
+          ScientAnalytics.layerDisabled,
           Layer.mock(EventSinkV2)({}),
           Layer.mock(ProjectionStoreV2)({}),
           Layer.mock(ProviderRegistry)({}),

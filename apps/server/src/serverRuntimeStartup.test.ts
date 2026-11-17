@@ -442,7 +442,6 @@ it.effect("startup heartbeat reports thread and project counts and hashed accoun
             events.push({ name, properties });
           }),
         flush: Effect.void,
-        status: Effect.succeed({ available: false }),
       }),
       Effect.provide(
         Layer.mergeAll(

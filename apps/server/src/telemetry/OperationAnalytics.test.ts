@@ -2,29 +2,29 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { makeOperationAnalytics, observeAnalyticsEffect } from "./OperationAnalytics.ts";
 
 function fixture() {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let available = true;
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
   const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      available = next;
+      availability.available = next;
     });
-  return { events, service, setAvailable };
+  return { events, service, availability, setAvailable };
 }
 
 describe("semantic operation analytics", () => {
-  it.effect("runs the product operation exactly once when analytics preflight defects", () => {
+  it.effect("runs the product operation exactly once when recording defects", () => {
     const f = fixture();
     let executions = 0;
     return Effect.gen(function* () {
@@ -39,8 +39,9 @@ describe("semantic operation analytics", () => {
     }).pipe(
       Effect.provideService(AnalyticsService, {
         ...f.service,
-        status: Effect.die("observer unavailable"),
+        record: () => Effect.die("observer unavailable"),
       }),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
     );
   });
   it.effect("observes sign-out completion and failure without account details", () => {
@@ -69,7 +70,10 @@ describe("semantic operation analytics", () => {
       expect(f.events.flatMap((event) => Object.values(event.properties ?? {}))).not.toContain(
         "private account detail",
       );
-    }).pipe(Effect.provideService(AnalyticsService, f.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, f.service),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
+    );
   });
   it.effect("records one terminal outcome and ignores restored history", () => {
     const f = fixture();
@@ -92,7 +96,10 @@ describe("semantic operation analytics", () => {
       expect(f.events.flatMap((event) => Object.values(event.properties ?? {}))).not.toContain(
         "opaque-id",
       );
-    }).pipe(Effect.provideService(AnalyticsService, f.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, f.service),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
+    );
   });
 
   it.effect("does not change the operation's result or error or capture its contents", () => {
@@ -125,6 +132,9 @@ describe("semantic operation analytics", () => {
         trigger: "agent",
       });
       expect(f.events).toHaveLength(4);
-    }).pipe(Effect.provideService(AnalyticsService, f.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, f.service),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
+    );
   });
 });

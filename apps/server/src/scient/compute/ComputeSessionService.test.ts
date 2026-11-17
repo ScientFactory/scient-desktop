@@ -49,6 +49,10 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../../config.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import {
+  type AnalyticsAvailability,
+  ScientAnalyticsAvailability,
+} from "../../telemetry/ScientAnalytics.ts";
+import {
   ComputeSessionService,
   DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
   type ComputeRuntimeBinding,
@@ -349,6 +353,7 @@ interface HarnessOptions {
   readonly adapter?: Partial<ComputeLanguageAdapter>;
   readonly additionalBindings?: ReadonlyArray<ComputeRuntimeBinding>;
   readonly analytics?: AnalyticsService["Service"];
+  readonly availability?: AnalyticsAvailability;
   readonly projectOutputs?: ComputeProjectOutputObserverPort;
   readonly capabilities?: ReadonlyArray<ComputeCapability>;
   readonly reportedCapabilities?: ReadonlyArray<ComputeCapability>;
@@ -443,7 +448,15 @@ const harness = (options: HarnessOptions = {}) =>
       Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(
-        options.analytics ? Layer.succeed(AnalyticsService, options.analytics) : Layer.empty,
+        options.analytics
+          ? Layer.mergeAll(
+              Layer.succeed(AnalyticsService, options.analytics),
+              Layer.succeed(
+                ScientAnalyticsAvailability,
+                options.availability ?? { available: true },
+              ),
+            )
+          : Layer.empty,
       ),
     );
     const use = <A, E>(
@@ -1655,21 +1668,20 @@ describe("compute runtime inspection", () => {
 
 const analyticsFixture = () => {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let available = true;
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
   const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      available = next;
+      availability.available = next;
     });
-  return { events, service, setAvailable };
+  return { events, service, availability, setAvailable };
 };
 
 describe("interactive capture analytics", () => {
@@ -1966,8 +1978,9 @@ describe("interactive capture analytics", () => {
       const test = yield* harness({
         analytics:
           mode === "broken"
-            ? { ...f.service, status: Effect.die("private analytics error") }
+            ? { ...f.service, record: () => Effect.die("private analytics error") }
             : f.service,
+        availability: f.availability,
       });
       yield* test.use(
         Effect.gen(function* () {
@@ -1993,7 +2006,7 @@ describe("compute outcome analytics", () => {
     Effect.gen(function* () {
       const f = analyticsFixture();
       yield* f.setAvailable(false);
-      const test = yield* harness({ analytics: f.service });
+      const test = yield* harness({ analytics: f.service, availability: f.availability });
       yield* test.use(
         Effect.gen(function* () {
           const service = yield* ComputeSessionService;

@@ -1,25 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { makeComputeOutputAnalytics } from "./ComputeOutputAnalytics.ts";
 
 const fixture = () => {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let available = true;
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
   const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      available = next;
+      availability.available = next;
     });
-  return { events, service, setAvailable };
+  return { events, service, availability, setAvailable };
 };
 
 describe("interactive output analytics", () => {
@@ -93,7 +93,10 @@ describe("interactive output analytics", () => {
           },
         },
       ]);
-    }).pipe(Effect.provideService(AnalyticsService, f.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, f.service),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
+    );
   });
 
   it.effect("does not replay work started while unavailable, or history", () => {
@@ -107,7 +110,10 @@ describe("interactive output analytics", () => {
       yield* observe({ key: "old", phase: "finished" });
       yield* observe({ key: "history", phase: "finished" });
       expect(f.events).toEqual([]);
-    }).pipe(Effect.provideService(AnalyticsService, f.service));
+    }).pipe(
+      Effect.provideService(AnalyticsService, f.service),
+      Effect.provideService(ScientAnalyticsAvailability, f.availability),
+    );
   });
 
   it.effect.each([false, true])(
@@ -133,7 +139,10 @@ describe("interactive output analytics", () => {
             rejectedOutputCount: 0,
           },
         });
-      }).pipe(Effect.provideService(AnalyticsService, f.service));
+      }).pipe(
+        Effect.provideService(AnalyticsService, f.service),
+        Effect.provideService(ScientAnalyticsAvailability, f.availability),
+      );
     },
   );
 
@@ -154,7 +163,10 @@ describe("interactive output analytics", () => {
         expect(f.events.at(-1)?.name).toBe("scient.operation.completed");
         yield* observe({ key: "fresh", phase: "started", startedAt: 100 });
         expect(f.events).toHaveLength(1_002);
-      }).pipe(Effect.provideService(AnalyticsService, f.service));
+      }).pipe(
+        Effect.provideService(AnalyticsService, f.service),
+        Effect.provideService(ScientAnalyticsAvailability, f.availability),
+      );
     },
   );
 
@@ -166,8 +178,9 @@ describe("interactive output analytics", () => {
       const broken = yield* makeComputeOutputAnalytics.pipe(
         Effect.provideService(AnalyticsService, {
           ...f.service,
-          status: Effect.die("private error"),
+          record: () => Effect.die("private error"),
         }),
+        Effect.provideService(ScientAnalyticsAvailability, f.availability),
       );
       yield* broken({ key: "unused", phase: "started", startedAt: 100 });
       yield* broken({ key: "unused", phase: "output", retained: true });

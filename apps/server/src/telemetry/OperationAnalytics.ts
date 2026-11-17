@@ -5,6 +5,7 @@ import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import type { ComputeCaptureSummary } from "../scient/compute/ComputeCaptureStatus.ts";
 import {
   captureRejectionAttribution,
@@ -53,11 +54,11 @@ export const makeOperationAnalytics = Effect.gen(function* () {
   const service = yield* Effect.serviceOption(AnalyticsService);
   if (Option.isNone(service)) return (_input: OperationObservation) => Effect.void;
   const analytics = service.value;
+  const availability = yield* ScientAnalyticsAvailability;
   const operations = new Map<string, boolean>();
   return (input: OperationObservation) =>
     Effect.gen(function* () {
-      const status = yield* analytics.status;
-      if (!status.available) {
+      if (!availability.available) {
         operations.clear();
         return;
       }
@@ -104,12 +105,7 @@ export const observeAnalyticsEffect = Effect.fn("OperationAnalytics.observeAnaly
     const service = yield* Effect.serviceOption(AnalyticsService);
     if (Option.isNone(service)) return yield* effect;
     const analytics = service.value;
-    const available = yield* analytics.status.pipe(
-      Effect.map((status) => status.available),
-      Effect.catchDefect(() => Effect.succeed(false)),
-    );
-    // A broken observer must never prevent or retry the actual product operation.
-    if (!available) return yield* effect;
+    if (!(yield* ScientAnalyticsAvailability).available) return yield* effect;
     const startedAt = yield* Clock.currentTimeMillis;
     const record = Effect.fn("OperationAnalytics.record")(
       function* (outcome: "started" | "completed" | "failed" | "cancelled", durationMs?: number) {

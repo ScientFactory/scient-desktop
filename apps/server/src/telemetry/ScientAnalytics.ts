@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This adapter owns Scient's local analytics boundary.
 /**
- * Scient first-party analytics implementation behind AnalyticsService.
+ * Scient first-party analytics, provided as T3's AnalyticsService where the server is built.
+ * T3's PostHog layer is never composed, so no event reaches T3's PostHog.
  *
  * @module ScientAnalytics
  */
@@ -10,12 +11,14 @@ import * as NodeProcess from "node:process";
 import * as NodeSea from "node:sea";
 import * as Config from "effect/Config";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerConfig from "../config.ts";
-import type { AnalyticsService } from "./AnalyticsService.ts";
+import { AnalyticsService } from "./AnalyticsService.ts";
 
 const AnalyticsEnvConfig = Config.all({
   enabled: Config.Boolean("SCIENT_ANALYTICS_ENABLED").pipe(Config.withDefault(false)),
@@ -46,12 +49,20 @@ export function localAnalyticsTestEndpoint(value: string): string | undefined {
   return url.href;
 }
 
-export interface ScientAnalyticsControls {
-  /** Whether this build collects analytics at all. */
-  readonly status: Effect.Effect<AnalyticsStatus>;
+export interface AnalyticsAvailability {
+  readonly available: boolean;
 }
 
-export interface AnalyticsStatus {
+/** Whether this build collects analytics at all; unprovided means it does not. */
+export class ScientAnalyticsAvailability extends Context.Reference<AnalyticsAvailability>(
+  "scient/telemetry/ScientAnalyticsAvailability",
+  {
+    defaultValue: () => ({ available: false }),
+  },
+) {}
+
+export interface ScientAnalytics {
+  readonly analytics: AnalyticsService["Service"];
   readonly available: boolean;
 }
 
@@ -91,18 +102,16 @@ export const disabledAnalyticsService: AnalyticsService["Service"] = {
   record: () => Effect.void,
   recordOwners: () => Effect.void,
   flush: Effect.void,
-  status: Effect.succeed({ available: false }),
 };
 
-/** @public */
+const disabled: ScientAnalytics = { analytics: disabledAnalyticsService, available: false };
+
 export const make = Effect.gen(function* () {
   const analyticsConfig = yield* AnalyticsEnvConfig;
   // A managed policy can switch analytics off over the environment, never on.
   const policyAllows =
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
-  if (!analyticsConfig.enabled || !policyAllows) {
-    return disabledAnalyticsService;
-  }
+  if (!analyticsConfig.enabled || !policyAllows) return disabled;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const outboxPath = NodePath.join(serverConfig.stateDir, "analytics", "outbox.sqlite");
   // Like T3, analytics is on for everyone; SCIENT_ANALYTICS_ENABLED=false is the off switch.
@@ -188,9 +197,19 @@ export const make = Effect.gen(function* () {
   );
 
   return {
-    record,
-    recordOwners,
-    flush,
-    status: Effect.succeed({ available: true }),
-  } satisfies AnalyticsService["Service"];
+    analytics: AnalyticsService.of({ record, recordOwners, flush }),
+    available: true,
+  } satisfies ScientAnalytics;
 });
+
+/** Provides AnalyticsService and its availability in place of T3's PostHog layer. */
+export const layer = Layer.effectContext(
+  Effect.map(make, ({ analytics, available }) =>
+    Context.make(AnalyticsService, analytics).pipe(
+      Context.add(ScientAnalyticsAvailability, { available }),
+    ),
+  ),
+);
+
+/** No-op layer for tests and callers that intentionally disable analytics. */
+export const layerDisabled = Layer.succeed(AnalyticsService, disabledAnalyticsService);

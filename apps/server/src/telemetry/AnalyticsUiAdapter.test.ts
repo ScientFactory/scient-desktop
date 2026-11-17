@@ -8,7 +8,6 @@ function fixture() {
   const events: unknown[] = [];
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
-    status: Effect.succeed({ available: true }),
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
@@ -22,7 +21,7 @@ describe("UI operation collection context", () => {
   it.effect("fences all voice stages across a server restart without exporting the context", () =>
     Effect.gen(function* () {
       const f = fixture();
-      const ui = makeAnalyticsUiAdapter(f.service);
+      const ui = makeAnalyticsUiAdapter(f.service, { available: true });
       const status = yield* ui.status;
       expect(status.voiceLifecycleVersion).toBe(2);
       for (const name of [
@@ -38,7 +37,7 @@ describe("UI operation collection context", () => {
           { accepted: true },
         );
       }
-      const restarted = makeAnalyticsUiAdapter(f.service);
+      const restarted = makeAnalyticsUiAdapter(f.service, { available: true });
       expect(
         yield* restarted.record({
           name: "voice.transcription.completed",
@@ -52,7 +51,7 @@ describe("UI operation collection context", () => {
   it.effect("accepts Visual LaTeX outcomes only within the current collection context", () =>
     Effect.gen(function* () {
       const f = fixture();
-      const ui = makeAnalyticsUiAdapter(f.service);
+      const ui = makeAnalyticsUiAdapter(f.service, { available: true });
       const current = yield* ui.status;
       const event = {
         name: "scient.operation.completed" as const,
@@ -62,7 +61,7 @@ describe("UI operation collection context", () => {
       expect(yield* ui.record({ ...event, collectionContext: current.collectionContext })).toEqual({
         accepted: true,
       });
-      const restarted = makeAnalyticsUiAdapter(f.service);
+      const restarted = makeAnalyticsUiAdapter(f.service, { available: true });
       expect(
         yield* restarted.record({ ...event, collectionContext: current.collectionContext }),
       ).toEqual({ accepted: false });
@@ -74,8 +73,8 @@ describe("UI operation collection context", () => {
     () =>
       Effect.gen(function* () {
         const f = fixture();
-        const before = yield* makeAnalyticsUiAdapter(f.service).status;
-        const ui = makeAnalyticsUiAdapter(f.service);
+        const before = yield* makeAnalyticsUiAdapter(f.service, { available: true }).status;
+        const ui = makeAnalyticsUiAdapter(f.service, { available: true });
         const window = {
           name: "feature.used" as const,
           properties: { feature: "accounts.browser_window", variant: "copied" },
@@ -99,7 +98,7 @@ describe("UI operation collection context", () => {
   it.effect("strips the context before recording and rejects absent or wrong contexts", () =>
     Effect.gen(function* () {
       const f = fixture();
-      const ui = makeAnalyticsUiAdapter(f.service);
+      const ui = makeAnalyticsUiAdapter(f.service, { available: true });
       const current = yield* ui.status;
       expect(current.collectionContext).toEqual(expect.any(String));
       const event = {
@@ -121,7 +120,7 @@ describe("UI operation collection context", () => {
   it.effect("keeps the legacy UI protocol and restricts new operations to UI-owned kinds", () =>
     Effect.gen(function* () {
       const f = fixture();
-      const ui = makeAnalyticsUiAdapter(f.service);
+      const ui = makeAnalyticsUiAdapter(f.service, { available: true });
       const context = (yield* ui.status).collectionContext;
       expect(
         yield* ui.record({
@@ -133,10 +132,7 @@ describe("UI operation collection context", () => {
       const legacy = { name: "project.opened" as const, properties: {} };
       expect(yield* ui.record(legacy)).toEqual({ accepted: true });
       expect(f.events).toEqual([legacy]);
-      const disabled = makeAnalyticsUiAdapter({
-        ...f.service,
-        status: Effect.succeed({ available: false }),
-      });
+      const disabled = makeAnalyticsUiAdapter(f.service, { available: false });
       expect(yield* disabled.status).toEqual({ available: false, consent: "off" });
       // Older clients still read a consent level; it is always the full one.
       expect(yield* ui.status).toMatchObject({ available: true, consent: "diagnostic" });

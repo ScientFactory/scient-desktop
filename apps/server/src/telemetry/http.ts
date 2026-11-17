@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import { annotateEnvironmentRequest, requireEnvironmentScope } from "../auth/http.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 import { makeAnalyticsUiAdapter } from "./AnalyticsUiAdapter.ts";
+import { disabledAnalyticsService, ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 
 export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -13,19 +14,9 @@ export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const analytics = Option.getOrElse(
       yield* Effect.serviceOption(AnalyticsService.AnalyticsService),
-      () =>
-        AnalyticsService.AnalyticsService.of({
-          recordOwners: Effect.fn("AnalyticsService.recordOwners")(function () {
-            return Effect.void;
-          }),
-          record: Effect.fn("AnalyticsService.record")(function () {
-            return Effect.void;
-          }),
-          flush: Effect.void,
-          status: Effect.succeed({ available: false }),
-        }),
+      () => disabledAnalyticsService,
     );
-    const ui = makeAnalyticsUiAdapter(analytics);
+    const ui = makeAnalyticsUiAdapter(analytics, yield* ScientAnalyticsAvailability);
     const authorize = (endpoint: string) =>
       annotateEnvironmentRequest(endpoint).pipe(
         Effect.andThen(requireEnvironmentScope(AuthOrchestrationOperateScope)),

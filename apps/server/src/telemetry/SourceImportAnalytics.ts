@@ -7,6 +7,7 @@ import type {
   SourceImportOutcome,
 } from "../scient/sources/SourceImportObservation.ts";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 
 /** A Promise bridge for the existing source coordinator, not a second job owner. */
 export const makeSourceImportAnalytics = Effect.fn("makeSourceImportAnalytics")(function* (
@@ -15,13 +16,13 @@ export const makeSourceImportAnalytics = Effect.fn("makeSourceImportAnalytics")(
   const service = yield* Effect.serviceOption(AnalyticsService);
   if (Option.isNone(service)) return undefined;
   const analytics = service.value;
+  const availability = yield* ScientAnalyticsAvailability;
   const context = yield* Effect.context<never>();
   const runPromise = Effect.runPromiseWith(context);
   return () =>
     runPromise(
       Effect.gen(function* () {
-        const status = yield* analytics.status;
-        if (!status.available) return undefined;
+        if (!availability.available) return undefined;
         const startedAt = yield* Clock.currentTimeMillis;
         yield* analytics.record("scient.operation.started", {
           operationKind: "source-import",

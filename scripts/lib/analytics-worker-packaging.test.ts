@@ -97,9 +97,9 @@ it("delivers from a relocated CLI chunk, preserves identity across restarts, and
       ).pipe(Layer.provideMerge(NodeServices.layer));
       await Effect.runPromise(Effect.gen(function* () {
         const server = yield* ServerConfig;
-        const analytics = yield* make;
+        const { analytics, available } = yield* make;
         const outbox = path.join(server.stateDir, 'analytics/outbox.sqlite');
-        assert.deepEqual(yield* analytics.status, { available: mode !== 'master-off' });
+        assert.equal(available, mode !== 'master-off');
         for (let index = 0; index < 600; index++) {
           yield* analytics.record('provider.turn.sent', { provider: 'codex', prompt: 'must-not-leave' });
         }

@@ -63,6 +63,12 @@ protections below. Final copy and layout require human review before activation.
 
 ## Contract and delivery
 
+T3's `apps/server/src/telemetry/AnalyticsService.ts` stays exactly as T3 wrote it. Scient's
+`ScientAnalytics.ts` provides that service and Scient's availability flag, and `server.ts`
+composes it in place of T3's PostHog layer, which is never built. `server.scient.test.ts` builds
+the composed analytics with T3's PostHog settings switched on and checks that nothing reaches
+PostHog.
+
 `contract.ts` normalizes raw call-site values. `wireContract.ts` is the strict
 persisted/wire validator; the website gateway consumes its generated copy.
 Revision 3 added product insight signals. Revision 4 makes provider installation

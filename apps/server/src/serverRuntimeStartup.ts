@@ -50,6 +50,7 @@ import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
 import { getMachineOwners } from "./telemetry/MachineId.ts";
+import { ScientAnalyticsAvailability } from "./telemetry/ScientAnalytics.ts";
 import { observeAnalyticsEffect } from "./telemetry/OperationAnalytics.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -219,8 +220,8 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
   yield* analytics.recordOwners(yield* getServerOwners, "server");
   yield* Effect.gen(function* () {
-    const status = yield* analytics.status;
-    if (status.available) yield* analytics.recordOwners(yield* getMachineOwners, "server");
+    if ((yield* ScientAnalyticsAvailability).available)
+      yield* analytics.recordOwners(yield* getMachineOwners, "server");
   }).pipe(Effect.forkScoped);
 });
 

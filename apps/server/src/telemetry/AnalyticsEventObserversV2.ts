@@ -14,6 +14,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics.ts";
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
@@ -441,14 +442,15 @@ export const makeV2AnalyticsObservers = Effect.gen(function* () {
   const mapper = createV2AnalyticsEventMapper(yield* BrowserToolCalls);
   const lifecycle = createProviderLifecycleAnalyticsMapper();
   const accounts = createProviderAccountAnalyticsMapper();
-  const enabled = Effect.gen(function* () {
-    const status = yield* analytics.status;
-    if (!status.available) {
+  const availability = yield* ScientAnalyticsAvailability;
+  const enabled = Effect.sync(() => {
+    const { available } = availability;
+    if (!available) {
       mapper.clear();
       lifecycle.clear();
       accounts.clear();
     }
-    return status.available;
+    return available;
   });
   const record = (observations: ReadonlyArray<Observation>) =>
     Effect.forEach(observations, (entry) => analytics.record(entry.name, entry.properties), {
@@ -473,8 +475,7 @@ export const makeV2AnalyticsObservers = Effect.gen(function* () {
 
 /** Disabled hosts acquire no observers; only live committed V2 events are observed. */
 export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
-  const analytics = yield* AnalyticsService;
-  if (!(yield* analytics.status).available) return;
+  if (!(yield* ScientAnalyticsAvailability).available) return;
   const sink = yield* EventSink.EventSinkV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const providers = yield* ProviderRegistry;

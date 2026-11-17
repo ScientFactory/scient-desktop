@@ -6,7 +6,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
-import * as AnalyticsService from "./AnalyticsService.ts";
+import * as ScientAnalytics from "./ScientAnalytics.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const factory = vi.hoisted(() => vi.fn());
@@ -41,12 +41,12 @@ function fakeRuntime(enabled = true) {
   return { runtime, recorded, properties };
 }
 
-it.layer(NodeServices.layer)("AnalyticsService controls", (it) => {
+it.layer(NodeServices.layer)("ScientAnalytics controls", (it) => {
   it.effect("uses an executable sibling for the analytics worker without starting collection", () =>
     Effect.gen(function* () {
       executable.active = true;
       factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
-      yield* AnalyticsService.make;
+      yield* ScientAnalytics.make;
       const options = factory.mock.calls.findLast(([options]) => options.enabled)?.[0] as
         | AnalyticsRuntimeOptions
         | undefined;
@@ -66,8 +66,7 @@ it.layer(NodeServices.layer)("AnalyticsService controls", (it) => {
   it.effect("collects when enabled", () =>
     Effect.gen(function* () {
       factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
-      const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: true });
+      assert.isTrue((yield* ScientAnalytics.make).available);
       assert.equal(factory.mock.calls.at(-1)?.[0].enabled, true);
     }).pipe(Effect.provide(testLayer())),
   );
@@ -76,7 +75,7 @@ it.layer(NodeServices.layer)("AnalyticsService controls", (it) => {
     Effect.gen(function* () {
       const active = fakeRuntime();
       factory.mockReset().mockImplementation(() => active.runtime);
-      const service = yield* AnalyticsService.make;
+      const { analytics: service } = yield* ScientAnalytics.make;
       const owners = [
         { source: "openai", ownerId: "a".repeat(64) },
         { source: "claude", ownerId: "b".repeat(64) },

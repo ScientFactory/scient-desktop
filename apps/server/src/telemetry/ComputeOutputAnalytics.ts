@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AnalyticsService } from "./AnalyticsService.ts";
 import { captureRejectionAttribution } from "./FailureAttribution.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import type {
   ComputeCaptureReason,
   ComputeProjectCaptureStatus,
@@ -24,6 +25,7 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
   const service = yield* Effect.serviceOption(AnalyticsService);
   if (Option.isNone(service)) return (_input: ComputeOutputObservation) => Effect.void;
   const analytics = service.value;
+  const availability = yield* ScientAnalyticsAvailability;
   const active = new Map<
     string,
     {
@@ -37,8 +39,7 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
   >();
   return (input: ComputeOutputObservation) =>
     Effect.gen(function* () {
-      const status = yield* analytics.status;
-      if (!status.available) {
+      if (!availability.available) {
         active.clear();
         return;
       }

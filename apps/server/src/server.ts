@@ -72,6 +72,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { launchV2AnalyticsEventObservers } from "./telemetry/AnalyticsEventObserversV2.ts";
 // SCIENT-FORK: page loads in the built-in browser.
 import * as BrowserPageAnalytics from "./telemetry/BrowserPageAnalytics.ts";
+import * as ScientAnalytics from "./telemetry/ScientAnalytics.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderUsageAnalytics from "./telemetry/ProviderUsageAnalytics.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -897,16 +898,25 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
+// SCIENT-FORK:START — Scient's first-party analytics replaces T3's PostHog layer
+/** The analytics the server composes; T3's PostHog layer is never built. */
+export const layerAnalytics = ScientAnalytics.layer satisfies Layer.Layer<
+  AnalyticsService.AnalyticsService,
+  unknown,
+  unknown
+>;
+// SCIENT-FORK:END
+
 const layerRuntimeBaseDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(TriageService.layer.pipe(Layer.provide(GitVcsDriver.layer))),
-  // Scient's first-party analytics runtime is disabled by default. Activation
-  // remains a separately reviewed product/privacy decision.
   // Layers memoize by reference, so this is the same policy the settings layer reads.
-  Layer.provideMerge(AnalyticsService.layer.pipe(Layer.provide(ManagedPolicy.layer))),
+  // SCIENT-FORK:START — Scient's first-party analytics replaces T3's PostHog layer
+  Layer.provideMerge(layerAnalytics.pipe(Layer.provide(ManagedPolicy.layer))),
+  // SCIENT-FORK:END
   Layer.provideMerge(GeneratedDocumentStore.layer.pipe(Layer.provide(layerServerEnvironment))),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),

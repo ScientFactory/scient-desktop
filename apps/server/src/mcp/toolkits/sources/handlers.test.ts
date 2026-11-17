@@ -29,6 +29,7 @@ import {
 } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "../../../telemetry/ScientAnalytics.ts";
 import {
   SourceIdentifierLookup,
   verifiableSourceIdentifier,
@@ -806,7 +807,6 @@ describe("Scient Sources MCP handlers", () => {
           Effect.sync(() => {
             events.push({ name, properties });
           }),
-        status: Effect.succeed({ available: true }),
         flush: Effect.void,
       });
       const root = yield* Effect.promise(() => fixture("scient-sources-agent-add-"));
@@ -848,6 +848,7 @@ describe("Scient Sources MCP handlers", () => {
       };
       const added = yield* provideContext(addScientSourceForInvocation(input), context).pipe(
         Effect.provideService(AnalyticsService, analytics),
+        Effect.provideService(ScientAnalyticsAvailability, { available: true }),
       );
       expect(added).toMatchObject({ outcome: "imported", verification: "unchecked" });
       expect(added.sourceId).toMatch(/^source_/);
@@ -856,6 +857,7 @@ describe("Scient Sources MCP handlers", () => {
 
       const repeated = yield* provideContext(addScientSourceForInvocation(input), context).pipe(
         Effect.provideService(AnalyticsService, analytics),
+        Effect.provideService(ScientAnalyticsAvailability, { available: true }),
       );
       expect(repeated.outcome).toBe("duplicate");
       expect(repeated.sourceId).toBe(added.sourceId);

@@ -34,6 +34,7 @@ import {
 } from "../scient/sources/Zotero.testkit.ts";
 import { discardLocalPdfImportMaterial } from "../scient/sources/LocalPdfSourceAdapter.ts";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { makeSourceImportAnalytics } from "./SourceImportAnalytics.ts";
 
 vi.mock("../scient/sources/LocalPdfSourceAdapter.ts", async (importOriginal) => {
@@ -82,9 +83,9 @@ async function project() {
 
 function analyticsFixture(initiallyAvailable = true) {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let available = initiallyAvailable;
+  const availability = { available: initiallyAvailable };
   const setAvailable = (next: boolean) => {
-    available = next;
+    availability.available = next;
   };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
@@ -92,11 +93,13 @@ function analyticsFixture(initiallyAvailable = true) {
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
   const observer = (trigger: "user" | "agent" = "user", provided = service) =>
-    makeSourceImportAnalytics(trigger).pipe(Effect.provideService(AnalyticsService, provided));
+    makeSourceImportAnalytics(trigger).pipe(
+      Effect.provideService(AnalyticsService, provided),
+      Effect.provideService(ScientAnalyticsAvailability, availability),
+    );
   return { events, service, observer, setAvailable };
 }
 
@@ -324,7 +327,6 @@ describe("source import outcome analytics", () => {
         const root = yield* Effect.promise(() => project());
         const f = analyticsFixture();
         for (const service of [
-          { ...f.service, status: Effect.die("analytics status failure") },
           { ...f.service, record: () => Effect.die("analytics record failure") },
         ]) {
           const observer = yield* f.observer("agent", service);

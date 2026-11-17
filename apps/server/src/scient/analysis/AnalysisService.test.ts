@@ -37,6 +37,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as ScientificRuntimePreferences from "../compute/ScientificRuntimePreferences.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "../../telemetry/ScientAnalytics.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -223,7 +224,7 @@ const serviceTestLayer = makeServiceTestLayer();
 const analyticsFixture = Effect.gen(function* () {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
   const terminalEvents = yield* Queue.unbounded<string>();
-  let available = true;
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
@@ -231,14 +232,17 @@ const analyticsFixture = Effect.gen(function* () {
         events.push({ name, properties });
         if (name !== "scient.operation.started") yield* Queue.offer(terminalEvents, name);
       }),
-    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
   const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      available = next;
+      availability.available = next;
     });
-  return { events, terminalEvents, service, setAvailable };
+  const layer = Layer.mergeAll(
+    Layer.succeed(AnalyticsService, service),
+    Layer.succeed(ScientAnalyticsAvailability, availability),
+  );
+  return { events, terminalEvents, service, availability, layer, setAvailable };
 });
 
 type ArtifactFixtureMode =
@@ -336,13 +340,7 @@ describe("analysis artifact analytics", () => {
               .filter((event) => event.properties?.operationKind === "compute-artifact")
               .map((event) => event.name),
           ).toEqual(["scient.operation.started", `scient.operation.${expected}`]);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -391,13 +389,7 @@ describe("analysis artifact analytics", () => {
             service.startRun({ ...request, runId, executablePath: "/other/matlab" }),
           );
           expect(conflicting.reason).toBe("run-already-active");
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -435,13 +427,7 @@ describe("analysis artifact analytics", () => {
               .map((event) => event.name),
           ).toEqual(["scient.operation.started", "scient.operation.failed"]);
           expect(yield* Ref.get(harness.processStartCount)).toBe(0);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -487,13 +473,7 @@ describe("analysis artifact analytics", () => {
             "scient.operation.completed",
           ]);
           expect(yield* Ref.get(harness.processStartCount)).toBe(1);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -577,13 +557,7 @@ describe("analysis artifact analytics", () => {
           ]) {
             expect(payload).not.toContain(privateValue);
           }
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -629,13 +603,7 @@ describe("analysis artifact analytics", () => {
               .filter((event) => event.properties?.operationKind === "compute-artifact")
               .map((event) => event.name),
           ).toEqual(["scient.operation.started", "scient.operation.completed"]);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -714,13 +682,7 @@ describe("analysis artifact analytics", () => {
           )[1];
           expect(capture?.properties).toMatchObject(scenario.capture);
           yield* Effect.promise(() => released);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -748,13 +710,7 @@ describe("analysis artifact analytics", () => {
           const runId = yield* Queue.take(harness.startedRuns);
           yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
           yield* Effect.promise(() => released);
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -809,6 +765,7 @@ describe("analysis artifact analytics", () => {
                     : analytics.service,
                 ),
               ),
+              Layer.provide(Layer.succeed(ScientAnalyticsAvailability, analytics.availability)),
             ),
           ),
         ),
@@ -862,11 +819,12 @@ describe("analysis outcome analytics", () => {
                   mode === "broken"
                     ? {
                         ...analytics.service,
-                        status: Effect.die("private observer failure"),
+                        record: () => Effect.die("private observer failure"),
                       }
                     : analytics.service,
                 ),
               ),
+              Layer.provide(Layer.succeed(ScientAnalyticsAvailability, analytics.availability)),
             ),
           ),
         ),
@@ -943,13 +901,7 @@ describe("analysis outcome analytics", () => {
           ]) {
             expect(payload).not.toContain(privateValue);
           }
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -1418,13 +1370,7 @@ describe("analysis service coordination", () => {
             outputContentHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
           });
           expect(history.runs[0]?.receipt.finishedAt).not.toBeNull();
-        }).pipe(
-          Effect.provide(
-            harness.analysisLayer.pipe(
-              Layer.provide(Layer.succeed(AnalyticsService, analytics.service)),
-            ),
-          ),
-        ),
+        }).pipe(Effect.provide(harness.analysisLayer.pipe(Layer.provide(analytics.layer)))),
       );
       expect(analytics.events).toEqual([]);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
