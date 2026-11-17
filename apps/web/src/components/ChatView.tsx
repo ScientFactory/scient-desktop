@@ -16,15 +16,6 @@ import { Button } from "./ui/button";
 import { ChevronDownIcon } from "lucide-react";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
 import { previewEnvironment } from "../state/preview";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "./ui/alert-dialog";
 import { latestTurnUnfinished } from "./chat/readerScrollPolicy";
 import { ThreadAnswerAcknowledgement } from "../scient/answerAttention/ThreadAnswerAcknowledgement";
 import { composerTargetKey } from "../composerDraftStore";
@@ -68,6 +59,7 @@ import { useLegacyQueueRecoveryError } from "~/scient/threadQueue/useLegacyQueue
 import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
 import {
   ScientRevertDialogDiagnostics,
+  describeUnrestorableRevertFiles,
   findFileHistoryIssue,
 } from "../scient/chat/ScientRevertDialogDiagnostics";
 import { scientFilePanelProps } from "../scient/fileSurfaces/scientFilePanelProps";
@@ -143,7 +135,7 @@ import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
-import { checkpointSupportsRewind, type UsageLimitSourceSnapshots } from "@t3tools/contracts";
+import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { freshSessionBannerItem } from "./chat/ComposerFreshSession";
 import { armFreshSession, disarmFreshSession, useFreshSessionArmed } from "./chat/freshSessionArms";
@@ -391,6 +383,7 @@ import {
   DeviceSetupDialogHost,
   openBranchRestoreConfirm,
   PullRequestThreadDialogHost,
+  RevertConfirmHost,
 } from "./chat/ChatOverlayHosts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { useCitedHistory } from "./chat/citationProcedure";
@@ -1741,14 +1734,6 @@ function ChatViewContent(props: ChatViewProps) {
    * File tools are explicit; completed commands are included because a shell
    * command can mutate the workspace without reporting the paths it touched.
    */
-  // SCIENT-FORK:START — a rewind failure stays in its dialog rather than the thread banner.
-  const [pendingRevert, setPendingRevert] = useState<{
-    turnCount: number;
-    messageId: MessageId;
-    routeThreadKey: string;
-    error?: string;
-  } | null>(null);
-  // SCIENT-FORK:END
   // SCIENT-FORK:START — a checkpoint the server could not capture leaves a
   // diagnostics affordance in the revert dialog so a missing diff is
   // explainable rather than silent.
@@ -2106,17 +2091,6 @@ function ChatViewContent(props: ChatViewProps) {
   const threadStartCheckpointAvailable =
     !serverThreadHistory.hasMoreHistory &&
     findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
-  // SCIENT-FORK:START — without a captured snapshot only the conversation rewinds.
-  const pendingRevertCheckpoint =
-    pendingRevert === null
-      ? undefined
-      : findRevertCheckpoint(serverProjection?.checkpoints ?? [], pendingRevert.turnCount);
-  const revertFilesUnavailable =
-    pendingRevertCheckpoint !== undefined &&
-    !checkpointSupportsRewind(pendingRevertCheckpoint, true);
-  // The server refuses file restore outside an isolated worktree.
-  const revertFilesOutsideWorktree = (activeThread?.worktreePath ?? null) === null;
-  // SCIENT-FORK:END
 
   const workspaceMutationId = deriveWorkspaceMutationId(
     serverVisibleTurnItems,
@@ -3667,8 +3641,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // SCIENT-FORK:END
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
-  const { onRevertToTurnCountStable, onRevertTimelineTurnStable } = useTimelineRewind({
-    setPendingRevert,
+  const { onConfirmRevertStable, onRevertTimelineTurnStable } = useTimelineRewind({
     hasProjectWorkspace,
     environmentId,
     routeThreadRef,
@@ -5073,71 +5046,20 @@ function ChatViewContent(props: ChatViewProps) {
         </ChatRightPanel>
       ) : null}
 
-      {/* SCIENT-FORK:START - retain the rewind dialog until the shared overlay host supports failure retention and file-history diagnostics. */}
-      <AlertDialog
-        open={pendingRevert !== null && pendingRevert.routeThreadKey === routeThreadKey}
-        onOpenChange={(open) => {
-          if (!open && !isRevertingCheckpoint) setPendingRevert(null);
-        }}
-      >
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Edit from here?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Rewind chat to before this message. Your prompt and attachments return to the
-              composer.
-              {revertFilesUnavailable
-                ? " Your files stay as they are: Scient could not save a snapshot of them from before this message."
-                : revertFilesOutsideWorktree
-                  ? " Your files stay as they are."
-                  : null}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <ScientRevertDialogDiagnostics
-            fileHistoryIssue={fileHistoryIssue}
-            error={pendingRevert?.error}
-          />
-          <AlertDialogFooter>
-            <AlertDialogClose
-              render={<Button variant="outline" disabled={isRevertingCheckpoint} />}
-            >
-              Cancel
-            </AlertDialogClose>
-            {revertFilesUnavailable || revertFilesOutsideWorktree ? null : (
-              <Button
-                variant="destructive"
-                disabled={isRevertingCheckpoint}
-                onClick={() => {
-                  if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                  void onRevertToTurnCountStable(
-                    pendingRevert.turnCount,
-                    pendingRevert.messageId,
-                    true,
-                  );
-                }}
-              >
-                Revert files too
-              </Button>
-            )}
-            <Button
-              disabled={isRevertingCheckpoint}
-              onClick={() => {
-                if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                void onRevertToTurnCountStable(
-                  pendingRevert.turnCount,
-                  pendingRevert.messageId,
-                  false,
-                );
-              }}
-            >
-              {revertFilesUnavailable || revertFilesOutsideWorktree
-                ? "Rewind chat"
-                : "Revert and keep changes"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
-      {/* SCIENT-FORK:END */}
+      <RevertConfirmHost
+        threadKey={routeThreadKey}
+        checkpoints={serverProjection?.checkpoints}
+        worktreePath={activeThread?.worktreePath ?? null}
+        onConfirm={onConfirmRevertStable}
+        // SCIENT-FORK:START — the dialog stays open while rewinding, says why files stay, and
+        // shows file-history diagnostics and the last failure.
+        reverting={isRevertingCheckpoint}
+        describeUnrestorableFiles={describeUnrestorableRevertFiles}
+        renderDetails={(error) => (
+          <ScientRevertDialogDiagnostics fileHistoryIssue={fileHistoryIssue} error={error} />
+        )}
+        // SCIENT-FORK:END
+      />
       {embedded ? null : <LinkPullRequestDialogHost />}
       {/* SCIENT-FORK:START — useAcknowledgeAnswer is the automatic visit writer; upstream's
           ThreadVisitWatermark would mark a background window or an unloaded answer read.

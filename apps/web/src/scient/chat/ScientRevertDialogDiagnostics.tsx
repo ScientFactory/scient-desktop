@@ -10,6 +10,15 @@ export function findFileHistoryIssue(
   return turnDiffSummaries.findLast((checkpoint) => checkpoint.status === "error") ?? null;
 }
 
+/** Why the revert dialog leaves the files as they are; it then offers only "Rewind chat". */
+export function describeUnrestorableRevertFiles(
+  reason: "outside-worktree" | "no-snapshot",
+): string {
+  return reason === "no-snapshot"
+    ? "Your files stay as they are: Scient could not save a snapshot of them from before this message."
+    : "Your files stay as they are.";
+}
+
 /**
  * The revert dialog's diagnostics: a checkpoint the server could not capture,
  * so a missing diff is explainable rather than silent, and the last rewind
