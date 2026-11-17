@@ -727,3 +727,48 @@ it.effect("upgrades a database with per-item fork handoff rows and converts them
     assert.equal(left[0]!.count, 1);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
+
+it.effect("selects from a not yet committed capture with ranges and leaves nothing behind", () =>
+  Effect.gen(function* () {
+    const { sql } = yield* forkFixture({ items: 60, running: 2 });
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+    const prepared = yield* service.prepareProviderHandoff({
+      threadId: forkId,
+      targetRunId: RunId.make("range-next:uncommitted"),
+      transferId: null,
+      purpose: "scient_fork",
+      fromProviderThreadIds: [],
+      toProviderThreadId: target,
+      fromProviderInstanceId: instance,
+      toProviderInstanceId: instance,
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "full_thread_summary",
+      items: yield* store.getContextHistoryCandidates(forkId),
+      createdAt: now,
+    });
+    const select = (handoff: OrchestrationV2ContextHandoff) =>
+      selectContextHistory(sql, {
+        handoffs: [handoff],
+        coverage: "Earlier conversation",
+        budget: 24_000,
+        alreadyDeliveredItemIds: new Set(),
+      }).pipe(
+        Effect.map((selected) => ({
+          ...selected,
+          itemIdsByHandoff: [...selected.itemIdsByHandoff].map(([id, ids]) => [id, [...ids]]),
+        })),
+      );
+    const uncommitted = yield* select(prepared);
+    assert.deepStrictEqual(yield* counts(), { rows: 0, ranges: 0 });
+    yield* commit({
+      id: EventId.make("handoff:uncommitted"),
+      type: "context-handoff.updated",
+      threadId: forkId,
+      occurredAt: now,
+      payload: prepared,
+    });
+    assert.isAbove((yield* counts()).ranges, 0);
+    assert.deepStrictEqual(yield* select(prepared), uncommitted);
+  }).pipe(Effect.provide(TestLayer)),
+);
