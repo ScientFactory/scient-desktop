@@ -63,6 +63,7 @@ import {
   BrowserToolCalls,
   isBrowserTool,
   noteToolFailure,
+  recordBrowserCall,
   refusedDelegateTarget,
   scientMcpAnalyticsInput,
   scientToolOutcome,
@@ -1439,12 +1440,16 @@ const withToolAnalytics =
                     const invocation = Option.getOrUndefined(
                       yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
                     )?.thread;
+                    // SCIENT-FORK: each browser call's tool, time, outcome and site, per turn.
                     if (isBrowserTool(tool) && invocation !== undefined)
-                      browserCalls.record(
-                        invocation.threadId,
+                      recordBrowserCall(browserCalls, invocation.threadId, {
+                        tool,
+                        args: payload,
+                        result: analyticsResult,
+                        failure,
+                        startedAt,
                         endedAt,
-                        scientToolOutcome(analyticsResult, failure).outcome !== "ok",
-                      );
+                      });
                     yield* record(
                       options.tool.name,
                       payload,

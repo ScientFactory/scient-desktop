@@ -916,23 +916,33 @@ describe("native V2 analytics", () => {
     (status) => {
       const ledger = new BrowserToolCallLedger();
       const completedAt = DateTime.toEpochMillis(runEvent("completed").occurredAt);
-      ledger.record(threadId, completedAt - 2_000, false);
-      ledger.record(threadId, completedAt - 1_000, true);
-      ledger.record(threadId, completedAt + 1, false);
+      const call = (at: number, failed: boolean) =>
+        ledger.record(threadId, { at, tool: "preview_act", durationMs: 100, failed });
+      call(completedAt - 2_000, false);
+      call(completedAt - 1_000, true);
+      call(completedAt + 1, false);
       const mapper = createV2AnalyticsEventMapper(ledger);
       mapper.event(runEvent("running"));
-      expect(mapper.event(runEvent(status))).toMatchObject([
-        {
-          name:
-            status === "completed"
-              ? "provider.turn.completed"
-              : status === "failed"
-                ? "provider.turn.failed"
-                : "provider.turn.stopped",
-          properties: { browserToolCalls: 2, browserToolFailures: 1 },
-        },
-      ]);
-      expect(ledger.take(threadId, completedAt + 1)).toEqual({ calls: 1, failures: 0 });
+      const output = mapper.event(runEvent(status));
+      expect(output[0]).toMatchObject({
+        name:
+          status === "completed"
+            ? "provider.turn.completed"
+            : status === "failed"
+              ? "provider.turn.failed"
+              : "provider.turn.stopped",
+        properties: { browserToolCalls: 2, browserToolFailures: 1 },
+      });
+      expect(
+        output.find((entry) => entry.name === "browser.turn.summary")?.properties,
+      ).toMatchObject({
+        provider: "codex",
+        turnOutcome: status,
+        calls: 2,
+        failures: 1,
+        actCalls: 2,
+      });
+      expect(ledger.take(threadId, completedAt + 1)).toMatchObject({ calls: 1, failures: 0 });
     },
   );
   it("ignores restored terminals and workspace-preparation failures", () => {

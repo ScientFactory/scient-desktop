@@ -329,11 +329,11 @@ unreported history. Offline/retry durability starts at local outbox acceptance;
 renderer disconnects, queue caps, expiry and abrupt termination can still lose
 observations. Never promise lossless telemetry at the expense of product work.
 
-The gateway report `analytics:insights` and prepared PostHog insights use
+The gateway report `analytics:insights` and Scient Insights use
 revision-3 Product participants, complete reporting days, distinct installation
 profiles and event-ID deduplication. Repeated use means at least two distinct
 days, not runtime sessions. The observed population is not feature eligibility
-or all users. D1 is UTC; qualify the PostHog project timezone before comparing.
+or all users. D1 is UTC.
 Deploy the generated validator before releasing these producers. No deployment,
 activation, dashboard installation or platform-wide performance proof follows
 from the source implementation alone.
@@ -535,15 +535,14 @@ false during preparation. Neither is enabled by building this desktop code.
 The approved storage split keeps Diagnostic-class events only in Scient's
 central Cloudflare D1 ledger, with 30-day pruning. Operators access aggregate
 diagnostic reports through the website repository's `bun run analytics:report`;
-these records are not stranded on users' devices. Essential/Product-class
-events may also be exported to EU PostHog. Their downstream retention is
-PostHog-managed; Scient does not promise a configurable physical-deletion
-deadline that this project cannot enforce. Consent at Diagnostic level does
-not change the routing of its Essential/Product-class events.
+these records are not stranded on users' devices. Until 2026-11-17
+Essential/Product-class events were also exported to EU PostHog; the gateway no
+longer exports anything. It still forwards installation deletions to PostHog for
+the copies sent before then, until that project is deleted.
 
-PostHog capture acknowledgement is asynchronous. Deletion stays pending until
-the provider verifies its person/event erasure operation, not merely submission.
-The gateway serializes export and deletion and rejects tombstoned identities;
+PostHog erasure is asynchronous. Deletion stays pending until the provider
+verifies its person/event erasure operation, not merely submission. The gateway
+rejects tombstoned identities;
 the app rotates identifiers and never intentionally reuses a deleted identity.
 Provider verification is not a synchronous transactional guarantee over every
 ambiguous capture. Desktop account linking remains disabled. See the gateway
@@ -625,6 +624,30 @@ Each entry names an action someone chose, never a read, refresh or subscription.
 imports and code runs keep their existing operation events, so they are not counted twice. To
 measure a new Scient feature, add its method, route or tool to that file; its test fails if a
 route or tool name no longer exists.
+
+### Built-in browser
+
+Browser work is reported at three grains, all from the server, for tabs people and agents drive:
+
+- `browser.page.loaded` ([`BrowserPageAnalytics.ts`](../../apps/server/src/telemetry/BrowserPageAnalytics.ts)):
+  one per finished main-frame load, from the preview manager's events. `outcome` is loaded,
+  failed or download; `site` is the host only ([`BrowserSite.ts`](../../apps/server/src/telemetry/BrowserSite.ts):
+  private and single-label hosts are `local`, file pages `file`, other schemes `internal`);
+  `loadMs` runs from the first Loading report; failures carry Chromium's `errorCode` and, when it
+  is a Chromium name, `errorName`. `driver` is agent while an automation owner holds the tab.
+  A Success with no Loading before it (title updates, same-page changes) is not a load.
+- `browser.tab.closed`: the tab's lifetime, loads, failures and distinct sites.
+- `browser.turn.summary` ([`ScientMcpAnalytics.ts`](../../apps/server/src/telemetry/ScientMcpAnalytics.ts)):
+  one per agent turn that called `preview_*` tools, from the per-thread call ledger: calls,
+  failures, failures a later call of the same tool got past (`recoveredFailures`), the longest
+  failure streak, whether the turn ended on a failure, total/p50/p95/max call time, per-tool
+  `<tool>Calls`/`<tool>Failures`/`<tool>Ms`, the sites and failed sites (most frequent first,
+  at most 32), error codes, page load errors and how often a page needed another account.
+
+Successful tool calls are still not recorded one by one. A failed `preview_*` call's
+`mcp.tool.invoked` also carries its `site`, its `preview_act` `action`, a snapshot timeout's
+first `pendingStage`, and failure classes for lost control (`control_<reason>`) and refused
+elements (`stale_ref`, `bad_locator`, `bad_selector`).
 
 ### Sign-in and browser-import observations
 

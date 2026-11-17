@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import type { FailureOwner } from "@scientfactory/analytics";
 import type { ServerProvider } from "@t3tools/contracts";
 
+import { browserSite } from "./BrowserSite.ts";
 import { toolFailureAttribution } from "./FailureAttribution.ts";
 import { catalogModelLabel, toolOutcome } from "./ProviderDimensions.ts";
 
@@ -66,7 +67,16 @@ export interface ToolFailureFacts {
   failureClass?: string;
   /** Why the call ended with no result, when the caller explains it rather than Scient. */
   unresulted?: "invalid_params" | "interrupted" | undefined;
+  /** A browser call's site, action and unfinished stage: closed values reported with its failure. */
+  browser?: BrowserCallFacts;
 }
+
+// A type, not an interface, so a tool outcome that carries it stays a plain property record.
+export type BrowserCallFacts = {
+  site?: string;
+  action?: string;
+  pendingStage?: string;
+};
 
 const isInvalidParams = Schema.is(McpSchema.InvalidParams);
 
@@ -95,17 +105,50 @@ const stringOf = (value: unknown, key: string) =>
 
 /**
  * A browser host that answered a timeout found the page not ready; one that never answered
- * overran. An execution failure stays unclassified: the host gives a script that threw on the
- * page and a failed browser call the same tag, so neither can be told to be the agent's code.
+ * overran. A lost tab says why control went, and a refused element says whether its ref was stale.
+ * An execution failure stays unclassified: the host gives a script that threw on the page and a
+ * failed browser call the same tag, so neither can be told to be the agent's code.
  */
 function browserFailureClass(error: unknown): string | undefined {
-  if (stringOf(error, "_tag") !== "PreviewAutomationTimeoutError") return undefined;
-  return stringOf(error, "remoteTag") === undefined ? "host_overrun" : "page_not_ready";
+  switch (stringOf(error, "_tag")) {
+    case "PreviewAutomationTimeoutError":
+      return stringOf(error, "remoteTag") === undefined ? "host_overrun" : "page_not_ready";
+    case "PreviewAutomationControlInterruptedError": {
+      const reason = stringOf(error, "reason");
+      return reason === undefined ? undefined : `control_${closedErrorCode(reason)}`;
+    }
+    case "PreviewAutomationInvalidSelectorError": {
+      if ((error as { staleRef?: unknown }).staleRef === true) return "stale_ref";
+      const kind = stringOf(error, "selectorKind");
+      return kind === undefined ? undefined : `bad_${kind}`;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** The first stage a timed-out snapshot still waited for, such as `page_state`. */
+function browserPendingStage(error: unknown): string | undefined {
+  const stages = (error as { pendingStages?: unknown } | null)?.pendingStages;
+  return Array.isArray(stages) && typeof stages[0] === "string"
+    ? closedErrorCode(stages[0])
+    : undefined;
 }
 
 const CLASS_OWNERS: Readonly<Record<string, FailureOwner>> = {
   page_not_ready: "external",
   host_overrun: "scient",
+  control_human_control: "external",
+  control_agent_mismatch: "input",
+  control_unclaimed_tab: "input",
+  control_tab_required: "input",
+  control_dialog_pending: "input",
+  control_tab_limit: "input",
+  control_closed: "cancelled",
+  control_interrupted: "cancelled",
+  stale_ref: "input",
+  bad_locator: "input",
+  bad_selector: "input",
 };
 
 export const noteToolFailure = Effect.fn("ScientMcpAnalytics.noteToolFailure")(function* (
@@ -117,6 +160,8 @@ export const noteToolFailure = Effect.fn("ScientMcpAnalytics.noteToolFailure")(f
   const failureClass = stringOf(error, "failureClass") ?? browserFailureClass(error);
   if (tag !== undefined) note.tag = tag;
   if (failureClass !== undefined) note.failureClass = failureClass;
+  const pendingStage = browserPendingStage(error);
+  if (pendingStage !== undefined) note.browser = { ...note.browser, pendingStage };
 });
 
 /** Keeps a failure's own closed reason where a handler folds it into a broader code. */
@@ -139,16 +184,17 @@ export function scientToolOutcome(
   readonly errorCode?: string;
   readonly failureClass?: string;
   readonly failureOwner?: string;
-} {
+} & BrowserCallFacts {
   const outcome = toolOutcome(result);
   if (outcome.outcome !== "error") return outcome;
   if (outcome.errorCode === "exception")
     return facts.unresulted === undefined
-      ? { ...outcome, failureOwner: "scient" }
+      ? { ...outcome, failureOwner: "scient", ...facts.browser }
       : {
           outcome: "error",
           errorCode: facts.unresulted,
           failureOwner: toolFailureAttribution(facts.unresulted).failureOwner,
+          ...facts.browser,
         };
   // The note was written from the typed failure, which a wrapper's tag may only generalize.
   const reported =
@@ -162,6 +208,7 @@ export function scientToolOutcome(
     errorCode,
     ...(facts.failureClass === undefined ? {} : { failureClass: facts.failureClass }),
     failureOwner: toolFailureOwner(errorCode, facts.failureClass),
+    ...facts.browser,
   };
 }
 
@@ -174,8 +221,25 @@ function toolFailureOwner(errorCode: string, failureClass: string | undefined): 
     : fromCode;
 }
 
+const fieldsOf = (value: unknown): Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
 const MAX_TRACKED_THREADS = 1_000;
 const MAX_CALLS_PER_THREAD = 10_000;
+
+/** One browser tool call as the turn summary counts it: closed values and times only. */
+export interface BrowserCall {
+  readonly at: number;
+  readonly tool: string;
+  readonly durationMs: number;
+  readonly failed: boolean;
+  readonly errorCode?: string | undefined;
+  readonly site?: string | undefined;
+  /** The browser's own error for a page that did not load, such as -105 for an unknown host. */
+  readonly loadErrorCode?: number | undefined;
+  /** The page needs another account or sign-in. */
+  readonly accountsNote?: boolean | undefined;
+}
 
 /**
  * Browser tool calls per thread, kept in memory until the thread's turn completes. Agents call
@@ -183,12 +247,11 @@ const MAX_CALLS_PER_THREAD = 10_000;
  * event per call.
  */
 export class BrowserToolCallLedger {
-  private readonly calls = new Map<
-    string,
-    Array<{ readonly at: number; readonly failed: boolean }>
-  >();
+  private readonly calls = new Map<string, Array<BrowserCall>>();
+  /** The site each thread's browser last showed, for failures whose result names none. */
+  private readonly sites = new Map<string, string>();
 
-  record(threadId: string, at: number, failed: boolean): void {
+  record(threadId: string, call: BrowserCall): void {
     let entries = this.calls.get(threadId);
     if (entries === undefined) {
       if (this.calls.size >= MAX_TRACKED_THREADS) {
@@ -199,21 +262,45 @@ export class BrowserToolCallLedger {
       this.calls.set(threadId, entries);
     }
     if (entries.length >= MAX_CALLS_PER_THREAD) entries.shift();
-    entries.push({ at, failed });
+    entries.push(call);
+    if (call.site !== undefined) {
+      this.sites.delete(threadId);
+      if (this.sites.size >= MAX_TRACKED_THREADS) {
+        const oldest = this.sites.keys().next().value;
+        if (oldest !== undefined) this.sites.delete(oldest);
+      }
+      this.sites.set(threadId, call.site);
+    }
+  }
+
+  lastSite(threadId: string): string | undefined {
+    return this.sites.get(threadId);
   }
 
   /** The calls a thread made up to `until`; later ones belong to its next turn. */
-  take(threadId: string, until: number): { readonly calls: number; readonly failures: number } {
+  take(
+    threadId: string,
+    until: number,
+  ): {
+    readonly calls: number;
+    readonly failures: number;
+    readonly entries: ReadonlyArray<BrowserCall>;
+  } {
     const entries = this.calls.get(threadId) ?? [];
     const taken = entries.filter((entry) => entry.at <= until);
     const kept = entries.filter((entry) => entry.at > until);
     if (kept.length === 0) this.calls.delete(threadId);
     else this.calls.set(threadId, kept);
-    return { calls: taken.length, failures: taken.filter((entry) => entry.failed).length };
+    return {
+      calls: taken.length,
+      failures: taken.filter((entry) => entry.failed).length,
+      entries: taken,
+    };
   }
 
   clear(): void {
     this.calls.clear();
+    this.sites.clear();
   }
 }
 
@@ -222,10 +309,139 @@ export class BrowserToolCalls extends Context.Reference<BrowserToolCallLedger>(
   { defaultValue: () => new BrowserToolCallLedger() },
 ) {}
 
-export const isBrowserTool = (tool: string) => tool.startsWith("preview_");
+/** Summary tool groups; `preview_wait_for` reports as `waitFor`. */
+const SUMMARY_TOOLS: Readonly<Record<string, string>> = {
+  preview_open: "open",
+  preview_navigate: "navigate",
+  preview_snapshot: "snapshot",
+  preview_act: "act",
+  preview_evaluate: "evaluate",
+  preview_wait_for: "waitFor",
+  preview_status: "status",
+};
+const MAX_SUMMARY_VALUES = 32;
 
-const fieldsOf = (value: unknown): Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+const percentile = (sorted: ReadonlyArray<number>, share: number) =>
+  sorted[Math.min(sorted.length - 1, Math.ceil(share * sorted.length) - 1)] ?? 0;
+
+/** Most frequent first, at most the gateway's array length. */
+const byFrequency = <A extends string | number>(values: ReadonlyArray<A>): Array<A> => {
+  const counts = new Map<A, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()]
+    .toSorted((left, right) => right[1] - left[1])
+    .slice(0, MAX_SUMMARY_VALUES)
+    .map(([value]) => value);
+};
+
+/**
+ * What a turn's browser work looked like: how many calls of each kind, how long they took, which
+ * failed and whether the agent got past them, and which sites it worked on.
+ */
+export function browserTurnSummary(
+  entries: ReadonlyArray<BrowserCall>,
+): Readonly<Record<string, number | boolean | ReadonlyArray<string | number>>> {
+  const durations = entries.map((entry) => entry.durationMs).toSorted((a, b) => a - b);
+  const groups: Record<string, number> = {};
+  let recoveredFailures = 0;
+  let streak = 0;
+  let longestFailureStreak = 0;
+  entries.forEach((entry, index) => {
+    const group = SUMMARY_TOOLS[entry.tool] ?? "other";
+    groups[`${group}Calls`] = (groups[`${group}Calls`] ?? 0) + 1;
+    groups[`${group}Ms`] = (groups[`${group}Ms`] ?? 0) + entry.durationMs;
+    if (!entry.failed) {
+      streak = 0;
+      return;
+    }
+    groups[`${group}Failures`] = (groups[`${group}Failures`] ?? 0) + 1;
+    streak += 1;
+    longestFailureStreak = Math.max(longestFailureStreak, streak);
+    if (entries.slice(index + 1).some((later) => later.tool === entry.tool && !later.failed))
+      recoveredFailures += 1;
+  });
+  const failures = entries.filter((entry) => entry.failed);
+  const sites = byFrequency(entries.flatMap((entry) => (entry.site ? [entry.site] : [])));
+  const failedSites = byFrequency(failures.flatMap((entry) => (entry.site ? [entry.site] : [])));
+  const errorCodes = byFrequency(failures.flatMap((entry) => entry.errorCode ?? []));
+  const loadErrorCodes = byFrequency(entries.flatMap((entry) => entry.loadErrorCode ?? []));
+  return {
+    calls: entries.length,
+    failures: failures.length,
+    recoveredFailures,
+    longestFailureStreak,
+    endedOnFailure: entries.at(-1)?.failed === true,
+    totalMs: durations.reduce((sum, value) => sum + value, 0),
+    p50Ms: percentile(durations, 0.5),
+    p95Ms: percentile(durations, 0.95),
+    maxMs: durations.at(-1) ?? 0,
+    ...groups,
+    siteCount: new Set(entries.flatMap((entry) => entry.site ?? [])).size,
+    ...(sites.length === 0 ? {} : { sites }),
+    ...(failedSites.length === 0 ? {} : { failedSites }),
+    ...(errorCodes.length === 0 ? {} : { errorCodes }),
+    loadErrors: entries.filter((entry) => entry.loadErrorCode !== undefined).length,
+    ...(loadErrorCodes.length === 0 ? {} : { loadErrorCodes }),
+    accountNotes: entries.filter((entry) => entry.accountsNote === true).length,
+  };
+}
+
+const ACTION_PATTERN = /^[A-Za-z]{1,32}$/u;
+
+/**
+ * Notes one finished browser call on its thread's ledger, and gives its failure, if any, the
+ * site and action it worked on. Only the host of an address is kept.
+ */
+export function recordBrowserCall(
+  ledger: BrowserToolCallLedger,
+  threadId: string,
+  call: {
+    readonly tool: string;
+    readonly args: unknown;
+    readonly result: McpSchema.CallToolResult | undefined;
+    readonly failure: ToolFailureFacts;
+    readonly startedAt: number;
+    readonly endedAt: number;
+  },
+): void {
+  const outcome = scientToolOutcome(call.result, call.failure);
+  const args = fieldsOf(call.args);
+  const content = fieldsOf(call.result?.structuredContent);
+  const target = fieldsOf(args.target);
+  const site =
+    browserSite(content.url) ??
+    browserSite(fieldsOf(content.toolIcon).pageUrl) ??
+    browserSite(args.url) ??
+    browserSite(target.url) ??
+    ledger.lastSite(threadId);
+  const action =
+    call.tool === "preview_act" &&
+    typeof args.action === "string" &&
+    ACTION_PATTERN.test(args.action)
+      ? args.action
+      : undefined;
+  const loadErrorCode = fieldsOf(content.loadError).code;
+  if (outcome.outcome !== "ok")
+    call.failure.browser = {
+      ...call.failure.browser,
+      ...(site === undefined ? {} : { site }),
+      ...(action === undefined ? {} : { action }),
+    };
+  ledger.record(threadId, {
+    at: call.endedAt,
+    tool: call.tool,
+    durationMs: Math.max(0, call.endedAt - call.startedAt),
+    failed: outcome.outcome !== "ok",
+    errorCode: outcome.errorCode,
+    site,
+    ...(typeof loadErrorCode === "number" && Number.isInteger(loadErrorCode)
+      ? { loadErrorCode }
+      : {}),
+    ...(typeof content.accountsNote === "string" ? { accountsNote: true } : {}),
+  });
+}
+
+export const isBrowserTool = (tool: string) => tool.startsWith("preview_");
 
 /**
  * What a refused `delegate_task` asked to run on, in the fields a started task reports. An

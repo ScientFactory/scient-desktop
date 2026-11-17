@@ -70,6 +70,8 @@ import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewG
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { launchV2AnalyticsEventObservers } from "./telemetry/AnalyticsEventObserversV2.ts";
+// SCIENT-FORK: page loads in the built-in browser.
+import * as BrowserPageAnalytics from "./telemetry/BrowserPageAnalytics.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderUsageAnalytics from "./telemetry/ProviderUsageAnalytics.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -922,6 +924,8 @@ const layerRuntimeDependencies = Layer.mergeAll(
   Layer.effectDiscard(launchV2AnalyticsEventObservers).pipe(
     Layer.provide(layerRuntimeBaseDependencies),
   ),
+  // SCIENT-FORK: page loads in the built-in browser, for people and agents.
+  BrowserPageAnalytics.layer.pipe(Layer.provide(layerRuntimeBaseDependencies)),
 );
 
 const layerCommandReadiness = HttpRouter.middleware(

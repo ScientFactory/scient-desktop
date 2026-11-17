@@ -19,8 +19,12 @@ import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics.ts";
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
 import { classifyCommand, shellCommandOf } from "./CommandCategories.ts";
-import { BrowserToolCalls, type BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
-import { analyticsFailureCode } from "@scientfactory/analytics";
+import {
+  BrowserToolCalls,
+  browserTurnSummary,
+  type BrowserToolCallLedger,
+} from "./ScientMcpAnalytics.ts";
+import { analyticsFailureCode, modelKey } from "@scientfactory/analytics";
 
 type Observation = {
   readonly name: string;
@@ -321,7 +325,23 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
                   properties: { ...properties, stopClass: run.status },
                 },
               ];
-      return [...outcome, ...commands];
+      // One summary per turn that used the browser: the turn event keeps only its two counts.
+      const browserSummary: Observation[] =
+        browser === undefined || browser.calls === 0
+          ? []
+          : [
+              {
+                name: "browser.turn.summary",
+                properties: {
+                  provider: correlation.provider,
+                  modelKey: modelKey(correlation.model),
+                  runRef: properties.runRef,
+                  turnOutcome: run.status,
+                  ...browserTurnSummary(browser.entries),
+                },
+              },
+            ];
+      return [...outcome, ...commands, ...browserSummary];
     }
     if (entry.type === "turn-item.updated") {
       const item = entry.payload;
