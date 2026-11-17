@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "rows": [
+    {
+      "id": "windows-voice-transcription-timeout",
+      "job": "windows_packaging / Windows packaging / Installer and native runtime",
+      "step": "Transcribe with the installed voice runtime",
+      "test": null,
+      "signature": "Offline voice transcription timed out.",
+      "owner": "Voice runtime",
+      "quarantined": "2026-11-17",
+      "expires": "2026-11-24"
+    },
+    {
+      "id": "windows-chrome-sign-in-window",
+      "job": "Overleaf Windows",
+      "step": "Sign in in a Chrome and an Edge window on Windows",
+      "test": "unit src/scient/accounts/chromeWindow.real.test.ts > a sign-in window of a real browser > brings Chrome's sign-in back, read by Chrome itself",
+      "signature": "Error: Test timed out in 120000ms.",
+      "owner": "Accounts",
+      "quarantined": "2026-11-17",
+      "expires": "2026-11-24"
+    },
+    {
+      "id": "windows-edge-sign-in-window",
+      "job": "Overleaf Windows",
+      "step": "Sign in in a Chrome and an Edge window on Windows",
+      "test": "unit src/scient/accounts/chromeWindow.real.test.ts > a sign-in window of a real browser > brings Edge's sign-in back, read by Edge itself",
+      "signature": "Error: Test timed out in 120000ms.",
+      "owner": "Accounts",
+      "quarantined": "2026-11-17",
+      "expires": "2026-11-24"
+    },
+    {
+      "id": "linux-google-sign-in-restart",
+      "job": "Test",
+      "step": "Explain Google's sign-in refusal in Electron's browser",
+      "test": null,
+      "signature": "Error: Failed during Google refusing that site's Continue with Google",
+      "owner": "Browser access",
+      "quarantined": "2026-11-17",
+      "expires": "2026-11-24"
+    },
+    {
+      "id": "intel-julia-interrupt",
+      "job": "compute_native / Real R and Julia / macos-15-intel",
+      "step": "Run real R and Julia kernels",
+      "test": "src/scient/compute/KernelLanguages.live.test.ts > kernel language integration > runs Julia through IJulia with rich output, variables, interrupt and restart",
+      "signature": "Error: Test timed out in 1200000ms.",
+      "owner": "Compute",
+      "quarantined": "2026-11-17",
+      "expires": "2026-11-24"
+    }
+  ]
+}
