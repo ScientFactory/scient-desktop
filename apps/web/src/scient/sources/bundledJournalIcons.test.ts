@@ -69,6 +69,15 @@ describe("bundledJournalMark", () => {
     }
   });
 
+  it("treats a journal abbreviation alone as a venue", () => {
+    expect(
+      bundledJournalMark(article({ containerTitleShort: "IEEE Access", publisher: "IEEE" })),
+    ).toBeNull();
+    expect(bundledJournalMark(article({ containerTitleShort: "NEJM Evid" }))).toMatchObject({
+      kind: "journal",
+    });
+  });
+
   it("shows a publisher mark for a record with no venue and exactly that publisher", () => {
     expect(bundledJournalMark(article({ type: "book", publisher: "IEEE" }))).toMatchObject({
       kind: "publisher",

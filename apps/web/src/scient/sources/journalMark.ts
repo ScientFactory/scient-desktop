@@ -89,6 +89,12 @@ const isAcronym = (word: string) => /^\p{Lu}{2,4}$/u.test(word);
 
 /** Up to four letters for a journal name, or null when the name gives none. */
 export function journalMarkLetters(name: string): string | null {
+  // Upper-casing can lengthen a letter (ß → SS), so the limit applies to the result.
+  const letters = markLetters(name);
+  return letters === null ? null : graphemes(letters).slice(0, MAX_GRAPHEMES).join("");
+}
+
+function markLetters(name: string): string | null {
   const text = cleanName(name);
   if (!text) return null;
   const alias = ALIASES.get(nameKey(text));
@@ -103,7 +109,9 @@ export function journalMarkLetters(name: string): string | null {
 
   const main = text.replace(/\([^)]*\)|\[[^\]]*\]/gu, " ").split(":")[0]!;
   const all = main.split(/[\s\-–—/.&,]+/u).filter((word) => word !== "" && LETTER.test(word));
-  const significant = (word: string) => !STOPWORDS.has(word.toLowerCase());
+  // A single capital is an initial ("N Y" in "Ann N Y Acad Sci"), except the article "A".
+  const significant = (word: string) =>
+    /^\p{Lu}$/u.test(word) ? word !== "A" : !STOPWORDS.has(word.toLowerCase());
   // A series letter after two longer words names one journal of a family: Physical Review B
   // → PRB, Proceedings of the Royal Society A … → PRSA. "Chemistry - A European Journal" has
   // one word before its "A", which stays an article.

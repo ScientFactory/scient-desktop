@@ -26,7 +26,7 @@ const CASES: ReadonlyArray<readonly [string, string | null]> = [
   // More than four words keep the distinguishing last one.
   ["IEEE Transactions on Information Technology in Biomedicine", "ITIB"],
   ["American Journal of Respiratory and Critical Care Medicine", "AJRM"],
-  ["Ann N Y Acad Sci", "ANAS"],
+  ["Ann N Y Acad Sci", "ANYS"],
   // One word.
   ["JAMA", "JAMA"],
   ["BMJ", "BMJ"],
@@ -107,6 +107,7 @@ describe("journalMarkLetters", () => {
       if (mark) expect(graphemeCount(mark)).toBeLessThanOrEqual(4);
     }
     expect(journalMarkLetters("Alpha Beta Gamma Delta Epsilon Zeta Eta")).toBe("ABGE");
+    expect(journalMarkLetters("ßalpha Alpha Beta Gamma")).toBe("SSAB");
   });
 });
 

@@ -104,8 +104,9 @@ may share one, and the full name is on hover and in the row's screen-reader text
 Bundled marks (`bundledJournalIcons.ts`, provenance in
 `apps/web/src/assets/journals/NOTICE`) replace the generated mark only for their
 exact journal (ISSN decides, else title). A publisher mark is used only for a
-record with no venue whose publisher matches exactly. Book chapters, books and
-other types keep their type icon. Website icon discovery, its image worker and
+record with no venue whose publisher matches exactly. Otherwise book chapters,
+books and other types keep their type icon. Cards name the venue for screen
+readers when their visible text does not (an abbreviation only, a publisher mark). Website icon discovery, its image worker and
 the `journalIcon` endpoint were removed on 2026-11-17. At start-up a background
 task deletes `<stateDir>/scient/journal-icons/v1` when it is a real folder at
 exactly that path (`RetiredJournalIconCache.ts`).

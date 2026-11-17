@@ -17,6 +17,7 @@ export type BundledMark = {
 type MarkRecord = {
   readonly type: string;
   readonly containerTitle: string | null;
+  readonly containerTitleShort?: string;
   readonly publisher?: string | null;
   readonly identifiers: ReadonlyArray<{ readonly scheme: string; readonly value: string }>;
 };
@@ -71,7 +72,7 @@ for (const publisher of PUBLISHERS) {
 
 /** The bundled mark for exactly this record, or null when the generated mark or type icon shows. */
 export function bundledJournalMark(record: MarkRecord): BundledMark | null {
-  const container = record.containerTitle?.trim();
+  const container = record.containerTitle?.trim() || record.containerTitleShort?.trim();
   if (container) {
     if (!VENUE_TYPES.has(record.type)) return null;
     const issns = record.identifiers
