@@ -190,7 +190,6 @@
   "src/components/chat/useQueuedRunEdit.browser.test.tsx": 0.412,
   "src/components/chat/useThreadFindNavigation.scient.browser.test.tsx": 0.181,
   "src/components/chat/useThreadLifecycle.browser.test.tsx": 2.757,
-  "src/components/chat/useTimelineEndControl.browser.test.tsx": 0.332,
   "src/components/chat/useTimelinePositionRestore.test.ts": 0.017,
   "src/components/chat/V2LifecycleRow.logic.test.ts": 0.012,
   "src/components/chat/workingRowExit.test.ts": 0.017,

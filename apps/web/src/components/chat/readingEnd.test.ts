@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
-import {
-  endTransition,
-  savedPositionIsAtEnd,
-  shouldFollowArrivedPrompt,
-} from "./readerScrollPolicy";
+import { savedPositionIsAtEnd, shouldFollowArrivedPrompt } from "./readerScrollPolicy";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import {
   boundedAnswerScrollDelta,
@@ -182,14 +178,7 @@ describe("shouldFollowArrivedPrompt", () => {
   });
 });
 
-describe("end control transitions", () => {
-  it("reacts only when the reader crosses the end", () => {
-    expect(endTransition(true, true)).toBeNull();
-    expect(endTransition(false, false)).toBeNull();
-    expect(endTransition(true, false)).toBe("left");
-    expect(endTransition(false, true)).toBe("reached");
-  });
-
+describe("end control", () => {
   it("starts a thread returned to mid-history away from the end", () => {
     expect(savedPositionIsAtEnd({ atEnd: false })).toBe(false);
     expect(savedPositionIsAtEnd({ atEnd: true })).toBe(true);

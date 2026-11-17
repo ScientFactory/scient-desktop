@@ -320,12 +320,6 @@ export function shouldFollowArrivedPrompt(input: {
   );
 }
 
-/** Whether the reader crossed the end ("reached"/"left"); null when nothing changed. */
-export function endTransition(wasAtEnd: boolean, isAtEnd: boolean): "reached" | "left" | null {
-  if (wasAtEnd === isAtEnd) return null;
-  return isAtEnd ? "reached" : "left";
-}
-
 /** A thread returned to mid-history starts away from the end, so its end control shows at once. */
 export function savedPositionIsAtEnd(position: { readonly atEnd?: boolean } | null | undefined) {
   return position?.atEnd !== false;
