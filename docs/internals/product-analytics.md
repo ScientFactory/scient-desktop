@@ -633,6 +633,29 @@ imports and code runs keep their existing operation events, so they are not coun
 measure a new Scient feature, add its method, route or tool to that file; its test fails if a
 route or tool name no longer exists.
 
+### Extensions
+
+[`ExtensionAnalytics.ts`](../../apps/server/src/telemetry/ExtensionAnalytics.ts) says which
+extensions people have, sign in to and use. An extension is named by its public identity: a
+registry or plugin name, its display name, and a hosted service's host, never its address.
+
+- `extension.observed`: each Scient connector when Scient starts (`owner: "scient"`), and each
+  agent's own plugin and MCP server from its provider snapshot (`owner` = the agent), once per run
+  for each state, so a server that becomes signed in reports again.
+- `extension.changed`: every saved connector change, from any path: `added`, `removed`,
+  `connected` (signed in), `credential_replaced`, `needs_sign_in`, `needs_key`, `enabled`,
+  `disabled`.
+- `extension.sign_in.started` and `extension.sign_in.finished`: each connector sign-in, with
+  `outcome` and, when it fails, why (`failureClass`, or `reason`: `denied`, `expired_link`,
+  `exchange_failed`, `service_<code>`, …).
+- `extension.tool.called`: every tool call an agent makes through Scient's connector proxy, with
+  `tool`, `decision`, `outcome` and the calling provider instance. An HTTP 200 whose MCP result
+  reports a tool error still counts as `ok`.
+- Extensions page actions (`extensions.connector.add`, plugin remove and on/off,
+  `providers.plugin.action`) carry the connector or plugin they name.
+
+Calls to an agent's own MCP servers do not pass through Scient, so their use is not counted.
+
 ### Built-in browser
 
 Browser work is reported at three grains, all from the server, for tabs people and agents drive:

@@ -225,6 +225,30 @@ describe("Scient analytics contract", () => {
     expect(run("private-run-id", "custom build")).not.toHaveProperty("providerVersion");
   });
 
+  it("keeps an extension's public identity: hosts, registry and plugin names", () => {
+    const properties = {
+      owner: "scient",
+      extensionKind: "connector",
+      connector: "io.github.acme/search",
+      connectorHost: "mcp.notion.com",
+      extensionName: "Notion",
+      plugin: "gmail",
+      marketplace: "openai-curated",
+      tool: "search_pages",
+      outcome: "ok",
+    };
+    const event = normalizeInheritedEvent("extension.tool.called", properties, context);
+    expect(event?.properties).toMatchObject(properties);
+    expect(
+      eventContractViolation({
+        name: "extension.tool.called",
+        privacyLevel: "product",
+        consentLevel: "product",
+        properties: event?.properties ?? {},
+      }),
+    ).toBeNull();
+  });
+
   it("records events and fields without a Scient normalizer, as T3 does", () => {
     expect(
       normalizeInheritedEvent("chatgpt.sign_in.completed", { outcome: "succeeded", n: 2 }, context),

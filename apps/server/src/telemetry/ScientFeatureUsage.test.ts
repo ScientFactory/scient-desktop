@@ -35,6 +35,40 @@ function sources(directory: string): ReadonlyArray<string> {
 }
 
 describe("Scient feature usage", () => {
+  it("names the extension an Extensions action acts on, never its address", () => {
+    expect(
+      featureUsage(WS_METHODS.extensionsConnectorAdd, {
+        target: { type: "url", url: "https://mcp.notion.com/mcp?key=secret" },
+      }),
+    ).toEqual({
+      feature: "extensions.connector.add",
+      connectorSource: "url",
+      connectorHost: "mcp.notion.com",
+    });
+    expect(
+      featureUsage(WS_METHODS.providerPluginsAct, {
+        instanceId: "codex",
+        action: { type: "install", entryId: "gmail@openai-curated" },
+      }),
+    ).toEqual({
+      feature: "providers.plugin.action",
+      variant: "install",
+      providerInstance: "codex",
+      plugin: "gmail",
+      marketplace: "openai-curated",
+    });
+    expect(
+      featureUsage(WS_METHODS.extensionsPluginSetEnabled, {
+        pluginId: "scient.zotero",
+        enabled: false,
+      }),
+    ).toEqual({
+      feature: "extensions.plugin.set_enabled",
+      variant: "off",
+      plugin: "scient.zotero",
+    });
+  });
+
   it("records Scient's requests through T3's feature table, with closed variants only", () => {
     expect(
       featureUsage(WS_METHODS.computeStartSession, { projectId: "p", languageId: "python" }),
@@ -47,14 +81,15 @@ describe("Scient feature usage", () => {
       variant: "source",
     });
     expect(
-      featureUsage(WS_METHODS.extensionsPluginSetEnabled, { pluginId: "x", enabled: false }),
-    ).toEqual({ feature: "extensions.plugin.set_enabled", variant: "off" });
-    expect(
       featureUsage(WS_METHODS.providerPluginsAct, {
-        instanceId: "private",
+        instanceId: "codex",
         action: { type: "install", name: "private" },
       }),
-    ).toEqual({ feature: "providers.plugin.action", variant: "install" });
+    ).toEqual({
+      feature: "providers.plugin.action",
+      variant: "install",
+      providerInstance: "codex",
+    });
     expect(featureUsage(WS_METHODS.accountsUniversitySignIn, { universityId: "private" })).toEqual({
       feature: "university.sign_in",
     });
