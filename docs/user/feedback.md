@@ -2,13 +2,16 @@
 
 You can tell the Scient team what isn't working, or what you'd like Scient to do, without leaving
 the app. Reports go to the Scient team only. They are not sent to OpenAI, Anthropic or another
-provider (Codex's own `/feedback` command is different: it sends a thread to OpenAI).
+provider.
 
 ## Where to find it
 
 - **Send feedback** at the bottom of the sidebar, next to Settings.
 - **Help ▸ Send Feedback...** in the menu bar. On Windows and Linux, press Alt to show the menu bar.
 - **Send feedback to Scient** in the command palette.
+- **`/feedback`** in the message box. Words after it become your message, so
+  `/feedback the export lost my figures` opens the dialog with that sentence filled in. In Codex
+  threads, Codex's own command, which sends the thread to OpenAI instead, is `/feedback-openai`.
 - **Report** on the notice of a failed turn, and **Report problem** on the error page. The error
   is attached for you, so you can send it with one click and add words if you like.
 

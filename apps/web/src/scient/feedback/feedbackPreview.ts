@@ -29,6 +29,7 @@ const SOURCE_LABELS: Record<FeedbackSource, string> = {
   "command-palette": "The command palette",
   "turn-error": "A failed turn",
   "error-page": "The error page",
+  "slash-command": "The /feedback command",
 };
 
 const SCREEN_LABELS: Record<FeedbackScreen, string> = {

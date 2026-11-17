@@ -37,6 +37,7 @@ export const FeedbackSource = Schema.Literals([
   "command-palette",
   "turn-error",
   "error-page",
+  "slash-command",
 ]);
 export type FeedbackSource = typeof FeedbackSource.Type;
 

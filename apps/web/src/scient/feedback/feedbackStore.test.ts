@@ -26,4 +26,15 @@ describe("feedback draft", () => {
       email: "ada@uni.example",
     });
   });
+
+  it("fills the message with the words typed after /feedback", () => {
+    updateFeedbackDraft({ message: "older draft" });
+    requestFeedback({ source: "slash-command", message: "the export lost my figures" });
+    expect(useFeedbackDraft.getState()).toMatchObject({
+      source: "slash-command",
+      message: "the export lost my figures",
+    });
+    requestFeedback({ source: "slash-command" });
+    expect(useFeedbackDraft.getState().message).toBe("the export lost my figures");
+  });
 });

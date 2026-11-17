@@ -92,6 +92,9 @@ import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+// SCIENT-FORK:START — `/feedback` sends feedback to the Scient team.
+import { requestFeedback } from "../../scient/feedback/feedbackStore";
+// SCIENT-FORK:END
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { type FolderDropTarget, folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
@@ -2205,6 +2208,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
+      // SCIENT-FORK:START — `/feedback` opens "Send feedback to Scient" for this conversation.
+      if (item.command === "feedback") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          requestFeedback({ source: "slash-command", threadRef: routeThreadRef });
+        }
+        return;
+      }
+      // SCIENT-FORK:END
       if (item.command === "clear") {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),

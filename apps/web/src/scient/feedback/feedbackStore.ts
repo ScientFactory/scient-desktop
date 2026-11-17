@@ -12,6 +12,8 @@ export interface FeedbackRequest {
   readonly error?: FeedbackErrorContext;
   /** The conversation the report may be about; otherwise the one on screen. */
   readonly threadRef?: ScopedThreadRef;
+  /** Words typed after `/feedback`; they replace the saved draft text. */
+  readonly message?: string;
 }
 
 export interface AttachedScreenshot extends FeedbackScreenshot {
@@ -72,6 +74,7 @@ export function requestFeedback(request: FeedbackRequest): void {
       source: request.source,
       threadRef: request.threadRef ?? null,
       error: request.error ?? null,
+      ...(request.message ? { message: request.message } : {}),
       ...EMPTY_ATTACHMENTS,
     };
   });
