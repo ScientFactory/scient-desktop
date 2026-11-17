@@ -270,6 +270,8 @@ import { finishLibraryRestoreAtStart } from "./scient/sources/LibraryRestoreRuns
 import { generatedImageTempSweepLayer } from "./generatedImageAttachments.ts";
 // SCIENT-FORK:END
 import { conversationImportUploadRouteLayer } from "./scient/conversationImport/http.ts";
+// SCIENT-FORK: update facts over HTTP for a backend without the telemetry pipes.
+import * as DesktopUpdateFactsRoute from "./telemetry/DesktopUpdateFactsRoute.ts";
 import {
   makeScientRouteServices,
   ScientProviderLifecycleLive,
@@ -976,6 +978,8 @@ export const layerMakeRoutes = Layer.mergeAll(
     ConnectorProxyRoute.layer,
     ConnectorCallbackRoute.layer,
     // SCIENT-FORK:END
+    // SCIENT-FORK: update facts for a backend started without the telemetry pipes.
+    DesktopUpdateFactsRoute.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
