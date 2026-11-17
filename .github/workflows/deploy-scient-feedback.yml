@@ -44,9 +44,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: |
-            args:
-              - --filter=@scientfactory/scient-feedback-worker...
+          # A full install: `vp run` loads every package's config, and the server's config
+          # imports workspace packages a Worker-only install lacks (as in deploy-relay.yml).
+          run-install: true
 
       - name: Deploy
         run: vp run --filter @scientfactory/scient-feedback-worker deploy --stage "$STAGE" --yes --no-input
