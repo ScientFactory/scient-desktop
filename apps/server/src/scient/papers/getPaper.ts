@@ -1,9 +1,11 @@
 import {
   AccountsError,
   type AccountPaperForSourceInput,
+  type AccountId,
   type EnvironmentId,
   type PaperAsked,
   type PaperItemState,
+  type PaperQueueContinueInput,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -11,6 +13,9 @@ import * as Option from "effect/Option";
 import { FetchHttpClient } from "effect/http";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { consumeAgentWorkspace } from "../operations/AgentWorkspaceScope.ts";
+import { readScientSourceRecord } from "@scientfactory/scient-sources/store";
+import { resolveLibrarySourceId } from "../sources/LibraryProjectSources.ts";
+import { resolveScientLibraryStoreAt } from "../sources/SourcesBackend.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { authorizationDecision } from "../accounts/AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
@@ -24,6 +29,7 @@ import {
   paperQueueRunning,
   requestPapers,
   resumePapers,
+  showUnfinishedPapers,
   waitForPaper,
   waitingPaperRoots,
   type PaperRequester,
@@ -35,8 +41,8 @@ const ONE_PAPER_WAIT = "150 seconds";
 const unavailable = (message: string) => new AccountsError({ reason: "unavailable", message });
 
 /**
- * An agent's request is decided here, once: its session's access to the browser profile and to
- * each saved sign-in. What it may use travels with its papers, which keep going after its turn.
+ * Who an agent's request is: its conversation, and whether that may use the browser. Asked while
+ * the agent waits, a university on Ask shows the user its card; each attempt decides again.
  */
 const agentRequester = Effect.fn("Papers.agentRequester")(function* () {
   const scope: AccountSessionScope = yield* accountSessionScope();
@@ -79,27 +85,11 @@ const agentRequester = Effect.fn("Papers.agentRequester")(function* () {
       ),
     ),
   );
-  for (const university of universities)
-    yield* accounts.recordUse({
-      target: { type: "account", accountId: university.accountId },
-      action: "sign-in",
-      threadId: scope.threadId,
-      ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
-      outcome: "ok",
-    });
-  const reachable = new Set(universities.map((account) => account.accountId));
   return {
     environmentId: invocation.environmentId,
     threadId: scope.threadId,
+    ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
     browser: universities.length > 0 || (yield* mayBrowse(undefined)),
-    accounts:
-      universities.length > 0
-        ? allowed
-            .filter(
-              ({ accountId, details }) => !universityDetails(details) || reachable.has(accountId),
-            )
-            .map((account) => account.accountId)
-        : [],
   } satisfies PaperRequester;
 });
 
@@ -108,29 +98,83 @@ const agentRoot = consumeAgentWorkspace().pipe(
   Effect.mapError((error) => unavailable(error.message)),
 );
 
-/** One paper, waited for: it goes through the same queue as a list of them. */
-export const getPaper = Effect.fn("Papers.get")(function* (input: {
+interface AgentPaperAsked {
   readonly doi?: string | undefined;
   readonly url?: string | undefined;
-}) {
+  readonly addToLibrary?: boolean | undefined;
+  readonly sourceId?: string | undefined;
+}
+
+const NO_LIBRARY_ACCESS =
+  "This conversation may not change the Library, so the PDF was only saved.";
+
+/** An agent's paper as the queue takes it: Library work needs the Sources write grant. */
+export const askedForLibrary = Effect.fn("Papers.askedForLibrary")(function* (
+  root: string,
+  input: AgentPaperAsked,
+) {
+  const { addToLibrary, sourceId, ...paper } = input;
+  const wanted = addToLibrary === true || sourceId !== undefined;
+  const invocation = yield* AgentInvocationContext;
+  if (!wanted) return { asked: paper };
+  if (!invocation.capabilities.has("sources:write"))
+    return { asked: paper, note: NO_LIBRARY_ACCESS };
+  if (sourceId === undefined) return { asked: { ...paper, library: true } };
+  // Library mode: a library ID, or this project's source ID resolved to its library record.
+  const library = yield* resolveScientLibraryStoreAt(root, "write").pipe(
+    Effect.mapError((error) =>
+      unavailable(
+        error._tag === "ScientLibraryMoveBusyError"
+          ? error.message
+          : "The Library could not be read.",
+      ),
+    ),
+  );
+  const record = yield* Effect.tryPromise({
+    try: async () => {
+      if (!library) return readScientSourceRecord(root, sourceId);
+      const libraryId = await resolveLibrarySourceId(library, sourceId);
+      return libraryId ? readScientSourceRecord(library.store, libraryId) : null;
+    },
+    catch: () => unavailable("The Library could not be read."),
+  });
+  return record
+    ? {
+        asked: {
+          ...paper,
+          source: { sourceId: record.sourceId, expectedRevision: record.revision },
+        },
+      }
+    : { missing: `There is no source ${sourceId} in this project's Library.` };
+});
+
+/** One paper, waited for: it goes through the same queue as a list of them. */
+export const getPaper = Effect.fn("Papers.get")(function* (input: AgentPaperAsked) {
   if (!input.doi && !input.url)
     return {
       status: "not-found" as const,
       message: "Pass the paper's DOI or a link to it; find the DOI with a web search if needed.",
     };
   const root = yield* agentRoot;
-  const [item] = yield* requestPapers(root, [input], yield* agentRequester());
+  const request = yield* askedForLibrary(root, input);
+  if ("missing" in request) return { status: "not-found" as const, message: request.missing };
+  const [item] = yield* requestPapers(root, [request.asked], yield* agentRequester());
   if (!item) return yield* unavailable("The paper could not be queued.");
   const done = yield* waitForPaper(root, item.itemId, ONE_PAPER_WAIT);
-  if (done?.state === "saved" && done.path && done.route)
+  if (done?.state === "saved" && done.path && done.route) {
+    const message = request.note ?? done.message;
     return {
       status: "saved" as const,
       path: done.path,
       route: done.route,
       published: done.published ?? true,
+      ...(done.version ? { version: done.version } : {}),
       ...(done.title ? { title: done.title } : {}),
       ...(done.doi ? { doi: done.doi } : {}),
+      ...(done.sourceId ? { sourceId: done.sourceId } : {}),
+      ...(message ? { message } : {}),
     };
+  }
   return {
     status: done?.state === "saved" || !done ? ("waiting" as const) : done.state,
     message:
@@ -139,11 +183,20 @@ export const getPaper = Effect.fn("Papers.get")(function* (input: {
 }, Effect.provide(FetchHttpClient.layer));
 
 export const queuePapers = Effect.fn("Papers.queue")(function* (input: {
-  readonly papers: ReadonlyArray<PaperAsked>;
+  readonly papers: ReadonlyArray<AgentPaperAsked>;
 }) {
   const root = yield* agentRoot;
-  const items = yield* requestPapers(root, input.papers, yield* agentRequester());
-  return { queued: items.length };
+  const requests = yield* Effect.forEach(input.papers, (paper) => askedForLibrary(root, paper));
+  const asked = requests.flatMap((request) => ("asked" in request ? [request.asked] : []));
+  const notes = [
+    ...new Set(
+      requests.flatMap((request) =>
+        "missing" in request ? [request.missing] : request.note ? [request.note] : [],
+      ),
+    ),
+  ];
+  const items = asked.length > 0 ? yield* requestPapers(root, asked, yield* agentRequester()) : [];
+  return { queued: items.length, ...(notes.length > 0 ? { message: notes.join(" ") } : {}) };
 }, Effect.provide(FetchHttpClient.layer));
 
 export const paperStatus = Effect.fn("Papers.status")(function* (input: {
@@ -169,10 +222,10 @@ export const paperStatus = Effect.fn("Papers.status")(function* (input: {
   };
 }, Effect.provide(FetchHttpClient.layer));
 
+/** The user's own request: no conversation, so every saved sign-in that isn't Off. */
 const userRequester = (environmentId: EnvironmentId): PaperRequester => ({
   environmentId,
   browser: true,
-  accounts: "all",
 });
 
 /** The user's Get PDF on a source: the same queue, saved and attached to the source. */
@@ -209,16 +262,29 @@ export const requestPapersAsUser = (
 export const listPapersAsUser = (root: string, environmentId: EnvironmentId) =>
   resumePapers(root, userRequester(environmentId)).pipe(Effect.provide(FetchHttpClient.layer));
 
-export const continuePapersAsUser = (root: string, environmentId: EnvironmentId) =>
-  continuePapers(root, userRequester(environmentId)).pipe(
+export const continuePapersAsUser = (
+  input: PaperQueueContinueInput,
+  environmentId: EnvironmentId,
+) =>
+  continuePapers(input.root, userRequester(environmentId), undefined, input.terms).pipe(
     Effect.as({}),
     Effect.provide(FetchHttpClient.layer),
   );
 
-/** A sign-in just finished, so every paper that waited for one goes again. */
-export const continueWaitingPapers = (environmentId: EnvironmentId) =>
-  Effect.forEach(
-    waitingPaperRoots(),
-    (root) => continuePapers(root, userRequester(environmentId)),
-    { discard: true },
-  ).pipe(Effect.ignore, Effect.provide(FetchHttpClient.layer));
+/** A sign-in or a check just worked, so every paper that waited on the user goes again. */
+export const continueWaitingPapers = (environmentId: EnvironmentId, signedIn?: AccountId) =>
+  waitingPaperRoots().pipe(
+    Effect.flatMap((roots) =>
+      Effect.forEach(
+        roots,
+        (root) => continuePapers(root, userRequester(environmentId), signedIn),
+        { discard: true },
+      ),
+    ),
+    Effect.ignore,
+    Effect.provide(FetchHttpClient.layer),
+  );
+
+/** After a restart, what every project's papers wait for shows again. */
+export const showPapersAfterRestart = (environmentId: EnvironmentId) =>
+  showUnfinishedPapers(userRequester(environmentId)).pipe(Effect.ignore);

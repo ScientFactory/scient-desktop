@@ -1,4 +1,4 @@
-import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
+import type { PdfSourceDescriptor, PdfTarget } from "@scientfactory/document-artifacts";
 import type { PdfCitation, ScopedThreadRef } from "@t3tools/contracts";
 import { pdfCitationFits } from "@t3tools/shared/pdfCitations";
 import {
@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 
 import { toastManager } from "~/components/ui/toast";
 import { useComposerHandleContext } from "~/composerHandleContext";
+import { PdfAnnotationActionsContext } from "~/scient/annotations/PdfAnnotationLayer";
 import { CitationActionBar } from "~/scient/chat/CitationActionBar";
 import { SideChatCitationContext } from "~/scient/chat/sideChatCitation";
 import {
@@ -31,10 +32,16 @@ import {
 } from "./pdfQuoteReveal";
 import { takePdfReveal, useOwnedPdfReveal } from "./pdfRevealRequests";
 import { PDF_SELECTION_REFUSAL_COPY, readPdfTextSelection } from "./pdfTextLayer";
-import { pdfDocumentIdentity, pdfTextTarget } from "./pdfTextTarget";
+import { pdfDocumentIdentity, pdfDocumentMaterial, pdfTextTarget } from "./pdfTextTarget";
+import { pdfPageForLabel, type PdfPageLabelMatch } from "./pdfPageLabel";
 
 type Captured =
-  | { readonly citation: PdfCitation; readonly range: Range }
+  | {
+      readonly target: PdfTarget;
+      /** Null when the selection cannot be asked about here; it can still be annotated. */
+      readonly citation: PdfCitation | null;
+      readonly range: Range;
+    }
   | { readonly refusal: string; readonly range: Range };
 
 /**
@@ -56,10 +63,11 @@ export function PdfQuoteLayer(props: {
   /** The conversation a quote belongs to; without it there is no Ask in chat. */
   readonly citeThread?: ScopedThreadRef | undefined;
 }) {
+  const annotate = use(PdfAnnotationActionsContext);
   return (
     <>
       <PdfQuoteReveal {...props} />
-      {props.citeThread && props.presentedSource ? (
+      {(props.citeThread || annotate) && props.presentedSource ? (
         <PdfAskInChat {...props} citeThread={props.citeThread} source={props.presentedSource} />
       ) : null}
     </>
@@ -73,7 +81,7 @@ function outcomeNotice(outcome: PdfRevealOutcome): { title: string; description:
     case "Relocated":
       return {
         title: "Quote found by its text",
-        description: "The page text differs from when it was quoted, so Scient searched for it.",
+        description: "Its saved place did not match this PDF, so Scient searched for the words.",
       };
     case "Ambiguous":
       return {
@@ -90,6 +98,23 @@ function outcomeNotice(outcome: PdfRevealOutcome): { title: string; description:
         title: "Couldn't search the whole PDF in time",
         description: `Showing page ${outcome.page}, where it was quoted.`,
       };
+  }
+}
+
+function pageNotice(
+  label: string,
+  match: PdfPageLabelMatch,
+): { title: string; description?: string } | null {
+  switch (match._tag) {
+    case "Found":
+      return null;
+    case "Repeated":
+      return {
+        title: `More than one page is numbered ${label}`,
+        description: `Showing the first, page ${match.page} of the PDF.`,
+      };
+    case "Missing":
+      return { title: `This PDF has no page ${label}` };
   }
 }
 
@@ -112,6 +137,23 @@ function PdfQuoteReveal(props: {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     const controller = new AbortController();
+    if ("pageLabel" in request) {
+      const { pageLabel } = request;
+      void runtime.document.getPageLabels().then(
+        (labels) => {
+          if (controller.signal.aborted || !takePdfReveal(revealKey, request.id)) return;
+          const match = pdfPageForLabel(pageLabel, labels, runtime.document.numPages);
+          if (match._tag !== "Missing") showPdfPage(runtime, match.page);
+          const notice = pageNotice(pageLabel, match);
+          if (notice) toastManager.add({ type: "info", ...notice });
+        },
+        () => {
+          if (controller.signal.aborted || !takePdfReveal(revealKey, request.id)) return;
+          toastManager.add({ type: "error", title: `Couldn't go to page ${pageLabel}` });
+        },
+      );
+      return () => controller.abort();
+    }
     void locatePdfQuote(runtime, request.target, controller.signal).then(
       ({ outcome, highlight }) => {
         if (controller.signal.aborted || !takePdfReveal(revealKey, request.id)) return;
@@ -161,16 +203,18 @@ function PdfAskInChat(props: {
   readonly runtimeRef: RefObject<ScientPdfRuntime | null>;
   readonly source: PdfSourceDescriptor;
   readonly ready: boolean;
-  readonly citeThread: ScopedThreadRef;
+  readonly citeThread: ScopedThreadRef | undefined;
 }) {
   const composerRef = useComposerHandleContext();
   const citeInSideChat = use(SideChatCitationContext);
+  const annotate = use(PdfAnnotationActionsContext);
   const [shown, setShown] = useState<(Captured & { position: SelectionActionPoint }) | null>(null);
   const buttonRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const { container, ready, runtimeRef, source, citeThread } = props;
   const identity = pdfDocumentIdentity(source);
-  const citable = composerRef !== null && identity !== null;
+  const askable = composerRef !== null && identity !== null && citeThread !== undefined;
+  const citable = askable || (annotate !== null && identity !== null);
 
   const capture = (): Captured | null => {
     const runtime = runtimeRef.current;
@@ -180,19 +224,29 @@ function PdfAskInChat(props: {
     if (read._tag === "Empty") return null;
     const range = selection!.getRangeAt(0);
     if (read._tag === "Refused") return { refusal: PDF_SELECTION_REFUSAL_COPY[read.reason], range };
-    const built = pdfTextTarget({ document: identity, material: null, pages: read.pages });
+    const built = pdfTextTarget({
+      document: identity,
+      material: pdfDocumentMaterial(source),
+      pages: read.pages,
+    });
     if (built._tag === "Refused") {
       return { refusal: PDF_SELECTION_REFUSAL_COPY[built.reason], range };
     }
-    const citation: PdfCitation = {
-      kind: "pdf",
-      version: 1,
-      environmentId: citeThread.environmentId,
-      threadId: citeThread.threadId,
-      target: built.target,
-    };
-    return pdfCitationFits(citation)
-      ? { citation, range }
+    const citation: PdfCitation | null =
+      askable && citeThread
+        ? {
+            kind: "pdf",
+            version: 1,
+            environmentId: citeThread.environmentId,
+            threadId: citeThread.threadId,
+            target: built.target,
+          }
+        : null;
+    if (citation === null || pdfCitationFits(citation)) {
+      return { target: built.target, citation, range };
+    }
+    return annotate
+      ? { target: built.target, citation: null, range }
       : { refusal: PDF_SELECTION_REFUSAL_COPY["selection-too-large"], range };
   };
   const captureRef = useRef(capture);
@@ -298,13 +352,13 @@ function PdfAskInChat(props: {
     }
   };
   const askInSideChat = () => {
-    if (!("citation" in shown)) return;
+    if (!("citation" in shown) || !shown.citation) return;
     citeInSideChat?.(shown.citation);
     window.getSelection()?.removeAllRanges();
     dismiss();
   };
   const ask = () => {
-    if (!("citation" in shown) || !container) return;
+    if (!("citation" in shown) || !shown.citation || !container) return;
     const inserted =
       composerRef?.current?.citeText(shown.citation, {
         source: container,
@@ -323,14 +377,29 @@ function PdfAskInChat(props: {
     window.getSelection()?.removeAllRanges();
     dismiss();
   };
+  const target = "target" in shown ? shown.target : null;
+  const canAsk = refusal !== null || ("citation" in shown && shown.citation !== null);
+  const annotateWith = (action: "highlight" | "note") => () => {
+    if (!annotate || !target) return;
+    if (action === "highlight") annotate.highlight(target);
+    else annotate.note(target, DOMRect.fromRect(shown.range.getBoundingClientRect()));
+    window.getSelection()?.removeAllRanges();
+    dismiss();
+  };
   return createPortal(
     <CitationActionBar
       ref={buttonRef}
       pdf
       style={{ left: shown.position.x, top: shown.position.y }}
       {...(refusal === null ? {} : { label: refusal, refused: true })}
-      onAskInChat={ask}
-      onAskInSideChat={citeInSideChat && refusal === null ? askInSideChat : undefined}
+      onAskInChat={canAsk ? ask : undefined}
+      onAskInSideChat={
+        citeInSideChat && refusal === null && "citation" in shown && shown.citation
+          ? askInSideChat
+          : undefined
+      }
+      onHighlight={annotate && target ? annotateWith("highlight") : undefined}
+      onNote={annotate && target ? annotateWith("note") : undefined}
       onKeyDown={dismissOnEscape}
     />,
     document.body,

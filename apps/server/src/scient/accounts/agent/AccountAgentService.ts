@@ -186,11 +186,15 @@ export const accountAgentOperations = {
   }) {
     const scope = yield* accountSessionScope();
     const account = yield* getAccount(scope, accountId);
-    return yield* guardedSignIn({
+    const result = yield* guardedSignIn({
       page: { tabId },
       signIn: account,
       caller: { kind: "agent", scope },
     });
+    // Papers waiting for this sign-in go on, as after the user's own.
+    if (result.outcome === "signed-in")
+      yield* continueWaitingPapers((yield* AgentInvocationContext).environmentId, accountId);
+    return result;
   }),
   scient_account_request: Effect.fn("AccountsAgent.request")(function* (
     input: ToolInput<"scient_account_request">,
@@ -425,7 +429,9 @@ const signInAsPerson = Effect.fn("AccountsAgent.signInAsPerson")(function* (
     signIn: account,
     caller: {
       kind: "person",
-      afterSignIn: continueWaitingPapers(environmentId).pipe(Effect.provideContext(services)),
+      afterSignIn: continueWaitingPapers(environmentId, account.accountId).pipe(
+        Effect.provideContext(services),
+      ),
       ...(input.discardIfUnfinished ? { discardIfUnfinished: true } : {}),
     },
     onTab: (tabId) => Deferred.succeed(opened, tabId).pipe(Effect.asVoid),

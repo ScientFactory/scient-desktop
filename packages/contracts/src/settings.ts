@@ -91,6 +91,7 @@ import { CustomModelsSettings } from "./customModels.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 // SCIENT-FORK: conversation-fork preferences.
 import { ScientForkSettings, ScientForkSettingsPatch } from "./scientForkSettings.ts";
+import { ScientSourcesSettings, ScientSourcesSettingsPatch } from "./scient/sourcesSettings.ts";
 // SCIENT-FORK:START — Scient Agent's own idle compaction default.
 import { scientAgentIdleCompactionDefault } from "./scient/idleCompaction.ts";
 // SCIENT-FORK:END
@@ -1703,6 +1704,8 @@ export const ServerSettings = Schema.Struct({
   scientificComputing: ScientificComputingSettings,
   // SCIENT-FORK: portable context handoff size for forks.
   scientFork: ScientForkSettings,
+  // SCIENT-FORK: Library registry contact.
+  scientSources: ScientSourcesSettings,
   reviewGuidesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   reviewGuideModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -2153,6 +2156,8 @@ export const ServerSettingsPatch = Schema.Struct({
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   // SCIENT-FORK: portable context handoff size for forks.
   scientFork: Schema.optionalKey(ScientForkSettingsPatch),
+  // SCIENT-FORK: Library registry contact.
+  scientSources: Schema.optionalKey(ScientSourcesSettingsPatch),
   scientificComputing: Schema.optionalKey(ScientificComputingSettingsPatch),
   reviewGuidesEnabled: Schema.optionalKey(Schema.Boolean),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),

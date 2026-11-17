@@ -206,7 +206,12 @@ export function fakeAccounts(
       }),
     passwordStore: () => unsupported,
     snapshot: Effect.sync(
-      () => ({ accounts, agentAccess: options.agentAccess ?? true }) as unknown as AccountsSnapshot,
+      () =>
+        ({
+          accounts,
+          profiles: options.profiles ?? [],
+          agentAccess: options.agentAccess ?? true,
+        }) as unknown as AccountsSnapshot,
     ),
     changes: Stream.empty,
     save: (input) =>

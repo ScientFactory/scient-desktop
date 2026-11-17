@@ -51,7 +51,7 @@ export type SignInCaller =
   | {
       readonly kind: "paper";
       readonly scope: AccountSessionScope;
-      readonly requester: Pick<PaperRequester, "accounts">;
+      readonly requester: Pick<PaperRequester, "threadId">;
     }
   /** A local connector the user linked this sign-in to: signed in again, unattended, when it ends. */
   | { readonly kind: "connector" }
@@ -208,7 +208,6 @@ const mayType = Effect.fn("AccountsAgent.mayType")(function* (
   account: AccountSummary,
   agentAccess: boolean,
 ) {
-  const unattended = { projectId: undefined, unattended: true };
   switch (caller.kind) {
     case "agent":
       // Ask waits for the user's card; Off and out of scope refuse.
@@ -218,11 +217,14 @@ const mayType = Effect.fn("AccountsAgent.mayType")(function* (
       return (
         authorizationDecision(agentAccess, account.controls, caller.scope).decision === "allowed"
       );
-    case "paper":
-      // The user's own request may use any sign-in that isn't Off; an agent's needs it Allowed.
-      return caller.requester.accounts === "all"
-        ? account.controls.access !== "off"
-        : authorizationDecision(agentAccess, account.controls, unattended).decision === "allowed";
+    case "paper": {
+      // The user's own request may use any sign-in that isn't Off; an agent's, one its conversation
+      // may use without asking now, in its project, approvals it was given included.
+      if (caller.requester.threadId === undefined) return account.controls.access !== "off";
+      const accounts = yield* AccountsService;
+      const target = { type: "account" as const, accountId: account.accountId };
+      return (yield* accounts.authorize(caller.scope, target, "sign-in")).decision === "allowed";
+    }
     case "person":
       if (caller.agent) {
         yield* authorize(
@@ -257,9 +259,10 @@ const run = Effect.fn("AccountsAgent.guardedSignIn")(function* (
   if ("find" in request.signIn) {
     const { accounts: rows } = yield* accounts.snapshot;
     const { caller } = request;
+    // An agent's paper never types into a sign-in that is Off; the rest is decided before typing.
     const usable =
-      caller.kind === "paper" && caller.requester.accounts !== "all"
-        ? rows.filter((row) => caller.requester.accounts.includes(row.accountId))
+      caller.kind === "paper" && caller.requester.threadId !== undefined
+        ? rows.filter((row) => row.controls.access !== "off")
         : rows;
     const fitting = signInsForPage(
       usable,

@@ -45,7 +45,6 @@ export const makeSourceImportAnalytics = Effect.fn("makeSourceImportAnalytics")(
                   trigger,
                   durationMs: finishedAt - startedAt,
                   ...(outcome === "failed" ? { failureClass: "unknown" } : {}),
-                  reviewRequired: trigger === "agent",
                 },
               );
             }).pipe(Effect.ignoreCause()),

@@ -149,6 +149,12 @@ windows-tests.yml --ref <branch>`, optionally with `-f package=<dir>` to run one
 and `-f files="<paths>"` to run specific test files inside it. Once it is green, fold it into
 `ci.yml`.
 
+[`.github/workflows/scient-library-deep-tests.yml`](../../.github/workflows/scient-library-deep-tests.yml)
+runs the long forms of the Library's rule tests and the Sources eval's large import on main, on a
+schedule or by hand, never on a pull request, and is not a required check. The Sources guide's
+[Rules the stores keep](scient-sources.md#rules-the-stores-keep) says what it runs on which
+computer and how a failure is reported.
+
 [`promote-release.yml`](../../.github/workflows/promote-release.yml) manually fast-forwards
 `release/stable` to an exact green `main` commit. The manual-only
 [`release.yml`](../../.github/workflows/release.yml) then builds macOS (`arm64` and `x64`), Linux
