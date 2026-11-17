@@ -4,6 +4,7 @@ import type { AnalyticsRuntime } from "@scientfactory/analytics";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/http/HttpClient";
@@ -14,15 +15,22 @@ import * as ServerConfig from "./config.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { layerAnalytics } from "./server.ts";
 import { AnalyticsService } from "./telemetry/AnalyticsService.ts";
-import { ScientAnalyticsAvailability } from "./telemetry/ScientAnalytics.ts";
+import {
+  ScientAnalyticsAvailability,
+  ScientRecordedAnalyticsIngest,
+} from "./telemetry/ScientAnalytics.ts";
 
-const scient = vi.hoisted(() => ({ recorded: [] as string[] }));
+const scient = vi.hoisted(() => ({ recorded: [] as string[], ingested: [] as string[] }));
 vi.mock("@scientfactory/analytics", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scientfactory/analytics")>()),
   createAnalyticsRuntime: (): AnalyticsRuntime => ({
     enabled: true,
     record: (name) => {
       scient.recorded.push(name);
+      return true;
+    },
+    ingest: async (events) => {
+      scient.ingested.push(...events.map((event) => event.name));
       return true;
     },
     flush: async () => 0,
@@ -36,6 +44,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       scient.recorded.length = 0;
+      scient.ingested.length = 0;
       const posthogRequests: string[] = [];
       const posthog = HttpClient.make((request) =>
         Effect.sync(() => {
@@ -48,6 +57,17 @@ it.effect(
         yield* analytics.record("provider.turn.sent", { provider: "codex" });
         yield* analytics.recordOwners([{ source: "openai", ownerId: "a".repeat(64) }], "server");
         yield* analytics.flush;
+        // Facts another process journaled reach the same outbox, not the never-sent default.
+        yield* (yield* ScientRecordedAnalyticsIngest).ingest([
+          {
+            id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a24",
+            name: "app.update.summary",
+            occurredAt: DateTime.formatIso(yield* DateTime.now),
+            appVersion: "0.6.29",
+            buildChannel: "stable",
+            properties: { reason: "launch", status: "idle" },
+          },
+        ]);
         return (yield* ScientAnalyticsAvailability).available;
       }).pipe(
         Effect.provide(
@@ -83,6 +103,7 @@ it.effect(
         "install.owner_observed",
         "app.session.ended",
       ]);
+      assert.deepEqual(scient.ingested, ["app.update.summary"]);
       assert.isTrue(available);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

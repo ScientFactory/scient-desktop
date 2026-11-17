@@ -943,7 +943,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const program = runBackendProcess({
           ...config.value,
-          desktopTelemetryStream: desktopTelemetryPublisher.encoded,
+          // SCIENT-FORK: this backend's stream carries the update facts offered to it.
+          desktopTelemetryStream:
+            desktopTelemetryPublisher.encodedFor?.(spec.id) ?? desktopTelemetryPublisher.encoded,
           desktopBrowserStream: desktopBrowserHost.events,
           onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
           onDesktopTelemetryControl: (message) =>

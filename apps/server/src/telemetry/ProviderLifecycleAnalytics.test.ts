@@ -147,31 +147,51 @@ describe("Provider lifecycle analytics", () => {
     ]);
   });
 
-  it("says a background change started on its own and how its download went", () => {
+  it("says a background change started on its own and how far its download got", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     mapper.observe([provider()]);
     const background = { ...operation("downloading"), background: true, attempt: 2 };
-    expect(mapper.observe([provider(background)])).toMatchObject([
-      { name: "provider.lifecycle.started", properties: { trigger: "background", attempt: 2 } },
-    ]);
+    const [started] = mapper.observe([provider(background)]);
+    expect(started).toMatchObject({
+      name: "provider.lifecycle.started",
+      properties: { trigger: "background", attempt: 2 },
+    });
+    expect(started!.properties).not.toHaveProperty("failureClass");
     expect(
       mapper.observe([
         provider({
           ...background,
           status: "failed",
           finishedAt: "2026-08-31T00:00:12.000Z",
-          download: { resumedBytes: 41_000_000, source: "fallback", compressed: true },
+          failureClass: "timeout",
+          download: {
+            resumedBytes: 41_000_000,
+            source: "fallback",
+            compressed: true,
+            sourceKind: "github",
+            tries: 5,
+            progressPercent: 37,
+            bytesPerSecond: 410_000,
+            networkKind: "stalled",
+          },
         }),
       ]),
     ).toMatchObject([
       {
         name: "provider.lifecycle.failed",
         properties: {
+          // Older clients decode only `timeout`; the stall is told apart here.
+          failureClass: "stalled",
           trigger: "background",
           attempt: 2,
           resumedBytes: 41_000_000,
           downloadSource: "fallback",
-          compressed: true,
+          downloadVariant: "compressed",
+          sourceKind: "github",
+          downloadAttempts: 5,
+          progressPercent: 37,
+          bytesPerSecond: 410_000,
+          networkKind: "stalled",
         },
       },
     ]);

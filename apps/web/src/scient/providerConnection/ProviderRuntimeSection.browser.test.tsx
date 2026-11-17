@@ -1836,6 +1836,7 @@ describe("ProviderRuntimeSection", () => {
 
     const cancelledProvider: ServerProvider = {
       ...provider,
+      driver: ProviderDriverKind.make("claudeAgent"),
       installed: true,
       version: "2.1.170",
       status: "ready",
@@ -1877,6 +1878,51 @@ describe("ProviderRuntimeSection", () => {
     expect(markup).toContain('aria-label="Use Scient-managed Claude"');
     expect(markup).not.toContain("Provider runtime setup cancelled");
     expect(markup).not.toContain("previous working runtime");
+
+    const restartedProvider: ServerProvider = {
+      ...cancelledProvider,
+      connection: {
+        ...cancelledProvider.connection!,
+        runtime: {
+          ...cancelledProvider.connection!.runtime!,
+          operation: null,
+          pendingRecovery: {
+            requestId: "requested-before-restart",
+            action: "install",
+            nextRetryAt: "2026-11-16T12:05:00.000Z",
+          },
+        },
+      },
+    };
+    const clearedProvider: ServerProvider = {
+      ...restartedProvider,
+      connection: {
+        ...restartedProvider.connection!,
+        runtime: { ...restartedProvider.connection!.runtime!, pendingRecovery: null },
+      },
+    };
+    commands.cancel.mockResolvedValue({ _tag: "Success", value: { providers: [clearedProvider] } });
+    const host = await renderSection(_fixture, {
+      compact: true,
+      environmentId,
+      provider: restartedProvider,
+      displayName: "Claude",
+    });
+    expect(host.textContent).toContain("Scient will retry this requested install after");
+    expect(host.querySelector('[role="progressbar"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Cancel Claude install retry"]')).not.toBeNull();
+    const cancelRetry = findActionButton(host, "Cancel retry");
+    expect(cancelRetry).toBeDefined();
+    await act(() => cancelRetry!.click());
+    await vi.waitFor(() => {
+      expect(commands.cancel).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, requestId: "requested-before-restart" },
+      });
+      expect(host.textContent).not.toContain("Cancel retry");
+    });
+    expect(host.textContent).toContain("System installation");
+    expect(commands.start).not.toHaveBeenCalled();
   });
 
   it("shows the current missing-runtime state after removal instead of a stale success row", async () => {

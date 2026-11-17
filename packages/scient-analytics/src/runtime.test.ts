@@ -280,4 +280,81 @@ describe("Scient analytics background runtime", () => {
     expect(deadLetters.count).toBe(1);
     expect(server.bodies).toHaveLength(0);
   });
+
+  it("ingests a recorded event once, keeping its id, time and release", async () => {
+    const outboxPath = fixturePath();
+    const runtime = createAnalyticsRuntime(
+      options({ outboxPath, now: () => new Date("2026-11-16T12:00:00.000Z") }),
+    );
+    const recorded = {
+      id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a24",
+      name: "app.update.outcome",
+      occurredAt: "2026-11-16T11:00:00.000Z",
+      appVersion: "0.6.29",
+      buildChannel: "stable",
+      properties: { step: "install", outcome: "handoff-attempted", targetVersion: "0.6.30" },
+    } as const;
+    try {
+      expect(await runtime.ingest([recorded])).toBe(true);
+      // A replay after a lost acknowledgement finds the same row.
+      expect(await runtime.ingest([recorded])).toBe(true);
+      expect(await runtime.pendingCount()).toBe(1);
+    } finally {
+      await runtime.close();
+    }
+    const database = new NodeSqlite.DatabaseSync(outboxPath);
+    const row = database
+      .prepare("SELECT id, occurred_at, privacy_level, properties_json FROM analytics_outbox")
+      .get() as {
+      readonly id: string;
+      readonly occurred_at: string;
+      readonly privacy_level: string;
+      readonly properties_json: string;
+    };
+    database.close();
+    expect(row).toMatchObject({
+      id: recorded.id,
+      occurred_at: recorded.occurredAt,
+      privacy_level: "essential",
+    });
+    expect(JSON.parse(row.properties_json)).toMatchObject({
+      appVersion: "0.6.29",
+      step: "install",
+      targetVersion: "0.6.30",
+    });
+  });
+
+  it("settles recorded events it must not send without queueing them", async () => {
+    const runtime = createAnalyticsRuntime(
+      options({ now: () => new Date("2026-11-16T12:00:00.000Z") }),
+    );
+    const summary = {
+      name: "app.update.summary",
+      appVersion: "0.6.29",
+      buildChannel: "stable",
+      properties: { reason: "launch", status: "idle" },
+    } as const;
+    try {
+      // Too old, a malformed id, and an unknown name are never sent.
+      expect(
+        await runtime.ingest([
+          {
+            ...summary,
+            id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a25",
+            occurredAt: "2026-10-01T00:00:00.000Z",
+          },
+          { ...summary, id: "not-a-uuid", occurredAt: "2026-11-16T11:00:00.000Z" },
+          {
+            ...summary,
+            id: "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a26",
+            name: "Not An Event",
+            occurredAt: "2026-11-16T11:00:00.000Z",
+          },
+        ]),
+      ).toBe(true);
+      expect(await runtime.pendingCount()).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
 });

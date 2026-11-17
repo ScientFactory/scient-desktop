@@ -5,7 +5,11 @@
  *
  * @module ScientAnalytics
  */
-import { createAnalyticsRuntime, type AnalyticsRuntime } from "@scientfactory/analytics";
+import {
+  createAnalyticsRuntime,
+  type AnalyticsRuntime,
+  type RecordedAnalyticsEvent,
+} from "@scientfactory/analytics";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeSea from "node:sea";
@@ -61,9 +65,26 @@ export class ScientAnalyticsAvailability extends Context.Reference<AnalyticsAvai
   },
 ) {}
 
+export interface RecordedAnalyticsIngest {
+  /**
+   * Queues events another Scient process recorded, keeping their ids and times. True once the
+   * outbox holds them or analytics never sends them; false asks the sender to offer again.
+   */
+  readonly ingest: (events: ReadonlyArray<RecordedAnalyticsEvent>) => Effect.Effect<boolean>;
+}
+
+const neverSent: RecordedAnalyticsIngest = { ingest: () => Effect.succeed(true) };
+
+/** Ingest for events recorded in another process; unprovided means they are never sent. */
+export class ScientRecordedAnalyticsIngest extends Context.Reference<RecordedAnalyticsIngest>(
+  "scient/telemetry/ScientRecordedAnalyticsIngest",
+  { defaultValue: () => neverSent },
+) {}
+
 export interface ScientAnalytics {
   readonly analytics: AnalyticsService["Service"];
   readonly available: boolean;
+  readonly recorded: RecordedAnalyticsIngest;
 }
 
 function parseBuildChannel(
@@ -104,7 +125,11 @@ export const disabledAnalyticsService: AnalyticsService["Service"] = {
   flush: Effect.void,
 };
 
-const disabled: ScientAnalytics = { analytics: disabledAnalyticsService, available: false };
+const disabled: ScientAnalytics = {
+  analytics: disabledAnalyticsService,
+  available: false,
+  recorded: neverSent,
+};
 
 export const make = Effect.gen(function* () {
   const analyticsConfig = yield* AnalyticsEnvConfig;
@@ -196,17 +221,27 @@ export const make = Effect.gen(function* () {
     Effect.asVoid,
   );
 
+  const recorded: RecordedAnalyticsIngest = {
+    ingest: (events) =>
+      Effect.tryPromise({
+        try: () => runtime.ingest(events),
+        catch: () => "analytics-ingest-failed" as const,
+      }).pipe(Effect.orElseSucceed(() => false)),
+  };
+
   return {
     analytics: AnalyticsService.of({ record, recordOwners, flush }),
     available: true,
+    recorded,
   } satisfies ScientAnalytics;
 });
 
 /** Provides AnalyticsService and its availability in place of T3's PostHog layer. */
 export const layer = Layer.effectContext(
-  Effect.map(make, ({ analytics, available }) =>
+  Effect.map(make, ({ analytics, available, recorded }) =>
     Context.make(AnalyticsService, analytics).pipe(
       Context.add(ScientAnalyticsAvailability, { available }),
+      Context.add(ScientRecordedAnalyticsIngest, recorded),
     ),
   ),
 );

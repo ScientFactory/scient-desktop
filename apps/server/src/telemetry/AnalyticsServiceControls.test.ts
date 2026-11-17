@@ -32,6 +32,7 @@ function fakeRuntime(enabled = true) {
       }
       return alive;
     },
+    ingest: async () => true,
     flush: async () => 0,
     pendingCount: async () => 0,
     close: async () => {

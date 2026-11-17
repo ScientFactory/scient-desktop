@@ -27,6 +27,9 @@ import * as DesktopVoice from "./app/DesktopVoice.ts";
 // SCIENT-FORK:START — keep the computer awake while threads work.
 import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — the update facts journal the updater writes and the telemetry pipe delivers.
+import * as DesktopUpdateFacts from "./scient/updateOutcomes/DesktopUpdateFacts.ts";
+// SCIENT-FORK:END
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
@@ -198,7 +201,8 @@ const layerDesktopPreview = PreviewManager.layer.pipe(
 );
 
 const layerDesktopWindow = DesktopWindow.layer.pipe(
-  Layer.provideMerge(DesktopTelemetryPublisher.layer),
+  // SCIENT-FORK: the same journal layer as the updater's, so both share one journal.
+  Layer.provideMerge(DesktopTelemetryPublisher.layer.pipe(Layer.provide(DesktopUpdateFacts.layer))),
   Layer.provideMerge(DesktopShellEnvironment.layer),
   Layer.provideMerge(layerDesktopServerExposure),
   Layer.provideMerge(layerDesktopPreview),
@@ -246,6 +250,8 @@ const layerDesktopApplication = Layer.mergeAll(
   Layer.provideMerge(
     DesktopUpdates.layer.pipe(
       Layer.provide(DesktopUpdatePolicy.layer),
+      // SCIENT-FORK: the same journal layer as the telemetry publisher's.
+      Layer.provide(DesktopUpdateFacts.layer),
       // The same layer as the foundation's, so the policy is still read once.
       Layer.provide(DesktopManagedPolicy.layer),
     ),
