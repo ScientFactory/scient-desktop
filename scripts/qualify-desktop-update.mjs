@@ -639,7 +639,15 @@ async function qualify(options) {
       undefined,
       { timeout: TIMEOUT },
     );
-    await page.getByRole("button", { name: "Add project", exact: true }).first().click();
+    // A fresh profile opens Scient's getting-started flow; skip it to reach the empty workspace.
+    const addProject = page.getByRole("button", { name: "Add project", exact: true }).first();
+    const skipOnboarding = page.getByRole("button", { name: "Skip", exact: true }).first();
+    for (let step = 0; step < 4; step++) {
+      await addProject.or(skipOnboarding).first().waitFor({ state: "visible", timeout: TIMEOUT });
+      if (await addProject.isVisible()) break;
+      await skipOnboarding.click();
+    }
+    await addProject.click();
     await page.getByText("Local folder", { exact: true }).click();
     await page.getByRole("combobox").fill(project);
     await page.getByRole("combobox").press("Enter");
