@@ -874,16 +874,28 @@ export function useComposerSend(input: ComposerSendInput) {
           // as the message; Codex's own command is `/feedback-openai` here.
           const scientFeedbackAvailable = feedbackAvailable();
           const scientFeedbackCommand =
-            scientFeedbackAvailable &&
-            !directAnnotation &&
-            directPrompt === null &&
-            composerImages.length === 0 &&
-            effectiveComposerFiles.length === 0 &&
-            sendableComposerTerminalContexts.length === 0 &&
-            composerPreviewAnnotations.length === 0 &&
-            effectiveReviewComments.length === 0
+            scientFeedbackAvailable && !directAnnotation && directPrompt === null
               ? parseScientFeedbackCommand(trimmed)
               : null;
+          if (
+            scientFeedbackCommand &&
+            (composerImages.length > 0 ||
+              effectiveComposerFiles.length > 0 ||
+              sendableComposerTerminalContexts.length > 0 ||
+              composerPreviewAnnotations.length > 0 ||
+              effectiveReviewComments.length > 0)
+          ) {
+            // Never let feedback meant for the Scient team reach the model as a prompt.
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: "Remove the attachments to send feedback",
+                description:
+                  "/feedback opens Send feedback to Scient, where you can add a screenshot or logs.",
+              }),
+            );
+            return;
+          }
           if (scientFeedbackCommand) {
             promptRef.current = "";
             clearComposerDraftContent(composerDraftTarget);
