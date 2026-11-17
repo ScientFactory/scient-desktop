@@ -576,25 +576,23 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   // Every saved change, from any path (Extensions, agents, plugins, sign-in), says what it did.
   const store: typeof savedStore = {
     read: savedStore.read,
-    update: (transform) => {
-      let change:
-        | readonly [ReadonlyArray<ConnectorRecord>, ReadonlyArray<ConnectorRecord>]
-        | undefined;
-      return savedStore
+    // The saved before and after travel with the result, so each run reports its own change.
+    update: (transform) =>
+      savedStore
         .update((current) =>
-          Effect.map(transform(current), (result) => {
-            change = result[1] === current ? undefined : [current.connectors, result[1].connectors];
-            return result;
+          Effect.map(transform(current), ([result, next]) => {
+            const change =
+              next === current ? undefined : ([current.connectors, next.connectors] as const);
+            return [[result, change] as const, next] as const;
           }),
         )
         .pipe(
-          Effect.tap(() =>
+          Effect.flatMap(([result, change]) =>
             change === undefined
-              ? Effect.void
-              : recordExtensionEvents(connectorChangeEvents(...change)),
+              ? Effect.succeed(result)
+              : recordExtensionEvents(connectorChangeEvents(...change)).pipe(Effect.as(result)),
           ),
-        );
-    },
+        ),
   };
   yield* recordExtensionEvents(connectorInventoryEvents((yield* store.read).connectors));
   const clock = yield* Clock.Clock;
@@ -2095,6 +2093,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     };
   });
 
+  // OAuth 2.0 authorization error codes (RFC 6749 §4.1.2.1, OIDC); any other is "service_error".
+  const OAUTH_ERROR_CODES = new Set([
+    "invalid_request",
+    "unauthorized_client",
+    "unsupported_response_type",
+    "invalid_scope",
+    "server_error",
+    "temporarily_unavailable",
+    "login_required",
+    "consent_required",
+    "interaction_required",
+  ]);
   // How each sign-in ended, kept beside its result for the analytics wrapper below.
   const signInEnds = new WeakMap<object, { record?: ConnectorRecord; reason: string }>();
   const signInFailed = (
@@ -2134,7 +2144,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         code === "access_denied"
           ? "Sign-in was cancelled or denied."
           : `The service could not complete sign-in${code ? ` (${code})` : ""}.`,
-        code === "access_denied" ? "denied" : `service_${code || "error"}`,
+        code === "access_denied"
+          ? "denied"
+          : OAUTH_ERROR_CODES.has(code)
+            ? `service_${code}`
+            : "service_error",
       );
     }
     if (query.code === undefined || query.code.length === 0) {
@@ -2599,42 +2613,38 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         pluginHttp.get(request.connectorId)?.record;
       const rpc = request.method === "POST" ? parseRpcRequest(request.body) : {};
       const correlationId = yield* random.uuidV4();
-      const recordToolUse = (
-        decision: "allowed" | "denied",
-        outcome?: "ok" | "error",
+      const recordToolUse = (decision: "allowed" | "denied", outcome?: "ok" | "error") =>
+        record !== undefined && rpc.method === "tools/call" && rpc.toolName !== undefined
+          ? credentials.recordUse({
+              scope: request.scope,
+              target: `${record.serverName}/${rpc.toolName}`,
+              decision,
+              ...(outcome === undefined ? {} : { outcome }),
+              correlationId,
+            })
+          : Effect.void;
+      // Which connector agents actually use: one event per tool call, with what the agent got.
+      const recordToolCall = (
+        outcome: "ok" | "error" | "denied",
         detail: { readonly failureClass?: string; readonly httpStatus?: number } = {},
       ) =>
         record !== undefined && rpc.method === "tools/call" && rpc.toolName !== undefined
-          ? credentials
-              .recordUse({
-                scope: request.scope,
-                target: `${record.serverName}/${rpc.toolName}`,
-                decision,
-                ...(outcome === undefined ? {} : { outcome }),
-                correlationId,
-              })
-              .pipe(
-                // Which connector agents actually use: one event per tool call through the proxy.
-                Effect.andThen(
-                  recordExtensionEvents([
-                    {
-                      name: "extension.tool.called",
-                      properties: {
-                        owner: "scient",
-                        ...connectorFacts(record),
-                        tool: rpc.toolName.slice(0, 128),
-                        decision,
-                        outcome: outcome ?? (decision === "denied" ? "denied" : "ok"),
-                        status: record.status,
-                        ...(request.scope.thread === undefined
-                          ? {}
-                          : { callerProviderInstance: request.scope.thread.providerInstanceId }),
-                        ...detail,
-                      },
-                    },
-                  ]),
-                ),
-              )
+          ? recordExtensionEvents([
+              {
+                name: "extension.tool.called",
+                properties: {
+                  owner: "scient",
+                  ...connectorFacts(record),
+                  tool: rpc.toolName.slice(0, 128),
+                  outcome,
+                  status: record.status,
+                  ...(request.scope.thread === undefined
+                    ? {}
+                    : { callerProviderInstance: request.scope.thread.providerInstanceId }),
+                  ...detail,
+                },
+              },
+            ])
           : Effect.void;
       const usable =
         record !== undefined &&
@@ -2642,15 +2652,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         record.enabled &&
         (yield* isPluginEligible(record));
       if (!usable || record.status !== "connected") {
-        yield* recordToolUse("denied", undefined, {
-          failureClass:
-            record === undefined
-              ? "removed"
-              : !record.enabled
-                ? "disabled"
-                : !usable
-                  ? "unavailable"
-                  : record.status,
+        yield* recordToolUse("denied");
+        yield* recordToolCall("denied", {
+          failureClass: usable
+            ? record.status
+            : record?.enabled === false
+              ? "disabled"
+              : "unavailable",
         });
         // A sign-in the service refused stays the person's to fix: discovery keeps failing.
         const refused = usable ? standingRefusal(record) : undefined;
@@ -2672,11 +2680,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       let upstreamSessionId: string | undefined;
       if (proxySessionId !== undefined) {
         upstreamSessionId = sessions.resolve(proxySessionId, record.connectorId, providerSessionId);
-        if (upstreamSessionId === undefined) return yield* sessionGone(record, request);
+        if (upstreamSessionId === undefined) {
+          yield* recordToolCall("error", { failureClass: "session_gone" });
+          return yield* sessionGone(record, request);
+        }
       }
 
       const permits = semaphoreFor(inFlight, record.connectorId, MAX_IN_FLIGHT_PER_CONNECTOR);
       if (!(yield* Semaphore.takeIfAvailable(permits, 1))) {
+        yield* recordToolCall("error", { failureClass: "busy" });
         return refusal(
           request,
           `${record.displayName} has too many requests in progress. Retry shortly.`,
@@ -2730,9 +2742,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             void refused.body?.cancel().catch(() => undefined);
           });
         }
-        yield* recordToolUse(outcome.type === "lost" ? "denied" : "allowed", "error", {
-          failureClass: outcome.type,
-        });
+        yield* recordToolUse(outcome.type === "lost" ? "denied" : "allowed", "error");
+        yield* recordToolCall("error", { failureClass: outcome.type });
         // A refused key, Source Control token or sign-in is the user's to fix, so the agent's
         // session hears it fail; a connector that is gone or a failed transport meets the empty
         // server.
@@ -2741,10 +2752,18 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           : connectorUnavailableResponse(request, outcome.message);
       }
       const response = outcome.response;
-      yield* recordToolUse(
-        "allowed",
-        response.ok ? "ok" : "error",
-        response.ok ? {} : { failureClass: "http", httpStatus: response.status },
+      yield* recordToolUse("allowed", response.ok ? "ok" : "error");
+      // A 200 that is not an MCP answer reaches the agent as an error (below), so it is one here.
+      const answerType = response.headers.get("content-type")?.toLowerCase() ?? "";
+      const mcpAnswer =
+        answerType.includes("text/event-stream") || answerType.includes("application/json");
+      yield* recordToolCall(
+        response.ok && mcpAnswer ? "ok" : "error",
+        response.ok
+          ? mcpAnswer
+            ? {}
+            : { failureClass: "not_mcp" }
+          : { failureClass: "http", httpStatus: response.status },
       );
       const settle = (result: ConnectorForwardResponse) =>
         cancelBody(response).pipe(Effect.andThen(release), Effect.as(result));

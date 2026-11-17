@@ -933,7 +933,7 @@ describe("connector analytics", () => {
         connectorSource: "url",
         extensionName: "Vendor",
         tool: "search",
-        decision: "allowed",
+        outcome: "ok",
         callerProviderInstance: "codex",
       });
       expect(JSON.stringify(events)).not.toContain("/noprm/mcp");

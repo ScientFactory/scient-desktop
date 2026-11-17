@@ -647,10 +647,11 @@ registry or plugin name, its display name, and a hosted service's host, never it
   `disabled`.
 - `extension.sign_in.started` and `extension.sign_in.finished`: each connector sign-in, with
   `outcome` and, when it fails, why (`failureClass`, or `reason`: `denied`, `expired_link`,
-  `exchange_failed`, `service_<code>`, …).
+  `exchange_failed`, `service_<OAuth error code>`, `service_error`, …).
 - `extension.tool.called`: every tool call an agent makes through Scient's connector proxy, with
-  `tool`, `decision`, `outcome` and the calling provider instance. An HTTP 200 whose MCP result
-  reports a tool error still counts as `ok`.
+  `tool`, the calling provider instance and what the agent got: `ok`, `denied` (off, not signed
+  in) or `error` with `failureClass` (`busy`, `session_gone`, `lost`, `rejected`, `not_mcp`,
+  `http` with `httpStatus`). An MCP result that reports a tool error still counts as `ok`.
 - Extensions page actions (`extensions.connector.add`, plugin remove and on/off,
   `providers.plugin.action`) carry the connector or plugin they name.
 
