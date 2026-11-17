@@ -223,6 +223,11 @@ Update outcomes and summaries (`app.update.*`, see `docs/internals/product-analy
 `DesktopBackendManager.ts`, `main.ts`, the telemetry contract and `DesktopTelemetryReceiver.ts`
 carry only marked calls into them. The four-hour poller contains an unexpected failure per
 iteration instead of ending; keep that when aligning upstream's poller.
+Runtime Stable and Beta feeds use Scient's download mirror; Nightly keeps GitHub. A check the
+mirror cannot answer runs again against GitHub, and a failed mirror download keeps the rest of the
+run on GitHub. Outcome source attribution follows the selected feed when recorded, including
+after channel changes; an administrator's feed remains `administrator`. The build-time publisher stays GitHub so older
+clients and the published `app-update.yml` keep their release compatibility.
 The update pill shows only this app's own update. Other machines' servers and apps, provider CLIs
 and Scient-managed runtimes appear in a Scient-owned circle and card
 (`apps/web/src/scient/desktopUpdate/SidebarOtherUpdates.tsx`, `useOtherUpdates.ts`), mounted in

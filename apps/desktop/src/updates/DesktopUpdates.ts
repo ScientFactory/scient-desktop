@@ -49,7 +49,10 @@ import {
   releaseNotesOfOfferedVersion,
 } from "./releaseNotes.ts";
 import { isEmptyBetaFeedError, resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
-import { scientDesktopUpdateFeed } from "@t3tools/shared/scientRelease";
+import {
+  scientDesktopRuntimeUpdateFeed,
+  scientDesktopUpdateFeed,
+} from "@t3tools/shared/scientRelease";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
@@ -499,6 +502,9 @@ export const make = Effect.gen(function* () {
       : false;
 
   // SCIENT-FORK:START — update outcomes and summaries for product analytics.
+  const updateSourceKindRef = yield* Ref.make<DesktopUpdateOutcomes.UpdateSourceKind | undefined>(
+    policy.feedUrl === undefined ? undefined : "administrator",
+  );
   const outcomes = yield* DesktopUpdateOutcomes.make({
     facts: yield* Effect.serviceOption(DesktopUpdateFacts.DesktopUpdateFacts),
     packageKind: DesktopUpdateOutcomes.updatePackageKind({
@@ -506,13 +512,73 @@ export const make = Effect.gen(function* () {
       appImage: Option.isSome(config.appImagePath),
       debPackage: isDebPackage,
     }),
-    sourceKind: mockUpdates
-      ? undefined
-      : DesktopUpdateOutcomes.updateSourceKind({
-          administratorFeed: policy.feedUrl !== undefined,
-          defaultProvider: scientDesktopUpdateFeed("latest").provider,
-        }),
+    sourceKind: Ref.get(updateSourceKindRef),
     policyOff: policy.mode === "off",
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient's mirror with GitHub, where every release is published, behind it.
+  // The channel whose Scient feed is selected; none while an administrator's feed or mocks decide.
+  const scientFeedChannelRef = yield* Ref.make(Option.none<DesktopUpdateChannel>());
+  // After the mirror fails a download, the rest of this run updates from GitHub.
+  const mirrorSkippedRef = yield* Ref.make(false);
+  // electron-updater downloads from the feed its last answered check used, so after the mirror
+  // fails a download, GitHub must answer a check before the next download leaves the mirror.
+  const gitHubCheckOwedRef = yield* Ref.make(false);
+  const useScientFeed = Effect.fn("desktop.updates.useScientFeed")(function* (
+    channel: DesktopUpdateChannel,
+    source: "mirror" | "github",
+  ) {
+    const feed =
+      source === "mirror"
+        ? scientDesktopRuntimeUpdateFeed(channel)
+        : scientDesktopUpdateFeed(channel);
+    yield* electronUpdater.setFeedURL(feed);
+    // Outcomes read the feed actually selected, including after a track switch or a fallback.
+    yield* Ref.set(
+      updateSourceKindRef,
+      DesktopUpdateOutcomes.updateSourceKind({
+        administratorFeed: false,
+        defaultProvider: feed.provider,
+      }),
+    );
+  });
+  const mirrorChannel = Effect.map(Ref.get(scientFeedChannelRef), (channel) =>
+    Option.filter(channel, (value) => scientDesktopRuntimeUpdateFeed(value).provider === "generic"),
+  );
+  // One check: the mirror first, then GitHub when the mirror fails or was skipped.
+  const checkWithGitHubFallback = Effect.gen(function* () {
+    const channel = yield* mirrorChannel;
+    if (Option.isNone(channel)) return yield* electronUpdater.checkForUpdates;
+    if (!(yield* Ref.get(mirrorSkippedRef))) {
+      yield* useScientFeed(channel.value, "mirror");
+      const answered = yield* electronUpdater.checkForUpdates.pipe(
+        Effect.as(true),
+        Effect.catchTags({
+          ElectronUpdaterCheckForUpdatesError: (error) =>
+            logUpdaterWarning("update mirror check failed; checking GitHub", {
+              cause: describeUpdateErrorCause(error.cause),
+            }).pipe(Effect.as(false)),
+        }),
+      );
+      if (answered) return;
+    }
+    yield* useScientFeed(channel.value, "github");
+    const result = yield* electronUpdater.checkForUpdates;
+    yield* Ref.set(gitHubCheckOwedRef, false);
+    return result;
+  });
+  const gitHubCheckOwed = Effect.gen(function* () {
+    if (Option.isNone(yield* mirrorChannel)) return false;
+    return yield* Ref.get(gitHubCheckOwedRef);
+  });
+  // A download the mirror failed leaves the next checks and downloads to GitHub.
+  const skipMirrorAfterDownloadFailure = Effect.gen(function* () {
+    if (Option.isNone(yield* mirrorChannel)) return;
+    if ((yield* Ref.get(updateSourceKindRef)) !== "scient_mirror") return;
+    yield* Ref.set(mirrorSkippedRef, true);
+    yield* Ref.set(gitHubCheckOwedRef, true);
+    yield* logUpdaterWarning("update mirror download failed; using GitHub for this run");
   });
   // SCIENT-FORK:END
 
@@ -602,9 +668,10 @@ export const make = Effect.gen(function* () {
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
     const allowsPrerelease = channel === "beta";
-    // SCIENT-FORK: an administrator's mirror stays the update source on every channel.
+    // SCIENT-FORK: Stable/Beta use Scient's mirror; an administrator's feed wins on every channel.
     if (!config.mockUpdates && policy.feedUrl === undefined) {
-      yield* electronUpdater.setFeedURL(scientDesktopUpdateFeed(channel));
+      yield* Ref.set(scientFeedChannelRef, Option.some(channel));
+      yield* useScientFeed(channel, (yield* Ref.get(mirrorSkippedRef)) ? "github" : "mirror");
     }
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
@@ -625,7 +692,8 @@ export const make = Effect.gen(function* () {
   ) {
     const restoreDowngrade = yield* electronUpdater.allowDowngrade;
     if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
-    return yield* electronUpdater.checkForUpdates.pipe(
+    // SCIENT-FORK: a mirror that cannot answer leaves the check to GitHub.
+    return yield* checkWithGitHubFallback.pipe(
       Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
     );
   });
@@ -733,8 +801,11 @@ export const make = Effect.gen(function* () {
 
     const offered = yield* Ref.get(updateStateRef);
     let state = offered;
+    // SCIENT-FORK: electron-updater downloads from the feed its last answered check used, so a
+    // retry after a failed mirror download first finds the update on GitHub, until GitHub answers.
+    const refreshFromGitHub = !refresh && (yield* gitHubCheckOwed);
     return yield* Effect.gen(function* () {
-      if (refresh) {
+      if (refresh || refreshFromGitHub) {
         // electron-updater downloads what its last check found, which can be hours old.
         yield* logUpdaterInfo("checking for updates", { reason: "download" });
         // SCIENT-FORK: Scient's channels (with Beta) come from its own version parser.
@@ -774,6 +845,8 @@ export const make = Effect.gen(function* () {
             );
             // SCIENT-FORK: one outcome per download.
             yield* outcomes.downloadFailed(error.cause);
+            // SCIENT-FORK: the next attempt downloads from GitHub.
+            yield* skipMirrorAfterDownloadFailure;
             yield* logUpdaterError(error.message, {
               errorTag: error._tag,
               cause,
@@ -1517,6 +1590,19 @@ export const make = Effect.gen(function* () {
 
       const appUpdateYmlConfig = yield* readAppUpdateYml;
       yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
+      // SCIENT-FORK: before runtime selection, the packaged feed is the active default.
+      const packagedProvider = Option.isSome(appUpdateYmlConfig)
+        ? appUpdateYmlConfig.value.provider
+        : undefined;
+      if (!mockUpdates && policy.feedUrl === undefined && packagedProvider !== undefined) {
+        yield* Ref.set(
+          updateSourceKindRef,
+          DesktopUpdateOutcomes.updateSourceKind({
+            administratorFeed: false,
+            defaultProvider: packagedProvider,
+          }),
+        );
+      }
 
       const notAppliedVersion = yield* readNotAppliedInstallVersion;
       yield* Ref.set(notAppliedVersionRef, notAppliedVersion);

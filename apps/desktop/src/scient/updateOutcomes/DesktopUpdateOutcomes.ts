@@ -104,7 +104,7 @@ type AttemptStep = "check" | "download" | "install";
 export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: {
   readonly facts: Option.Option<DesktopUpdateFacts.DesktopUpdateFacts["Service"]>;
   readonly packageKind: UpdatePackageKind | undefined;
-  readonly sourceKind: UpdateSourceKind | undefined;
+  readonly sourceKind: Effect.Effect<UpdateSourceKind | undefined>;
   readonly policyOff: boolean;
 }) {
   const random = yield* SecureRandom.SecureRandom;
@@ -113,10 +113,12 @@ export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: 
     Option.none<{ readonly ok: boolean; readonly at: number }>(),
   );
   const lastSuccessfulCheckAtRef = yield* Ref.make(Option.none<number>());
-  const context = {
-    ...(options.packageKind === undefined ? {} : { packageKind: options.packageKind }),
-    ...(options.sourceKind === undefined ? {} : { sourceKind: options.sourceKind }),
-  };
+  const context = options.sourceKind.pipe(
+    Effect.map((sourceKind) => ({
+      ...(options.packageKind === undefined ? {} : { packageKind: options.packageKind }),
+      ...(sourceKind === undefined ? {} : { sourceKind }),
+    })),
+  );
 
   const record = (
     name: "app.update.outcome" | "app.update.summary",
@@ -144,7 +146,7 @@ export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: 
     return attempt;
   });
 
-  const outcome = (
+  const outcome = Effect.fn("DesktopUpdateOutcomes.outcome")(function* (
     step: AttemptStep,
     attempt: Attempt,
     result: string,
@@ -153,19 +155,19 @@ export const make = Effect.fn("DesktopUpdateOutcomes.make")(function* (options: 
       readonly failureClass?: UpdateFailureClass;
       readonly durationMs?: number;
     } = {},
-  ) => {
+  ) {
     const targetVersion = details.targetVersion ?? attempt.targetVersion;
-    return record("app.update.outcome", {
+    yield* record("app.update.outcome", {
       step,
       outcome: result,
       trigger: attempt.trigger,
       attemptRef: attempt.ref,
-      ...context,
+      ...(yield* context),
       ...(targetVersion === null ? {} : { targetVersion }),
       ...(details.failureClass === undefined ? {} : { failureClass: details.failureClass }),
       ...(details.durationMs === undefined ? {} : { durationMs: details.durationMs }),
     });
-  };
+  });
 
   /** Records the attempt's terminal outcome once, however many paths report its end. */
   const finish = Effect.fn("DesktopUpdateOutcomes.finish")(function* (
