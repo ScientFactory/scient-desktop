@@ -48,9 +48,17 @@ still build, sign, package and check their actual release artifacts normally.
   server, web app, and monorepo root, dropping the dependency-ordering wait that only bought idle
   runner time. The 20-minute job ceiling is wider than upstream's 10 because Scient's suite is
   roughly three times larger on a runner with half the vCPUs.
-- **Test Web**: three shards of `vp run --filter @t3tools/web test --shard N/3`, each on its own
+- **Test Web**: six shards of `vp run --filter @t3tools/web test --shard N/6`, each on its own
   runner, covering both unit tests and `*.browser.test.{ts,tsx}` in headless Chromium. This keeps
-  the large web suite from competing with other workspace packages.
+  the large web suite from competing with other workspace packages. The Test step sets
+  `SCIENT_BROWSER_LIFECYCLE_DIAGNOSTICS`, so the Playwright provider
+  (`apps/web/src/testUtils/browserLifecycleDiagnostics.ts`) records page close/crash, navigation
+  category, browser disconnect and browser-API socket open/close/error as fixed event names and
+  per-process ordinals, never URLs, payloads or error messages. It marks the first close no
+  shutdown or page replacement explains and keeps that window. Only a failed shard uploads it,
+  as `browser-lifecycle-<shard>-attempt-<n>` for 14 days; it is evidence for investigating a
+  lost browser connection, not a qualification input, and does not change test results. Raw
+  TCP close carries no WebSocket close code or reason.
 - **Test Server**: three shards of `vp run --filter t3 test --shard N/3`. The server sets
   `fileParallelism: false`, so its test files run strictly serially and sharding spreads them over
   separate runners instead of workers: files within a shard execute serially, and no

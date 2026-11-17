@@ -4,7 +4,6 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeTimersPromises from "node:timers/promises";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   ProjectDeleteFileInput,
@@ -36,6 +35,7 @@ import {
   type WorkspaceFileSystem,
 } from "../../workspace/WorkspaceFileSystem.ts";
 import type * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
+import { withinDeadline } from "./Deadline.ts";
 import {
   bindNativeFilePublication,
   bindNativeFilePublicationParent,
@@ -4760,10 +4760,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     if (known) return known;
     const finished = (async () => {
       const root = await NodeFSP.realpath(cwd);
-      const records = await Promise.race([
-        recordsUnderRoot(root),
-        NodeTimersPromises.setTimeout(OLDER_RECORDS_SCAN_MS, []),
-      ]);
+      const records = await withinDeadline(recordsUnderRoot(root), OLDER_RECORDS_SCAN_MS, []);
       // A discard a crash cut short is unfinished too, or its kept copy would stay for good.
       let unfinished = false;
       for (const { directory, record } of records) {
@@ -4779,12 +4776,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         // Saves are never held for ever by work that may never finish. Work out of time is
         // interrupted, since it could finish over a later save, but not awaited: it retires
         // only once its helper answers.
-        await Promise.race([
+        await withinDeadline(
           runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore), {
             signal: stop.signal,
           }),
-          NodeTimersPromises.setTimeout(OLDER_WORK_LIMIT_MS),
-        ]);
+          OLDER_WORK_LIMIT_MS,
+          undefined,
+        );
         stop.abort();
       }
     })().catch(() => undefined);
@@ -4815,13 +4813,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   ) =>
     Effect.tryPromise({
       try: async () => {
-        const finished = await Promise.race([
+        const finished = await withinDeadline(
           finishOlderPublications(input.cwd).then(() => true),
-          NodeTimersPromises.setTimeout(
-            writes ? OLDER_WORK_WRITE_WAIT_MS : OLDER_WORK_READ_WAIT_MS,
-            false,
-          ),
-        ]);
+          writes ? OLDER_WORK_WRITE_WAIT_MS : OLDER_WORK_READ_WAIT_MS,
+          false,
+        );
         if (!finished && writes)
           throw new RetainedMutationError(
             "unavailable",

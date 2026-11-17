@@ -586,6 +586,9 @@ jobs:
           # Vite's client reloads the page when its server socket drops or a dependency
           # re-optimizes, which ends the shard; vite:hmr and vite:deps say which happened.
           DEBUG: "vitest:browser*,pw:browser,vite:hmr,vite:deps,vite:optimize-deps"
+          # Page, browser and browser-API socket lifecycle, redacted (apps/web/src/testUtils).
+          SCIENT_BROWSER_LIFECYCLE_DIAGNOSTICS: "1"
+          SCIENT_BROWSER_LIFECYCLE_REPORT: ${{ runner.temp }}/browser-lifecycle-${{ matrix.shard }}.json
           # SCIENT-FORK:END
         run: >-
           vp run --filter @t3tools/web test
@@ -606,6 +609,15 @@ jobs:
               cat "/sys/fs/cgroup/$metric"
             fi
           done
+      - name: Upload browser lifecycle diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-lifecycle-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser-lifecycle-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 14
       # SCIENT-FORK:END
 
       # Browser tests run source modules; this boots the production chunk graph.

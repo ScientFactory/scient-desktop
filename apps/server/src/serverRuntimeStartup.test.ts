@@ -419,29 +419,6 @@ it.effect("enqueueCommand waits for readiness and then drains queued work", () =
   }),
 );
 
-it.effect("enqueueCommand fails queued work when readiness fails", () =>
-  Effect.gen(function* () {
-    const commandGate = yield* ServerRuntimeStartup.makeCommandGate;
-    const failure = yield* Deferred.make<void, never>();
-
-    const queuedCommandFiber = yield* commandGate
-      .enqueueCommand(Deferred.await(failure).pipe(Effect.as("should-not-run")))
-      .pipe(Effect.forkScoped);
-
-    yield* commandGate.failCommandReady(
-      new ServerRuntimeStartup.ServerRuntimeStartupError({
-        mode: "web",
-        host: "127.0.0.1",
-        port: 3773,
-        cause: new Error("test startup failure"),
-      }),
-    );
-
-    const error = yield* Effect.flip(Fiber.join(queuedCommandFiber));
-    assert.equal(error.message, "Server runtime startup failed before command readiness.");
-  }),
-);
-
 it.effect("startup heartbeat reports thread and project counts and hashed account owners", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

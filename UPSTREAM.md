@@ -2434,3 +2434,9 @@ predates T3's unlisted-detail path and was written when a 404 was final. Since T
 and clicks on it, to the start page until the next retry. Scient keeps one divergence here:
 `resolveThreadRouteRenderState` admits an archived unlisted thread, so archived originals stay
 readable through fork lineage.
+
+## Security policy
+
+`.github/SECURITY.md` is Scient's: reports go to Scient's address or a private advisory on
+`ScientFactory/scient-desktop`, not to T3's security address or policy page. Upstream edits to that
+file do not replace it; review them and keep Scient's contact.
