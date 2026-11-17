@@ -8,6 +8,7 @@ import { latexSourceRevealRange } from "./latexSourceRevealRange";
 import { useMarkdownPersistenceLease } from "../markdownEditor/persistence/useMarkdownPersistenceLease";
 import { resolveLatexCitationSource } from "./latexVisualSelection";
 import { sourcePositionFromPointerEvent } from "./latexSourceNavigation";
+import { useLatexSourceCitationOpen, type LatexCitationOpener } from "./useLatexCitationOpener";
 
 export interface LatexVisualSourceReveal {
   readonly path: string;
@@ -39,8 +40,11 @@ export function LatexVisualSourcePane(
   > & {
     reveal: LatexVisualSourceReveal;
     onNavigateVisual?: ((source: string, line: number) => void) | undefined;
+    /** Opens a citation's source on Command-click (Control-click); null when it cannot. */
+    citationOpener: LatexCitationOpener | null;
   },
 ) {
+  const { citationOpener, ...surfaceProps } = props;
   const { environmentId, cwd, reveal } = props;
   const query = useProjectFileQuery(environmentId, cwd, reveal.path);
   const target = { environmentId, cwd, relativePath: reveal.path };
@@ -111,6 +115,10 @@ export function LatexVisualSourcePane(
   const dismissNavigation = () => {
     if (!reveal.citation) setDismissedRequest(reveal.requestId);
   };
+  const sourceCitation = useLatexSourceCitationOpen(
+    citationOpener,
+    () => lease?.getSnapshot().draftSource ?? source,
+  );
   const warned = useRef<number | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts an imperative warning toast when a citation reveal cannot be located in the current source
   useEffect(() => {
@@ -127,7 +135,12 @@ export function LatexVisualSourcePane(
   return (
     <div
       className="relative flex min-h-0 flex-1 flex-col"
-      onPointerDownCapture={dismissNavigation}
+      onPointerDownCapture={(event) => {
+        dismissNavigation();
+        sourceCitation.onPointerDown(event);
+      }}
+      onMouseDownCapture={sourceCitation.onMouseDown}
+      onClickCapture={sourceCitation.onClick}
       onKeyDownCapture={dismissNavigation}
       onDoubleClickCapture={(event) => {
         const position = sourcePositionFromPointerEvent(event);
@@ -138,7 +151,7 @@ export function LatexVisualSourcePane(
     >
       {lease ? (
         <MarkdownSourceSurface
-          {...props}
+          {...surfaceProps}
           persistence={lease}
           relativePath={reveal.path}
           revealRequestId={reveal.requestId}

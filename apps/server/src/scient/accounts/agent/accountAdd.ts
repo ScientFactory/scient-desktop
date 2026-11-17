@@ -21,6 +21,8 @@ import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { ACCOUNT_SECRET_REQUEST_PREFIX } from "@t3tools/shared/scientAccountSecretRequest";
 import { searchUniversities } from "../../papers/universityDirectory.ts";
+import { continueWaitingPapers } from "../../papers/getPaper.ts";
+import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { accountUsage } from "./accountUse.ts";
 import { guardedSignIn } from "./guardedSignIn.ts";
 import { accountSessionScope } from "./scope.ts";
@@ -278,6 +280,7 @@ const signInHere = Effect.fn("AccountsAgent.addSignIn")(function* (
     // A call the agent gave up on ends the card, and a row made for it.
   }).pipe(Effect.onInterrupt(() => (created ? discard.pipe(Effect.ignore) : Effect.void)));
   if (result.outcome === "signed-in") {
+    yield* continueWaitingPapers((yield* AgentInvocationContext).environmentId, account.accountId);
     const signedIn = (yield* (yield* AccountsService).forSession(scope)).accounts.find(
       (item) => item.accountId === account.accountId,
     );

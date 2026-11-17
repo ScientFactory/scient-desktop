@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   composerTargetKey,
   DraftId,
+  queuedRunEditDraftId,
   useComposerDraftStore,
   type ComposerThreadTarget,
 } from "../../composerDraftStore.ts";
-import { useQueueEditSessions } from "../threadQueue/editSession.ts";
 import {
   appendVoiceTranscriptToStoredDraft,
   deliverVoiceTranscriptToDraft,
@@ -19,7 +19,6 @@ import {
   type VoiceDraftNotice,
   type VoiceDraftOrigin,
 } from "./voiceDraftDelivery.ts";
-import { hasAsyncSendPreparation } from "./voiceDraftOrigin.ts";
 
 const LOCAL = EnvironmentId.make("environment-local");
 const REMOTE = EnvironmentId.make("environment-remote");
@@ -290,38 +289,15 @@ describe("appendVoiceTranscriptToStoredDraft", () => {
     expect(appendVoiceTranscriptToStoredDraft(closed, "lost words")).toBe(false);
     expect(useComposerDraftStore.getState().getComposerDraft(closed)).toBeNull();
   });
-});
 
-describe("hasAsyncSendPreparation", () => {
-  beforeEach(() => {
-    useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
-    useQueueEditSessions.setState({ sessions: {} });
-  });
-  afterEach(() => useQueueEditSessions.setState({ sessions: {} }));
-
-  it("is false for an ordinary draft", () => {
-    const target = scopeThreadRef(LOCAL, THREAD);
-    useComposerDraftStore.getState().setPrompt(target, "ordinary");
-    expect(hasAsyncSendPreparation(target)).toBe(false);
-  });
-
-  it("is true for an extracted queue draft or an open queue edit", () => {
-    const target = scopeThreadRef(LOCAL, THREAD);
-    const key = composerTargetKey(target);
-    useComposerDraftStore.setState({
-      draftsByThreadKey: {
-        [key]: {
-          ...useComposerDraftStore.getState().getComposerDraft(target),
-          prompt: "extracted",
-          extractedIntent: { intentId: "intent-1", journalKey: "journal-1" },
-        } as never,
-      },
-    });
-    expect(hasAsyncSendPreparation(target)).toBe(true);
-
-    useComposerDraftStore.setState({ draftsByThreadKey: {} });
-    expect(hasAsyncSendPreparation(target)).toBe(false);
-    useQueueEditSessions.setState({ sessions: { [key]: {} as never } });
-    expect(hasAsyncSendPreparation(target)).toBe(true);
+  it("writes to a queued-message edit while it is open and refuses it once it ends", () => {
+    const edit = queuedRunEditDraftId(scopeThreadRef(LOCAL, THREAD), "queued-run");
+    useComposerDraftStore.getState().setPrompt(edit, "Edited text");
+    expect(appendVoiceTranscriptToStoredDraft(edit, "spoken words")).toBe(true);
+    expect(useComposerDraftStore.getState().getComposerDraft(edit)?.prompt).toContain(
+      "spoken words",
+    );
+    useComposerDraftStore.getState().clearComposerContent(edit);
+    expect(appendVoiceTranscriptToStoredDraft(edit, "late words")).toBe(false);
   });
 });

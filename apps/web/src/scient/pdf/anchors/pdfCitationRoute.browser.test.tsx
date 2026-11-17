@@ -85,7 +85,10 @@ describe("opening a PDF quote from its route", () => {
     await act(() => vi.runAllTimersAsync());
     expect(openFile).toHaveBeenCalledTimes(1);
     expect(openFile).toHaveBeenCalledWith(ref, "papers/paper.pdf");
-    expect(pendingPdfReveal(pdfRevealDocumentKey(source))?.target).toEqual(quote.target);
+    expect(pendingPdfReveal(pdfRevealDocumentKey(source))).toEqual({
+      id: expect.any(Number),
+      target: quote.target,
+    });
   });
 
   it("abandons a waiting quote when the conversation is left", async () => {

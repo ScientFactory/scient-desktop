@@ -86,6 +86,8 @@ export const ScientWordFileExportRequest = Schema.Struct({
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
   revision: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   diagramCapture: Schema.optionalKey(ScientWordDiagramCapture),
+  /** A bundled CSL style for the references; a document's own `csl:` setting comes first. */
+  citationStyle: Schema.optionalKey(Schema.Literals(["apa", "vancouver"])),
 });
 export type ScientWordFileExportRequest = typeof ScientWordFileExportRequest.Type;
 

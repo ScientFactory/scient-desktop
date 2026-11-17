@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
   ScopedThreadRef,
@@ -148,6 +149,7 @@ export function ComposerAttachmentMediaRow({
   attachmentDraftTarget,
   canOperateThread,
   onExpandImage,
+  onCopySnapshot,
   onFileOpen,
   onRemoveImage,
   onRemoveFile,
@@ -166,6 +168,7 @@ export function ComposerAttachmentMediaRow({
   readonly environmentId: EnvironmentId;
   readonly attachmentDraftTarget: ScopedThreadRef | DraftId;
   readonly canOperateThread: boolean;
+  readonly onCopySnapshot: (imageId: string) => Promise<void>;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onFileOpen: (attachment: ChatFileAttachment) => void;
   readonly onRemoveImage: (imageId: string) => void;
@@ -223,7 +226,7 @@ export function ComposerAttachmentMediaRow({
                   aria-label={`Preview ${image.name}`}
                   disabled={!ready}
                   onClick={() => {
-                    const preview = buildExpandedImagePreview(images, image.id);
+                    const preview = buildExpandedImagePreview(images, image.id, onCopySnapshot);
                     if (!preview) return;
                     onExpandImage(preview);
                   }}
@@ -254,6 +257,7 @@ export function ComposerAttachmentMediaRow({
               {source?.kind === "snap-shot" ? (
                 <SnapShotAttachmentDetails
                   source={source}
+                  onCopySnapshot={ready ? () => onCopySnapshot(ready.id) : undefined}
                   className={cn(
                     upload?.status === "uploading" && "bottom-4",
                     upload?.status === "failed" && "bottom-8",
@@ -589,11 +593,13 @@ export function ComposerRestingImagePreviews({
   allImages,
   resolvedTheme,
   onExpandImage,
+  onCopySnapshot,
   onShowMore,
 }: {
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly allImages: ReadonlyArray<ComposerImageAttachment>;
   readonly resolvedTheme: "light" | "dark";
+  readonly onCopySnapshot: (imageId: string) => Promise<void>;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onShowMore: () => void;
 }) {
@@ -609,7 +615,7 @@ export function ComposerRestingImagePreviews({
           aria-label={`Preview ${image.name}`}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
-            const preview = buildExpandedImagePreview(allImages, image.id);
+            const preview = buildExpandedImagePreview(allImages, image.id, onCopySnapshot);
             if (preview) onExpandImage(preview);
           }}
         >
@@ -659,6 +665,46 @@ export function ComposerRestingImagePreviews({
           +{counts.overflowCount}
         </button>
       ) : null}
+    </div>
+  );
+}
+
+/** Attachments of the queued message being edited; they are already uploaded. */
+export function ComposerQueuedAttachmentRow({
+  attachments,
+  onRemove,
+}: {
+  readonly attachments: ReadonlyArray<{
+    readonly attachment: ChatAttachment;
+    readonly url: string | null;
+  }>;
+  readonly onRemove: (attachmentId: string) => void;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      {attachments.map(({ attachment, url }) => (
+        <div
+          key={attachment.id}
+          className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+        >
+          {attachment.type === "image" && url ? (
+            <img src={url} alt={attachment.name} className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
+              {attachment.name}
+            </div>
+          )}
+          <Button
+            variant="media-close"
+            size="icon-xs"
+            className="absolute right-1 top-1"
+            onClick={() => onRemove(attachment.id)}
+            aria-label={`Remove ${attachment.name}`}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      ))}
     </div>
   );
 }

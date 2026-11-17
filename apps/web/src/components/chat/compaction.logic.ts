@@ -43,10 +43,9 @@ export function formatContextWindowCompactionMessage(autoCompactThreshold?: numb
 }
 
 // SCIENT-FORK:START — resume compaction before an ordinary send.
-/** Compact only ordinary server sends; queue edits/retries keep their captured payload. */
+/** Compact only ordinary server sends; steers, annotations and direct prompts keep their payload. */
 export function shouldCompactBeforeSend(input: {
   readonly ordinaryServerSend: boolean;
-  readonly hasCapturedQueueSubmission: boolean;
   readonly multipleModels: boolean;
   readonly resumeCompactionTokens: number | null;
   readonly keepFullHistory: boolean;
@@ -54,7 +53,6 @@ export function shouldCompactBeforeSend(input: {
 }): boolean {
   return (
     input.ordinaryServerSend &&
-    !input.hasCapturedQueueSubmission &&
     !input.multipleModels &&
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&

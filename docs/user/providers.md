@@ -176,6 +176,38 @@ code goes to that live process and is not saved as provider state.
 Being signed in does not always mean the account has a supported subscription, remaining quota, or a
 usable model. Scient keeps those states separate and reports the provider's actual result.
 
+## Model visibility and subscription defaults
+
+Scient hides a known set of older or non-preferred subscription models by default, using
+exact model IDs rather than an allowlist or a family-prefix rule. Newly discovered IDs are
+visible automatically. Hidden models remain available to show again in **Settings > Providers >
+Models**. Your saved visibility, ordering, favorites, and custom models take priority over
+these defaults; this policy does not rewrite existing conversations, explicit model choices,
+or your global default.
+
+The current subscription choices are:
+
+| Subscription | Visible current choices                                                                              | Preferred implicit default |
+| ------------ | ---------------------------------------------------------------------------------------------------- | -------------------------- |
+| OpenAI       | Sol 6.1 (`gpt-6.1-sol`), Terra 6.1 (`gpt-6.1-terra`), Astra 6 (`gpt-6-astra`), Luna 6 (`gpt-6-luna`) | Sol 6.1                    |
+| Anthropic    | Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.2                                                           | Opus 5.5                   |
+| Antigravity  | Gemini 4 Argon, Gemini 4 Hydrogen, Claude Opus 5.5                                                   | Gemini 4 Hydrogen          |
+| Muse Code    | Wonder 1.0, Wonder Full 1.0, Ember 1.0                                                               | Wonder Full 1.0            |
+
+These are preferences, not a promise of account access. An implicit subscription selection
+uses the preferred model only when the provider actually offers it and it is eligible;
+it does not substitute whichever model happens to appear first in the catalog. Standalone
+Antigravity and Muse Code use the same preferred choices when offered. Scient Agent's
+Antigravity connections distinguish `google-antigravity/` from `antigravity-cli/`; their
+Hydrogen IDs are respectively `google-antigravity/gemini-4-hydrogen` and
+`antigravity-cli/gemini-4-hydrogen`.
+
+Older current OpenAI and Anthropic models are hidden by default. Antigravity also hides
+Gemini 3.8 Flash, Claude Sonnet 5.5, GPT-OSS 120B Medium, and the CLI catalog's Gemini 4 Carbon;
+Muse hides Spark, contributor variants, and AssetGen models. These rules apply to the known
+exact IDs, not future versions with similar names. For quota fallback and explicit recovery,
+see [Usage and limits](./usage.md#subscription-quota-fallback).
+
 ## Disabled, remote, and unsupported providers
 
 A disabled provider can be enabled directly from its lifecycle surface when the current client has

@@ -580,6 +580,28 @@ describe("ChatMarkdown Scient headings", () => {
   });
 });
 
+describe("ChatMarkdown code block direction", () => {
+  it("gives Hebrew plain text a right-to-left box and English a left-to-right one", async () => {
+    setup();
+    await using screen = await renderText(
+      ["```text", "שלום עולם", "```", "", "```text", "hello world", "```"].join("\n"),
+    );
+    const blocks = [...screen.container.querySelectorAll(".chat-markdown-codeblock")];
+    expect(blocks.map((block) => block.getAttribute("dir"))).toEqual(["rtl", "ltr"]);
+    // The header and its actions stay left to right inside a right-to-left box.
+    const header = blocks[0]!.querySelector(".chat-markdown-codeblock-header")!;
+    expect(getComputedStyle(header).direction).toBe("ltr");
+  });
+
+  it("keeps source code left to right even when it holds Hebrew", async () => {
+    setup();
+    await using screen = await renderText(["```ts", 'const greeting = "שלום";', "```"].join("\n"));
+    expect(screen.container.querySelector(".chat-markdown-codeblock")?.getAttribute("dir")).toBe(
+      "ltr",
+    );
+  });
+});
+
 describe("ChatMarkdown thread find", () => {
   function FindProbe(props: {
     container: HTMLElement;

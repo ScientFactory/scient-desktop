@@ -14,6 +14,13 @@ export interface LatexCompletionAdapter {
 }
 
 /** Completion owns keys only while a backslash command or a known argument is being edited. */
+const installed = new Set<() => void>();
+
+/** Shows what the open completion list offers now, after its choices changed without a key. */
+export function refreshLatexCompletions(): void {
+  for (const refresh of installed) refresh();
+}
+
 export function installLatexTextCompletion(
   owner: HTMLElement,
   adapter: LatexCompletionAdapter,
@@ -82,12 +89,14 @@ export function installLatexTextCompletion(
     return menu.key(event, getKeyboardPreferences().preferences.completion === "space-tab");
   };
   const unsubscribe = subscribeKeyboardPreferences(refresh);
+  installed.add(refresh);
   return {
     refresh,
     key,
     hide: () => menu.hide(),
     dispose() {
       disposed = true;
+      installed.delete(refresh);
       unsubscribe();
       menu.dispose();
     },

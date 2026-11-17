@@ -7,6 +7,7 @@ import {
   BrowserPdfExportProfile,
   BrowserPdfExportSourceSignals,
 } from "./browserPdfExport.ts";
+import { isSignedAssetPath } from "./scient/signedAssetPath.ts";
 import { isTrimmedUnadvertised } from "./scientToolSchemas.ts";
 
 const BoundedText = Schema.String.check(Schema.isMaxLength(2_048));
@@ -34,6 +35,7 @@ export const ControlledHtmlPdfRenderRequest = Schema.Struct({
     Schema.isTrimmed(),
     Schema.isNonEmpty(),
     Schema.isMaxLength(32_768),
+    isSignedAssetPath(),
   ),
 });
 export type ControlledHtmlPdfRenderRequest = typeof ControlledHtmlPdfRenderRequest.Type;

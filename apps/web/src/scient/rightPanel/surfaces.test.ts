@@ -222,7 +222,7 @@ describe("Scient right-panel surfaces", () => {
   });
 
   it("keeps user-visible titles inside the Scient-owned registry", () => {
-    expect(scientRightPanelSurfaceTitle(scientSourcesSurface())).toBe("Sources");
+    expect(scientRightPanelSurfaceTitle(scientSourcesSurface())).toBe("Library");
     expect(scientRightPanelSurfaceTitle(scientComputeSurface({ cwd: "/project" }))).toBe(
       "Compute history",
     );

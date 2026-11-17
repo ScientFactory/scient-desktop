@@ -1,4 +1,5 @@
 import type {
+  ScientSourceActor,
   ScientSourceCreator,
   ScientSourceEditableMetadata,
   ScientSourceFieldProvenance,
@@ -7,14 +8,22 @@ import type {
   ScientSourceRecord,
 } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
+import {
+  isScientSourceMoreName,
+  normalizeScientSourceMore,
+  scientSourceMoreLabel,
+} from "./sourceMore.ts";
 import { normalizeScientSourceAbstract } from "./abstract.ts";
 import { normalizeScientSourceAbstractDocument } from "./abstract.ts";
+import { CITATION_KEY_SYNTAX_MESSAGE, isValidCitationKey } from "./citationKeys.ts";
 
 const SCIENT_SOURCE_EDITABLE_FIELDS = [
+  "citationKey",
   "type",
   "customType",
   "title",
   "creators",
+  "incompleteCreatorRoles",
   "issuedRaw",
   "issuedYear",
   "identifiers",
@@ -27,6 +36,7 @@ const SCIENT_SOURCE_EDITABLE_FIELDS = [
   "language",
   "url",
   "tags",
+  "more",
 ] as const;
 
 export type ScientSourceEditableField = (typeof SCIENT_SOURCE_EDITABLE_FIELDS)[number];
@@ -65,10 +75,12 @@ export function editableMetadataFromRecord(
   record: ScientSourceRecord,
 ): ScientSourceEditableMetadata {
   return {
+    ...(record.citationKey ? { citationKey: record.citationKey } : {}),
     type: record.type,
     customType: record.customType ?? null,
     title: record.title,
     creators: record.creators,
+    incompleteCreatorRoles: record.incompleteCreatorRoles ?? [],
     issuedRaw: record.issuedRaw,
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
@@ -81,7 +93,19 @@ export function editableMetadataFromRecord(
     language: record.language,
     url: record.url,
     tags: record.tags,
+    more: record.more ?? {},
   };
+}
+
+/** The marked roles that still have names, each once, in the creators' spelling. */
+function normalizeIncompleteRoles(
+  roles: ReadonlyArray<string>,
+  creators: ReadonlyArray<ScientSourceCreator>,
+): string[] {
+  const named = new Map(
+    creators.map((creator) => [creator.creatorType.toLowerCase(), creator.creatorType]),
+  );
+  return [...new Set(roles.flatMap((role) => named.get(role.trim().toLowerCase()) ?? []))];
 }
 
 export function normalizeScientSourceEditableMetadata(
@@ -106,14 +130,26 @@ export function normalizeScientSourceEditableMetadata(
     tags.push(tag);
   }
 
+  const creators = metadata.creators.flatMap((creator) => {
+    const normalized = normalizeCreator(creator);
+    return normalized ? [normalized] : [];
+  });
   return {
+    ...(metadata.citationKey === undefined
+      ? {}
+      : { citationKey: metadata.citationKey.normalize("NFC").trim() }),
     type: metadata.type,
     customType: metadata.type === "other" ? nullableText(metadata.customType) : null,
     title: nullableText(metadata.title),
-    creators: metadata.creators.flatMap((creator) => {
-      const normalized = normalizeCreator(creator);
-      return normalized ? [normalized] : [];
-    }),
+    creators,
+    ...(metadata.incompleteCreatorRoles === undefined
+      ? {}
+      : {
+          incompleteCreatorRoles: normalizeIncompleteRoles(
+            metadata.incompleteCreatorRoles,
+            creators,
+          ),
+        }),
     issuedRaw: nullableText(metadata.issuedRaw),
     issuedYear: metadata.issuedYear,
     identifiers,
@@ -126,6 +162,10 @@ export function normalizeScientSourceEditableMetadata(
     language: nullableText(metadata.language),
     url: nullableText(metadata.url),
     tags,
+    // An entry that would not fit is refused by validation, so nothing is dropped here.
+    ...(metadata.more === undefined
+      ? {}
+      : { more: normalizeScientSourceMore(metadata.more).more ?? {} }),
   };
 }
 
@@ -133,6 +173,12 @@ export function validateScientSourceEditableMetadata(
   metadata: ScientSourceEditableMetadata,
 ): ReadonlyArray<ScientSourceMetadataValidationIssue> {
   const issues: ScientSourceMetadataValidationIssue[] = [];
+  if (metadata.citationKey !== undefined && !isValidCitationKey(metadata.citationKey)) {
+    issues.push({
+      field: "citationKey",
+      message: CITATION_KEY_SYNTAX_MESSAGE,
+    });
+  }
   if (metadata.type === "other" && !metadata.customType?.trim()) {
     issues.push({ field: "customType", message: "Enter the source type." });
   }
@@ -148,6 +194,14 @@ export function validateScientSourceEditableMetadata(
         message: "Every identifier needs a type and value.",
       });
     }
+  }
+  for (const name of normalizeScientSourceMore(metadata.more).left) {
+    issues.push({
+      field: `more.${name}`,
+      message: isScientSourceMoreName(name)
+        ? `${scientSourceMoreLabel(name)} is too long to keep.`
+        : "This detail has no name Scient knows.",
+    });
   }
   if (metadata.issuedYear !== null && (metadata.issuedYear < 1000 || metadata.issuedYear > 9999)) {
     issues.push({ field: "issuedYear", message: "Enter a four-digit publication year." });
@@ -165,20 +219,30 @@ export function validateScientSourceEditableMetadata(
   return issues;
 }
 
-export function editableMetadataEquals(
-  left: ScientSourceEditableMetadata,
-  right: ScientSourceEditableMetadata,
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
+/** `next` without a citation key keeps the current key, so it never counts as a change. */
 export function changedEditableMetadataFields(
   previous: ScientSourceEditableMetadata,
   next: ScientSourceEditableMetadata,
 ): ReadonlyArray<ScientSourceEditableField> {
-  return SCIENT_SOURCE_EDITABLE_FIELDS.filter(
-    (field) => JSON.stringify(previous[field]) !== JSON.stringify(next[field]),
-  );
+  return SCIENT_SOURCE_EDITABLE_FIELDS.filter((field) => {
+    if (field === "citationKey" && next.citationKey === undefined) return false;
+    if (field === "more" && next.more === undefined) return false;
+    if (field === "incompleteCreatorRoles") {
+      return (
+        next.incompleteCreatorRoles !== undefined &&
+        JSON.stringify(previous.incompleteCreatorRoles ?? []) !==
+          JSON.stringify(next.incompleteCreatorRoles)
+      );
+    }
+    return JSON.stringify(previous[field] ?? {}) !== JSON.stringify(next[field] ?? {});
+  });
+}
+
+export function editableMetadataEquals(
+  previous: ScientSourceEditableMetadata,
+  next: ScientSourceEditableMetadata,
+): boolean {
+  return changedEditableMetadataFields(previous, next).length === 0;
 }
 
 function belongsToChangedField(
@@ -189,29 +253,66 @@ function belongsToChangedField(
   return provenance.field.startsWith("identifiers.") && changed.has("identifiers");
 }
 
+/** The further details whose text differs between two versions, by name. */
+function changedMoreNames(
+  previous: ScientSourceEditableMetadata,
+  next: ScientSourceEditableMetadata,
+): ReadonlyArray<string> {
+  if (next.more === undefined) return [];
+  const [before, after] = [previous.more ?? {}, next.more];
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
+    (name) => before[name] !== after[name],
+  );
+}
+
 export function applyEditableMetadata(input: {
   readonly record: ScientSourceRecord;
   readonly metadata: ScientSourceEditableMetadata;
   readonly updatedAt: string;
+  readonly actor?: ScientSourceActor;
 }): ScientSourceRecord {
+  const actor = input.actor ?? "user";
   const previous = normalizeScientSourceEditableMetadata(editableMetadataFromRecord(input.record));
   const next = normalizeScientSourceEditableMetadata(input.metadata);
   const changed = changedEditableMetadataFields(previous, next);
   const changedSet = new Set(changed);
+  // Each further detail has its own line: who last set or cleared it, apart from the others.
+  const moreNames = new Set(changedMoreNames(previous, next).map((name) => `more.${name}`));
   const fieldProvenance = input.record.fieldProvenance.filter(
-    (entry) => !belongsToChangedField(entry, changedSet),
+    (entry) => !belongsToChangedField(entry, changedSet) && !moreNames.has(entry.field),
   );
+  // An incomplete list is part of the creators; it has no provenance line of its own.
   fieldProvenance.push(
-    ...changed.map((field) => ({ field, origin: "user" as const, sourceField: null })),
+    ...changed
+      .filter((field) => field !== "more" && field !== "incompleteCreatorRoles")
+      .map((field) => ({ field, origin: actor, sourceField: null })),
+    ...[...moreNames].map((field) => ({ field, origin: actor, sourceField: null })),
   );
   const abstractChanged = changedSet.has("abstract");
   const abstract = abstractChanged ? normalizeScientSourceAbstractDocument(next.abstract) : null;
+  // The further details are replaced as a whole when given; none left means the part goes.
+  const { more: nextMore, incompleteCreatorRoles: nextIncomplete, ...nextFields } = next;
+  const { more: _currentMore, ...withoutMore } = input.record;
+  const kept =
+    nextMore === undefined
+      ? input.record
+      : Object.keys(nextMore).length > 0
+        ? { ...withoutMore, more: nextMore }
+        : withoutMore;
+  const { incompleteCreatorRoles: _currentIncomplete, ...withoutIncomplete } = kept;
+  const marked =
+    nextIncomplete === undefined
+      ? kept
+      : nextIncomplete.length > 0
+        ? { ...withoutIncomplete, incompleteCreatorRoles: nextIncomplete }
+        : withoutIncomplete;
   const updated = {
-    ...input.record,
-    ...next,
+    ...marked,
+    ...nextFields,
     revision: input.record.revision + 1,
     fieldProvenance,
     updatedAt: input.updatedAt,
+    updatedBy: actor,
   };
   if (!abstractChanged) return updated;
   if (abstract) return { ...updated, abstractSections: [...abstract.sections] };

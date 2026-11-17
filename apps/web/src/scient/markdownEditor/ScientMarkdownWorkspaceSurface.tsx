@@ -50,6 +50,12 @@ import {
   type MarkdownPersistenceLease,
 } from "./persistence/markdownPersistenceRegistry";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
+import { useDocumentQuoteTarget } from "../annotations/documentQuoteTargets";
+import { markdownQuote } from "../annotations/quoteFormat";
+import type { LibraryCitationCandidate } from "../sources/libraryCitations";
+import type { ScientMarkdownCitationOpenRequest } from "./prosemirror/citationOpenRequest";
+
+const EMPTY_LIBRARY_CITATIONS: ReadonlyArray<LibraryCitationCandidate> = [];
 
 const CHROME_BLOCK_SHORTCUTS = [
   ["moveBlockUp", "move-up"],
@@ -86,6 +92,9 @@ export interface ScientMarkdownWorkspaceSurfaceProps {
   readonly uploadImage?: (file: File) => Promise<ScientMarkdownUploadedImage>;
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
+  /** Library sources offered after `[@`. */
+  readonly libraryCitations?: ReadonlyArray<LibraryCitationCandidate>;
+  readonly onOpenCitation?: (request: ScientMarkdownCitationOpenRequest) => boolean;
   readonly wikiLinkCandidates?: ReadonlyArray<ScientMarkdownWikiLinkCandidate>;
   readonly recentWikiLinkPaths?: ReadonlyArray<string>;
   readonly onWikiLinkSelected?: (path: string) => void;
@@ -229,6 +238,7 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
             }
           : {}),
         wikiLinkTargetExists: (target) => readBindings().wikiLinkTargetExists?.(target) ?? null,
+        onOpenCitation: (request) => readBindings().onOpenCitation?.(request) ?? false,
         showLinkContextMenu: async (request) => {
           const api = readLocalApi();
           if (!api) return null;
@@ -264,6 +274,21 @@ function ScientMarkdownWorkspaceSurfaceOwner(props: ScientMarkdownWorkspaceSurfa
   useLayoutEffect(() => {
     controllerRef.current = controller;
   });
+  useDocumentQuoteTarget(
+    props.citationSource
+      ? {
+          environmentId: props.citationSource.environmentId,
+          root: props.citationSource.cwd,
+          label: props.citationSource.path.split("/").at(-1) ?? props.citationSource.path,
+          element: () => controller.view?.dom ?? null,
+          insert: (quote) => controller.insertQuotation(markdownQuote(quote)),
+        }
+      : null,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the loaded Library to the imperative editor controller
+  useLayoutEffect(() => {
+    controller.setLibraryCitations(props.libraryCitations ?? EMPTY_LIBRARY_CITATIONS);
+  }, [controller, props.libraryCitations]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers an external-projection handler on the persistence lease until unmount
   useLayoutEffect(

@@ -1081,6 +1081,13 @@
       "version": "3.11"
     },
     {
+      "bundles": ["server", "web"],
+      "license": "CC-BY-SA-3.0",
+      "name": "Citation Style Language styles and locales",
+      "sourceUrl": "https://github.com/citation-style-language/styles/tree/7a37c5a736c10fbd468bc31f92cbc6eafaa2173d",
+      "noticeFile": "packages/scient-citations/CSL-NOTICE"
+    },
+    {
       "bundles": ["server"],
       "includeInBundles": ["server", "desktop", "web"],
       "license": "Unicode-3.0",
@@ -1151,6 +1158,13 @@
       "license": "MIT",
       "sourceUrl": "https://github.com/anomalyco/opencode",
       "noticeFile": "apps/web/src/components/files/office/LICENSE.opencode"
+    },
+    {
+      "name": "Journal and publisher marks",
+      "bundles": ["assets", "desktop", "web"],
+      "license": "CC0-1.0 AND LicenseRef-PD-textlogo",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/Template:PD-textlogo",
+      "noticeFile": "apps/web/src/assets/journals/NOTICE"
     }
   ]
 }

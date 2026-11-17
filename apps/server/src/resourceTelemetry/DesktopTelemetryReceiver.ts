@@ -39,6 +39,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
 // SCIENT-FORK:START — journaled desktop update facts
 import { ingestDesktopUpdateFacts } from "../telemetry/DesktopUpdateFacts.ts";
+import { ScientRecordedAnalyticsIngest } from "../telemetry/ScientAnalytics.ts";
 // SCIENT-FORK:END
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
@@ -409,6 +410,9 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   const applyShellSnapshot = makeApplyDesktopShellEnvironmentSnapshot(environment, platform);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const analytics = yield* Effect.serviceOption(AnalyticsService);
+  // SCIENT-FORK:START — ingest for desktop-journaled update facts
+  const recordedAnalytics = yield* ScientRecordedAnalyticsIngest;
+  // SCIENT-FORK:END
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const receiverStartedAt = yield* DateTime.now;
   const lastContactAtMs = yield* Ref.make(
@@ -613,7 +617,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           const facts = message.facts;
           return recordContact.pipe(
             Effect.andThen(
-              ingestDesktopUpdateFacts(analytics, facts).pipe(
+              ingestDesktopUpdateFacts(recordedAnalytics, facts).pipe(
                 Effect.flatMap((ids) =>
                   ids.length === 0
                     ? Effect.void

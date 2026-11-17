@@ -307,7 +307,7 @@
   },
   {
     "path": "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
-    "line": "{t3Chat.pending === \"link\" ? \"Opening\u2026\" : \"Link T3 Chat\"}",
+    "line": "{t3Chat.pending === \"link\" ? \"Opening…\" : \"Link T3 Chat\"}",
     "rules": ["bare-t3"],
     "kind": "relay-gated",
     "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
@@ -499,5 +499,12 @@
     "rules": ["bare-t3"],
     "kind": "relay-gated",
     "reason": "T3 Chat plan link: rendered only when the relay has T3CHAT_LINK_SECRET. Scient's relay has none, so it reports T3 Chat unavailable and this never shows."
+  },
+  {
+    "path": "packages/scient-sources/src/bibliography/ris.ts",
+    "line": "[\"T3\", \"collection-title\"],",
+    "rules": ["bare-t3"],
+    "kind": "file-format",
+    "reason": "RIS tag T3 (a work's series title) in the reference-file format, not the product name."
   }
 ]

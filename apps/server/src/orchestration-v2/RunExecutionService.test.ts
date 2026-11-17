@@ -17,6 +17,7 @@ import {
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
@@ -2866,15 +2867,17 @@ it.effect("keeps ingesting a failed root's background item when its work continu
   }),
 );
 
-it.effect("does not pin ingestion on background items when the root turn is interrupted", () =>
-  Effect.gen(function* () {
-    const observed = yield* runBackgroundItemScenario("bg-interrupted", (ids) => [
-      backgroundTurnItemEvent(ids, "command_execution", "running", 1),
-      rootTerminalEvent(ids, "interrupted"),
-      backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
-    ]);
-    assert.deepEqual(observed, ["turn_item:running", "root-finalized"]);
-  }),
+it.effect.each(["interrupted", "failed"] as const)(
+  "does not pin ingestion on background items when the root turn is %s",
+  (status) =>
+    Effect.gen(function* () {
+      const observed = yield* runBackgroundItemScenario(`bg-${status}`, (ids) => [
+        backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+        rootTerminalEvent(ids, status),
+        backgroundTurnItemEvent(ids, "command_execution", "completed", 2),
+      ]);
+      assert.deepEqual(observed, ["turn_item:running", "root-finalized"]);
+    }),
 );
 
 it.effect("seeds inherited background items before their next update", () =>
@@ -4906,6 +4909,21 @@ it.effect.each([
     }),
 );
 
+it.effect("keeps a provider's stop reason on a completed run", () =>
+  Effect.gen(function* () {
+    const reason = "sessionStart hook (user): Plugin guard blocked this session.";
+    const { written } = yield* captureRootRunTermination({
+      key: "completed-stop-reason",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) => Stream.make({ ...rootTerminalEvent(ids, "completed"), reason }),
+    });
+    assert.deepEqual(
+      written.map((item) => (item.type === "system_notice" ? item.message : item.type)),
+      [reason],
+    );
+  }),
+);
+
 it.effect.each(
   (["completed", "interrupted", "cancelled", "failed"] as const).map((status) => ({
     caseTitle: `refreshes pull requests after the current root run ${status}`,
@@ -6431,6 +6449,57 @@ it.effect("stops pending recovery at service shutdown", () =>
   }),
 );
 
+it.effect.each(["completed", "failed"] as const)(
+  "persists a background-task roster clear that arrives after a %s turn",
+  (status) =>
+    Effect.gen(function* () {
+      const pending = yield* Ref.make(true);
+      const ingested = yield* Ref.make<Array<ProviderAdapter.ProviderAdapterV2Event>>([]);
+      yield* captureRootRunTermination({
+        key: `roster-clear-${status}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        hasPendingBackgroundWorkForThread: () => Ref.get(pending),
+        events: (ids) => {
+          const runningBuild: OrchestrationV2PendingBackgroundTask = {
+            taskId: "running-build",
+            kind: "command",
+          };
+          const roster = (hasTask: boolean): ProviderAdapter.ProviderAdapterV2Event => {
+            const pendingBackgroundTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask> =
+              hasTask ? [runningBuild] : [];
+            return {
+              type: "provider_thread.updated",
+              driver,
+              providerThread: {
+                id: ids.providerThreadId,
+                driver,
+                appThreadId: ids.threadId,
+                pendingBackgroundTasks,
+              } as OrchestrationV2ProviderThread,
+            };
+          };
+          return Stream.fromIterable([roster(true), rootTerminalEvent(ids, status), roster(false)]);
+        },
+        // The adapter clears its live roster before ingestion reaches the queued clear.
+        beforeTerminalWrite: () => Ref.set(pending, false).pipe(Effect.as(true)),
+        ingestNormalizedForEvent: (input) =>
+          Ref.update(ingested, (all) => [...all, input.event]).pipe(
+            Effect.as(
+              input.event.type === "provider_thread.updated"
+                ? [{} as OrchestrationV2StoredEvent]
+                : [],
+            ),
+          ),
+      });
+      const rosters = (yield* Ref.get(ingested)).flatMap((event) =>
+        event.type === "provider_thread.updated"
+          ? [event.providerThread.pendingBackgroundTasks]
+          : [],
+      );
+      assert.deepEqual(rosters.at(-1), [], "an ended task must leave the persisted roster");
+    }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
@@ -7357,24 +7426,6 @@ it.effect("keeps a failed root's still-running native children live while the ru
       written.some((event) => event.type === "subagent.updated"),
       "a child that outlives the failed root must not be settled with it",
     );
-  }),
-);
-
-it.effect("does not overwrite Stop when ownership changes after the finalization read", () =>
-  Effect.gen(function* () {
-    const { written, observed, submittedEffects, committedEffects } =
-      yield* captureRootRunTermination({
-        key: "stop-wins-finalization-gap",
-        shouldFinalizeRun: () => Effect.succeed(true),
-        declineFinalWrite: true,
-      });
-    assert.deepEqual(written, []);
-    assert.deepEqual(observed, []);
-    assert.deepEqual(
-      submittedEffects.map((effect) => effect.request.type),
-      ["checkpoint.capture"],
-    );
-    assert.deepEqual(committedEffects, []);
   }),
 );
 

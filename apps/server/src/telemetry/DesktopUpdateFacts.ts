@@ -7,16 +7,14 @@
  */
 import type { DesktopUpdateFact } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
-import type { AnalyticsService } from "./AnalyticsService.ts";
+import type { RecordedAnalyticsIngest } from "./ScientAnalytics.ts";
 
 /** The ids the desktop may forget: held by the outbox, or never to be sent from here. */
 export const ingestDesktopUpdateFacts = Effect.fn("DesktopUpdateFacts.ingest")(function* (
-  analytics: Option.Option<AnalyticsService["Service"]>,
+  recorded: RecordedAnalyticsIngest,
   facts: ReadonlyArray<DesktopUpdateFact>,
 ) {
-  const ingest = Option.getOrUndefined(analytics)?.ingestRecorded;
-  const settled = ingest === undefined ? true : yield* ingest(facts);
+  const settled = yield* recorded.ingest(facts);
   return settled ? facts.map((fact) => fact.id) : [];
 });

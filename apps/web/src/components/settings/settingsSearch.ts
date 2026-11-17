@@ -403,6 +403,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "word-export",
     searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "reinstall"],
   },
+  // SCIENT-FORK:START — Word export citation style.
+  {
+    id: "word-citation-style",
+    title: "Citation style",
+    to: "/settings/documents",
+    targetId: "word-citation-style",
+    searchTerms: ["citation", "references", "bibliography", "csl", "apa", "vancouver", "word"],
+  },
+  // SCIENT-FORK:END
   {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
@@ -805,6 +814,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Transcription hardware and model unloading",
     to: "/settings/voice",
     searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
+  },
+  {
+    id: "speech-streaming",
+    title: "Streaming transcription",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt advanced native live preview batch after stopping slow lag"],
   },
   {
     id: "microphone-test",

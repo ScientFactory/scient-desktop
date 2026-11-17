@@ -25,6 +25,7 @@ import {
 } from "./rawBlockNodeView";
 import {
   createScientReferenceNodeView,
+  type ScientMarkdownCitationOpener,
   type ScientMarkdownFootnoteNodeViewRegistrar,
 } from "./referenceNodeView";
 import { createScientTaskListItemNodeView } from "./taskListItemNodeView";
@@ -41,6 +42,7 @@ export type {
 
 export interface ScientMarkdownNodeViewOptions {
   readonly onOpenWikiLink?: ScientMarkdownLinkOpenHandler;
+  readonly openCitation?: ScientMarkdownCitationOpener;
   readonly registerCodeEditor?: ScientMarkdownCodeEditorRegistrar;
   readonly registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar;
   readonly registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar;
@@ -74,7 +76,8 @@ export function buildScientMarkdownNodeViews(
         options.showRichFenceContextMenu,
         options.registerCodeEditor,
       ),
-    citation: (node, view, getPos) => createScientReferenceNodeView(node, view, getPos),
+    citation: (node, view, getPos) =>
+      createScientReferenceNodeView(node, view, getPos, undefined, options.openCitation),
     display_math: createScientMathNodeView,
     image: (node, view, getPos) =>
       createScientImageNodeView(

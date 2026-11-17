@@ -120,7 +120,11 @@ runs:
       run: vp install $INSTALL_ARGS
 
     - name: Save lockfile verification
-      if: inputs.install == 'true' && steps.pnpm_verified.outputs.cache-hit != 'true'
+      # SCIENT-FORK:START — a merge-queue ref's caches serve only reruns of that entry.
+      if: >-
+        inputs.install == 'true' && github.event_name != 'merge_group' &&
+        steps.pnpm_verified.outputs.cache-hit != 'true'
+      # SCIENT-FORK:END
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm_store.outputs.verified }}
@@ -132,12 +136,15 @@ runs:
     # Concurrent jobs with the same install args reserve one key, so the losers
     # compress the store for nothing; all but one pass save-pnpm-store: false.
     - name: Save pnpm store
+      # SCIENT-FORK:START — merge-queue runs never save the store.
       if: >-
         inputs.install == 'true' && inputs.save-pnpm-store == 'true' &&
+        github.event_name != 'merge_group' &&
         (github.event_name != 'pull_request' || github.base_ref == github.event.repository.default_branch) &&
         steps.pnpm_cache.outputs.cache-hit != 'true' &&
         (steps.pnpm_store.outputs.namespace == 'full' ||
           steps.pnpm_cache.outputs.cache-matched-key != format('pnpm-full-v1-{0}-{1}-{2}', runner.os, runner.arch, hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json')))
+      # SCIENT-FORK:END
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm_store.outputs.path }}

@@ -8,17 +8,20 @@ import shardWeights from "./shardWeights.json" with { type: "json" };
 
 // Use the recorded median for new files.
 const UNRECORDED_FILE_SECONDS = 0.6;
+// Measured on CI shards: what a file costs before its first test, beyond its recorded time.
+const FILE_START_SECONDS = 2.2;
 
 const recordedSeconds: Readonly<Record<string, number>> = shardWeights;
 
-// Include import time (~1/3 of CI shards) in weights; derive identical splits so each file runs once.
+// Count each file's start cost; derive identical splits so each file runs once.
 export class WeightedShardSequencer extends BaseSequencer {
   override async shard(files: TestSpecification[]) {
     const { index, count } = this.ctx.config.shard ?? { index: 1, count: 1 };
     const weighted = files
       .map((spec) => {
         const key = NodePath.relative(this.ctx.config.root, spec.moduleId).replaceAll("\\", "/");
-        return { spec, key, seconds: recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS };
+        const recorded = recordedSeconds[key] ?? UNRECORDED_FILE_SECONDS;
+        return { spec, key, seconds: recorded + FILE_START_SECONDS };
       })
       .toSorted((a, b) => b.seconds - a.seconds || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 

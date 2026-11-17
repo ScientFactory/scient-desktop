@@ -27,6 +27,7 @@ import {
   WorkspaceFileAssetResource,
   workspaceFileLocatorFilter,
 } from "./scient/workspaceFileAsset.ts";
+import { EnvironmentThemeId } from "./server.ts";
 
 // SCIENT-FORK:START — host paths and signed environment-file URLs run longer.
 const ENVIRONMENT_ASSET_PATH_MAX_LENGTH = 4_096;
@@ -103,6 +104,9 @@ export const AssetResource = Schema.Union([
   // to a request that carries a credential, which the client has none of, so the server fetches
   // them with the credential the host's driver holds for the repository at `cwd`. `repository`
   // names the change request's repository, which can differ from the checkout at `cwd`.
+  Schema.TaggedStruct("environment-theme-background", {
+    themeId: EnvironmentThemeId,
+  }),
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(WORKSPACE_ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
@@ -126,7 +130,10 @@ export const AssetCreateUrlResult = Schema.Struct({
   // Environment-file claims contain the canonical path in their signed token.
   // The URL can therefore be longer than the path itself after JSON/base64url
   // encoding, especially for non-ASCII Windows paths.
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_RELATIVE_URL_MAX_LENGTH)),
+  relativeUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(ASSET_RELATIVE_URL_MAX_LENGTH),
+    Schema.isPattern(/^\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+$/u),
+  ),
   expiresAt: Schema.Number,
   sourcePath: Schema.optional(
     FilePathString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
@@ -167,7 +174,10 @@ export type AttachmentCreateUploadUrlInput = typeof AttachmentCreateUploadUrlInp
 
 export const AttachmentCreateUploadUrlResult = Schema.Struct({
   attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  relativeUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(4096),
+    Schema.isPattern(/^\/api\/attachments\/upload\/(?!\.{1,2}$)[\w.-]+$/u),
+  ),
   expiresAt: Schema.Number,
 });
 export type AttachmentCreateUploadUrlResult = typeof AttachmentCreateUploadUrlResult.Type;

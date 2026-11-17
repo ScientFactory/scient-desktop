@@ -70,10 +70,13 @@ describe("new thread model fallback", () => {
       checkedAt: "2026-09-03T11:00:00.000Z",
       windows: [{ ...window, usedPercent: 100 }],
     },
+    models: [{ slug: selection.model, name: "Sol", isCustom: false, capabilities: null }],
   });
   const available = provider({
     instanceId: fallback.instanceId,
     driver: ProviderDriverKind.make("claudeAgent"),
+    auth: { status: "authenticated", type: "claudeProSubscription" },
+    models: [{ slug: fallback.model, name: "Fable", isCustom: false, capabilities: null }],
   });
 
   const defaults = {

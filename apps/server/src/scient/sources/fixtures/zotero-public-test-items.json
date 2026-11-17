@@ -1,0 +1,4242 @@
+{
+  "from": "Public Zotero group 2205533, read through api.zotero.org without a key. Bibliographic details only; note texts are made up.",
+  "entries": [
+    {
+      "item": {
+        "key": "V6ILPUJS",
+        "version": 14981,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "V6ILPUJS",
+          "version": 14981,
+          "itemType": "artwork",
+          "title": "",
+          "creators": [],
+          "abstractNote": "",
+          "artworkMedium": "",
+          "artworkSize": "",
+          "date": "",
+          "eventPlace": "",
+          "DOI": "",
+          "citationKey": "1917a",
+          "url": "",
+          "accessDate": "",
+          "archive": "Manuscripts and Archives, Yale University Library",
+          "archiveLocation": "Box 137, Folder 2292",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "",
+          "extra": "issued: 1917/1954?\nGenre: Photographs of Robert M. Yerkes\nArchive Place: New Haven, CT\ntype: collection\narchive_collection: Robert Mearns Yerkes Papers",
+          "tags": [
+            {
+              "tag": "cleaned"
+            },
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["DMKBHP6P"],
+          "relations": {},
+          "dateAdded": "2018-11-08T20:39:32Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "ECGZVK37",
+          "version": 4055,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "ECGZVK37",
+            "version": 4055,
+            "parentItem": "V6ILPUJS",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-02-04T18:09:54Z",
+            "dateModified": "2019-02-04T18:14:31Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "WVBHKJVT",
+          "version": 1036,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "WVBHKJVT",
+            "version": 1036,
+            "parentItem": "V6ILPUJS",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-02-04T18:14:26Z",
+            "dateModified": "2019-02-20T22:34:22Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "3YQ96FHJ",
+        "version": 14947,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "3YQ96FHJ",
+          "version": 14947,
+          "itemType": "audioRecording",
+          "title": "Humble",
+          "creators": [
+            {
+              "creatorType": "performer",
+              "firstName": "K.",
+              "lastName": "Lamar"
+            }
+          ],
+          "abstractNote": "",
+          "audioRecordingFormat": "Song",
+          "seriesTitle": "",
+          "volume": "",
+          "numberOfVolumes": "",
+          "label": "Aftermath Entertainment; Interscope Records; Top Dawg Entertainment",
+          "place": "",
+          "date": "2017",
+          "runningTime": "",
+          "ISBN": "",
+          "DOI": "",
+          "citationKey": "lamarHumble2017",
+          "url": "",
+          "accessDate": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "APA7 92d",
+          "extra": "Container title: Damn",
+          "tags": [
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-27T18:48:08Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "WH9I65EM",
+          "version": 4052,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "WH9I65EM",
+            "version": 4052,
+            "parentItem": "3YQ96FHJ",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              },
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-11-20T22:14:30Z",
+            "dateModified": "2019-11-20T22:14:32Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "2KPTQZIL",
+        "version": 14989,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "2KPTQZIL",
+          "version": 14989,
+          "itemType": "bill",
+          "title": "",
+          "creators": [],
+          "abstractNote": "",
+          "billNumber": "438",
+          "code": "Cong. Rec.",
+          "codeVolume": "162",
+          "section": "",
+          "codePages": "2394",
+          "legislativeBody": "114th Cong.",
+          "session": "",
+          "history": "",
+          "date": "2016",
+          "DOI": "",
+          "citationKey": "2016",
+          "url": "https://www.congress.gov/congressional-record/volume-162/issue-62/senate-section/article/S2394-2",
+          "accessDate": "",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "APA7 617",
+          "extra": "Status: enacted\nGenre: S. Res.",
+          "tags": [],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2021-11-08T19:15:33Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "PBZIL3L9",
+          "version": 4050,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "PBZIL3L9",
+            "version": 4050,
+            "parentItem": "2KPTQZIL",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2024-02-12T00:46:58Z",
+            "dateModified": "2024-07-08T20:39:17Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "Y4FLGQTZ",
+        "version": 15090,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "Y4FLGQTZ",
+          "version": 15090,
+          "itemType": "blogPost",
+          "title": "Futurist shock",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "William",
+              "lastName": "Germano"
+            }
+          ],
+          "abstractNote": "Now more than ever, says Bill Germano, we need history to help us sort out an enormous mess we just can’t future.",
+          "blogTitle": "Chronicle of Higher Education",
+          "websiteType": "<i>Lingua Franca</i> (blog)",
+          "date": "2017-02-15T21:01:11",
+          "DOI": "",
+          "citationKey": "germanoFuturistShock2017a",
+          "url": "https://www.chronicle.com/blogs/linguafranca/futurist-shock",
+          "accessDate": "2025-02-26T11:46:50Z",
+          "ISSN": "",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "CMOS18 14.105",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "CSL limitation"
+            }
+          ],
+          "collections": [],
+          "relations": {},
+          "dateAdded": "2026-01-14T18:07:53Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "37B7B6TQ",
+          "version": 14465,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "37B7B6TQ",
+            "version": 14465,
+            "parentItem": "Y4FLGQTZ",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2026-01-15T11:31:24Z",
+            "dateModified": "2026-01-15T11:32:08Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "UIEDZDMG",
+        "version": 15037,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "UIEDZDMG",
+          "version": 15037,
+          "itemType": "book",
+          "title": "<span class=\"nocase\">Historia ecclesie Abbendonensis</span>",
+          "creators": [
+            {
+              "creatorType": "author",
+              "name": "Abingdon Abbey"
+            },
+            {
+              "creatorType": "editor",
+              "firstName": "John",
+              "lastName": "Hudson"
+            },
+            {
+              "creatorType": "translator",
+              "firstName": "John",
+              "lastName": "Hudson"
+            }
+          ],
+          "abstractNote": "",
+          "series": "Oxford Medieval Texts",
+          "seriesNumber": "",
+          "volume": "",
+          "numberOfVolumes": "2",
+          "edition": "",
+          "date": "2002/2007",
+          "publisher": "Clarendon Press",
+          "place": "Oxford",
+          "originalDate": "",
+          "originalPublisher": "",
+          "originalPlace": "",
+          "format": "",
+          "numPages": "",
+          "ISBN": "978-0-19-820742-9 978-0-19-929937-9",
+          "DOI": "10.1093/actrade/9780199299379.book.1",
+          "citationKey": "abingdonabbeyHistoriaEcclesieAbbendonensis2002",
+          "url": "",
+          "accessDate": "",
+          "ISSN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "BnF ISBN",
+          "callNumber": "BX2596.A25 A25 2002",
+          "rights": "",
+          "extra": "OCLC: ocm50099829\ntype: classic\ncontainer-title: The history of the Church of Abingdon",
+          "tags": [
+            {
+              "tag": "1066-1485",
+              "type": 1
+            },
+            {
+              "tag": "449-1066",
+              "type": 1
+            },
+            {
+              "tag": "Abingdon Abbey",
+              "type": 1
+            },
+            {
+              "tag": "Anglo Saxon period, 449-1066",
+              "type": 1
+            },
+            {
+              "tag": "Church history",
+              "type": 1
+            },
+            {
+              "tag": "Church lands",
+              "type": 1
+            },
+            {
+              "tag": "England",
+              "type": 1
+            },
+            {
+              "tag": "Great Britain",
+              "type": 1
+            },
+            {
+              "tag": "History",
+              "type": 1
+            },
+            {
+              "tag": "Medieval period, 1066-1485",
+              "type": 1
+            },
+            {
+              "tag": "To 1500",
+              "type": 1
+            }
+          ],
+          "collections": [],
+          "relations": {},
+          "dateAdded": "2025-04-25T19:41:33Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 3
+        }
+      },
+      "children": [
+        {
+          "key": "9N8ZJNK8",
+          "version": 7512,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "9N8ZJNK8",
+            "version": 7512,
+            "parentItem": "UIEDZDMG",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-04-25T19:41:33Z",
+            "dateModified": "2025-04-25T19:41:33Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "DLSDVJB7",
+          "version": 7512,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "DLSDVJB7",
+            "version": 7512,
+            "parentItem": "UIEDZDMG",
+            "itemType": "attachment",
+            "linkMode": "linked_url",
+            "title": "Vol. 1",
+            "accessDate": "2025-04-24T10:48:10Z",
+            "url": "https://doi.org/10.1093/actrade/9780199299379.book.1",
+            "note": "",
+            "contentType": "",
+            "charset": "",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-04-25T19:41:33Z",
+            "dateModified": "2025-04-25T19:41:33Z"
+          }
+        },
+        {
+          "key": "F9H5AQZM",
+          "version": 7512,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "F9H5AQZM",
+            "version": 7512,
+            "parentItem": "UIEDZDMG",
+            "itemType": "attachment",
+            "linkMode": "linked_url",
+            "title": "Vol. 2",
+            "accessDate": "2025-04-24T10:49:07Z",
+            "url": "https://doi.org/10.1093/actrade/9780198207429.book.1",
+            "note": "",
+            "contentType": "",
+            "charset": "",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-04-25T19:41:33Z",
+            "dateModified": "2025-04-25T19:41:33Z"
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "N5S8J5A7",
+        "version": 15067,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "N5S8J5A7",
+          "version": 15067,
+          "itemType": "book",
+          "title": "Stories after nature",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Charles",
+              "lastName": "Wells"
+            }
+          ],
+          "abstractNote": "",
+          "series": "",
+          "seriesNumber": "",
+          "volume": "",
+          "numberOfVolumes": "",
+          "edition": "",
+          "date": "1891",
+          "publisher": "Lawrence and Bullen",
+          "place": "London",
+          "originalDate": "",
+          "originalPublisher": "",
+          "originalPlace": "",
+          "format": "",
+          "numPages": "xvii, [3], 254, [1] p.",
+          "ISBN": "",
+          "DOI": "",
+          "citationKey": "wellsStoriesNature1891",
+          "url": "https://catalog.hathitrust.org/Record/009403693",
+          "accessDate": "2025-07-09T05:58:39Z",
+          "ISSN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "HathiTrust",
+          "callNumber": "",
+          "rights": "NHR 18.2.2",
+          "extra": "",
+          "tags": [],
+          "collections": ["499SCKUW"],
+          "relations": {},
+          "dateAdded": "2025-07-09T05:58:39Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 7
+        }
+      },
+      "children": [
+        {
+          "key": "3I9T4DQE",
+          "version": 10858,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "3I9T4DQE",
+            "version": 10858,
+            "parentItem": "N5S8J5A7",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-07-09T05:58:39Z",
+            "dateModified": "2025-07-09T05:58:39Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "66RS486J",
+          "version": 10858,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "66RS486J",
+            "version": 10858,
+            "parentItem": "N5S8J5A7",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-07-09T05:58:39Z",
+            "dateModified": "2025-07-09T05:58:39Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "6EHQWKGA",
+          "version": 10858,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "6EHQWKGA",
+            "version": 10858,
+            "parentItem": "N5S8J5A7",
+            "itemType": "attachment",
+            "linkMode": "linked_url",
+            "title": "Record Page",
+            "accessDate": "2025-07-09T05:58:39Z",
+            "url": "https://catalog.hathitrust.org/Record/009403693",
+            "note": "",
+            "contentType": "text/html",
+            "charset": "",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-07-09T05:58:39Z",
+            "dateModified": "2025-07-09T05:58:39Z"
+          }
+        },
+        {
+          "key": "9EDIURTV",
+          "version": 10858,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "9EDIURTV",
+            "version": 10858,
+            "parentItem": "N5S8J5A7",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-07-09T05:58:39Z",
+            "dateModified": "2025-07-09T05:58:39Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "BGPMMUQ4",
+          "version": 10858,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "BGPMMUQ4",
+            "version": 10858,
+            "parentItem": "N5S8J5A7",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-07-09T05:58:39Z",
+            "dateModified": "2025-07-09T05:58:39Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "TZ8GAQRS",
+          "version": 10858,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "TZ8GAQRS",
+            "version": 10858,
+            "parentItem": "N5S8J5A7",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-07-09T05:58:39Z",
+            "dateModified": "2025-07-09T05:58:39Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "VC4FXF93",
+          "version": 10858,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "VC4FXF93",
+            "version": 10858,
+            "parentItem": "N5S8J5A7",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-07-09T05:58:39Z",
+            "dateModified": "2025-07-09T05:58:39Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "4XYGI6LG",
+        "version": 15076,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "4XYGI6LG",
+          "version": 15076,
+          "itemType": "bookSection",
+          "title": "",
+          "creators": [
+            {
+              "creatorType": "seriesEditor",
+              "firstName": "M. H.",
+              "lastName": "Abrams"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "William",
+              "lastName": "Shakespeare"
+            }
+          ],
+          "abstractNote": "",
+          "bookTitle": "The Norton anthology of English literature",
+          "series": "",
+          "seriesNumber": "",
+          "volume": "",
+          "numberOfVolumes": "",
+          "edition": "6",
+          "date": "1993",
+          "publisher": "Norton",
+          "place": "New York",
+          "originalDate": "",
+          "originalPublisher": "",
+          "originalPlace": "",
+          "format": "",
+          "pages": "812",
+          "ISBN": "978-0-393-96287-1 978-0-393-96288-8",
+          "DOI": "",
+          "citationKey": "shakespeare1993",
+          "url": "",
+          "accessDate": "",
+          "ISSN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "Library of Congress ISBN",
+          "callNumber": "PR1109 .N6 1993",
+          "rights": "",
+          "extra": "genre: Sonnet 30",
+          "tags": [
+            {
+              "tag": "English literature",
+              "type": 1
+            },
+            {
+              "tag": "Great Britain",
+              "type": 1
+            },
+            {
+              "tag": "Literary collections",
+              "type": 1
+            },
+            {
+              "tag": "Literature",
+              "type": 1
+            }
+          ],
+          "collections": ["L96HMJXY"],
+          "relations": {},
+          "dateAdded": "2025-09-11T17:39:44Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "BIA8ZGPR",
+          "version": 12900,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "BIA8ZGPR",
+            "version": 12900,
+            "parentItem": "4XYGI6LG",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-09-11T17:39:44Z",
+            "dateModified": "2025-09-11T17:39:44Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "ZTCVJSA4",
+          "version": 12900,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "ZTCVJSA4",
+            "version": 12900,
+            "parentItem": "4XYGI6LG",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-09-11T17:39:44Z",
+            "dateModified": "2025-09-11T17:39:44Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "CWRACJW5",
+        "version": 15072,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "CWRACJW5",
+          "version": 15072,
+          "itemType": "bookSection",
+          "title": "Norton Priory: a resource for the community",
+          "creators": [
+            {
+              "creatorType": "editor",
+              "firstName": "David",
+              "lastName": "Baker"
+            },
+            {
+              "creatorType": "editor",
+              "firstName": "Gill",
+              "lastName": "Chitty"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Margaret",
+              "lastName": "Warhurst"
+            }
+          ],
+          "abstractNote": "Managing Historic Sites and Buildings looks at the choices and the tensions that exist in conservation and interpretation of the heritage. Preservation and presentation are central activities, arguably means and ends in the conservation of the historic environment. But are they self-reinforcing or do they work against each other? In a series of essays which span form prehistoric sacred site to Second World war military remains, from medieval monastery to 1970s housing estate, we look at contemporary concerns and debates about the way the past is shaped, physically and metaphorically , by these",
+          "bookTitle": "Managing historic sites and buildings: reconciling presentation and preservation",
+          "series": "",
+          "seriesNumber": "",
+          "volume": "",
+          "numberOfVolumes": "",
+          "edition": "",
+          "date": "2000",
+          "publisher": "Routledge",
+          "place": "London",
+          "originalDate": "",
+          "originalPublisher": "",
+          "originalPlace": "",
+          "format": "",
+          "pages": "71–84",
+          "ISBN": "978-0-415-20815-4",
+          "DOI": "10.4324/9780203714652",
+          "citationKey": "warhurstNortonPrioryResource2000",
+          "url": "",
+          "accessDate": "",
+          "ISSN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "Norton priory",
+          "language": "en",
+          "libraryCatalog": "K10plus ISBN",
+          "callNumber": "",
+          "rights": "",
+          "extra": "",
+          "tags": [],
+          "collections": [],
+          "relations": {
+            "dc:replaces": "http://zotero.org/groups/2205533/items/82IW7UFC"
+          },
+          "dateAdded": "2025-08-12T15:25:55Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "C3TT4NMC",
+          "version": 12192,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "C3TT4NMC",
+            "version": 12192,
+            "parentItem": "CWRACJW5",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-08-12T15:28:32Z",
+            "dateModified": "2025-08-12T15:28:32Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "TUSY9V8G",
+          "version": 12192,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "TUSY9V8G",
+            "version": 12192,
+            "parentItem": "CWRACJW5",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-08-12T15:28:32Z",
+            "dateModified": "2025-08-12T15:28:32Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "XVKGPT5M",
+        "version": 14987,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "XVKGPT5M",
+          "version": 14987,
+          "itemType": "case",
+          "caseName": "Tarasoff v. Regents of the University of California",
+          "creators": [],
+          "abstractNote": "",
+          "court": "",
+          "dateDecided": "1976",
+          "docketNumber": "",
+          "reporter": "Cal.3d",
+          "reporterVolume": "17",
+          "firstPage": "425",
+          "history": "131 Cal. Rptr. 14, 551 P.2d 334",
+          "DOI": "",
+          "citationKey": "TarasoffRegentsUniversity1976",
+          "url": "https://www.casebriefs.com/blog/law/torts/torts-keyed-to-dobbs/the-duty-to-protect-from-third-persons/tarasoff-v-regents-of-university",
+          "accessDate": "",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "APA7 606",
+          "extra": "",
+          "tags": [],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2021-11-08T18:41:03Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "8L5CTCGZ",
+          "version": 2593,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "8L5CTCGZ",
+            "version": 2593,
+            "parentItem": "XVKGPT5M",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [
+              {
+                "tag": "CSL limitation"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2024-02-11T23:31:20Z",
+            "dateModified": "2024-02-11T23:32:43Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "C5H2NB3F",
+        "version": 14975,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "C5H2NB3F",
+          "version": 14975,
+          "itemType": "computerProgram",
+          "title": "E-SOFTA: System for observing family therapy alliances",
+          "creators": [
+            {
+              "creatorType": "programmer",
+              "firstName": "M.L.",
+              "lastName": "Friedlander"
+            },
+            {
+              "creatorType": "programmer",
+              "firstName": "V.",
+              "lastName": "Escudero"
+            },
+            {
+              "creatorType": "programmer",
+              "firstName": "L.",
+              "lastName": "Heatherington"
+            }
+          ],
+          "abstractNote": "",
+          "seriesTitle": "",
+          "versionNumber": "",
+          "date": "2002",
+          "system": "Software and training videos",
+          "company": "",
+          "place": "",
+          "programmingLanguage": "Unpublished instrument",
+          "rights": "",
+          "citationKey": "friedlanderESOFTASystemObserving2002",
+          "url": "http://www.softa-soatif.com/",
+          "accessDate": "",
+          "DOI": "",
+          "ISBN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "shortTitle": "",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "cleaned"
+            },
+            {
+              "tag": "incorrect output"
+            },
+            {
+              "tag": "linter/error",
+              "type": 1
+            }
+          ],
+          "collections": ["DMKBHP6P"],
+          "relations": {},
+          "dateAdded": "2018-11-08T20:39:08Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "FQMILVT5",
+          "version": 4055,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "FQMILVT5",
+            "version": 4055,
+            "parentItem": "C5H2NB3F",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2018-12-02T18:30:55Z",
+            "dateModified": "2018-12-16T12:24:04Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "WH2BDAB4",
+          "version": 673,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "WH2BDAB4",
+            "version": 673,
+            "parentItem": "C5H2NB3F",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2018-12-16T12:24:07Z",
+            "dateModified": "2018-12-16T12:24:21Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "ETKTN5UJ",
+        "version": 15075,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "ETKTN5UJ",
+          "version": 15075,
+          "itemType": "conferencePaper",
+          "title": "The twelfth-century glossed Bible",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Margaret T.",
+              "lastName": "Gibson"
+            },
+            {
+              "creatorType": "seriesEditor",
+              "firstName": "E. A.",
+              "lastName": "Livingstone"
+            }
+          ],
+          "abstractNote": "",
+          "proceedingsTitle": "Papers presented to the Tenth International Conference on Patristic Studies held in Oxford, 1987",
+          "conferenceName": "Tenth international conference on patristic studies",
+          "publisher": "Peeters",
+          "place": "Leuven",
+          "date": "1989",
+          "eventPlace": "Oxford",
+          "volume": "5",
+          "issue": "",
+          "numberOfVolumes": "5",
+          "pages": "232–244",
+          "series": "Studia Patristica",
+          "seriesNumber": "23",
+          "DOI": "",
+          "ISBN": "90-6831-227-8",
+          "citationKey": "gibsonTwelfthcenturyGlossedBible1989",
+          "url": "",
+          "accessDate": "",
+          "ISSN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "toroprod.library.utoronto.ca Library Catalog",
+          "callNumber": "BR67 .I5 v.19 IMS",
+          "rights": "",
+          "extra": "volume-title: Late Greek Fathers. Latin Fathers after Nicea. Nachleben of the Fathers\nevent-date: 1987",
+          "tags": [],
+          "collections": [],
+          "relations": {},
+          "dateAdded": "2025-08-28T05:43:44Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "4UQY9CTE",
+          "version": 12639,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "4UQY9CTE",
+            "version": 12639,
+            "parentItem": "ETKTN5UJ",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-08-28T05:43:44Z",
+            "dateModified": "2025-08-28T05:43:44Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "6L3C64G8",
+          "version": 12639,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "6L3C64G8",
+            "version": 12639,
+            "parentItem": "ETKTN5UJ",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-08-28T05:43:44Z",
+            "dateModified": "2025-08-28T05:43:44Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "HSQR5EIW",
+        "version": 14964,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "HSQR5EIW",
+          "version": 14964,
+          "itemType": "dataset",
+          "title": "Fast Response Survey System (FRSS): teachers' use of educational technology in U.S. public schools, 2009",
+          "creators": [
+            {
+              "creatorType": "author",
+              "name": "National Center For Education Statistics"
+            }
+          ],
+          "abstractNote": "The Fast Response Survey System (FRSS) was established in 1975 by the National Center for Education Statistics (NCES), United States Department of Education. FRSS is designed to collect issue-oriented data within a relatively short time frame. FRSS collects data from state education agencies, local education agencies, public and private elementary and secondary schools, public school teachers, and public libraries. To ensure minimal burden on respondents, the surveys are generally limited to three pages of questions, with a response burden of about 30 minutes per respondent. Sample sizes are relatively small (usually about 1,000 to 1,500 respondents per survey) so that data collection can be completed quickly. Reported data are weighted to produce national estimates of the sampled education sector. The sample size permits limited breakouts by classification variables. However, as the number of categories within the classification variables increases, the sample size within categories decreases, which results in larger sampling errors for the breakouts by classification variables. The Teachers' Use of Educational Technology in U.S. Public Schools, 2009 survey provides national estimates on the availability and use of educational technology among teachers in public elementary and secondary schools during 2009. This is one of a set of three surveys (at the district, school, and teacher levels) that collected data on a range of educational technology resources. A stratified multistage sample design was used to select teachers for this study. Data collection was conducted September 2008 through July 2009, and 3,159 eligible teachers completed the survey by web, mail, fax, or telephone. The survey asked respondents to report information on the use of computers and Internet access in the classroom; availability and use of computing devices, software, and school or district networks (including remote access) by teachers; students' use of educational technology; teachers' preparation to use educational technology for instruction; and technology-related professional development activities. Respondents reported quantities for the following: computers located in the classroom every day, computers that can be brought into the classroom, and computers with Internet access. Data on the availability and frequency of using computers and other technology devices during instructional time were also collected. Respondents reported on students' use of educational technology resources during classes and teachers' use of modes of technology to communicate with parents and students. Additional survey topics included teacher training and preparation to effectively use educational technology for instruction, and teachers' opinions related to statements about their participation in professional development for educational technology. Respondents were also asked for administrative information such as school instructional level, school enrollment size, main teaching assignment, and years of experience.",
+          "identifier": "ICPSR 35531",
+          "type": "",
+          "versionNumber": "",
+          "date": "2015",
+          "repository": "National Archive of Data on Arts and Culture",
+          "repositoryLocation": "",
+          "format": "Data set and code book",
+          "DOI": "10.3886/ICPSR35531.v3",
+          "citationKey": "nationalcenterforeducationstatisticsFastResponseSurvey2015",
+          "url": "http://www.icpsr.umich.edu/icpsrweb/NADAC/studies/35531/version/3",
+          "accessDate": "2019-10-17T21:01:43Z",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "Fast Response Survey System (FRSS)",
+          "language": "en",
+          "libraryCatalog": "DataCite",
+          "callNumber": "",
+          "rights": "APA7 75b",
+          "extra": "collection-title: Fast Response Survey System (FRSS) Series",
+          "tags": [
+            {
+              "tag": "inconsistent rules"
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-17T21:01:43Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "2L6S3X69",
+          "version": 2049,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "2L6S3X69",
+            "version": 2049,
+            "parentItem": "HSQR5EIW",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "bad manual data"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-10-17T21:28:25Z",
+            "dateModified": "2019-11-20T21:27:50Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "R362J6UF",
+        "version": 15058,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "R362J6UF",
+          "version": 15058,
+          "itemType": "dictionaryEntry",
+          "title": "hootenanny, n.",
+          "creators": [],
+          "abstractNote": "",
+          "dictionaryTitle": "Oxford English Dictionary",
+          "series": "",
+          "seriesNumber": "",
+          "volume": "",
+          "numberOfVolumes": "",
+          "edition": "",
+          "date": "June 2025",
+          "publisher": "",
+          "place": "",
+          "pages": "",
+          "ISBN": "",
+          "DOI": "10.1093/OED/7402752672",
+          "citationKey": "Hootenanny2025",
+          "url": "https://oed.com/dictionary/hootenanny_n",
+          "accessDate": "2025-04-29T22:04:15Z",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "DOI.org (Crossref)",
+          "callNumber": "",
+          "rights": "CMOS18 14.131",
+          "extra": "status: last modified",
+          "tags": [
+            {
+              "tag": "robustness"
+            }
+          ],
+          "collections": ["5V67EPX3"],
+          "relations": {},
+          "dateAdded": "2025-07-02T02:01:06Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "2M6W6M5H",
+          "version": 10539,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "2M6W6M5H",
+            "version": 10539,
+            "parentItem": "R362J6UF",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-07-04T19:49:16Z",
+            "dateModified": "2025-07-04T19:50:06Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "KSWF7M2A",
+        "version": 14966,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "KSWF7M2A",
+          "version": 14966,
+          "itemType": "document",
+          "title": "Teacher preparation for early childhood special education in Taiwan",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Hua-Kuo",
+              "lastName": "Ho"
+            }
+          ],
+          "abstractNote": "The purpose of this paper is intended to present the current model of teacher preparation for early childhood special education in Taiwan. Documentary analysis was conducted in the study to collect and analyze the obtained data. The main features of teacher preparation policies for early childhood special education in Taiwan could be summarized as: (1) The Ministry of Education is the competent authority for teacher preparation; (2) The teacher preparation programs must be approved by the Ministry of Education; (3) The teacher education courses are regulated by the Ministry of Education; (4) Teacher preparation consists of pre-service teacher education and teacher qualification test. In addition, teacher preparation procedures in Taiwan and comparisons in teacher preparation practices between Taiwan and other nations were also discussed in the paper.",
+          "type": "",
+          "date": "2014/07/00",
+          "publisher": "",
+          "place": "",
+          "DOI": "",
+          "citationKey": "hoTeacherPreparationEarly2014",
+          "url": "https://eric.ed.gov/?id=ED545393",
+          "accessDate": "2019-10-26T16:16:09Z",
+          "archive": "ERIC",
+          "archiveLocation": "ED545393",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "ERIC",
+          "callNumber": "",
+          "rights": "APA7 74",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "bad manual data"
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-26T16:16:09Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "UEX37G77",
+          "version": 1963,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "UEX37G77",
+            "version": 1963,
+            "parentItem": "KSWF7M2A",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2019-10-26T16:28:48Z",
+            "dateModified": "2019-11-19T05:46:19Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "6PHQB648",
+        "version": 15052,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "6PHQB648",
+          "version": 15052,
+          "itemType": "email",
+          "subject": "",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Derek",
+              "lastName": "Walcott"
+            },
+            {
+              "creatorType": "recipient",
+              "name": "the author"
+            }
+          ],
+          "abstractNote": "",
+          "date": "23 March 2012",
+          "DOI": "",
+          "citationKey": "walcott2012",
+          "url": "",
+          "accessDate": "",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "MHRA4 7.11.viii",
+          "extra": "genre: email",
+          "tags": [],
+          "collections": ["D9MVMAFF"],
+          "relations": {},
+          "dateAdded": "2025-06-11T20:29:39Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 0
+        }
+      },
+      "children": []
+    },
+    {
+      "item": {
+        "key": "4KNGAPRT",
+        "version": 15010,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "4KNGAPRT",
+          "version": 15010,
+          "itemType": "encyclopediaArticle",
+          "title": "Climate model simulations of the geological past",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "André",
+              "lastName": "Berger"
+            },
+            {
+              "creatorType": "editor",
+              "firstName": "Michael C.",
+              "lastName": "MacCracken"
+            },
+            {
+              "creatorType": "editor",
+              "firstName": "John S.",
+              "lastName": "Perry"
+            },
+            {
+              "creatorType": "seriesEditor",
+              "firstName": "Ted",
+              "lastName": "Munn"
+            }
+          ],
+          "abstractNote": "",
+          "encyclopediaTitle": "Encyclopedia of global environmental change",
+          "series": "World Environmental Issues",
+          "seriesNumber": "23",
+          "volume": "1",
+          "numberOfVolumes": "5",
+          "edition": "2",
+          "date": "2002",
+          "publisher": "John Wiley",
+          "place": "New York",
+          "pages": "296–301",
+          "ISBN": "978-1-78034-286-3",
+          "DOI": "",
+          "citationKey": "bergerClimateModelSimulations2002",
+          "url": "",
+          "accessDate": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "Climate model simulations",
+          "language": "en",
+          "libraryCatalog": "Open WorldCat",
+          "callNumber": "",
+          "rights": "MLA9 5.44",
+          "extra": "OCLC: 947256329\nvolume-title: The Earth system: physical and chemical dimensions of global environmental change",
+          "tags": [],
+          "collections": ["L96HMJXY"],
+          "relations": {},
+          "dateAdded": "2025-03-14T00:25:18Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "VUS5895Y",
+          "version": 4746,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "VUS5895Y",
+            "version": 4746,
+            "parentItem": "4KNGAPRT",
+            "itemType": "attachment",
+            "linkMode": "linked_url",
+            "title": "volume-titles-multivolume-works",
+            "accessDate": "2025-03-14T00:35:53Z",
+            "url": "https://style.mla.org/volume-titles-multivolume-works/",
+            "note": "",
+            "contentType": "",
+            "charset": "",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-03-14T00:35:53Z",
+            "dateModified": "2025-03-14T00:35:53Z"
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "MJ3X5EAC",
+        "version": 14949,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "MJ3X5EAC",
+          "version": 14949,
+          "itemType": "film",
+          "title": "Accelerated experiential dynamic psychotherapy (AEDP) supervision",
+          "creators": [
+            {
+              "creatorType": "guest",
+              "firstName": "D.",
+              "lastName": "Fosha"
+            },
+            {
+              "creatorType": "host",
+              "firstName": "H.",
+              "lastName": "Levenson"
+            }
+          ],
+          "abstractNote": "",
+          "distributor": "American Psychological Association",
+          "place": "",
+          "date": "2017",
+          "genre": "film",
+          "videoRecordingFormat": "educational DVD",
+          "runningTime": "",
+          "DOI": "",
+          "citationKey": "foshaAcceleratedExperientialDynamic2017",
+          "url": "https://www.apa.org/pubs/videos/4310958.aspx",
+          "accessDate": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "APA7 84b",
+          "extra": "",
+          "tags": [],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-26T18:03:45Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "YUK45FC5",
+          "version": 2067,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "YUK45FC5",
+            "version": 2067,
+            "parentItem": "MJ3X5EAC",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-10-26T18:07:04Z",
+            "dateModified": "2019-11-20T21:51:11Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "ZJZFPJ28",
+          "version": 4053,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "ZJZFPJ28",
+            "version": 4053,
+            "parentItem": "MJ3X5EAC",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-10-26T18:12:24Z",
+            "dateModified": "2019-10-26T18:12:47Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "8EC53LI7",
+        "version": 15000,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "8EC53LI7",
+          "version": 15000,
+          "itemType": "forumPost",
+          "title": "👀 Sneak a peek at the deepest & sharpest infrared image of the early universe ever taken — all in a day’s work for the Webb telescope. (Literally, capturing it took less than a day!)",
+          "creators": [
+            {
+              "creatorType": "author",
+              "name": "NASA Webb Telescope (@NASAWebb)"
+            }
+          ],
+          "abstractNote": "",
+          "forumTitle": "Twitter (now X)",
+          "postType": "",
+          "date": "2022-07-11T22:22Z",
+          "DOI": "",
+          "citationKey": "nasawebbtelescope@nasawebbSneakPeekDeepest2022",
+          "url": "https://twitter.com/NASAWebb/status/1546621080298835970",
+          "accessDate": "2025-02-24T17:36:40Z",
+          "shortTitle": "👀 Sneak a peek",
+          "language": "en",
+          "rights": "CMOS18 14.106 (quick)",
+          "extra": "",
+          "tags": [],
+          "collections": ["5V67EPX3"],
+          "relations": {},
+          "dateAdded": "2025-02-24T17:36:40Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "MIY9FXBL",
+          "version": 3035,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "MIY9FXBL",
+            "version": 3035,
+            "parentItem": "8EC53LI7",
+            "itemType": "attachment",
+            "linkMode": "linked_url",
+            "title": "Link 1 (nasa.gov)",
+            "accessDate": "2025-02-24T17:36:40Z",
+            "url": "http://nasa.gov/webbfirstimages/",
+            "note": "",
+            "contentType": "text/html",
+            "charset": "",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-02-24T17:36:40Z",
+            "dateModified": "2025-02-24T17:36:40Z"
+          }
+        },
+        {
+          "key": "UP2AD9HH",
+          "version": 3035,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "UP2AD9HH",
+            "version": 3035,
+            "parentItem": "8EC53LI7",
+            "itemType": "attachment",
+            "linkMode": "linked_url",
+            "title": "Link 2",
+            "accessDate": "2025-02-24T17:36:40Z",
+            "url": "https://t.co/Y7ebmQwT7j",
+            "note": "",
+            "contentType": "text/html",
+            "charset": "",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-02-24T17:36:40Z",
+            "dateModified": "2025-02-24T17:36:40Z"
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "D34UVA47",
+        "version": 14987,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "D34UVA47",
+          "version": 14987,
+          "itemType": "hearing",
+          "title": "Federal real property reform: how cutting red tape and better management could achieve billions in savings, U.S. Senate Committee on Homeland Security and Governmental Affairs",
+          "creators": [],
+          "abstractNote": "",
+          "committee": "",
+          "publisher": "",
+          "numberOfVolumes": "",
+          "documentNumber": "",
+          "pages": "",
+          "legislativeBody": "114th Cong.",
+          "session": "",
+          "history": "",
+          "date": "2016",
+          "place": "",
+          "DOI": "",
+          "citationKey": "dongFederalRealProperty2016a",
+          "url": "http://www.gsa.gov/portal/content/233107",
+          "accessDate": "",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "APA7 614a",
+          "extra": "Author: Dong || Norman",
+          "tags": [
+            {
+              "tag": "robustness"
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2021-11-08T19:13:52Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "MF9BWUU9",
+          "version": 2602,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "MF9BWUU9",
+            "version": 2602,
+            "parentItem": "D34UVA47",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [
+              {
+                "tag": "bad manual data"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2024-02-11T23:43:19Z",
+            "dateModified": "2024-02-11T23:43:33Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "CWMFJXV5",
+        "version": 14999,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "CWMFJXV5",
+          "version": 14999,
+          "itemType": "instantMessage",
+          "title": "",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Sam",
+              "lastName": "Gomez"
+            },
+            {
+              "creatorType": "recipient",
+              "name": "author"
+            }
+          ],
+          "abstractNote": "",
+          "date": "August 1, 2024",
+          "DOI": "",
+          "citationKey": "gomez2024",
+          "url": "",
+          "accessDate": "",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "CMOS18 14.111 (quick)",
+          "extra": "genre: Facebook direct message",
+          "tags": [],
+          "collections": ["5V67EPX3"],
+          "relations": {},
+          "dateAdded": "2025-02-24T12:20:41Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 0
+        }
+      },
+      "children": []
+    },
+    {
+      "item": {
+        "key": "GEILI2KG",
+        "version": 15001,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "GEILI2KG",
+          "version": 15001,
+          "itemType": "interview",
+          "title": "'If you have a face, you have a place in the conversation about AI,' expert says",
+          "creators": [
+            {
+              "creatorType": "interviewee",
+              "firstName": "Joy",
+              "lastName": "Buolamwini"
+            },
+            {
+              "creatorType": "interviewer",
+              "firstName": "Tonya",
+              "lastName": "Mosley"
+            }
+          ],
+          "abstractNote": "Computer scientist Joy Buolamwini warns that facial recognition technology is riddled with the biases of its creators. She is the author of Unmasking AI and founder of the Algorithmic Justice League.",
+          "interviewMedium": "audio",
+          "date": "2023-11-28",
+          "publisher": "NPR",
+          "place": "",
+          "DOI": "",
+          "citationKey": "buolamwiniIfYouHave2023",
+          "url": "https://www.npr.org/2023/11/28/1215529902/unmasking-ai-facial-recognition-technology-joy-buolamwini",
+          "accessDate": "2025-02-24T11:47:55Z",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "NPR",
+          "callNumber": "",
+          "rights": "CMOS18 14.110 (quick)",
+          "extra": "container-title: Fresh Air\ndimensions: 37:58",
+          "tags": [
+            {
+              "tag": "inconsistent rules"
+            }
+          ],
+          "collections": ["5V67EPX3"],
+          "relations": {},
+          "dateAdded": "2025-02-24T11:47:55Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "62EJQ5D2",
+          "version": 2992,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "62EJQ5D2",
+            "version": 2992,
+            "parentItem": "GEILI2KG",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-02-24T12:04:34Z",
+            "dateModified": "2025-02-24T12:04:36Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "NHLY2283",
+          "version": 8139,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "NHLY2283",
+            "version": 8139,
+            "parentItem": "GEILI2KG",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-04-28T18:01:38Z",
+            "dateModified": "2025-04-29T23:47:11Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "LKX8LDCD",
+        "version": 15166,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "LKX8LDCD",
+          "version": 15166,
+          "itemType": "journalArticle",
+          "title": "Teaching medicine with the help of “Dr. House”",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Andreas",
+              "lastName": "Jerrentrup"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Tobias",
+              "lastName": "Mueller"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Ulrich",
+              "lastName": "Glowalla"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Meike",
+              "lastName": "Herder"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Nadine",
+              "lastName": "Henrichs"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Andreas",
+              "lastName": "Neubauer"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Juergen R.",
+              "lastName": "Schaefer"
+            },
+            {
+              "creatorType": "editor",
+              "firstName": "Thanh G",
+              "lastName": "Phan"
+            }
+          ],
+          "abstractNote": "",
+          "publicationTitle": "PLOS ONE",
+          "publisher": "",
+          "place": "",
+          "date": "2018-3-13",
+          "volume": "13",
+          "issue": "3",
+          "section": "",
+          "partNumber": "",
+          "partTitle": "",
+          "pages": "",
+          "series": "",
+          "seriesTitle": "",
+          "seriesText": "",
+          "journalAbbreviation": "PLOS One",
+          "DOI": "10.1371/journal.pone.0193972",
+          "citationKey": "jerrentrupTeachingMedicineHelp2018",
+          "url": "https://dx.plos.org/10.1371/journal.pone.0193972",
+          "accessDate": "2019-10-27T23:15:09Z",
+          "PMID": "29534114",
+          "PMCID": "PMC5849285",
+          "ISSN": "1932-6203",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "Crossref",
+          "callNumber": "",
+          "rights": "APA7 202",
+          "extra": "number: e0193972",
+          "tags": [
+            {
+              "tag": "Adult"
+            },
+            {
+              "tag": "Clinical Competence"
+            },
+            {
+              "tag": "Curriculum"
+            },
+            {
+              "tag": "Education, Medical"
+            },
+            {
+              "tag": "Education, Medical, Undergraduate"
+            },
+            {
+              "tag": "Educational Measurement"
+            },
+            {
+              "tag": "Female"
+            },
+            {
+              "tag": "Humans"
+            },
+            {
+              "tag": "Learning"
+            },
+            {
+              "tag": "Male"
+            },
+            {
+              "tag": "Problem-Based Learning"
+            },
+            {
+              "tag": "Students, Medical"
+            },
+            {
+              "tag": "Surveys and Questionnaires"
+            },
+            {
+              "tag": "Teaching"
+            },
+            {
+              "tag": "Television"
+            },
+            {
+              "tag": "Young Adult"
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-27T23:15:09Z",
+          "dateModified": "2026-04-03T21:18:53Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "KYHEWY8E",
+          "version": 4051,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "KYHEWY8E",
+            "version": 4051,
+            "parentItem": "LKX8LDCD",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-11-21T18:37:57Z",
+            "dateModified": "2019-11-21T18:38:19Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "ZI4Z5R8Z",
+          "version": 2112,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "ZI4Z5R8Z",
+            "version": 2112,
+            "parentItem": "LKX8LDCD",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-11-21T18:39:09Z",
+            "dateModified": "2019-11-21T18:40:11Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "S3AZYLSF",
+        "version": 15089,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "S3AZYLSF",
+          "version": 15089,
+          "itemType": "journalArticle",
+          "title": "The history of the book",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Alexandra",
+              "lastName": "Gillespie"
+            }
+          ],
+          "abstractNote": "",
+          "publicationTitle": "New Medieval Literatures",
+          "publisher": "",
+          "place": "",
+          "date": "2007",
+          "volume": "9",
+          "issue": "",
+          "section": "analytical survey",
+          "partNumber": "",
+          "partTitle": "",
+          "pages": "245-286",
+          "series": "",
+          "seriesTitle": "",
+          "seriesText": "",
+          "journalAbbreviation": "New Mediev. Lit.",
+          "DOI": "10.1484/j.nml.2.302743",
+          "citationKey": "gillespieHistoryBook2007",
+          "url": "http://dx.doi.org/10.1484/J.NML.2.302743",
+          "accessDate": "2013-01-16T23:08:43Z",
+          "PMID": "",
+          "PMCID": "",
+          "ISSN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "History of the book",
+          "language": "en",
+          "libraryCatalog": "MetaPress",
+          "callNumber": "",
+          "rights": "",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "Manuscript Production and Dissemination"
+            }
+          ],
+          "collections": [],
+          "relations": {},
+          "dateAdded": "2025-12-19T06:39:10Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "3SBKEBVF",
+          "version": 13915,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "3SBKEBVF",
+            "version": 13915,
+            "parentItem": "S3AZYLSF",
+            "itemType": "attachment",
+            "linkMode": "imported_url",
+            "title": "MetaPress Full Text PDF",
+            "accessDate": "2013-01-16T23:08:43Z",
+            "url": "http://brepols.metapress.com/content/64716788r31156q2/fulltext.pdf",
+            "note": "",
+            "contentType": "application/pdf",
+            "charset": "",
+            "filename": "Gillespie - 2007 - The History of the Book.pdf",
+            "md5": null,
+            "mtime": null,
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-12-19T06:39:10Z",
+            "dateModified": "2025-12-19T06:39:10Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "KM32WX7L",
+          "version": 13915,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "KM32WX7L",
+            "version": 13915,
+            "parentItem": "S3AZYLSF",
+            "itemType": "attachment",
+            "linkMode": "imported_url",
+            "title": "MetaPress Snapshot",
+            "accessDate": "2013-01-16T23:10:19Z",
+            "url": "http://brepols.metapress.com/content/64716788R31156Q2",
+            "note": "",
+            "contentType": "text/html",
+            "charset": "utf-8",
+            "filename": "64716788R31156Q2.html",
+            "md5": null,
+            "mtime": null,
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-12-19T06:39:10Z",
+            "dateModified": "2025-12-19T06:39:10Z"
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "Y4YC85KE",
+        "version": 14943,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "Y4YC85KE",
+          "version": 14943,
+          "itemType": "letter",
+          "title": "",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "G. P.",
+              "lastName": "Zacharius"
+            },
+            {
+              "creatorType": "recipient",
+              "firstName": "William",
+              "lastName": "Rickel"
+            },
+            {
+              "creatorType": "translator",
+              "firstName": "William",
+              "lastName": "Rickel"
+            }
+          ],
+          "abstractNote": "",
+          "letterType": "",
+          "date": "1953-08-15",
+          "eventPlace": "",
+          "DOI": "",
+          "citationKey": "zacharius1953",
+          "url": "",
+          "accessDate": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "APA7 402",
+          "extra": "archive-place: Copy in possession of Hendrika Vande Kemp",
+          "tags": [
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["DMKBHP6P", "MR2N872S"],
+          "relations": {
+            "dc:replaces": "http://zotero.org/groups/2205533/items/2TMXF5BJ"
+          },
+          "dateAdded": "2018-11-08T20:39:29Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "2JNKIQWB",
+          "version": 6377,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "2JNKIQWB",
+            "version": 6377,
+            "parentItem": "Y4YC85KE",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-02-20T22:22:41Z",
+            "dateModified": "2025-04-09T19:54:33Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "LYIJRB43",
+          "version": 4051,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "LYIJRB43",
+            "version": 4051,
+            "parentItem": "Y4YC85KE",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-11-21T19:38:54Z",
+            "dateModified": "2019-11-21T19:39:16Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "92LLEIJT",
+        "version": 15021,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "92LLEIJT",
+          "version": 15021,
+          "itemType": "magazineArticle",
+          "title": "Geschichten der romanischen und germanischen Völker",
+          "creators": [
+            {
+              "creatorType": "reviewedAuthor",
+              "firstName": "Leopold von",
+              "lastName": "Ranke"
+            }
+          ],
+          "abstractNote": "",
+          "publicationTitle": "Ergänzungsblätter zur Allgemeinen Literatur-Zeitung",
+          "publisher": "",
+          "place": "",
+          "date": "February 1828",
+          "volume": "4",
+          "issue": "23–24",
+          "pages": "183–189",
+          "ISSN": "",
+          "DOI": "",
+          "citationKey": "rankeGeschichtenRomanischenUnd1828",
+          "url": "https://hdl.handle.net/2027/uc1.$b196747",
+          "accessDate": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "de",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "CMOS18 14.102",
+          "extra": "",
+          "tags": [],
+          "collections": ["5V67EPX3"],
+          "relations": {
+            "dc:replaces": "http://zotero.org/groups/2205533/items/TZEBICKY"
+          },
+          "dateAdded": "2025-03-31T16:58:48Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "FWXM89VX",
+          "version": 12768,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "FWXM89VX",
+            "version": 12768,
+            "parentItem": "92LLEIJT",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-09-06T06:18:08Z",
+            "dateModified": "2025-09-06T18:46:52Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "3W4BL43Y",
+        "version": 14969,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "3W4BL43Y",
+          "version": 14969,
+          "itemType": "manuscript",
+          "title": "Marion Taylor today—by the biographer",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "A.",
+              "lastName": "Allport"
+            }
+          ],
+          "abstractNote": "",
+          "manuscriptType": "Unpublished manuscript",
+          "institution": "",
+          "place": "",
+          "date": "",
+          "numPages": "",
+          "number": "",
+          "DOI": "",
+          "citationKey": "allportMarionTaylorToday1937a",
+          "url": "",
+          "accessDate": "",
+          "archive": "Schlesinger Library, Radcliffe College",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "",
+          "extra": "issued: 1937?\narchive-place: Cambridge, MA\narchive_collection: Marion Taylor Papers",
+          "tags": [
+            {
+              "tag": "cleaned"
+            },
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["DMKBHP6P"],
+          "relations": {},
+          "dateAdded": "2018-11-08T20:39:30Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "E9YBKF5X",
+          "version": 855,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "E9YBKF5X",
+            "version": 855,
+            "parentItem": "3W4BL43Y",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-02-05T00:46:50Z",
+            "dateModified": "2019-02-05T00:46:52Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "S7LH9CT9",
+          "version": 800,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "S7LH9CT9",
+            "version": 800,
+            "parentItem": "3W4BL43Y",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-02-04T20:18:33Z",
+            "dateModified": "2019-02-04T20:21:02Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "8H773RZZ",
+        "version": 14975,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "8H773RZZ",
+          "version": 14975,
+          "itemType": "map",
+          "title": "Population density, 2000 U.S. Census",
+          "creators": [
+            {
+              "creatorType": "cartographer",
+              "name": "Lewis County Geographic Information Services"
+            }
+          ],
+          "abstractNote": "",
+          "mapType": "Demographic map",
+          "scale": "",
+          "seriesTitle": "",
+          "edition": "",
+          "publisher": "",
+          "place": "",
+          "date": "2002",
+          "DOI": "",
+          "ISBN": "",
+          "citationKey": "lewiscountygeographicinformationservicesPopulationDensity20002002",
+          "url": "http://maps.lewiscountywa.gov/maps/Demographics/census-popdens_2000.pdf",
+          "accessDate": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "",
+          "extra": "Author role: Cartographer",
+          "tags": [
+            {
+              "tag": "cleaned"
+            },
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["DMKBHP6P"],
+          "relations": {},
+          "dateAdded": "2018-11-08T20:39:05Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "HBXJXKAK",
+          "version": 4056,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "HBXJXKAK",
+            "version": 4056,
+            "parentItem": "8H773RZZ",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2018-12-02T18:36:41Z",
+            "dateModified": "2018-12-16T12:16:54Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "P6M963G8",
+          "version": 673,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "P6M963G8",
+            "version": 673,
+            "parentItem": "8H773RZZ",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2018-12-16T12:16:58Z",
+            "dateModified": "2018-12-16T12:17:03Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "S2RWNWZ7",
+        "version": 15057,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "S2RWNWZ7",
+          "version": 15057,
+          "itemType": "newspaperArticle",
+          "title": "Christ Church Cathedral",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "H. G.",
+              "lastName": "Liddell"
+            }
+          ],
+          "abstractNote": "",
+          "publicationTitle": "The Times",
+          "publisher": "",
+          "place": "London",
+          "date": "1871-05-20",
+          "volume": "",
+          "issue": "27068",
+          "edition": "",
+          "section": "",
+          "pages": "12",
+          "ISSN": "0140-0460",
+          "DOI": "",
+          "citationKey": "liddellChristChurchCathedral1871",
+          "url": "https://link.gale.com/apps/doc/CS202550452/TTDA",
+          "accessDate": "2025-06-06T17:27:45Z",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "The Times Digital Archive",
+          "callNumber": "",
+          "rights": "",
+          "extra": "genre: letter to the editor",
+          "tags": [
+            {
+              "tag": "Church buildings",
+              "type": 1
+            }
+          ],
+          "collections": [],
+          "relations": {},
+          "dateAdded": "2025-06-22T21:38:00Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "9I3HZZD7",
+          "version": 10454,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "9I3HZZD7",
+            "version": 10454,
+            "parentItem": "S2RWNWZ7",
+            "itemType": "attachment",
+            "linkMode": "imported_file",
+            "title": "PDF",
+            "accessDate": "",
+            "url": "",
+            "note": "",
+            "contentType": "application/pdf",
+            "charset": "",
+            "filename": "Liddell - 1871 - Christ Church Cathedral.pdf",
+            "md5": null,
+            "mtime": null,
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-06-22T21:38:00Z",
+            "dateModified": "2025-06-22T21:38:00Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "5J6C7H4H",
+        "version": 15020,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "5J6C7H4H",
+          "version": 15020,
+          "itemType": "patent",
+          "title": "Cement admixture",
+          "creators": [
+            {
+              "creatorType": "inventor",
+              "firstName": "Masanori",
+              "lastName": "Iizuka"
+            },
+            {
+              "creatorType": "inventor",
+              "firstName": "Hideki",
+              "lastName": "Tanaka"
+            }
+          ],
+          "abstractNote": "",
+          "place": "",
+          "country": "US",
+          "assignee": "Kao Corp",
+          "issuingAuthority": "US",
+          "patentNumber": "4,586,960",
+          "filingDate": "1984-06-26",
+          "pages": "",
+          "applicationNumber": "US06624634",
+          "priorityNumbers": "",
+          "issueDate": "1986-05-06",
+          "priorityDate": "",
+          "references": "",
+          "legalStatus": "",
+          "DOI": "",
+          "citationKey": "iizukaCementAdmixture1986",
+          "url": "https://patents.google.com/patent/US4586960A/",
+          "accessDate": "2025-03-31T17:46:57Z",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "CMOS18 14.158",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "cement",
+              "type": 1
+            },
+            {
+              "tag": "composition",
+              "type": 1
+            },
+            {
+              "tag": "copolymer",
+              "type": 1
+            },
+            {
+              "tag": "monomer",
+              "type": 1
+            },
+            {
+              "tag": "water",
+              "type": 1
+            }
+          ],
+          "collections": ["5V67EPX3"],
+          "relations": {},
+          "dateAdded": "2025-03-31T17:46:57Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 0
+        }
+      },
+      "children": []
+    },
+    {
+      "item": {
+        "key": "MULZ8DMP",
+        "version": 15002,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "MULZ8DMP",
+          "version": 15002,
+          "itemType": "podcast",
+          "title": "Goodbye, routine; hello, meltdown!",
+          "creators": [
+            {
+              "creatorType": "podcaster",
+              "firstName": "Lauren",
+              "lastName": "Ober"
+            }
+          ],
+          "abstractNote": "Learn the story of Lauren Ober’s journey to understand what it means to be troubled with sensory processing issues and major anxiety disorder. Check her story here!",
+          "seriesTitle": "",
+          "episodeNumber": "season 1, episode 2",
+          "audioFileType": "podcast",
+          "date": "2022-09-13",
+          "publisher": "Pushkin Industries",
+          "place": "",
+          "runningTime": "41 min., 37 sec.",
+          "DOI": "",
+          "citationKey": "GoodbyeRoutineHello2022",
+          "url": "https://www.pushkin.fm/podcasts/loudest-girl-in-the-world",
+          "accessDate": "2025-02-24T18:24:41Z",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "CMOS18 14.168 (quick)",
+          "extra": "container-title: The loudest girl in the world",
+          "tags": [],
+          "collections": ["5V67EPX3"],
+          "relations": {},
+          "dateAdded": "2025-02-24T18:24:41Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "L8GNNW4W",
+          "version": 9204,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "L8GNNW4W",
+            "version": 9204,
+            "parentItem": "MULZ8DMP",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-04-29T23:32:38Z",
+            "dateModified": "2025-05-24T19:28:51Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "P36ZRHQU",
+        "version": 15049,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "P36ZRHQU",
+          "version": 15049,
+          "itemType": "preprint",
+          "title": "When money talks: judging risk and coercion in high-paying clinical trials",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Christina",
+              "lastName": "Leuker"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Lasare",
+              "lastName": "Samartzidis"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Ralph",
+              "lastName": "Hertwig"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Timothy",
+              "lastName": "Pleskac"
+            }
+          ],
+          "abstractNote": "Millions of volunteers take part in clinical trials every year. This is unsurprising, given that clinical trials are often much more lucrative than other types of unskilled work. When clinical trials offer very high pay, however, some people consider them repugnant. To understand why, we asked 1,428 respondents to evaluate a hypothetical medical trial for a new Ebola vaccine offering three different payment amounts. Some respondents (27%) used very high pay (£10,000) as a cue to infer the potential risks the clinical trial posed. These respondents were also concerned that offering £10,000 was coercive—simply too profitable to pass up. Both perceived risk and coercion in high-paying clinical trials shape how people evaluate these trials. This result was robust within and between respondents. The link between risk and repugnance may generalize to other markets in which parties are partially remunerated for the risk they take and contributes to a more complete understanding of why some market transactions appear repugnant.",
+          "genre": "",
+          "repository": "PsyArXiv",
+          "archiveID": "",
+          "place": "",
+          "date": "2018-04-13",
+          "series": "",
+          "seriesNumber": "",
+          "DOI": "10.17605/osf.io/9p7cb",
+          "citationKey": "leukerWhenMoneyTalks2018",
+          "url": "https://psyarxiv.com/9p7cb/",
+          "accessDate": "2025-05-30T09:20:59Z",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "When money talks",
+          "language": "en-us",
+          "libraryCatalog": "OSF Preprints",
+          "callNumber": "",
+          "rights": "APA7 73a",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "Cognitive Psychology",
+              "type": 1
+            },
+            {
+              "tag": "FOS: Psychology",
+              "type": 1
+            },
+            {
+              "tag": "Psychology",
+              "type": 1
+            },
+            {
+              "tag": "Social and Behavioral Sciences",
+              "type": 1
+            },
+            {
+              "tag": "clinical trials",
+              "type": 1
+            },
+            {
+              "tag": "coercion",
+              "type": 1
+            },
+            {
+              "tag": "payment",
+              "type": 1
+            },
+            {
+              "tag": "repugnant transactions",
+              "type": 1
+            },
+            {
+              "tag": "risk",
+              "type": 1
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {
+            "dc:replaces": [
+              "http://zotero.org/groups/2205533/items/8X6V2Q5A",
+              "http://zotero.org/groups/2205533/items/LTQ7Z8BP"
+            ]
+          },
+          "dateAdded": "2025-05-30T09:20:59Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "HSLX7YCZ",
+          "version": 9578,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "HSLX7YCZ",
+            "version": 9578,
+            "parentItem": "P36ZRHQU",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [
+              {
+                "tag": "robustness"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-10-17T20:57:43Z",
+            "dateModified": "2025-05-30T09:21:53Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "QBL6LXZU",
+        "version": 14970,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "QBL6LXZU",
+          "version": 14970,
+          "itemType": "presentation",
+          "title": "Housing, credit, and consumer expenditure",
+          "creators": [
+            {
+              "creatorType": "presenter",
+              "firstName": "J.",
+              "lastName": "Muellbauer"
+            },
+            {
+              "creatorType": "chair",
+              "firstName": "S. C.",
+              "lastName": "Ludvigson"
+            }
+          ],
+          "abstractNote": "",
+          "presentationType": "symposium",
+          "date": "2007-09",
+          "meetingName": "meeting of the Federal Reserve Bank of Kansas City",
+          "place": "Jackson Hole, WY",
+          "series": "",
+          "sessionTitle": "Housing and consumer behavior",
+          "DOI": "",
+          "citationKey": "muellbauerHousingCreditConsumer2007",
+          "url": "",
+          "accessDate": "",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "cleaned"
+            },
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["DMKBHP6P"],
+          "relations": {},
+          "dateAdded": "2018-11-08T20:39:26Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "PZW2FPVQ",
+          "version": 848,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "PZW2FPVQ",
+            "version": 848,
+            "parentItem": "QBL6LXZU",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-02-05T00:08:20Z",
+            "dateModified": "2019-02-05T00:08:23Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "XRLL9DXE",
+          "version": 4053,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "XRLL9DXE",
+            "version": 4053,
+            "parentItem": "QBL6LXZU",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-02-20T22:05:33Z",
+            "dateModified": "2019-02-20T22:05:54Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "8NUJFXJ7",
+        "version": 15033,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "8NUJFXJ7",
+          "version": 15033,
+          "itemType": "radioBroadcast",
+          "title": "'If you have a face, you have a place in the conversation about AI,' expert says",
+          "creators": [
+            {
+              "creatorType": "creator",
+              "firstName": "Joy",
+              "lastName": "Buolamwini"
+            }
+          ],
+          "abstractNote": "Computer scientist Joy Buolamwini warns that facial recognition technology is riddled with the biases of its creators. She is the author of Unmasking AI and founder of the Algorithmic Justice League.",
+          "programTitle": "Fresh Air",
+          "episodeNumber": "",
+          "audioRecordingFormat": "audio",
+          "network": "NPR",
+          "place": "",
+          "date": "2023-11-28",
+          "runningTime": "37:58",
+          "DOI": "",
+          "citationKey": "buolamwiniIfYouHave2023a",
+          "url": "https://www.npr.org/2023/11/28/1215529902/unmasking-ai-facial-recognition-technology-joy-buolamwini",
+          "accessDate": "2025-02-24T11:47:55Z",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "NPR",
+          "callNumber": "",
+          "rights": "CMOS18 14.110 (quick)",
+          "extra": "interviewer: Mosley || Tonya",
+          "tags": [
+            {
+              "tag": "inconsistent rules"
+            }
+          ],
+          "collections": ["5V67EPX3"],
+          "relations": {
+            "dc:replaces": "http://zotero.org/groups/2205533/items/BSSQV2DQ"
+          },
+          "dateAdded": "2025-02-24T11:49:41Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 0
+        }
+      },
+      "children": []
+    },
+    {
+      "item": {
+        "key": "522RL785",
+        "version": 14943,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "522RL785",
+          "version": 14943,
+          "itemType": "report",
+          "title": "Recommendations for undergraduate public health education",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Richard K.",
+              "lastName": "Riegelman"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Susan",
+              "lastName": "Albertine"
+            }
+          ],
+          "abstractNote": "This curriculum guide serves to assist faculty who are developing undergraduate courses in public health as well as educational administrators and faculty curriculum committees who are designing undergraduate public health curricula. The approach outlined in these recommendations focuses on the development of three core courses, each of which is designed to fulfill general education requirements. All three of the courses could be taken as part of general education and could form the core curriculum for a minor in public health. The three courses that are outlined in detail in these recommendations are: (1) Public Health 101: An introductory overview course designed to fulfill a social science requirement, perhaps integrated into the humanities, advancing both intellectual and practical skills and embracing civic learning and application; (2) Epidemiology 101: An introductory course illustrating the scientific method and designed to fulfill a science requirement, including  the option for an \"epidemiology laboratory,\" integrating such skills as quantitative thinking, inquiry and analysis, and teamwork; and (3) Global Health 101: An introductory course focused on applying public health principles in developing as well as developed countries, designed to fulfill a global studies integrative requirement, perhaps incorporating service and research. Public health practitioners as well as faculty from clinical disciplines that apply public health principles, such as nursing, may be eager to collaborate in order to expose students to the world of public health practice. These recommendations were developed as part of the Faculty Development Program of the Association for Prevention Teaching and Research (APTR) and the Association of American Colleges and Universities (AAC&U), funded through the APTR-CDC Cooperative Agreement. The recommendations are not official recommendations of APTR or AAC&U. (Contains 2 boxes, showing the LEAP (Liberal Education and America's Promise) essential learning outcomes and the generic structure for a minor in Public Health.",
+          "reportNumber": "ED504790",
+          "reportType": "",
+          "institution": "Association of American Colleges and Universities",
+          "place": "",
+          "date": "2008/10/00",
+          "seriesTitle": "",
+          "seriesNumber": "",
+          "pages": "",
+          "DOI": "",
+          "ISBN": "",
+          "citationKey": "riegelmanRecommendationsUndergraduatePublic2008",
+          "url": "https://eric.ed.gov/?id=ED504790",
+          "accessDate": "2019-10-28T00:21:15Z",
+          "ISSN": "",
+          "archive": "ERIC",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "ERIC",
+          "callNumber": "",
+          "rights": "APA7 505",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-28T00:21:15Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "PE57EBBC",
+          "version": 4050,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "PE57EBBC",
+            "version": 4050,
+            "parentItem": "522RL785",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [
+              {
+                "tag": "bad manual data"
+              },
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-11-21T21:52:17Z",
+            "dateModified": "2019-11-21T21:52:24Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "4K5JLZZB",
+        "version": 14945,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "4K5JLZZB",
+          "version": 14945,
+          "itemType": "report",
+          "title": "Taking time: support for people with cancer",
+          "creators": [
+            {
+              "creatorType": "author",
+              "name": "National Cancer Institute"
+            }
+          ],
+          "abstractNote": "",
+          "reportNumber": "18-2059",
+          "reportType": "NIH Publication",
+          "institution": "U.S. Department of Health and Human Services, National Institutes of Health",
+          "place": "",
+          "date": "2019",
+          "seriesTitle": "",
+          "seriesNumber": "",
+          "pages": "",
+          "DOI": "",
+          "ISBN": "",
+          "citationKey": "nationalcancerinstituteTakingTimeSupport2019",
+          "url": "https://www.cancer.gov/publications/patient-education/takingtime.pdf",
+          "accessDate": "",
+          "ISSN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "Taking time",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "APA7 210",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-27T23:23:27Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "DNIRW23P",
+          "version": 2116,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "DNIRW23P",
+            "version": 2116,
+            "parentItem": "4K5JLZZB",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-11-21T19:16:22Z",
+            "dateModified": "2019-11-21T19:16:28Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "P4PLPDIX",
+        "version": 15034,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "P4PLPDIX",
+          "version": 15034,
+          "itemType": "standard",
+          "title": "Bibliographic references",
+          "creators": [],
+          "abstractNote": "",
+          "organization": "National Information Standards Organization",
+          "committee": "",
+          "type": "ANSI/NISO",
+          "number": "Z39.29-2005 (R2010)",
+          "versionNumber": "",
+          "edition": "",
+          "status": "approved June 9, 2005; reaffirmed",
+          "date": "May 13, 2010",
+          "publisher": "NISO",
+          "place": "Bethesda, MD",
+          "partNumber": "",
+          "partTitle": "",
+          "ISBN": "978-1-937522-26-1",
+          "DOI": "10.3789/ansi.niso.z39.29-2005R2010",
+          "citationKey": "BibliographicReferences2010",
+          "url": "https://www.niso.org/publications/ansiniso-z3929-2005-r2010",
+          "accessDate": "2025-04-11T21:47:34Z",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "numPages": "",
+          "language": "en",
+          "libraryCatalog": "DOI.org (Crossref)",
+          "callNumber": "",
+          "rights": "CMOS18 14.159",
+          "extra": "ISSN: 1041-5653",
+          "tags": [
+            {
+              "tag": "CSL limitation"
+            },
+            {
+              "tag": "inconsistent rules"
+            }
+          ],
+          "collections": ["5V67EPX3"],
+          "relations": {},
+          "dateAdded": "2025-04-11T21:47:34Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "Z5WJYDD2",
+          "version": 9702,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "Z5WJYDD2",
+            "version": 9702,
+            "parentItem": "P4PLPDIX",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-06-03T14:28:51Z",
+            "dateModified": "2025-06-03T14:29:20Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "DBNJMQHZ",
+        "version": 15020,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "DBNJMQHZ",
+          "version": 15020,
+          "itemType": "statute",
+          "nameOfAct": "American rescue plan act",
+          "creators": [],
+          "abstractNote": "",
+          "code": "Stat.",
+          "codeNumber": "135",
+          "publicLawNumber": "117\\-2",
+          "dateEnacted": "2021-03-11",
+          "pages": "4",
+          "section": "",
+          "session": "",
+          "history": "",
+          "DOI": "",
+          "citationKey": "AmericanRescuePlan2021",
+          "url": "https://www.govinfo.gov/app/details/PLAW-117publ2",
+          "accessDate": "2025-03-31T17:40:34Z",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "CMOS18 14.183",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["5V67EPX3"],
+          "relations": {},
+          "dateAdded": "2025-03-31T17:40:34Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "CTYWL6Q3",
+          "version": 5665,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "CTYWL6Q3",
+            "version": 5665,
+            "parentItem": "DBNJMQHZ",
+            "itemType": "attachment",
+            "linkMode": "imported_url",
+            "title": "USLM rendition",
+            "accessDate": "2025-03-31T17:40:44Z",
+            "url": "https://www.govinfo.gov/content/pkg/PLAW-117publ2/uslm/PLAW-117publ2.xml",
+            "note": "",
+            "contentType": "application/xml",
+            "charset": "utf-8",
+            "filename": "PLAW-117publ2.xml",
+            "md5": null,
+            "mtime": null,
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-03-31T17:40:44Z",
+            "dateModified": "2025-03-31T17:40:44Z"
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "JA3W6QNM",
+        "version": 15042,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "JA3W6QNM",
+          "version": 15042,
+          "itemType": "thesis",
+          "title": "Building a foundation for evaluation of instruction in higher education and continuing education",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Ronald Jerry",
+              "lastName": "Adams"
+            }
+          ],
+          "abstractNote": "",
+          "thesisType": "Doctoral dissertation",
+          "university": "Ohio State University",
+          "place": "",
+          "date": "1974",
+          "series": "",
+          "seriesNumber": "",
+          "numPages": "",
+          "DOI": "",
+          "ISBN": "",
+          "citationKey": "adamsBuildingFoundationEvaluation1974",
+          "url": "http://rave.ohiolink.edu/etdc/view?acc_num=osu148674672383062",
+          "accessDate": "2025-04-30T00:34:28Z",
+          "ISSN": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "etd.ohiolink.edu",
+          "callNumber": "",
+          "rights": "",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "cleaned"
+            }
+          ],
+          "collections": ["DMKBHP6P"],
+          "relations": {
+            "dc:replaces": "http://zotero.org/groups/2205533/items/97XKLF7D"
+          },
+          "dateAdded": "2018-11-08T20:39:02Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "5B74JAMI",
+          "version": 8180,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "5B74JAMI",
+            "version": 8180,
+            "parentItem": "JA3W6QNM",
+            "itemType": "attachment",
+            "linkMode": "imported_url",
+            "title": "Full Text PDF",
+            "accessDate": "2025-04-30T00:34:44Z",
+            "url": "https://etd.ohiolink.edu/acprod/odb_etd/ws/send_file/send?accession=osu148674672383062&disposition=inline",
+            "note": "",
+            "contentType": "application/pdf",
+            "charset": "",
+            "filename": "Adams - 1974 - Building a foundation for evaluation of instruction in higher education and continuing education .pdf",
+            "md5": null,
+            "mtime": null,
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-04-30T00:34:44Z",
+            "dateModified": "2025-04-30T00:34:44Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "P9AMYL6Y",
+        "version": 14978,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "P9AMYL6Y",
+          "version": 14978,
+          "itemType": "thesis",
+          "title": "Dealing with dual differences: social coping strategies of gifted and lesbian, gay, bisexual, transgender, and queer adolescents",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Virginia H.",
+              "lastName": "Hutcheson"
+            }
+          ],
+          "abstractNote": "",
+          "thesisType": "master's thesis",
+          "university": "The College of William & Mary",
+          "place": "",
+          "date": "2012-05",
+          "series": "",
+          "seriesNumber": "",
+          "numPages": "",
+          "DOI": "",
+          "ISBN": "",
+          "citationKey": "hutchesonDealingDualDifferences2012",
+          "url": "https://hdl.handle.net/10288/16594",
+          "accessDate": "2019-10-18",
+          "ISSN": "",
+          "archive": "William & Mary Digital Archive",
+          "archiveLocation": "",
+          "shortTitle": "Dealing with dual differences",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "APA7 66",
+          "extra": "",
+          "tags": [],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-18T14:24:52Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "XTCC899Y",
+          "version": 2035,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "XTCC899Y",
+            "version": 2035,
+            "parentItem": "P9AMYL6Y",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "bad manual data"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-10-25T20:41:39Z",
+            "dateModified": "2019-10-25T20:41:57Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "5QRGQPHV",
+        "version": 14970,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "5QRGQPHV",
+          "version": 14970,
+          "itemType": "tvBroadcast",
+          "title": "Failure to communicate",
+          "creators": [
+            {
+              "creatorType": "director",
+              "firstName": "J.",
+              "lastName": "Alexander"
+            },
+            {
+              "creatorType": "scriptwriter",
+              "firstName": "D.",
+              "lastName": "Egan"
+            },
+            {
+              "creatorType": "executiveProducer",
+              "firstName": "D.",
+              "lastName": "Shore"
+            }
+          ],
+          "abstractNote": "",
+          "programTitle": "House",
+          "episodeNumber": "season 2, episode 10",
+          "videoRecordingFormat": "Television series episode",
+          "network": "Fox Broadcasting",
+          "place": "New York, NY",
+          "date": "2005",
+          "runningTime": "",
+          "DOI": "",
+          "citationKey": "alexanderFailureCommunicate2005",
+          "url": "",
+          "accessDate": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "cleaned"
+            }
+          ],
+          "collections": ["DMKBHP6P"],
+          "relations": {},
+          "dateAdded": "2018-11-08T20:39:27Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 1
+        }
+      },
+      "children": [
+        {
+          "key": "3YMLE4L7",
+          "version": 817,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "3YMLE4L7",
+            "version": 817,
+            "parentItem": "5QRGQPHV",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-02-04T20:44:49Z",
+            "dateModified": "2019-02-04T20:44:54Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "4ZDNIG8L",
+        "version": 14951,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "4ZDNIG8L",
+          "version": 14951,
+          "itemType": "videoRecording",
+          "title": "Responding therapeutically to patient expression of sexual attraction",
+          "creators": [
+            {
+              "creatorType": "director",
+              "name": "American Psychological Association"
+            }
+          ],
+          "abstractNote": "",
+          "videoRecordingFormat": "DVD",
+          "seriesTitle": "",
+          "volume": "",
+          "numberOfVolumes": "",
+          "studio": "",
+          "place": "",
+          "date": "2007",
+          "runningTime": "",
+          "ISBN": "",
+          "DOI": "",
+          "citationKey": "americanpsychologicalassociationRespondingTherapeuticallyPatient2007",
+          "url": "http://www.apa.org/pubs/videos/4310767.aspx",
+          "accessDate": "",
+          "archive": "",
+          "archiveLocation": "",
+          "shortTitle": "",
+          "language": "en",
+          "libraryCatalog": "",
+          "callNumber": "",
+          "rights": "",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "cleaned"
+            },
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["DMKBHP6P"],
+          "relations": {},
+          "dateAdded": "2018-11-08T20:39:04Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "3STMYWWW",
+          "version": 672,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "3STMYWWW",
+            "version": 672,
+            "parentItem": "4ZDNIG8L",
+            "itemType": "note",
+            "note": "<table><tr><td>group</td><td>n</td></tr><tr><td>A</td><td>12</td></tr></table>",
+            "tags": [
+              {
+                "tag": "CSL change"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2018-12-16T12:08:58Z",
+            "dateModified": "2018-12-16T12:09:04Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "KCH4CAA6",
+          "version": 4056,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "KCH4CAA6",
+            "version": 4056,
+            "parentItem": "4ZDNIG8L",
+            "itemType": "note",
+            "note": "<p>Read the second chapter again before citing.</p>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2018-12-04T20:56:08Z",
+            "dateModified": "2018-12-16T12:09:33Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    },
+    {
+      "item": {
+        "key": "24FLGD9C",
+        "version": 14962,
+        "library": {
+          "type": "group",
+          "id": 2205533
+        },
+        "data": {
+          "key": "24FLGD9C",
+          "version": 14962,
+          "itemType": "webpage",
+          "title": "Ethics principles",
+          "creators": [
+            {
+              "creatorType": "author",
+              "firstName": "Janet",
+              "lastName": "Boddy"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Tim",
+              "lastName": "Neumann"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Sean",
+              "lastName": "Jennings"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Virginia",
+              "lastName": "Morrow"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Priscilla",
+              "lastName": "Alderson"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Rebecca",
+              "lastName": "Rees"
+            },
+            {
+              "creatorType": "author",
+              "firstName": "Will",
+              "lastName": "Gibson"
+            }
+          ],
+          "abstractNote": "",
+          "websiteTitle": "The research ethics guidebook: a resource for social scientists",
+          "websiteType": "",
+          "date": "",
+          "publisher": "",
+          "place": "",
+          "DOI": "",
+          "citationKey": "boddyEthicsPrinciples",
+          "url": "http://www.ethicsguidebook.ac.uk/EthicsPrinciples",
+          "accessDate": "2019-10-18T14:50:58Z",
+          "shortTitle": "",
+          "language": "en",
+          "rights": "APA7 113a",
+          "extra": "",
+          "tags": [
+            {
+              "tag": "incorrect output"
+            }
+          ],
+          "collections": ["MR2N872S"],
+          "relations": {},
+          "dateAdded": "2019-10-18T14:50:58Z",
+          "dateModified": "2026-02-16T17:49:34Z"
+        },
+        "meta": {
+          "numChildren": 2
+        }
+      },
+      "children": [
+        {
+          "key": "R27Q277H",
+          "version": 4051,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "R27Q277H",
+            "version": 4051,
+            "parentItem": "24FLGD9C",
+            "itemType": "note",
+            "note": "<h2>Method</h2><p>See <a href=\"https://example.org/protocol\">the protocol</a>.</p><ul><li>sample size</li><li>blinding</li></ul>",
+            "tags": [
+              {
+                "tag": "inconsistent rules"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-11-21T17:33:19Z",
+            "dateModified": "2019-11-21T17:33:50Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        },
+        {
+          "key": "VDJQUF4G",
+          "version": 2105,
+          "library": {
+            "type": "group",
+            "id": 2205533
+          },
+          "data": {
+            "key": "VDJQUF4G",
+            "version": 2105,
+            "parentItem": "24FLGD9C",
+            "itemType": "note",
+            "note": "<p><strong>Key point:</strong> the effect holds only for the <em>first</em> cohort.</p>",
+            "tags": [
+              {
+                "tag": "bad manual data"
+              }
+            ],
+            "relations": {},
+            "dateAdded": "2019-11-21T17:31:11Z",
+            "dateModified": "2019-11-21T17:31:27Z"
+          },
+          "meta": {
+            "numChildren": 0
+          }
+        }
+      ]
+    }
+  ]
+}

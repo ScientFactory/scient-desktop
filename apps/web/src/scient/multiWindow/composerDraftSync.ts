@@ -66,9 +66,6 @@ function reconcileRemoteComposerDraft(
       const local = previousFiles.get(file.id)?.file;
       return local && !file.file ? { ...file, file: local } : file;
     }),
-    ...(previous.contextThreadId && !next.contextThreadId
-      ? { contextThreadId: previous.contextThreadId }
-      : {}),
   };
 }
 

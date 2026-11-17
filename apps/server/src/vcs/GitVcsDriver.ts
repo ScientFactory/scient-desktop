@@ -14,6 +14,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
+  VcsCheckpointStorageError,
   VcsExecutableUnavailableError,
   VcsProcessExitError,
   VcsUnsupportedOperationError,
@@ -40,18 +41,17 @@ import {
 } from "@t3tools/contracts";
 import { CommandAvailability } from "@t3tools/shared/shell";
 import {
-  checkpointCleanGitEnv,
+  boundCheckpointCapture,
+  CheckpointPublicationWitness,
   makeCheckpointSizeCheck,
-  prepareCheckpointStagingRepo,
-  publishStagedCheckpoint,
   remainingCheckpointCaptureMs,
-  scopedCheckpointCapture,
 } from "./ScientCheckpointCapture.ts";
 // SCIENT-FORK:START — checkpoint repositories get server-owned Git upkeep.
 import { CheckpointUpkeep } from "./ScientCheckpointUpkeep.ts";
 // SCIENT-FORK:END
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -594,8 +594,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
     args: ReadonlyArray<string>,
     options?: {
       readonly stdin?: string;
-      // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
-      readonly stdinBytes?: Uint8Array;
+      // SCIENT-FORK:START — stdout consumers for checkpoint capture.
       readonly onStdoutChunk?: VcsProcess.VcsProcessInput["onStdoutChunk"];
       readonly onStdoutChunkEffect?: VcsProcess.VcsProcessInput["onStdoutChunkEffect"];
       // SCIENT-FORK:END
@@ -615,8 +614,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
       cwd,
       spawnCwd: globalThis.process.cwd(),
       ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
-      // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
-      ...(options?.stdinBytes !== undefined ? { stdinBytes: options.stdinBytes } : {}),
+      // SCIENT-FORK:START — stdout consumers for checkpoint capture.
       ...(options?.onStdoutChunk !== undefined ? { onStdoutChunk: options.onStdoutChunk } : {}),
       ...(options?.onStdoutChunkEffect !== undefined
         ? { onStdoutChunkEffect: options.onStdoutChunkEffect }
@@ -707,8 +705,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
-      // SCIENT-FORK:START — binary stdin and stdout consumers for checkpoint capture.
-      ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
+      // SCIENT-FORK:START — stdout consumers for checkpoint capture.
       ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
       ...(input.onStdoutChunkEffect !== undefined
         ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
@@ -1173,17 +1170,47 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const hostEnv = yield* HostProcess.Environment;
+      // VcsProcess clears inherited object selectors, so every other command uses this store.
+      const sharedObjects = path.join(gitCommonDir, "objects");
+      const quotedObjects = quoteGitPatchPath(sharedObjects);
+      // Isolate bulk-checkin packs so cleanup cannot remove another Git writer's objects.
+      const privateObjects = yield* Effect.acquireRelease(
+        fileSystem
+          .makeTempDirectory({ directory: sharedObjects, prefix: "tmp_objdir-t3-checkpoint-" })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new VcsCheckpointStorageError({
+                  operation,
+                  cwd: input.cwd,
+                  stage: "isolate",
+                  cause,
+                }),
+            ),
+          ),
+        (directory) =>
+          fileSystem.remove(directory, { recursive: true, force: true }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not remove private checkpoint objects", {
+                reason: cause.reason._tag,
+              }),
+            ),
+          ),
+      );
       const commitEnv: NodeJS.ProcessEnv = {
         GIT_INDEX_FILE: tempIndexPath,
+        GIT_OBJECT_DIRECTORY: privateObjects,
+        // A filter must not publish refs that depend on our disposable store.
+        GIT_QUARANTINE_PATH: privateObjects,
+        // Git accepts C-quoted alternate paths, including path-list separators.
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: quotedObjects.startsWith('"')
+          ? quotedObjects
+          : `"${quotedObjects}"`,
         GIT_AUTHOR_NAME: "Scient",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
         GIT_COMMITTER_NAME: "Scient",
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
       };
-
-      // SCIENT-FORK:START — Git commands that must not inherit a caller's repository.
-      const cleanGitEnv = checkpointCleanGitEnv();
-      // SCIENT-FORK:END
 
       const cleanupTempIndex = Effect.forEach(
         [tempIndexPath, `${tempIndexPath}.lock`],
@@ -1192,18 +1219,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
 
       yield* Effect.gen(function* () {
-        // SCIENT-FORK:START — stage objects in a scoped bare repository.
-        const { stagingRepo, stagedEnv, objectFormat } = yield* prepareCheckpointStagingRepo({
-          execute,
-          fileSystem,
-          path,
-          operation,
-          cwd: input.cwd,
-          gitCommonDir,
-          commitEnv,
-          cleanGitEnv,
-        });
-        // SCIENT-FORK:END
         const sparseConfig = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1239,7 +1254,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation,
               cwd: input.cwd,
               args: [...indexConfig, "read-tree", "--reset", "HEAD"],
-              env: stagedEnv,
+              env: commitEnv,
             });
             // read-tree can rewrite the index, so restore its racy timestamp afterward.
             yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
@@ -1257,7 +1272,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               command: "git",
               cwd: input.cwd,
               args: [...indexConfig, "ls-files", "--full-name", "--sparse", "--stage", "-v", "-z"],
-              env: stagedEnv,
+              env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
               // Only tags and flagged or skip-worktree records matter; scan NUL-delimited records.
@@ -1315,7 +1330,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 cwd: input.cwd,
                 args: [...indexConfig, "sparse-checkout", "check-rules", "-z"],
                 stdin,
-                env: stagedEnv,
+                env: commitEnv,
                 maxOutputBytes: Buffer.byteLength(stdin),
                 outputMode: "error",
               });
@@ -1340,7 +1355,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   "--index-info",
                 ],
                 stdin: flagged.join("\0") + "\0",
-                env: stagedEnv,
+                env: commitEnv,
               });
               yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
             }
@@ -1372,7 +1387,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               args: sparseCheckout
                 ? [...indexConfig, "-c", "index.sparse=true", "read-tree", "--reset", "HEAD"]
                 : [...indexConfig, "read-tree", "HEAD"],
-              env: stagedEnv,
+              env: commitEnv,
             });
           }
         }
@@ -1420,14 +1435,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 /^:000000 ([0-7]{6}) 0+ ([0-9a-f]+) A\t/gm,
                 "$1 $2\t",
               ),
-              env: stagedEnv,
+              env: commitEnv,
             });
           }
           const tracked = yield* execute({
             operation,
             cwd: input.cwd,
             args: [...indexConfig, "ls-files", "--cached", "-z", "--", "."],
-            env: stagedEnv,
+            env: commitEnv,
             maxOutputBytes: 1,
             outputMode: "truncate",
           });
@@ -1440,7 +1455,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        yield* checkCheckpointSize(input.cwd, stagedEnv);
+        // SCIENT-FORK: very large changed files stay out of checkpoints.
+        yield* checkCheckpointSize(input.cwd, commitEnv);
 
         // Untracked files have no stat data in a new index, so git add would rehash every one.
         const untracked =
@@ -1471,7 +1487,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ".",
               ...exclusions,
             ],
-            env: stagedEnv,
+            env: commitEnv,
           });
         const stagingAt = yield* Clock.currentTimeMillis;
         yield* stageFiles([]).pipe(
@@ -1491,7 +1507,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     "--",
                     ".",
                   ],
-                  env: stagedEnv,
+                  env: commitEnv,
                   maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
                 });
                 if (untracked.stdoutTruncated) return yield* error;
@@ -1538,7 +1554,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...indexConfig, ...durableWrite, "write-tree"],
-          env: stagedEnv,
+          env: commitEnv,
         });
         const treeOid = writeTreeResult.stdout.trim();
         if (treeOid.length === 0) {
@@ -1694,7 +1710,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             "-m",
             message,
           ],
-          env: stagedEnv,
+          env: commitEnv,
         });
         const commitOid = commitTreeResult.stdout.trim();
         if (commitOid.length === 0) {
@@ -1707,23 +1723,106 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        // SCIENT-FORK:START — publish the staged commit into the user's repository.
-        yield* publishStagedCheckpoint({
-          execute,
-          fileSystem,
-          path,
-          gitCommonDir,
-          objectFormat,
+        // SCIENT-FORK:START — a fork records the commit it owns before any object or ref lands.
+        yield* (yield* CheckpointPublicationWitness)({
+          cwd: input.cwd,
+          checkpointRef: input.checkpointRef,
+          commitOid,
+        });
+        // SCIENT-FORK:END
+        // Git writers have exited; bound publication by fanout directory.
+        yield* fileSystem.readDirectory(privateObjects).pipe(
+          Effect.flatMap((directories) =>
+            Effect.forEach(
+              directories.filter(
+                (directory) => directory === "pack" || /^[0-9a-f]{2}$/.test(directory),
+              ),
+              (directory) =>
+                Effect.gen(function* () {
+                  const source = path.join(privateObjects, directory);
+                  const destination = path.join(sharedObjects, directory);
+                  // Most fanouts already exist; avoid constructing an EEXIST error
+                  // for each of them on every capture. mkdir still handles the race.
+                  if (!(yield* fileSystem.exists(destination)))
+                    yield* fileSystem.makeDirectory(destination).pipe(
+                      Effect.andThen(
+                        Effect.gen(function* () {
+                          // Git has already applied core.sharedRepository to the source.
+                          // chmod bypasses umask, but never changes a pre-existing bucket.
+                          const { mode } = yield* fileSystem.stat(source);
+                          yield* fileSystem.chmod(destination, mode & 0o7777);
+                        }),
+                      ),
+                      Effect.catchIf(
+                        (cause) => cause.reason._tag === "AlreadyExists",
+                        () => Effect.void,
+                      ),
+                      Effect.uninterruptible,
+                    );
+                  const names = yield* fileSystem.readDirectory(source);
+                  // Per-object spans would swamp the capture span for large workspaces.
+                  const linkObject = Effect.fnUntraced(function* (name: string) {
+                    const from = path.join(source, name);
+                    const to = path.join(destination, name);
+                    yield* fileSystem.link(from, to).pipe(
+                      Effect.catchIf(
+                        (cause) =>
+                          cause.reason._tag === "PermissionDenied" ||
+                          cause.reason._tag === "Unknown",
+                        () =>
+                          Effect.gen(function* () {
+                            if (yield* fileSystem.exists(to)) return;
+                            // Git also falls back to rename without hardlinks; identical object names are interchangeable.
+                            yield* fileSystem.rename(from, to);
+                          }),
+                      ),
+                      Effect.catchIf(
+                        (cause) => cause.reason._tag === "AlreadyExists",
+                        () => Effect.void,
+                      ),
+                    );
+                  });
+                  if (directory !== "pack") {
+                    yield* Effect.forEach(
+                      names.filter((name) => /^(?:[0-9a-f]{38}|[0-9a-f]{62})$/.test(name)),
+                      linkObject,
+                      { discard: true },
+                    );
+                    return;
+                  }
+                  const files = new Set(names);
+                  for (const name of names) {
+                    if (!/^pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.pack$/.test(name)) continue;
+                    const base = name.slice(0, -5);
+                    if (!files.has(`${base}.idx`)) continue;
+                    // Link metadata before the pack so an I/O error cannot strand a
+                    // large unindexed pack. Defer cancellation across this short group
+                    // of links. Never roll back shared links: a concurrent writer may
+                    // already depend on them. Ref publication still happens last.
+                    yield* Effect.forEach(
+                      [".keep", ".promisor", ".rev", ".idx", ".pack"]
+                        .map((extension) => `${base}${extension}`)
+                        .filter((file) => files.has(file)),
+                      linkObject,
+                      { discard: true },
+                    ).pipe(Effect.uninterruptible);
+                  }
+                }),
+              { concurrency: 16, discard: true },
+            ),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new VcsCheckpointStorageError({ operation, cwd: input.cwd, stage: "publish", cause }),
+          ),
+        );
+
+        yield* execute({
           operation,
           cwd: input.cwd,
-          stagingRepo,
-          stagedEnv,
-          cleanGitEnv,
-          durableWrite,
-          commitOid,
-          checkpointRef: input.checkpointRef,
+          args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
-        // Publication skips Git's automatic maintenance; the server runs it later, owned.
+        // SCIENT-FORK:START — the server runs Git's maintenance for checkpoint objects, owned.
         if (Option.isSome(checkpointUpkeep)) yield* checkpointUpkeep.value.request(gitCommonDir);
         // SCIENT-FORK:END
         if (untracked !== undefined) {
@@ -1738,9 +1837,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
       }).pipe(
         Effect.ensuring(cleanupTempIndex),
-        // SCIENT-FORK:START — the staging scope and the whole-capture timeout.
-        scopedCheckpointCapture(operation, input.cwd),
-        // SCIENT-FORK:END
+        // SCIENT-FORK: one deadline for the whole capture.
+        boundCheckpointCapture(operation, input.cwd),
       );
 
       // The tree records only each submodule's HEAD, so submodules keep their own ref.
@@ -1810,7 +1908,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }),
         // SCIENT-FORK:END
       );
-    }),
+    }, Effect.scoped),
 
     hasCheckpointRef: (input) =>
       resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(

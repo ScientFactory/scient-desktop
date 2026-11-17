@@ -1,5 +1,7 @@
 import type { PagedTableLayout } from "./latexPagedGeometry";
 import { resolvedLatexFontSize } from "./latexVisualLayout";
+import { useDocumentQuoteTarget } from "../annotations/documentQuoteTargets";
+import { latexQuote } from "../annotations/quoteFormat";
 import { latexSelectionClipboard } from "./latexClipboard";
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
@@ -15,6 +17,7 @@ import {
   type ResolveLatexSourceOwner,
   type LatexSourceOwner,
 } from "./latexVisualSelection";
+import type { CitationItem } from "@scientfactory/scient-sources";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { latexVisualNodeSignature } from "./latexVisualDocument";
@@ -183,6 +186,9 @@ import {
 } from "~/components/ui/menu";
 import "../markdownEditor/scient-markdown-editor.css";
 import { LatexReferenceDialog } from "./LatexReferenceDialog";
+import { useLatexCitationSuggestions } from "./useLatexCitationSuggestions";
+import { useLatexCitationOpener, type LatexCitationOpener } from "./useLatexCitationOpener";
+import { isCitationOpenClick, latexCitationOpenItems, latexQuoteBefore } from "./latexCitationOpen";
 import { bibliographyChangePublished, mergeBibliographySourceEdit } from "./latexBibliographyModel";
 import {
   LatexReferencesPanel,
@@ -331,7 +337,7 @@ import {
 import { insertLatexBlock } from "./latexInsertion";
 import { LatexBibliographyDialog } from "./LatexBibliographyDialog";
 import { LatexLinkDialog } from "./LatexLinkDialog";
-import { withoutComments } from "./latexAuthoringModel";
+import { bibliographyPaths, withoutComments } from "./latexAuthoringModel";
 import {
   LATEX_PROJECTION_METADATA_REPAIR,
   LatexVisualSearch,
@@ -1670,6 +1676,8 @@ function LatexInlineCommandView({
   const argument = String(node.attrs.argument ?? "");
   const citation = latexCitationParts(String(node.attrs.raw ?? ""));
   const referenceManager = useContext(LatexReferencesContext);
+  const citationOpener = citation ? (referenceManager?.citationOpener ?? null) : null;
+  const pendingCitation = useRef<ReadonlyArray<CitationItem> | null>(null);
   const citationTargets = useLatexReferenceState(
     name === "cite" ? referenceEditor : null,
     (current) => {
@@ -1893,6 +1901,66 @@ function LatexInlineCommandView({
       data-anchor={name === "hypertarget" || undefined}
       data-citation={!!citationTargets || undefined}
       contentEditable={false}
+      onMouseDownCapture={(event: MouseEvent<HTMLElement>) => {
+        pendingCitation.current = null;
+        if (!citation || !citationOpener) return;
+        const key =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>("[data-citation-key]")
+            : null;
+        // Read-only, a plain click opens the source unless it already goes to a reference.
+        const reading =
+          !editable &&
+          event.button === 0 &&
+          !(event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) &&
+          key?.dataset.citationTarget === undefined;
+        if (!isCitationOpenClick(event) && !reading) return;
+        const items = latexCitationOpenItems(
+          argument,
+          citation.notes,
+          key?.dataset.citationKey ?? null,
+        );
+        if (!citationOpener.opens(items)) return;
+        pendingCitation.current = items;
+        // The press would select the citation and open its options.
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClickCapture={(event: MouseEvent<HTMLElement>) => {
+        let items = pendingCitation.current;
+        pendingCitation.current = null;
+        const key =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>("[data-citation-key]")
+            : null;
+        // Enter or Space on a citation while reading: a click with no press before it.
+        if (!items && event.detail === 0 && !editable && citation && citationOpener) {
+          const keyed = latexCitationOpenItems(
+            argument,
+            citation.notes,
+            key?.dataset.citationKey ?? null,
+          );
+          if (key?.dataset.citationTarget === undefined && citationOpener.opens(keyed)) {
+            items = keyed;
+          }
+        }
+        if (!items || !citationOpener) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const position = getPos();
+        const before = typeof position === "number" ? editor.state.doc.resolve(position) : null;
+        const box = (key ?? event.currentTarget).getBoundingClientRect();
+        citationOpener.open(
+          items,
+          before &&
+            latexQuoteBefore(
+              before.parent.textBetween(0, before.parentOffset, undefined, "\ufffc"),
+            ),
+          event.detail === 0
+            ? { x: box.left, y: box.bottom }
+            : { x: event.clientX, y: event.clientY },
+        );
+      }}
     >
       {name === "hfill" ? null : textEditing && (hasLinkText || name === "footnote") ? (
         <>
@@ -1997,7 +2065,9 @@ function LatexInlineCommandView({
                 >
                   <button
                     type="button"
-                    disabled={!editable && !target}
+                    disabled={!editable && !target && !citationOpener}
+                    data-citation-key={key}
+                    data-citation-target={target ? "" : undefined}
                     aria-label={
                       target
                         ? `Go to reference ${target.number ?? key}`
@@ -2026,7 +2096,7 @@ function LatexInlineCommandView({
       ) : (
         <button
           type="button"
-          disabled={!editable && !equationReference && name !== "footnote"}
+          disabled={!editable && !equationReference && name !== "footnote" && !citationOpener}
           aria-label={
             name === "footnote"
               ? `Go to footnote ${footnoteNumber ?? ""}`
@@ -2425,6 +2495,8 @@ const LatexWorkspaceContext = createContext<LatexVisualWorkspace | null>(null);
 const LatexReferencesContext = createContext<{
   open: (key?: string) => void;
   entries: readonly BibliographyDetails[];
+  /** Opens a citation's Library source; null while it cannot. */
+  citationOpener: LatexCitationOpener | null;
 } | null>(null);
 
 function normalizeFigurePath(sourceRelativePath: string, figurePath: string): string | null {
@@ -6053,11 +6125,32 @@ function LatexVisualEditorReady(
   const currentSetupSource = useRef(props.sourceSnapshot.setupSource);
   // Plugins and fields live as long as the editor and read the newest setup through this.
   const readSetupSource = useStableCallback(() => currentSetupSource.current);
+  const citationOpener = useLatexCitationOpener({
+    environmentId: props.environmentId ?? null,
+    root: props.citationSource?.cwd ?? null,
+    threadRef: props.citationSource && {
+      environmentId: props.citationSource.environmentId,
+      threadId: props.citationSource.threadId,
+    },
+    documentPath: props.relativePath ?? null,
+  });
+  const citationSuggestions = useLatexCitationSuggestions({
+    environmentId: props.environmentId ?? null,
+    root: props.cwd ?? null,
+    bibliography: () => ({
+      paths: bibliographyPaths(
+        readSetupSource(),
+        props.rootRelativePath ?? props.relativePath ?? "",
+      ),
+      wholeDocument: true,
+    }),
+  });
   const commandContext = {
     source: mathSetupSource,
     referenceSource: readSetupSource,
     macros: documentMathSetup.macros,
     colors: latexDocumentColors(mathSetupSource),
+    citations: citationSuggestions,
   };
   const completionContext = useRef(commandContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the command context for editor plugins to read
@@ -8302,6 +8395,35 @@ function LatexVisualEditorReady(
     };
     requestAnimationFrame(focusFirstCell);
   };
+  useDocumentQuoteTarget(
+    props.environmentId && props.cwd && props.relativePath && editor
+      ? {
+          environmentId: props.environmentId,
+          root: props.cwd,
+          label: props.relativePath.split("/").at(-1) ?? props.relativePath,
+          element: () => editor.view.dom,
+          insert: (quote) => {
+            if (readOnly || !editor.state.selection.$from.parent.isTextblock) return false;
+            const { text, cite } = latexQuote(quote);
+            return editor
+              .chain()
+              .focus()
+              .insertContent([
+                { type: "text", text },
+                ...(cite
+                  ? [
+                      {
+                        type: "latexInlineCommand",
+                        attrs: { name: "cite", argument: cite.key, raw: cite.raw },
+                      },
+                    ]
+                  : []),
+              ])
+              .run();
+          },
+        }
+      : null,
+  );
   const insertReference = (command: string, key: string) => {
     if (readOnly || !key || /[{}\\%]/u.test(key) || !restoreInsertion()) return;
     if (editor) editor.commands.setTextSelection(editor.state.selection.to);
@@ -8823,6 +8945,7 @@ function LatexVisualEditorReady(
   const referencesContext = {
     open: (key?: string) => openReferenceManagerRef.current(key),
     entries: referenceCatalog,
+    citationOpener,
   };
   const selectedCitation = useEditorState({
     editor,

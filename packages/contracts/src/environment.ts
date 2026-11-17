@@ -106,13 +106,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
   /** Queue operations retain typed context independently of immediate-turn support. */
   threadQueueMessageContext: Schema.optionalKey(Schema.Boolean),
-  /** Server can explicitly send one waiting queue item after a failed or stopped turn. */
+  /** Server can explicitly send one waiting queue item after a failed or stopped turn. Scient
+  builds before 0.6.26 show Send now only when it is set. */
   threadQueueExplicitSend: Schema.optionalKey(Schema.Boolean),
-  // SCIENT-FORK:START
-  /** Overrides legacy Scient's threadQueueExplicitSend queue.resume(runId) form.
-  Unmodified upstream v2 hosts already use queued-run.start without either flag. */
-  queuedRunStart: Schema.optionalKey(Schema.Boolean),
-  // SCIENT-FORK:END
   requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),
   threadSettlement: Schema.optionalKey(Schema.Boolean),
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
@@ -218,6 +214,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   linkFence: Schema.optionalKey(Schema.Boolean),
   /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
   mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
+  peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),
   /** Agent sign-ins on its T3 Connect address are approved on the hosted app, without a code. */
   mcpHostedApproval: Schema.optionalKey(Schema.Boolean),
   /** Server answers server.prepareTriage. */
