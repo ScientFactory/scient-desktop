@@ -41,7 +41,8 @@ shared component. A new composer banner or notice uses the `ComposerBanner` slot
 Check each changed screen against this list, in light and dark, at a normal window size and at the
 narrowest width it supports. The PR shows before and after, light and dark, at the normal size
 ([AGENTS.md](../../AGENTS.md#verification)); add the narrow width when it looks different. A new
-screen has no before.
+screen has no before. An item the change inherits and cannot fix in its scope is marked in the PR as
+inherited, with the reason.
 
 - **Made of the screen's own parts.** New states are variants of the components the screen already
   uses. Show a proposal as a screenshot of the real app, not a drawing.
@@ -67,7 +68,8 @@ screen has no before.
 ### Screenshots in a PR
 
 The repository is public, so screenshots show synthetic state only, and they are pushed only when
-opening the PR is authorized. They go on a branch of their own, which runs no CI, is never merged
+opening the PR is authorized. Any real browser can take them: the dev app, `vp run dev`, or a browser
+test that renders the real component, kept uncommitted. They go on a branch of their own, which runs no CI, is never merged
 and is kept. From the PR's checkout, with the images in `$shots`:
 
 ```sh
@@ -82,7 +84,7 @@ if [ -n "$prev" ]; then
 else
   commit=$(git commit-tree "$tree" -m "PR screenshots")
 fi
-git push origin "$commit:$ref"
+git push origin "${commit}:${ref}"
 echo "https://raw.githubusercontent.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/$commit/"
 ```
 

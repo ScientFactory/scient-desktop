@@ -36,6 +36,10 @@ Documentation impact:
 | Windows  |                   |            |          |
 | Linux    |                   |            |          |
 
+## Verification
+
+<!-- Commands run and their results, and what did not run and why. -->
+
 ## UI Changes
 
 <!-- Before/after screenshots of every changed screen, light and dark, checked against the
@@ -60,3 +64,5 @@ Review:
 - [ ] Focused tests and typecheck pass on this head
 - [ ] UI: before/after screenshots, light and dark, checked against the UI checklist (or no UI change)
 - [ ] Every link a reader can follow that this PR adds was fetched and works
+
+Model/harness:

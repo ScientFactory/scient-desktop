@@ -184,7 +184,8 @@ conditions, 6 for slow-runner conditions, 8 for stress; not a hardware guarantee
 
 Prove a UI change with before/after screenshots of every screen it changes, in light
 and dark, checked against the [UI checklist](docs/internals/web-ui.md#ui-checklist);
-capture the before-state before editing. The agent that opens the PR captures them.
+capture the before-state before editing. The agent that opens the PR captures them,
+subagent or not.
 Verify user-visible frontend changes once after integration in a real browser or
 simulator without asking first, using synthetic state. The primary agent performs
 this pass; subagents do not launch duplicate dev servers. This does not override
@@ -264,7 +265,7 @@ Report work as done only when all of these hold on the final head. Without a PR,
 handback carries what the PR would.
 
 - focused tests and typecheck pass, plus the final checks [Verification](#verification)
-  asks for;
+  asks for unless the task's budget narrows them; the PR then lists what did not run;
 - a UI change has its before/after screenshots in the PR, as Verification describes;
 - every link a reader can follow that the change adds (docs, UI, PR text) was fetched
   once and works;
