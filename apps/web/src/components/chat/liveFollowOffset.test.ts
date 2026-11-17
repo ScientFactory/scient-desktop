@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { returnToLiveFollow } from "./liveFollowOffset";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { startFollowResume } from "./readerScrolling";
+import type { TimelineNavigation, TimelineViewport } from "./timelineViewport";
 
 describe("returnToLiveFollow", () => {
   it("ends within its frame budget while the end keeps moving and the list never settles", () => {
@@ -48,5 +50,53 @@ describe("returnToLiveFollow", () => {
     }
     expect(done).toHaveBeenCalledOnce();
     expect(frames).toEqual([]);
+  });
+});
+
+describe("startFollowResume", () => {
+  it("stays positioned without resuming the follow when the reader navigates first", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (step: FrameRequestCallback) => frames.push(step));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const scrollNode = {
+        scrollTop: 0,
+        scrollHeight: 2000,
+        clientHeight: 600,
+        getBoundingClientRect: () => ({ top: 0 }),
+      };
+      const listeners = new Set<(navigation: TimelineNavigation) => void>();
+      const viewport = {
+        scrollNode,
+        subscribe: (listener: (navigation: TimelineNavigation) => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        holdProgrammaticScroll: () => () => {},
+      } as unknown as TimelineViewport;
+      const list = {
+        getScrollableNode: () => scrollNode,
+        getState: () => ({ data: [], elementAtIndex: () => undefined }),
+        scrollToEnd: async () => {},
+        scrollToOffset: async () => {},
+      } as unknown as LegendListRef;
+      const onPositioned = vi.fn();
+      const onResumed = vi.fn();
+      startFollowResume({
+        list,
+        viewport,
+        composerInset: 0,
+        promptId: "prompt",
+        listIdentityKey: "thread",
+        onPositioned,
+        onResumed,
+      });
+      for (const listener of listeners) listener({ source: "wheel", direction: "up" });
+      for (const step of frames.splice(0)) step(0);
+      expect(onPositioned).toHaveBeenCalledExactlyOnceWith("thread");
+      expect(onResumed).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

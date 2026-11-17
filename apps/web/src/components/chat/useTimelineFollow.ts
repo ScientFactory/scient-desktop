@@ -246,6 +246,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const readFollow = () => followStore.read(visit);
   // Async settles outlive their render; this reads the visit shown now.
   const readCurrentFollow = useStableCallback(readFollow);
+  const readCurrentVisit = useStableCallback(() => visit);
   const isTimelineAtLogicalEnd = () => {
     const current = readFollow();
     return (
@@ -351,14 +352,18 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     // Stops a running position restore; follow itself is re-armed below.
     viewportRef.current?.navigate({ releasesFollow: false });
     followStore.dispatch(visit, { type: "followEnd" });
-    visitScroll().showScrollDebouncer.cancel();
+    const requestedVisit = visitScroll();
+    // Navigating away or switching threads before the next frame cancels the request.
+    const stillWanted = () =>
+      readCurrentVisit() === requestedVisit.visit && readCurrentFollow().mode === "following";
+    requestedVisit.showScrollDebouncer.cancel();
     setShowScrollToBottom(false);
     setTimelineAnchor(releaseChatTimelineAnchor);
     // The anchored end space must be gone before the scroll measures, or the
     // list lands short of the real end.
     requestAnimationFrame(() => {
       const list = legendListRef.current;
-      if (!list) {
+      if (!list || !stillWanted()) {
         policy.onScrolledToEnd?.(false);
         return;
       }
@@ -371,10 +376,10 @@ export function useTimelineFollow(input: TimelineFollowInput) {
           settleListScroll(
             list,
             measuredEndOffset,
-            () => readCurrentFollow().mode !== "following" || legendListRef.current !== list,
+            () => !stillWanted() || legendListRef.current !== list,
           ),
         )
-        .then(() => policy.onScrolledToEnd?.(readCurrentFollow().mode === "following"));
+        .then(() => policy.onScrolledToEnd?.(stillWanted()));
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);

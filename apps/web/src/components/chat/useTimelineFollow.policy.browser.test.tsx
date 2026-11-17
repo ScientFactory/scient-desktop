@@ -10,8 +10,10 @@ type Follow = ReturnType<typeof useTimelineFollow>;
 
 function list(scrollToIndex = vi.fn(async () => {})) {
   const node = document.createElement("div");
+  const scrollToEnd = vi.fn(async () => {});
   return {
     scrollToIndex,
+    scrollToEnd,
     ref: {
       current: {
         getScrollableNode: () => node,
@@ -25,7 +27,7 @@ function list(scrollToIndex = vi.fn(async () => {})) {
           scrollLength: 600,
         }),
         scrollToIndex,
-        scrollToEnd: async () => {},
+        scrollToEnd,
         scrollToOffset: async () => {},
         cancelScroll: () => {},
       } as unknown as LegendListRef,
@@ -37,16 +39,18 @@ function Probe({
   legendListRef,
   policy,
   onFollow,
+  threadKey = "thread",
 }: {
   legendListRef: RefObject<LegendListRef | null>;
   policy: TimelineFollowPolicy;
   onFollow: (follow: Follow) => void;
+  threadKey?: string;
 }) {
   const follow = useTimelineFollow({
     legendListRef,
     composerTimelineInset: 0,
-    routeThreadKey: "thread",
-    activeThreadKey: "thread",
+    routeThreadKey: threadKey,
+    activeThreadKey: threadKey,
     isServerThread: false,
     serverProjection: null,
     threadStatus: "live",
@@ -64,17 +68,24 @@ function Probe({
 async function renderFollow(policy: TimelineFollowPolicy, scrollToIndex?: () => Promise<void>) {
   const target = list(scrollToIndex ? vi.fn(scrollToIndex) : undefined);
   const follow: { current: Follow | null } = { current: null };
-  const screen = await render(
+  const probe = (threadKey?: string) => (
     <Probe
       legendListRef={target.ref}
       policy={policy}
       onFollow={(next) => {
         follow.current = next;
       }}
-    />,
-    { router: false },
+      {...(threadKey ? { threadKey } : {})}
+    />
   );
-  return { screen, follow, scrollToIndex: target.scrollToIndex };
+  const screen = await render(probe(), { router: false });
+  return {
+    screen,
+    follow,
+    scrollToIndex: target.scrollToIndex,
+    scrollToEnd: target.scrollToEnd,
+    showThread: (threadKey: string) => screen.rerender(probe(threadKey)),
+  };
 }
 
 describe("useTimelineFollow policy", () => {
@@ -125,5 +136,17 @@ describe("useTimelineFollow policy", () => {
       vi.advanceTimersByTime(100);
     });
     expect(scrollToIndex).toHaveBeenCalledOnce();
+  });
+
+  it("drops a scroll to end requested in a thread the reader has left", async () => {
+    const onScrolledToEnd = vi.fn();
+    const { screen, follow, scrollToEnd, showThread } = await renderFollow({ onScrolledToEnd });
+    await using _screen = screen;
+    using _timers = fakeTimers();
+    await act(() => follow.current!.scrollToEnd(true));
+    await showThread("another-thread");
+    await act(() => vi.advanceTimersByTime(100));
+    expect(scrollToEnd).not.toHaveBeenCalled();
+    expect(onScrolledToEnd).toHaveBeenCalledExactlyOnceWith(false);
   });
 });

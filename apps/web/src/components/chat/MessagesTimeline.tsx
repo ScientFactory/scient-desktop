@@ -1068,10 +1068,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         viewport,
         composerInset,
         promptId: followingPromptId,
-        onPositioned: (identity) => {
-          setPositionedThreadKey(identity);
-          onResumeFollow?.(followingPromptId);
-        },
+        onPositioned: setPositionedThreadKey,
+        onResumed: () => onResumeFollow?.(followingPromptId),
         listIdentityKey,
       });
     }

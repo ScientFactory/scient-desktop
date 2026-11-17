@@ -406,8 +406,9 @@ export function useReadingRestoreTarget({
 
 /**
  * Returns a reader who left while following to where that follow is now (chat/liveFollowOffset.ts),
- * and reports the thread positioned so the follow carries on. Any navigation on the viewport
- * stops it where it is. Returns the stop for the restore's owner.
+ * then reports the thread positioned and the follow resumed. Any navigation on the viewport stops it
+ * where it is: positioned, but the reader took over, so the follow stays ended. Returns the stop
+ * for the restore's owner.
  */
 export function startFollowResume({
   list,
@@ -416,6 +417,7 @@ export function startFollowResume({
   promptId,
   listIdentityKey,
   onPositioned,
+  onResumed,
 }: {
   list: LegendListRef;
   viewport: TimelineViewport;
@@ -423,6 +425,8 @@ export function startFollowResume({
   promptId: string;
   listIdentityKey: string;
   onPositioned: (identity: string) => void;
+  /** The view reached the follow's position without the reader navigating. */
+  onResumed: () => void;
 }): () => void {
   let cancelled = false;
   let frame: number | null = null;
@@ -451,6 +455,7 @@ export function startFollowResume({
       if (cancelled) return;
       stop();
       onPositioned(listIdentityKey);
+      onResumed();
     },
   });
   return stop;
