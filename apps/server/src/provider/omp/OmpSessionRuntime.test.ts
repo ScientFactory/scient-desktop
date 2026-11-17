@@ -1900,6 +1900,50 @@ describe("Oh My Pi autonomous continuation ownership", () => {
     }),
   );
 
+  it.effect("a paused run's final agent_end stays out of the next turn (OMP 18.21)", () =>
+    Effect.gen(function* () {
+      const h = yield* wireHarness();
+      const first = { role: "assistant", content: [{ type: "text", text: "First answer" }] };
+      yield* h.runtime.begin("first");
+      yield* h.runtime.accepted("first-prompt", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd(first),
+        // The run pauses on a background job, which can still resume it.
+        {
+          type: "agent_end",
+          messages: [first],
+          isTerminal: false,
+          yielded: true,
+          awaitingAsyncWork: true,
+        },
+        { type: "prompt_result", id: "first-prompt", agentInvoked: true, status: "completed" },
+      );
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed", requestId: "first-prompt" });
+      expect(yield* h.runtime.begin("second")).toEqual({ turnId: "second", steering: false });
+      // The job went away without waking the run, which now ends with no loop of its own.
+      yield* h.wire.send({ type: "agent_end", messages: [first], isTerminal: true, yielded: true });
+      const ended = yield* h.settleFrames;
+      expect(ended).not.toContainEqual(
+        expect.objectContaining({ type: "assistant-delta", delta: "First answer" }),
+      );
+      yield* h.runtime.accepted("second-prompt", true);
+      yield* h.wire.send(
+        { type: "agent_start" },
+        assistantEnd({ content: [{ type: "text", text: "Second answer" }] }),
+        { type: "agent_end", messages: [], isTerminal: true, yielded: true },
+        { type: "prompt_result", id: "second-prompt", agentInvoked: true, status: "completed" },
+      );
+      const updates = yield* h.settleFrames;
+      expect(updates).toContainEqual(
+        expect.objectContaining({ type: "assistant-delta", delta: "Second answer" }),
+      );
+      expect(updates.filter((update) => update.type === "turn-started")).toEqual([]);
+      expect(yield* h.outcome).toMatchObject({ outcome: "completed", requestId: "second-prompt" });
+      yield* Scope.close(h.scope, Exit.void);
+    }),
+  );
+
   it.effect("a message racing a native wake-up owns its turn until its own prompt_result", () =>
     Effect.gen(function* () {
       const h = yield* wireHarness();
