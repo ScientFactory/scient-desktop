@@ -18,6 +18,7 @@ import { AnalyticsService } from "./AnalyticsService.ts";
 import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics.ts";
+import { createProviderExtensionAnalyticsMapper } from "./ExtensionAnalytics.ts";
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
 import { classifyCommand, shellCommandOf } from "./CommandCategories.ts";
 import {
@@ -446,6 +447,7 @@ export const makeV2AnalyticsObservers = Effect.gen(function* () {
   const mapper = createV2AnalyticsEventMapper(yield* BrowserToolCalls);
   const lifecycle = createProviderLifecycleAnalyticsMapper();
   const accounts = createProviderAccountAnalyticsMapper();
+  const extensions = createProviderExtensionAnalyticsMapper();
   const availability = yield* ScientAnalyticsAvailability;
   const enabled = Effect.sync(() => {
     const { available } = availability;
@@ -453,6 +455,7 @@ export const makeV2AnalyticsObservers = Effect.gen(function* () {
       mapper.clear();
       lifecycle.clear();
       accounts.clear();
+      extensions.clear();
     }
     return available;
   });
@@ -473,6 +476,7 @@ export const makeV2AnalyticsObservers = Effect.gen(function* () {
     if (!(yield* enabled)) return;
     yield* record(lifecycle.observe(snapshot));
     yield* record(accounts.observe(snapshot));
+    yield* record(extensions.observe(snapshot));
   });
   return { enabled, event, providers };
 });

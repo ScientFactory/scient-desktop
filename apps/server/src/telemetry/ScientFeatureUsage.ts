@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { extensionHost, pluginFacts } from "./ExtensionAnalytics.ts";
 import type { FeatureUsage } from "./FeatureUsage.ts";
 
 type Payload = Readonly<Record<string, unknown>>;
@@ -25,6 +26,48 @@ const use = (feature: string, variant?: string): FeatureUsage =>
 
 const enabled = (payload: Payload) =>
   typeof payload.enabled === "boolean" ? (payload.enabled ? "on" : "off") : undefined;
+
+const text = (payload: Payload, key: string): string | undefined => {
+  const value = payload[key];
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+};
+
+/** A feature with the extension it acts on, by its public identity. */
+const withExtension = (
+  usage: FeatureUsage,
+  facts: Readonly<Record<string, string | undefined>>,
+): FeatureUsage => {
+  const known = Object.entries(facts).filter(([, value]) => value !== undefined);
+  return known.length === 0 ? usage : { ...usage, ...Object.fromEntries(known) };
+};
+
+/** Which connector an add asks for: its registry name, or the host of its address. */
+const connectorTarget = (payload: Payload) => {
+  const target =
+    typeof payload.target === "object" && payload.target !== null
+      ? (payload.target as Payload)
+      : {};
+  const type = literal(target, "type");
+  return {
+    connectorSource: type,
+    connector: type === "registry" ? text(target, "name")?.slice(0, 128) : undefined,
+    connectorHost: type === "local-bundle" ? undefined : extensionHost(text(target, "url")),
+  };
+};
+
+/** The plugin or server a provider plugin action names. */
+const providerPluginTarget = (payload: Payload) => {
+  const action =
+    typeof payload.action === "object" && payload.action !== null
+      ? (payload.action as Payload)
+      : {};
+  const server = text(action, "serverName");
+  return {
+    providerInstance: literal(payload, "instanceId"),
+    ...pluginFacts(text(action, "pluginId") ?? text(action, "entryId")),
+    ...(server === undefined ? {} : { mcpServer: server.slice(0, 128) }),
+  };
+};
 
 /** WebSocket requests that start a Scient feature. */
 const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsage>> = {
@@ -65,19 +108,27 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.extensionsProviderStoreSearch]: () => use("providers.store.search"),
   [WS_METHODS.extensionsDiscoverSearch]: () => use("extensions.discover.search"),
   [WS_METHODS.extensionsPluginInstall]: () => use("extensions.plugin.install"),
-  [WS_METHODS.extensionsPluginRemove]: () => use("extensions.plugin.remove"),
+  [WS_METHODS.extensionsPluginRemove]: (payload) =>
+    withExtension(use("extensions.plugin.remove"), pluginFacts(text(payload, "pluginId"))),
   [WS_METHODS.extensionsPluginSetEnabled]: (payload) =>
-    use("extensions.plugin.set_enabled", enabled(payload)),
-  [WS_METHODS.extensionsConnectorAdd]: () => use("extensions.connector.add"),
+    withExtension(
+      use("extensions.plugin.set_enabled", enabled(payload)),
+      pluginFacts(text(payload, "pluginId")),
+    ),
+  [WS_METHODS.extensionsConnectorAdd]: (payload) =>
+    withExtension(use("extensions.connector.add"), connectorTarget(payload)),
   [WS_METHODS.extensionsConnectorStartSignIn]: () => use("extensions.connector.sign_in"),
   [WS_METHODS.extensionsConnectorRemove]: () => use("extensions.connector.remove"),
   [WS_METHODS.extensionsConnectorTest]: () => use("extensions.connector.test"),
   [WS_METHODS.providerPluginsAct]: (payload) =>
-    use(
-      "providers.plugin.action",
-      typeof payload.action === "object" && payload.action !== null
-        ? literal(payload.action as Payload, "type")
-        : undefined,
+    withExtension(
+      use(
+        "providers.plugin.action",
+        typeof payload.action === "object" && payload.action !== null
+          ? literal(payload.action as Payload, "type")
+          : undefined,
+      ),
+      providerPluginTarget(payload),
     ),
   [WS_METHODS.skillsSetProjectPreference]: () => use("skills.project_preference.set"),
   [WS_METHODS.skillsSetUserActivation]: () => use("skills.activation.set"),
