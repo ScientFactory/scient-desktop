@@ -849,13 +849,15 @@ describe("mounted composer send admission owner", () => {
 
   // SCIENT-FORK:START — `/feedback` opens Send feedback to Scient and never reaches the model.
   const withScientFeedback = async (run: () => Promise<void>) => {
-    const bridge = window.desktopBridge;
-    window.desktopBridge = { ...bridge, feedback: {} } as typeof window.desktopBridge;
+    const host = window as unknown as { desktopBridge?: object };
+    const bridge = host.desktopBridge;
+    host.desktopBridge = { ...bridge, feedback: {} };
     useFeedbackDraft.setState({ open: false, message: "" });
     try {
       await run();
     } finally {
-      window.desktopBridge = bridge;
+      if (bridge === undefined) delete host.desktopBridge;
+      else host.desktopBridge = bridge;
     }
   };
 
