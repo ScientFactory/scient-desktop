@@ -38,16 +38,20 @@ shared component. A new composer banner or notice uses the `ComposerBanner` slot
 
 ## UI checklist
 
-Check each changed screen against this list in its before/after screenshots
-([AGENTS.md](../../AGENTS.md#verification)), in light and dark, at a normal window size and at the
-narrowest width the screen supports.
+Check each changed screen against this list, in light and dark, at a normal window size and at the
+narrowest width it supports. The PR shows before and after, light and dark, at the normal size
+([AGENTS.md](../../AGENTS.md#verification)); add the narrow width when it looks different. A new
+screen has no before.
 
 - **Made of the screen's own parts.** New states are variants of the components the screen already
   uses. Show a proposal as a screenshot of the real app, not a drawing.
 - **Nothing clipped, covered or uneven.** No edge cut off by an overflow or scroll container, no
-  control on top of or under another, and controls in one row are the same height.
-- **One focus border.** A focused control shows one thin, darker border, never a ring or halo. A
-  control that shows the halo gets its `data-slot` in
+  control on top of or under another, and controls in one row are the same height. A whole-window
+  screenshot hides this: check it in the running app and look at enlarged crops of toolbars and
+  edges.
+- **One focus border.** A focused control shows one thin, darker border, never a ring or halo; when
+  the change adds or restyles a control, one screenshot shows it focused. A control that shows the
+  halo gets its `data-slot` in
   [`scient-form-focus.css`](../../apps/web/src/scient/presentation/scient-form-focus.css).
 - **No card in a card.** Items in a settings section are rows of that section (`SettingsRow`),
   aligned with the sections around it.
@@ -62,19 +66,22 @@ narrowest width the screen supports.
 
 ### Screenshots in a PR
 
-The repository is public, so screenshots show synthetic state only. Push them to a branch of their
-own, which runs no CI and is never merged, then embed their raw URLs in the PR body. From the
-checkout, with the images in `$shots`:
+The repository is public, so screenshots show synthetic state only, and they are pushed only when
+opening the PR is authorized. They go on a branch of their own, which runs no CI, is never merged
+and is kept. From the PR's checkout, with the images in `$shots`:
 
 ```sh
+branch=$(git branch --show-current)
 tree=$(for f in "$shots"/*.png; do
   printf '100644 blob %s\t%s\n' "$(git hash-object -w "$f")" "$(basename "$f")"
 done | git mktree)
-git push origin "$(git commit-tree "$tree" -m "PR screenshots")":refs/heads/review-assets/<branch>
+commit=$(git commit-tree "$tree" -m "PR screenshots")  # later rounds: add -p <previous commit>
+git push origin "$commit:refs/heads/review-assets/$branch"
+echo "https://raw.githubusercontent.com/ScientFactory/scient-desktop/$commit/"
 ```
 
-`https://raw.githubusercontent.com/ScientFactory/scient-desktop/review-assets/<branch>/<file>.png`
-then shows `<file>.png`. Pushing again to the same branch needs `--force`.
+Embed each image as that printed address followed by its file name. Addresses by commit never
+change, so a later round adds images without replacing the ones reviewers already saw.
 
 ## Handlers in large components
 

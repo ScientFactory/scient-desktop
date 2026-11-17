@@ -44,8 +44,12 @@ Documentation impact:
 
 ## Review
 
-<!-- Keep one, with the result: None — docs, copy or small UI | Light Codex review |
-     Codex high review and a live test — data, migrations, security, release or alignment -->
+<!-- One tier, then its result and any skipped reviewer:
+     None — docs, or UI appearance or copy with no logic change
+     Light Codex — one pass of correctness findings, each verified, then one recheck of the fixes
+     Codex high and a live test — data, migrations, security, release or alignment; the changed
+     behavior run in a built app with synthetic state
+     Example: Review: Light Codex — 2 findings, 1 fixed, 1 rejected (reason); recheck clean -->
 
 Review:
 
@@ -54,5 +58,5 @@ Review:
 - [ ] This PR is small and focused
 - [ ] I explained what changed and why
 - [ ] Focused tests and typecheck pass on this head
-- [ ] UI: before/after screenshots, light and dark, checked against the UI checklist
-- [ ] Every link or URL this PR adds was fetched and works
+- [ ] UI: before/after screenshots, light and dark, checked against the UI checklist (or no UI change)
+- [ ] Every link a reader can follow that this PR adds was fetched and works

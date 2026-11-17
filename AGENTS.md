@@ -184,7 +184,7 @@ conditions, 6 for slow-runner conditions, 8 for stress; not a hardware guarantee
 
 Prove a UI change with before/after screenshots of every screen it changes, in light
 and dark, checked against the [UI checklist](docs/internals/web-ui.md#ui-checklist);
-capture the before-state before editing.
+capture the before-state before editing. The agent that opens the PR captures them.
 Verify user-visible frontend changes once after integration in a real browser or
 simulator without asking first, using synthetic state. The primary agent performs
 this pass; subagents do not launch duplicate dev servers. This does not override
@@ -202,14 +202,14 @@ are separate.
   report conflicts rather than resolving them without the relevant authorization.
 - Use GitHub's merge queue; do not bypass checks or jump the queue except through
   the approved admin procedure below. When merge is authorized, set auto-merge on the
-  reviewed, conflict-free head (`gh pr merge <number> --merge --auto
+  conflict-free head that had its review (see the PR template) (`gh pr merge <number> --merge --auto
   --match-head-commit <sha>`); the queue takes it when required checks pass, so
   nobody watches it. Without that authorization leave auto-merge off: non-draft or
   green alone is not permission.
 - Do not merge main solely for CI reuse or repeatedly realign a queued branch:
   an update adds another PR run and can serialize work the queue runs together.
   Align for conflicts, dependencies or sensitivity to intervening changes. Before
-  correcting a queued PR, dequeue and disable auto-merge; verify and review the new
+  correcting a queued or auto-merge-enabled PR, dequeue and disable auto-merge; verify and review the new
   head before requesting delivery again. Push locally verified corrections together,
   not as a series that repeatedly restarts CI. Return PR/CI links; do not monitor
   unless asked.
@@ -255,9 +255,12 @@ Report work as done only when all of these hold on the final head:
 - focused tests and typecheck pass, plus the final checks [Verification](#verification)
   asks for;
 - a UI change has its before/after screenshots in the PR, as Verification describes;
-- every link or URL the change adds was fetched once and works;
-- the PR states platform behavior, as below;
-- the PR is open, with auto-merge set if merge was authorized.
+- every link a reader can follow that the change adds (docs, UI, PR text) was fetched
+  once and works;
+- the PR states platform behavior, as below, and its review and result;
+- the delivery the task allowed is complete: the PR is open, with auto-merge set if
+  merge was authorized. Without PR authorization, the handback names the branch, head
+  and what is still owed.
 
 Use conventional-commit titles. PRs include problem, resulting behavior, verification,
 documentation impact and model/harness attribution; follow
