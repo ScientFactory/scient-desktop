@@ -18,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -31,6 +32,8 @@ import { scientAnalyticsMetadata } from "../../backend/scientAnalyticsMetadata.t
 
 export const DESKTOP_UPDATE_FACTS_FILE = "desktop-update-facts.json";
 const MAX_FACT_AGE_MS = 14 * 86_400_000;
+/** A lost acknowledgement or a timed-out ingest leaves facts pending; offer them again. */
+const REOFFER_INTERVAL = "5 minutes";
 
 const Journal = Schema.Struct({
   version: Schema.Literal(1),
@@ -59,6 +62,8 @@ export class DesktopUpdateFacts extends Context.Service<
     readonly sourceRemoved: (sourceId: string) => Effect.Effect<void>;
     /** The backend's outbox holds these facts, or analytics there must never send them. */
     readonly acknowledge: (ids: ReadonlyArray<string>) => Effect.Effect<void>;
+    /** Every pending fact, for a backend that takes them over HTTP instead of its pipe. */
+    readonly pending: Effect.Effect<ReadonlyArray<DesktopUpdateFactValue>>;
   }
 >()("@t3tools/desktop/scient/updateOutcomes/DesktopUpdateFacts") {}
 
@@ -187,6 +192,9 @@ const make = Effect.gen(function* () {
     yield* offer;
   });
 
+  // Re-offering is safe: the outbox and the gateway keep one event per fact id.
+  yield* offer.pipe(Effect.repeat(Schedule.spaced(REOFFER_INTERVAL)), Effect.forkScoped);
+
   return DesktopUpdateFacts.of({
     record,
     deliveries: (sourceId) =>
@@ -213,6 +221,7 @@ const make = Effect.gen(function* () {
         facts: journal.facts.filter((fact) => !ids.includes(fact.id)),
       }));
     }),
+    pending: Ref.get(journalRef).pipe(Effect.map((journal) => journal.facts)),
   });
 });
 

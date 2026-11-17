@@ -38,6 +38,7 @@ function recordingHarness(options: UpdatesHarnessOptions = {}) {
       sourceReady: () => Effect.void,
       sourceRemoved: () => Effect.void,
       acknowledge: () => Effect.void,
+      pending: Effect.succeed([]),
     }),
   );
   const outcomes = (step: string) =>

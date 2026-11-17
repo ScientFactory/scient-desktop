@@ -860,7 +860,13 @@ pipe's `desktopUpdateStatus` report to one backend (the primary when ready, else
 one; two backends have two installation identities). That backend's `ScientRecordedAnalyticsIngest`
 queues them with their own event ids and times, through the normal shape checks, and the desktop
 forgets them only after the outbox persisted them or analytics there must never send them. A fact
-offered again stays one event: the outbox and gateway both ignore a repeated id.
+offered again stays one event: the outbox and gateway both ignore a repeated id. Pending facts are
+offered again every five minutes, so a timed-out ingest or a lost acknowledgement is retried. A
+primary started without the telemetry pipes (WSL-only) takes them over authenticated HTTP instead
+(`POST /api/scient/desktop-update-facts/v1`, served only by a desktop-mode backend without the
+pipes and only to the desktop's own bootstrap session), polled every 30 seconds
+while facts are pending; its response lists the ids the outbox holds, as the pipe's acknowledgement
+does.
 
 ## Privacy invariants
 
