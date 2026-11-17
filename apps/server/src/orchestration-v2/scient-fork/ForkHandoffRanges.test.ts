@@ -364,7 +364,7 @@ const observe = Effect.fn("ForkHandoffRanges.observe")(function* (
 });
 
 /** The same history read through every layout must give identical deliveries. */
-const sameAcrossModes = <A>(run: (mode: Mode) => Effect.Effect<A, unknown, never>) =>
+const sameAcrossModes = <A, E>(run: (mode: Mode) => Effect.Effect<A, E, never>) =>
   Effect.gen(function* () {
     const results = new Map<Mode, A>();
     for (const mode of ["rows", "ranges", "converted"] as const)
@@ -672,7 +672,7 @@ it.effect("leaves rows that do not match the fork's history or do not read back 
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* forkFixture({ items: 40, running: 0 });
-    const sources = [];
+    const sources: Array<string> = [];
     for (const tag of ["a", "b", "c"]) {
       const { prepared } = yield* prepare(forkId, tag);
       yield* captureAsBefore(sql, prepared);
