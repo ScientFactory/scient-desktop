@@ -255,6 +255,7 @@ import {
   useChatFileLinkOpening,
 } from "../scient/fileOpening/useChatFileLinkOpening";
 import { environmentFileLinkResolution } from "../scient/fileOpening/environmentFileState";
+import { showAnchoredCopyErrorToast } from "./ui/anchoredCopyToast";
 // SCIENT-FORK:END
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
@@ -2104,6 +2105,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
           conversationDirection: resolvedContentDirection,
           isStreaming,
         })}
+        // A failed copy says so beside the Copy button, like Copy message.
+        onCopyFailure={(cause, copyButton) => showAnchoredCopyErrorToast(copyButton, cause)}
         // SCIENT-FORK:END
       >
         {highlightedCode}

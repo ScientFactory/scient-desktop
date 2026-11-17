@@ -160,10 +160,12 @@ marked mount before upstream's `WorkEntryIcon` switch, which stays upstream's te
 upstream icon name (T3 #18865 adds `"code"`) falls through to that switch and needs no Scient
 change unless Scient wants its own drawing.
 
-Chat Markdown (Scient): code blocks render through T3's `chat/MarkdownCodeBlock.tsx`. Its one
-Scient seam is an optional `dir` prop (default `"ltr"`); `ChatMarkdown.tsx` passes
+Chat Markdown (Scient): code blocks render through T3's `chat/MarkdownCodeBlock.tsx`. Its
+Scient seams are two optional props. `dir` (default `"ltr"`): `ChatMarkdown.tsx` passes
 `chatCodeBoxDirection(...)` so a Hebrew or Arabic plain-text box reads right to left, and Copy
-message reads the same `dir`. The loading placeholder in `ChatMarkdown.tsx` is not `aria-hidden`,
+message reads the same `dir`. `onCopyFailure(cause, copyButton)`, with a ref on the block's
+Copy button: chat shows T3's anchored "Failed to copy" toast beside that button (as Copy message
+does), and the Mermaid card shows its own error. T3's block alone only logs the failure. The loading placeholder in `ChatMarkdown.tsx` is not `aria-hidden`,
 so Copy message keeps code whose highlighting is still loading. The rich editor's code header
 keeps Scient's `CodeBlockActions.tsx` and `CodeBlockTitle.tsx`. Closed Mermaid fences render
 even while the answer streams; Vega-Lite and Plotly fences wait for settlement. These render
