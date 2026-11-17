@@ -297,6 +297,11 @@
       "path": "knip.jsonc",
       "anchor": "generate-claude-connectors.mjs",
       "purpose": "Register the manual refresh script for the claude.ai connectors Scient links to."
+    },
+    {
+      "path": "apps/server/src/mcp/McpHttpServer.ts",
+      "anchor": "SCIENT_MCP_INSTRUCTIONS",
+      "purpose": "Describe Scient's tool server, connectors included, to MCP clients in one instructions line."
     }
   ],
   "scientMounts": [
