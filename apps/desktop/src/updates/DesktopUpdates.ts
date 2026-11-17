@@ -527,7 +527,9 @@ export const make = Effect.gen(function* () {
     source: "mirror" | "github",
   ) {
     const feed =
-      source === "mirror" ? scientDesktopRuntimeUpdateFeed(channel) : scientDesktopUpdateFeed(channel);
+      source === "mirror"
+        ? scientDesktopRuntimeUpdateFeed(channel)
+        : scientDesktopUpdateFeed(channel);
     yield* electronUpdater.setFeedURL(feed);
     // Outcomes read the feed actually selected, including after a track switch or a fallback.
     yield* Ref.set(
@@ -549,11 +551,12 @@ export const make = Effect.gen(function* () {
       yield* useScientFeed(channel.value, "mirror");
       const answered = yield* electronUpdater.checkForUpdates.pipe(
         Effect.as(true),
-        Effect.catchTag("ElectronUpdaterCheckForUpdatesError", (error) =>
-          logUpdaterWarning("update mirror check failed; checking GitHub", {
-            cause: describeUpdateErrorCause(error.cause),
-          }).pipe(Effect.as(false)),
-        ),
+        Effect.catchTags({
+          ElectronUpdaterCheckForUpdatesError: (error) =>
+            logUpdaterWarning("update mirror check failed; checking GitHub", {
+              cause: describeUpdateErrorCause(error.cause),
+            }).pipe(Effect.as(false)),
+        }),
       );
       if (answered) return;
     }

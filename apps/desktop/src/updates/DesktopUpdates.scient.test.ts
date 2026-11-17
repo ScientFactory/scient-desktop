@@ -107,12 +107,20 @@ describe("DesktopUpdates outcomes", () => {
   );
 
   describe("GitHub behind Scient's mirror", () => {
-    const github = { provider: "github", owner: "ScientFactory", repo: "scient-desktop" };
+    const github = { provider: "github", owner: "ScientFactory", repo: "scient-desktop" } as const;
     const isMirror = (feed: unknown) =>
-      typeof feed === "object" && feed !== null && "provider" in feed && feed.provider === "generic";
-    const missingFeed = newError("Cannot find channel \"latest.yml\" update info: HttpError: 404", "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND");
+      typeof feed === "object" &&
+      feed !== null &&
+      "provider" in feed &&
+      feed.provider === "generic";
+    const missingFeed = newError(
+      'Cannot find channel "latest.yml" update info: HttpError: 404',
+      "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
+    );
     const failCheck = (cause: Error) =>
-      Effect.fail(new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({ channel: "latest", cause }));
+      Effect.fail(
+        new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({ channel: "latest", cause }),
+      );
     const realFeeds = {
       env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
       appUpdateYml: "provider: github\nowner: ScientFactory\nrepo: scient-desktop\n",
@@ -150,8 +158,11 @@ describe("DesktopUpdates outcomes", () => {
     });
 
     it.effect("reports GitHub's failure once when neither source answers", () => {
-      const offline = newError("net::ERR_INTERNET_DISCONNECTED", "ERR_UPDATER_LATEST_VERSION_NOT_FOUND");
-      const { harness, outcomes, layer } = recordingHarness({
+      const offline = newError(
+        "net::ERR_INTERNET_DISCONNECTED",
+        "ERR_UPDATER_LATEST_VERSION_NOT_FOUND",
+      );
+      const { outcomes, layer } = recordingHarness({
         ...realFeeds,
         checkForUpdates: Effect.suspend(() => failCheck(offline)),
       });
