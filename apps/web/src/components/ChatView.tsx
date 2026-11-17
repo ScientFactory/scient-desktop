@@ -1,5 +1,7 @@
 import { useComposerCitations } from "./chat/useComposerCitations";
+// SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
 import { DesktopWorkspaceReadiness } from "./desktop/DesktopWorkspaceReadiness";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Accounts: mount approvals above the composer.
 import {
   ThreadAccountApprovals,
@@ -4140,6 +4142,7 @@ function ChatViewContent(props: ChatViewProps) {
       ref={setWorkspaceLayoutElement}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
+      {/* SCIENT-FORK:START — the restored workspace confirms an update restart. */}
       <DesktopWorkspaceReadiness
         environmentId={environmentId}
         initialized={
@@ -4151,6 +4154,7 @@ function ChatViewContent(props: ChatViewProps) {
         }
         projectRestored={activeProject !== null}
       />
+      {/* SCIENT-FORK:END */}
       <ThreadAnswerAcknowledgement threadRef={routeThreadDetailRef} />
       {embedded ? null : (
         <DeviceSetupDialogHost

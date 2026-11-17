@@ -118,6 +118,7 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  // SCIENT-FORK:START — consented update restarts: save barriers and restart receipts.
   getRestartReadinessToken: () =>
     ipcRenderer.invoke(IpcChannels.GET_RESTART_READINESS_TOKEN_CHANNEL),
   reportWorkspaceReady: (input) =>
@@ -150,6 +151,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   completeUpdateSave: (input) =>
     ipcRenderer.invoke(IpcChannels.COMPLETE_UPDATE_SAVE_CHANNEL, input),
+  // SCIENT-FORK:END
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {

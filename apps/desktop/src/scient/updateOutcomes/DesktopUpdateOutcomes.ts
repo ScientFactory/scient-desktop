@@ -85,9 +85,10 @@ function disabledClass(state: DesktopUpdateState, policyOff: boolean): string {
   return "other";
 }
 
-/** Status that a summary reports a change of; a check in progress is not a change. */
+/** Status that a summary reports a change of; a check or a restart's preparation in progress is
+ * not a change. */
 function summaryKey(state: DesktopUpdateState): string | undefined {
-  if (state.status === "checking") return undefined;
+  if (state.status === "checking" || state.status === "preparing") return undefined;
   return state.status === "error" ? `error:${state.errorContext ?? ""}` : state.status;
 }
 
