@@ -633,7 +633,7 @@ it.effect(
     ),
 );
 
-it.effect("resumes a conversion interrupted while looking or between sources", () =>
+it.effect("resumes a conversion interrupted while looking or between batches", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* forkFixture({ items: 400, running: 2 });
@@ -655,7 +655,7 @@ it.effect("resumes a conversion interrupted while looking or between sources", (
     const looking = yield* Effect.exit(convertForkHandoffHistory(sql, Effect.interrupt, 50));
     assert.isTrue(Exit.hasInterrupts(looking));
     assert.deepStrictEqual(yield* counts(), asRows);
-    // A restart right after the first source switched keeps that source whole.
+    // A restart right after the first batch keeps what it switched and reads the same.
     const stopAfterSwitch = sql<{ readonly ranges: number }>`
       SELECT COUNT(*) AS ranges FROM scient_handoff_history_ranges`.pipe(
       Effect.orDie,
@@ -674,7 +674,7 @@ it.effect("resumes a conversion interrupted while looking or between sources", (
     assert.deepStrictEqual(yield* seen(), expected);
     const resumed = yield* convertForkHandoffHistory(sql, Effect.void, 50);
     assert.equal(resumed.skippedSources, 0);
-    // A source converts whole, so the result matches captures that wrote ranges.
+    // Batches end on whole ranges, so the result matches captures that wrote ranges.
     assert.deepStrictEqual(yield* counts(), ranged);
     assert.deepStrictEqual(yield* seen(), expected);
     assert.deepStrictEqual(yield* convertForkHandoffHistory(sql, Effect.void, 50), {
@@ -734,6 +734,42 @@ it.effect(
       assert.deepStrictEqual(yield* forkList, forkListBefore);
       const [cleanRows] = yield* snapshot(clean);
       assert.equal(cleanRows.length, 6);
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "stops a source at the first batch that reads back differently and still delivers the same",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* forkFixture({ items: 400, running: 0 });
+      const { prepared, handoff } = yield* prepare(forkId, "fork");
+      const expected = yield* observe(forkId, [handoff]);
+      yield* captureAsBefore(sql, prepared);
+      const sourceRows = sql<{ readonly position: number }>`
+      SELECT position FROM scient_handoff_history WHERE source_id = ${prepared.historySource!.id}
+      ORDER BY position`;
+      const asRows = yield* sourceRows;
+      yield* sql.unsafe(`CREATE TRIGGER rewrite_under_switch AFTER INSERT ON scient_handoff_history_ranges
+      WHEN NEW.position >= 200 BEGIN
+        UPDATE scient_fork_history SET source_item_id = 'rewritten'
+        WHERE thread_id = NEW.view_thread_id AND position = NEW.fork_position;
+      END`);
+      const forkList = sql`SELECT * FROM scient_fork_history ORDER BY thread_id, position`;
+      const forkListBefore = yield* forkList;
+      const result = yield* convertForkHandoffHistory(sql, Effect.void, 50);
+      assert.equal(result.skippedSources, 1);
+      assert.isAbove(result.rows, 0);
+      const left = (yield* sourceRows).map((row) => row.position);
+      // Earlier batches stay switched; the failed batch and everything after it stay as rows.
+      assert.isBelow(left.length, asRows.length);
+      assert.deepStrictEqual(
+        left.filter((position) => position >= 200),
+        asRows.map((row) => row.position).filter((position) => position >= 200),
+      );
+      assert.deepStrictEqual(yield* forkList, forkListBefore);
+      yield* sql`DROP TRIGGER rewrite_under_switch`;
+      assert.deepStrictEqual(yield* observe(forkId, [handoff]), expected);
     }).pipe(Effect.provide(TestLayer)),
 );
 

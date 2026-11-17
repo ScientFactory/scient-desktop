@@ -242,13 +242,21 @@ const classifiedRows = (
 /** A row shaped like an inherited position that the fork's history does not hold as stored. */
 const malformed = (row: ClassifiedRow) => inRange(row) && row.matches === 0;
 
-/** Converts per-item rows written before ranges. A source is read in bounded pages, then switched
- * whole in one transaction that must read back row for row; one with a row the fork's history does
- * not hold, overlapping positions or a different read-back stays as it is. Progress is the tables. */
+/** Whether any per-item row of a source sits inside one of its ranges: one seek per range. */
+const overlapsRanges = (sql: SqlClient.SqlClient, sourceId: string) =>
+  sql`
+    SELECT 1 FROM scient_handoff_history_ranges AS span
+    JOIN scient_handoff_history AS history ON history.source_id = span.source_id
+      AND history.position BETWEEN span.position AND span.position + span.item_count - 1
+    WHERE span.source_id = ${sourceId} LIMIT 1`.pipe(Effect.map((rows) => rows.length > 0));
+
+/** Converts per-item rows written before ranges. A source qualifies only if every page of it is well
+ * formed, then switches in short batches that each read back row for row or roll back; the first
+ * batch that does not stops that source. A source that does not qualify stays exactly as it is. */
 export const convertForkHandoffHistory = Effect.fn("ForkHandoffRanges.convertAll")(function* (
   sql: SqlClient.SqlClient,
   between: Effect.Effect<void>,
-  pageSize = BACKFILL_PAGE,
+  batchSize = BACKFILL_PAGE,
 ) {
   const counts = { ranges: 0, rows: 0, skippedSources: 0 };
   let after = "";
@@ -259,63 +267,76 @@ export const convertForkHandoffHistory = Effect.fn("ForkHandoffRanges.convertAll
     if (next[0] === undefined) return counts;
     const sourceId = next[0].source_id;
     after = sourceId;
-    // Look first, in pages: most sources have nothing to convert, and none needs the writer long.
     let candidates = 0;
-    let wellFormed = true;
+    let wellFormed = !(yield* overlapsRanges(sql, sourceId));
     for (let from = -1; wellFormed;) {
-      const page = yield* classifiedRows(sql, sourceId, from, pageSize);
+      const page = yield* classifiedRows(sql, sourceId, from, batchSize);
       for (const row of page) {
         if (malformed(row)) wellFormed = false;
         else if (inRange(row)) candidates++;
       }
       yield* between;
-      if (page.length < pageSize) break;
+      if (page.length < batchSize) break;
       from = page.at(-1)!.position;
     }
     if (!wellFormed) {
       counts.skippedSources++;
       yield* Effect.logWarning("Fork handoff history was left as rows", {
         sourceId,
-        reason: "a row does not match the fork's history",
+        reason: "a row does not match the fork's history or overlaps a range",
       });
       continue;
     }
     if (candidates === 0) continue;
-    const switched = yield* Effect.gen(function* () {
-      const readAll = sql<HandoffHistoryRow>`
-        SELECT * FROM (${handoffHistoryRowsSql(sql, sql`${sourceId}`)}) ORDER BY position`;
-      const before = yield* readAll;
-      for (const [at, row] of before.entries())
-        if (at > 0 && row.position <= before[at - 1]!.position)
-          return yield* new RangeSourceNotConverted({ sourceId, reason: "overlapping positions" });
-      const rows = yield* classifiedRows(sql, sourceId, -1, undefined);
-      if (rows.some(malformed))
-        return yield* new RangeSourceNotConverted({ sourceId, reason: "changed while converting" });
-      const { ranges } = splitHandoffHistory(rows.filter(inRange));
-      if (ranges.length === 0) return ranges;
-      yield* insertRanges(sql, ranges);
-      for (const range of ranges)
-        yield* sql`
-          DELETE FROM scient_handoff_history
-          WHERE source_id = ${sourceId}
-            AND position BETWEEN ${range.position} AND ${range.position + range.item_count - 1}`;
-      const back = yield* readAll;
-      if (back.length !== before.length || before.some((row, at) => !sameRow(row, back[at])))
-        return yield* new RangeSourceNotConverted({ sourceId, reason: "read back differently" });
-      return ranges;
-    }).pipe(
-      sql.withTransaction,
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Fork handoff history was left as rows", { sourceId, cause }).pipe(
-          Effect.as(null),
+    for (let from = -1; ;) {
+      const batch = yield* Effect.gen(function* () {
+        const rows = yield* classifiedRows(sql, sourceId, from, batchSize);
+        if (rows.some(malformed))
+          return yield* new RangeSourceNotConverted({
+            sourceId,
+            reason: "changed while converting",
+          });
+        let { ranges } = splitHandoffHistory(rows.filter(inRange));
+        // A full batch may cut its last range short; the next batch starts at that range instead.
+        if (rows.length === batchSize && ranges.length > 1) ranges = ranges.slice(0, -1);
+        const end =
+          rows.length < batchSize
+            ? Number.MAX_SAFE_INTEGER
+            : (ranges.at(-1)?.rows.at(-1)?.position ?? rows.at(-1)!.position);
+        if (ranges.length === 0) return { ranges, end };
+        const window = sql<HandoffHistoryRow>`
+          SELECT * FROM (${handoffHistoryRowsSql(sql, sql`${sourceId}`, [
+            ranges[0]!.position,
+            ranges.at(-1)!.rows.at(-1)!.position,
+          ])}) ORDER BY position`;
+        const before = yield* window;
+        yield* insertRanges(sql, ranges);
+        for (const range of ranges)
+          yield* sql`
+            DELETE FROM scient_handoff_history
+            WHERE source_id = ${sourceId}
+              AND position BETWEEN ${range.position} AND ${range.position + range.item_count - 1}`;
+        const back = yield* window;
+        if (back.length !== before.length || before.some((row, at) => !sameRow(row, back[at])))
+          return yield* new RangeSourceNotConverted({ sourceId, reason: "read back differently" });
+        return { ranges, end };
+      }).pipe(
+        sql.withTransaction,
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Fork handoff history was left as rows", { sourceId, cause }).pipe(
+            Effect.as(null),
+          ),
         ),
-      ),
-    );
-    if (switched === null) counts.skippedSources++;
-    else {
-      counts.ranges += switched.length;
-      counts.rows += switched.reduce((sum, range) => sum + range.item_count, 0);
+      );
+      yield* between;
+      if (batch === null) {
+        counts.skippedSources++;
+        break;
+      }
+      counts.ranges += batch.ranges.length;
+      counts.rows += batch.ranges.reduce((sum, range) => sum + range.item_count, 0);
+      if (batch.end === Number.MAX_SAFE_INTEGER) break;
+      from = batch.end;
     }
-    yield* between;
   }
 });
