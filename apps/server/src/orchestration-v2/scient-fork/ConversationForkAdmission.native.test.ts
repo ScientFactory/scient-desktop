@@ -8,7 +8,6 @@ import {
   ProviderDriverKind,
   ThreadId,
   TurnItemId,
-  type ThreadForkCommand,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -33,7 +32,10 @@ import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
+import {
+  forkConversation,
+  type ConversationForkTestCommand,
+} from "../testkit/ConversationForkCommand.ts";
 
 const layer = nativeImportRuntimeTestLayer(
   makeLayer([
@@ -47,7 +49,9 @@ const layer = nativeImportRuntimeTestLayer(
   ]),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
-const withSource = <A, E, R>(test: (command: ThreadForkCommand) => Effect.Effect<A, E, R>) =>
+const withSource = <A, E, R>(
+  test: (command: ConversationForkTestCommand) => Effect.Effect<A, E, R>,
+) =>
   Effect.scoped(
     Effect.gen(function* () {
       yield* createNativeProjects;
@@ -86,7 +90,6 @@ it.live(
   () =>
     withSource((command) =>
       Effect.gen(function* () {
-        const forks = yield* ConversationForkService;
         const store = yield* ProjectionStoreV2;
         const source = yield* store.getThreadProjection(command.originThreadId);
         const callerShaped = {
@@ -98,7 +101,7 @@ it.live(
           title: "Injected title",
           sourceImport: { exportId: "injected provenance" },
         };
-        yield* forks.dispatch(callerShaped);
+        yield* forkConversation(callerShaped);
         const fork = yield* store.getThreadProjection(command.newThreadId);
         assert.equal(fork.thread.title, "Origin conversation (2)");
         assert.deepEqual(
@@ -120,7 +123,7 @@ it.live(
         };
         const sink = yield* EventSinkV2;
         const sequence = yield* sink.latestSequence({});
-        assert.equal((yield* Effect.result(forks.dispatch(rejected)))._tag, "Failure");
+        assert.equal((yield* Effect.result(forkConversation(rejected)))._tag, "Failure");
         assert.equal(yield* sink.latestSequence({}), sequence);
         assert.ok(
           Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(rejected.commandId)),
@@ -142,12 +145,11 @@ it.live(
   () =>
     withSource((command) =>
       Effect.gen(function* () {
-        const forks = yield* ConversationForkService;
         const store = yield* ProjectionStoreV2;
         const source = yield* store.getThreadProjection(command.originThreadId);
         const sink = yield* EventSinkV2;
         const sourceSequence = yield* sink.latestSequence({ threadId: command.originThreadId });
-        yield* forks.dispatch(command);
+        yield* forkConversation(command);
         const first = yield* store.getThreadProjection(command.newThreadId);
         assert.equal(first.thread.title, "Origin conversation (2)");
         const answer = first.messages.find((message) => message.text === "Answer 2");
@@ -159,7 +161,7 @@ it.live(
           newThreadId: ThreadId.make("native-numbered-refork"),
           sourceAssistantMessageId: answer.id,
         };
-        yield* forks.dispatch(reforkCommand);
+        yield* forkConversation(reforkCommand);
         const refork = yield* store.getThreadProjection(reforkCommand.newThreadId);
         assert.equal(refork.thread.title, "Origin conversation (3)");
         assert.equal(refork.thread.forkLineage?.originThreadId, command.newThreadId);
@@ -167,13 +169,13 @@ it.live(
           refork.messages.map((message) => message.text),
           first.messages.map((message) => message.text),
         );
-        yield* forks.dispatch({
+        yield* forkConversation({
           ...command,
           commandId: CommandId.make("explicit-fork-one"),
           newThreadId: ThreadId.make("explicit-one"),
           titleOverride: "Deliberate fork title",
         });
-        yield* forks.dispatch({
+        yield* forkConversation({
           ...command,
           commandId: CommandId.make("explicit-fork-two"),
           newThreadId: ThreadId.make("explicit-two"),
@@ -206,14 +208,13 @@ it.live(
   () =>
     withSource((command) =>
       Effect.gen(function* () {
-        const forks = yield* ConversationForkService;
         const store = yield* ProjectionStoreV2;
         const source = yield* store.getThreadProjection(command.originThreadId);
         const answer = source.messages.find((message) => message.text === "Answer 1");
         const question = source.messages.find((message) => message.text === "Question 1");
         assert.ok(answer && question);
         const earlierCommand = { ...command, sourceAssistantMessageId: answer.id };
-        const receipt = yield* forks.dispatch(earlierCommand);
+        const receipt = yield* forkConversation(earlierCommand);
         const earlier = yield* store.getThreadProjection(command.newThreadId);
         assert.deepEqual(
           earlier.messages.map((message) => message.text),
@@ -232,7 +233,7 @@ it.live(
         assert.equal(earlier.thread.conversationFork?.checkpointRef, null);
         assert.equal(earlier.thread.conversationFork?.workspaceMode, "local");
         assert.equal(earlier.thread.conversationFork?.status, "ready");
-        assert.equal((yield* forks.dispatch(earlierCommand)).sequence, receipt.sequence);
+        assert.equal((yield* forkConversation(earlierCommand)).sequence, receipt.sequence);
         const emptyCommand = {
           ...command,
           commandId: CommandId.make("first-user-fork"),
@@ -240,7 +241,7 @@ it.live(
           sourceAssistantMessageId: undefined,
           sourceUserMessageId: question.id,
         };
-        yield* forks.dispatch(emptyCommand);
+        yield* forkConversation(emptyCommand);
         const empty = yield* store.getThreadProjection(emptyCommand.newThreadId);
         assert.deepEqual(empty.messages, []);
         assert.deepEqual(
@@ -283,7 +284,6 @@ it.live(
   () =>
     withSource((command) =>
       Effect.gen(function* () {
-        const forks = yield* ConversationForkService;
         const store = yield* ProjectionStoreV2;
         const receipts = yield* CommandReceiptStoreV2;
         const sink = yield* EventSinkV2;
@@ -291,7 +291,7 @@ it.live(
         const firstQuestion = source.messages.find((message) => message.role === "user");
         assert.ok(firstQuestion);
         // Give a different origin a genuine, destination-owned assistant ID.
-        yield* forks.dispatch({
+        yield* forkConversation({
           ...command,
           commandId: CommandId.make("foreign-assistant-fixture"),
           newThreadId: ThreadId.make("foreign-assistant-source"),
@@ -360,7 +360,7 @@ it.live(
             newThreadId: ThreadId.make(`rejected-target:${index}`),
           };
           const sequence = yield* sink.latestSequence({});
-          assert.equal((yield* Effect.result(forks.dispatch(rejected)))._tag, "Failure");
+          assert.equal((yield* Effect.result(forkConversation(rejected)))._tag, "Failure");
           assert.equal(yield* sink.latestSequence({}), sequence);
           assert.ok(Option.isNone(yield* receipts.getByCommandId(rejected.commandId)));
           assert.equal(
@@ -381,16 +381,15 @@ it.live(
   () =>
     withSource((command) =>
       Effect.gen(function* () {
-        const forks = yield* ConversationForkService;
         const store = yield* ProjectionStoreV2;
         const receipts = yield* CommandReceiptStoreV2;
         const sink = yield* EventSinkV2;
-        yield* forks.dispatch(command);
+        yield* forkConversation(command);
         const source = yield* store.getThreadProjection(command.originThreadId);
         const target = yield* store.getThreadProjection(command.newThreadId);
         const sequence = yield* sink.latestSequence({});
         const competing = { ...command, commandId: CommandId.make("competing-destination-fork") };
-        assert.equal((yield* Effect.result(forks.dispatch(competing)))._tag, "Failure");
+        assert.equal((yield* Effect.result(forkConversation(competing)))._tag, "Failure");
         assert.ok(Option.isNone(yield* receipts.getByCommandId(competing.commandId)));
         assert.equal(yield* sink.latestSequence({}), sequence);
         assert.deepEqual(yield* store.getThreadProjection(command.newThreadId), target);

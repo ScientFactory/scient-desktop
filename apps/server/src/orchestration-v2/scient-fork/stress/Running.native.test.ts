@@ -48,9 +48,9 @@ import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/P
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
-import { ConversationForkService } from "../ConversationForkService.ts";
 import { runtimeOptions } from "./stressHarness.ts";
 import * as PortScanner from "../../../preview/PortScanner.ts";
+import { forkConversation } from "../../testkit/ConversationForkCommand.ts";
 
 // A provider turn's terminal event lands before the run's final write, which
 // enqueues its checkpoint effect; drain only once the run has left `running`.
@@ -312,7 +312,7 @@ it.live.each([false, true])(
             assert.isTrue(yield* Effect.promise(() => gate.waitForReached(`cut-${cut}`)));
             if (cut > 0) yield* Deferred.await(received[cut - 1]!);
             const newThreadId = ThreadId.make(`running-cut-${cut}`);
-            yield* (yield* ConversationForkService).dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: CommandId.make(`running-cut-${cut}`),
               originThreadId: threadId,

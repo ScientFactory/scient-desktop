@@ -32,6 +32,7 @@ import {
 } from "../threadHistoryPaging.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import { measureEffectBenchmark as measureForkEffect } from "../../testUtils/benchmark.testkit.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 const layer = nativeImportRuntimeTestLayer(
   makeLayer([
     {
@@ -115,7 +116,7 @@ describe.skipIf(process.env.SCIENT_FORK_BENCH !== "1")("native heavy fork measur
           const forks = yield* ConversationForkService;
           const [options, optionsMs] = yield* timed("fork options", forks.getOptions(command));
           assert.isTrue(options.available);
-          const [receipt, forkMs] = yield* timed("fork dispatch", forks.dispatch(command));
+          const [receipt, forkMs] = yield* timed("fork dispatch", forkConversation(command));
           yield* Fiber.interrupt(reader);
           const [window, openMs] = yield* timed(
             "open fork window",
@@ -152,7 +153,7 @@ describe.skipIf(process.env.SCIENT_FORK_BENCH !== "1")("native heavy fork measur
           assert.deepEqual(fork.runs, []);
           assert.deepEqual(fork.providerSessions, []);
           assert.deepEqual(fork.runtimeRequests, []);
-          assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+          assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
           const after = yield* store.getThreadProjection(result.threadId);
           assert.deepEqual(after.thread, source.thread);
           assert.deepEqual(after.messages, source.messages);

@@ -1,22 +1,37 @@
-import { EnvironmentId, ThreadForkCommand, type ForkDisposition } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  ScientThreadForkOptions,
+  ThreadId,
+  type ForkDisposition,
+} from "@t3tools/contracts";
 import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import * as Schema from "effect/Schema";
 import { RpcClientError } from "effect/rpc";
 
+/** The fork command as the client sends it: T3's thread.fork with Scient's options. */
+const AttemptCommand = Schema.Struct({
+  commandId: CommandId,
+  sourceThreadId: ThreadId,
+  targetThreadId: ThreadId,
+  scient: ScientThreadForkOptions,
+});
+export type ForkAttemptCommand = typeof AttemptCommand.Type;
+
 const Attempt = Schema.Struct({
   environmentId: EnvironmentId,
-  command: ThreadForkCommand,
+  command: AttemptCommand,
   ready: Schema.Boolean,
   handoffDone: Schema.Boolean,
   composerDraftFingerprint: Schema.optional(Schema.String),
-  displayTitle: Schema.optional(Schema.String),
   /** Where a local fork works when that differs from the original; shown again on retry. */
   workspaceNotice: Schema.optional(Schema.String),
   attachmentIdMap: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type ForkAttempt = typeof Attempt.Type;
 const decodeAttempt = Schema.decodeUnknownSync(Schema.fromJsonString(Attempt));
-const STORAGE_PREFIX = "scient:fork-attempt:v1:";
+// v1 journalled Scient's former fork command; those entries are no longer read.
+const STORAGE_PREFIX = "scient:fork-attempt:v2:";
 
 /** Entries survive navigation/reload until the same operation is resolved. */
 export function createForkAttemptStore(
@@ -42,10 +57,10 @@ export function forkAttemptKey(environmentId: string, originId: string, source: 
 }
 
 function forkErrorDisposition(error: unknown): ForkDisposition {
-  const disposition =
-    typeof error === "object" && error !== null && "forkDisposition" in error
-      ? error.forkDisposition
-      : undefined;
+  if (typeof error !== "object" || error === null) return "unknown";
+  // T3's dispatch reports a durably refused command; readiness reports the fork's own state.
+  if ("commandDisposition" in error && error.commandDisposition === "rejected") return "rejected";
+  const disposition = "forkDisposition" in error ? error.forkDisposition : undefined;
   return disposition === "rejected" ||
     disposition === "pending" ||
     disposition === "provisioning" ||

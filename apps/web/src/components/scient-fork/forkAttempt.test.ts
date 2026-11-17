@@ -25,15 +25,14 @@ function fixture() {
     environmentId: EnvironmentId.make("env"),
     ready: false,
     handoffDone: false,
-    displayTitle: "Renamed fork",
     command: {
-      type: "thread.fork",
       commandId: CommandId.make("fork-request"),
-      originThreadId: ThreadId.make("origin"),
-      newThreadId: ThreadId.make("destination"),
-      sourceAssistantMessageId: MessageId.make("answer"),
-      workspaceMode: "new-worktree",
-      titleOverride: "Renamed fork",
+      sourceThreadId: ThreadId.make("origin"),
+      targetThreadId: ThreadId.make("destination"),
+      scient: {
+        boundary: { kind: "assistant-response", messageId: MessageId.make("answer") },
+        workspaceMode: "new-worktree",
+      },
     },
   };
   return {
@@ -151,9 +150,9 @@ describe("durable fork attempts", () => {
         commands.push(value);
       },
     });
-    expect(commands[0]?.command.newThreadId).toBe(attempt.command.newThreadId);
+    expect(commands[0]?.command.targetThreadId).toBe(attempt.command.targetThreadId);
     expect(ready.ready).toBe(true);
-    expect(reloaded.get(key)?.displayTitle).toBe("Renamed fork");
+    expect(reloaded.get(key)?.command).toEqual(attempt.command);
   });
 
   it.each(["rejected", "abandoned"])(
@@ -176,6 +175,24 @@ describe("durable fork attempts", () => {
       expect(discardDraft).toHaveBeenCalledOnce();
     },
   );
+
+  it("cleans the staged destination when T3's dispatch durably refused the fork", async () => {
+    const { attempt, store, key } = fixture();
+    const discardDraft = vi.fn();
+    await expect(
+      deliverForkAttempt({
+        attempt,
+        store,
+        key,
+        discardDraft,
+        dispatch: async () => {
+          throw { _tag: "OrchestrationV2DispatchCommandError", commandDisposition: "rejected" };
+        },
+      }),
+    ).rejects.toMatchObject({ commandDisposition: "rejected" });
+    expect(store.get(key)).toBeNull();
+    expect(discardDraft).toHaveBeenCalledOnce();
+  });
 
   it.each(["failed", "provisioning", "pending", "unknown"])(
     "retains identity and draft after %s",

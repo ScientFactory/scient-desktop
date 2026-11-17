@@ -58,6 +58,7 @@ import {
   layerMemory as SqlitePersistenceMemory,
   layerFromPath as makeSqlitePersistenceLive,
 } from "../../persistence/Sqlite.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -332,9 +333,7 @@ const pending = Effect.fn("Workspace.pending")(function* (
       afterSequence: 0,
     }),
   );
-  const waiting = yield* (yield* ConversationForkService)
-    .dispatch(command)
-    .pipe(Effect.exit, Effect.forkChild);
+  const waiting = yield* forkConversation(command).pipe(Effect.exit, Effect.forkChild);
   yield* pull;
   return {
     command,
@@ -500,7 +499,7 @@ it.live(
         assert.equal(options.newWorktree, true);
         assert.isNull(options.reason);
         assert.include(options.workspaceNotice ?? "", "project folder");
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("removed-local"),
           originThreadId: sourceId,
@@ -537,7 +536,7 @@ it.live("a fork whose own worktree setup is unfinished can still be forked local
         "pending",
       );
       const child = ThreadId.make("unfinished-parent-child");
-      yield* (yield* ConversationForkService).dispatch({
+      yield* forkConversation({
         type: "thread.fork",
         commandId: CommandId.make("unfinished-parent-child"),
         originThreadId: command.newThreadId,
@@ -556,11 +555,10 @@ it.live("a local fork continues without a restore point when its checkpoint cann
     Effect.gen(function* () {
       yield* seed();
       const sql = yield* SqlClient.SqlClient;
-      const forks = yield* ConversationForkService;
       yield* sql.unsafe(`CREATE TRIGGER reject_snapshot_ownership BEFORE INSERT ON scient_fork_checkpoint_ownership
         BEGIN SELECT RAISE(ABORT, 'injected ownership failure'); END`);
       const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
-        forks.dispatch({
+        forkConversation({
           type: "thread.fork",
           commandId: CommandId.make(`no-restore-${suffix}`),
           originThreadId: sourceId,
@@ -617,7 +615,7 @@ it.live(
           `#!/bin/sh\nif [ "$1" = prepared ]; then rm -rf '${worktree}'; rm -f "$0"; exit 1; fi\nexit 0\n`,
         );
         yield* fs.chmod(hook, 0o755);
-        yield* (yield* ConversationForkService).dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("vanishing-local"),
           originThreadId: sourceId,
@@ -669,7 +667,7 @@ it.live(
         assert.isFalse(options.newWorktree);
         assert.include(options.workspaceNotice ?? "", "project folder");
         const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
-          forks.dispatch({
+          forkConversation({
             type: "thread.fork",
             commandId: CommandId.make(`removed-running-${suffix}`),
             originThreadId: sourceId,
@@ -714,7 +712,7 @@ it.live(
         );
         yield* fs.chmod(hook, 0o755);
         const result = yield* Effect.result(
-          (yield* ConversationForkService).dispatch({
+          forkConversation({
             type: "thread.fork",
             commandId: CommandId.make("vanishing-root"),
             originThreadId: sourceId,
@@ -766,7 +764,7 @@ it.live("a Git failure costs only the restore point, and never reaches clients w
         assert.isFalse(options.newWorktree);
         assert.notInclude(JSON.stringify(options), secret);
         const fork = (suffix: string, workspaceMode: "local" | "new-worktree") =>
-          forks.dispatch({
+          forkConversation({
             type: "thread.fork",
             commandId: CommandId.make(`git-diagnostics-${suffix}`),
             originThreadId: sourceId,
@@ -784,7 +782,8 @@ it.live("a Git failure costs only the restore point, and never reaches clients w
         assert.equal(result._tag, "Failure");
         if (result._tag === "Failure") {
           assert.notInclude(result.failure.message, secret);
-          assert.isUndefined(result.failure.cause);
+          // Git output and workspace paths stay in the server log.
+          assert.notInclude(JSON.stringify(result.failure), secret);
           assert.equal(result.failure.forkDisposition, "rejected");
         }
       }).pipe(Effect.provide(runtime));
@@ -1048,7 +1047,7 @@ it.live("late SQL admission failure releases only the just-published snapshot", 
         yield* sql.unsafe(`CREATE TRIGGER reject_fork BEFORE INSERT ON orchestration_v2_projection_threads
         WHEN NEW.thread_id = 'late-rejected-fork' BEGIN SELECT RAISE(ABORT, 'injected admission failure'); END`);
         const result = yield* Effect.result(
-          (yield* ConversationForkService).dispatch({
+          forkConversation({
             type: "thread.fork",
             commandId: CommandId.make("late-rejected-fork"),
             originThreadId: sourceId,
@@ -1117,16 +1116,14 @@ it.live("a paused running-worktree snapshot does not block an unrelated local fo
             afterSequence: 0,
           }),
         );
-        const slow = yield* (yield* ConversationForkService)
-          .dispatch({
-            type: "thread.fork",
-            commandId: CommandId.make("paused-workspace"),
-            originThreadId: sourceId,
-            newThreadId: ThreadId.make("paused-workspace"),
-            workspaceMode: "new-worktree",
-            sourceRunningRunId: RunId.make("workspace-run-3"),
-          })
-          .pipe(Effect.forkChild);
+        const slow = yield* forkConversation({
+          type: "thread.fork",
+          commandId: CommandId.make("paused-workspace"),
+          originThreadId: sourceId,
+          newThreadId: ThreadId.make("paused-workspace"),
+          workspaceMode: "new-worktree",
+          sourceRunningRunId: RunId.make("workspace-run-3"),
+        }).pipe(Effect.forkChild);
         yield* Deferred.await(entered).pipe(Effect.timeout("5 seconds"));
         const target = ThreadId.make("unrelated-local");
         const pull = yield* Stream.toPull(
@@ -1136,16 +1133,14 @@ it.live("a paused running-worktree snapshot does not block an unrelated local fo
             afterSequence: 0,
           }),
         );
-        const fast = yield* (yield* ConversationForkService)
-          .dispatch({
-            type: "thread.fork",
-            commandId: CommandId.make("unrelated-local"),
-            originThreadId: source.thread.id,
-            newThreadId: target,
-            workspaceMode: "local",
-            sourceAssistantMessageId: assistant.id,
-          })
-          .pipe(Effect.forkChild);
+        const fast = yield* forkConversation({
+          type: "thread.fork",
+          commandId: CommandId.make("unrelated-local"),
+          originThreadId: source.thread.id,
+          newThreadId: target,
+          workspaceMode: "local",
+          sourceAssistantMessageId: assistant.id,
+        }).pipe(Effect.forkChild);
         yield* pull.pipe(Effect.timeout("5 seconds"));
         // A local fork needs no workspace and is ready while the worktree snapshot is paused.
         yield* Fiber.join(fast).pipe(Effect.timeout("5 seconds"));
@@ -1166,26 +1161,22 @@ it.live("a paused running-worktree snapshot does not block an unrelated local fo
         const before = yield* store.getThread(sourceId);
         const reverse = yield* Effect.all(
           [
-            (yield* ConversationForkService)
-              .dispatch({
-                type: "thread.fork",
-                commandId: CommandId.make("direction-a"),
-                originThreadId: sourceId,
-                newThreadId: source.thread.id,
-                workspaceMode: "local",
-                sourceAssistantMessageId: MessageId.make("workspace-a1"),
-              })
-              .pipe(Effect.result),
-            (yield* ConversationForkService)
-              .dispatch({
-                type: "thread.fork",
-                commandId: CommandId.make("direction-b"),
-                originThreadId: source.thread.id,
-                newThreadId: sourceId,
-                workspaceMode: "local",
-                sourceAssistantMessageId: assistant.id,
-              })
-              .pipe(Effect.result),
+            forkConversation({
+              type: "thread.fork",
+              commandId: CommandId.make("direction-a"),
+              originThreadId: sourceId,
+              newThreadId: source.thread.id,
+              workspaceMode: "local",
+              sourceAssistantMessageId: MessageId.make("workspace-a1"),
+            }).pipe(Effect.result),
+            forkConversation({
+              type: "thread.fork",
+              commandId: CommandId.make("direction-b"),
+              originThreadId: source.thread.id,
+              newThreadId: sourceId,
+              workspaceMode: "local",
+              sourceAssistantMessageId: assistant.id,
+            }).pipe(Effect.result),
           ],
           { concurrency: 2 },
         );

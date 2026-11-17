@@ -46,7 +46,6 @@ import {
   THREAD_FORK_NATIVE_SOURCE_PROMPT,
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "../testkit/fixtures/shared.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import { conversationForkBoundaryItem } from "./ConversationForkBoundaryItem.ts";
 import { presentInheritedItem } from "./ForkHistory.ts";
 
@@ -150,6 +149,7 @@ const createSource = Effect.fn("NativeFork.createSource")(function* (cwd: string
 });
 
 import { planConversationFork } from "./ConversationForkPlan.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 it.live.each(
   [false, true].map((nested) => ({
@@ -218,7 +218,6 @@ it.live.each(
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
         const source = yield* createSource(cwd);
-        const forks = yield* ConversationForkService;
         let boundary = source;
         let parentId = sourceId;
         let sourceFilePath: string | undefined;
@@ -228,7 +227,7 @@ it.live.each(
             (item) => item.type === "assistant_message" && item.status === "completed",
           );
           assert.ok(answer?.type === "assistant_message");
-          yield* forks.dispatch({
+          yield* forkConversation({
             type: "thread.fork",
             commandId: CommandId.make("native-run-fork-scient-parent"),
             originThreadId: sourceId,

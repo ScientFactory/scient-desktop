@@ -66,7 +66,9 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
       Option.isSome(receipt) &&
       receipt.value.status === "accepted" &&
       receipt.value.threadId === row.target_thread_id &&
-      receipt.value.commandType === "thread.conversation.fork";
+      // Forks accepted before the single fork path have the older command type.
+      (receipt.value.commandType === "thread.fork" ||
+        receipt.value.commandType === "thread.conversation.fork");
     const destination =
       target?.conversationFork?.commandId === row.command_id ? target.conversationFork : null;
     if (accepted && destination !== null && destination.checkpointRef === row.checkpoint_ref) {

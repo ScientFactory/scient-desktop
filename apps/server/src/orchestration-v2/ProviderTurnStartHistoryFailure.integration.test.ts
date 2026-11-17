@@ -53,7 +53,7 @@ import {
   readProviderReplayTranscript,
 } from "@t3tools/provider-testing/replayTranscript";
 import { THREAD_FORK_NATIVE_SOURCE_PROMPT } from "./testkit/fixtures/shared.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
+import { forkConversation } from "./testkit/ConversationForkCommand.ts";
 
 const frameJson = Schema.fromJsonString(Schema.Unknown);
 const encodeFrame = Schema.encodeEffect(frameJson);
@@ -780,7 +780,6 @@ it.live(
           const worker = yield* OrchestrationEffectWorkerV2;
           const outbox = yield* EffectOutboxV2;
           const sink = yield* EventSinkV2;
-          const forks = yield* ConversationForkService;
           const sql = yield* SqlClient.SqlClient;
           const now = yield* DateTime.now;
           const sourceId = ThreadId.make("clone-history-source");
@@ -903,16 +902,14 @@ it.live(
           const forkPull = yield* Stream.toPull(
             sink.stream({ threadId: targetId, afterSequence: forkCursor }),
           );
-          const pendingFork = yield* forks
-            .dispatch({
-              type: "thread.fork",
-              commandId: CommandId.make("clone-history-fork"),
-              originThreadId: sourceId,
-              newThreadId: targetId,
-              sourceAssistantMessageId: answer.messageId,
-              workspaceMode: "local",
-            })
-            .pipe(Effect.forkScoped);
+          const pendingFork = yield* forkConversation({
+            type: "thread.fork",
+            commandId: CommandId.make("clone-history-fork"),
+            originThreadId: sourceId,
+            newThreadId: targetId,
+            sourceAssistantMessageId: answer.messageId,
+            workspaceMode: "local",
+          }).pipe(Effect.forkScoped);
           const acceptedFork = yield* Stream.fromPull(Effect.succeed(forkPull)).pipe(
             Stream.filter((stored) => stored.event.type === "thread.created"),
             Stream.runHead,

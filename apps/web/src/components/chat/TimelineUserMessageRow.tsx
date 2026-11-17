@@ -362,6 +362,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 <ScientForkMessageButton
                   label="Fork conversation from this message"
                   onFork={() => ctx.onForkUserMessage?.(row.message)}
+                  onForkNewWorktree={() => ctx.onForkUserMessage?.(row.message, "new-worktree")}
                 />
               ) : null}
               {/* SCIENT-FORK:END */}
@@ -745,6 +746,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <ScientForkMessageButton
             label="Fork conversation from this message"
             onFork={() => ctx.onForkUserMessage?.(row.message)}
+            onForkNewWorktree={() => ctx.onForkUserMessage?.(row.message, "new-worktree")}
           />
         ) : null}
         {/* SCIENT-FORK:END */}

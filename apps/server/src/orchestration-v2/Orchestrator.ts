@@ -140,10 +140,15 @@ import {
 import { subscribeDelegatedChildSettlements } from "./scient-fork/DelegatedChildSettlements.ts";
 import { SubagentParentLockHeld } from "./scient-fork/SubagentParentLockHeld.ts";
 import {
-  conversationForkHistoryEvents,
-  conversationForkProvisionEffect,
-} from "./scient-fork/ConversationForkPlan.ts";
-import type { ForkHistoryEntry } from "./scient-fork/ForkHistory.ts";
+  dispatchConversationFork,
+  ForkAttemptScope,
+  RunningForkCapture,
+  type ConversationForkCommitPlan,
+} from "./scient-fork/ConversationForkDispatch.ts";
+import {
+  ConversationForkService,
+  type ConversationForkCommitInput,
+} from "./scient-fork/ConversationForkService.ts";
 import {
   classifyProviderWorkAdmission,
   commitProviderWorkAdmission,
@@ -1723,6 +1728,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
+  // SCIENT-FORK: conversation forks freeze their boundary in Scient's admission.
+  const conversationForks = yield* ConversationForkService;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
   // SCIENT-FORK:START — Scient Cloud lease guard; absent where the cloud state is not mounted.
@@ -6308,6 +6315,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchThreadFork = Effect.fn("orchestrationV2.dispatch.threadFork")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    // SCIENT-FORK: a conversation fork may queue its worktree setup.
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     yield* Effect.annotateCurrentSpan({
@@ -6318,26 +6326,64 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.source_point_type": command.sourcePoint.type,
     });
 
-    // Accepted command retries return their receipt before planning. Fresh
-    // forks must not resurrect a tombstone or replace another conversation.
-    const destinationExists = yield* projectionStore.getThread(command.targetThreadId).pipe(
-      Effect.as(true),
-      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(false) }),
-      Effect.mapError(
-        (cause) => new OrchestratorProjectionError({ threadId: command.targetThreadId, cause }),
-      ),
-    );
-    // SCIENT-FORK:START — a side chat's target is refused below, with upstream's error.
-    if (destinationExists && command.sideChat !== true)
-      return yield* new OrchestratorCommandRejectedError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: "The destination already exists. Choose a new fork identity.",
-      });
+    // SCIENT-FORK:START — a conversation fork freezes its boundary in Scient's admission
+    // (scient-fork/ConversationForkDispatch.ts); a side chat stays T3's live view.
+    if (command.sideChat !== true)
+      return yield* dispatchConversationFork(
+        {
+          conversationForks,
+          threadForkService,
+          projectionStore,
+          allocateTransferId: mapDispatchError(command)(
+            idAllocator.allocate.contextTransfer({
+              sourceThreadId: command.sourceThreadId,
+              targetThreadId: command.targetThreadId,
+              type: "fork",
+            }),
+          ),
+          mapDispatchError,
+          emit,
+          refuseAboveDispatchModeLimit,
+          reject: (cause) =>
+            new OrchestratorCommandRejectedError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
+          runForSourcePoint: (projection) => runForSourcePoint(projection, command.sourcePoint),
+          runtimeCwd: (projection, run) =>
+            runtimePolicy
+              .resolve({
+                thread: {
+                  ...projection.thread,
+                  runtimeMode: run.runtimeMode ?? projection.thread.runtimeMode,
+                  interactionMode: run.interactionMode ?? projection.thread.interactionMode,
+                },
+                modelSelection: run.modelSelection,
+              })
+              .pipe(
+                Effect.map(
+                  (policy) => policy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                ),
+                mapDispatchError(command),
+              ),
+          providerThreadForRun,
+          providerTurnForRun,
+          contextSourcePointForRun,
+        },
+        command,
+        events,
+        effects,
+      );
     // SCIENT-FORK:END
-
     const sourceProjection = yield* projectionStore
-      .getThreadProjection(command.sourceThreadId)
+      .getThreadRecords(command.sourceThreadId, [
+        "runs",
+        ...(command.sourcePoint.type === "checkpoint" ? (["checkpoints"] as const) : []),
+        "providerThreads",
+        "providerTurns",
+        "attempts",
+      ])
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -6405,27 +6451,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "fork",
       }),
     );
-    // SCIENT-FORK:START — a side chat keeps the parent's worktree, so only a fork records a cwd.
-    const sourcePolicy =
-      sourceRun === null || command.sideChat === true
-        ? null
-        : yield* runtimePolicy
-            .resolve({
-              thread: {
-                ...sourceProjection.thread,
-                runtimeMode: sourceRun.runtimeMode ?? sourceProjection.thread.runtimeMode,
-                interactionMode:
-                  sourceRun.interactionMode ?? sourceProjection.thread.interactionMode,
-              },
-              modelSelection: sourceRun.modelSelection,
-            })
-            .pipe(mapDispatchError(command));
-    // SCIENT-FORK:END
-    const { targetThread, transfer, frozen } = yield* threadForkService
+    const { targetThread, transfer } = yield* threadForkService
       .plan({
         sourceProjection,
-        commandId: command.commandId,
-        cwd: sourcePolicy?.cwd ?? sourceProjection.thread.worktreePath ?? process.cwd(),
         sourceRun,
         sourceProviderThread,
         sourceTokenUsage:
@@ -6460,19 +6488,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: transfer,
     });
-    // SCIENT-FORK:START — the fork carries its frozen history and provisions its workspace.
-    if (frozen === null) return undefined;
-    for (const event of conversationForkHistoryEvents({
-      targetThreadId: targetThread.id,
-      history: frozen.history,
-      boundaryItem: frozen.boundaryItem,
-      occurredAt: now,
-    }))
-      yield* emitEvent(event);
-    const provision = conversationForkProvisionEffect(command.commandId, targetThread);
-    if (provision !== undefined) yield* Ref.update(effects, (existing) => [...existing, provision]);
-    return frozen.history.history;
-    // SCIENT-FORK:END
   });
 
   const dispatchThreadMergeBack = Effect.fn("orchestrationV2.dispatch.threadMergeBack")(function* (
@@ -16501,8 +16516,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
       };
-      // SCIENT-FORK: a new fork's inherited history, committed with it.
-      readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
+      // SCIENT-FORK: a conversation fork's history and commit fence.
+      readonly conversationFork?: ConversationForkCommitPlan;
       readonly updateDelegatedCompletionOnlyRunId?: RunId;
     },
     OrchestratorV2Error
@@ -16516,7 +16531,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
     let providerWorkOwner: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
-    let forkHistory: ReadonlyArray<ForkHistoryEntry> | undefined;
+    let conversationFork: ConversationForkCommitPlan | undefined;
     let cancelUnsettledEffects:
       | {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -16982,7 +16997,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchInterruptUnresponsive(command, events);
         break;
       case "thread.fork":
-        forkHistory = yield* dispatchThreadFork(command, events, effects);
+        // SCIENT-FORK: a conversation fork commits its history inside its commit fence.
+        conversationFork = yield* dispatchThreadFork(command, events, effects);
         break;
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
@@ -17027,7 +17043,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects: yield* Ref.get(effects),
       ...(providerWorkOwner === undefined ? {} : { providerWorkOwner }),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
-      ...(forkHistory === undefined ? {} : { forkHistory }),
+      ...(conversationFork === undefined ? {} : { conversationFork }),
       ...(updateDelegatedCompletionOnlyRunId === undefined
         ? {}
         : { updateDelegatedCompletionOnlyRunId }),
@@ -17071,6 +17087,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // SCIENT-FORK: the committed Scient order includes automatic predecessors before the selected send.
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId, { userStarted: true }));
     }
+    // SCIENT-FORK: repeating an accepted fork schedules its failed worktree setup again.
+    if (command.type === "thread.fork" && command.sideChat !== true)
+      yield* mapDispatchError(command)(
+        conversationForks.retryFailedSetup(command.targetThreadId, command.commandId),
+      );
     return {
       sequence: receipt.resultSequence,
       storedEvents,
@@ -17166,6 +17187,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Busy predecessors are transient. A receipt here would permanently
           // reject this generation's stable command identity on the next offer.
           if (cause._tag === "OrchestratorProviderWorkDeferredError") return yield* cause;
+          // SCIENT-FORK: a refused conversation fork changed nothing; its identity stays
+          // retryable once the cause (an import, the workspace, the source) is repaired.
+          if (command.type === "thread.fork" && command.sideChat !== true) return yield* cause;
           // Refusals depend on modes the user can change; a recorded rejection would block the retry.
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
@@ -17265,55 +17289,68 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
     const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
-    const commit = eventSink
-      .commitCommand({
-        commandId: command.commandId,
-        threadId: commandThreadId(command),
-        commandType: command.type,
-        acceptedAt,
-        events:
-          cancelledTask === undefined
-            ? plan.events
-            : [
-                ...plan.events,
-                yield* makeSystemEvent({
-                  type: "subagent.updated",
-                  threadId: cancelledTask.threadId,
-                  nodeId: cancelledTask.id,
-                  occurredAt: cancelledTask.updatedAt,
-                  payload: cancelledTask,
-                }).pipe(mapDispatchError(command)),
-              ],
-        effects: plan.effects,
-        ...(plan.cancelUnsettledEffects === undefined
-          ? {}
-          : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
-        ...(plan.forkHistory === undefined ? {} : { forkHistory: plan.forkHistory }),
-        ...(plan.updateDelegatedCompletionOnlyRunId === undefined
-          ? {}
-          : { updateDelegatedCompletionOnlyRunId: plan.updateDelegatedCompletionOnlyRunId }),
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause,
-            }),
-        ),
-      );
+    const commandEvents =
+      cancelledTask === undefined
+        ? plan.events
+        : [
+            ...plan.events,
+            yield* makeSystemEvent({
+              type: "subagent.updated",
+              threadId: cancelledTask.threadId,
+              nodeId: cancelledTask.id,
+              occurredAt: cancelledTask.updatedAt,
+              payload: cancelledTask,
+            }).pipe(mapDispatchError(command)),
+          ];
+    // SCIENT-FORK: a conversation fork's fence supplies its final events and live capture.
+    const commitWith = (input: ConversationForkCommitInput) =>
+      eventSink
+        .commitCommand({
+          commandId: command.commandId,
+          threadId: commandThreadId(command),
+          commandType: command.type,
+          acceptedAt,
+          events: input.events,
+          effects: plan.effects,
+          ...(plan.cancelUnsettledEffects === undefined
+            ? {}
+            : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
+          // SCIENT-FORK:START
+          ...(input.runningForkSource === undefined
+            ? {}
+            : { runningForkSource: input.runningForkSource }),
+          ...(plan.conversationFork === undefined
+            ? {}
+            : { forkHistory: plan.conversationFork.forkHistory }),
+          // SCIENT-FORK:END
+          ...(plan.updateDelegatedCompletionOnlyRunId === undefined
+            ? {}
+            : { updateDelegatedCompletionOnlyRunId: plan.updateDelegatedCompletionOnlyRunId }),
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        );
 
-    // SCIENT-FORK:START — provider-initiated work commits inside its native admission fence.
+    // SCIENT-FORK:START — provider-initiated work commits inside its native admission fence,
+    // and a conversation fork inside its title, folder and live-capture fence.
     const committed = yield* command.type === "provider-work.admit"
       ? commitProviderWorkAdmission({
           DispatchError: OrchestratorDispatchError,
           providerSessions,
           command,
           owner: plan.providerWorkOwner,
-          commit,
+          commit: commitWith({ events: commandEvents }),
         })
-      : commit;
+      : plan.conversationFork !== undefined
+        ? plan.conversationFork.commit(commitWith, commandEvents)
+        : commitWith({ events: commandEvents });
     // SCIENT-FORK:END
 
     if (committed.receipt.status === "rejected") {
@@ -17399,6 +17436,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (effect, id) => threadDispatch.withLock(id, effect),
       dispatchWithReceiptEffect(command),
     );
+    // SCIENT-FORK:START — a conversation fork's attempt owns its checkpoint reservation until it
+    // commits; a running-turn fork captures the turn's unsaved text before it locks.
+    if (command.type === "thread.fork" && command.sideChat !== true)
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const scope = yield* Effect.scope;
+          return yield* conversationForks.withRunningCapture(command, (capture) =>
+            dispatch.pipe(
+              Effect.provideService(RunningForkCapture, capture),
+              Effect.provideService(ForkAttemptScope, scope),
+            ),
+          );
+        }),
+      );
+    // SCIENT-FORK:END
+
     // A fork holds its source's lock, so a source deletion and its fork never interleave. A
     // parent's lock comes before its side chats' locks. A side chat fork from a side chat or a
     // fork onto an existing thread would invert that order; dispatch rejects both, so they skip it.
@@ -18208,6 +18261,8 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
+  // SCIENT-FORK: conversation forks freeze their boundary in Scient's admission.
+  | ConversationForkService
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
 );

@@ -2050,9 +2050,8 @@ export const layerWsRpc = (
               message: cause instanceof Error ? cause.message : fallbackMessage,
               cause,
             });
-      const forkRpc = makeConversationForkRpcHandlers({
+      const forkRpcHandlers = makeConversationForkRpcHandlers({
         observeRpcEffect,
-        startup,
         conversationForks,
       });
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -2391,7 +2390,7 @@ export const layerWsRpc = (
         }),
       });
       const handlers1 = WsConversationRpcGroup.of({
-        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: forkRpc.route((command) =>
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
             startup
@@ -2433,7 +2432,6 @@ export const layerWsRpc = (
                 : {}),
             },
           ),
-        ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: (input) =>
           threadManagement.forceStopThread(input),
@@ -2885,7 +2883,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
-        ...forkRpc.handlers,
+        ...forkRpcHandlers,
       });
       const handlers2 = WsServerManagementRpcGroup.of({
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),

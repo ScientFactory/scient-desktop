@@ -5,7 +5,6 @@ import * as NodePath from "node:path";
 import {
   EventId,
   TurnItemId,
-  type ThreadForkCommand,
   type OrchestrationV2DomainEvent,
   CommandId,
   MessageId,
@@ -61,6 +60,10 @@ import {
   type ImportTestControls,
 } from "./conversationImport.test-harness.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import {
+  forkConversation,
+  type ConversationForkTestCommand,
+} from "../../orchestration-v2/testkit/ConversationForkCommand.ts";
 
 const attemptDirectory = (name = "attempt") =>
   Effect.map(ServerConfig, (config) =>
@@ -256,7 +259,9 @@ const finishHistory = Effect.fn("ImportTest.finishHistory")(function* (
 });
 
 /** Observe the native creation receipt before invoking the production provisioner. */
-const forkHistory = Effect.fn("ImportTest.forkHistory")(function* (command: ThreadForkCommand) {
+const forkHistory = Effect.fn("ImportTest.forkHistory")(function* (
+  command: ConversationForkTestCommand,
+) {
   const sink = yield* EventSink.EventSinkV2;
   const pull = yield* Stream.toPull(
     sink.stream({
@@ -266,7 +271,7 @@ const forkHistory = Effect.fn("ImportTest.forkHistory")(function* (command: Thre
     }),
   );
   const forks = yield* ConversationForkService;
-  const waiting = yield* forks.dispatch(command).pipe(Effect.forkChild);
+  const waiting = yield* forkConversation(command).pipe(Effect.forkChild);
   yield* pull;
   yield* forks.provision(command.newThreadId, false);
   yield* Fiber.join(waiting);

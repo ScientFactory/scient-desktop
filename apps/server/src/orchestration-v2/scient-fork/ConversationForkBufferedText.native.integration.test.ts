@@ -60,7 +60,6 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import { checkpointRefForThreadTurn } from "./ForkCheckpointBaseline.ts";
 import { observeCheckpointOwnership } from "./checkpointOwnershipCompletion.testkit.ts";
 import {
@@ -70,6 +69,7 @@ import {
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const isThreadPayload = Schema.is(Schema.Struct({ threadId: Schema.String }));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -1150,7 +1150,6 @@ it.live.each(
           const forkEvents = yield* Stream.toPull(
             orchestrator.streamStoredEventsFrom({ threadId: forkId, afterSequence: 0 }),
           );
-          const forks = yield* ConversationForkService;
           const command = {
             type: "thread.fork",
             commandId: forkCommandId,
@@ -1236,15 +1235,13 @@ it.live.each(
                 ? Deferred.await(expireCapture)
                 : realClock.sleep(duration),
           };
-          let forking = yield* forks
-            .dispatch(command)
-            .pipe(
-              Effect.provideService(
-                Clock.Clock,
-                scenario.control === "timeout" ? timeoutClock : realClock,
-              ),
-              Effect.forkScoped,
-            );
+          let forking = yield* forkConversation(command).pipe(
+            Effect.provideService(
+              Clock.Clock,
+              scenario.control === "timeout" ? timeoutClock : realClock,
+            ),
+            Effect.forkScoped,
+          );
           yield* Effect.raceFirst(
             Deferred.await(
               ["eof", "pre-delta", "detach", "cancel-ordinary"].includes(scenario.control)
@@ -1622,7 +1619,7 @@ it.live.each(
               (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
               "Failure",
             );
-            forking = yield* forks.dispatch(command).pipe(Effect.forkScoped);
+            forking = yield* forkConversation(command).pipe(Effect.forkScoped);
           }
           yield* Deferred.await(captureCommitted).pipe(Effect.timeout("15 seconds"));
           if (cutoffRace) {
@@ -1871,7 +1868,7 @@ it.live.each(
           const frozen = yield* orchestrator.getThreadProjection(forkId);
           assert.equal(frozen.thread.conversationFork?.status, "ready");
           const capturesBeforeReplay = rawCaptureCount;
-          const accepted = yield* forks.dispatch(command);
+          const accepted = yield* forkConversation(command);
           const acceptedReceipt = yield* (yield* CommandReceiptStoreV2).getByCommandId(
             forkCommandId,
           );
@@ -1983,7 +1980,7 @@ it.live.each(
             const peerEvents = yield* Stream.toPull(
               orchestrator.streamStoredEventsFrom({ threadId: peerForkId, afterSequence: 0 }),
             );
-            const peerForking = yield* forks.dispatch(peerCommand).pipe(Effect.forkScoped);
+            const peerForking = yield* forkConversation(peerCommand).pipe(Effect.forkScoped);
             yield* Stream.fromPull(Effect.succeed(peerEvents)).pipe(
               Stream.filter((event) => event.event.type === "thread.created"),
               Stream.runHead,

@@ -12,16 +12,18 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   type CheckpointRef,
+  type CommandId,
   EventId,
-  ContextTransferId,
-  type OrchestrationV2ContextTransfer,
   OrchestrationDispatchCommandError,
   type ForkOptions,
+  type ForkReadiness,
   type GetForkOptionsInput,
   type OrchestrationV2AppThread,
+  type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
-  type ThreadForkCommand,
+  type RunId,
+  type ScientThreadForkBoundary,
   ThreadId,
   VcsCheckpointUnavailableError,
   VcsError,
@@ -36,6 +38,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { EventSinkV2 } from "../EventSink.ts";
@@ -54,18 +57,82 @@ import {
   ConversationForkPlanError,
   type ConversationForkSource,
 } from "./ConversationForkPlan.ts";
-import { freezeConversationForkNativeSource } from "./ConversationForkNativeSource.ts";
-import { conversationForkBoundaryItem } from "./ConversationForkBoundaryItem.ts";
+import {
+  freezeConversationForkNativeSource,
+  type ConversationForkNativeSourceDecision,
+} from "./ConversationForkNativeSource.ts";
+
+export type ThreadForkV2Command = Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>;
+
+/** Where a fork stops: Scient's boundary, or the settled run T3's source point names. */
+export type ConversationForkBoundary =
+  | ScientThreadForkBoundary
+  | { readonly kind: "settled-run"; readonly runId: RunId };
+
+/** What a fork freezes before T3's builder makes its thread: the plan, workspace and proof. */
+export interface ConversationForkAdmission {
+  readonly projection: OrchestrationV2ThreadProjection;
+  readonly source: ConversationForkSource;
+  readonly plan: Effect.Success<ReturnType<typeof planConversationFork>>;
+  readonly markerSource:
+    | { readonly type: "run"; readonly threadId: ThreadId; readonly runId: RunId }
+    | {
+        readonly type: "message";
+        readonly threadId: ThreadId;
+        readonly messageId: Extract<ConversationForkSource, { kind: "user-message" }>["messageId"];
+        readonly position: "before" | "after";
+      };
+  readonly workspaceMode: "local" | "new-worktree";
+  readonly cwd: string;
+  readonly inProjectFolder: boolean;
+  readonly projectRoot: string;
+  /** False when a mobile or MCP fork works in T3's folder without a project folder. */
+  readonly workspaceVerified: boolean;
+  readonly checkpointRef: CheckpointRef | null;
+  readonly checkpointOid: string | null;
+  readonly nativeSource: ConversationForkNativeSourceDecision;
+}
+
+/** The final events a fork commits, with the live capture its commit must recheck. */
+export interface ConversationForkCommitInput {
+  readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  readonly runningForkSource?: {
+    readonly owner: CapturedProviderText["owner"];
+    readonly capture: CapturedProviderText;
+  };
+}
 
 export class ConversationForkService extends Context.Service<
   ConversationForkService,
   {
-    readonly dispatch: (
-      command: ThreadForkCommand,
-    ) => Effect.Effect<
-      { readonly sequence: number; readonly forkAttachmentIdMap: Readonly<Record<string, string>> },
-      OrchestrationDispatchCommandError
-    >;
+    /** Freezes a fork's prefix and workspace under the source and destination locks. */
+    readonly admit: (input: {
+      readonly command: ThreadForkV2Command;
+      readonly boundary: ConversationForkBoundary;
+      readonly sourceProjection: OrchestrationV2ThreadProjection;
+      readonly fallbackCwd?: string;
+    }) => Effect.Effect<ConversationForkAdmission, OrchestrationDispatchCommandError, Scope.Scope>;
+    /** Commits a fork under its title allocation, its folder check and any live capture. */
+    readonly commit: <A, E, R>(input: {
+      readonly command: ThreadForkV2Command;
+      readonly admission: ConversationForkAdmission;
+      readonly capture: CapturedProviderText | null;
+      readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+      readonly commit: (input: ConversationForkCommitInput) => Effect.Effect<A, E, R>;
+    }) => Effect.Effect<A, E | OrchestrationDispatchCommandError | ProviderTextSnapshotError, R>;
+    /** Runs a fork with the running turn's unsaved text, or with saved history when it cannot. */
+    readonly withRunningCapture: <A, E, R>(
+      command: ThreadForkV2Command,
+      attempt: (capture: CapturedProviderText | null) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
+    /** A repeated fork command schedules a failed worktree setup again. */
+    readonly retryFailedSetup: (
+      threadId: ThreadId,
+      commandId: CommandId,
+    ) => Effect.Effect<void, OrchestrationDispatchCommandError>;
+    readonly awaitReady: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ForkReadiness, OrchestrationDispatchCommandError>;
     readonly getOptions: (
       input: GetForkOptionsInput,
     ) => Effect.Effect<ForkOptions, OrchestrationDispatchCommandError>;
@@ -190,20 +257,28 @@ const make = Effect.gen(function* () {
   });
 
   const inspect = Effect.fn("ConversationFork.inspect")(function* (
-    input: GetForkOptionsInput,
+    projection: OrchestrationV2ThreadProjection,
+    source: ConversationForkSource,
     targetThreadId: ThreadId,
-    capturedProjection?: OrchestrationV2ThreadProjection,
     materialize = true,
+    /** T3's own fork folder: a mobile or MCP fork never refused for a missing workspace. */
+    fallbackCwd?: string,
   ) {
-    yield* legacyImporter.ensureTranscript(input.originThreadId);
-    const projection =
-      capturedProjection ?? (yield* projections.getThreadProjection(input.originThreadId));
-    // A fork whose own worktree setup is pending or failed already shares its
-    // history, so it forks in the folder it shows now.
-    const source = yield* resolveSource(projection, input);
     const plan = yield* planConversationFork({ projection, targetThreadId, source, materialize });
+    const unverified = (cwd: string) => ({
+      plan,
+      cwd,
+      fromCheckpointRef: null,
+      checkpointAvailable: false,
+      inProjectFolder: false,
+      projectRoot: cwd,
+      workspaceVerified: false,
+    });
     const project = yield* projects.get(projection.thread.projectId);
-    if (Option.isNone(project)) return yield* failure("The conversation's project is unavailable.");
+    if (Option.isNone(project))
+      return fallbackCwd === undefined
+        ? yield* failure("The conversation's project is unavailable.")
+        : unverified(fallbackCwd);
     const originCwd = projection.thread.worktreePath ?? project.value.workspaceRoot;
     const originAvailable = yield* baseline.workspaceExists(originCwd);
     const sourceRun = projection.runs.find((run) => run.id === plan.boundaryRunId);
@@ -229,7 +304,9 @@ const make = Effect.gen(function* () {
     // A removed worktree forks into the project folder rather than refusing.
     const cwd = originAvailable ? originCwd : project.value.workspaceRoot;
     if (!originAvailable && !(yield* baseline.workspaceExists(cwd)))
-      return yield* failure("The project folder is unavailable.");
+      return fallbackCwd === undefined
+        ? yield* failure("The project folder is unavailable.")
+        : unverified(fallbackCwd);
     // A Git lookup that fails only costs the restore point: a local fork goes on.
     const unlessGitFails = (lookup: Effect.Effect<boolean, VcsError>) =>
       lookup.pipe(
@@ -246,14 +323,13 @@ const make = Effect.gen(function* () {
         : fromCheckpointRef !== null &&
           (yield* unlessGitFails(baseline.hasCheckpoint(cwd, fromCheckpointRef))));
     return {
-      projection,
-      source,
       plan,
       cwd,
       fromCheckpointRef,
       checkpointAvailable,
       inProjectFolder: !originAvailable,
       projectRoot: project.value.workspaceRoot,
+      workspaceVerified: true,
     };
   });
 
@@ -275,8 +351,10 @@ const make = Effect.gen(function* () {
   ) {
     const cursor = yield* sink.latestSequence({ threadId });
     const initial = yield* projections.getThread(threadId);
+    if (initial.conversationFork == null)
+      return yield* failure("This conversation is not a fork.", "rejected");
     const final =
-      initial.deletedAt === null && initial.conversationFork?.status === "pending"
+      initial.deletedAt === null && initial.conversationFork.status === "pending"
         ? yield* sink.stream({ threadId, afterSequence: cursor }).pipe(
             Stream.filterMap((stored) => {
               const event = stored.event;
@@ -301,26 +379,54 @@ const make = Effect.gen(function* () {
         final.conversationFork?.error ?? "Fork setup failed. Retry the same fork.",
         "failed",
       );
-    return Object.fromEntries(
-      final.conversationFork.attachmentCopies.map(({ source, target }) => [source.id, target.id]),
-    );
+    return {
+      forkAttachmentIdMap: Object.fromEntries(
+        final.conversationFork.attachmentCopies.map(({ source, target }) => [source.id, target.id]),
+      ),
+    } satisfies ForkReadiness;
   });
 
-  const prepareTextCapture = Effect.fnUntraced(function* (command: ThreadForkCommand) {
-    if (command.sourceRunningRunId === undefined && command.sourceRunningTurnId === undefined)
-      return null;
+  const retryFailedSetup = Effect.fn("ConversationForkService.retryFailedSetup")(function* (
+    threadId: ThreadId,
+    commandId: CommandId,
+  ) {
+    const target = yield* projections.getThread(threadId);
+    const fork = target.conversationFork;
+    if (fork?.status !== "failed" || fork.commandId !== commandId || target.deletedAt !== null)
+      return;
+    const now = yield* DateTime.now;
+    const sequence = yield* sink.latestSequence({ threadId });
+    yield* sink.writeWithEffects({
+      events: [
+        yield* metadataEvent(
+          { ...target, conversationFork: { ...fork, status: "pending", error: null } },
+          now,
+        ),
+      ],
+      effects: [
+        {
+          id: `scient-fork:${commandId}:retry:${sequence}`,
+          commandId,
+          threadId,
+          request: { type: "scient-fork.provision" },
+        },
+      ],
+    });
+  });
+
+  const prepareTextCapture = Effect.fnUntraced(function* (command: ThreadForkV2Command) {
+    const boundary = command.scient?.boundary;
+    if (boundary?.kind !== "running-turn") return null;
     if (Option.isSome(yield* receipts.getByCommandId(command.commandId))) return null;
-    yield* legacyImporter.ensureTranscript(command.originThreadId);
+    yield* legacyImporter.ensureTranscript(command.sourceThreadId);
     // Control records only: the capture reads the source's history once, at its frame.
-    const projection = yield* projections.getThreadRecords(command.originThreadId, [
+    const projection = yield* projections.getThreadRecords(command.sourceThreadId, [
       "runs",
       "attempts",
       "providerThreads",
       "providerTurns",
     ]);
-    const source = yield* resolveSource({ ...projection, visibleTurnItems: [] }, command);
-    if (source.kind !== "running-turn") return null;
-    const run = projection.runs.find((row) => row.id === source.runId);
+    const run = projection.runs.find((row) => row.id === boundary.runId);
     const thread = projection.providerThreads.find((row) => row.id === run?.providerThreadId);
     if (thread?.driver !== "codex") return null;
     const attempt = projection.attempts.find((row) => row.id === run?.activeAttemptId);
@@ -343,8 +449,8 @@ const make = Effect.gen(function* () {
     const withoutCapture = (reason: string) =>
       Effect.logWarning("Running fork forks saved history without live text", {
         reason,
-        threadId: command.originThreadId,
-        runId: source.runId,
+        threadId: command.sourceThreadId,
+        runId: boundary.runId,
       }).pipe(Effect.as(null));
     if (Option.isNone(snapshots) || snapshots.value.captureRunningForkText === undefined)
       return yield* withoutCapture("unavailable");
@@ -380,432 +486,271 @@ const make = Effect.gen(function* () {
       );
   });
 
-  const dispatch = Effect.fn("ConversationFork.dispatch")(function* (command: ThreadForkCommand) {
-    const captured: CapturedProviderText | null = yield* Effect.acquireRelease(
-      prepareTextCapture(command),
-      (captured) =>
-        captured === null || Option.isNone(snapshots)
-          ? Effect.void
-          : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void),
-      { interruptible: true },
-    );
-    // Reserves and publishes the fork's own checkpoint ref, copied from the boundary
-    // or, for a running fork, captured from the current files.
-    const freezeCheckpoint = Effect.fnUntraced(function* (input: {
-      readonly command: ThreadForkCommand;
-      readonly cwd: string;
-      readonly source: ConversationForkSource;
-      readonly fromCheckpointRef: CheckpointRef | null;
-      readonly requestedCheckpointRef: CheckpointRef | null;
-    }) {
-      const { command, cwd, source, fromCheckpointRef, requestedCheckpointRef } = input;
-      const owned =
-        requestedCheckpointRef === null
-          ? null
-          : yield* checkpointOwnership
-              .reserve({
-                cwd,
-                commandId: command.commandId,
-                targetThreadId: command.newThreadId,
-                checkpointRef: requestedCheckpointRef,
-              })
-              .pipe(
-                Effect.tapError((cause) =>
-                  Effect.logWarning("Fork snapshot ownership could not be recorded", { cause }),
+  const releaseCapture = (captured: CapturedProviderText | null) =>
+    captured === null || Option.isNone(snapshots)
+      ? Effect.void
+      : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void);
+
+  const withRunningCapture = <A, E, R>(
+    command: ThreadForkV2Command,
+    attempt: (capture: CapturedProviderText | null) => Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    command.scient?.boundary.kind !== "running-turn"
+      ? attempt(null)
+      : Effect.scoped(
+          Effect.gen(function* () {
+            const captured = yield* Effect.acquireRelease(
+              prepareTextCapture(command).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Running fork forks saved history without live text", {
+                    reason: "prepare-failed",
+                    cause,
+                  }).pipe(Effect.as(null)),
                 ),
-                Effect.mapError(snapshotFailure),
-              );
-      const checkpointRef = owned?.ref ?? null;
-      if (checkpointRef !== null) {
-        if (source.kind === "running-turn")
-          yield* baseline.capture({ cwd, toCheckpointRef: checkpointRef }).pipe(
+              ),
+              releaseCapture,
+              { interruptible: true },
+            );
+            if (captured === null) return yield* attempt(null);
+            // An attempt built on the capture can fail because the source moved on after
+            // it (its turn finished, its worktree changed). Release the capture and fork
+            // the saved history as it is now, rather than refusing.
+            return yield* attempt(captured).pipe(
+              Effect.ensuring(releaseCapture(captured)),
+              Effect.catch((cause) =>
+                Effect.logWarning("Running fork forks saved history after its source moved on", {
+                  cause,
+                }).pipe(Effect.andThen(attempt(null))),
+              ),
+            );
+          }),
+        );
+
+  // Reserves and publishes the fork's own checkpoint ref, copied from the boundary
+  // or, for a running fork, captured from the current files.
+  const freezeCheckpoint = Effect.fnUntraced(function* (input: {
+    readonly command: ThreadForkV2Command;
+    readonly workspaceMode: "local" | "new-worktree";
+    readonly cwd: string;
+    readonly source: ConversationForkSource;
+    readonly fromCheckpointRef: CheckpointRef | null;
+    readonly requestedCheckpointRef: CheckpointRef | null;
+  }) {
+    const { command, cwd, source, fromCheckpointRef, requestedCheckpointRef } = input;
+    const owned =
+      requestedCheckpointRef === null
+        ? null
+        : yield* checkpointOwnership
+            .reserve({
+              cwd,
+              commandId: command.commandId,
+              targetThreadId: command.targetThreadId,
+              checkpointRef: requestedCheckpointRef,
+            })
+            .pipe(
+              Effect.tapError((cause) =>
+                Effect.logWarning("Fork snapshot ownership could not be recorded", { cause }),
+              ),
+              Effect.mapError(snapshotFailure),
+            );
+    const checkpointRef = owned?.ref ?? null;
+    if (checkpointRef !== null) {
+      if (source.kind === "running-turn")
+        yield* baseline.capture({ cwd, toCheckpointRef: checkpointRef }).pipe(
+          Effect.provideService(CheckpointPublicationWitness, owned!.beforePublish),
+          Effect.tapError((cause) =>
+            Effect.logWarning("Fork workspace snapshot capture failed", { cause }),
+          ),
+          Effect.mapError(snapshotFailure),
+        );
+      else {
+        const unavailable = failure(
+          input.workspaceMode === "new-worktree"
+            ? "The saved workspace checkpoint is unavailable. Fork without a new worktree instead."
+            : "The saved workspace checkpoint is unavailable. Retry the fork.",
+        );
+        const copied =
+          fromCheckpointRef !== null &&
+          (yield* baseline.copy({ cwd, fromCheckpointRef, toCheckpointRef: checkpointRef }).pipe(
             Effect.provideService(CheckpointPublicationWitness, owned!.beforePublish),
             Effect.tapError((cause) =>
-              Effect.logWarning("Fork workspace snapshot capture failed", { cause }),
+              Effect.logWarning("Fork workspace checkpoint copy failed", { cause }),
             ),
-            Effect.mapError(snapshotFailure),
-          );
-        else {
-          const unavailable = failure(
-            command.workspaceMode === "new-worktree"
-              ? "The saved workspace checkpoint is unavailable. Fork without a new worktree instead."
-              : "The saved workspace checkpoint is unavailable. Retry the fork.",
-          );
-          const copied =
-            fromCheckpointRef !== null &&
-            (yield* baseline.copy({ cwd, fromCheckpointRef, toCheckpointRef: checkpointRef }).pipe(
-              Effect.provideService(CheckpointPublicationWitness, owned!.beforePublish),
-              Effect.tapError((cause) =>
-                Effect.logWarning("Fork workspace checkpoint copy failed", { cause }),
-              ),
-              Effect.mapError(() => unavailable),
-            ));
-          if (!copied) return yield* unavailable;
-        }
+            Effect.mapError(() => unavailable),
+          ));
+        if (!copied) return yield* unavailable;
       }
-      const checkpointOid =
-        checkpointRef === null ? null : yield* baseline.resolveCheckpoint(cwd, checkpointRef);
-      if (checkpointRef !== null && checkpointOid === null)
-        return yield* failure("The frozen workspace checkpoint is unavailable. Retry the fork.");
-      return { checkpointRef, checkpointOid };
+    }
+    const checkpointOid =
+      checkpointRef === null ? null : yield* baseline.resolveCheckpoint(cwd, checkpointRef);
+    if (checkpointRef !== null && checkpointOid === null)
+      return yield* failure("The frozen workspace checkpoint is unavailable. Retry the fork.");
+    return { checkpointRef, checkpointOid };
+  });
+
+  const admit = Effect.fn("ConversationFork.admit")(function* (input: {
+    readonly command: ThreadForkV2Command;
+    readonly boundary: ConversationForkBoundary;
+    readonly sourceProjection: OrchestrationV2ThreadProjection;
+    readonly fallbackCwd?: string;
+  }) {
+    const { command, boundary } = input;
+    // Forks a migrated V1 thread's saved transcript, not the empty shell it starts as.
+    const hydrated = yield* legacyImporter.ensureTranscript(command.sourceThreadId);
+    const projection =
+      hydrated.importedMessageCount > 0 || hydrated.importedThreadCount > 0
+        ? yield* projections.getThreadProjection(command.sourceThreadId)
+        : input.sourceProjection;
+    const source: ConversationForkSource = boundary;
+    const workspaceMode = command.scient?.workspaceMode ?? "local";
+    const inspected = yield* inspect(
+      projection,
+      source,
+      command.targetThreadId,
+      true,
+      input.fallbackCwd,
+    );
+    const { plan, cwd, fromCheckpointRef, checkpointAvailable } = inspected;
+    const markerSource =
+      source.kind === "user-message"
+        ? {
+            type: "message" as const,
+            threadId: projection.thread.id,
+            messageId: source.messageId,
+            position: "before" as const,
+          }
+        : plan.boundaryRunId !== null && !(source.kind === "assistant-response" && plan.cutsOpenRun)
+          ? { type: "run" as const, threadId: projection.thread.id, runId: plan.boundaryRunId }
+          : source.kind === "assistant-response"
+            ? {
+                type: "message" as const,
+                threadId: projection.thread.id,
+                messageId: source.messageId,
+                position: "after" as const,
+              }
+            : yield* failure("The fork's durable conversation boundary is unavailable.");
+    if (workspaceMode === "new-worktree" && !checkpointAvailable)
+      return yield* failure(
+        "This boundary has no saved workspace checkpoint. Fork locally instead.",
+      );
+    const requestedCheckpointRef =
+      checkpointAvailable && (source.kind !== "running-turn" || workspaceMode === "new-worktree")
+        ? checkpointRefForThreadTurn(command.targetThreadId, 0)
+        : null;
+    // A new worktree is built from the checkpoint. A local fork only loses its
+    // restore point, so it continues without one rather than refusing.
+    const frozen = freezeCheckpoint({
+      command,
+      workspaceMode,
+      cwd,
+      source,
+      fromCheckpointRef,
+      requestedCheckpointRef,
     });
-    const accept = Effect.fnUntraced(function* (capture: CapturedProviderText | null) {
-      const receipt = yield* receipts.getByCommandId(command.commandId);
-      if (Option.isSome(receipt)) {
-        if (
-          receipt.value.threadId !== command.newThreadId ||
-          receipt.value.commandType !== "thread.conversation.fork"
-        )
-          return yield* failure("This command identity belongs to another operation.");
-        if (receipt.value.status === "rejected")
-          return yield* failure(receipt.value.error ?? "This fork was rejected.");
-        const target = yield* projections.getThread(command.newThreadId);
-        if (target.conversationFork?.status === "failed") {
-          const now = yield* DateTime.now;
-          const sequence = yield* sink.latestSequence({ threadId: target.id });
-          yield* sink.writeWithEffects({
-            events: [
-              yield* metadataEvent(
-                {
-                  ...target,
-                  conversationFork: {
-                    ...target.conversationFork,
-                    status: "pending",
-                    error: null,
-                  },
-                },
-                now,
-              ),
-            ],
-            effects: [
-              {
-                id: `scient-fork:${command.commandId}:retry:${sequence}`,
-                commandId: command.commandId,
-                threadId: target.id,
-                request: { type: "scient-fork.provision" },
-              },
-            ],
-          });
-        }
-        return receipt.value.resultSequence;
-      }
-      const destinationExists = yield* projections
-        .getThread(command.newThreadId)
-        .pipe(
-          Effect.as(true),
-          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(false) }),
-        );
-      if (destinationExists)
-        return yield* failure("The destination already exists. Choose a new fork identity.");
-      const inspected = yield* inspect(command, command.newThreadId, capture?.projection);
-      const { projection, plan, source, cwd, fromCheckpointRef, checkpointAvailable } = inspected;
-      const markerSource =
-        source.kind === "user-message"
-          ? {
-              type: "message" as const,
-              threadId: projection.thread.id,
-              messageId: source.messageId,
-              position: "before" as const,
-            }
-          : plan.boundaryRunId !== null &&
-              !(source.kind === "assistant-response" && plan.cutsOpenRun)
-            ? { type: "run" as const, threadId: projection.thread.id, runId: plan.boundaryRunId }
-            : source.kind === "assistant-response"
-              ? {
-                  type: "message" as const,
-                  threadId: projection.thread.id,
-                  messageId: source.messageId,
-                  position: "after" as const,
-                }
-              : yield* failure("The fork's durable conversation boundary is unavailable.");
-      if (command.workspaceMode === "new-worktree" && !checkpointAvailable)
-        return yield* failure(
-          "This boundary has no saved workspace checkpoint. Fork locally instead.",
-        );
-      const requestedCheckpointRef =
-        checkpointAvailable &&
-        (source.kind !== "running-turn" || command.workspaceMode === "new-worktree")
-          ? checkpointRefForThreadTurn(command.newThreadId, 0)
-          : null;
-      // A new worktree is built from the checkpoint. A local fork only loses its
-      // restore point, so it continues without one rather than refusing.
-      const frozen = freezeCheckpoint({
-        command,
-        cwd,
-        source,
-        fromCheckpointRef,
-        requestedCheckpointRef,
-      });
-      const { checkpointRef, checkpointOid } = yield* command.workspaceMode === "new-worktree"
-        ? frozen
-        : frozen.pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Local fork continues without a restore point", { cause }).pipe(
-                Effect.as({ checkpointRef: null, checkpointOid: null }),
-              ),
+    const { checkpointRef, checkpointOid } = yield* workspaceMode === "new-worktree"
+      ? frozen
+      : frozen.pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Local fork continues without a restore point", { cause }).pipe(
+              Effect.as({ checkpointRef: null, checkpointOid: null }),
             ),
-          );
-      const now = yield* DateTime.now;
-      const nativeSource = freezeConversationForkNativeSource({
+          ),
+        );
+    return {
+      projection,
+      source,
+      plan,
+      markerSource,
+      workspaceMode,
+      cwd,
+      inProjectFolder: inspected.inProjectFolder,
+      projectRoot: inspected.projectRoot,
+      workspaceVerified: inspected.workspaceVerified,
+      checkpointRef,
+      checkpointOid,
+      nativeSource: freezeConversationForkNativeSource({
         projection,
         retainedSourceItems: plan.retained,
         boundaryRunId: plan.boundaryRunId,
         sourceKind: source.kind,
-      });
-      const transfer: OrchestrationV2ContextTransfer = {
-        id: ContextTransferId.make(`scient-fork:${command.commandId}:transfer`),
-        type: "fork",
-        sourceThreadId: projection.thread.id,
-        targetThreadId: command.newThreadId,
-        sourcePoint: {
-          threadId: projection.thread.id,
-          ...(plan.boundaryRunId === null ? {} : { runId: plan.boundaryRunId }),
-        },
-        basePoint: null,
-        sourceProviderInstanceId:
-          nativeSource.strategy === "native_fork"
-            ? nativeSource.frozenSource.sourceRun.providerInstanceId
-            : projection.thread.providerInstanceId,
-        targetProviderInstanceId: null,
-        targetRunId: null,
-        status: "pending",
-        resolution: null,
-        ...(nativeSource.strategy === "native_fork"
-          ? { frozenSource: nativeSource.frozenSource }
-          : { portableReason: nativeSource.reason }),
-        createdBy: "user",
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-        consumedAt: null,
-      };
-      // Source/destination locks are already held. Global title allocation only
-      // serializes sibling reads and admission, never workspace capture.
-      return yield* titles.withLock(
-        "conversation-fork-titles",
-        Effect.gen(function* () {
-          const projectThreads = yield* projections.getProjectThreadTitles(projection.thread.id);
-          // Checked after every wait, just before the fork is built and committed: a
-          // local fork whose folder disappeared works in the project folder instead,
-          // never in the missing folder.
-          const folderGone =
-            command.workspaceMode === "local" && !(yield* baseline.workspaceExists(cwd));
-          const movedToProjectFolder = folderGone && cwd !== inspected.projectRoot;
-          if (
-            folderGone &&
-            (!movedToProjectFolder || !(yield* baseline.workspaceExists(inspected.projectRoot)))
-          )
-            return yield* failure("The project folder is unavailable.");
-          const inProjectFolder = inspected.inProjectFolder || movedToProjectFolder;
-          const forkCwd = movedToProjectFolder ? inspected.projectRoot : cwd;
-          const thread: OrchestrationV2AppThread = {
-            ...projection.thread,
-            id: command.newThreadId,
-            title:
-              command.titleOverride ??
-              deriveForkTitle({
-                origin: projection.thread,
-                originHasForkLineage: projection.thread.forkLineage != null,
-                projectThreads,
-              }),
-            createdBy: "user",
-            creationSource: "web",
-            ...(inProjectFolder ? { worktreePath: null, branch: null } : {}),
-            activeProviderThreadId: null,
-            lineage: {
-              parentThreadId: projection.thread.id,
-              rootThreadId: projection.thread.lineage.rootThreadId,
-              relationshipToParent: "fork",
-            },
-            forkedFrom: null,
-            historyOrigin: "scient_fork",
-            conversationImport: null,
-            forkLineage: {
-              originThreadId: projection.thread.id,
-              baselineAssistantMessageId: plan.baselineAssistantMessageId,
-              ...(projection.thread.conversationImport == null
-                ? projection.thread.forkLineage?.sourceImport === undefined
-                  ? {}
-                  : { sourceImport: projection.thread.forkLineage.sourceImport }
-                : { sourceImport: projection.thread.conversationImport }),
-            },
-            conversationFork: {
-              commandId: command.commandId,
-              sourceThreadId: projection.thread.id,
-              workspaceMode: command.workspaceMode,
-              // History is shared, so only a new worktree still needs setting up.
-              status: command.workspaceMode === "new-worktree" ? "pending" : "ready",
-              cwd: forkCwd,
-              checkpointRef,
-              checkpointOid,
-              // Shared files, recorded so the client keeps their open previews.
-              attachmentCopies: plan.attachmentCopies,
-              error: null,
-            },
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            deletedAt: null,
-            settledAt: null,
-            settledOverride: null,
-            unsettledAt: null,
-            snoozedAt: null,
-            snoozedUntil: null,
-            limitRecovery: null,
-            pinnedAt: null,
-            pinOrderKey: null,
-            activeOrderKey: null,
-            lastVisitedAt: null,
-            titleRegeneration: null,
-            rollbackFailure: null,
-            rollbackRequestId: undefined,
-            linkedPullRequest: null,
-            branchPullRequest: null,
-            pullRequests: [],
-            // A guest link and a remote delegation belong to the thread they were made for.
-            guestShare: null,
-            delegatedFrom: undefined,
-            opens: null,
-            lastSnoozeWakeAt: null,
-            autoSettleDisabledAt: null,
-          };
-          const events: OrchestrationV2DomainEvent[] = [
-            {
-              id: EventId.make(`scient-fork:${command.commandId}:thread`),
-              threadId: thread.id,
-              occurredAt: now,
-              type: "thread.created",
-              payload: thread,
-            },
-            ...(plan.history.length === 0
-              ? []
-              : [
-                  {
-                    id: EventId.make(`scient-fork:${command.commandId}:transfer`),
-                    threadId: thread.id,
-                    occurredAt: now,
-                    type: "context-transfer.created",
-                    payload: transfer,
-                  } satisfies OrchestrationV2DomainEvent,
-                ]),
-            ...plan.messages.map((payload, index): OrchestrationV2DomainEvent => ({
-              id: EventId.make(`scient-fork:${command.commandId}:message:${index}`),
-              threadId: thread.id,
-              occurredAt: now,
-              type: "message.updated",
-              payload,
-            })),
-            ...plan.items.map((payload, index): OrchestrationV2DomainEvent => ({
-              id: EventId.make(`scient-fork:${command.commandId}:item:${index}`),
-              threadId: thread.id,
-              occurredAt: now,
-              type: "turn-item.updated",
-              payload,
-            })),
-            {
-              id: EventId.make(`scient-fork:${command.commandId}:boundary`),
-              threadId: thread.id,
-              occurredAt: now,
-              type: "turn-item.updated",
-              payload: conversationForkBoundaryItem({
-                targetThreadId: thread.id,
-                source: markerSource,
-                ordinal: plan.history.length,
-                createdAt: now,
-              }),
-            },
-            ...plan.nodes.map((payload, index): OrchestrationV2DomainEvent => ({
-              id: EventId.make(`scient-fork:${command.commandId}:node:${index}`),
-              threadId: thread.id,
-              occurredAt: now,
-              type: "node.updated",
-              payload,
-            })),
-            ...plan.plans.map((payload, index): OrchestrationV2DomainEvent => ({
-              id: EventId.make(`scient-fork:${command.commandId}:plan:${index}`),
-              threadId: thread.id,
-              occurredAt: now,
-              type: "plan.updated",
-              payload,
-            })),
-          ];
-          const commit = sink.commitCommand({
-            ...(capture === null ? {} : { runningForkSource: { owner: capture.owner, capture } }),
-            commandId: command.commandId,
-            threadId: thread.id,
-            commandType: "thread.conversation.fork",
-            acceptedAt: now,
-            events,
-            forkHistory: plan.history,
-            effects:
-              thread.conversationFork?.status === "pending"
-                ? [
-                    {
-                      id: `scient-fork:${command.commandId}:provision`,
-                      commandId: command.commandId,
-                      threadId: thread.id,
-                      request: { type: "scient-fork.provision" },
-                    },
-                  ]
-                : [],
+      }),
+    } satisfies ConversationForkAdmission;
+  });
+
+  const commit = <A, E, R>(input: {
+    readonly command: ThreadForkV2Command;
+    readonly admission: ConversationForkAdmission;
+    readonly capture: CapturedProviderText | null;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly commit: (input: ConversationForkCommitInput) => Effect.Effect<A, E, R>;
+  }) => {
+    const { command, admission, capture } = input;
+    const { projection } = admission;
+    // Source/destination locks are already held. Global title allocation only
+    // serializes sibling reads and admission, never workspace capture.
+    return titles.withLock(
+      "conversation-fork-titles",
+      Effect.gen(function* () {
+        // Checked after every wait, just before the fork is committed: a local fork whose
+        // folder disappeared works in the project folder instead, never in the missing folder.
+        const folderGone =
+          admission.workspaceVerified &&
+          admission.workspaceMode === "local" &&
+          !(yield* baseline.workspaceExists(admission.cwd));
+        const movedToProjectFolder = folderGone && admission.cwd !== admission.projectRoot;
+        if (
+          folderGone &&
+          (!movedToProjectFolder || !(yield* baseline.workspaceExists(admission.projectRoot)))
+        )
+          return yield* failure("The project folder is unavailable.");
+        const title =
+          command.title ??
+          deriveForkTitle({
+            origin: projection.thread,
+            originHasForkLineage: projection.thread.forkLineage != null,
+            projectThreads: yield* projections
+              .getProjectThreadTitles(projection.thread.id)
+              .pipe(
+                Effect.mapError(() =>
+                  failure("Unable to read this project's conversations. Retry the fork."),
+                ),
+              ),
           });
-          const guardedCommit =
-            capture === null
-              ? commit
-              : Effect.gen(function* () {
-                  if (!(yield* baseline.workspaceExists(cwd)))
-                    return yield* failure("The captured workspace is unavailable. Retry the fork.");
-                  return yield* commit;
-                }).pipe(attachmentArbitration.withPermit);
-          const committed = yield* capture === null
-            ? guardedCommit
-            : Option.isSome(snapshots) && snapshots.value.withCapturedForkText !== undefined
-              ? snapshots.value.withCapturedForkText(capture, guardedCommit)
-              : Effect.fail(new ProviderTextSnapshotError({ reason: "owner-lost" }));
-          return committed.receipt.resultSequence;
-        }),
-      );
-    });
-    // Consistent lock order prevents forks in opposite directions deadlocking.
-    // Each attempt owns its checkpoint reservation, released when it ends.
-    const attempt = (capture: CapturedProviderText | null) =>
-      Effect.scoped(
-        [...new Set([command.originThreadId, command.newThreadId])]
-          .sort()
-          .reduceRight((effect, id) => executor.withLock(id, effect), accept(capture)),
-      );
-    const releaseCapture =
-      captured === null || Option.isNone(snapshots)
-        ? Effect.void
-        : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void);
-    // An attempt built on the capture can fail because the source moved on after
-    // it (its turn finished, its worktree changed). Release the capture and fork
-    // the saved history as it is now, rather than refusing.
-    const sequence =
-      captured === null
-        ? yield* attempt(null)
-        : yield* attempt(captured).pipe(
-            Effect.ensuring(releaseCapture),
-            Effect.catch((cause) =>
-              Effect.logWarning("Running fork forks saved history after its source moved on", {
-                cause,
-              }).pipe(Effect.andThen(attempt(null))),
-            ),
-          );
-    const forkAttachmentIdMap = yield* awaitReady(command.newThreadId).pipe(
-      Effect.mapError((cause) =>
-        isDispatchError(cause)
-          ? cause
-          : new OrchestrationDispatchCommandError({
-              message:
-                "The fork was accepted, but its setup receipt could not be read. Retry the same fork.",
-              cause,
-              forkDisposition: "pending",
-            }),
-      ),
+        const events = input.events.map((event): OrchestrationV2DomainEvent => {
+          if (event.type !== "thread.created" || event.threadId !== command.targetThreadId)
+            return event;
+          const fork = event.payload.conversationFork;
+          return {
+            ...event,
+            payload: {
+              ...event.payload,
+              title,
+              ...(movedToProjectFolder
+                ? {
+                    worktreePath: null,
+                    branch: null,
+                    conversationFork: fork == null ? fork : { ...fork, cwd: admission.projectRoot },
+                  }
+                : {}),
+            },
+          };
+        });
+        const committed = input.commit({
+          events,
+          ...(capture === null ? {} : { runningForkSource: { owner: capture.owner, capture } }),
+        });
+        if (capture === null) return yield* committed;
+        const guarded = Effect.gen(function* () {
+          if (!(yield* baseline.workspaceExists(admission.cwd)))
+            return yield* failure("The captured workspace is unavailable. Retry the fork.");
+          return yield* committed;
+        }).pipe(attachmentArbitration.withPermit);
+        return yield* Option.isSome(snapshots) && snapshots.value.withCapturedForkText !== undefined
+          ? snapshots.value.withCapturedForkText(capture, guarded)
+          : Effect.fail(new ProviderTextSnapshotError({ reason: "owner-lost" }));
+      }),
     );
-    return { sequence, forkAttachmentIdMap };
-  }, Effect.scoped);
+  };
 
   const provision = Effect.fn("ConversationFork.provision")(function* (
     threadId: ThreadId,
@@ -936,36 +881,68 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return ConversationForkService.of({
-    dispatch: Effect.fn("ConversationForkService.dispatch")(function (command) {
-      return withoutVcsDiagnostics(dispatch(command)).pipe(
+  const asDispatchError =
+    (forkDisposition: "rejected" | "failed") =>
+    <A, E extends { readonly message: string }, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
         Effect.mapError((cause) =>
           isDispatchError(cause)
             ? cause
             : new OrchestrationDispatchCommandError({
-                message: cause.message,
+                message:
+                  cause.message.trim() !== ""
+                    ? cause.message
+                    : "The fork could not be prepared. Retry the fork.",
                 cause,
-                forkDisposition: "rejected",
+                forkDisposition,
+              }),
+        ),
+      );
+
+  return ConversationForkService.of({
+    admit: Effect.fn("ConversationForkService.admit")(function (input) {
+      return withoutVcsDiagnostics(admit(input)).pipe(asDispatchError("rejected"));
+    }),
+    commit,
+    withRunningCapture,
+    retryFailedSetup: Effect.fn("ConversationForkService.retryFailedSetup")(
+      function (threadId, commandId) {
+        return retryFailedSetup(threadId, commandId).pipe(asDispatchError("failed"));
+      },
+    ),
+    awaitReady: Effect.fn("ConversationForkService.awaitReady")(function (threadId) {
+      return awaitReady(threadId).pipe(
+        Effect.mapError((cause) =>
+          isDispatchError(cause)
+            ? cause
+            : new OrchestrationDispatchCommandError({
+                message:
+                  "The fork was accepted, but its setup receipt could not be read. Retry the same fork.",
+                cause,
+                forkDisposition: "pending",
               }),
         ),
       );
     }),
     provision: Effect.fn("ConversationForkService.provision")(function (threadId, willRetry) {
-      return provision(threadId, willRetry).pipe(
-        Effect.mapError((cause) =>
-          isDispatchError(cause)
-            ? cause
-            : new OrchestrationDispatchCommandError({
-                message: cause.message,
-                cause,
-                forkDisposition: "failed",
-              }),
-        ),
-      );
+      return provision(threadId, willRetry).pipe(asDispatchError("failed"));
     }),
     getOptions: Effect.fn("ConversationForkService.getOptions")(function (input) {
       return withoutVcsDiagnostics(
-        inspect(input, ThreadId.make(`scient-options:${input.originThreadId}`), undefined, false),
+        Effect.gen(function* () {
+          yield* legacyImporter.ensureTranscript(input.originThreadId);
+          const projection = yield* projections.getThreadProjection(input.originThreadId);
+          // A fork whose own worktree setup is pending or failed already shares its
+          // history, so it forks in the folder it shows now.
+          const source = yield* resolveSource(projection, input);
+          const inspected = yield* inspect(
+            projection,
+            source,
+            ThreadId.make(`scient-options:${input.originThreadId}`),
+            false,
+          );
+          return { source, ...inspected };
+        }),
       ).pipe(
         Effect.map(({ source, checkpointAvailable, inProjectFolder }): ForkOptions => ({
           available: true,

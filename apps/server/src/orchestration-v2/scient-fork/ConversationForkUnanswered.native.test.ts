@@ -25,7 +25,7 @@ import {
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const layer = nativeImportRuntimeTestLayer(
   makeLayer([
@@ -73,7 +73,7 @@ const forkAt = Effect.fn("test.forkUnansweredPrefix")(function* (
 ) {
   const answer = source.messages.find((message) => message.text === text);
   assert.ok(answer);
-  yield* (yield* ConversationForkService).dispatch({
+  yield* forkConversation({
     type: "thread.fork",
     commandId: CommandId.make(target),
     originThreadId: source.thread.id,
@@ -226,8 +226,7 @@ it.live(
           sourceUserMessageId: question.id,
           workspaceMode: "local" as const,
         };
-        const forks = yield* ConversationForkService;
-        const receipt = yield* forks.dispatch(command);
+        const receipt = yield* forkConversation(command);
         const store = yield* ProjectionStoreV2;
         const child = yield* store.getThreadProjection(targetId);
         assert.deepEqual(
@@ -253,7 +252,7 @@ it.live(
         );
         assert.deepEqual(child.runs, []);
         assert.deepEqual(child.runtimeRequests, []);
-        assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+        assert.equal((yield* forkConversation(command)).sequence, receipt.sequence);
         assert.deepEqual(
           (yield* store.getThreadProjection(source.thread.id)).turnItems,
           source.turnItems,
@@ -269,7 +268,7 @@ it.live("a user fork with only unanswered inherited requests has no invented ans
         const question = source.messages.find((message) => message.text === "Question 3");
         assert.ok(question);
         const targetId = ThreadId.make("unanswered-empty-baseline");
-        yield* (yield* ConversationForkService).dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("unanswered-empty-baseline"),
           originThreadId: source.thread.id,

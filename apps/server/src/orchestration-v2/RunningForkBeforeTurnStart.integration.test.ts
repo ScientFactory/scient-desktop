@@ -18,7 +18,6 @@ import { CodexOrchestratorReplayHarness } from "./Adapters/CodexAdapterV2.testki
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -27,6 +26,7 @@ import {
   readProviderReplayTranscript,
 } from "@t3tools/provider-testing/replayTranscript";
 import { PROPOSED_PLAN_PROMPT } from "./testkit/fixtures/shared.ts";
+import { forkConversation } from "./testkit/ConversationForkCommand.ts";
 
 it.live("forks a running Codex turn before Codex reports the turn started", () =>
   Effect.scoped(
@@ -68,7 +68,6 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
         const orchestrator = yield* OrchestratorV2;
         const sink = yield* EventSinkV2;
         const worker = yield* OrchestrationEffectWorkerV2;
-        const forks = yield* ConversationForkService;
         const threadId = ThreadId.make("fork-before-turn-start");
         const forkId = ThreadId.make("fork-before-turn-start-fork");
         const projectId = ProjectId.make("fork-before-turn-start-project");
@@ -153,7 +152,7 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
             projection.providerThreads[0]?.driver === "codex",
         );
         assert.isEmpty(running.providerTurns);
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("fork-before-turn-start-fork"),
           originThreadId: threadId,

@@ -163,6 +163,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   send an override. */
   threadForkTitleOverride: Schema.optionalKey(Schema.Boolean),
   threadForkRecovery: Schema.optionalKey(Schema.Boolean),
+  /** Server takes Scient's boundary and workspace options on T3's thread.fork and answers
+  orchestration.awaitFork. Older servers take Scient forks only as a separate command. */
+  threadForkOptions: Schema.optionalKey(Schema.Boolean),
   /** Server supports legacy linkedPullRequest updates through thread.meta.update.
   Independent of threadPullRequests; servers supporting both advertise both. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),

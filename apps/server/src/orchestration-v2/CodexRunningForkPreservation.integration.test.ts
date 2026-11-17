@@ -47,7 +47,6 @@ import { DEFAULT_CODEX_SETTINGS } from "./Adapters/CodexAdapterV2.replay.testkit
 import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
@@ -55,6 +54,7 @@ import {
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as PortScanner from "../preview/PortScanner.ts";
+import { forkConversation } from "./testkit/ConversationForkCommand.ts";
 
 const encodeEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -584,7 +584,7 @@ it.live(
 
             yield* capture("receivedRunning", source);
             const forkCommandId = CommandId.make(`${mode}-running-fork`);
-            yield* (yield* ConversationForkService).dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: forkCommandId,
               originThreadId: threadId,

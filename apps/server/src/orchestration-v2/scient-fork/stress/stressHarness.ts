@@ -30,7 +30,7 @@ import { EffectOutboxV2 } from "../../EffectOutbox.ts";
 import { OrchestratorV2 } from "../../Orchestrator.ts";
 import { layerFromAdapters } from "../../ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2 } from "../../ProjectionStore.ts";
-import { ConversationForkService } from "../ConversationForkService.ts";
+import { forkConversation } from "../../testkit/ConversationForkCommand.ts";
 
 export const inertRegistry = layerFromAdapters([
   {
@@ -81,7 +81,7 @@ export const fork = Effect.fn("stress.fork")(function* (
   const boundary = answer ?? projection.messages.findLast((m) => m.role === "assistant")?.id;
   assert.ok(boundary);
   const newThreadId = ThreadId.make(name);
-  const receipt = yield* (yield* ConversationForkService).dispatch({
+  const receipt = yield* forkConversation({
     type: "thread.fork",
     commandId: CommandId.make(name),
     originThreadId: source,

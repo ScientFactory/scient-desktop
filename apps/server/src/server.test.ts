@@ -84,7 +84,6 @@ import {
   type ServerLifecycleStreamEvent,
   ThreadId,
   RunId,
-  TurnId,
   UsageLimitSourceId,
   WS_METHODS,
   WsRpcGroup,
@@ -337,6 +336,7 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { DEFAULT_SIGNAL_EXPORT, layerOtlpSerialization } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
+import { toThreadForkCommand } from "./orchestration-v2/testkit/ConversationForkCommand.ts";
 
 // @effect-diagnostics nodeBuiltinImport:off
 
@@ -9970,26 +9970,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect("acknowledges websocket thread.fork only after provisioning completes", () =>
+    it.effect("answers a fork's readiness only after its provisioning completes", () =>
       Effect.gen(function* () {
         const provisioningStarted = yield* Deferred.make<void>();
         const allowProvisioningToComplete = yield* Deferred.make<void>();
         const rpcCompleted = yield* Deferred.make<void>();
-        const effects: string[] = [];
         const forkThreadId = ThreadId.make("thread-fork-ready-gate");
 
         yield* buildAppUnderTest({
           layers: {
             conversationFork: {
-              dispatch: (command) =>
+              awaitReady: (threadId) =>
                 Effect.gen(function* () {
-                  assert.equal(command.newThreadId, forkThreadId);
-                  effects.push(`dispatch:${command.type}`);
-                  effects.push(`await:${command.newThreadId}`);
+                  assert.equal(threadId, forkThreadId);
                   yield* Deferred.succeed(provisioningStarted, undefined);
                   yield* Deferred.await(allowProvisioningToComplete);
-                  effects.push(`ready:${command.newThreadId}`);
-                  return { sequence: 41, forkAttachmentIdMap: { "origin-file": "fork-file" } };
+                  return { forkAttachmentIdMap: { "origin-file": "fork-file" } };
                 }),
             },
           },
@@ -9999,13 +9995,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const response = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
             Effect.gen(function* () {
-              const rpcFiber = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-                type: "thread.fork",
-                commandId: CommandId.make("cmd-thread-fork-ready-gate"),
-                originThreadId: ThreadId.make("thread-fork-ready-gate-origin"),
-                newThreadId: forkThreadId,
-                sourceAssistantMessageId: MessageId.make("assistant-fork-ready-gate"),
-                workspaceMode: "local",
+              const rpcFiber = yield* client[ORCHESTRATION_WS_METHODS.awaitFork]({
+                threadId: forkThreadId,
               }).pipe(
                 Effect.tap(() => Deferred.succeed(rpcCompleted, undefined)),
                 Effect.forkChild,
@@ -10019,24 +10010,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           ),
         );
 
-        assert.equal(response.sequence, 41);
         assert.deepEqual(response.forkAttachmentIdMap, { "origin-file": "fork-file" });
-        assert.deepEqual(effects, [
-          "dispatch:thread.fork",
-          `await:${forkThreadId}`,
-          `ready:${forkThreadId}`,
-        ]);
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect("returns websocket thread.fork provisioning failures to the caller", () =>
+    it.effect("returns a fork's provisioning failure to the caller", () =>
       Effect.gen(function* () {
-        const forkThreadId = ThreadId.make("thread-fork-failed-gate");
-
         yield* buildAppUnderTest({
           layers: {
             conversationFork: {
-              dispatch: () =>
+              awaitReady: () =>
                 Effect.fail(
                   new OrchestrationDispatchCommandError({
                     message: "Fork workspace provisioning failed.",
@@ -10050,13 +10033,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const wsUrl = yield* getWsServerUrl("/ws");
         const result = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
-            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-              type: "thread.fork",
-              commandId: CommandId.make("cmd-thread-fork-failed-gate"),
-              originThreadId: ThreadId.make("thread-fork-failed-gate-origin"),
-              newThreadId: forkThreadId,
-              sourceAssistantMessageId: MessageId.make("assistant-fork-failed-gate"),
-              workspaceMode: "new-worktree",
+            client[ORCHESTRATION_WS_METHODS.awaitFork]({
+              threadId: ThreadId.make("thread-fork-failed-gate"),
             }),
           ).pipe(Effect.result),
         );
@@ -10068,7 +10046,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect("rejects an unavailable running fork boundary before durable acceptance", () =>
+    it.effect("rejects an unavailable running fork boundary before creating the fork", () =>
       Effect.gen(function* () {
         const forkThreadId = ThreadId.make("thread-fork-capture-failure");
         const originThreadId = ThreadId.make("thread-fork-capture-origin");
@@ -10080,17 +10058,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
               type: "thread.fork",
               commandId: CommandId.make("cmd-thread-fork-capture-failure"),
-              originThreadId,
-              newThreadId: forkThreadId,
-              sourceRunningTurnId: TurnId.make("running-capture"),
-              workspaceMode: "local",
+              sourceThreadId: originThreadId,
+              targetThreadId: forkThreadId,
+              sourcePoint: { type: "latest_stable" },
+              createdBy: "user",
+              creationSource: "web",
+              scient: {
+                boundary: { kind: "running-turn", runId: RunId.make("running-capture") },
+                workspaceMode: "local",
+              },
             }),
           ).pipe(Effect.result),
         );
         assertTrue(result._tag === "Failure");
-        assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
-        assert.include(result.failure.message, "running turn is unavailable");
-        assert.equal(result.failure.forkDisposition, "rejected");
+        assertTrue(result.failure._tag === "OrchestrationV2DispatchCommandError");
+        assert.include(result.failure.message, "selected run is unavailable");
+        assert.equal(result.failure.commandDisposition, "rejected");
         assert.equal(yield* app.v2.eventSink.latestSequence(), before);
         assert.isNull(yield* app.v2.threads.getThreadShell(forkThreadId));
       }).pipe(Effect.provide(NodeHttpServerTest)),
@@ -11400,7 +11383,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                   Effect.andThen(app.v2.worker.drain()),
                   Effect.forkScoped,
                 );
-              const accepted = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](command);
+              const accepted = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+                toThreadForkCommand(command),
+              );
               yield* Fiber.join(provisioning);
               const fork = yield* app.v2.threads.getThreadProjection(target);
               assert.equal(fork.thread.conversationFork?.status, "ready");
@@ -11422,20 +11407,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                 commandId: CommandId.make("ws-native-delete-source"),
                 threadId: transferV2ThreadId,
               });
-              const repeated = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](command);
+              const repeated = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+                toThreadForkCommand(command),
+              );
               assert.equal(repeated.sequence, accepted.sequence);
               assert.deepEqual(
                 (yield* app.v2.threads.getThreadProjection(target)).messages,
                 fork.messages,
               );
-              const rejected = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-                ...command,
-                commandId: CommandId.make("ws-native-rejected-fork"),
-                newThreadId: ThreadId.make("ws-native-rejected"),
-              }).pipe(Effect.flip);
-              assert.equal(rejected._tag, "OrchestrationDispatchCommandError");
-              if (rejected._tag === "OrchestrationDispatchCommandError")
-                assert.equal(rejected.forkDisposition, "rejected");
+              const rejected = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+                toThreadForkCommand({
+                  ...command,
+                  commandId: CommandId.make("ws-native-rejected-fork"),
+                  newThreadId: ThreadId.make("ws-native-rejected"),
+                }),
+              ).pipe(Effect.flip);
+              assert.equal(rejected._tag, "OrchestrationV2DispatchCommandError");
+              if (rejected._tag === "OrchestrationV2DispatchCommandError")
+                assert.equal(rejected.commandDisposition, "rejected");
             }),
           );
         }).pipe(Effect.provide(NodeHttpServerTest)),
@@ -11489,7 +11478,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                   Effect.andThen(app.v2.worker.drain()),
                   Effect.forkScoped,
                 );
-              yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](command);
+              yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](toThreadForkCommand(command));
               yield* Fiber.join(firstProvision);
               yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
                 type: "thread.delete",
@@ -11499,13 +11488,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               const tombstone = yield* app.v2.threads.getThreadProjection(deletedId);
               assert.isNotNull(tombstone.thread.deletedAt);
               assert.lengthOf(tombstone.messages, 2);
-              const rejected = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-                ...command,
-                commandId: CommandId.make("immutable-fork-reuse-rejected"),
-              }).pipe(Effect.flip);
-              assert.equal(rejected._tag, "OrchestrationDispatchCommandError");
-              if (rejected._tag === "OrchestrationDispatchCommandError")
-                assert.equal(rejected.forkDisposition, "rejected");
+              const rejected = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+                toThreadForkCommand({
+                  ...command,
+                  commandId: CommandId.make("immutable-fork-reuse-rejected"),
+                }),
+              ).pipe(Effect.flip);
+              assert.equal(rejected._tag, "OrchestrationV2DispatchCommandError");
+              if (rejected._tag === "OrchestrationV2DispatchCommandError")
+                assert.equal(rejected.commandDisposition, "rejected");
               assert.deepEqual(yield* app.v2.threads.getThreadProjection(deletedId), tombstone);
               yield* app.v2.worker.drain();
               const freshProvisionCursor = yield* app.v2.eventSink.latestSequence();
@@ -11521,11 +11512,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                   Effect.andThen(app.v2.worker.drain()),
                   Effect.forkScoped,
                 );
-              yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-                ...command,
-                commandId: CommandId.make("immutable-fork-fresh"),
-                newThreadId: freshId,
-              });
+              yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+                toThreadForkCommand({
+                  ...command,
+                  commandId: CommandId.make("immutable-fork-fresh"),
+                  newThreadId: freshId,
+                }),
+              );
               yield* Fiber.join(freshProvision);
               const fresh = yield* app.v2.threads.getThreadProjection(freshId);
               assert.equal(fresh.thread.conversationFork?.status, "ready");
@@ -11614,14 +11607,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           const before = yield* app.v2.eventSink.latestSequence();
           const target = ThreadId.make("native-failed-capture-target");
           const dispatch = withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
-            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-              type: "thread.fork",
-              commandId: CommandId.make("native-failed-capture"),
-              originThreadId: transferV2ThreadId,
-              newThreadId: target,
-              sourceRunningRunId: RunId.make("run-0"),
-              workspaceMode,
-            }),
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+              toThreadForkCommand({
+                commandId: CommandId.make("native-failed-capture"),
+                originThreadId: transferV2ThreadId,
+                newThreadId: target,
+                sourceRunningRunId: RunId.make("run-0"),
+                workspaceMode,
+              }),
+            ),
           );
           if (workspaceMode === "local") {
             const provisioning = yield* app.v2.eventSink
@@ -11649,12 +11643,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             return;
           }
           const failure = yield* dispatch.pipe(Effect.flip);
-          assert.equal(failure._tag, "OrchestrationDispatchCommandError");
-          if (failure._tag === "OrchestrationDispatchCommandError") {
+          assert.equal(failure._tag, "OrchestrationV2DispatchCommandError");
+          if (failure._tag === "OrchestrationV2DispatchCommandError") {
             assert.include(failure.message, "This workspace exceeds the snapshot limits");
-            assert.notInclude(failure.message, "Private diagnostic");
-            assert.isUndefined(failure.cause);
-            assert.equal(failure.forkDisposition, "rejected");
+            // Git output and workspace paths stay in the server log.
+            assert.notInclude(JSON.stringify(failure), "Private diagnostic");
+            assert.equal(failure.commandDisposition, "rejected");
           }
           assert.equal(captures.length, 1);
           assert.equal(captures[0]?.cwd, cwd);

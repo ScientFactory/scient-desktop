@@ -1576,12 +1576,15 @@ dismissal of pending notifications; upstream's favicon badge remains on the web.
 window lifecycle remain owned by their current systems. See
 [answer attention](docs/internals/answer-attention.md).
 
-Conversation forks keep server-owned boundary resolution, durable provisioning,
+Conversation forks are T3's `thread.fork` with Scient's `scient` boundary and workspace
+options; the Orchestrator's one dispatch mount hands every fork that is not a side chat to
+`scient-fork/ConversationForkDispatch.ts`, which uses T3's `ThreadForkService` to build the
+thread. They keep server-owned boundary resolution, durable provisioning,
 and provider-neutral context bootstrap. Preserve the shared
 selection of submitted question-answer activities and independent file ownership;
 T3's question submission path remains unchanged. Preserve the read-authorized
-`orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
-typed fork dispositions on dispatch errors, and the pre-send readiness gate.
+`orchestration.getForkOptions` and `orchestration.awaitFork` RPCs and the `threadForkOptions`
+capability, receipt-less refusals of conversation forks, and the pre-send readiness gate.
 Running local forks skip file capture; new-worktree captures retain exact attempt/ref/OID
 ownership through rejection and restart. Checkpoint enumeration remains bounded and streamed,
 and publication transfers only new staged objects while preserving connectivity and fsync.
