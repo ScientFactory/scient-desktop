@@ -2163,6 +2163,65 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "rejects HTML document aliases whose canonical target is hidden",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-html-alias-" });
+        const htmlPath = path.join(root, "report.html");
+        yield* fileSystem.writeFileString(htmlPath, "<!doctype html>");
+        yield* fileSystem.writeFileString(path.join(root, "theme.css"), "body {}");
+        yield* fileSystem.writeFileString(path.join(root, ".env"), "SECRET=value");
+        yield* fileSystem.makeDirectory(path.join(root, ".git"));
+        yield* fileSystem.writeFileString(path.join(root, ".git", "config"), "[core]");
+        yield* fileSystem.symlink(path.join(root, "theme.css"), path.join(root, "linked.css"));
+        yield* fileSystem.symlink(path.join(root, ".env"), path.join(root, "public.css"));
+        yield* fileSystem.symlink(path.join(root, ".git"), path.join(root, "vcs"));
+
+        const issued = yield* issueAssetUrl({
+          resource: {
+            _tag: "environment-file",
+            path: EnvironmentFilePath.make(htmlPath),
+            access: "html-document",
+          },
+        });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+
+        expect(yield* resolveAsset(token, "linked.css")).toMatchObject({
+          path: yield* fileSystem.realPath(path.join(root, "theme.css")),
+        });
+        expect(yield* resolveAsset(token, "public.css")).toBeNull();
+        expect(yield* resolveAsset(token, "vcs/config")).toBeNull();
+        if (path.sep === "/") {
+          yield* fileSystem.writeFileString(path.join(root, "styles\\.min.css"), "body {}");
+          yield* fileSystem.symlink(
+            path.join(root, "styles\\.min.css"),
+            path.join(root, "min.css"),
+          );
+          expect(yield* resolveAsset(token, "min.css")).not.toBeNull();
+        }
+
+        const hiddenEntryPath = path.join(root, ".draft.html");
+        yield* fileSystem.writeFileString(hiddenEntryPath, "<!doctype html>");
+        const hiddenEntry = yield* issueAssetUrl({
+          resource: {
+            _tag: "environment-file",
+            path: EnvironmentFilePath.make(hiddenEntryPath),
+            access: "html-document",
+          },
+        });
+        const hiddenSuffix = hiddenEntry.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const hiddenToken = hiddenSuffix.slice(0, hiddenSuffix.indexOf("/"));
+        expect(yield* resolveAsset(hiddenToken, ".draft.html")).toMatchObject({
+          path: yield* fileSystem.realPath(hiddenEntryPath),
+        });
+        expect(yield* resolveAsset(hiddenToken, "public.css")).toBeNull();
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("honors a shorter internal lifetime for controlled HTML rendering", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
