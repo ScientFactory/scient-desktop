@@ -51,6 +51,7 @@ import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ThreadCommandExecutor, layer as commandsLayer } from "./ThreadCommandExecutor.ts";
 import { makeReplayServerConfig } from "./testkit/ProviderReplayHarness.ts";
+import { recordConversationFork } from "./testkit/ConversationForkCommand.ts";
 
 const now = DateTime.makeUnsafe("2026-10-05T00:00:00Z");
 const threadId = ThreadId.make("prune-owner");
@@ -302,19 +303,6 @@ it.live(
                 event("thread.created", foreignId, {
                   ...thread(foreignId),
                   archivedAt: now,
-                  conversationFork: {
-                    commandId: CommandId.make("pending-fork"),
-                    sourceThreadId: threadId,
-                    workspaceMode: "local",
-                    status: "failed",
-                    cwd: config.cwd,
-                    checkpointRef: null,
-                    checkpointOid: null,
-                    attachmentCopies: [
-                      { source: forkSource.attachment, target: foreign.attachment },
-                    ],
-                    error: "retryable",
-                  },
                 }),
                 ...[failed, queue, extractedRun, nativeRun].map((payload) =>
                   event("run.created", threadId, payload),
@@ -355,6 +343,17 @@ it.live(
                   event("turn-item.updated", threadId, payload),
                 ),
               ],
+            });
+            yield* recordConversationFork(foreignId, {
+              commandId: CommandId.make("pending-fork"),
+              sourceThreadId: threadId,
+              workspaceMode: "local",
+              status: "failed",
+              cwd: config.cwd,
+              checkpointRef: null,
+              checkpointOid: null,
+              attachmentCopies: [{ source: forkSource.attachment, target: foreign.attachment }],
+              error: "retryable",
             });
             expect(yield* fs.exists(removed.filename)).toBe(true);
             yield* sink.writeWithEffects({

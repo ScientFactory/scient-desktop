@@ -1,6 +1,6 @@
 import { ProviderCitationPresentation } from "./providerCitationPresentation.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
-import { ScientConversationFork } from "./scientConversationFork.ts";
+import { ScientThreadForkOptions } from "./scientConversationFork.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -604,7 +604,6 @@ export const OrchestrationV2AppThread = Schema.Struct({
   sectionId: Schema.optional(Schema.NullOr(ThreadSectionId)),
   conversationImport: Schema.optional(Schema.NullOr(OrchestrationConversationImport)),
   forkLineage: Schema.optional(Schema.NullOr(OrchestrationForkLineage)),
-  conversationFork: Schema.optional(Schema.NullOr(ScientConversationFork)),
   // SCIENT-FORK:END
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -3749,6 +3748,8 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),
+    // SCIENT-FORK: Scient's fork boundary and workspace choice (scientConversationFork.ts).
+    scient: Schema.optional(ScientThreadForkOptions),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.merge_back"),

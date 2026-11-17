@@ -285,13 +285,13 @@ export const makeProviderTextSnapshots = Effect.fn(
     consume: Effect.fn("ProviderTextSnapshots.consume")(function* (batch, write) {
       const pending = textSnapshots.get(batch.token);
       if (pending === undefined) return;
+      const bound = textSnapshotConsumers.get(subscriberId);
+      // Only the run consumer the capture was registered with may write its batch.
       if (
         pending.consumerId !== subscriberId ||
         pending.owner !== batch.owner ||
-        !matchesTextConsumer(
-          textSnapshotConsumers.get(subscriberId)?.owner ?? batch.owner,
-          pending.owner,
-        )
+        bound === undefined ||
+        !matchesTextConsumer(bound.owner, pending.owner)
       ) {
         yield* Deferred.fail(pending.done, new ProviderTextSnapshotError({ reason: "owner-lost" }));
         return;
@@ -354,9 +354,8 @@ export const makeProviderTextSnapshots = Effect.fn(
     event: ProviderTextSnapshotBatch,
   ) {
     const pending = textSnapshots.get(event.token);
-    const consumer =
-      pending === undefined ? undefined : textSnapshotConsumers.get(pending.consumerId);
     if (pending === undefined) return;
+    const consumer = textSnapshotConsumers.get(pending.consumerId);
     if (
       pending.retired ||
       pending.entry.runtime !== runtime ||

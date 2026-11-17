@@ -29,7 +29,6 @@ import { EventSinkV2 } from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
@@ -54,6 +53,7 @@ import {
   destination,
   principal,
 } from "../scient/conversationImport/conversationImport.test-fixtures.ts";
+import { forkConversation } from "./testkit/ConversationForkCommand.ts";
 
 const transcriptJson = Schema.fromJsonString(ProviderReplayTranscript);
 const encodeTranscriptJson = Schema.encodeEffect(transcriptJson);
@@ -215,7 +215,6 @@ it.live(
           Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
             const sink = yield* EventSinkV2;
-            const forks = yield* ConversationForkService;
             const now = yield* DateTime.now;
             const projectId = ProjectId.make("citation-project");
             const modelSelection = {
@@ -355,7 +354,7 @@ it.live(
                   event.payload.text === display,
               ),
             );
-            yield* forks.dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: CommandId.make("citation-fork"),
               originThreadId: threadId,
@@ -369,7 +368,7 @@ it.live(
             assert.deepEqual(assistant(child).citationPresentation, item.citationPresentation);
             assert.equal(assistant(projectThreadProjectionForWire(child)).text, display);
             assertClients(clients, child);
-            yield* forks.dispatch({
+            yield* forkConversation({
               type: "thread.fork",
               commandId: CommandId.make("citation-refork"),
               originThreadId: forkId,

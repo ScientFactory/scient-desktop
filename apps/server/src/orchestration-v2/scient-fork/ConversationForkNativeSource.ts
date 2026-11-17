@@ -381,7 +381,7 @@ export function inheritedForkPrefixIsNative(input: {
 }): boolean {
   const { projection, activeProviderThread } = input;
   return (
-    projection.thread.conversationFork != null &&
+    projection.thread.historyOrigin === "scient_fork" &&
     activeProviderThread?.nativeThreadRef?.strength === "strong" &&
     !!activeProviderThread.nativeThreadRef.nativeId?.trim() &&
     activeProviderThread.providerInstanceId === input.targetInstanceId &&

@@ -276,6 +276,7 @@ export const make = Effect.gen(function* () {
       threadTitleRegeneration: true,
       threadForkTitleOverride: true,
       threadForkRecovery: true,
+      threadForkOptions: true,
       commandOutputStreaming: true,
       threadVisitedTracking: true,
       threadPullRequests: true,

@@ -41,8 +41,8 @@ import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
   makeReplayServerConfig,
 } from "./testkit/ProviderReplayHarness.ts";
-import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { forkConversation } from "./testkit/ConversationForkCommand.ts";
 
 const Audit = Schema.Struct({
   pid: Schema.Int,
@@ -304,16 +304,14 @@ it.live(
             const answer = source.messages.find((message) => message.text === "CONTROLLED_DONE");
             assert.ok(answer);
             const commandId = CommandId.make("terminal-cursor-bound-target-fork");
-            const rejected = yield* (yield* ConversationForkService)
-              .dispatch({
-                type: "thread.fork",
-                commandId,
-                originThreadId: sourceId,
-                newThreadId: targetId,
-                sourceAssistantMessageId: answer.id,
-                workspaceMode: "local",
-              })
-              .pipe(Effect.result);
+            const rejected = yield* forkConversation({
+              type: "thread.fork",
+              commandId,
+              originThreadId: sourceId,
+              newThreadId: targetId,
+              sourceAssistantMessageId: answer.id,
+              workspaceMode: "local",
+            }).pipe(Effect.result);
             assert.equal(rejected._tag, "Failure");
             if (rejected._tag === "Failure")
               assert.include(String(rejected.failure), "destination already exists");

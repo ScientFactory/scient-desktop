@@ -1,8 +1,14 @@
 /** Rollback attachment pruning: which candidate attachments are still referenced
  * by a record the rollback does not release, so pruning keeps them. */
-import { type OrchestrationV2ThreadProjection, type RunId, ThreadId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ThreadProjection,
+  type RunId,
+  type ScientConversationFork,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { readConversationFork } from "./ConversationForkRecords.ts";
 import { readLiveForkSharedAttachmentIds } from "./ForkHistory.ts";
 
 type RollbackAttachmentOwner = Pick<
@@ -32,10 +38,16 @@ export const readRollbackAttachmentOwners = <E>(
               JOIN scient_history_bodies AS body ON body.hash = unhex(json_extract(item.payload_json, '$.scientSummaryBody'))
               WHERE item.type = 'handoff' AND instr(lower(body.body), ${id.toLowerCase()}) > 0
             UNION SELECT thread_id FROM orchestration_v2_projection_threads WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
+            UNION SELECT thread_id FROM scient_conversation_forks WHERE instr(lower(fork_json), ${id.toLowerCase()}) > 0
           `;
         rows.forEach((row) => threadIds.add(ThreadId.make(row.thread_id)));
       }
-      const owners = yield* Effect.forEach(threadIds, (threadId) => readOwner(threadId));
+      const owners = yield* Effect.forEach(threadIds, (threadId) =>
+        Effect.all({
+          projection: readOwner(threadId),
+          conversationFork: readConversationFork(sql, threadId),
+        }),
+      );
       // A live fork shares the original's items by reference: what its frozen
       // history shows stays, even after the original rolls those runs back.
       return [
@@ -53,12 +65,10 @@ export const retainedRollbackAttachmentIds = (
     readonly revertedRunIds: ReadonlyArray<RunId>;
     readonly attachmentIds: ReadonlyArray<string>;
   },
-  projections: ReadonlyArray<
-    Pick<
-      OrchestrationV2ThreadProjection,
-      "thread" | "runs" | "messages" | "turnItems" | "runtimeRequests"
-    >
-  >,
+  owners: ReadonlyArray<{
+    readonly projection: RollbackAttachmentOwner;
+    readonly conversationFork: ScientConversationFork | null;
+  }>,
 ) => {
   const candidates = new Set(input.attachmentIds.map((id) => id.toLowerCase()));
   const retained = new Set<string>();
@@ -66,7 +76,7 @@ export const retainedRollbackAttachmentIds = (
     ids.forEach((id) => {
       if (candidates.has(id.toLowerCase())) retained.add(id.toLowerCase());
     });
-  for (const projection of projections) {
+  for (const { projection, conversationFork: fork } of owners) {
     // A deleted conversation shows nothing, so it keeps no file.
     if (projection.thread.deletedAt !== null && projection.thread.id !== input.threadId) continue;
     const recoverable = new Set(
@@ -114,7 +124,6 @@ export const retainedRollbackAttachmentIds = (
             .map((attachment) => attachment.id),
         );
     }
-    const fork = projection.thread.conversationFork;
     if (fork != null && fork.status !== "ready")
       retain(fork.attachmentCopies.map((copy) => copy.source.id));
   }

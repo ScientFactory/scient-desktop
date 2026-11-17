@@ -8,7 +8,12 @@ import {
   roomWaitingCount,
 } from "@t3tools/contracts";
 // SCIENT-FORK:START — retained-source adapters and fixture selection.
-import { ContextHandoffId, type OrchestrationV2ContextHandoff } from "@t3tools/contracts";
+import {
+  ContextHandoffId,
+  type OrchestrationV2ContextHandoff,
+  type ScientConversationFork,
+} from "@t3tools/contracts";
+import { readConversationFork } from "./scient-fork/ConversationForkRecords.ts";
 import {
   readContextHistoryCandidates,
   type ContextHistoryCandidate,
@@ -839,6 +844,10 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<{ readonly id: ThreadId; readonly title: string }>,
     ProjectionStoreV2Error
   >;
+  /** SCIENT-FORK: a fork's own setup state, kept in Scient's table (ConversationForkRecords.ts). */
+  readonly getConversationFork: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ScientConversationFork | null, ProjectionStoreV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
@@ -9996,6 +10005,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
         ),
       getReleasableFiles,
+      getConversationFork: (threadId) =>
+        readConversationFork(sql, threadId).pipe(
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        ),
       getProjectThreadTitles: (threadId) =>
         sql<{ readonly thread_id: string; readonly title: string }>`
           SELECT sibling.thread_id, json_extract(sibling.payload_json, '$.title') AS title

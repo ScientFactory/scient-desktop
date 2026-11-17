@@ -247,6 +247,7 @@ it.effect(
           getContextHandoffSummaryPage: () => Effect.die("unused summary reader"),
           resolveContextHistory: () => Effect.die("unused context source resolver"),
           getProjectThreadTitles: () => Effect.succeed([]),
+          getConversationFork: () => Effect.succeed(null),
           getReleasableFiles: () => Effect.succeed([]),
           getTurnStartHistory: () => Effect.die("unused"),
           getNativeHistoryEstimates: () => Effect.die("unused native estimate"),

@@ -535,7 +535,10 @@ export interface ChatComposerProps {
   onResume: () => void;
   onInterrupt: () => void;
   // SCIENT-FORK:START
-  onForkConversation: (options?: { readonly preserveComposerDraft?: boolean }) => void;
+  onForkConversation: (options?: {
+    readonly preserveComposerDraft?: boolean;
+    readonly workspaceMode?: "local" | "new-worktree";
+  }) => void;
   /** The thread's goal and plan state, for the Goal and Plan chips. */
   modeChips?: ComposerModeChipsThreadState;
   // SCIENT-FORK:END
@@ -2189,14 +2192,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
-      if (item.command === "fork") {
+      if (item.command === "fork" || item.command === "fork-worktree") {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
           focusEditorAfterReplace: false,
         });
         if (applied) {
           setComposerHighlightedItemId(null);
-          onForkConversation();
+          onForkConversation(
+            item.command === "fork-worktree" ? { workspaceMode: "new-worktree" } : undefined,
+          );
         }
         return;
       }

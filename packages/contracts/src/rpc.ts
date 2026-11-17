@@ -167,7 +167,8 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
-  ThreadForkCommand,
+  AwaitForkInput,
+  ForkReadiness,
   GetForkOptionsInput,
   ForkOptions,
   OrchestrationGetSnapshotError,
@@ -2174,9 +2175,8 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
-// Native run commands and Scient conversation-boundary forks share one registration.
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
-  payload: Schema.Union([OrchestrationV2RpcSchemas.dispatchCommand.input, ThreadForkCommand]),
+  payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: ScientConversationDispatchResult,
   error: Schema.Union([
     OrchestrationV2DispatchCommandError,
@@ -2189,6 +2189,12 @@ const WsOrchestrationGetForkOptionsRpc = Rpc.make("orchestration.getForkOptions"
   payload: GetForkOptionsInput,
   success: ForkOptions,
   error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+});
+
+const WsOrchestrationAwaitForkRpc = Rpc.make("orchestration.awaitFork", {
+  payload: AwaitForkInput,
+  success: ForkReadiness,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
 const WsOrchestrationV2GetTurnDiffRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.getTurnDiff, {
@@ -2542,6 +2548,7 @@ export const WsConversationRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsOrchestrationGetForkOptionsRpc,
+  WsOrchestrationAwaitForkRpc,
 );
 
 export const WsServerManagementRpcGroup = RpcGroup.make(

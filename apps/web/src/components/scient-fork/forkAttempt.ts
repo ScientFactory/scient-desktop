@@ -1,22 +1,66 @@
-import { EnvironmentId, ThreadForkCommand, type ForkDisposition } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  ScientThreadForkOptions,
+  ThreadId,
+  type ForkDisposition,
+} from "@t3tools/contracts";
 import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import * as Schema from "effect/Schema";
 import { RpcClientError } from "effect/rpc";
 
+/** The fork command as the client sends it: T3's thread.fork with Scient's options. */
+const AttemptCommand = Schema.Struct({
+  commandId: CommandId,
+  sourceThreadId: ThreadId,
+  targetThreadId: ThreadId,
+  scient: ScientThreadForkOptions,
+});
+export type ForkAttemptCommand = typeof AttemptCommand.Type;
+
 const Attempt = Schema.Struct({
   environmentId: EnvironmentId,
-  command: ThreadForkCommand,
+  command: AttemptCommand,
   ready: Schema.Boolean,
   handoffDone: Schema.Boolean,
   composerDraftFingerprint: Schema.optional(Schema.String),
-  displayTitle: Schema.optional(Schema.String),
   /** Where a local fork works when that differs from the original; shown again on retry. */
   workspaceNotice: Schema.optional(Schema.String),
   attachmentIdMap: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type ForkAttempt = typeof Attempt.Type;
 const decodeAttempt = Schema.decodeUnknownSync(Schema.fromJsonString(Attempt));
-const STORAGE_PREFIX = "scient:fork-attempt:v1:";
+const decodeAttemptValue = Schema.decodeUnknownSync(Attempt);
+const STORAGE_PREFIX = "scient:fork-attempt:v2:";
+const V1_STORAGE_PREFIX = "scient:fork-attempt:v1:";
+
+/** A v1 entry journalled Scient's former fork command; it resumes as the same fork. */
+function fromV1Attempt(value: string): ForkAttempt | null {
+  try {
+    const v1 = JSON.parse(value) as Record<string, unknown> & {
+      readonly command?: Record<string, unknown>;
+    };
+    const command = v1.command ?? {};
+    const boundary =
+      command.sourceRunningRunId !== undefined
+        ? { kind: "running-turn", runId: command.sourceRunningRunId }
+        : command.sourceUserMessageId !== undefined
+          ? { kind: "user-message", messageId: command.sourceUserMessageId }
+          : { kind: "assistant-response", messageId: command.sourceAssistantMessageId };
+    const { displayTitle: _displayTitle, command: _command, ...rest } = v1;
+    return decodeAttemptValue({
+      ...rest,
+      command: {
+        commandId: command.commandId,
+        sourceThreadId: command.originThreadId,
+        targetThreadId: command.newThreadId,
+        scient: { boundary, workspaceMode: command.workspaceMode },
+      },
+    });
+  } catch {
+    return null;
+  }
+}
 
 /** Entries survive navigation/reload until the same operation is resolved. */
 export function createForkAttemptStore(
@@ -25,7 +69,14 @@ export function createForkAttemptStore(
   return {
     get(key: string): ForkAttempt | null {
       const value = storage.getItem(STORAGE_PREFIX + key);
-      return value === null ? null : decodeAttempt(value);
+      if (value !== null) return decodeAttempt(value);
+      const v1 = storage.getItem(V1_STORAGE_PREFIX + key);
+      const migrated = v1 === null ? null : fromV1Attempt(v1);
+      if (migrated !== null) {
+        storage.setItem(STORAGE_PREFIX + key, JSON.stringify(migrated));
+        storage.removeItem(V1_STORAGE_PREFIX + key);
+      }
+      return migrated;
     },
     set(key: string, attempt: ForkAttempt) {
       storage.setItem(STORAGE_PREFIX + key, JSON.stringify(attempt));
@@ -42,10 +93,10 @@ export function forkAttemptKey(environmentId: string, originId: string, source: 
 }
 
 function forkErrorDisposition(error: unknown): ForkDisposition {
-  const disposition =
-    typeof error === "object" && error !== null && "forkDisposition" in error
-      ? error.forkDisposition
-      : undefined;
+  if (typeof error !== "object" || error === null) return "unknown";
+  // T3's dispatch reports a durably refused command; readiness reports the fork's own state.
+  if ("commandDisposition" in error && error.commandDisposition === "rejected") return "rejected";
+  const disposition = "forkDisposition" in error ? error.forkDisposition : undefined;
   return disposition === "rejected" ||
     disposition === "pending" ||
     disposition === "provisioning" ||

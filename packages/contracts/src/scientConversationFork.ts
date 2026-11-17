@@ -14,38 +14,33 @@ import { ChatAttachment, ChatAttachmentId } from "./chatAttachment.ts";
 export const OrchestrationForkWorkspaceMode = Schema.Literals(["new-worktree", "local"]);
 export type OrchestrationForkWorkspaceMode = typeof OrchestrationForkWorkspaceMode.Type;
 
-export const ThreadForkCommand = Schema.Struct({
-  type: Schema.Literal("thread.fork"),
-  commandId: CommandId,
-  originThreadId: ThreadId,
-  newThreadId: ThreadId,
-  // Exactly one source message identifies the public fork point. Assistant
-  // responses retain that response. User messages retain only the completed
-  // transcript before the message; the client stages the selected message as
-  // an unsent composer draft in the destination thread.
-  sourceAssistantMessageId: Schema.optional(MessageId),
-  sourceUserMessageId: Schema.optional(MessageId),
-  // The running turn itself: retain every completed turn plus that turn's
-  // latest state (reasoning, tool work and text produced so far).
-  sourceRunningTurnId: Schema.optional(TurnId),
-  sourceRunningRunId: Schema.optional(RunId),
+/**
+ * Scient's choices on T3's `thread.fork`. The boundary refines the command's source point: an
+ * assistant response retains that response; a user message retains only the completed transcript
+ * before it (possibly nothing), and the client stages the message as an unsent draft; a running
+ * turn retains its saved work so far.
+ */
+export const ScientThreadForkBoundary = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("assistant-response"), messageId: MessageId }),
+  Schema.Struct({ kind: Schema.Literal("user-message"), messageId: MessageId }),
+  Schema.Struct({ kind: Schema.Literal("running-turn"), runId: RunId }),
+]);
+export type ScientThreadForkBoundary = typeof ScientThreadForkBoundary.Type;
+
+export const ScientThreadForkOptions = Schema.Struct({
+  boundary: ScientThreadForkBoundary,
   workspaceMode: OrchestrationForkWorkspaceMode,
-  // Explicit destination title chosen by the user. When absent, the server
-  // allocates the automatic collision-safe title at commit time.
-  titleOverride: Schema.optional(TrimmedNonEmptyString),
-}).check(
-  Schema.makeFilter(
-    (command) =>
-      [
-        command.sourceAssistantMessageId,
-        command.sourceUserMessageId,
-        command.sourceRunningTurnId,
-        command.sourceRunningRunId,
-      ].filter((source) => source !== undefined).length === 1 ||
-      "exactly one fork source must be specified",
-  ),
-);
-export type ThreadForkCommand = typeof ThreadForkCommand.Type;
+});
+export type ScientThreadForkOptions = typeof ScientThreadForkOptions.Type;
+
+/** Waits until a fork can be opened: a new worktree first finishes its setup. */
+export const AwaitForkInput = Schema.Struct({ threadId: ThreadId });
+export type AwaitForkInput = typeof AwaitForkInput.Type;
+export const ForkReadiness = Schema.Struct({
+  /** Retained attachment ownership, so open previews keep their files. */
+  forkAttachmentIdMap: Schema.Record(ChatAttachmentId, ChatAttachmentId),
+});
+export type ForkReadiness = typeof ForkReadiness.Type;
 
 /** Omit both message ids to resolve the latest completed response on the server. */
 export const GetForkOptionsInput = Schema.Struct({
@@ -85,8 +80,6 @@ export const ScientConversationDispatchResult = Schema.Struct({
   ),
   queued: Schema.optional(Schema.Boolean),
   sequence: NonNegativeInt,
-  /** Scient fork receipt: exact retained attachment ownership. */
-  forkAttachmentIdMap: Schema.optional(Schema.Record(ChatAttachmentId, ChatAttachmentId)),
 });
 export type ScientConversationDispatchResult = typeof ScientConversationDispatchResult.Type;
 
