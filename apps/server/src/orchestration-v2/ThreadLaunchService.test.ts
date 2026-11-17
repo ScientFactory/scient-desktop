@@ -1967,10 +1967,11 @@ it.effect.each(["fails", "is interrupted"] as const)(
         ] as const) {
           const refused = yield* threads
             .dispatch({
-              type: "queue.resume",
+              ...(runId === undefined
+                ? { type: "queue.resume" as const }
+                : { type: "queued-run.start" as const, runId }),
               commandId: CommandId.make(`command:launch:missing-worktree:${ending}:${action}`),
               threadId: launched.threadId,
-              ...(runId === undefined ? {} : { runId }),
             })
             .pipe(Effect.flip);
           assert.include(String(refused.cause), "Retry worktree setup");

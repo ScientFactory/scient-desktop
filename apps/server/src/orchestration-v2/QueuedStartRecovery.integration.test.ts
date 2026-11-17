@@ -203,7 +203,7 @@ it.live(
         assert.equal(yield* fs.readFileString(path), "evidence");
         rejectPreparation(false);
         yield* orchestrator.dispatch({
-          type: "queue.resume",
+          type: "queued-run.start",
           threadId,
           runId: queued.id,
           commandId: CommandId.make("queued-start-repaired-resume"),
@@ -263,7 +263,7 @@ it.live(
           ["captured-skill"],
         );
         yield* orchestrator.dispatch({
-          type: "queue.resume",
+          type: "queued-run.start",
           threadId,
           runId: queued.id,
           commandId: CommandId.make("queued-open-explicit-retry"),
@@ -377,7 +377,7 @@ it.live("imported plan remains active across native open failure and explicit Re
       assert.isTrue(Option.isSome(heldReceipt));
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).plans[0]?.status, "active");
       yield* orchestrator.dispatch({
-        type: "queue.resume",
+        type: "queued-run.start",
         commandId: CommandId.make("imported-source-plan-retry:retry"),
         threadId,
         runId: run.id,

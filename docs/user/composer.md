@@ -424,8 +424,8 @@ that message, and the rest of the queue continues after it in order. Sending a n
 directly also continues the held queue after that message, unless it steers a turn that is
 already running. On web or desktop, **Resume** in an empty composer continues the queue too, as
 does **Resume queue** on mobile. You can edit or remove held messages without starting them. If
-the thread stopped at a usage limit, Send now is not offered: use **Resume thread** in an empty
-composer on web or desktop to continue the thread, and the queue follows.
+the thread stopped at a usage limit, Send now says to continue the thread first: use **Resume
+thread** in an empty composer on web or desktop to continue the thread, and the queue follows.
 
 Resume and Resume thread continue a stopped run through the agent's own continuation, without
 sending a new prompt. If the agent does not support it, send a message to continue instead. If
@@ -831,8 +831,8 @@ your draft automatically. **Stash** saves it for later through the usual menu.
 Sending another ordinary message releases the queue to follow it automatically,
 one message at a time after each successful answer. Restarting work or the server
 does not release a held queue. You can also click **Send** on any waiting message:
-that message starts first and the remaining queue is released in its retained
-order, with automatic completions first. Reorder while idle to choose the order.
+that message starts first, even before a finished background task's result, and the remaining
+queue is released in its retained order. Reorder while idle to choose the order.
 
 **Retry** is for a queued message whose provider failed to start; the message stays
 queued. It cannot bypass a running answer or silently release the held tail.

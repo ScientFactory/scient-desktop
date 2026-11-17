@@ -3674,7 +3674,8 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("queue.resume"),
     commandId: CommandId,
     threadId: ThreadId,
-    /** Release only the idle queue head for an explicit Send; absent releases the queue. */
+    // SCIENT-FORK: Scient builds before 0.6.26 send a held message now this way; the server reads
+    // it as queued-run.start.
     runId: Schema.optional(RunId),
   }),
   Schema.Struct({

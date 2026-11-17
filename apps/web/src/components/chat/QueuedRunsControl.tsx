@@ -192,7 +192,7 @@ export function QueuedRunsControl({
     const freshContext = queued.some(
       ({ run }) => run.id === queuedRunId && run.freshContext === true,
     );
-    if (!canSendRun(freshContext) || scient.sendRefused(queuedRunId)) return;
+    if (!canSendRun(freshContext)) return;
     if (workflow?.canSendNow) {
       await scient.perform(queuedRunId, () =>
         resume({
@@ -214,11 +214,9 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      // SCIENT-FORK:START queue-scient-parts
-      if (!next || !canSendRun(next.run.freshContext === true) || scient.sendRefused(next.run.id))
-        return false;
+      if (!next || !canSendRun(next.run.freshContext === true)) return false;
+      // SCIENT-FORK: one queue command at a time (useScientQueueParts).
       if (!repeat && !scient.isBusy()) void sendQueuedMessage(next.run.id);
-      // SCIENT-FORK:END queue-scient-parts
       return true;
     },
     // Leave the key to caret navigation while editing.
@@ -299,12 +297,6 @@ export function QueuedRunsControl({
             : queuePreviewText(item.text);
           // SCIENT-FORK:END queue-scient-preview
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
-          // SCIENT-FORK:START queue-scient-parts — a refused held Send stays hidden.
-          const sendOffered =
-            canSendRun(item.freshContext) &&
-            !isEditing &&
-            !(item.runId !== null && scient.sendRefused(item.runId));
-          // SCIENT-FORK:END queue-scient-parts
           return (
             <li
               key={item.key}
@@ -324,7 +316,7 @@ export function QueuedRunsControl({
                 onOpenThread={props.onOpenThread}
                 onImageExpand={props.onImageExpand}
               >
-                {sendOffered ? (
+                {canSendRun(item.freshContext) && !isEditing ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>

@@ -12,7 +12,7 @@ For V2 threads, native queued runs and their user messages are the sole live
 queue authority. Upstream's `QueuedRunsControl` presents that projection in the
 composer's drawer column (`queuedRunsControl` → `attachedAbove`), so it shares the
 Tasks bar's width. Scient's parts are mounted from
-`scient/threadQueue/useScientQueueParts.tsx`: the held-queue Send rule, the
+`scient/threadQueue/useScientQueueParts.tsx`: the
 failed-start notice with Retry, readable command failures, and "Queuing…" only
 when admission is slow.
 The web app does not read the pre-native queue endpoint except once per thread,
@@ -42,12 +42,14 @@ hold delivery. Becoming idle does not resume a held queue.
 Three things release a held queue, and each releases every queued run:
 
 - **Send on a row.** While the queue is held and the thread is idle, every user
-  row offers **Send now** (on mobile too). It dispatches `queue.resume(runId)`: the
-  server moves automatic delegated completions first, then the chosen message,
-  then the other messages in their current order, and releases them all. The
-  shared rule is `canSendQueuedRun` (`@t3tools/shared/scientQueuedRunSend`);
-  the server refuses a run that is not queued, an automatic delivery, a busy
-  thread, or a usage-limited thread. There is no held header or Resume queue.
+  row offers **Send now** (on mobile too). It dispatches upstream's `queued-run.start`:
+  the server starts the chosen message first, even ahead of a waiting automatic
+  completion, and releases the rest in their current order. It refuses a run that
+  is not a queued user message or a thread that is still running ("A queued user
+  message can only be sent now while the thread is stopped."). Scient builds before
+  0.6.26 send this as `queue.resume` with a `runId`; client intake reads that as
+  `queued-run.start` (`scient-fork/QueuedRunSend.ts`). There is no held header or
+  Resume queue.
 - **A direct send.** A user message sent with `start_immediately` and no
   delivery intent (or `auto`) that starts its own run releases every queued run
   in the same command (`scient-fork/QueuedRunSend.ts`). A Queue submission or a
@@ -58,14 +60,13 @@ Three things release a held queue, and each releases every queued run:
 - **Resume.** `queue.resume` without a run, from the composer's empty-draft
   Resume, still releases the whole queue.
 
-A usage limit refuses Send and Resume. The composer's **Resume thread** continues
-the limited thread first and then resumes the queue. Clients hide Send for the
-limit only when the server-built thread shell confirms it, so a windowed
-snapshot never hides a Send the server would accept. Idle reorder remains
+A usage limit refuses Send and Resume ("Continue the limited thread before resuming its
+queue."). The composer's **Resume thread** continues the limited thread first and then
+resumes the queue. Clients offer Send and leave that refusal to the server. Idle reorder remains
 available, including before a provider session exists. Provider-start failure
 retains the queued message for Retry, which is Send on that message.
 Holds follow the exact attempt's original failure or interruption boundary.
-The terminal hold reaction treats a release written by `queue.resume` or by a
+The terminal hold reaction treats a release written by `queue.resume`, `queued-run.start` or by a
 direct send's `message.dispatch` as newer than an earlier terminal, so a late
 reaction or a delayed checkpoint echo cannot hold the queue again; a failure or
 Stop after the release still holds it.
@@ -94,7 +95,7 @@ serialized messages and the actual file size of each owned attachment reference,
 promoted run whose native acceptance is still pending. Missing or foreign-thread bytes fail closed.
 
 The native commands are `queued-run.reorder`, `queued-run.cancel`, `queued-run.edit`,
-`queued-message.promote-to-steer`, and `queue.resume`. Their predicates and receipts belong to
+`queued-message.promote-to-steer`, `queued-run.start` and `queue.resume`. Their predicates and receipts belong to
 V2. The effect worker starts an admitted run through `ProviderTurnStartService`; provider events
 flow through `ProviderEventIngestor` and `RunExecutionService`. Finalization settles checkpoint
 work separately from provider success. A capture failure does not turn an answer into a failure.
@@ -178,7 +179,7 @@ cleanup. Bytes still referenced by a queued item or projected message are retain
 | `apps/server/src/orchestration-v2/EffectWorker.ts`               | Durable execution after admission                                            |
 | `apps/server/src/orchestration-v2/legacy/`                       | Legacy queue cutover and recovery readers                                    |
 | `apps/web/src/components/chat/QueuedRunsControl.tsx`             | Upstream's queue presentation and native commands, with marked Scient mounts |
-| `apps/web/src/scient/threadQueue/useScientQueueParts.tsx`        | Held-queue Send rule, Retry, command errors, admission status                |
+| `apps/web/src/scient/threadQueue/useScientQueueParts.tsx`        | Retry, command errors, admission status                                      |
 | `apps/web/src/scient/threadQueue/useLegacyQueueRecoveryError.ts` | One-time notice for retained pre-native queue work                           |
 | `apps/web/src/components/chat/useQueuedRunEdit.ts`               | Upstream's in-place queued edit, with a marked Scient skill-selection mount  |
 | `apps/web/src/scient/threadQueue/submission.ts`                  | Ordinary send submission identity and accepted-draft matching                |
@@ -211,7 +212,7 @@ Manual acceptance should exercise these cases in an isolated candidate:
    queue is released and follows that message automatically. Stop again with
    several queued messages, reorder while idle, then Send a later held row;
    that row starts first and the remaining queue is released in its retained
-   order (automatic completions first). Verify delivery after each successful
+   order. Verify delivery after each successful
    finalized answer and check failed delivery/Retry separately. Exercise reload
    during editing, another window, and lost responses; inspect for missing or
    duplicated user messages and retained drafts.

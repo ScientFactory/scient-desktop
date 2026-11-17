@@ -4,17 +4,14 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
-import { canSendQueuedRun, isQueueUsageLimitProven } from "@t3tools/shared/scientQueuedRunSend";
 import { CircleAlertIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { ComposerBanner } from "../../components/chat/ComposerBanner";
 import { Button } from "../../components/ui/button";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
-import { useThreadShell } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -28,8 +25,8 @@ const FAILED_START_NOTICE =
   "The queued message could not start. Retry it, or edit or delete the message.";
 
 /**
- * Scient's additions to upstream's queue control: the held-queue Send rule, the failed-start
- * Retry and readable command failures.
+ * Scient's additions to upstream's queue control: the failed-start Retry and readable command
+ * failures.
  */
 export function useScientQueueParts(input: {
   readonly environmentId: EnvironmentId;
@@ -40,23 +37,13 @@ export function useScientQueueParts(input: {
   readonly setBusyRunId: (runId: RunId | null) => void;
 }) {
   const { projection, workflow } = input;
-  const shell = useThreadShell(scopeThreadRef(input.environmentId, input.threadId));
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const [actionError, setActionError] = useState<string | null>(null);
   const busyRef = useRef(false);
   const queued = workflow?.queuedRuns ?? [];
   const head = queued[0];
 
-  // A held queue offers Send on each message the server accepts; Send starts it and resumes
-  // the rest. A usage limit hides Send only when the server-computed shell confirms it,
-  // because a windowed snapshot can miss the session that lifted the limit.
   const held = workflow?.isHeld === true && projection !== undefined ? projection : null;
-  const usageLimited =
-    held !== null && isQueueUsageLimitProven(held, shell?.runtime?.lastErrorClass);
-  const sendRefused = (runId: RunId) =>
-    held !== null &&
-    workflow?.canSendNow === true &&
-    !canSendQueuedRun(held, runId, { usageLimited });
   const failedHead =
     held !== null &&
     head !== undefined &&
@@ -89,7 +76,7 @@ export function useScientQueueParts(input: {
   };
 
   const retry =
-    failedHead && workflow?.activeRun === null && !sendRefused(head.run.id)
+    failedHead && workflow?.activeRun === null
       ? () =>
           void perform(head.run.id, () =>
             resume({
@@ -100,7 +87,6 @@ export function useScientQueueParts(input: {
       : null;
 
   return {
-    sendRefused,
     perform,
     isBusy: () => busyRef.current,
     notice: actionError ?? input.error ?? (failedHead ? FAILED_START_NOTICE : null),

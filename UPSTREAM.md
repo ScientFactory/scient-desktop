@@ -267,7 +267,9 @@ Stop turns into a queued message joins the held queue. A stop made so a queued m
 (a `/goal`, or Send now into a running compaction) does not hold the queue
 (`scient/orchestration/TerminalQueueHold.ts`). Upstream's release block in `Orchestrator.ts`
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
-`SteeringCompletion.integration.test.ts` assert Scient's rule.
+`SteeringCompletion.integration.test.ts` assert Scient's rule. Send now on a held message is
+upstream's `queued-run.start`, with its order and refusals; the same file reads an older Scient
+client's `queue.resume` with a `runId` as that command.
 Upstream's release of unattended messages after a later completed run is composed: the
 terminal fence honours it as the one release without a command, and a message queued before a
 Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
@@ -275,7 +277,7 @@ Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
 The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
 `queuedRunsControl` slot. Scient's additions live in
 `scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
-`SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
+`SCIENT-FORK queue-scient-parts` sections: failed-start Retry,
 command errors and the delayed "Queuing…" status. Take
 upstream's changes to the rest of the file as they are, including its single Send now action
 without reordering; agents still reorder through `scient_queue`.
