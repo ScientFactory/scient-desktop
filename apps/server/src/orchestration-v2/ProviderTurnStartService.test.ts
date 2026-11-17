@@ -2345,6 +2345,29 @@ effectIt.effect.each([
     }),
 );
 
+effectIt.effect("fails the start when the owner its replacement supersedes is still closing", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue after the failure",
+      openFailure: "The prior native close is still pending.",
+    });
+    const supersededProviderSessionId = ProviderSessionId.make("superseded-provider-session");
+    yield* Effect.gen(function* () {
+      yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+        threadId: harness.threadId,
+        runId: harness.runId,
+        supersededProviderSessionId,
+      });
+    }).pipe(Effect.provide(harness.layer));
+    expect(harness.open).toHaveBeenCalledWith(
+      expect.objectContaining({ supersededProviderSessionId }),
+    );
+    expect(harness.projection().runs.find((run) => run.id === harness.runId)?.status).toBe(
+      "failed",
+    );
+  }),
+);
+
 effectIt.effect.each([
   { nativeForkFrom: "idle", forks: true, transferStatus: "consumed", handoffIds: [] },
   {

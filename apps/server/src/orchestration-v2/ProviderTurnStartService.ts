@@ -25,6 +25,7 @@ import {
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
+  type ProviderSessionId,
   RunId,
   RunAttemptId,
   NodeId,
@@ -187,6 +188,8 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly runId: RunId;
     readonly willRetry?: boolean;
     readonly expectedAttemptId?: RunAttemptId;
+    // SCIENT-FORK: the refused owner dispatch replaced with a new provider session.
+    readonly supersededProviderSessionId?: ProviderSessionId;
   }) => Effect.Effect<void, ProviderTurnStartError>;
   readonly failStartingRun: (input: {
     readonly threadId: ThreadId;
@@ -490,6 +493,8 @@ export const layer: Layer.Layer<
         readonly runId: RunId;
         readonly willRetry?: boolean;
         readonly expectedAttemptId?: RunAttemptId;
+        // SCIENT-FORK: the refused owner dispatch replaced with a new provider session.
+        readonly supersededProviderSessionId?: ProviderSessionId;
       },
       captureStartingRun: (run: OrchestrationV2Run) => void,
     ) {
@@ -909,6 +914,11 @@ export const layer: Layer.Layer<
               // SCIENT-FORK:START provider-enabled-at-open
               requireEnabledInstance: true,
               // SCIENT-FORK:END provider-enabled-at-open
+              // SCIENT-FORK:START — the superseded owner can hold this native history.
+              ...(input.supersededProviderSessionId === undefined
+                ? {}
+                : { supersededProviderSessionId: input.supersededProviderSessionId }),
+              // SCIENT-FORK:END
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
               ...(existingSessionProjection === undefined

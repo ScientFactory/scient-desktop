@@ -850,6 +850,8 @@ export const OrchestrationV2Run = Schema.Struct({
   sourcePlanFingerprint: Schema.optional(Schema.String),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  // SCIENT-FORK: a deferred start keeps the refused owner its new provider session replaces.
+  supersededProviderSessionId: Schema.optional(ProviderSessionId),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
 });
