@@ -31,7 +31,9 @@ it("requires applicable Windows qualification through the single Check gate", ()
   expect(gate.env).toMatchObject({
     WINDOWS_DETECTION_RESULT: "${{ needs.changes.result }}",
     WINDOWS_CHANGED: "${{ needs.changes.outputs.windows_changed }}",
-    WINDOWS_NATIVE_RESULT: "${{ needs.windows_packaging.result }}",
+    // A failure the flake quarantine accepted counts as passed (docs/operations/ci-flakes.md).
+    WINDOWS_NATIVE_RESULT:
+      "${{ steps.quarantine.outputs.ok == 'true' && needs.windows_packaging.result == 'failure' && 'success' || needs.windows_packaging.result }}",
   });
   expect(gate.run).toContain("node .github/scripts/windows-packaging-ci-gate.mjs check");
   expect(gate.run).toContain("node .github/scripts/compute-ci-gate.mjs check");

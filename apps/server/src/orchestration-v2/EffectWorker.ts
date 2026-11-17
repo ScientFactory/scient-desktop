@@ -5,6 +5,8 @@ import {
   isDroidSteerUncertain,
 } from "./Adapters/DroidSteerSafety.ts";
 import { CommandId, type RunAttemptId, type RunId } from "@t3tools/contracts";
+// SCIENT-FORK: a replacement start names the refused owner it supersedes.
+import type { ProviderSessionId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -146,6 +148,8 @@ export const layerExecutor: Layer.Layer<
       willRetry: boolean,
       // SCIENT-FORK: a queued start can name the attempt it was admitted for.
       expectedAttemptId?: RunAttemptId,
+      // SCIENT-FORK: and the refused owner its new provider session replaces.
+      supersededProviderSessionId?: ProviderSessionId,
     ) =>
       providerTurnStart
         .start({
@@ -153,6 +157,7 @@ export const layerExecutor: Layer.Layer<
           runId,
           willRetry,
           ...(expectedAttemptId === undefined ? {} : { expectedAttemptId }),
+          ...(supersededProviderSessionId === undefined ? {} : { supersededProviderSessionId }),
         })
         .pipe(
           Effect.catchCauseIf(
@@ -287,6 +292,7 @@ export const layerExecutor: Layer.Layer<
               effect.request.runId,
               willRetry,
               effect.request.expectedAttemptId,
+              effect.request.supersededProviderSessionId,
             ).pipe(
               Effect.mapError(
                 (cause) =>

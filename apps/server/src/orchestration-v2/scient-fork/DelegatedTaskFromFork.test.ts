@@ -22,6 +22,7 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
+import { conversationForkOf, recordConversationFork } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -96,7 +97,6 @@ const helperFields = {
   sectionId: "inherited",
   conversationImport: "reset",
   forkLineage: "reset",
-  conversationFork: "reset",
 } as const satisfies Record<keyof OrchestrationV2AppThread, "inherited" | "reset" | "set">;
 
 it.effect("starts a delegated task from a forked conversation as a plain helper", () =>
@@ -136,18 +136,19 @@ it.effect("starts a delegated task from a forked conversation as a plain helper"
         originThreadId: ThreadId.make("thread:fork-origin"),
         baselineAssistantMessageId: null,
       },
-      conversationFork: {
-        commandId: CommandId.make("fork:forked-parent"),
-        sourceThreadId: ThreadId.make("thread:fork-origin"),
-        workspaceMode: "local",
-        status: "ready",
-        cwd: "/repo-worktree",
-        checkpointRef: null,
-        checkpointOid: null,
-        attachmentCopies: [],
-        error: null,
-      },
     } as const satisfies Partial<OrchestrationV2AppThread>;
+    // A fork's setup state is Scient's own record, which a helper cannot copy.
+    yield* recordConversationFork(parentThreadId, {
+      commandId: CommandId.make("fork:forked-parent"),
+      sourceThreadId: ThreadId.make("thread:fork-origin"),
+      workspaceMode: "local",
+      status: "ready",
+      cwd: "/repo-worktree",
+      checkpointRef: null,
+      checkpointOid: null,
+      attachmentCopies: [],
+      error: null,
+    });
     yield* projections.apply({
       id: EventId.make("forked-parent:fork-state"),
       type: "thread.metadata-updated",
@@ -192,6 +193,7 @@ it.effect("starts a delegated task from a forked conversation as a plain helper"
       const key = field as keyof OrchestrationV2AppThread;
       assert.deepEqual(child.thread[key], parent.thread[key], `${field} is inherited`);
     }
+    assert.isNull(yield* conversationForkOf(child.thread.id));
     for (const [field, value] of Object.entries(parentState)) {
       assert.equal(helperFields[field as keyof typeof parentState], "reset");
       assert.notDeepEqual(

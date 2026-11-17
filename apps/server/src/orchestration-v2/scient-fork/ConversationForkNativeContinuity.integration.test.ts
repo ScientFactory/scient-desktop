@@ -49,12 +49,12 @@ import {
   THREAD_FORK_NATIVE_SOURCE_PROMPT,
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "../testkit/fixtures/shared.ts";
-import { ConversationForkService } from "./ConversationForkService.ts";
 import { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { layerFromPath as makeSqlitePersistenceLive } from "../../persistence/Sqlite.ts";
+import { forkConversation } from "../testkit/ConversationForkCommand.ts";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFrame = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -254,7 +254,6 @@ it.live.each(
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
         const sink = yield* EventSinkV2;
-        const forks = yield* ConversationForkService;
         const now = yield* DateTime.now;
         const source = yield* createSource(cwd, sourceStatus);
         assert.equal(source.runs[0]?.status, sourceStatus);
@@ -335,7 +334,7 @@ it.live.each(
           sourceAssistantMessageId: answer.messageId,
           workspaceMode: "local" as const,
         };
-        const receipt = yield* forks.dispatch(forkCommand);
+        const receipt = yield* forkConversation(forkCommand);
         const frozen = yield* orchestrator.getThreadProjection(targetId);
         assert.lengthOf(
           frozen.contextTransfers,
@@ -365,7 +364,7 @@ it.live.each(
           assert.equal(inheritedAnswer.inheritedFrom?.itemId, answer.id);
           assert.lengthOf(frozen.runs, 0);
           assert.lengthOf(frozen.providerThreads, 0, "Admission must not execute a provider");
-          const repeated = yield* forks.dispatch(forkCommand);
+          const repeated = yield* forkConversation(forkCommand);
           assert.equal(repeated.sequence, receipt.sequence);
           const reloaded = yield* (yield* ProjectionStoreV2).getThreadProjection(targetId);
           assert.lengthOf(reloaded.contextTransfers, 1);
@@ -867,7 +866,7 @@ it.live.each(
           );
         }
         assert.include(target.messages.at(-1)?.text ?? "", "fork native ok");
-        const repeated = yield* forks.dispatch(forkCommand);
+        const repeated = yield* forkConversation(forkCommand);
         assert.equal(repeated.sequence, receipt.sequence);
         assert.lengthOf((yield* orchestrator.getThreadProjection(targetId)).contextTransfers, 1);
       }).pipe(Effect.provide(layer));
@@ -927,7 +926,6 @@ it.live(
         const accepted = yield* Effect.scoped(
           Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
-            const forks = yield* ConversationForkService;
             const source = yield* createSource(cwd);
             const answer = source.turnItems.find(
               (item) => item.type === "assistant_message" && item.status === "completed",
@@ -941,7 +939,7 @@ it.live(
               sourceAssistantMessageId: answer.messageId,
               workspaceMode: "local" as const,
             };
-            const receipt = yield* forks.dispatch(command);
+            const receipt = yield* forkConversation(command);
             yield* orchestrator.dispatch({
               type: "thread.delete",
               commandId: CommandId.make("native-fork-restart-delete"),
@@ -975,7 +973,6 @@ it.live(
         yield* Effect.scoped(
           Effect.gen(function* () {
             const orchestrator = yield* OrchestratorV2;
-            const forks = yield* ConversationForkService;
             const frozen = yield* orchestrator.getThreadProjection(targetId);
             assert.equal(
               frozen.contextTransfers[0]?.frozenSource?.sourceProviderTurns.at(-1)?.nativeTurnRef
@@ -983,7 +980,7 @@ it.live(
               "native-source-turn",
             );
             assert.equal(
-              (yield* forks.dispatch(accepted.command)).sequence,
+              (yield* forkConversation(accepted.command)).sequence,
               accepted.receipt.sequence,
             );
             yield* orchestrator.dispatch({
@@ -1033,13 +1030,12 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
       );
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
-        const forks = yield* ConversationForkService;
         const source = yield* createSource(cwd);
         const answer = source.turnItems.find(
           (item) => item.type === "assistant_message" && item.status === "completed",
         );
         assert.ok(answer?.type === "assistant_message");
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("first-turn-retry-fork"),
           originThreadId: sourceId,
@@ -1331,13 +1327,12 @@ it.live.each(
       );
       yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
-        const forks = yield* ConversationForkService;
         const store = yield* ProjectionStoreV2;
         const source = yield* createSource(cwd);
         assert.ok(source.visibleTurnItems.some((row) => row.item.type === "command_execution"));
         const sourceAnswer = source.messages.findLast((message) => message.role === "assistant");
         assert.ok(sourceAnswer);
-        yield* forks.dispatch({
+        yield* forkConversation({
           type: "thread.fork",
           commandId: CommandId.make("scient-rollback-fork"),
           originThreadId: sourceId,

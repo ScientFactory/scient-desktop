@@ -33,6 +33,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { conversationForkOf } from "./testkit/ConversationForkCommand.ts";
 
 const forkCases = (["codex", "claudeAgent"] as const).map((driverName) => {
   const driver = ProviderDriverKind.make(driverName);
@@ -375,7 +376,7 @@ it.effect.each(
         fresh.turnItems.every((item) => item.runId === null && item.threadId === freshThreadId),
       );
       assert.isNull(fresh.thread.forkedFrom);
-      assert.equal(fresh.thread.conversationFork?.sourceThreadId, sourceThreadId);
+      assert.equal((yield* conversationForkOf(fresh.thread.id))?.sourceThreadId, sourceThreadId);
       assert.lengthOf(fresh.providerSessions, 0);
       const sourceAfter = yield* orchestrator.getThreadProjection(sourceThreadId);
       // The new fork adds its legitimate outgoing relation to the source
@@ -1703,7 +1704,7 @@ it.effect("a side chat of a busy Scient fork carries its frozen history by refer
       runId: stableRunId,
     });
     assert.equal(created.thread.historyOrigin, "native");
-    assert.isNull(created.thread.conversationFork);
+    assert.isNull(yield* conversationForkOf(created.thread.id));
     assert.lengthOf(created.visibleTurnItems, 0);
 
     yield* askSideChat(sideChatId, "side-chat-frozen-first-message");

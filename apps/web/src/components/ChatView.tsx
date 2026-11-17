@@ -33,9 +33,8 @@ import { readTimelinePosition } from "./chat/timelineScrollAnchoring";
 import { useDraftHeroMotion } from "./chat/timelineEntranceMotion";
 import { isOnlySendBusy, deriveTimelineWorking } from "./chat/timelineWorkingState";
 import {
-  ScientChatForkDialog,
+  ScientChatForkContext,
   useChatViewForkCommand,
-  useClearForkCommandOnThreadChange,
   createForkConversationCommand,
   useForkLanding,
   useForkLandingReveal,
@@ -484,7 +483,7 @@ import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/Thre
 import { ThreadNow } from "./chat/ThreadNow";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
-import { useTimelineFollow } from "./chat/useTimelineFollow";
+import { useReadingFollow } from "./chat/useReadingFollow";
 import { useQueuedRunsInView } from "./chat/queuedRunsInView";
 import {
   type EnvironmentUnavailableState,
@@ -1138,7 +1137,7 @@ function ChatViewContent(props: ChatViewProps) {
           title: parentSubagentThread?.title ?? "Parent thread",
         };
   const hasProjectWorkspace = activeThread?.projectId != null;
-  // SCIENT-FORK:START — fork dialog target, preview and command state.
+  // SCIENT-FORK:START — one-click forks of this conversation.
   const forkCommand = useChatViewForkCommand({
     activeThread,
     navigate,
@@ -1150,7 +1149,7 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     ),
   });
-  const { isForkingThread, setForkCommandTarget } = forkCommand;
+  const { isForkingThread, requestFork } = forkCommand;
   // SCIENT-FORK:END
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
@@ -1203,13 +1202,6 @@ function ChatViewContent(props: ChatViewProps) {
       items: serverVisibleTurnItems.map(({ item }) => item),
     });
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
-  // SCIENT-FORK:START — a fork target belongs to the thread it was opened on.
-  useClearForkCommandOnThreadChange(
-    setForkCommandTarget,
-    activeThreadId,
-    activeThreadEnvironmentId,
-  );
-  // SCIENT-FORK:END
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
@@ -2083,7 +2075,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeRunningTurnId,
     activeThreadId,
     activeThreadEnvironmentId,
-    setForkCommandTarget,
+    requestFork,
   });
   // SCIENT-FORK:END
   const availableRevertTurnCounts = deriveAvailableRevertTurnCounts(serverProjection ?? null);
@@ -2241,22 +2233,9 @@ function ChatViewContent(props: ChatViewProps) {
     : (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   const diffAvailable = hasProjectWorkspace && isServerThread && isGitRepo;
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — fork baseline and new-worktree availability.
-  const {
-    hasForkBaseline,
-    forkOriginThreadId,
-    forkBaselineAssistantMessageId,
-    forkWorktreeAvailability,
-  } = deriveForkTimelineBaseline({
-    readTimelineEntries: readLiveTimelineEntries,
-    turnDiffSummaries,
-    activeThread,
-    serverVisibleTurnItems,
-    isGitRepo,
-    forkDialogOpen: forkCommand.forkDialogOpen,
-    forkCommandTarget: forkCommand.forkCommandTarget,
-    timelineEntries,
-  });
+  // SCIENT-FORK:START — fork baseline.
+  const { hasForkBaseline, forkOriginThreadId, forkBaselineAssistantMessageId } =
+    deriveForkTimelineBaseline({ activeThread, serverVisibleTurnItems });
   // SCIENT-FORK:END
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
@@ -2762,7 +2741,6 @@ function ChatViewContent(props: ChatViewProps) {
     setUnreadBelowCount,
     timelinePositioningPending,
     responseFollow,
-    cancelPositionRestoreRef,
     isTimelineAtLogicalEndStable,
     onComposerPageScrollKeyDownStable,
     onComposerPageScrollKeyUpStable,
@@ -2774,8 +2752,8 @@ function ChatViewContent(props: ChatViewProps) {
     captureSendReadingPosition,
     frameSubmittedMessage,
     releaseUnusedTimelineAnchor,
-    cancelTimelinePositioning,
-  } = useTimelineFollow({
+    attachTimelineViewport,
+  } = useReadingFollow({
     legendListRef,
     composerOverlayElement,
     composerTimelineInset,
@@ -2783,6 +2761,11 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadKey,
     isServerThread,
     serverProjection,
+    threadStatus,
+    activeActivityRun,
+    activeRunningTurnId,
+    timelineEntries,
+    timelineAnchorMessageId,
     timelineMessages,
     isDraftHeroState,
     hasLatestRun: activeLatestRun !== null,
@@ -3874,7 +3857,7 @@ function ChatViewContent(props: ChatViewProps) {
   const { onForkAssistantMessage, onForkUserMessage, onForkFromRun } = createForkMessageCommands({
     activeThreadId,
     activeThreadEnvironmentId,
-    setForkCommandTarget,
+    requestFork,
     activeRunningTurnId,
     readTimelineEntries: readLiveTimelineEntries,
   });
@@ -4379,7 +4362,7 @@ function ChatViewContent(props: ChatViewProps) {
                   onAnchorReady={onTimelineAnchorReadyStable}
                   onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
                   contentInsetEndAdjustment={composerTimelineInset}
-                  // SCIENT-FORK:START — no live-follow flag (the timeline never pins to its end);
+                  // SCIENT-FORK:START — no live-follow flag (the reading follow moves the view);
                   // placement in flight, the send follow (chat/responseFollow.ts) and releasing
                   // unused reserved room.
                   timelinePositioningPending={timelinePositioningPending}
@@ -4391,10 +4374,7 @@ function ChatViewContent(props: ChatViewProps) {
                   // SCIENT-FORK:START — the unread count below, for the Scroll to end control.
                   onUnreadBelowChange={setUnreadBelowCount}
                   // SCIENT-FORK:END
-                  // SCIENT-FORK:START — the reader's navigation cancels placement and the follow.
-                  onManualNavigation={cancelTimelinePositioning}
-                  // SCIENT-FORK:END
-                  cancelPositionRestoreRef={cancelPositionRestoreRef}
+                  onViewportAttach={attachTimelineViewport}
                   // SCIENT-FORK:START
                   onPositionedThreadKeyChange={forkLandingReveal.onPositionedThreadKeyChange}
                   // SCIENT-FORK:END
@@ -5070,15 +5050,11 @@ function ChatViewContent(props: ChatViewProps) {
       <ThreadOpenRecorder threadRef={routeThreadRef} />
       {/* SCIENT-FORK:END */}
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
-      {/* SCIENT-FORK:START — the fork dialog. */}
-      <ScientChatForkDialog
+      {/* SCIENT-FORK:START — fork requests know the thread's ref and folder. */}
+      <ScientChatForkContext
         fork={forkCommand}
-        activeThread={activeThread}
-        activeThreadId={activeThreadId}
-        activeThreadEnvironmentId={activeThreadEnvironmentId}
         activeThreadRef={activeThreadRef}
         activeWorkspaceRoot={activeWorkspaceRoot}
-        forkWorktreeAvailability={forkWorktreeAvailability}
       />
       {/* SCIENT-FORK:END */}
     </div>

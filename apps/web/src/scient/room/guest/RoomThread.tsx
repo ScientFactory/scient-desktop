@@ -22,7 +22,7 @@ import {
   type MessagesTimelineHistoryControls,
 } from "~/components/chat/MessagesTimeline";
 import type { TimelineRow } from "~/components/chat/timelineRowContext";
-import { useTimelineFollow } from "~/components/chat/useTimelineFollow";
+import { useReadingFollow } from "~/components/chat/useReadingFollow";
 import { Button } from "~/components/ui/button";
 import { useIncrementalTimelineEntries } from "~/hooks/useIncrementalTimelineEntries";
 import { useNowMinute } from "~/hooks/useNowMinute";
@@ -121,7 +121,7 @@ export function RoomThread({
     deriveActiveWorkStartedAt(activityRun, runtime, null) ?? runlessWorkStartedAt;
   const runningRunId = runtime?.activeRunId ?? null;
   const currentRouteThreadKeyRef = useRef<string | null>(threadKey);
-  const follow = useTimelineFollow({
+  const follow = useReadingFollow({
     legendListRef: listRef,
     composerOverlayElement: null,
     composerTimelineInset: 0,
@@ -130,6 +130,11 @@ export function RoomThread({
     // Not a server thread: new turns follow the end instead of anchoring near the top.
     isServerThread: false,
     serverProjection: null,
+    threadStatus: "live",
+    activeActivityRun: activityRun,
+    activeRunningTurnId: runningRunId,
+    timelineEntries: entries,
+    timelineAnchorMessageId: null,
     timelineMessages: entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
     isDraftHeroState: false,
     hasLatestRun: activityRun !== null,
@@ -157,7 +162,7 @@ export function RoomThread({
     form.append("to", direct ? "agent" : "people");
     for (const file of files) form.append("file", file, file.name);
     const failure = await postRoom(participantId, "messages", form);
-    if (failure === null) follow.scrollToEnd(true);
+    if (failure === null) void follow.scrollToEnd(true);
     return failure;
   };
   const stop = async () => {
@@ -230,8 +235,7 @@ export function RoomThread({
                     contentInsetEndAdjustment={0}
                     emptyPlaceholderInset={0}
                     onIsAtEndChange={follow.onIsAtEndChange}
-                    onManualNavigation={follow.cancelTimelinePositioning}
-                    cancelPositionRestoreRef={follow.cancelPositionRestoreRef}
+                    onViewportAttach={follow.attachTimelineViewport}
                   />
                 </HostImageUrlContext>
                 {follow.showScrollToBottom ? (

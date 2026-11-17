@@ -827,11 +827,13 @@ const checkpointCleanupFixture = Effect.fn("test.checkpointCleanupFixture")(func
       payload_json: JSON.stringify({
         worktreePath: worktree,
         forkedFrom: options.source ? { type: "run", threadId: options.source } : null,
-        ...(options.forkSnapshot === undefined
-          ? {}
-          : { conversationFork: { cwd: worktree, checkpointRef: options.forkSnapshot } }),
       }),
     })}`;
+    // Only the fields cleanup reads; a fork's setup state is Scient's own record.
+    if (options.forkSnapshot !== undefined)
+      yield* sql`INSERT INTO scient_conversation_forks (thread_id, fork_json) VALUES (${id}, ${JSON.stringify(
+        { cwd: worktree, checkpointRef: options.forkSnapshot },
+      )})`;
     if (!options.legacyOnly)
       yield* sql`INSERT INTO orchestration_v2_projection_checkpoint_scopes ${sql.insert({
         scope_id: scopeId,

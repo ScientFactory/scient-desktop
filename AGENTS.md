@@ -210,13 +210,22 @@ are separate.
   head before requesting delivery again. Push locally verified corrections together,
   not as a series that repeatedly restarts CI. Return PR/CI links; do not monitor
   unless asked.
+- A test failure that exactly matches an open, unexpired quarantine row in the
+  [flake register](docs/operations/ci-flakes.md) (job, failed step, test id and
+  signature) does not fail `Check`: it neither removes a PR from the queue nor fails
+  main's required check. The test still runs, its job stays red and `Check`'s summary
+  lists it with its row. Rows expire 7 days after quarantine and then block again
+  unless the cause is fixed (removing the row) or the owner extends it. Build,
+  typecheck, format/lint, documentation and provenance failures never quarantine.
+  Releases still require a CI run with no failed job.
 - After queue removal for `failed_checks` on an unchanged authorized head, inspect
-  its timeline and match every failure against open
-  [flake signatures](docs/operations/ci-flakes.md). If this is the first removal of
-  that head and it qualifies, re-add once right away. If it was removed earlier as
-  well, stop and tell the user. Never re-add a typecheck, build, provenance or unknown
-  failure. Investigate nonmatching failures and record any newly confirmed flake
-  with an owner before further delivery attempts. A row is not a failure waiver.
+  its timeline and match every failure against the register. If this is the first
+  removal of that head and every failure matches a listed but unquarantined
+  signature, re-add once right away. If it was removed earlier as well, stop and tell
+  the user. Never re-add a typecheck, build, provenance or unknown failure.
+  Investigate nonmatching failures and record any newly confirmed flake with an owner
+  before further delivery attempts. Outside an approved admin merge, only a
+  quarantine row waives a failure.
 - Admin-merge only with explicit approval for that PR's reviewed head and accepted
   failures matching open flake signatures. All checks must have finished and the
   head must contain current main. Recheck head, checks and main immediately before

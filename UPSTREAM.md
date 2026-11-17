@@ -1597,12 +1597,15 @@ dismissal of pending notifications; upstream's favicon badge remains on the web.
 window lifecycle remain owned by their current systems. See
 [answer attention](docs/internals/answer-attention.md).
 
-Conversation forks keep server-owned boundary resolution, durable provisioning,
+Conversation forks are T3's `thread.fork` with Scient's `scient` boundary and workspace
+options; the Orchestrator's one dispatch mount hands every fork that is not a side chat to
+`scient-fork/ConversationForkDispatch.ts`, which uses T3's `ThreadForkService` to build the
+thread. They keep server-owned boundary resolution, durable provisioning,
 and provider-neutral context bootstrap. Preserve the shared
 selection of submitted question-answer activities and independent file ownership;
 T3's question submission path remains unchanged. Preserve the read-authorized
-`orchestration.getForkOptions` RPC and its `threadForkRecovery` capability,
-typed fork dispositions on dispatch errors, and the pre-send readiness gate.
+`orchestration.getForkOptions` and `orchestration.awaitFork` RPCs and the `threadForkOptions`
+capability, receipt-less refusals of conversation forks, and the pre-send readiness gate.
 Running local forks skip file capture; new-worktree captures retain exact attempt/ref/OID
 ownership through rejection and restart. Checkpoint enumeration remains bounded and streamed,
 and publication transfers only new staged objects while preserving connectivity and fsync.
@@ -2456,6 +2459,25 @@ predates T3's unlisted-detail path and was written when a 404 was final. Since T
 and clicks on it, to the start page until the next retry. Scient keeps one divergence here:
 `resolveThreadRouteRenderState` admits an archived unlisted thread, so archived originals stay
 readable through fork lineage.
+
+## Repositories with nothing to branch from
+
+T3 refuses a new worktree only for a folder that is not a Git repository. A repository with no
+commit, no local branch and no remote passes its base check, then fails every worktree launch,
+and a scheduled task saved there with a worktree failed each run. Scient treats such a repository
+as a plain folder (`scient-fork/EmptyRepositoryWorkspace.ts`) unless the requested base resolves:
+the marked `isNonGitProject` entry in `ThreadLaunchService` makes task saves store a root
+strategy, and the marked `launch` normalization runs tasks already saved with a worktree at the
+root, as T3 does for Scratch. Only Git's "no remote configured" refusal counts as no remote.
+
+A message sent into a thread whose worktree setup failed waits behind T3's `worktreeSetupPending`
+hold until someone retries setup, and T3's scheduled-task wait gave up only after a day. The
+marked wait in `ScheduledTaskService.recordRunFailure` calls
+`scient/orchestration/WorktreeSetupHoldReport.ts`, which records that run as failed once it is
+stuck, including when the setup ahead of it fails later. `Orchestrator.ts` only re-exports the
+predicate. Tested in `ThreadLaunchService.scient.test.ts` and `EmptyRepositoryWorkspace.test.ts`.
+T3 main has the same launch, save and wait code, so this is offered upstream; when T3 takes an
+equal change, use its version and delete the blocks, modules and tests.
 
 ## Security policy
 

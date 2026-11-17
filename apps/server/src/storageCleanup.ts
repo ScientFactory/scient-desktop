@@ -1861,9 +1861,10 @@ const make = Effect.gen(function* () {
         json_extract(t.payload_json, '$.worktreePath') AS "worktreePath",
         p.workspace_root AS "workspaceRoot", s.scope_id AS "scopeId",
         json_extract(s.payload_json, '$.cwd') AS cwd,
-        json_extract(t.payload_json, '$.conversationFork.checkpointRef') AS "forkSnapshotRef",
-        json_extract(t.payload_json, '$.conversationFork.cwd') AS "forkCwd"
+        json_extract(fork.fork_json, '$.checkpointRef') AS "forkSnapshotRef",
+        json_extract(fork.fork_json, '$.cwd') AS "forkCwd"
       FROM orchestration_v2_projection_threads t
+      LEFT JOIN scient_conversation_forks fork ON fork.thread_id = t.thread_id
       LEFT JOIN projection_projects p ON p.project_id = t.project_id
       LEFT JOIN orchestration_v2_projection_checkpoint_scopes s ON s.thread_id = t.thread_id
       WHERE t.deleted_at IS NOT NULL

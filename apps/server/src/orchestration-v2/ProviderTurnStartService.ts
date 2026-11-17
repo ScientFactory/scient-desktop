@@ -25,6 +25,7 @@ import {
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
   parseGoalCommand,
+  type ProviderSessionId,
   RunId,
   RunAttemptId,
   NodeId,
@@ -187,6 +188,8 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly runId: RunId;
     readonly willRetry?: boolean;
     readonly expectedAttemptId?: RunAttemptId;
+    // SCIENT-FORK: the refused owner dispatch replaced with a new provider session.
+    readonly supersededProviderSessionId?: ProviderSessionId;
   }) => Effect.Effect<void, ProviderTurnStartError>;
   readonly failStartingRun: (input: {
     readonly threadId: ThreadId;
@@ -490,11 +493,15 @@ export const layer: Layer.Layer<
         readonly runId: RunId;
         readonly willRetry?: boolean;
         readonly expectedAttemptId?: RunAttemptId;
+        // SCIENT-FORK: the refused owner dispatch replaced with a new provider session.
+        readonly supersededProviderSessionId?: ProviderSessionId;
       },
       captureStartingRun: (run: OrchestrationV2Run) => void,
     ) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
+      // SCIENT-FORK: a fork's workspace choice shapes how its history is delivered.
+      const conversationFork = yield* projectionStore.getConversationFork(input.threadId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
@@ -909,6 +916,11 @@ export const layer: Layer.Layer<
               // SCIENT-FORK:START provider-enabled-at-open
               requireEnabledInstance: true,
               // SCIENT-FORK:END provider-enabled-at-open
+              // SCIENT-FORK:START — the superseded owner can hold this native history.
+              ...(input.supersededProviderSessionId === undefined
+                ? {}
+                : { supersededProviderSessionId: input.supersededProviderSessionId }),
+              // SCIENT-FORK:END
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
               ...(existingSessionProjection === undefined
@@ -1342,7 +1354,7 @@ export const layer: Layer.Layer<
         if (providerWork !== undefined) return providerThread;
         if (nativeForkTransfer !== undefined) {
           // SCIENT-FORK:START — a frozen fork starts natively or from its portable prefix.
-          if (projection.thread.conversationFork != null) {
+          if (projection.thread.historyOrigin === "scient_fork") {
             const frozenStart = yield* startFrozenConversationFork({
               nativeForkTransfer,
               session,
@@ -1624,7 +1636,7 @@ export const layer: Layer.Layer<
             // SCIENT-FORK:START — Scient policy, source resolver, and provenance.
             budget: context.budget(handoffs),
             resolveHistory: projectionStore.resolveContextHistory,
-            ...scientHandoffDeliveryProvenance(projection.thread),
+            ...scientHandoffDeliveryProvenance(projection.thread, conversationFork),
             // SCIENT-FORK:END
             deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
             alreadyDeliveredItemIds: context.deliveredItemIds,
@@ -1647,7 +1659,7 @@ export const layer: Layer.Layer<
             // SCIENT-FORK:START — Scient policy, source resolver, and provenance.
             budget: freshContext.budget(withRecoveryHandoff(handoff)),
             resolveHistory: projectionStore.resolveContextHistory,
-            ...scientHandoffDeliveryProvenance(projection.thread),
+            ...scientHandoffDeliveryProvenance(projection.thread, conversationFork),
             // SCIENT-FORK:END
             alreadyDeliveredItemIds: freshContext.deliveredItemIds,
             persist: () => Effect.void,
@@ -2080,7 +2092,7 @@ export const layer: Layer.Layer<
               resolveHistory: projectionStore.resolveContextHistory,
               // SCIENT-FORK:END
               // SCIENT-FORK:START — fork workspace and import provenance.
-              ...scientHandoffDeliveryProvenance(projection.thread),
+              ...scientHandoffDeliveryProvenance(projection.thread, conversationFork),
               // SCIENT-FORK:END
               ...(session.injectHistory === undefined
                 ? {}

@@ -249,6 +249,13 @@ export function useComposerMenuItems({
           description: "Fork this conversation",
         },
         {
+          id: "slash:fork-worktree",
+          type: "slash-command",
+          command: "fork-worktree",
+          label: "/fork-worktree",
+          description: "Fork into a new worktree",
+        },
+        {
           id: "slash:model",
           type: "slash-command",
           command: "model",

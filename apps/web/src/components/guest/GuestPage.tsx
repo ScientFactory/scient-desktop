@@ -55,7 +55,7 @@ import { MessagesTimeline, type MessagesTimelineHistoryControls } from "../chat/
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDisplayModelName, getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import type { TimelineRow } from "../chat/timelineRowContext";
-import { useTimelineFollow } from "../chat/useTimelineFollow";
+import { useReadingFollow } from "../chat/useReadingFollow";
 import { GuestHtmlRender } from "./GuestHtmlRender";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -456,7 +456,7 @@ function GuestThread({
   // SCIENT-FORK:START
   const currentRouteThreadKeyRef = useRef<string | null>(threadKey);
   // SCIENT-FORK:END
-  const follow = useTimelineFollow({
+  const follow = useReadingFollow({
     legendListRef: listRef,
     composerOverlayElement: null,
     composerTimelineInset: 0,
@@ -465,6 +465,11 @@ function GuestThread({
     // Not a server thread: new turns follow the end instead of anchoring near the top.
     isServerThread: false,
     serverProjection: null,
+    threadStatus: "live",
+    activeActivityRun: activityRun,
+    activeRunningTurnId: runningRunId,
+    timelineEntries: entries,
+    timelineAnchorMessageId: null,
     // SCIENT-FORK:START — Scient's reading end (chat/useTimelineFollow.ts).
     timelineMessages: entries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
     isDraftHeroState: false,
@@ -548,9 +553,8 @@ function GuestThread({
             emptyPlaceholderInset={0}
             // SCIENT-FORK:START — Scient's reading end (chat/useTimelineFollow.ts).
             onIsAtEndChange={follow.onIsAtEndChange}
-            onManualNavigation={follow.cancelTimelinePositioning}
+            onViewportAttach={follow.attachTimelineViewport}
             // SCIENT-FORK:END
-            cancelPositionRestoreRef={follow.cancelPositionRestoreRef}
             footer={
               unplaced.length === 0 ? null : (
                 <ol className="chat-content-lane flex flex-col gap-4 pb-4">

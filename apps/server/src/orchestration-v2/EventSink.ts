@@ -10,6 +10,7 @@ import {
   type NativeModelCapacityOwner,
 } from "./scient-fork/NativeModelContextWindow.ts";
 import { writeForkHistory, type ForkHistoryEntry } from "./scient-fork/ForkHistory.ts";
+import { writeConversationFork } from "./scient-fork/ConversationForkRecords.ts";
 import { freezeShownHistory } from "./scient-fork/ForkHistoryFreeze.ts";
 import {
   pendingStartOwnerIsCurrent,
@@ -44,6 +45,7 @@ import {
   RuntimeRequestId,
   NodeId,
   type ProjectId,
+  type ScientConversationFork,
   ThreadId,
 } from "@t3tools/contracts";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
@@ -289,8 +291,9 @@ export interface EventSinkV2Shape {
     // SCIENT-FORK:END
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
-    // SCIENT-FORK:START — a new fork's inherited history, recorded with its creation.
+    // SCIENT-FORK:START — a new fork's inherited history and setup state, recorded with its creation.
     readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
+    readonly conversationFork?: ScientConversationFork;
     // SCIENT-FORK:END
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
@@ -1097,8 +1100,13 @@ const layerBase: Layer.Layer<
           }
           const outcomes = yield* applyStoredEvents(storedEvents);
           // SCIENT-FORK:START
-          if (input.forkHistory !== undefined)
-            yield* writeForkHistory(sql, input.threadId, input.forkHistory).pipe(
+          if (input.forkHistory !== undefined || input.conversationFork !== undefined)
+            yield* Effect.gen(function* () {
+              if (input.forkHistory !== undefined)
+                yield* writeForkHistory(sql, input.threadId, input.forkHistory);
+              if (input.conversationFork !== undefined)
+                yield* writeConversationFork(sql, input.threadId, input.conversationFork);
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new EventSinkWriteError({

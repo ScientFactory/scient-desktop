@@ -8,7 +8,7 @@ import {
   OrchestrationV2ConversationMessageJson,
   OrchestrationV2TurnItemJson,
   type CommandId,
-  type OrchestrationV2AppThread,
+  type ScientConversationFork,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
@@ -469,13 +469,14 @@ export function conversationForkHistoryEvents(input: {
 /** A fork whose workspace is still pending asks the effect worker to provision it. */
 export function conversationForkProvisionEffect(
   commandId: CommandId,
-  targetThread: OrchestrationV2AppThread,
+  threadId: ThreadId,
+  fork: Pick<ScientConversationFork, "status">,
 ): PendingOrchestrationEffectV2 | undefined {
-  return targetThread.conversationFork?.status === "pending"
+  return fork.status === "pending"
     ? {
         id: `effect:${commandId}:scient-fork.provision`,
         commandId,
-        threadId: targetThread.id,
+        threadId,
         request: { type: "scient-fork.provision" },
       }
     : undefined;

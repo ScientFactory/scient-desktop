@@ -30,7 +30,7 @@ import {
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 // SCIENT-FORK: "fork" reseats conversation forks in the composer slash menu.
-export type ComposerSlashCommand = "model" | "fork" | "side" | "btw" | "clear";
+export type ComposerSlashCommand = "model" | "fork" | "fork-worktree" | "side" | "btw" | "clear";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {

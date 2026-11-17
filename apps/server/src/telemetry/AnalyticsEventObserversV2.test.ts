@@ -838,7 +838,7 @@ describe("native V2 analytics", () => {
     const conversationFork = {
       commandId: CommandId.make("private-fork-command"),
       sourceThreadId: ThreadId.make("private-origin"),
-      workspaceMode: "local" as const,
+      workspaceMode: "new-worktree" as const,
       status: "pending" as const,
       cwd: "/private",
       checkpointRef: null,
@@ -847,17 +847,17 @@ describe("native V2 analytics", () => {
       error: null,
     };
     mapper.event(
-      { ...base, type: "thread.created", payload: { ...thread, conversationFork } },
-      { refork: true },
+      { ...base, type: "thread.created", payload: thread },
+      { refork: true, conversationFork },
     );
-    const ready = metadata({ conversationFork: { ...conversationFork, status: "ready" } });
-    expect(mapper.event(ready)).toEqual([
+    const readyFork = { conversationFork: { ...conversationFork, status: "ready" as const } };
+    expect(mapper.event(metadata({}), readyFork)).toEqual([
       {
         name: "thread.fork.completed",
-        properties: { workspaceMode: "local", boundaryClass: "conversation", refork: true },
+        properties: { workspaceMode: "new-worktree", boundaryClass: "conversation", refork: true },
       },
     ]);
-    expect(mapper.event(ready)).toEqual([]);
+    expect(mapper.event(metadata({}), readyFork)).toEqual([]);
   });
   it.effect("clears correlations while unavailable before later native outcomes", () => {
     const fixture = analyticsFixture();

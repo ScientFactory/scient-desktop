@@ -150,14 +150,39 @@ const asScientAgent = (record: UsageRecord): UsageRecord => ({
   provider: "scient",
   dedupeKey: record.dedupeKey === null ? null : `scient:${record.dedupeKey}`,
 });
+const pi = piUsageFormat as TranscriptUsageFormat<unknown>;
+// Calls outside the conversation (prompt predictions, titles, cache warming) are `model_usage`
+// entries, which carry the fields of Pi's `usage` entry.
+const asPiEntry = (entry: unknown): unknown =>
+  typeof entry === "object" && entry !== null && "type" in entry && entry.type === "model_usage"
+    ? { ...entry, type: "usage" }
+    : entry;
+// The marker tells a scan saved before side calls were counted, which the cache re-reads whole.
+const ScientAgentScanState = Schema.Struct({
+  sessionId: Schema.mutableKey(Schema.String),
+  sideCalls: Schema.Literal(true),
+});
+const isScientAgentScanState = Schema.is(ScientAgentScanState);
+/** Whether a cached scan's state comes from this reader, which counts side calls. */
+export const scientAgentScanStateIsCurrent = (state: unknown): boolean =>
+  isScientAgentScanState(state);
 const scientAgentUsageFormat: TranscriptUsageFormat<unknown> = {
-  ...(piUsageFormat as TranscriptUsageFormat<unknown>),
-  parseLine: (line, state) =>
-    (piUsageFormat as TranscriptUsageFormat<unknown>).parseLine(line, state).map(asScientAgent),
+  ...pi,
+  state: {
+    initial: () => ({ sessionId: "", sideCalls: true }),
+    schema: ScientAgentScanState as Schema.Codec<unknown>,
+  },
+  parseLine: (line, state) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return [];
+    }
+    return pi.parseProjected(asPiEntry(parsed), state).map(asScientAgent);
+  },
   parseProjected: (projected, state) =>
-    (piUsageFormat as TranscriptUsageFormat<unknown>)
-      .parseProjected(projected, state)
-      .map(asScientAgent),
+    pi.parseProjected(asPiEntry(projected), state).map(asScientAgent),
 };
 
 /** Token and cost history from the conversations Scient runs with the agent. */

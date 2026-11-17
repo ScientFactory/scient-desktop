@@ -69,6 +69,18 @@ describe("OMP custom model projection", () => {
     expect(JSON.stringify(result.payload)).not.toContain("secret-value");
   });
 
+  it("names Scient to OpenRouter and to no other service", () => {
+    const [local, openRouter] = buildOmpCustomModelPayload([
+      connection(),
+      connection({ id: "router", baseUrl: "https://openrouter.ai/api/v1" }),
+    ]).payload;
+    expect(local).not.toHaveProperty("headers");
+    expect(openRouter?.headers).toMatchObject({
+      "HTTP-Referer": "https://scientfactory.com",
+      "X-OpenRouter-Title": "Scient",
+    });
+  });
+
   it("does not fill missing manual limits from provider evidence", () => {
     const {
       contextWindow: _contextWindow,
