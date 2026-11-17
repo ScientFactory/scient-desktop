@@ -102,6 +102,47 @@ jobs:
           }
           "@ | Set-Content -LiteralPath $script
           Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', $script -WindowStyle Hidden
+      # SCIENT-FORK:START — the published 0.6.21 downloads, verifies and installs while the
+      # candidate builds; the upgrade step waits for it and then installs the candidate over it.
+      - name: Start installing 0.6.21 for the upgrade
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'scient-install-upgrade'
+          "SCIENT_PACKAGING_INSTALL=$installDir" >> $env:GITHUB_ENV
+          $status = Join-Path $env:RUNNER_TEMP 'stable-install-status'
+          $log = Join-Path $env:RUNNER_TEMP 'stable-install.log'
+          $script = Join-Path $env:RUNNER_TEMP 'stable-install.ps1'
+          @"
+          `$code = 1
+          try {
+            `$ErrorActionPreference = 'Stop'
+            # The progress display slows Invoke-WebRequest's download several times over.
+            `$ProgressPreference = 'SilentlyContinue'
+            `$oldInstaller = Join-Path '$env:RUNNER_TEMP' 'Scient-0.6.21-x64.exe'
+            Invoke-WebRequest 'https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.21/Scient-0.6.21-x64.exe' -OutFile `$oldInstaller
+            `$expectedDigest = '173891f53b4d03c15fd9e551a0bb298fc9cac5ed128176cdd9f5ceb0e6a0a409'
+            if ((Get-FileHash `$oldInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -ne `$expectedDigest) { throw 'Stable installer checksum mismatch' }
+            `$env:SCIENT_NEXT_HOME = Join-Path '$env:RUNNER_TEMP' 'scient-upgrade-profile'
+            `$env:APPDATA = Join-Path '$env:RUNNER_TEMP' 'scient-upgrade-appdata'
+            `$process = Start-Process `$oldInstaller -ArgumentList '/S', '/D=$installDir' -Wait -PassThru
+            if (`$process.ExitCode -ne 0) { throw "Installer failed for 0.6.21 with exit `$(`$process.ExitCode)" }
+            `$exe = Join-Path '$installDir' 'Scient.exe'
+            if (!(Test-Path `$exe)) { throw 'Installed executable missing' }
+            # electron-builder writes the Windows product version with a fourth
+            # revision component, including for the published 0.6.21 installer.
+            `$installedVersion = (Get-Item `$exe).VersionInfo.ProductVersion
+            Add-Content -LiteralPath '$log' -Value "Installed Windows product version: `$installedVersion"
+            if (`$installedVersion -ne '0.6.21.0') { throw "Installed version `$installedVersion is not 0.6.21.0" }
+            `$code = 0
+          } catch {
+            Add-Content -LiteralPath '$log' -Value (`$_ | Out-String)
+          } finally {
+            Set-Content -LiteralPath '$status.partial' -Value `$code
+            Move-Item -LiteralPath '$status.partial' -Destination '$status' -Force
+          }
+          "@ | Set-Content -LiteralPath $script
+          Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', $script -WindowStyle Hidden
+      # SCIENT-FORK:END
       # Reference repositories and the mobile terminal's prebuilt libraries are half the
       # repository's bytes and two thirds of its files; nothing here reads them.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -231,29 +272,25 @@ jobs:
         run: node scripts/qualify-windows-packaged-runtime.mjs "$env:SCIENT_PACKAGING_UNPACKED"
       - name: Install 0.6.21 and upgrade to the candidate
         shell: pwsh
+        timeout-minutes: 10
         run: |
-          # The progress display slows Invoke-WebRequest's download several times over.
-          $ProgressPreference = 'SilentlyContinue'
-          $oldInstaller = Join-Path $env:RUNNER_TEMP 'Scient-0.6.21-x64.exe'
-          Invoke-WebRequest 'https://github.com/ScientFactory/scient-desktop/releases/download/v0.6.21/Scient-0.6.21-x64.exe' -OutFile $oldInstaller
-          $expectedDigest = '173891f53b4d03c15fd9e551a0bb298fc9cac5ed128176cdd9f5ceb0e6a0a409'
-          if ((Get-FileHash $oldInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedDigest) { throw 'Stable installer checksum mismatch' }
-          $installDir = Join-Path $env:LOCALAPPDATA 'scient-install-upgrade'
-          "SCIENT_PACKAGING_INSTALL=$installDir" >> $env:GITHUB_ENV
+          $status = Join-Path $env:RUNNER_TEMP 'stable-install-status'
+          while (!(Test-Path -LiteralPath $status)) { Start-Sleep -Seconds 1 }
+          $log = Join-Path $env:RUNNER_TEMP 'stable-install.log'
+          if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
+          $code = (Get-Content -LiteralPath $status -Raw).Trim()
+          if ($code -ne '0') { throw "Installing 0.6.21 failed" }
+          $installDir = $env:SCIENT_PACKAGING_INSTALL
           $env:SCIENT_NEXT_HOME = Join-Path $env:RUNNER_TEMP 'scient-upgrade-profile'
           $env:APPDATA = Join-Path $env:RUNNER_TEMP 'scient-upgrade-appdata'
-          foreach ($version in @('0.6.21', '0.6.22')) {
-            $installer = if ($version -eq '0.6.21') { $oldInstaller } else { (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path }
-            $process = Start-Process $installer -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
-            if ($process.ExitCode -ne 0) { throw "Installer failed for $version with exit $($process.ExitCode)" }
-            $exe = Join-Path $installDir 'Scient.exe'
-            if (!(Test-Path $exe)) { throw 'Installed executable missing' }
-            # electron-builder writes the Windows product version with a fourth
-            # revision component, including for the published 0.6.21 installer.
-            $installedVersion = (Get-Item $exe).VersionInfo.ProductVersion
-            Write-Host "Installed Windows product version: $installedVersion"
-            if ($installedVersion -ne "$version.0") { throw "Installed version $installedVersion is not $version.0" }
-          }
+          $installer = (Resolve-Path 'release/Scient-0.6.22-x64.exe').Path
+          $process = Start-Process $installer -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer failed for 0.6.22 with exit $($process.ExitCode)" }
+          $exe = Join-Path $installDir 'Scient.exe'
+          if (!(Test-Path $exe)) { throw 'Installed executable missing' }
+          $installedVersion = (Get-Item $exe).VersionInfo.ProductVersion
+          Write-Host "Installed Windows product version: $installedVersion"
+          if ($installedVersion -ne '0.6.22.0') { throw "Installed version $installedVersion is not 0.6.22.0" }
           node scripts/qualify-windows-packaged-runtime.mjs "$installDir" --launch-smoke
       - name: Require the installed WSL runtime to be the one qualified
         shell: pwsh
