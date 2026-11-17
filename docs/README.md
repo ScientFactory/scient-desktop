@@ -66,6 +66,7 @@ require a cosmetic folder migration.
 - [Usage and limits](./user/usage.md)
 - [Secrets](./user/secrets.md)
 - [Product usage data](./user/telemetry.md)
+- [Send feedback](./user/feedback.md)
 - [Remote access](./user/remote-access.md)
 - [Invite people to a thread](./user/thread-rooms.md)
 - [Scient Connect troubleshooting](./user/scient-connect-troubleshooting.md)

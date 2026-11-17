@@ -110,11 +110,17 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss,
   errorClass,
   errorCode,
+  // SCIENT-FORK:START — report the failure to the Scient team.
+  onReport,
+  // SCIENT-FORK:END
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   errorCode?: string | null;
   onDismiss?: () => void;
+  // SCIENT-FORK:START — report the failure to the Scient team.
+  onReport?: (() => void) | undefined;
+  // SCIENT-FORK:END
 }) {
   if (!error) return null;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
@@ -153,6 +159,13 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             ) : chatGptLimit ? (
               <ChatGptUsageButton variant="default" size="sm" />
             ) : null}
+            {/* SCIENT-FORK:START — report the failure to the Scient team. */}
+            {onReport && !chatGptLimit ? (
+              <Button variant="outline" size="xs" onClick={onReport}>
+                Report
+              </Button>
+            ) : null}
+            {/* SCIENT-FORK:END */}
             {onDismiss ? (
               <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
                 <XIcon />

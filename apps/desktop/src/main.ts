@@ -31,6 +31,9 @@ import * as DesktopVoice from "./app/DesktopVoice.ts";
 // SCIENT-FORK:START — keep the computer awake while threads work.
 import * as DesktopKeepAwake from "./scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — feedback reports to the Scient team.
+import * as DesktopFeedback from "./scient/feedback/DesktopFeedback.ts";
+// SCIENT-FORK:END
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
@@ -255,6 +258,9 @@ const layerDesktopVoice = DesktopVoice.layer.pipe(Layer.provideMerge(layerDeskto
 const layerDesktopApplication = Layer.mergeAll(
   // SCIENT-FORK:START — keep the computer awake while threads work.
   DesktopKeepAwake.layer,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — feedback reports to the Scient team.
+  DesktopFeedback.layer,
   // SCIENT-FORK:END
   DesktopLifecycle.layer,
   layerDesktopAppActivation,

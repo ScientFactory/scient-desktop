@@ -118,6 +118,7 @@ export * from "./scient/accounts.ts";
 export * from "./scient/accountRpcs.ts";
 export * from "./scient/browserHistoryRpcs.ts";
 export * from "./scient/desktopAccountsBridge.ts";
+export * from "./scient/feedback.ts";
 // SCIENT-FORK:END
 export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";

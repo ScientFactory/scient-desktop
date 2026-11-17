@@ -28,6 +28,7 @@ const workspaceFiles = [
   "apps/marketing/package.json",
   "infra/relay/package.json",
   "infra/scient-cloud/package.json",
+  "infra/scient-feedback/package.json",
   "infra/task-cache/package.json",
   "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
