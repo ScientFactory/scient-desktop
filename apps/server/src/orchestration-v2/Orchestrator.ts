@@ -1103,6 +1103,9 @@ function worktreeSetupPending(
     )
   );
 }
+// SCIENT-FORK:START — scheduled tasks report a run this hold keeps waiting.
+export { worktreeSetupPending };
+// SCIENT-FORK:END
 
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,

@@ -54,6 +54,12 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
+// SCIENT-FORK:START — report runs that failed worktree setup keeps waiting.
+import {
+  recordWorktreeSetupHold,
+  waitForRunOrWorktreeSetupHold,
+} from "../scient/orchestration/WorktreeSetupHoldReport.ts";
+// SCIENT-FORK:END
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -897,11 +903,18 @@ export const layer = Layer.effect(
       const { runs } = yield* threadManagement.getProjectThreadRecords(thread, ["runs"]);
       const dispatched = runs.find((run) => run.userMessageId === messageId);
       if (dispatched === undefined) return;
-      const { run } = yield* threadManagement.waitForThread({
+      // SCIENT-FORK:START — failed worktree setup holds a run until someone acts; report it then.
+      const outcome = yield* waitForRunOrWorktreeSetupHold(threadManagement, {
         ...thread,
         runId: dispatched.id,
         timeoutMs: RUN_OUTCOME_WAIT_MS,
       });
+      if (outcome === null) {
+        if (yield* recordWorktreeSetupHold(sql, { taskId, startedAtIso })) yield* notifyChanged;
+        return;
+      }
+      const { run } = outcome;
+      // SCIENT-FORK:END
       if (
         run === null ||
         run.status === "completed" ||
