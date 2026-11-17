@@ -15,6 +15,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
+  type ScientConversationFork,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -115,20 +116,19 @@ function withFrozenFacts(input: {
           ? {}
           : { sourceImport: source.forkLineage.sourceImport }),
     },
-    conversationFork: {
-      commandId: command.commandId,
-      sourceThreadId: source.id,
-      workspaceMode: admission.workspaceMode,
-      // History is shared, so only a new worktree still needs setting up.
-      status:
-        admission.workspaceMode === "new-worktree" ? ("pending" as const) : ("ready" as const),
-      cwd: admission.cwd,
-      checkpointRef: admission.checkpointRef,
-      checkpointOid: admission.checkpointOid,
-      // Shared files, recorded so the client keeps their open previews.
-      attachmentCopies: admission.plan.attachmentCopies,
-      error: null,
-    },
+  };
+  const conversationFork: ScientConversationFork = {
+    commandId: command.commandId,
+    sourceThreadId: source.id,
+    workspaceMode: admission.workspaceMode,
+    // History is shared, so only a new worktree still needs setting up.
+    status: admission.workspaceMode === "new-worktree" ? ("pending" as const) : ("ready" as const),
+    cwd: admission.cwd,
+    checkpointRef: admission.checkpointRef,
+    checkpointOid: admission.checkpointOid,
+    // Shared files, recorded so the client keeps their open previews.
+    attachmentCopies: admission.plan.attachmentCopies,
+    error: null,
   };
   const transfer: OrchestrationV2ContextTransfer = {
     ...input.transfer,
@@ -146,7 +146,7 @@ function withFrozenFacts(input: {
       ? { frozenSource: native.frozenSource }
       : { portableReason: native.reason }),
   };
-  return { targetThread, transfer };
+  return { targetThread, transfer, conversationFork };
 }
 
 export const dispatchConversationFork = Effect.fn("ConversationForkDispatch.dispatch")(function* (
@@ -263,7 +263,7 @@ export const dispatchConversationFork = Effect.fn("ConversationForkDispatch.disp
       createdAt: now,
     })
     .pipe(mapDispatchError(command));
-  const { targetThread, transfer } = withFrozenFacts({
+  const { targetThread, transfer, conversationFork } = withFrozenFacts({
     command,
     admission,
     targetThread: planned.targetThread,
@@ -302,13 +302,17 @@ export const dispatchConversationFork = Effect.fn("ConversationForkDispatch.disp
     occurredAt: now,
   }))
     yield* emitEvent(event);
-  const provision = conversationForkProvisionEffect(command.commandId, targetThread);
+  const provision = conversationForkProvisionEffect(
+    command.commandId,
+    targetThread.id,
+    conversationFork,
+  );
   if (provision !== undefined) yield* Ref.update(effects, (existing) => [...existing, provision]);
   return {
     forkHistory: admission.plan.history,
     commit: (commit, plannedEvents) =>
       conversationForks
-        .commit({ command, admission, capture, events: plannedEvents, commit })
+        .commit({ command, admission, capture, events: plannedEvents, conversationFork, commit })
         .pipe(Effect.catchIf(isForkRefusal, (cause) => Effect.fail(deps.reject(cause)))),
   } satisfies ConversationForkCommitPlan;
 });

@@ -174,7 +174,13 @@ folder without a restore point, as before; a web fork requires its project.
    facts and the command receipt together, plus a `scient-fork.provision` outbox effect for a new
    worktree, through the Orchestrator's ordinary commit. A Scient fence around that commit
    allocates the title under the global title lock, rechecks the folder, and holds any running
-   capture. `conversationFork` metadata owns provisioning status. A refused conversation fork
+   capture. The fork's setup state (workspace mode, folder, checkpoint, retained files, provisioning
+   status) is Scient's own record in `scient_conversation_forks`
+   (`scient-fork/ConversationForkRecords.ts`), written in the same transaction as the fork's thread
+   events and read through `ProjectionStore.getConversationFork`; T3's thread record does not carry
+   it, so threads built from a fork (side chats, delegated tasks) cannot copy it. Scient migration 30
+   moved existing forks' state there. `forkLineage` (origin, baseline answer, import provenance)
+   stays on the thread for now: shells, exports and V1 imports read it. A refused conversation fork
    leaves no receipt, so its identity stays retryable after its cause is repaired; side chats keep
    T3's rejection receipts.
 4. For a new worktree, the V2 effect worker calls `ConversationForkService.provision` to create

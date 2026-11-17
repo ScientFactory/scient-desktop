@@ -7,17 +7,21 @@ import {
   type MessageId,
   OrchestrationDispatchCommandError,
   RunId,
+  type ScientConversationFork,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandRejectedError,
   OrchestratorV2,
 } from "../Orchestrator.ts";
+import { ProjectionStoreV2 } from "../ProjectionStore.ts";
+import { writeConversationFork } from "../scient-fork/ConversationForkRecords.ts";
 import { ConversationForkService } from "../scient-fork/ConversationForkService.ts";
 import { userFacingDispatchErrorMessage } from "../UserFacingErrors.ts";
 
@@ -99,3 +103,15 @@ export const forkConversation = Effect.fn("testkit.forkConversation")(function* 
   const ready = yield* forks.awaitReady(input.newThreadId);
   return { sequence: receipt.sequence, forkAttachmentIdMap: ready.forkAttachmentIdMap };
 });
+
+/** A thread's fork setup state, as Scient's table records it. */
+export const conversationForkOf = (threadId: ThreadId) =>
+  Effect.flatMap(ProjectionStoreV2, (store) => store.getConversationFork(threadId)).pipe(
+    Effect.orDie,
+  );
+
+/** Records a fixture fork's setup state, as a fork's own commit does. */
+export const recordConversationFork = (threadId: ThreadId, fork: ScientConversationFork) =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) => writeConversationFork(sql, threadId, fork)).pipe(
+    Effect.orDie,
+  );

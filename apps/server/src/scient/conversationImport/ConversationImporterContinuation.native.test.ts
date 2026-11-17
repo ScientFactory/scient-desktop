@@ -130,6 +130,8 @@ import { conversationSnapshotProjection } from "../conversationExport/conversati
 import {
   forkConversation,
   type ConversationForkTestCommand,
+  conversationForkOf,
+  recordConversationFork,
 } from "../../orchestration-v2/testkit/ConversationForkCommand.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
@@ -2480,7 +2482,7 @@ it.live("file release ignores name case and subagent conversations' copied fork 
         workspaceMode: "local",
       });
       const fork = yield* store.getThreadProjection(forkId);
-      const file = fork.thread.conversationFork!.attachmentCopies[0]!.source;
+      const file = (yield* conversationForkOf(fork.thread.id))!.attachmentCopies[0]!.source;
       const now = yield* DateTime.now;
       const prompt = fork.messages.find((message) => message.role === "user")!;
       // The fork names the shared file under an uppercase alias.
@@ -2581,9 +2583,9 @@ it.live(
           )!.id,
           workspaceMode: "local",
         });
-        const files = (yield* store.getThreadProjection(
-          forkId,
-        )).thread.conversationFork!.attachmentCopies.map((copy) => copy.source);
+        const files = (yield* conversationForkOf(forkId))!.attachmentCopies.map(
+          (copy) => copy.source,
+        );
         assert.isAtLeast(files.length, 2);
         const [sent, held] = [files[0]!, files[1]!];
         // An unrelated conversation was sent one of the files.
@@ -2670,7 +2672,7 @@ it.live(
           workspaceMode: "local",
         });
         const fork = yield* store.getThreadProjection(forkId);
-        const file = fork.thread.conversationFork!.attachmentCopies[0]!.source;
+        const file = (yield* conversationForkOf(fork.thread.id))!.attachmentCopies[0]!.source;
         const now = yield* DateTime.now;
         const prompt = source.messages.find((message) => message.role === "user")!;
         // An unrelated conversation that was sent `files`.
@@ -2754,6 +2756,7 @@ it.live(
             },
           ],
         });
+        yield* recordConversationFork(reuserForkId, (yield* conversationForkOf(fork.thread.id))!);
         yield* sql`
           INSERT INTO scient_fork_history
             (thread_id, position, source_thread_id, source_item_id, item_type, message_id,
@@ -3015,7 +3018,7 @@ it.live(
           .filter((row) => row.visibility === "inherited")
           .map((row) => row.item);
         assert.isAbove(inherited.length, 0);
-        const files = frozen.thread.conversationFork!.attachmentCopies;
+        const files = (yield* conversationForkOf(frozen.thread.id))!.attachmentCopies;
         assert.isAbove(files.length, 0);
         const bytes = new Map<string, Uint8Array>();
         for (const copy of files) {
@@ -3191,7 +3194,7 @@ it.live(
         assert.deepEqual(rebuilt.turnItems, reverted.turnItems);
         assert.deepEqual(rebuilt.visibleTurnItems, reverted.visibleTurnItems);
         assert.deepEqual((yield* readThread(childId))!.messages, baseline.messages);
-        assert.deepEqual(rebuilt.thread.conversationFork?.attachmentCopies, files);
+        assert.deepEqual((yield* conversationForkOf(rebuilt.thread.id))?.attachmentCopies, files);
         const reforkId = ThreadId.make("durable-baseline-refork");
         yield* forkConversation({
           ...command,
@@ -3224,10 +3227,9 @@ it.live(
         const reforkQuestionFiles = Object.values(
           reforkQuestion.questionAnswer.attachmentsByQuestionId,
         ).flat();
+        const reforkCopies = (yield* conversationForkOf(refork.thread.id))!.attachmentCopies;
         const questionCopies = questionFiles.map((file) => {
-          const matches = refork.thread.conversationFork!.attachmentCopies.filter(
-            (copy) => copy.source.id === file.id,
-          );
+          const matches = reforkCopies.filter((copy) => copy.source.id === file.id);
           assert.lengthOf(matches, 1);
           assert.deepEqual(matches[0]!.source, file);
           return matches[0]!;
@@ -3248,7 +3250,7 @@ it.live(
             bytes.get(questionCopies[index]!.source.id),
           );
         }
-        for (const copy of refork.thread.conversationFork!.attachmentCopies) {
+        for (const copy of (yield* conversationForkOf(refork.thread.id))!.attachmentCopies) {
           assert.isTrue(bytes.has(copy.source.id));
           assert.deepEqual(copy.target, copy.source);
           assert.deepEqual(

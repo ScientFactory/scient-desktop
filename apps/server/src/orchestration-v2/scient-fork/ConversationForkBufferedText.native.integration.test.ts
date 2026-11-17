@@ -69,7 +69,7 @@ import {
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as PortScanner from "../../preview/PortScanner.ts";
-import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 const isThreadPayload = Schema.is(Schema.Struct({ threadId: Schema.String }));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -1169,7 +1169,7 @@ it.live.each(
           ) {
             assert.equal(exit._tag, "Success");
             const child = yield* orchestrator.getThreadProjection(forkId);
-            assert.equal(child.thread.conversationFork?.status, "ready");
+            assert.equal((yield* conversationForkOf(child.thread.id))?.status, "ready");
             assert.equal(child.thread.lineage.parentThreadId, threadId);
             assert.isEmpty(child.runs);
             assert.isTrue(
@@ -1736,8 +1736,8 @@ it.live.each(
                   Effect.timeout("15 seconds"),
                 ),
                 yield* orchestrator.getThreadProjection(forkId));
-              const accepted = pending.thread.conversationFork?.checkpointRef;
-              assert.equal(pending.thread.conversationFork?.status, "pending");
+              const accepted = (yield* conversationForkOf(pending.thread.id))?.checkpointRef;
+              assert.equal((yield* conversationForkOf(pending.thread.id))?.status, "pending");
               assert.ok(accepted);
               const snapshots = () =>
                 VcsProcess.VcsProcess.use((vcs) =>
@@ -1866,7 +1866,7 @@ it.live.each(
           );
           yield* Fiber.join(forking);
           const frozen = yield* orchestrator.getThreadProjection(forkId);
-          assert.equal(frozen.thread.conversationFork?.status, "ready");
+          assert.equal((yield* conversationForkOf(frozen.thread.id))?.status, "ready");
           const capturesBeforeReplay = rawCaptureCount;
           const accepted = yield* forkConversation(command);
           const acceptedReceipt = yield* (yield* CommandReceiptStoreV2).getByCommandId(

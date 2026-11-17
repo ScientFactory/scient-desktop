@@ -26,7 +26,7 @@ import {
   readProviderReplayTranscript,
 } from "@t3tools/provider-testing/replayTranscript";
 import { PROPOSED_PLAN_PROMPT } from "./testkit/fixtures/shared.ts";
-import { forkConversation } from "./testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "./testkit/ConversationForkCommand.ts";
 
 it.live("forks a running Codex turn before Codex reports the turn started", () =>
   Effect.scoped(
@@ -161,7 +161,7 @@ it.live("forks a running Codex turn before Codex reports the turn started", () =
           workspaceMode: "local",
         });
         const fork = yield* orchestrator.getThreadProjection(forkId);
-        assert.equal(fork.thread.conversationFork?.status, "ready");
+        assert.equal((yield* conversationForkOf(fork.thread.id))?.status, "ready");
         assert.deepEqual(
           fork.messages.map((message) => message.text),
           [PROPOSED_PLAN_PROMPT],

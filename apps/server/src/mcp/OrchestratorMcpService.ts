@@ -3535,7 +3535,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(threadManagementFailure));
       // SCIENT-FORK: a Scient fork shows its history's messages as it keeps
       // them: read them through the fork, not from their original owners.
-      const readThroughFork = target.thread.conversationFork != null;
+      const readThroughFork = target.thread.historyOrigin === "scient_fork";
       const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
       for (const row of timeline.items) {
         if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;

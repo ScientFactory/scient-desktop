@@ -44,7 +44,7 @@ import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { layerFromAdapters as makeLayer } from "./ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { forkConversation } from "./testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "./testkit/ConversationForkCommand.ts";
 
 const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const pendingCodec = Schema.fromJsonString(
@@ -323,7 +323,7 @@ readline.createInterface({input:process.stdin}).on("line", async line => {
             const outbox = yield* EffectOutboxV2;
             assert.isEmpty(yield* outbox.listByCommandId(forkCommand.commandId));
             const frozen = yield* store.getThreadProjection(targetId);
-            assert.equal(frozen.thread.conversationFork?.status, "ready");
+            assert.equal((yield* conversationForkOf(frozen.thread.id))?.status, "ready");
             assert.deepEqual(
               frozen.messages.map((message) => message.text),
               [sourceText, sourceAnswer],

@@ -382,6 +382,18 @@ describe("native V2 analytics", () => {
                   getInstance: () => Effect.undefined,
                 }),
                 Layer.mock(ProjectionStoreV2)({
+                  getConversationFork: () =>
+                    Effect.succeed({
+                      commandId: CommandId.make("private-fork"),
+                      sourceThreadId: threadId,
+                      workspaceMode: "new-worktree" as const,
+                      status: "pending" as const,
+                      cwd: "/private",
+                      checkpointRef: null,
+                      checkpointOid: null,
+                      attachmentCopies: [],
+                      error: null,
+                    }),
                   getThreadShell: () =>
                     Deferred.succeed(entered, undefined).pipe(
                       Effect.andThen(Deferred.await(release)),
@@ -398,20 +410,7 @@ describe("native V2 analytics", () => {
             event: {
               ...base,
               type: "thread.created",
-              payload: {
-                ...thread,
-                conversationFork: {
-                  commandId: CommandId.make("private-fork"),
-                  sourceThreadId: threadId,
-                  workspaceMode: "local",
-                  status: "pending",
-                  cwd: "/private",
-                  checkpointRef: null,
-                  checkpointOid: null,
-                  attachmentCopies: [],
-                  error: null,
-                },
-              },
+              payload: thread,
             },
           });
           yield* Deferred.await(entered);
@@ -1010,7 +1009,7 @@ describe("native V2 analytics", () => {
     const conversationFork = {
       commandId: CommandId.make("private-fork-command"),
       sourceThreadId: ThreadId.make("private-origin"),
-      workspaceMode: "local" as const,
+      workspaceMode: "new-worktree" as const,
       status: "pending" as const,
       cwd: "/private",
       checkpointRef: null,
@@ -1019,17 +1018,17 @@ describe("native V2 analytics", () => {
       error: null,
     };
     mapper.event(
-      { ...base, type: "thread.created", payload: { ...thread, conversationFork } },
-      { refork: true },
+      { ...base, type: "thread.created", payload: thread },
+      { refork: true, conversationFork },
     );
-    const ready = metadata({ conversationFork: { ...conversationFork, status: "ready" } });
-    expect(mapper.event(ready)).toEqual([
+    const readyFork = { conversationFork: { ...conversationFork, status: "ready" as const } };
+    expect(mapper.event(metadata({}), readyFork)).toEqual([
       {
         name: "thread.fork.completed",
-        properties: { workspaceMode: "local", boundaryClass: "conversation", refork: true },
+        properties: { workspaceMode: "new-worktree", boundaryClass: "conversation", refork: true },
       },
     ]);
-    expect(mapper.event(ready)).toEqual([]);
+    expect(mapper.event(metadata({}), readyFork)).toEqual([]);
   });
   it.effect(
     "clears correlations on consent and data-deletion boundaries before later native outcomes",

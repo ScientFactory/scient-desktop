@@ -127,7 +127,7 @@ function shownItems(child: OrchestrationV2ThreadProjection) {
 }
 
 function assertFrozenHistory(child: OrchestrationV2ThreadProjection) {
-  const source = child.thread.conversationFork?.sourceThreadId;
+  const source = child.thread.forkLineage?.originThreadId;
   assert.ok(source);
   const shown = shownItems(child);
   const prefix = shown.filter((item) => item.inheritedFrom?.threadId === source);

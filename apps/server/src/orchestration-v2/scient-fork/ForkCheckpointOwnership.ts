@@ -59,9 +59,7 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
   // done or once the ref is known to belong to something else.
   const reconcile = Effect.fn("ForkCheckpointOwnership.reconcile")(function* (row: Ownership) {
     const receipt = yield* receipts.getByCommandId(CommandId.make(row.command_id));
-    const target = yield* projections
-      .getThread(ThreadId.make(row.target_thread_id))
-      .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
+    const targetFork = yield* projections.getConversationFork(ThreadId.make(row.target_thread_id));
     const accepted =
       Option.isSome(receipt) &&
       receipt.value.status === "accepted" &&
@@ -69,8 +67,7 @@ export const makeForkCheckpointOwnership = Effect.gen(function* () {
       // Forks accepted before the single fork path have the older command type.
       (receipt.value.commandType === "thread.fork" ||
         receipt.value.commandType === "thread.conversation.fork");
-    const destination =
-      target?.conversationFork?.commandId === row.command_id ? target.conversationFork : null;
+    const destination = targetFork?.commandId === row.command_id ? targetFork : null;
     if (accepted && destination !== null && destination.checkpointRef === row.checkpoint_ref) {
       if (destination.checkpointOid !== row.checkpoint_oid)
         yield* Effect.logWarning("Accepted fork snapshot metadata changed; preserving it", {

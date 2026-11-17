@@ -22,6 +22,7 @@ import * as Orchestrator from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
+import { conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
@@ -130,8 +131,8 @@ it.effect("a mobile or MCP fork freezes its history and takes a collision-safe t
     assert.equal(first.historyOrigin, "scient_fork");
     assert.isNull(first.forkedFrom);
     assert.equal(first.forkLineage?.originThreadId, source);
-    assert.equal(first.conversationFork?.status, "ready");
-    assert.equal(first.conversationFork?.workspaceMode, "local");
+    assert.equal((yield* conversationForkOf(first.id))?.status, "ready");
+    assert.equal((yield* conversationForkOf(first.id))?.workspaceMode, "local");
     assert.equal(first.lineage.parentThreadId, source);
     assert.equal(
       (yield* store.getThread(ThreadId.make("dispatch:mobile-b"))).title,
@@ -159,7 +160,7 @@ it.effect("a side chat of a fork keeps T3's live view, without its parent's fork
     assert.isTrue(side.lineage.sideChat);
     assert.equal(side.historyOrigin, "native");
     assert.isNull(side.forkLineage);
-    assert.isNull(side.conversationFork);
+    assert.isNull(yield* conversationForkOf(side.id));
   }).pipe(Effect.provide(layer)),
 );
 

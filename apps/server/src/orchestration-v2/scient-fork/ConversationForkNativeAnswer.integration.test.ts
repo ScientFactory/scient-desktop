@@ -23,7 +23,7 @@ import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTr
 import { materializeReplayTranscriptRuntimeInstructions } from "../testkit/ReplayRuntimeInstructions.ts";
 import { SIMPLE_PROMPT } from "../testkit/fixtures/shared.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
-import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 it.live("forks an ordinary native ACP answer through its persisted direct-child node", () =>
   Effect.scoped(
@@ -162,7 +162,7 @@ it.live("forks an ordinary native ACP answer through its persisted direct-child 
         const receipt = yield* forkConversation(command);
         assert.equal(options.localAvailable, true, options.reason ?? undefined);
         const target = yield* orchestrator.getThreadProjection(command.newThreadId);
-        assert.equal(target.thread.conversationFork?.status, "ready");
+        assert.equal((yield* conversationForkOf(target.thread.id))?.status, "ready");
         assert.equal(target.thread.sectionId, sectionId);
         // The fork shows the source's items by reference, frozen.
         const inherited = target.visibleTurnItems.filter((row) => row.visibility === "inherited");

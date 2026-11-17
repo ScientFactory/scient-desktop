@@ -32,7 +32,7 @@ import {
 } from "../threadHistoryPaging.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import { measureEffectBenchmark as measureForkEffect } from "../../testUtils/benchmark.testkit.ts";
-import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 const layer = nativeImportRuntimeTestLayer(
   makeLayer([
     {
@@ -138,7 +138,7 @@ describe.skipIf(process.env.SCIENT_FORK_BENCH !== "1")("native heavy fork measur
             store.getThreadProjection(command.newThreadId),
           );
           assert.equal(fork.messages.length, turns * 2);
-          assert.equal(fork.thread.conversationFork?.status, "ready");
+          assert.equal((yield* conversationForkOf(fork.thread.id))?.status, "ready");
           // The fork shows the source's settled history by reference; it copies
           // only the plan it can act on.
           const inherited = fork.visibleTurnItems.filter((row) => row.visibility === "inherited");

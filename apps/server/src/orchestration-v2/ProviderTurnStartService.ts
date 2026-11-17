@@ -495,6 +495,8 @@ export const layer: Layer.Layer<
     ) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
+      // SCIENT-FORK: a fork's workspace choice shapes how its history is delivered.
+      const conversationFork = yield* projectionStore.getConversationFork(input.threadId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
@@ -1342,7 +1344,7 @@ export const layer: Layer.Layer<
         if (providerWork !== undefined) return providerThread;
         if (nativeForkTransfer !== undefined) {
           // SCIENT-FORK:START — a frozen fork starts natively or from its portable prefix.
-          if (projection.thread.conversationFork != null) {
+          if (projection.thread.historyOrigin === "scient_fork") {
             const frozenStart = yield* startFrozenConversationFork({
               nativeForkTransfer,
               session,
@@ -1624,7 +1626,7 @@ export const layer: Layer.Layer<
             // SCIENT-FORK:START — Scient policy, source resolver, and provenance.
             budget: context.budget(handoffs),
             resolveHistory: projectionStore.resolveContextHistory,
-            ...scientHandoffDeliveryProvenance(projection.thread),
+            ...scientHandoffDeliveryProvenance(projection.thread, conversationFork),
             // SCIENT-FORK:END
             deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
             alreadyDeliveredItemIds: context.deliveredItemIds,
@@ -1647,7 +1649,7 @@ export const layer: Layer.Layer<
             // SCIENT-FORK:START — Scient policy, source resolver, and provenance.
             budget: freshContext.budget(withRecoveryHandoff(handoff)),
             resolveHistory: projectionStore.resolveContextHistory,
-            ...scientHandoffDeliveryProvenance(projection.thread),
+            ...scientHandoffDeliveryProvenance(projection.thread, conversationFork),
             // SCIENT-FORK:END
             alreadyDeliveredItemIds: freshContext.deliveredItemIds,
             persist: () => Effect.void,
@@ -2080,7 +2082,7 @@ export const layer: Layer.Layer<
               resolveHistory: projectionStore.resolveContextHistory,
               // SCIENT-FORK:END
               // SCIENT-FORK:START — fork workspace and import provenance.
-              ...scientHandoffDeliveryProvenance(projection.thread),
+              ...scientHandoffDeliveryProvenance(projection.thread, conversationFork),
               // SCIENT-FORK:END
               ...(session.injectHistory === undefined
                 ? {}

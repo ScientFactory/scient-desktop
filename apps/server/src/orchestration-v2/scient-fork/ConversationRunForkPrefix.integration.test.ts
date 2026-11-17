@@ -149,7 +149,7 @@ const createSource = Effect.fn("NativeFork.createSource")(function* (cwd: string
 });
 
 import { planConversationFork } from "./ConversationForkPlan.ts";
-import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 it.live.each(
   [false, true].map((nested) => ({
@@ -509,7 +509,11 @@ it.live.each(
             Stream.mapEffect(() => orchestrator.getThreadProjection(childId)),
           ),
         ).pipe(
-          Stream.filter((projection) => projection.thread.conversationFork?.status === "ready"),
+          Stream.filterEffect((projection) =>
+            conversationForkOf(projection.thread.id).pipe(
+              Effect.map((fork) => fork?.status === "ready"),
+            ),
+          ),
           Stream.runHead,
           Effect.timeout("10 seconds"),
         );
@@ -543,7 +547,7 @@ it.live.each(
         });
         assert.deepEqual(storedBoundary.items, [boundaryRow]);
         if (nested) {
-          const copy = ready.value.thread.conversationFork?.attachmentCopies[0];
+          const copy = (yield* conversationForkOf(ready.value.thread.id))?.attachmentCopies[0];
           assert.ok(copy);
           const config = yield* ServerConfig;
           const path = resolveAttachmentPath({
@@ -584,7 +588,8 @@ it.live.each(
         });
         if (nested) {
           // Deleting the parent keeps the files its live fork still shows.
-          const sharedId = ready.value.thread.conversationFork?.attachmentCopies[0]?.target.id;
+          const sharedId = (yield* conversationForkOf(ready.value.thread.id))?.attachmentCopies[0]
+            ?.target.id;
           assert.ok(sharedId);
           assert.notInclude(yield* projectionStore.getReleasableFiles(parentId), sharedId);
         }
@@ -616,7 +621,7 @@ it.live.each(
           ),
         );
         assert.isNull((yield* Ref.get(driver.state)).failure);
-        assert.equal(delivered.thread.conversationFork?.sourceThreadId, parentId);
+        assert.equal((yield* conversationForkOf(delivered.thread.id))?.sourceThreadId, parentId);
         assert.lengthOf(
           delivered.visibleTurnItems.filter(
             (row) =>
@@ -683,7 +688,7 @@ it.live.each(
           assert.include(answerContext, "dataset.txt");
           assert.include(
             answerContext,
-            delivered.thread.conversationFork?.attachmentCopies[0]?.target.id ??
+            (yield* conversationForkOf(delivered.thread.id))?.attachmentCopies[0]?.target.id ??
               "MISSING_TARGET_ATTACHMENT",
           );
         }

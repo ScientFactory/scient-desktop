@@ -28,7 +28,7 @@ import {
   readProviderReplayTranscript,
 } from "@t3tools/provider-testing/replayTranscript";
 import { PROPOSED_PLAN_PROMPT } from "./testkit/fixtures/shared.ts";
-import { forkConversation } from "./testkit/ConversationForkCommand.ts";
+import { conversationForkOf, forkConversation } from "./testkit/ConversationForkCommand.ts";
 
 it.live(
   "freezes the received partial native proposal and retains its first timestamp through later deltas",
@@ -182,10 +182,7 @@ it.live(
             workspaceMode: "local",
           });
           // A local fork copies only the running plan and is ready at once.
-          assert.equal(
-            (yield* orchestrator.getThreadProjection(forkId)).thread.conversationFork?.status,
-            "ready",
-          );
+          assert.equal((yield* conversationForkOf(forkId))?.status, "ready");
           assert.isFalse(
             (yield* outbox.listByCommandId(forkCommandId)).some(
               (effect) => effect.request.type === "scient-fork.provision",

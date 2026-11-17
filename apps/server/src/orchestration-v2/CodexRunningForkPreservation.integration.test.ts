@@ -54,7 +54,7 @@ import {
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as PortScanner from "../preview/PortScanner.ts";
-import { forkConversation } from "./testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "./testkit/ConversationForkCommand.ts";
 
 const encodeEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
@@ -599,7 +599,7 @@ it.live(
               ),
             );
             const frozen = yield* orchestrator.getThreadProjection(forkId);
-            assert.equal(frozen.thread.conversationFork?.status, "ready");
+            assert.equal((yield* conversationForkOf(frozen.thread.id))?.status, "ready");
             assert.isEmpty(frozen.runs);
             assert.isEmpty(frozen.providerTurns);
             assert.isEmpty(frozen.providerThreads);

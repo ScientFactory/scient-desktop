@@ -34,7 +34,7 @@ import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite
 import { ServerConfig } from "../../config.ts";
 import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
-import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -353,7 +353,7 @@ it.effect(
       assert.equal(target.thread.sectionId, ThreadSectionId.make("section:research"));
       // A guest invited to the source must never resolve to the fork.
       assert.isNull(target.thread.guestShare);
-      assert.equal(target.thread.conversationFork?.status, "ready");
+      assert.equal((yield* conversationForkOf(target.thread.id))?.status, "ready");
       assert.equal(target.thread.forkedFrom, null);
       assert.equal(target.runs.length, 0);
       assert.equal(target.providerThreads.length, 0);

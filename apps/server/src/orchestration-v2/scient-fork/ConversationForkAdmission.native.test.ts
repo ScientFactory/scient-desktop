@@ -35,6 +35,7 @@ import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import {
   forkConversation,
   type ConversationForkTestCommand,
+  conversationForkOf,
 } from "../testkit/ConversationForkCommand.ts";
 
 const layer = nativeImportRuntimeTestLayer(
@@ -112,7 +113,7 @@ it.live(
           fork.thread.forkLineage?.sourceImport?.exportId,
           source.thread.conversationImport?.exportId,
         );
-        assert.isNull(fork.thread.conversationFork?.checkpointRef);
+        assert.isNull((yield* conversationForkOf(fork.thread.id))?.checkpointRef);
         const rejected = {
           ...callerShaped,
           commandId: CommandId.make("injected-missing-boundary"),
@@ -230,9 +231,9 @@ it.live(
         assert.equal(earlier.runs.length, 0);
         assert.equal(earlier.runtimeRequests.length, 0);
         assert.equal(earlier.providerSessions.length, 0);
-        assert.equal(earlier.thread.conversationFork?.checkpointRef, null);
-        assert.equal(earlier.thread.conversationFork?.workspaceMode, "local");
-        assert.equal(earlier.thread.conversationFork?.status, "ready");
+        assert.equal((yield* conversationForkOf(earlier.thread.id))?.checkpointRef, null);
+        assert.equal((yield* conversationForkOf(earlier.thread.id))?.workspaceMode, "local");
+        assert.equal((yield* conversationForkOf(earlier.thread.id))?.status, "ready");
         assert.equal((yield* forkConversation(earlierCommand)).sequence, receipt.sequence);
         const emptyCommand = {
           ...command,

@@ -61,6 +61,7 @@ import {
 } from "./conversationImport.test-harness.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
+  conversationForkOf,
   forkConversation,
   type ConversationForkTestCommand,
 } from "../../orchestration-v2/testkit/ConversationForkCommand.ts";
@@ -1427,10 +1428,7 @@ describe("ConversationImporter", () => {
           });
           assert.deepInclude(reimport.origin.omissions, sourceOmission);
 
-          assert.strictEqual(
-            (yield* readProjection(forkId)).thread.conversationFork?.status,
-            "ready",
-          );
+          assert.strictEqual((yield* conversationForkOf(forkId))?.status, "ready");
           const secondForkId = ThreadId.make("fork-of-imported-fork");
           const secondSource = fork.messages.find((message) => message.text === "Answer 2")!;
           yield* forkHistory({

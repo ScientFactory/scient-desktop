@@ -28,7 +28,6 @@ export function hasScientContextHistory(
     thread.historyOrigin === "scient_fork" ||
     thread.conversationImport != null ||
     thread.forkLineage != null ||
-    thread.conversationFork != null ||
     projection.contextTransfers.some(
       (transfer) =>
         transfer.targetThreadId === thread.id &&

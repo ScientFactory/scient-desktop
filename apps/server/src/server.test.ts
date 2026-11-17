@@ -337,6 +337,7 @@ import { DEFAULT_SIGNAL_EXPORT, layerOtlpSerialization } from "@t3tools/shared/o
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { toThreadForkCommand } from "./orchestration-v2/testkit/ConversationForkCommand.ts";
+import { readConversationFork } from "./orchestration-v2/scient-fork/ConversationForkRecords.ts";
 
 // @effect-diagnostics nodeBuiltinImport:off
 
@@ -11388,7 +11389,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               );
               yield* Fiber.join(provisioning);
               const fork = yield* app.v2.threads.getThreadProjection(target);
-              assert.equal(fork.thread.conversationFork?.status, "ready");
+              assert.equal(
+                (yield* readConversationFork(app.v2.sql, fork.thread.id))?.status,
+                "ready",
+              );
               assert.equal(fork.thread.sectionId, sectionId);
               assert.equal(fork.thread.activeProviderThreadId, null);
               assert.equal(fork.thread.historyOrigin, "scient_fork");
@@ -11521,7 +11525,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               );
               yield* Fiber.join(freshProvision);
               const fresh = yield* app.v2.threads.getThreadProjection(freshId);
-              assert.equal(fresh.thread.conversationFork?.status, "ready");
+              assert.equal(
+                (yield* readConversationFork(app.v2.sql, fresh.thread.id))?.status,
+                "ready",
+              );
               assert.isNull(fresh.thread.deletedAt);
               assert.deepEqual(
                 fresh.messages.map((message) => [message.role, message.text]),
@@ -11631,9 +11638,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             yield* Fiber.join(provisioning);
             const fork = yield* app.v2.threads.getThreadProjection(target);
             assert.equal(captures.length, 0);
-            assert.equal(fork.thread.conversationFork?.status, "ready");
-            assert.isNull(fork.thread.conversationFork?.checkpointRef);
-            assert.isNull(fork.thread.conversationFork?.checkpointOid);
+            assert.equal(
+              (yield* readConversationFork(app.v2.sql, fork.thread.id))?.status,
+              "ready",
+            );
+            assert.isNull((yield* readConversationFork(app.v2.sql, fork.thread.id))?.checkpointRef);
+            assert.isNull((yield* readConversationFork(app.v2.sql, fork.thread.id))?.checkpointOid);
             assert.deepEqual(fork.runs, []);
             assert.deepEqual(fork.providerSessions, []);
             assert.equal(

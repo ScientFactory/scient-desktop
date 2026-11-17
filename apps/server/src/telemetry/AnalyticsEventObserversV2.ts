@@ -3,6 +3,7 @@ import type {
   OrchestrationV2TurnItem,
   ProviderDriverKind,
   ServerProvider,
+  ScientConversationFork,
 } from "@t3tools/contracts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
@@ -33,6 +34,8 @@ type Observation = {
 type EventContext = {
   readonly driver?: ProviderDriverKind;
   readonly refork?: boolean;
+  /** SCIENT-FORK: the fork's own setup state, read when its thread event is observed. */
+  readonly conversationFork?: ScientConversationFork | null;
   /** The provider runtime's own version, such as Scient Agent's. */
   readonly providerVersion?: string;
 };
@@ -381,8 +384,9 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
       if (run !== undefined) run.hasAttachment = true;
     }
     if (entry.type === "thread.created") {
-      const fork = entry.payload.conversationFork;
-      if (fork?.status === "pending")
+      const fork = context.conversationFork;
+      // A new worktree is set up after the fork commits; it completes when the setup is ready.
+      if (fork?.workspaceMode === "new-worktree")
         remember(forks, entry.threadId, {
           workspaceMode: fork.workspaceMode,
           boundaryClass: fork.checkpointRef === null ? "conversation" : "checkpoint",
@@ -392,7 +396,7 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
     if (entry.type === "thread.metadata-updated") {
       const thread = entry.payload;
       const fork = forks.get(entry.threadId);
-      if (fork !== undefined && thread.conversationFork?.status === "ready") {
+      if (fork !== undefined && context.conversationFork?.status === "ready") {
         forks.delete(entry.threadId);
         return [{ name: "thread.fork.completed", properties: fork }];
       }
@@ -560,9 +564,14 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
         const instance =
           instanceId === undefined ? undefined : yield* instances.getInstance(instanceId);
         const providerVersion = instanceId === undefined ? undefined : versions.get(instanceId);
-        const fork = entry.type === "thread.created" ? entry.payload.conversationFork : undefined;
+        const fork =
+          entry.type === "thread.created" || entry.type === "thread.metadata-updated"
+            ? yield* projections
+                .getConversationFork(entry.threadId)
+                .pipe(Effect.orElseSucceed(() => null))
+            : null;
         const origin =
-          fork?.status === "pending"
+          entry.type === "thread.created" && fork?.workspaceMode === "new-worktree"
             ? yield* projections
                 .getThreadShell(fork.sourceThreadId)
                 .pipe(Effect.orElseSucceed(() => null))
@@ -573,6 +582,7 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
             ...(instance === undefined ? {} : { driver: instance.driverKind }),
             ...(providerVersion === undefined ? {} : { providerVersion }),
             ...(origin === null ? {} : { refork: origin.forkLineage != null }),
+            ...(fork === null ? {} : { conversationFork: fork }),
           },
           expectedEpoch,
         );

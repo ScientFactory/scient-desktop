@@ -58,7 +58,7 @@ import {
   layerMemory as SqlitePersistenceMemory,
   layerFromPath as makeSqlitePersistenceLive,
 } from "../../persistence/Sqlite.ts";
-import { forkConversation } from "../testkit/ConversationForkCommand.ts";
+import { forkConversation, conversationForkOf } from "../testkit/ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "fixture" };
@@ -354,16 +354,19 @@ it.live.each(
       const store = yield* ProjectionStoreV2;
       const source = yield* store.getThreadProjection(sourceId);
       const { command, waiting, frozen } = yield* pending(mode, mode);
-      assert.equal(frozen.thread.conversationFork?.checkpointOid, commits[0]);
+      assert.equal((yield* conversationForkOf(frozen.thread.id))?.checkpointOid, commits[0]);
       assert.equal(
-        yield* git(cwd, ["rev-parse", frozen.thread.conversationFork!.checkpointRef!]),
+        yield* git(cwd, [
+          "rev-parse",
+          (yield* conversationForkOf(frozen.thread.id))!.checkpointRef!,
+        ]),
         commits[0],
       );
       yield* git(cwd, ["update-ref", "refs/scient/source/1", commits[1]!]);
       yield* (yield* OrchestrationEffectWorkerV2).drain();
       assert.equal((yield* Fiber.join(waiting))._tag, "Success");
       const ready = yield* store.getThreadProjection(command.newThreadId);
-      assert.equal(ready.thread.conversationFork?.status, "ready");
+      assert.equal((yield* conversationForkOf(ready.thread.id))?.status, "ready");
       assert.deepEqual(
         ready.messages.map((message) => message.text),
         ["Question 1", "Answer 1"],
@@ -425,7 +428,7 @@ it.live.each(
         "-b",
         branch,
         path,
-        frozen.thread.conversationFork!.checkpointRef!,
+        (yield* conversationForkOf(frozen.thread.id))!.checkpointRef!,
       ]);
       if (!clean)
         yield* fs.writeFileString(
@@ -436,7 +439,10 @@ it.live.each(
       const result = yield* Fiber.join(waiting);
       const target = yield* (yield* ProjectionStoreV2).getThreadProjection(command.newThreadId);
       assert.equal(result._tag, clean ? "Success" : "Failure");
-      assert.equal(target.thread.conversationFork?.status, clean ? "ready" : "abandoned");
+      assert.equal(
+        (yield* conversationForkOf(target.thread.id))?.status,
+        clean ? "ready" : "abandoned",
+      );
       if (clean) {
         assert.equal(yield* fs.realPath(target.thread.worktreePath!), yield* fs.realPath(path));
         assert.equal(yield* git(path, ["rev-parse", "HEAD"]), commits[0]);
@@ -453,11 +459,15 @@ it.live("native provisioning abandons a dedicated fork whose frozen checkpoint d
     Effect.gen(function* () {
       const { cwd } = yield* seed();
       const { command, waiting, frozen } = yield* pending("missing-checkpoint", "new-worktree");
-      yield* git(cwd, ["update-ref", "-d", frozen.thread.conversationFork!.checkpointRef!]);
+      yield* git(cwd, [
+        "update-ref",
+        "-d",
+        (yield* conversationForkOf(frozen.thread.id))!.checkpointRef!,
+      ]);
       yield* (yield* OrchestrationEffectWorkerV2).drain();
       assert.equal((yield* Fiber.join(waiting))._tag, "Failure");
       const target = yield* (yield* ProjectionStoreV2).getThreadProjection(command.newThreadId);
-      assert.equal(target.thread.conversationFork?.status, "abandoned");
+      assert.equal((yield* conversationForkOf(target.thread.id))?.status, "abandoned");
       assert.isNotNull(target.thread.deletedAt);
       assert.isNull(target.thread.worktreePath);
     }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
@@ -508,8 +518,8 @@ it.live(
           workspaceMode: "local",
         });
         const local = yield* store.getThread(ThreadId.make("removed-local"));
-        assert.equal(local.conversationFork?.status, "ready");
-        assert.equal(local.conversationFork?.cwd, cwd);
+        assert.equal((yield* conversationForkOf(local.id))?.status, "ready");
+        assert.equal((yield* conversationForkOf(local.id))?.cwd, cwd);
         assert.isNull(local.worktreePath);
         assert.isNull(local.branch);
         const { command, waiting } = yield* pending("removed-source", "new-worktree");
@@ -518,7 +528,7 @@ it.live(
         const target = yield* store.getThread(command.newThreadId);
         assert.ok(target.worktreePath);
         assert.notEqual(target.worktreePath, cwd);
-        assert.equal(target.conversationFork?.cwd, cwd);
+        assert.equal((yield* conversationForkOf(target.id))?.cwd, cwd);
         assert.equal(yield* git(target.worktreePath, ["rev-parse", "HEAD"]), commits[0]);
         assert.equal(yield* fsRead(target.worktreePath, "evidence.txt"), "version 1");
       }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
@@ -531,10 +541,7 @@ it.live("a fork whose own worktree setup is unfinished can still be forked local
       yield* seed();
       const store = yield* ProjectionStoreV2;
       const { command } = yield* pending("unfinished-parent", "new-worktree");
-      assert.equal(
-        (yield* store.getThread(command.newThreadId)).conversationFork?.status,
-        "pending",
-      );
+      assert.equal((yield* conversationForkOf(command.newThreadId))?.status, "pending");
       const child = ThreadId.make("unfinished-parent-child");
       yield* forkConversation({
         type: "thread.fork",
@@ -544,7 +551,7 @@ it.live("a fork whose own worktree setup is unfinished can still be forked local
         workspaceMode: "local",
       });
       const forked = yield* store.getThread(child);
-      assert.equal(forked.conversationFork?.status, "ready");
+      assert.equal((yield* conversationForkOf(forked.id))?.status, "ready");
       assert.equal(forked.lineage.parentThreadId, command.newThreadId);
     }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
   ),
@@ -568,9 +575,9 @@ it.live("a local fork continues without a restore point when its checkpoint cann
         });
       yield* fork("local", "local");
       const local = yield* (yield* ProjectionStoreV2).getThread(ThreadId.make("no-restore-local"));
-      assert.equal(local.conversationFork?.status, "ready");
-      assert.isNull(local.conversationFork?.checkpointRef);
-      assert.isNull(local.conversationFork?.checkpointOid);
+      assert.equal((yield* conversationForkOf(local.id))?.status, "ready");
+      assert.isNull((yield* conversationForkOf(local.id))?.checkpointRef);
+      assert.isNull((yield* conversationForkOf(local.id))?.checkpointOid);
       // A new worktree is built from the checkpoint, so it still refuses.
       assert.equal((yield* Effect.result(fork("worktree", "new-worktree")))._tag, "Failure");
     }).pipe(
@@ -625,9 +632,9 @@ it.live(
         });
         assert.isFalse(yield* fs.exists(worktree));
         const target = yield* store.getThread(ThreadId.make("vanishing-local"));
-        assert.equal(target.conversationFork?.status, "ready");
-        assert.equal(target.conversationFork?.cwd, cwd);
-        assert.isNull(target.conversationFork?.checkpointRef);
+        assert.equal((yield* conversationForkOf(target.id))?.status, "ready");
+        assert.equal((yield* conversationForkOf(target.id))?.cwd, cwd);
+        assert.isNull((yield* conversationForkOf(target.id))?.checkpointRef);
         assert.isNull(target.worktreePath);
         assert.isNull(target.branch);
       }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
@@ -688,9 +695,9 @@ it.live(
         const local = yield* (yield* ProjectionStoreV2).getThread(
           ThreadId.make("removed-running-local"),
         );
-        assert.equal(local.conversationFork?.status, "ready");
-        assert.equal(local.conversationFork?.cwd, cwd);
-        assert.isNull(local.conversationFork?.checkpointRef);
+        assert.equal((yield* conversationForkOf(local.id))?.status, "ready");
+        assert.equal((yield* conversationForkOf(local.id))?.cwd, cwd);
+        assert.isNull((yield* conversationForkOf(local.id))?.checkpointRef);
         assert.isNull(local.worktreePath);
       }).pipe(Effect.provide(layer), Effect.timeout("20 seconds")),
     ),
@@ -776,8 +783,8 @@ it.live("a Git failure costs only the restore point, and never reaches clients w
         const local = yield* (yield* ProjectionStoreV2).getThread(
           ThreadId.make("git-diagnostics-local"),
         );
-        assert.equal(local.conversationFork?.status, "ready");
-        assert.isNull(local.conversationFork?.checkpointRef);
+        assert.equal((yield* conversationForkOf(local.id))?.status, "ready");
+        assert.isNull((yield* conversationForkOf(local.id))?.checkpointRef);
         const result = yield* Effect.result(fork("worktree", "new-worktree"));
         assert.equal(result._tag, "Failure");
         if (result._tag === "Failure") {
@@ -828,20 +835,12 @@ it.effect(
           const { command, waiting } = yield* pending("slow", "new-worktree");
           const drain = yield* (yield* OrchestrationEffectWorkerV2).drain().pipe(Effect.forkChild);
           yield* Deferred.await(entered);
-          assert.equal(
-            (yield* (yield* ProjectionStoreV2).getThread(command.newThreadId)).conversationFork
-              ?.status,
-            "pending",
-          );
+          assert.equal((yield* conversationForkOf(command.newThreadId))?.status, "pending");
           yield* TestClock.adjust("4 minutes");
           yield* Deferred.await(release);
           yield* Fiber.join(drain);
           assert.equal((yield* Fiber.join(waiting))._tag, "Success");
-          assert.equal(
-            (yield* (yield* ProjectionStoreV2).getThread(command.newThreadId)).conversationFork
-              ?.status,
-            "ready",
-          );
+          assert.equal((yield* conversationForkOf(command.newThreadId))?.status, "ready");
         }).pipe(Effect.provide(makeRuntime(delayed)));
       }),
     ),
@@ -870,7 +869,7 @@ it.live(
         yield* (yield* OrchestrationEffectWorkerV2).drain();
         assert.equal((yield* Fiber.join(waiting))._tag, "Failure");
         const target = yield* (yield* ProjectionStoreV2).getThread(command.newThreadId);
-        assert.equal(target.conversationFork?.status, "abandoned");
+        assert.equal((yield* conversationForkOf(target.id))?.status, "abandoned");
         assert.isNotNull(target.deletedAt);
         assert.isNull(target.worktreePath);
         assert.ok(unfinishedPath);
@@ -939,7 +938,7 @@ it.live(
           const store = yield* ProjectionStoreV2;
           const worker = yield* OrchestrationEffectWorkerV2;
           const { command, waiting, frozen } = yield* pending("first-baseline", "local", true);
-          assert.isNull(frozen.thread.conversationFork?.checkpointRef);
+          assert.isNull((yield* conversationForkOf(frozen.thread.id))?.checkpointRef);
           yield* worker.drain();
           assert.equal((yield* Fiber.join(waiting))._tag, "Success");
           yield* fs.writeFileString(
@@ -1144,10 +1143,7 @@ it.live("a paused running-worktree snapshot does not block an unrelated local fo
         yield* pull.pipe(Effect.timeout("5 seconds"));
         // A local fork needs no workspace and is ready while the worktree snapshot is paused.
         yield* Fiber.join(fast).pipe(Effect.timeout("5 seconds"));
-        assert.equal(
-          (yield* (yield* ProjectionStoreV2).getThread(target)).conversationFork?.status,
-          "ready",
-        );
+        assert.equal((yield* conversationForkOf(target))?.status, "ready");
         yield* Deferred.succeed(release, undefined);
         yield* slowCreated.pipe(Effect.timeout("5 seconds"));
         yield* (yield* OrchestrationEffectWorkerV2).drain();
@@ -1215,8 +1211,8 @@ it.live(
             const { command, waiting, frozen } = yield* pending("accepted-restart", "local");
             yield* (yield* OrchestrationEffectWorkerV2).drain();
             assert.equal((yield* Fiber.join(waiting))._tag, "Success");
-            acceptedRef = frozen.thread.conversationFork!.checkpointRef!;
-            acceptedOid = frozen.thread.conversationFork!.checkpointOid!;
+            acceptedRef = (yield* conversationForkOf(frozen.thread.id))!.checkpointRef!;
+            acceptedOid = (yield* conversationForkOf(frozen.thread.id))!.checkpointOid!;
             const sql = yield* SqlClient.SqlClient;
             for (const row of [
               {

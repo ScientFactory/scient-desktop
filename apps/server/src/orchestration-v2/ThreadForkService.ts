@@ -130,7 +130,6 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           : {}),
         conversationImport: null,
         forkLineage: null,
-        conversationFork: null,
         // SCIENT-FORK:END
         createdAt: input.createdAt,
         updatedAt: input.createdAt,

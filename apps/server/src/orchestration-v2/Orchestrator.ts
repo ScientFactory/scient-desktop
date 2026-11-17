@@ -1708,7 +1708,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     message: OrchestrationV2ConversationMessage,
   ) =>
-    ensureQueuedMessageBudget({ projection, message }).pipe(
+    // SCIENT-FORK: a fork's shared history files are its own to send.
+    projectionStore.getConversationFork(projection.thread.id).pipe(
+      Effect.flatMap((fork) =>
+        ensureQueuedMessageBudget({
+          projection,
+          message,
+          sharedFileIds: fork?.attachmentCopies.map((copy) => copy.target.id) ?? [],
+        }),
+      ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(ServerConfig, serverConfig),
       Effect.mapError(
@@ -1730,6 +1738,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   // SCIENT-FORK: conversation forks freeze their boundary in Scient's admission.
   const conversationForks = yield* ConversationForkService;
+  /** SCIENT-FORK: turns wait until a fork's own worktree setup is ready. */
+  const forkSetupReady = (threadId: ThreadId) =>
+    projectionStore.getConversationFork(threadId).pipe(
+      Effect.map((fork) => fork === null || fork.status === "ready"),
+      Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+    );
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
   // SCIENT-FORK:START — Scient Cloud lease guard; absent where the cloud state is not mounted.
@@ -2640,10 +2654,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        // SCIENT-FORK:START
-        (projection.thread.conversationFork != null &&
-          projection.thread.conversationFork.status !== "ready") ||
-        // SCIENT-FORK:END
+        // SCIENT-FORK: a fork's queue waits for its worktree setup.
+        !(yield* forkSetupReady(threadId)) ||
         projection.runs.some(isActiveRun)
       ) {
         return;
@@ -8877,7 +8889,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // SCIENT-FORK:START — a completed clone already owns its inherited prefix natively.
       // Command reads load only pending transfers, so the consumed clone transfer is read here.
       const inheritedPrefixAlreadyNative =
-        projection.thread.conversationFork != null &&
+        (yield* projectionStore
+          .getConversationFork(command.threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          )) !== null &&
         inheritedForkPrefixIsNative({
           projection: {
             ...projection,
@@ -9264,7 +9282,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
     const frozenFork =
-      pendingForkTransfer !== undefined && projection.thread.conversationFork != null;
+      pendingForkTransfer !== undefined &&
+      // SCIENT-FORK: a Scient fork's transfer carries its frozen proof.
+      (yield* projectionStore
+        .getConversationFork(projection.thread.id)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: projection.thread.id, cause }),
+          ),
+        )) !== null;
     const frozenSource = pendingForkTransfer?.frozenSource;
     const sourceProjection =
       pendingForkTransfer === undefined || frozenFork
@@ -16738,7 +16764,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "message.dispatch": {
         const thread = yield* refuseNativeSubagentMessage(command);
-        if (thread.conversationFork != null && thread.conversationFork.status !== "ready")
+        if (!(yield* forkSetupReady(command.threadId)))
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
@@ -17303,7 +17329,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }).pipe(mapDispatchError(command)),
           ];
     // SCIENT-FORK: a conversation fork's fence supplies its final events and live capture.
-    const commitWith = (input: ConversationForkCommitInput) =>
+    const commitWith = (
+      input: Pick<ConversationForkCommitInput, "events"> & Partial<ConversationForkCommitInput>,
+    ) =>
       eventSink
         .commitCommand({
           commandId: command.commandId,
@@ -17319,6 +17347,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(input.runningForkSource === undefined
             ? {}
             : { runningForkSource: input.runningForkSource }),
+          ...(input.conversationFork === undefined
+            ? {}
+            : { conversationFork: input.conversationFork }),
           ...(plan.conversationFork === undefined
             ? {}
             : { forkHistory: plan.conversationFork.forkHistory }),

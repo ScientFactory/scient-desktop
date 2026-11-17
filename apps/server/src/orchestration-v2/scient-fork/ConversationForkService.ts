@@ -22,6 +22,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type RunId,
+  type ScientConversationFork,
   type ScientThreadForkBoundary,
   ThreadId,
   VcsCheckpointUnavailableError,
@@ -34,8 +35,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
+import { writeConversationFork } from "./ConversationForkRecords.ts";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
@@ -96,6 +98,7 @@ export interface ConversationForkAdmission {
 /** The final events a fork commits, with the live capture its commit must recheck. */
 export interface ConversationForkCommitInput {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  readonly conversationFork: ScientConversationFork;
   readonly runningForkSource?: {
     readonly owner: CapturedProviderText["owner"];
     readonly capture: CapturedProviderText;
@@ -118,6 +121,7 @@ export class ConversationForkService extends Context.Service<
       readonly admission: ConversationForkAdmission;
       readonly capture: CapturedProviderText | null;
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+      readonly conversationFork: ScientConversationFork;
       readonly commit: (input: ConversationForkCommitInput) => Effect.Effect<A, E, R>;
     }) => Effect.Effect<A, E | OrchestrationDispatchCommandError | ProviderTextSnapshotError, R>;
     /** Runs a fork with the running turn's unsaved text, or with saved history when it cannot. */
@@ -199,6 +203,14 @@ const make = Effect.gen(function* () {
   const git = yield* GitWorkflowService;
   const legacyImporter = yield* LegacyV1ThreadImporter;
   const checkpointOwnership = yield* makeForkCheckpointOwnership;
+  const sql = yield* SqlClient.SqlClient;
+  /** Records a fork's new setup state in the same transaction as its event. */
+  const withForkRecord = (threadId: ThreadId, fork: ScientConversationFork) => ({
+    transactionHooks: {
+      prepare: Effect.void,
+      finalize: writeConversationFork(sql, threadId, fork),
+    },
+  });
   // Attempts own unique refs and recovery skips active ones, so it can run
   // beside new forks instead of delaying server startup.
   yield* checkpointOwnership.recover().pipe(Effect.forkScoped);
@@ -288,18 +300,18 @@ const make = Effect.gen(function* () {
       )?.ref ?? null;
     // A frozen fork's own baseline covers all inherited rows, never an earlier
     // boundary inside that baseline. Do not substitute the current checkout.
-    if (
-      fromCheckpointRef === null &&
-      plan.boundaryRunId === null &&
-      projection.thread.conversationFork?.checkpointRef != null
-    ) {
+    const sourceFork =
+      fromCheckpointRef === null && plan.boundaryRunId === null
+        ? yield* projections.getConversationFork(projection.thread.id)
+        : null;
+    if (sourceFork?.checkpointRef != null) {
       const retainedIds = new Set(plan.retained.map((item) => item.id));
       if (
         projection.visibleTurnItems
           .filter(({ item }) => item.inheritedFrom !== undefined)
           .every(({ item }) => retainedIds.has(item.id))
       )
-        fromCheckpointRef = projection.thread.conversationFork.checkpointRef;
+        fromCheckpointRef = sourceFork.checkpointRef;
     }
     // A removed worktree forks into the project folder rather than refusing.
     const cwd = originAvailable ? originCwd : project.value.workspaceRoot;
@@ -350,38 +362,40 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
   ) {
     const cursor = yield* sink.latestSequence({ threadId });
-    const initial = yield* projections.getThread(threadId);
-    if (initial.conversationFork == null)
-      return yield* failure("This conversation is not a fork.", "rejected");
+    const initial = yield* projections.getConversationFork(threadId);
+    if (initial === null) return yield* failure("This conversation is not a fork.", "rejected");
+    const settled = (
+      thread: { readonly deletedAt: unknown },
+      fork: ScientConversationFork | null,
+    ) => thread.deletedAt !== null || fork?.status !== "pending";
+    // Setup changes are written with a thread event, so each event of the fork is a wakeup.
     const final =
-      initial.deletedAt === null && initial.conversationFork.status === "pending"
+      initial.status === "pending" && (yield* projections.getThread(threadId)).deletedAt === null
         ? yield* sink.stream({ threadId, afterSequence: cursor }).pipe(
-            Stream.filterMap((stored) => {
-              const event = stored.event;
-              return (event.type === "thread.metadata-updated" &&
-                event.payload.conversationFork?.status !== "pending") ||
-                event.type === "thread.deleted"
-                ? Result.succeed(event.payload)
-                : Result.failVoid;
-            }),
+            Stream.filter(
+              ({ event }) =>
+                event.type === "thread.metadata-updated" || event.type === "thread.deleted",
+            ),
+            Stream.mapEffect(() =>
+              Effect.all({
+                thread: projections.getThread(threadId),
+                fork: projections.getConversationFork(threadId),
+              }),
+            ),
+            Stream.filter(({ thread, fork }) => settled(thread, fork)),
             Stream.take(1),
             Stream.runCollect,
-            Effect.map((threads) => threads[0]!),
+            Effect.map((settledForks) => settledForks[0]!),
           )
-        : initial;
-    if (final.deletedAt !== null || final.conversationFork?.status === "abandoned")
-      return yield* failure(
-        final.conversationFork?.error ?? "The fork was abandoned.",
-        "abandoned",
-      );
-    if (final.conversationFork?.status !== "ready")
-      return yield* failure(
-        final.conversationFork?.error ?? "Fork setup failed. Retry the same fork.",
-        "failed",
-      );
+        : { thread: yield* projections.getThread(threadId), fork: initial };
+    const fork = final.fork;
+    if (final.thread.deletedAt !== null || fork?.status === "abandoned")
+      return yield* failure(fork?.error ?? "The fork was abandoned.", "abandoned");
+    if (fork?.status !== "ready")
+      return yield* failure(fork?.error ?? "Fork setup failed. Retry the same fork.", "failed");
     return {
       forkAttachmentIdMap: Object.fromEntries(
-        final.conversationFork.attachmentCopies.map(({ source, target }) => [source.id, target.id]),
+        fork.attachmentCopies.map(({ source, target }) => [source.id, target.id]),
       ),
     } satisfies ForkReadiness;
   });
@@ -391,18 +405,14 @@ const make = Effect.gen(function* () {
     commandId: CommandId,
   ) {
     const target = yield* projections.getThread(threadId);
-    const fork = target.conversationFork;
+    const fork = yield* projections.getConversationFork(threadId);
     if (fork?.status !== "failed" || fork.commandId !== commandId || target.deletedAt !== null)
       return;
     const now = yield* DateTime.now;
     const sequence = yield* sink.latestSequence({ threadId });
     yield* sink.writeWithEffects({
-      events: [
-        yield* metadataEvent(
-          { ...target, conversationFork: { ...fork, status: "pending", error: null } },
-          now,
-        ),
-      ],
+      ...withForkRecord(threadId, { ...fork, status: "pending", error: null }),
+      events: [yield* metadataEvent(target, now)],
       effects: [
         {
           id: `scient-fork:${commandId}:retry:${sequence}`,
@@ -588,6 +598,7 @@ const make = Effect.gen(function* () {
     readonly admission: ConversationForkAdmission;
     readonly capture: CapturedProviderText | null;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly conversationFork: ScientConversationFork;
     readonly commit: (input: ConversationForkCommitInput) => Effect.Effect<A, E, R>;
   }) => {
     const { command, admission, capture } = input;
@@ -622,27 +633,23 @@ const make = Effect.gen(function* () {
                 ),
               ),
           });
-        const events = input.events.map((event): OrchestrationV2DomainEvent => {
-          if (event.type !== "thread.created" || event.threadId !== command.targetThreadId)
-            return event;
-          const fork = event.payload.conversationFork;
-          return {
-            ...event,
-            payload: {
-              ...event.payload,
-              title,
-              ...(movedToProjectFolder
-                ? {
-                    worktreePath: null,
-                    branch: null,
-                    conversationFork: fork == null ? fork : { ...fork, cwd: admission.projectRoot },
-                  }
-                : {}),
-            },
-          };
-        });
+        const events = input.events.map((event): OrchestrationV2DomainEvent =>
+          event.type !== "thread.created" || event.threadId !== command.targetThreadId
+            ? event
+            : {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  title,
+                  ...(movedToProjectFolder ? { worktreePath: null, branch: null } : {}),
+                },
+              },
+        );
         const committed = input.commit({
           events,
+          conversationFork: movedToProjectFolder
+            ? { ...input.conversationFork, cwd: admission.projectRoot }
+            : input.conversationFork,
           ...(capture === null ? {} : { runningForkSource: { owner: capture.owner, capture } }),
         });
         return yield* capture === null
@@ -661,7 +668,7 @@ const make = Effect.gen(function* () {
         threadId,
         Effect.gen(function* () {
           const thread = yield* projections.getThread(threadId);
-          const fork = thread.conversationFork;
+          const fork = yield* projections.getConversationFork(threadId);
           if (fork == null || fork.status === "ready" || thread.deletedAt !== null) return;
           let worktreePath = thread.worktreePath;
           let branch = thread.branch;
@@ -707,17 +714,8 @@ const make = Effect.gen(function* () {
           }
           const now = yield* DateTime.now;
           yield* sink.write({
-            events: [
-              yield* metadataEvent(
-                {
-                  ...thread,
-                  worktreePath,
-                  branch,
-                  conversationFork: { ...fork, status: "ready", error: null },
-                },
-                now,
-              ),
-            ],
+            ...withForkRecord(threadId, { ...fork, status: "ready", error: null }),
+            events: [yield* metadataEvent({ ...thread, worktreePath, branch }, now)],
           });
         }),
       )
@@ -742,27 +740,21 @@ const make = Effect.gen(function* () {
               threadId,
               Effect.gen(function* () {
                 const thread = yield* projections.getThread(threadId);
-                if (
-                  thread.conversationFork == null ||
-                  thread.deletedAt !== null ||
-                  thread.conversationFork.status === "ready"
-                )
-                  return;
+                const fork = yield* projections.getConversationFork(threadId);
+                if (fork == null || thread.deletedAt !== null || fork.status === "ready") return;
                 const abandoned = isAbandonedFailure(cause);
                 const now = yield* DateTime.now;
-                const updated = {
-                  ...thread,
-                  ...(abandoned ? { deletedAt: now } : {}),
-                  conversationFork: {
-                    ...thread.conversationFork,
-                    status: abandoned ? ("abandoned" as const) : ("failed" as const),
-                    error: cause.message,
-                  },
-                };
-                const event = yield* metadataEvent(updated, now);
-                const fork = thread.conversationFork;
+                const event = yield* metadataEvent(
+                  { ...thread, ...(abandoned ? { deletedAt: now } : {}) },
+                  now,
+                );
                 // An abandoned fork is deleted: it releases what deleting it would.
                 yield* sink.writeWithEffects({
+                  ...withForkRecord(threadId, {
+                    ...fork,
+                    status: abandoned ? "abandoned" : "failed",
+                    error: cause.message,
+                  }),
                   events: [abandoned ? { ...event, type: "thread.deleted" } : event],
                   effects: abandoned
                     ? [

@@ -39,7 +39,7 @@ import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { ensureQueuedMessageBudget } from "../QueuedMessageBudget.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import { forkConversation } from "./ConversationForkCommand.ts";
+import { conversationForkOf, forkConversation } from "./ConversationForkCommand.ts";
 
 const instanceId = ProviderInstanceId.make("acp");
 const modelSelection = { instanceId, model: "fixture" };
@@ -222,6 +222,9 @@ it.live.each(
           yield* ensureQueuedMessageBudget({
             projection: child,
             message: { ...prompt, id: MessageId.make(`${name}-queued-file`), attachments: [file] },
+            sharedFileIds: (yield* conversationForkOf(target))!.attachmentCopies.map(
+              (copy) => copy.target.id,
+            ),
           });
           yield* orchestrator.dispatch({
             type: "thread.delete",
