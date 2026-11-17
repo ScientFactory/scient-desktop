@@ -24,6 +24,7 @@ import {
   useScientProjectFolderActions,
 } from "~/scient/commandPalette/scientCommandPalette";
 import { useOverleafPaletteItems } from "~/scient/overleaf/overleafPaletteItems";
+import { feedbackPaletteItems } from "~/scient/feedback/FeedbackCoordinator";
 import { insertOverleafAddProjectItem } from "~/scient/overleaf/OverleafNewProject";
 // SCIENT-FORK:END
 import {
@@ -1781,6 +1782,13 @@ function OpenCommandPaletteDialog(props: {
 
   // SCIENT-FORK:START — Sync with Overleaf, for each linked folder of this thread's project
   actionItems.push(...overleafPaletteItems);
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — "Send feedback to Scient".
+  actionItems.push(
+    ...feedbackPaletteItems(
+      activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+    ),
+  );
   // SCIENT-FORK:END
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);

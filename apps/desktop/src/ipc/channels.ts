@@ -190,5 +190,12 @@ export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
 
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
+// SCIENT-FORK:START — feedback reports to the Scient team (scient/feedback).
+export const FEEDBACK_PREPARE_CHANNEL = "scient:feedback:prepare";
+export const FEEDBACK_CAPTURE_SCREENSHOT_CHANNEL = "scient:feedback:capture-screenshot";
+export const FEEDBACK_READ_RECENT_LOGS_CHANNEL = "scient:feedback:read-recent-logs";
+export const FEEDBACK_SUBMIT_CHANNEL = "scient:feedback:submit";
+export const FEEDBACK_TAKE_FIXED_NOTICES_CHANNEL = "scient:feedback:take-fixed-notices";
+// SCIENT-FORK:END
 
 export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

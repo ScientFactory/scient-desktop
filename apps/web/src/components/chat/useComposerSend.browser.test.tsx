@@ -40,6 +40,8 @@ import * as imageCompression from "../../lib/imageCompression";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import { toastManager } from "../ui/toast";
+// SCIENT-FORK: `/feedback` opens Send feedback to Scient.
+import { useFeedbackDraft } from "../../scient/feedback/feedbackStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { responseContextRecord, threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
@@ -844,6 +846,67 @@ describe("mounted composer send admission owner", () => {
       expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
     },
   );
+
+  // SCIENT-FORK:START — `/feedback` opens Send feedback to Scient and never reaches the model.
+  const withScientFeedback = async (run: () => Promise<void>) => {
+    const host = window as unknown as { desktopBridge?: object };
+    const bridge = host.desktopBridge;
+    host.desktopBridge = { ...bridge, feedback: {} };
+    useFeedbackDraft.setState({ open: false, message: "" });
+    try {
+      await run();
+    } finally {
+      if (bridge === undefined) delete host.desktopBridge;
+      else host.desktopBridge = bridge;
+    }
+  };
+
+  it("opens Send feedback to Scient with the words after /feedback", async () => {
+    await withScientFeedback(async () => {
+      await using fixture = await setup();
+      const prompt = "/feedback the export lost my figures";
+      useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+      fixture.context = { ...fixture.context, prompt };
+      await fixture.send();
+      expect(fixture.command).not.toHaveBeenCalled();
+      expect(useFeedbackDraft.getState()).toMatchObject({
+        open: true,
+        source: "slash-command",
+        message: "the export lost my figures",
+      });
+    });
+  });
+
+  it("refuses /feedback with an attachment instead of sending it to the model", async () => {
+    await withScientFeedback(async () => {
+      const toast = vi.spyOn(toastManager, "add");
+      await using fixture = await setup();
+      const prompt = "/feedback the export failed";
+      useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, prompt);
+      fixture.context = {
+        ...fixture.context,
+        prompt,
+        files: [
+          {
+            type: "file",
+            id: "figure",
+            name: "figure.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 3,
+            file: new File(["pdf"], "figure.pdf", { type: "application/pdf" }),
+          },
+        ],
+      };
+      await fixture.send();
+      expect(fixture.command).not.toHaveBeenCalled();
+      expect(useFeedbackDraft.getState().open).toBe(false);
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Remove the attachments to send feedback" }),
+      );
+      toast.mockRestore();
+    });
+  });
+  // SCIENT-FORK:END
 
   // Send is enabled for a composer that holds only a thread context, so the send must go.
   it("sends a message whose only content is an attached thread", async () => {

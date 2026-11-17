@@ -1,0 +1,56 @@
+name: Deploy Scient feedback
+
+# Manual only: in-app feedback reports reach the team once the owner runs this.
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Alchemy stage (prod serves feedback.scientfactory.com; others need SCIENT_FEEDBACK_HOST or use workers.dev).
+        type: string
+        default: prod
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scient-feedback-${{ inputs.stage }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Scient feedback Worker
+    if: ${{ github.repository == 'ScientFactory/scient-desktop' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: scient-feedback
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      SCIENT_FEEDBACK_HOST: ${{ vars.SCIENT_FEEDBACK_HOST }}
+      SCIENT_FEEDBACK_INGESTION_ENABLED: ${{ vars.SCIENT_FEEDBACK_INGESTION_ENABLED }}
+      SCIENT_FEEDBACK_DAILY_CAP: ${{ vars.SCIENT_FEEDBACK_DAILY_CAP }}
+      ALCHEMY_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@scientfactory/scient-feedback-worker...
+
+      - name: Deploy
+        run: vp run --filter @scientfactory/scient-feedback-worker deploy --stage "$STAGE" --yes --no-input
+        env:
+          STAGE: ${{ inputs.stage }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SCIENT_FEEDBACK_ADMIN_TOKEN: ${{ secrets.SCIENT_FEEDBACK_ADMIN_TOKEN }}

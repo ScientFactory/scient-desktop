@@ -68,6 +68,14 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+// SCIENT-FORK:START — `/feedback` sends feedback to the Scient team.
+import { feedbackAvailable } from "../../scient/feedback/FeedbackDialog";
+import { requestFeedback } from "../../scient/feedback/feedbackStore";
+import {
+  codexOpenAiFeedbackText,
+  parseScientFeedbackCommand,
+} from "../../scient/feedback/feedbackSlashCommand";
+// SCIENT-FORK:END
 import { createModelSelection } from "@t3tools/shared/model";
 import { type SetStateAction, useLayoutEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -862,6 +870,49 @@ export function useComposerSend(input: ComposerSendInput) {
             composerRef.current?.resetCursorState();
             return;
           }
+          // SCIENT-FORK:START — `/feedback [words]` opens "Send feedback to Scient" with the words
+          // as the message; Codex's own command is `/feedback-openai` here.
+          const scientFeedbackAvailable = feedbackAvailable();
+          const scientFeedbackCommand =
+            scientFeedbackAvailable && !directAnnotation && directPrompt === null
+              ? parseScientFeedbackCommand(trimmed)
+              : null;
+          if (
+            scientFeedbackCommand &&
+            (composerImages.length > 0 ||
+              effectiveComposerFiles.length > 0 ||
+              sendableComposerTerminalContexts.length > 0 ||
+              composerPreviewAnnotations.length > 0 ||
+              effectiveReviewComments.length > 0)
+          ) {
+            // Never let feedback meant for the Scient team reach the model as a prompt.
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: "Remove the attachments to send feedback",
+                description:
+                  "/feedback opens Send feedback to Scient, where you can add a screenshot or logs.",
+              }),
+            );
+            return;
+          }
+          if (scientFeedbackCommand) {
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+            requestFeedback({
+              source: "slash-command",
+              ...(isServerThread
+                ? { threadRef: scopeThreadRef(activeThread.environmentId, activeThread.id) }
+                : {}),
+              ...(scientFeedbackCommand.message ? { message: scientFeedbackCommand.message } : {}),
+            });
+            return;
+          }
+          const codexFeedbackText = scientFeedbackAvailable
+            ? codexOpenAiFeedbackText(trimmed)
+            : trimmed;
+          // SCIENT-FORK:END
           // Read once: an arm made while this send is in flight belongs to the next message.
           const freshArm = freshSessionAvailable ? readFreshSessionArm(routeThreadKey) : undefined;
           const feedbackCommand =
@@ -871,8 +922,9 @@ export function useComposerSend(input: ComposerSendInput) {
             effectiveComposerFiles.length === 0 &&
             sendableComposerTerminalContexts.length === 0 &&
             composerPreviewAnnotations.length === 0 &&
-            effectiveReviewComments.length === 0
-              ? parseCodexFeedbackCommand(trimmed)
+            effectiveReviewComments.length === 0 &&
+            codexFeedbackText !== null
+              ? parseCodexFeedbackCommand(codexFeedbackText)
               : null;
           if (feedbackCommand && multipleModelSelections === null) {
             if (!isServerThread || activeThread.activeProviderThreadId === null) {

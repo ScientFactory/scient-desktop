@@ -50,6 +50,8 @@ const BACKGROUND_ENVIRONMENT_KEYS = [
   "SSH_AUTH_SOCK",
   "SCIENT_DEV_CODESIGN_IDENTITY",
   "T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT",
+  // A loopback feedback service for live checks (infra/scient-feedback/scripts/dev.ts).
+  "SCIENT_FEEDBACK_TEST_ENDPOINT",
   "TMPDIR",
   // The standing stable app's launch (scripts/dev-app/controller.mjs).
   "SCIENT_DEV_APP_CHECKOUT",
