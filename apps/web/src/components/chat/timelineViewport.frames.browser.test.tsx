@@ -1,11 +1,9 @@
 import { expect, it } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { isScrollbarPress, watchFocusedFrameResizes } from "./readerScrolling";
+import { attachTimelineViewport } from "./timelineViewport";
 
-// Upstream tests this on attachTimelineViewport (timelineViewport.browser.test.tsx), which Scient
-// replaced; here the same frame-resize rule is checked on Scient's reader input owner.
+// A toggle inside a focused HTML preview settles like a click in the timeline (MessagesTimeline).
 it("reports a content resize only from the focused frame in the timeline", async () => {
   await using screen = await render(
     <div data-testid="timeline" style={{ height: 300, overflowY: "auto" }}>
@@ -22,7 +20,7 @@ it("reports a content resize only from the focused frame in the timeline", async
   const timeline = screen.getByTestId("timeline").element() as HTMLElement;
   const frame = screen.getByTitle("render").element() as HTMLIFrameElement;
   const resized: HTMLIFrameElement[] = [];
-  const stop = watchFocusedFrameResizes(timeline, (target) => resized.push(target));
+  const viewport = attachTimelineViewport(timeline, (target) => resized.push(target));
   const resize = (height: number, source: Window | null = frame.contentWindow) =>
     window.dispatchEvent(
       new MessageEvent("message", {
@@ -43,32 +41,7 @@ it("reports a content resize only from the focused frame in the timeline", async
   resize(600);
   resize(200);
   expect(resized).toEqual([frame, frame]);
-  stop();
+  viewport.dispose();
   resize(800);
   expect(resized).toEqual([frame, frame]);
-});
-
-// Upstream's attachTimelineViewport test of the same rule, on Scient's reader input owner.
-it("counts a scrollbar press but not a click on the scroller's empty padding", async () => {
-  await using screen = await render(
-    <div
-      data-testid="timeline"
-      style={{ height: 300, width: 400, overflowY: "auto", padding: "0 42px" }}
-    >
-      <div style={{ height: 1200 }} />
-    </div>,
-    { router: false },
-  );
-  const timeline = screen.getByTestId("timeline").element() as HTMLElement;
-  const presses: boolean[] = [];
-  timeline.addEventListener("pointerdown", (event) =>
-    presses.push(isScrollbarPress(event, timeline)),
-  );
-
-  await userEvent.click(screen.getByTestId("timeline"), { position: { x: 10, y: 150 } });
-  await userEvent.click(screen.getByTestId("timeline"), {
-    position: { x: timeline.offsetWidth - 2, y: 150 },
-  });
-
-  expect(presses).toEqual([false, true]);
 });

@@ -10,10 +10,8 @@ import {
 } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { MessageId, RunId } from "@t3tools/contracts";
-import { readHtmlRenderContentHeight } from "@t3tools/shared/htmlRender";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
-import type { AssistantCitationRequest } from "./AssistantCitationSource";
 import { returnToLiveFollow } from "./liveFollowOffset";
 import {
   readerAtReadingEnd,
@@ -27,6 +25,7 @@ import {
   rememberTimelinePosition,
   type RememberedTimelinePosition,
 } from "./timelineScrollAnchoring";
+import type { TimelineViewport } from "./timelineViewport";
 
 type ReadingDisclosures = NonNullable<RememberedTimelinePosition["disclosures"]>;
 
@@ -37,170 +36,42 @@ export interface ReadingHistoryPage {
   readonly onLoadEarlier: () => void;
 }
 
-// Wide enough for an overlay scrollbar, which takes no layout space (macOS Firefox).
-const SCROLLBAR_HIT_PX = 16;
-
 /**
- * Scrollbar drags produce no wheel/touch events. The scroll node's own padding also targets it,
- * so only a press at its trailing edge counts (upstream's attachTimelineViewport rule).
+ * Any click or key in the timeline can open or close content (a long message, a plan, tool
+ * output). Idle end keeping pauses briefly after one, so the toggled content keeps its place
+ * instead of being pinned to its end. Returns whether it is settling, and a way to start it.
  */
-export function isScrollbarPress(
-  event: Pick<PointerEvent, "target" | "clientX">,
-  scrollNode: HTMLElement | null | undefined,
-): boolean {
-  return (
-    scrollNode != null &&
-    event.target === scrollNode &&
-    scrollNode.getBoundingClientRect().right - event.clientX <=
-      Math.max(SCROLLBAR_HIT_PX, scrollNode.offsetWidth - scrollNode.clientWidth)
-  );
-}
-
-/**
- * Calls `onResize` when an HTML preview the reader is using (the focused frame in `viewport`)
- * changes its content height, as an accordion inside it does. A click inside a frame never
- * reaches the timeline, so this resize is the only sign the reader toggled something there.
- * Runs before the preview's own listener resizes its row.
- */
-export function watchFocusedFrameResizes(
-  viewport: HTMLElement,
-  onResize: (frame: HTMLIFrameElement) => void,
-): () => void {
-  const ownerWindow = viewport.ownerDocument.defaultView;
-  if (!ownerWindow) return () => {};
-  const frameHeights = new WeakMap<HTMLIFrameElement, number>();
-  const handleMessage = (event: MessageEvent) => {
-    const height = readHtmlRenderContentHeight(event.data);
-    if (height === undefined) return;
-    const frame = [...viewport.querySelectorAll("iframe")].find(
-      (candidate) => candidate.contentWindow === event.source,
-    );
-    if (!frame) return;
-    const previous = frameHeights.get(frame);
-    frameHeights.set(frame, height);
-    if (
-      previous !== undefined &&
-      previous !== height &&
-      viewport.ownerDocument.activeElement === frame
-    ) {
-      onResize(frame);
-    }
-  };
-  ownerWindow.addEventListener("message", handleMessage, true);
-  return () => ownerWindow.removeEventListener("message", handleMessage, true);
-}
-
-/**
- * Idle end-keeping and frame bookkeeping must respect recorded reader input rather than acting on
- * the reader's own movement. Track click/key settling separately from autonomous follow.
- */
-export function useReaderScrollInput({
-  listRef,
-  viewport,
-  readerInputRef,
-  scrollbarHeldRef,
-  stillFramesRef,
-  scheduleBookkeepingRef,
-  readerInputCountRef,
-}: {
-  listRef: RefObject<LegendListRef | null>;
-  viewport: HTMLDivElement | null;
-  readerInputRef: RefObject<boolean>;
-  scrollbarHeldRef: RefObject<boolean>;
-  stillFramesRef: RefObject<number>;
-  scheduleBookkeepingRef: RefObject<() => void>;
-  /** Counts the reader's scrolling inputs, so a later one can be told from an earlier one. */
-  readerInputCountRef?: RefObject<number>;
-}) {
-  // Any click or key in the timeline can expand or collapse content (a long
-  // message, a plan, tool output). Idle end pinning pauses briefly after one,
-  // so the toggled content keeps its place instead of being pinned to its end.
-  const [interactionSettling, setInteractionSettling] = useState(false);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches wheel/touch/pointer/key scroll-input listeners to the timeline viewport and document while mounted
+export function useInteractionSettling(
+  viewport: HTMLElement | null,
+): readonly [boolean, () => void] {
+  const [settling, setSettling] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settle = useStableCallback(() => {
+    setSettling(true);
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      setSettling(false);
+    }, 400);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for clicks and keys in the timeline viewport while it is mounted
   useEffect(() => {
     if (!viewport) return;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const settle = () => {
-      setInteractionSettling(true);
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        setInteractionSettling(false);
-      }, 400);
-    };
-    // The reader's own scrolling input; idle end keeping never acts on it.
-    const input = () => {
-      if (readerInputCountRef) readerInputCountRef.current += 1;
-      readerInputRef.current = true;
-      stillFramesRef.current = 0;
-      scheduleBookkeepingRef.current();
-    };
-    // A scrollbar drag moves the view on every frame until release.
-    const pressed = (event: PointerEvent) => {
-      if (!isScrollbarPress(event, listRef.current?.getScrollableNode())) return;
-      scrollbarHeldRef.current = true;
-      input();
-    };
-    const released = () => {
-      scrollbarHeldRef.current = false;
-    };
-    const keyed = (event: globalThis.KeyboardEvent) => {
-      // Keys typed into the composer or another field don't scroll the timeline.
-      if (
-        event.target instanceof Element &&
-        event.target.closest("input, textarea, [contenteditable=true], [contenteditable='']")
-      )
-        return;
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
-        input();
-    };
-    const ownerDocument = viewport.ownerDocument;
-    // A toggle inside a focused HTML preview settles like a click in the timeline, and its row
-    // holds its place, so the opened accordion cannot pull the reader to the end.
-    const stopWatchingFrames = watchFocusedFrameResizes(viewport, (frame) => {
-      settle();
-      const rowId = frame.closest<HTMLElement>("[data-timeline-row-id]")?.dataset.timelineRowId;
-      const list = listRef.current;
-      if (rowId && list) {
-        list.cancelScroll();
-        list.anchorVisibleContent({ key: rowId });
-      }
-    });
     viewport.addEventListener("click", settle, { capture: true });
     viewport.addEventListener("keydown", settle, { capture: true });
-    viewport.addEventListener("wheel", input, { capture: true, passive: true });
-    viewport.addEventListener("touchmove", input, { capture: true, passive: true });
-    viewport.addEventListener("pointerdown", pressed, { capture: true });
-    ownerDocument.addEventListener("keydown", keyed, { capture: true });
-    ownerDocument.addEventListener("pointerup", released);
-    ownerDocument.addEventListener("pointercancel", released);
-    ownerDocument.addEventListener("mouseup", released);
     return () => {
-      if (timer !== null) clearTimeout(timer);
-      stopWatchingFrames();
       viewport.removeEventListener("click", settle, { capture: true });
       viewport.removeEventListener("keydown", settle, { capture: true });
-      viewport.removeEventListener("wheel", input, { capture: true });
-      viewport.removeEventListener("touchmove", input, { capture: true });
-      viewport.removeEventListener("pointerdown", pressed, { capture: true });
-      ownerDocument.removeEventListener("keydown", keyed, { capture: true });
-      ownerDocument.removeEventListener("pointerup", released);
-      ownerDocument.removeEventListener("pointercancel", released);
-      ownerDocument.removeEventListener("mouseup", released);
     };
-    // The refs are the caller's stable useRef objects; listing them changes nothing.
-  }, [
-    listRef,
-    viewport,
-    readerInputRef,
-    scrollbarHeldRef,
-    stillFramesRef,
-    scheduleBookkeepingRef,
-    readerInputCountRef,
-  ]);
-
-  return interactionSettling;
+  }, [viewport, settle]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending settle timer on unmount
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  return [settling, settle] as const;
 }
 
 /**
@@ -456,15 +327,6 @@ export function useReadingBookkeepingFrame({
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
 
-function currentScrollOffset(viewport: HTMLElement) {
-  return {
-    get offset() {
-      return viewport.scrollTop;
-    },
-    animated: false,
-  };
-}
-
 /** Pages of older history requested for one thread's saved position. */
 export interface ReadingHistoryPages {
   readonly key: string;
@@ -543,244 +405,78 @@ export function useReadingRestoreTarget({
 }
 
 /**
- * Bound restore settling and report abandonment visibly. Reader wheel/touch/press/scroll keys
- * cancel restoration; use the caller's cancellation ref for thread/view ownership changes.
+ * Returns a reader who left while following to where that follow is now (chat/liveFollowOffset.ts),
+ * then reports the thread positioned and the follow resumed. Any navigation on the viewport stops it
+ * where it is: positioned, but the reader took over, so the follow stays ended. Returns the stop
+ * for the restore's owner.
  */
-export function useReadingPositionRestore({
-  listRef,
-  rows,
+export function startFollowResume({
+  list,
+  viewport,
+  composerInset,
+  promptId,
   listIdentityKey,
-  rememberedPosition,
-  restoringThreadPosition,
-  readingListLoaded,
-  citationRequest,
-  anchorMessageId,
-  restoreRowIndex,
-  restoreOffset,
-  waitingForReadingHistory,
-  positionHistoryLoading,
-  contentInsetEndAdjustment,
-  cancelPositionRestoreRef,
-  onManualNavigation,
-  onResumeFollow,
-  setPositionedThreadKey,
-  setAbandonedPositionKey,
+  onPositioned,
+  onResumed,
 }: {
-  listRef: RefObject<LegendListRef | null>;
-  rows: readonly MessagesTimelineRow[];
+  list: LegendListRef;
+  viewport: TimelineViewport;
+  composerInset: number;
+  promptId: string;
   listIdentityKey: string;
-  rememberedPosition: RememberedTimelinePosition | undefined;
-  restoringThreadPosition: boolean;
-  readingListLoaded: boolean;
-  citationRequest: AssistantCitationRequest | null;
-  anchorMessageId: MessageId | null;
-  restoreRowIndex: number;
-  restoreOffset: number;
-  waitingForReadingHistory: boolean;
-  positionHistoryLoading: boolean;
-  contentInsetEndAdjustment: number;
-  cancelPositionRestoreRef: RefObject<(() => void) | null> | undefined;
-  onManualNavigation: () => void;
-  onResumeFollow: ((promptId: string) => void) | undefined;
-  setPositionedThreadKey: (threadKey: string) => void;
-  setAbandonedPositionKey: (threadKey: string) => void;
-}) {
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the saved scroll position in the list viewport and owns the cancel-on-input listeners while restoring
-  useLayoutEffect(() => {
-    if (!restoringThreadPosition || rows.length === 0 || !readingListLoaded) return;
-    const list = listRef.current;
-    if (!list) return;
-    if (citationRequest !== null || (anchorMessageId !== null && !rememberedPosition)) {
-      setPositionedThreadKey(listIdentityKey);
-      return;
-    }
-    let cancelled = false;
-    let settleFrame: number | null = null;
-    const viewport: HTMLElement | null = list.getScrollableNode();
-    const cancelRestoration = () => {
+  onPositioned: (identity: string) => void;
+  /** The view reached the follow's position without the reader navigating. */
+  onResumed: () => void;
+}): () => void {
+  let cancelled = false;
+  let frame: number | null = null;
+  const releaseScrollHold = viewport.holdProgrammaticScroll();
+  const stop = () => {
+    cancelled = true;
+    if (frame !== null) cancelAnimationFrame(frame);
+    releaseScrollHold();
+    unsubscribe();
+  };
+  const unsubscribe = viewport.subscribe(() => {
+    if (cancelled) return;
+    stop();
+    void list.scrollToOffset({ offset: viewport.scrollNode.scrollTop, animated: false });
+    onPositioned(listIdentityKey);
+  });
+  returnToLiveFollow({
+    list,
+    composerInset,
+    promptId,
+    cancelled: () => cancelled,
+    nextFrame: (step) => {
+      frame = requestAnimationFrame(step);
+    },
+    done: () => {
       if (cancelled) return;
-      cancelled = true;
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      // Supersede any pending estimated-index scroll before the browser applies the gesture.
-      if (viewport) void list.scrollToOffset(currentScrollOffset(viewport));
-      setPositionedThreadKey(listIdentityKey);
-    };
-    const cancelForNavigation = () => {
-      cancelRestoration();
-      onManualNavigation();
-    };
-    const onScrollKey = (event: globalThis.KeyboardEvent) => {
-      if (
-        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key) &&
-        !(
-          event.target instanceof Element &&
-          event.target.closest("input, textarea, [contenteditable=true]")
-        )
-      )
-        cancelForNavigation();
-    };
-    viewport?.addEventListener("wheel", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
-    viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
-    const position = rememberedPosition;
-    const index = restoreRowIndex;
-    const targetRowId = rows[index]?.id;
-    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
-    // Placing at the end only ever scrolls down (or clamps at the end). Moving up without
-    // wheel, touch, press or key input (a screen reader moving to a heading) is the reader's.
-    let lastScrollTop = viewport?.scrollTop ?? 0;
-    const onScrollAwayFromEnd = () => {
-      if (!viewport) return;
-      const top = viewport.scrollTop;
-      const movedUp = top < lastScrollTop - 1;
-      lastScrollTop = top;
-      if (movedUp && viewport.scrollHeight - viewport.clientHeight - top > 1) {
-        cancelForNavigation();
-      }
-    };
-    const cleanup = () => {
-      cancelled = true;
-      if (cancelPositionRestoreRef?.current === cancelRestoration) {
-        cancelPositionRestoreRef.current = null;
-      }
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      viewport?.removeEventListener("wheel", cancelForNavigation);
-      viewport?.removeEventListener("touchmove", cancelForNavigation);
-      viewport?.removeEventListener("pointerdown", cancelForNavigation);
-      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
-      viewport?.removeEventListener("scroll", onScrollAwayFromEnd);
-    };
-    if (positionHistoryLoading || waitingForReadingHistory) return cleanup;
-    // Left while following: back to where the follow is now (chat/liveFollowOffset.ts).
-    const followingPromptId = position?.followingPromptId;
-    if (followingPromptId) {
-      returnToLiveFollow({
-        list,
-        rows,
-        composerInset: contentInsetEndAdjustment,
-        promptId: followingPromptId,
-        cancelled: () => cancelled,
-        nextFrame: (step) => {
-          settleFrame = requestAnimationFrame(step);
-        },
-        done: () => {
-          setPositionedThreadKey(listIdentityKey);
-          // The follow carries on from here while the prompt's run still works.
-          onResumeFollow?.(followingPromptId);
-        },
-      });
-      return cleanup;
+      stop();
+      onPositioned(listIdentityKey);
+      onResumed();
+    },
+  });
+  return stop;
+}
+
+/**
+ * While an opening settles at the end, it only ever scrolls down (or clamps at the end). Moving
+ * up away from the end without wheel, touch, press or key input, as a screen reader moving to a
+ * heading does, is the reader's own navigation. Returns the stop.
+ */
+export function watchReaderLeavingEnd(viewport: TimelineViewport): () => void {
+  const node = viewport.scrollNode;
+  let lastScrollTop = node.scrollTop;
+  const onScroll = () => {
+    const top = node.scrollTop;
+    const movedUp = top < lastScrollTop - 1;
+    lastScrollTop = top;
+    if (movedUp && node.scrollHeight - node.clientHeight - top > 1) {
+      viewport.navigate({ releasesFollow: true });
     }
-    if (!position || index < 0) {
-      viewport?.addEventListener("scroll", onScrollAwayFromEnd, { passive: true });
-    }
-    const scrolling =
-      position && index >= 0
-        ? list.scrollToIndex({
-            index,
-            animated: false,
-            viewPosition: 0,
-            viewOffset: -restoreOffset,
-          })
-        : list.scrollToEnd({ animated: false });
-    void Promise.resolve(scrolling).then(() => {
-      if (cancelled) return;
-      if (!position || index < 0) {
-        // Rows measure after the first jump; keep the end in view until the
-        // list height holds for two frames, so a fresh open lands at the end.
-        let stableEndFrames = 0;
-        let remainingEndFrames = 60;
-        const settleAtEnd = () => {
-          if (cancelled) return;
-          const element = list.getScrollableNode();
-          if (element) remainingEndFrames -= 1;
-          if (!element || remainingEndFrames <= 0) {
-            // Gave up: the list never held still (see settledListThreadKey).
-            setAbandonedPositionKey(listIdentityKey);
-            setPositionedThreadKey(listIdentityKey);
-            return;
-          }
-          if (element.scrollHeight - element.clientHeight - element.scrollTop > 1) {
-            stableEndFrames = 0;
-            void Promise.resolve(list.scrollToEnd({ animated: false })).then(() => {
-              if (!cancelled) settleFrame = requestAnimationFrame(settleAtEnd);
-            });
-            return;
-          }
-          stableEndFrames += 1;
-          if (stableEndFrames >= 2) setPositionedThreadKey(listIdentityKey);
-          else settleFrame = requestAnimationFrame(settleAtEnd);
-        };
-        settleFrame = requestAnimationFrame(settleAtEnd);
-        return;
-      }
-      // Index scrolling starts from estimates. Keep the saved row mounted
-      // until its measured position and the DOM agree for two layout frames.
-      let stableFrames = 0;
-      let remainingFrames = 60;
-      const reconcile = () => {
-        if (cancelled) return;
-        remainingFrames -= 1;
-        if (remainingFrames <= 0) {
-          // Gave up: the list never held still (see settledListThreadKey).
-          setAbandonedPositionKey(listIdentityKey);
-          setPositionedThreadKey(listIdentityKey);
-          return;
-        }
-        const state = list.getState();
-        const rowIndex = targetRowId === undefined ? undefined : state.indexByKey(targetRowId);
-        const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
-        const element = list.getScrollableNode();
-        if (!row || !element) {
-          settleFrame = requestAnimationFrame(reconcile);
-          return;
-        }
-        const offset = Math.max(
-          0,
-          Math.min(
-            element.scrollTop +
-              row.getBoundingClientRect().top -
-              element.getBoundingClientRect().top +
-              restoreOffset,
-            element.scrollHeight - element.clientHeight,
-          ),
-        );
-        if (Math.abs(element.scrollTop - offset) > 1) {
-          stableFrames = 0;
-          void list.scrollToOffset({ offset, animated: false }).then(() => {
-            if (!cancelled) settleFrame = requestAnimationFrame(reconcile);
-          });
-          return;
-        }
-        stableFrames += 1;
-        if (stableFrames >= 2) {
-          setPositionedThreadKey(listIdentityKey);
-        } else {
-          settleFrame = requestAnimationFrame(reconcile);
-        }
-      };
-      settleFrame = requestAnimationFrame(reconcile);
-    });
-    return cleanup;
-  }, [
-    citationRequest,
-    anchorMessageId,
-    cancelPositionRestoreRef,
-    listIdentityKey,
-    listRef,
-    onManualNavigation,
-    rememberedPosition,
-    restoringThreadPosition,
-    rows,
-    restoreRowIndex,
-    restoreOffset,
-    waitingForReadingHistory,
-    positionHistoryLoading,
-    readingListLoaded,
-    contentInsetEndAdjustment,
-    onResumeFollow,
-    setPositionedThreadKey,
-    setAbandonedPositionKey,
-  ]);
+  };
+  node.addEventListener("scroll", onScroll, { passive: true });
+  return () => node.removeEventListener("scroll", onScroll);
 }

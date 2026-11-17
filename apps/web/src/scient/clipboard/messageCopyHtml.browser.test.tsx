@@ -122,7 +122,6 @@ function timelineProps() {
     contentInsetEndAdjustment: 0,
     liveFollowEnabled: true,
     onIsAtEndChange: () => {},
-    onManualNavigation: () => {},
   };
 }
 
