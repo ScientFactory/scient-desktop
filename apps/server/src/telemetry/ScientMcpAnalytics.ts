@@ -149,6 +149,62 @@ const CLASS_OWNERS: Readonly<Record<string, FailureOwner>> = {
   stale_ref: "input",
   bad_locator: "input",
   bad_selector: "input",
+  // Scient installs this browser itself; a call that gives up while it installs is Scient's to wait out.
+  preview_browser_installing: "scient",
+  // The caller's own script threw on the page (the browser reported its exception).
+  script_exception: "code",
+  // A message to a thread that cannot take one: archived, or no run to steer.
+  thread_archived: "input",
+  no_steerable_run: "input",
+  // Scient could not read its own thread projections, or a task command left no task behind.
+  projection_load_failed: "scient",
+  task_projection_missing: "scient",
+  // "unavailable" can be the browser or the Accounts store; neither is proven here.
+  accounts_unavailable: "unknown",
+};
+
+const notedClasses = new WeakMap<object, string>();
+
+/**
+ * Marks a broad failure built from a more specific cause with that cause's closed class, for the
+ * failure note to read. `failureClass` must be a fixed label, never text from the cause.
+ */
+export function withFailureClass<E extends object>(error: E, failureClass: string): E {
+  notedClasses.set(error, closedErrorCode(failureClass));
+  return error;
+}
+
+/**
+ * A browser host's execution failure says it was the page script's own exception only through
+ * this fixed detail; any other remote failure keeps its unowned class.
+ */
+export function withRemoteFailureClass<E extends object>(
+  error: E,
+  remote: { readonly _tag: string; readonly detail?: unknown },
+): E {
+  const detail = remote.detail;
+  return remote._tag === "PreviewAutomationExecutionError" &&
+    typeof detail === "object" &&
+    detail !== null &&
+    (detail as { readonly failureClass?: unknown }).failureClass === "script_exception"
+    ? withFailureClass(error, "script_exception")
+    : error;
+}
+
+/** An Accounts error without its own class says only its broad reason. */
+function accountsFailureClass(error: unknown): string | undefined {
+  if (stringOf(error, "_tag") !== "AccountsError") return undefined;
+  const reason = stringOf(error, "reason");
+  return reason === undefined ? undefined : `accounts_${closedErrorCode(reason)}`;
+}
+
+/** Codes whose owner is exact, whatever a generic pattern would say. */
+const CODE_OWNERS: Readonly<Record<string, FailureOwner>> = {
+  // Watching a pull request that already merged, or naming one without a host to find it on.
+  pull_request_not_open: "input",
+  pull_request_host_required: "input",
+  // A script result larger than the cap; the caller can ask for less.
+  result_too_large: "input",
 };
 
 export const noteToolFailure = Effect.fn("ScientMcpAnalytics.noteToolFailure")(function* (
@@ -157,7 +213,11 @@ export const noteToolFailure = Effect.fn("ScientMcpAnalytics.noteToolFailure")(f
   const note = yield* ToolFailureNote;
   if (note === undefined) return;
   const tag = stringOf(error, "code") ?? stringOf(error, "_tag");
-  const failureClass = stringOf(error, "failureClass") ?? browserFailureClass(error);
+  const failureClass =
+    stringOf(error, "failureClass") ??
+    (typeof error === "object" && error !== null ? notedClasses.get(error) : undefined) ??
+    browserFailureClass(error) ??
+    accountsFailureClass(error);
   if (tag !== undefined) note.tag = tag;
   if (failureClass !== undefined) note.failureClass = failureClass;
   const pendingStage = browserPendingStage(error);
@@ -213,7 +273,8 @@ export function scientToolOutcome(
 }
 
 function toolFailureOwner(errorCode: string, failureClass: string | undefined): string {
-  const owned = failureClass === undefined ? undefined : CLASS_OWNERS[failureClass];
+  const owned =
+    (failureClass === undefined ? undefined : CLASS_OWNERS[failureClass]) ?? CODE_OWNERS[errorCode];
   if (owned !== undefined) return owned;
   const fromCode = toolFailureAttribution(errorCode).failureOwner;
   return fromCode === "unknown" && failureClass !== undefined

@@ -729,12 +729,27 @@ A run that never reached the kernel, an app restart or a broken bridge connectio
 runtime that exits mid-run stays `unknown`. Error names and messages never leave the computer.
 A tool call that ends with no result is `exception` and Scient's, except arguments the tool refused
 (`invalid_params`, `input`) and a cancelled call (`interrupted`, `cancelled`).
+A broad tool failure built from a more specific cause keeps that cause as a fixed `failureClass`
+([`ScientMcpAnalytics.ts`](../../apps/server/src/telemetry/ScientMcpAnalytics.ts)
+`withFailureClass`), and the class decides the owner: an archived thread or one with no run to
+steer is `input`; Scient's own projection reads failing, or a delegation command that left no task,
+is `scient`. A browser `execution` failure is `code` only when the page reported the script's own
+exception (`script_exception`); any other execution failure stays `unknown`, since a broken browser
+call shares the tag. An Accounts failure without a connector's own class reports its reason
+(`accounts_invalid_input`, `accounts_denied`, …), and `accounts_unavailable` stays `unknown`.
+Exact codes: a merged or hostless pull request and an oversized script result are `input`; a
+preview that gave up while Scient's browser was still installing is `scient`. Older builds keep
+their earlier owners, so compare owners by `appVersion`.
 Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`, `selection`,
 `cell`, `run-file`) and `runtimeSource`.
 
 ## Why a turn or delegated task failed
 
-`provider.turn.failed` keeps `failureClass` and adds the cause a provider gave, when it gave one:
+`provider.turn.failed` keeps `failureClass` and adds the cause a provider gave, when it gave one.
+A Scient Agent turn whose code is `usage-limit` reports `usage_limit` even when the agent's own
+classifier said `provider_error` (it keys on cost caps and HTTP 429); only the report changes, not
+recovery. Claude's `usage_limit` with `compaction_failed` is a failed compaction under a rate limit,
+and holds queued work as a usage limit should; break it out by `failureCode` when counting quota.
 
 - `failureCode`: one machine reason. Scient Agent reports its error classifier's kinds in
   `prompt_result.error.kinds` (scient-agent `SA-FAILURE-KIND`), and

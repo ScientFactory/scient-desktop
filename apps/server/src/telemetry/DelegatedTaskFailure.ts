@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 
 import { delegatedTaskResultRun } from "../orchestration-v2/RestartBackgroundNote.ts";
 import type { OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
-import { analyticsFailureCode } from "@scientfactory/analytics";
+import { analyticsFailureClass, analyticsFailureCode } from "@scientfactory/analytics";
 
 export interface DelegatedTaskFailure {
   /**
@@ -63,7 +63,9 @@ export const delegatedTaskFailure = Effect.fn("DelegatedTaskFailure.summarize")(
   const failureCode = analyticsFailureCode(task.driver, failure?.code ?? null);
   return {
     failurePhase: started ? "provider" : "before_provider",
-    ...(failure === null ? {} : { failureClass: failure.class }),
+    ...(failure === null
+      ? {}
+      : { failureClass: analyticsFailureClass(task.driver, failure.class, failureCode) }),
     ...(failureCode === undefined ? {} : { failureCode }),
     ...(failure?.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }),
   } satisfies DelegatedTaskFailure;

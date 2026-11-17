@@ -1150,6 +1150,8 @@ export const evaluate = async (
     throw new ServerBrowserOperationError({
       tag: "PreviewAutomationExecutionError",
       message: result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+      // SCIENT-FORK: the page reported the script's own exception, a fact analytics keep.
+      detail: { failureClass: "script_exception" },
     });
   }
   const value =
