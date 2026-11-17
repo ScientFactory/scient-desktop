@@ -317,11 +317,13 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingMigrations();
+  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const previewMigrations =
     // Only worth attempting once the caller intends to migrate past the
     // orchestration schema. 59 is T3's migration 55 at Scient's next free id.
-    toMigrationInclusive === undefined || toMigrationInclusive >= 59
+    // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
+    hasPending && (toMigrationInclusive === undefined || toMigrationInclusive >= 59)
       ? yield* reconcileV2PreviewMigration()
       : [];
   // After the preview lift, so a repaired ledger is judged as this build sees it.

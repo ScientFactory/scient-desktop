@@ -110,7 +110,7 @@ function lifecycleEvent(
   if (!next) return null;
   const sameOperation = previous?.key === next.key;
   if (sameOperation && previous.outcome !== null) return null;
-  // A terminal snapshot without an observed start may predate consent or this
+  // A terminal snapshot without an observed start may predate this
   // server session. Never replay it as a new completed operation.
   if (!sameOperation && next.outcome !== null) return null;
   if (sameOperation && next.outcome === null) return null;

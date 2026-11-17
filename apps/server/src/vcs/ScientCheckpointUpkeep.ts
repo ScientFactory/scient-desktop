@@ -1,8 +1,7 @@
 /**
- * The automatic maintenance checkpoint publication no longer triggers, run by the server instead:
- * Git's own `maintenance run --auto --task=gc` (its lock, thresholds and cruft expiry), in the
- * foreground, one repository at a time, after a quiet period, at most once per interval, stopped
- * with the server. A repository that turned automatic maintenance off is left alone.
+ * Checkpoint capture never runs Git's automatic maintenance, so the server runs Git's own
+ * `maintenance run --auto --task=gc` in the foreground, one repository at a time, after a quiet
+ * period, at most once per interval. A repository with automatic maintenance off is left alone.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -13,7 +12,23 @@ import * as Option from "effect/Option";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { ResourceRecord } from "../scient/observability/ResourceRecord.ts";
-import { CHECKPOINT_PACK_MEMORY_CONFIG, checkpointCleanGitEnv } from "./ScientCheckpointCapture.ts";
+
+/**
+ * One pack thread and a bounded delta window, so repacking large checkpoint files does not need
+ * Git's per-thread delta memory. They reduce memory use; they are not a hard ceiling.
+ */
+const PACK_MEMORY_CONFIG = ["-c", "pack.threads=1", "-c", "pack.windowMemory=256m"] as const;
+
+/** Upkeep runs outside VcsProcess, so it must not inherit a caller's repository either. */
+const cleanGitEnv = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  GIT_DIR: undefined,
+  GIT_WORK_TREE: undefined,
+  GIT_COMMON_DIR: undefined,
+  GIT_INDEX_FILE: undefined,
+  GIT_OBJECT_DIRECTORY: undefined,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+});
 
 /** Wait this long after a repository's latest checkpoint, so a busy session runs upkeep once. */
 export const UPKEEP_QUIET_PERIOD = Duration.minutes(2);
@@ -25,7 +40,7 @@ export const UPKEEP_FAILURE_BACKOFF = Duration.hours(6);
 export const UPKEEP_TICK = Duration.seconds(30);
 /** A larger repository may repack for a long time; stop it rather than hold it forever. */
 const UPKEEP_TIMEOUT = Duration.minutes(30);
-/** Git's default expiry, the shortest this upkeep prunes with: a capture's borrowed objects survive. */
+/** Git's default expiry, the shortest this upkeep prunes with: objects a running capture reuses survive. */
 const SAFE_PRUNE_EXPIRE = "2.weeks.ago";
 const SAFE_PRUNE_EXPIRE_SECONDS = 14 * 24 * 60 * 60;
 
@@ -62,7 +77,7 @@ export function upkeepGitArgs(gitCommonDir: string, policy: UpkeepPolicy): Reado
     "maintenance.autoDetach=false",
     "-c",
     "gc.autoDetach=false",
-    ...CHECKPOINT_PACK_MEMORY_CONFIG,
+    ...PACK_MEMORY_CONFIG,
     ...(policy.prunesTooSoon ? ["-c", `gc.pruneExpire=${SAFE_PRUNE_EXPIRE}`] : []),
     "--git-dir",
     gitCommonDir,
@@ -77,7 +92,7 @@ export function upkeepGitArgs(gitCommonDir: string, policy: UpkeepPolicy): Reado
 export class CheckpointUpkeep extends Context.Service<
   CheckpointUpkeep,
   {
-    /** Note a checkpoint published into the repository whose common Git directory this is. */
+    /** Note a checkpoint captured into the repository whose common Git directory this is. */
     readonly request: (gitCommonDir: string) => Effect.Effect<void>;
   }
 >()("t3/vcs/ScientCheckpointUpkeep/CheckpointUpkeep") {}
@@ -98,7 +113,7 @@ export const make = Effect.gen(function* () {
         command: "git",
         args,
         cwd,
-        env: checkpointCleanGitEnv(),
+        env: cleanGitEnv(),
         timeout,
         maxOutputBytes: 64 * 1024,
         outputMode: "truncate",

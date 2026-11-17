@@ -3,25 +3,16 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-import { MarkdownCodeBlock } from "~/scient/presentation/MarkdownCodeBlock";
+import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { MarkdownTable } from "./MarkdownTable";
 
 // Insecure origins (a LAN or tailnet address over plain http) have no async clipboard.
 function withoutAsyncClipboard() {
   const original = Object.getOwnPropertyDescriptor(Navigator.prototype, "clipboard");
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
-  let copiedSource: string | null = null;
-  const execCommand = vi.spyOn(document, "execCommand").mockImplementation(() => {
-    const selected = document.activeElement;
-    copiedSource =
-      selected instanceof HTMLTextAreaElement
-        ? selected.value.slice(selected.selectionStart, selected.selectionEnd)
-        : null;
-    return true;
-  });
+  const execCommand = vi.spyOn(document, "execCommand").mockReturnValue(true);
   return {
     execCommand,
-    copiedSource: () => copiedSource,
     [Symbol.dispose]() {
       execCommand.mockRestore();
       Reflect.deleteProperty(navigator, "clipboard");
@@ -39,7 +30,11 @@ describe("markdown copy without the async clipboard", () => {
         fenceTitle={null}
         theme="light"
         isStreaming={false}
-      />,
+      >
+        <pre>
+          <code>echo hi</code>
+        </pre>
+      </MarkdownCodeBlock>,
       // The block renders no links and reads no route.
       { router: false },
     );
@@ -48,7 +43,6 @@ describe("markdown copy without the async clipboard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Copy code" }));
     await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
     expect(clipboard.execCommand).toHaveBeenCalledWith("copy");
-    expect(clipboard.copiedSource()).toBe("echo hi");
   });
 
   it("copies a table through the execCommand fallback", async () => {

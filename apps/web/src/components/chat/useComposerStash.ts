@@ -1,4 +1,3 @@
-import { restoreQueueEditStash } from "../../scient/threadQueue/editSession";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
   type ComposerContextRecord,
@@ -69,13 +68,19 @@ import {
 import { BackgroundThreadContext } from "./backgroundThread";
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
+// SCIENT-FORK: a stash saved by older Scient builds keeps its draft in a journal.
+import {
+  offerLegacyQueueEditJournals,
+  restoreLegacyQueueEditStash,
+} from "../../scient/threadQueue/legacyQueueEditStash";
 
 /**
  * The prompt stash: saving the draft aside, restoring or deleting an entry, the badge pulse,
  * and the stash shortcut. Its state lives here so the composer body only wires it up.
  */
 export function useComposerStash(input: {
-  readonly onStashRecoveredDraft: ChatComposerProps["onStashRecoveredDraft"];
+  // SCIENT-FORK: a queued-message edit keeps its existing attachments outside the draft.
+  readonly isEditingQueuedMessage: boolean;
   readonly environmentId: EnvironmentId;
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
   readonly promptRef: ChatComposerProps["promptRef"];
@@ -131,8 +136,13 @@ export function useComposerStash(input: {
     importContextRecords,
     expandMobileComposer,
   } = input;
-  const { onStashRecoveredDraft } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  // SCIENT-FORK:START — an edit left open by an older Scient build is offered once in Stash.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the retired queue-edit journal once per app session and adds its open drafts to the stash
+  useEffect(() => {
+    void offerLegacyQueueEditJournals().catch(() => {});
+  }, []);
+  // SCIENT-FORK:END
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftReplyTo = useComposerDraftStore((store) => store.setReplyTo);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
@@ -185,15 +195,23 @@ export function useComposerStash(input: {
   });
 
   const restoreStashEntry = async (menuEntry: PromptStashEntry) => {
-    if (menuEntry.queueEditKey) {
+    // SCIENT-FORK:START — a stash saved by older Scient builds keeps its draft in a journal.
+    if (menuEntry.queueEditKey !== undefined) {
       try {
-        await restoreQueueEditStash(menuEntry, composerDraftTarget, environmentId);
+        await restoreLegacyQueueEditStash(
+          { ...menuEntry, queueEditKey: menuEntry.queueEditKey },
+          composerDraftTarget,
+        );
         setIsStashMenuOpen(false);
       } catch (cause) {
-        toastManager.add({ type: "error", title: String(cause) });
+        toastManager.add({
+          type: "error",
+          title: cause instanceof Error ? cause.message : String(cause),
+        });
       }
       return;
     }
+    // SCIENT-FORK:END
     const filesToVerify = menuEntry.files ?? [];
     if (filesToVerify.some((file) => file.environmentId !== environmentId)) {
       toastManager.add({
@@ -488,6 +506,17 @@ export function useComposerStash(input: {
   const deleteStashEntryStable = useStableCallback(deleteStashEntry);
 
   const stashCurrentPrompt = async () => {
+    // SCIENT-FORK:START — a stash holds only the draft, so it would drop the queued message's
+    // existing attachments.
+    if (input.isEditingQueuedMessage) {
+      toastManager.add({
+        type: "info",
+        title: "Save or cancel the queued message first.",
+        description: "A queued message being edited can't be stashed.",
+      });
+      return;
+    }
+    // SCIENT-FORK:END
     // Stashing clears the draft. A pasted attachment still downloading would then land in the
     // emptied composer instead of travelling with the entry it belongs to.
     if (pendingDraftWork.has(attachmentTargetKey)) {
@@ -496,14 +525,6 @@ export function useComposerStash(input: {
         title: "Still bringing attached context into this message.",
         description: "Stash again once its chip resolves.",
       });
-      return;
-    }
-    if (onStashRecoveredDraft) {
-      try {
-        await onStashRecoveredDraft();
-      } catch (cause) {
-        toastManager.add({ type: "error", title: String(cause) });
-      }
       return;
     }
     const replyTo = getComposerDraft(composerDraftTarget)?.replyTo;

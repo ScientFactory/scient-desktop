@@ -2305,6 +2305,7 @@ export const layerWsRpc = (
           if (
             input.resource._tag === "attachment" ||
             input.resource._tag === "native-app-icon" ||
+            input.resource._tag === "environment-theme-background" ||
             input.resource._tag === "tool-output-image" ||
             input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
           ) {
@@ -2688,6 +2689,13 @@ export const layerWsRpc = (
                         cause,
                       }),
                     ThreadLaunchBaseRefError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
+                    ThreadLaunchBranchExistsError: (cause) =>
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
                         projectId: input.projectId,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { consentAllows, normalizeInheritedEvent } from "./contract.ts";
+import { normalizeInheritedEvent } from "./contract.ts";
 import { eventContractViolation } from "./wireContract.ts";
 
 const context = { appVersion: "0.6.27", buildChannel: "stable" } as const;
@@ -146,7 +146,6 @@ describe("capture and voice outcome metadata", () => {
         context,
       )!;
       expect(event.privacyLevel).toBe("essential");
-      expect(consentAllows("essential", event.privacyLevel)).toBe(true);
     }
     const cancelled = normalizeInheritedEvent(
       "voice.transcription.cancelled",
@@ -154,7 +153,6 @@ describe("capture and voice outcome metadata", () => {
       context,
     )!;
     expect(cancelled.properties.stage).toBe("correcting");
-    expect(consentAllows("essential", cancelled.privacyLevel)).toBe(false);
-    expect(consentAllows("off", cancelled.privacyLevel)).toBe(false);
+    expect(cancelled.privacyLevel).not.toBe("essential");
   });
 });

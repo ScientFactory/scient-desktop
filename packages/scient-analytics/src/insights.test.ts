@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { normalizeInheritedEvent, consentAllows, modelKey } from "./contract.ts";
+import { normalizeInheritedEvent, modelKey } from "./contract.ts";
 import { eventContractViolation } from "./wireContract.ts";
 
 const context = { appVersion: "0.6.10", buildChannel: "stable" } as const;
@@ -30,10 +30,7 @@ describe("product insight contract", () => {
       );
       expect(JSON.stringify(event)).not.toContain("PRIVATE");
       expect(eventContractViolation({ ...event, consentLevel: event.privacyLevel })).toBeNull();
-      expect(consentAllows("off", event.privacyLevel)).toBe(false);
-      expect(consentAllows("essential", event.privacyLevel)).toBe(
-        name === "scient.operation.failed",
-      );
+      expect(event.privacyLevel === "essential").toBe(name === "scient.operation.failed");
     }
   });
   it("folds public namespaces and Antigravity variants into one model key", () => {
@@ -79,7 +76,7 @@ describe("product insight contract", () => {
         consentLevel: "product",
       }),
     ).toBeNull();
-    expect(consentAllows("essential", event.privacyLevel)).toBe(false);
+    expect(event.privacyLevel).not.toBe("essential");
     expect(JSON.stringify(event)).not.toContain("PRIVATE");
   });
   it("rejects invalid usage and private model labels while naming the mixed-turn primary model", () => {

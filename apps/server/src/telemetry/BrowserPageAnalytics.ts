@@ -18,6 +18,7 @@ import * as PubSub from "effect/PubSub";
 
 import { PreviewManager } from "../preview/Manager.ts";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { browserSite } from "./BrowserSite.ts";
 
 const MAX_TRACKED_TABS = 500;
@@ -173,7 +174,7 @@ export function createBrowserPageMapper() {
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService;
-    if (!(yield* analytics.status).available) return;
+    if (!(yield* ScientAnalyticsAvailability).available) return;
     const manager = yield* PreviewManager;
     const mapper = createBrowserPageMapper();
     const events = yield* manager.subscribeEvents;

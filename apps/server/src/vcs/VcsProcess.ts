@@ -33,8 +33,7 @@ export interface VcsProcessInput {
   readonly spawnCwd?: string;
   readonly stdin?: string;
   readonly onStdoutChunk?: (chunk: Uint8Array) => void;
-  // SCIENT-FORK:START — binary stdin and an awaited stdout consumer for checkpoint capture.
-  readonly stdinBytes?: Uint8Array;
+  // SCIENT-FORK:START — an awaited stdout consumer for checkpoint capture.
   readonly onStdoutChunkEffect?: ProcessRunner.ProcessRunInput["onStdoutChunkEffect"];
   // SCIENT-FORK:END
   readonly onSpawn?: () => void;
@@ -237,8 +236,7 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
-        // SCIENT-FORK:START — binary stdin and an awaited stdout consumer.
-        ...(input.stdinBytes !== undefined ? { stdinBytes: input.stdinBytes } : {}),
+        // SCIENT-FORK:START — an awaited stdout consumer.
         ...(input.onStdoutChunkEffect !== undefined
           ? { onStdoutChunkEffect: input.onStdoutChunkEffect }
           : {}),

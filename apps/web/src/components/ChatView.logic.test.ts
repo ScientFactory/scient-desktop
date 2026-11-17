@@ -1336,6 +1336,7 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
           element(tagName, {
             within: '[contenteditable="true"]',
           }),
+          null,
         ),
       ).toBe(false);
     },

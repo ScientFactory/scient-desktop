@@ -17,12 +17,12 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import type { ScientRpcServerTestHarness } from "../../server.test.ts";
+import type { ScientRpcServerTestHarness } from "../../server.testkit.ts";
 import { deriveServerPaths } from "../../config.ts";
 
 const encodeRuntimeSettings = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
-// Registered by server.test.ts so these cases exercise the same T3 server seam.
+// Registered by server.workspace.test.ts so these cases exercise the same T3 server seam.
 export const registerAnalysisRpcTests = (
   it: Vitest.MethodsNonLive<
     | NodeServices.NodeServices

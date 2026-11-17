@@ -398,7 +398,7 @@ it.live.each(
         observeResume = true;
         yield* Effect.onExit(
           orchestrator.dispatch({
-            type: "queue.resume",
+            type: "queued-run.start",
             threadId,
             runId: queued.id,
             commandId: CommandId.make("history-failure-resume"),
@@ -653,7 +653,7 @@ it.live.each(
         yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = ${history.payload_json}
         WHERE thread_id = ${threadId} AND turn_item_id = ${history.turn_item_id}`;
         yield* orchestrator.dispatch({
-          type: "queue.resume",
+          type: "queued-run.start",
           threadId,
           runId: queued.id,
           commandId: CommandId.make("history-failure-repaired-resume"),

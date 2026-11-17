@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 
-import type { ThreadId, ScientThreadQueueControlRequest } from "@t3tools/contracts";
+import type { ThreadId } from "@t3tools/contracts";
 
 import type { PreparedConnection } from "../connection/model.ts";
 
@@ -40,30 +40,6 @@ export const listEnvironmentScientThreadQueue = Effect.fn(
           threadId: input.threadId,
           ...(input.knownRevision !== undefined ? { knownRevision: input.knownRevision } : {}),
         },
-      }),
-  });
-});
-
-export const controlEnvironmentScientThreadQueue = Effect.fn(
-  "clientRuntime.state.controlScientThreadQueue",
-)(function* (input: {
-  readonly prepared: PreparedConnection;
-  readonly payload: ScientThreadQueueControlRequest;
-}) {
-  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
-    prepared: input.prepared,
-    signer,
-    remoteAuthorization,
-    method: "POST",
-    url: (urls) => urls.control(),
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    group: "scientThreadQueue",
-    request: ({ client, headers }) =>
-      client.control({
-        headers,
-        payload: input.payload,
       }),
   });
 });

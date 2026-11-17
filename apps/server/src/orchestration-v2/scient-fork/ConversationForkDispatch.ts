@@ -153,7 +153,7 @@ export const dispatchConversationFork = Effect.fn("ConversationForkDispatch.disp
   deps: {
     readonly conversationForks: ConversationForkService["Service"];
     readonly threadForkService: ThreadForkServiceV2Shape;
-    readonly projectionStore: Pick<ProjectionStoreV2Shape, "getThread" | "getThreadProjection">;
+    readonly projectionStore: Pick<ProjectionStoreV2Shape, "findThread" | "getThreadProjection">;
     readonly allocateTransferId: Effect.Effect<ContextTransferId, OrchestratorDispatchError>;
     readonly mapDispatchError: MapDispatchError;
     readonly emit: Emit;
@@ -193,13 +193,9 @@ export const dispatchConversationFork = Effect.fn("ConversationForkDispatch.disp
   const { conversationForks, mapDispatchError, projectionStore } = deps;
   // Accepted retries replay their receipt before dispatch; a fresh fork never
   // resurrects a tombstone or replaces another conversation.
-  const destinationExists = yield* projectionStore
-    .getThread(command.targetThreadId)
-    .pipe(
-      Effect.as(true),
-      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(false) }),
-      mapDispatchError(command),
-    );
+  const destinationExists =
+    (yield* projectionStore.findThread(command.targetThreadId).pipe(mapDispatchError(command))) !==
+    null;
   if (destinationExists)
     return yield* deps.reject("The destination already exists. Choose a new fork identity.");
   const capture = yield* RunningForkCapture;

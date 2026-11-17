@@ -1227,22 +1227,13 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
   input: ResumeThreadQueueInput,
 ) {
-  // SCIENT-FORK:START — equal protocol versions do not imply support for a new command tag.
-  let startSelectedRun = false;
-  if (input.runId !== undefined) {
-    const { capabilities } = (yield* getInitialServerConfig()).environment;
-    // Only legacy Scient advertises the queue.resume(runId) form; upstream v2 uses the new tag.
-    startSelectedRun = capabilities.queuedRunStart ?? capabilities.threadQueueExplicitSend !== true;
-  }
   return yield* dispatch({
-    ...(input.runId !== undefined && startSelectedRun
-      ? { type: "queued-run.start" as const, runId: input.runId }
-      : { type: "queue.resume" as const }),
+    ...(input.runId === undefined
+      ? { type: "queue.resume" as const }
+      : { type: "queued-run.start" as const, runId: input.runId }),
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
-    ...(input.runId === undefined ? {} : { runId: input.runId }),
   });
-  // SCIENT-FORK:END
 });
 
 export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (

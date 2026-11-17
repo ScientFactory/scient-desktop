@@ -7,7 +7,6 @@ import type {
 } from "@t3tools/contracts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -16,6 +15,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { ScientAnalyticsAvailability } from "./ScientAnalytics.ts";
 import { analyticsRunRef } from "./AnalyticsRunRef.ts";
 import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics.ts";
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
@@ -253,7 +253,7 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
       const browser = browserCalls?.take(entry.threadId, DateTime.toEpochMillis(entry.occurredAt));
       const correlation = runs.get(key);
       runs.delete(key);
-      // A historical/consent-boundary terminal is not evidence of an observed provider turn.
+      // A historical terminal is not evidence of an observed provider turn.
       if (correlation === undefined) return [];
       // A run that never started only matters when it failed: stopping a queued run is not a turn.
       if (correlation.startedAt === null && run.status !== "failed") return [];
@@ -440,99 +440,61 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
   return { event, clear };
 }
 
-/** Native event and lifecycle observers share one consent and deletion fence. */
+/** Native event and lifecycle observers share one availability gate. */
 export const makeV2AnalyticsObservers = Effect.gen(function* () {
   const analytics = yield* AnalyticsService;
   const mapper = createV2AnalyticsEventMapper(yield* BrowserToolCalls);
   const lifecycle = createProviderLifecycleAnalyticsMapper();
   const accounts = createProviderAccountAnalyticsMapper();
-  let epoch = yield* analytics.collectionEpoch;
-  const enabled = Effect.gen(function* () {
-    const next = yield* analytics.collectionEpoch;
-    const status = yield* analytics.status;
-    if (next !== epoch || !status.available || status.consent === "off") {
+  const availability = yield* ScientAnalyticsAvailability;
+  const enabled = Effect.sync(() => {
+    const { available } = availability;
+    if (!available) {
       mapper.clear();
       lifecycle.clear();
       accounts.clear();
-      epoch = next;
     }
-    return status.available && status.consent !== "off";
+    return available;
   });
-  const record = (observations: ReadonlyArray<Observation>, recordingEpoch: number) =>
-    Effect.forEach(
-      observations,
-      (entry) => analytics.record(entry.name, entry.properties, recordingEpoch),
-      {
-        discard: true,
-      },
-    );
+  const record = (observations: ReadonlyArray<Observation>) =>
+    Effect.forEach(observations, (entry) => analytics.record(entry.name, entry.properties), {
+      discard: true,
+    });
   const event = Effect.fn("V2AnalyticsObservers.event")(function* (
     entry: OrchestrationV2DomainEvent,
     context?: EventContext,
-    expectedEpoch?: number,
   ) {
     if (!(yield* enabled)) return;
-    const recordingEpoch = yield* analytics.collectionEpoch;
-    if (expectedEpoch !== undefined && expectedEpoch !== recordingEpoch) return;
-    yield* record(mapper.event(entry, context), recordingEpoch);
+    yield* record(mapper.event(entry, context));
   });
   const providers = Effect.fn("V2AnalyticsObservers.providers")(function* (
     snapshot: ReadonlyArray<ServerProvider>,
   ) {
     if (!(yield* enabled)) return;
-    const recordingEpoch = yield* analytics.collectionEpoch;
-    yield* record(lifecycle.observe(snapshot), recordingEpoch);
-    yield* record(accounts.observe(snapshot), recordingEpoch);
+    yield* record(lifecycle.observe(snapshot));
+    yield* record(accounts.observe(snapshot));
   });
   return { enabled, event, providers };
 });
 
 /** Disabled hosts acquire no observers; only live committed V2 events are observed. */
 export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
-  const analytics = yield* AnalyticsService;
-  if (!(yield* analytics.status).available) return;
-  if (analytics.observeCollectionBoundary === undefined) return;
+  if (!(yield* ScientAnalyticsAvailability).available) return;
   const sink = yield* EventSink.EventSinkV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const providers = yield* ProviderRegistry;
   const instances = yield* ProviderInstanceRegistry;
   const observer = yield* makeV2AnalyticsObservers;
-  let streamEpoch = -1;
-  let afterSequence = Infinity;
-  let boundaryGeneration = 0;
-  const firstCursor = yield* Deferred.make<number>();
-  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-  yield* Effect.acquireRelease(
-    analytics.observeCollectionBoundary(async (epoch, phase) => {
-      const generation = ++boundaryGeneration;
-      // Invalidate immediately, then acquire the new period's cutoff BEFORE
-      // consent/deletion acknowledges. A first fresh event cannot become its
-      // own cutoff, and an older queued tail cannot cross this boundary.
-      streamEpoch = -1;
-      afterSequence = Infinity;
-      // Invalidating must not delay stopping delivery or remote erasure on a
-      // database lookup. Only the ready boundary acquires the next watermark.
-      if (phase === "invalidated") return;
-      const cutoff = await runPromise(
-        sink
-          .latestSequence()
-          .pipe(
-            Effect.tapError(() =>
-              Effect.logWarning(
-                "Analytics collection watermark unavailable; observation remains fenced",
-              ),
-            ),
-          ),
-      );
-      if (!Number.isSafeInteger(cutoff) || cutoff < 0)
-        throw new Error("Invalid analytics watermark");
-      if (generation !== boundaryGeneration) return;
-      afterSequence = cutoff;
-      streamEpoch = epoch;
-      await runPromise(Deferred.succeed(firstCursor, cutoff));
-    }),
-    (unsubscribe) => Effect.sync(unsubscribe),
-  );
+  // Only events committed after the observers start count; earlier ones are history.
+  const cutoff = yield* sink
+    .latestSequence()
+    .pipe(
+      Effect.catch(() =>
+        Effect.logWarning(
+          "Analytics collection watermark unavailable; observation remains fenced",
+        ).pipe(Effect.as(-1)),
+      ),
+    );
   // Each instance's runtime version, so an outcome says which agent build produced it.
   const versions = new Map<string, string>();
   const observeProviders = (snapshot: ReadonlyArray<ServerProvider>) => {
@@ -543,18 +505,11 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
   };
   yield* observeProviders(yield* providers.getProviders);
   yield* providers.streamChanges.pipe(Stream.runForEach(observeProviders), Effect.forkScoped);
-  // The subscription cursor is immutable. Never pass the fail-closed Infinity
-  // sentinel upstream: wait for a successful boundary, including recovery from
-  // an unavailable initial read or a superseded registration.
-  yield* Stream.unwrap(
-    Deferred.await(firstCursor).pipe(
-      Effect.map((cursor) => sink.stream({ afterSequence: cursor })),
-    ),
-  ).pipe(
+  if (!Number.isSafeInteger(cutoff) || cutoff < 0) return;
+  yield* sink.stream({ afterSequence: cutoff }).pipe(
     Stream.runForEach((stored) =>
       Effect.gen(function* () {
-        const expectedEpoch = yield* analytics.collectionEpoch;
-        if (expectedEpoch !== streamEpoch || stored.sequence <= afterSequence) return;
+        if (stored.sequence <= cutoff) return;
         if (!(yield* observer.enabled)) return;
         const entry = stored.event;
         const instanceId =
@@ -576,16 +531,12 @@ export const launchV2AnalyticsEventObservers = Effect.gen(function* () {
                 .getThreadShell(fork.sourceThreadId)
                 .pipe(Effect.orElseSucceed(() => null))
             : null;
-        yield* observer.event(
-          entry,
-          {
-            ...(instance === undefined ? {} : { driver: instance.driverKind }),
-            ...(providerVersion === undefined ? {} : { providerVersion }),
-            ...(origin === null ? {} : { refork: origin.forkLineage != null }),
-            ...(fork === null ? {} : { conversationFork: fork }),
-          },
-          expectedEpoch,
-        );
+        yield* observer.event(entry, {
+          ...(instance === undefined ? {} : { driver: instance.driverKind }),
+          ...(providerVersion === undefined ? {} : { providerVersion }),
+          ...(origin === null ? {} : { refork: origin.forkLineage != null }),
+          ...(fork === null ? {} : { conversationFork: fork }),
+        });
       }).pipe(Effect.ignoreCause({ log: true })),
     ),
     Effect.catchCause((cause) => Effect.logWarning("Native analytics observer stopped", { cause })),

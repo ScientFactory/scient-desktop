@@ -10,8 +10,8 @@ Scient owns `apps/web/src/scient/presentation` and
 settled rich fence and routes it to a Scient-owned renderer. The inherited T3
 host keeps one branch in `ChatMarkdown.tsx`, inside a marked `SCIENT-FORK`
 region of the `pre` renderer; while the message streams, and for unrecognized
-fences, the code goes through Scient's `MarkdownCodeBlock`
-(`scient/presentation/MarkdownCodeBlock.tsx`, a copy of T3's code block). A
+fences, the code goes through T3's `chat/MarkdownCodeBlock.tsx`, given Scient's code-box
+direction through its `dir` prop. A
 static seam test guards this boundary. Markdown file previews already use `ChatMarkdown`, so
 they receive the same behavior without a second integration.
 

@@ -54,6 +54,7 @@ const layerShellEnvironment = (prepared = true) =>
     installIntoProcess: Effect.succeed(prepared),
     awaitDiscovery: Effect.succeed(prepared),
     awaitUserShellDiscovery: Effect.succeed(prepared),
+    discoveryFinished: Effect.succeed(true),
     updates: Stream.empty,
   });
 

@@ -18,11 +18,11 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
+import { AnalyticsService } from "./AnalyticsService.ts";
+import * as ScientAnalytics from "./ScientAnalytics.ts";
 import {
   createV2AnalyticsEventMapper,
   launchV2AnalyticsEventObservers,
@@ -136,152 +136,131 @@ function metadata(update: Partial<OrchestrationV2AppThread>): OrchestrationV2Dom
 }
 function analyticsFixture() {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let status: AnalyticsStatus = { available: true, consent: "product" };
-  let epoch = 0;
-  const listeners = new Set<(epoch: number, phase: "invalidated" | "ready") => Promise<void>>();
-  const advance = async () => {
-    epoch++;
-    await Promise.all(
-      [...listeners].map((listener) => listener(epoch, "invalidated").catch(() => undefined)),
-    );
-    epoch++;
-    await Promise.all(
-      [...listeners].map((listener) => listener(epoch, "ready").catch(() => undefined)),
-    );
-  };
+  const availability = { available: true };
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
-    record: (name, properties, expectedEpoch) =>
+    record: (name, properties) =>
       Effect.sync(() => {
-        if (expectedEpoch !== undefined && expectedEpoch !== epoch) return;
         events.push({ name, properties });
-      }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
-    observeCollectionBoundary: (listener) =>
-      Effect.promise(async () => {
-        listeners.add(listener);
-        await listener(epoch, "ready").catch(() => undefined);
-        return () => listeners.delete(listener);
       }),
     flush: Effect.void,
   });
-  // A consent change or a deletion moves observers across a collection boundary.
-  const setConsent = (consent: AnalyticsStatus["consent"]) =>
-    Effect.promise(async () => {
-      status = { ...status, consent };
-      await advance();
+  const setAvailable = (next: boolean) =>
+    Effect.sync(() => {
+      availability.available = next;
     });
-  const deleteData = Effect.promise(advance);
-  return { service, events, setConsent, deleteData };
+  return { service, availability, events, setAvailable };
 }
 
 describe("native V2 analytics", () => {
-  it.effect.each(["failed", "superseded"] as const)(
-    "recovers from %s registration without capturing an invalid subscription cursor",
-    (mode) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = analyticsFixture();
-          const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
-          const initialEntered = yield* Deferred.make<void>();
-          const releaseInitial = yield* Deferred.make<void>();
-          const boundaryEntered = yield* Deferred.make<void>();
-          const releaseBoundary = yield* Deferred.make<void>();
-          const subscribed = yield* Deferred.make<void>();
-          const recorded = yield* Deferred.make<void>();
-          let latest = 0;
-          let reads = 0;
-          let subscriptionAfter: number | undefined;
-          const launch = yield* launchV2AnalyticsEventObservers.pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                Layer.succeed(AnalyticsService, {
-                  ...fixture.service,
-                  record: (name, properties, epoch) =>
-                    fixture.service
-                      .record(name, properties, epoch)
-                      .pipe(Effect.andThen(Deferred.succeed(recorded, undefined))),
-                }),
-                Layer.mock(EventSinkV2)({
-                  latestSequence: () =>
-                    Effect.gen(function* () {
-                      const read = ++reads;
-                      const cutoff = latest;
-                      if (read === 1) {
-                        yield* Deferred.succeed(initialEntered, undefined);
-                        if (mode === "failed")
-                          return yield* new EventSinkStreamError({
-                            cause: "synthetic unavailable sink",
-                          });
-                        yield* Deferred.await(releaseInitial);
-                      } else {
-                        yield* Deferred.succeed(boundaryEntered, undefined);
-                        yield* Deferred.await(releaseBoundary);
-                      }
-                      return cutoff;
-                    }),
-                  stream: (input) =>
-                    Stream.unwrap(
-                      Effect.gen(function* () {
-                        subscriptionAfter = input?.afterSequence;
-                        yield* Deferred.succeed(subscribed, undefined);
-                        // Match the immutable EventSink cursor, not an unconstrained queue.
-                        return Stream.fromQueue(queue).pipe(
-                          Stream.filter((stored) => stored.sequence > (input?.afterSequence ?? 0)),
-                        );
-                      }),
-                    ),
-                }),
-                Layer.mock(ProviderRegistry)({
-                  getProviders: Effect.succeed([]),
-                  streamChanges: Stream.empty,
-                }),
-                Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.undefined,
-                }),
-                Layer.mock(ProjectionStoreV2)({}),
-              ),
-            ),
-            Effect.forkScoped,
-          );
-          yield* Deferred.await(initialEntered);
-          latest = 10;
-          const control = yield* fixture.setConsent("product").pipe(Effect.forkScoped);
-          yield* Deferred.await(boundaryEntered);
-          yield* Deferred.succeed(releaseInitial, undefined);
-          yield* Fiber.join(launch);
-          yield* Deferred.succeed(releaseBoundary, undefined);
-          yield* Fiber.join(control);
-          yield* Deferred.await(subscribed);
-          expect(subscriptionAfter).toBe(10);
-          latest = 11;
-          yield* Queue.offer(queue, {
-            sequence: 11,
-            commandId: null,
-            event: { ...runEvent("running"), type: "run.created" },
-          });
-          yield* Deferred.await(recorded);
-          expect(fixture.events).toMatchObject([{ name: "provider.turn.sent" }]);
-        }),
-      ),
-  );
-  it.effect("counts the very first fresh admission after enabling, without a priming event", () =>
+  it.effect("observes only events committed after the startup watermark", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fixture = analyticsFixture();
-        yield* fixture.setConsent("off");
+        const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+        const recorded = yield* Deferred.make<void>();
+        let subscriptionAfter: number | undefined;
+        yield* launchV2AnalyticsEventObservers.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+              Layer.succeed(AnalyticsService, {
+                ...fixture.service,
+                record: (name, properties) =>
+                  fixture.service
+                    .record(name, properties)
+                    .pipe(Effect.andThen(Deferred.succeed(recorded, undefined))),
+              }),
+              Layer.mock(EventSinkV2)({
+                latestSequence: () => Effect.succeed(10),
+                stream: (input) => {
+                  subscriptionAfter = input?.afterSequence;
+                  return Stream.fromQueue(queue);
+                },
+              }),
+              Layer.mock(ProviderRegistry)({
+                getProviders: Effect.succeed([]),
+                streamChanges: Stream.empty,
+              }),
+              Layer.mock(ProviderInstanceRegistry)({
+                getInstance: () => Effect.undefined,
+              }),
+              Layer.mock(ProjectionStoreV2)({}),
+            ),
+          ),
+        );
+        expect(subscriptionAfter).toBe(10);
+        for (const sequence of [10, 11]) {
+          yield* Queue.offer(queue, {
+            sequence,
+            commandId: null,
+            event: {
+              ...runEvent("running"),
+              type: "run.created",
+              payload: { ...run, id: RunId.make("run:" + sequence) },
+            },
+          });
+        }
+        yield* Deferred.await(recorded);
+        expect(fixture.events).toMatchObject([{ name: "provider.turn.sent" }]);
+        expect(fixture.events).toHaveLength(1);
+      }),
+    ),
+  );
+  it.effect("stays fenced when the startup watermark cannot be read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = analyticsFixture();
+        let subscribed = false;
+        let providersRead = false;
+        yield* launchV2AnalyticsEventObservers.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+              Layer.succeed(AnalyticsService, fixture.service),
+              Layer.mock(EventSinkV2)({
+                latestSequence: () =>
+                  Effect.fail(new EventSinkStreamError({ cause: "synthetic unavailable sink" })),
+                stream: () => {
+                  subscribed = true;
+                  return Stream.empty;
+                },
+              }),
+              Layer.mock(ProviderRegistry)({
+                getProviders: Effect.sync(() => {
+                  providersRead = true;
+                  return [];
+                }),
+                streamChanges: Stream.empty,
+              }),
+              Layer.mock(ProviderInstanceRegistry)({
+                getInstance: () => Effect.undefined,
+              }),
+              Layer.mock(ProjectionStoreV2)({}),
+            ),
+          ),
+        );
+        expect(subscribed).toBe(false);
+        expect(providersRead).toBe(true);
+      }),
+    ),
+  );
+  it.effect("counts the very first fresh admission, without a priming event", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = analyticsFixture();
         const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
         const recorded = yield* Deferred.make<void>();
         let latest = 0;
         yield* launchV2AnalyticsEventObservers.pipe(
           Effect.provide(
             Layer.mergeAll(
+              Layer.succeed(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
               Layer.succeed(AnalyticsService, {
                 ...fixture.service,
-                record: (name, properties, epoch) =>
+                record: (name, properties) =>
                   fixture.service
-                    .record(name, properties, epoch)
+                    .record(name, properties)
                     .pipe(
                       Effect.andThen(
                         Effect.suspend(() =>
@@ -307,7 +286,6 @@ describe("native V2 analytics", () => {
             ),
           ),
         );
-        yield* fixture.setConsent("product");
         for (const sequence of [1, 2]) {
           latest = sequence;
           yield* Queue.offer(queue, {
@@ -331,125 +309,6 @@ describe("native V2 analytics", () => {
         ]);
       }),
     ),
-  );
-  it.effect.each(["consent", "deletion"] as const)(
-    "discards a buffered earlier-period message across %s, through the real observer",
-    (boundary) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = analyticsFixture();
-          const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
-          const entered = yield* Deferred.make<void>();
-          const release = yield* Deferred.make<void>();
-          const fenced = yield* Deferred.make<void>();
-          const recorded = yield* Deferred.make<void>();
-          let latest = 0;
-          let reads = 0;
-          const analytics = AnalyticsService.of({
-            ...fixture.service,
-            record: (name, properties, epoch) =>
-              fixture.service
-                .record(name, properties, epoch)
-                .pipe(
-                  Effect.andThen(
-                    Effect.suspend(() =>
-                      fixture.events.length > 0
-                        ? Deferred.succeed(recorded, undefined)
-                        : Effect.void,
-                    ),
-                  ),
-                ),
-          });
-          yield* launchV2AnalyticsEventObservers.pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                Layer.succeed(AnalyticsService, analytics),
-                Layer.mock(EventSinkV2)({
-                  latestSequence: () =>
-                    Effect.gen(function* () {
-                      reads++;
-                      const cutoff = latest;
-                      if (reads > 1) yield* Deferred.succeed(fenced, undefined);
-                      return cutoff;
-                    }),
-                  stream: () => Stream.fromQueue(queue),
-                }),
-                Layer.mock(ProviderRegistry)({
-                  getProviders: Effect.succeed([]),
-                  streamChanges: Stream.empty,
-                }),
-                Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.undefined,
-                }),
-                Layer.mock(ProjectionStoreV2)({
-                  getConversationFork: () =>
-                    Effect.succeed({
-                      commandId: CommandId.make("private-fork"),
-                      sourceThreadId: threadId,
-                      workspaceMode: "new-worktree" as const,
-                      status: "pending" as const,
-                      cwd: "/private",
-                      checkpointRef: null,
-                      checkpointOid: null,
-                      attachmentCopies: [],
-                      error: null,
-                    }),
-                  getThreadShell: () =>
-                    Deferred.succeed(entered, undefined).pipe(
-                      Effect.andThen(Deferred.await(release)),
-                      Effect.as(null),
-                    ),
-                }),
-              ),
-            ),
-          );
-          latest = 1;
-          yield* Queue.offer(queue, {
-            sequence: 1,
-            commandId: null,
-            event: {
-              ...base,
-              type: "thread.created",
-              payload: thread,
-            },
-          });
-          yield* Deferred.await(entered);
-          if (boundary === "consent") yield* fixture.setConsent("off");
-          latest = 2;
-          yield* Queue.offer(queue, {
-            sequence: 2,
-            commandId: null,
-            event: { ...runEvent("running"), type: "run.created", driver },
-          });
-          if (boundary === "consent") yield* fixture.setConsent("product");
-          else yield* fixture.deleteData;
-          yield* Deferred.succeed(release, undefined);
-          yield* Deferred.await(fenced);
-          latest = 3;
-          yield* Queue.offer(queue, {
-            sequence: 3,
-            commandId: null,
-            event: {
-              ...runEvent("running"),
-              type: "run.created",
-              payload: {
-                ...run,
-                id: RunId.make("private-fresh"),
-                userMessageId: MessageId.make("private-fresh"),
-              },
-              driver: ProviderDriverKind.make("scient"),
-            },
-          });
-          yield* Deferred.await(recorded);
-          expect(fixture.events).toMatchObject([
-            {
-              name: "provider.turn.sent",
-              properties: { provider: "scient" },
-            },
-          ]);
-          expect(fixture.events).toHaveLength(1);
-        }),
-      ),
   );
   it.each(["codex", "claudeAgent", "scient", "omp", "muse", "acpRegistry"])(
     "counts initial, queued and steering %s prompts once without reading content",
@@ -494,7 +353,7 @@ describe("native V2 analytics", () => {
         mapper.event(steerEvent("private-message", "promoted_queued_to_steer"), context),
       ).toEqual([]);
       mapper.clear();
-      // Promotion remains excluded even after an epoch reset and with identical timestamps.
+      // Promotion remains excluded even after the caches clear and with identical timestamps.
       expect(
         mapper.event(steerEvent("private-message", "promoted_queued_to_steer"), context),
       ).toEqual([]);
@@ -528,31 +387,26 @@ describe("native V2 analytics", () => {
       ]);
     }
   });
-  it.effect(
-    "never backfills held Droid re-delivery or legacy unknown admission after privacy boundaries",
-    () => {
-      const fixture = analyticsFixture();
-      return Effect.gen(function* () {
-        const observer = yield* makeV2AnalyticsObservers;
-        const context = { driver: ProviderDriverKind.make("droid") };
-        yield* fixture.setConsent("off");
-        yield* observer.event(steerEvent(), context);
-        yield* fixture.setConsent("product");
-        // Held release may have fresh timestamps and a reconstructed `steer` intent.
-        yield* observer.event(steerEvent("private-steer", "steer", true), context);
-        const unknown = steerEvent("private-unknown");
-        Object.defineProperty(unknown.payload, "inputAlreadyAdmitted", { value: undefined });
-        yield* observer.event(unknown, context);
-        yield* fixture.deleteData;
-        yield* observer.event(steerEvent("private-steer", "steer", true), context);
-        expect(fixture.events).toEqual([]);
-        yield* observer.event(steerEvent("private-fresh-steer"), context);
-        expect(fixture.events).toMatchObject([
-          { name: "provider.turn.sent", properties: { provider: "droid" } },
-        ]);
-      }).pipe(Effect.provideService(AnalyticsService, fixture.service));
-    },
-  );
+  it.effect("never counts held Droid re-delivery or legacy unknown admission", () => {
+    const fixture = analyticsFixture();
+    return Effect.gen(function* () {
+      const observer = yield* makeV2AnalyticsObservers;
+      const context = { driver: ProviderDriverKind.make("droid") };
+      // Held release may have fresh timestamps and a reconstructed `steer` intent.
+      yield* observer.event(steerEvent("private-steer", "steer", true), context);
+      const unknown = steerEvent("private-unknown");
+      Object.defineProperty(unknown.payload, "inputAlreadyAdmitted", { value: undefined });
+      yield* observer.event(unknown, context);
+      expect(fixture.events).toEqual([]);
+      yield* observer.event(steerEvent("private-fresh-steer"), context);
+      expect(fixture.events).toMatchObject([
+        { name: "provider.turn.sent", properties: { provider: "droid" } },
+      ]);
+    }).pipe(
+      Effect.provideService(AnalyticsService, fixture.service),
+      Effect.provideService(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+    );
+  });
   it("ignores restored terminal admissions and progress as new prompts", () => {
     for (const status of [
       "completed",
@@ -571,31 +425,6 @@ describe("native V2 analytics", () => {
     expect(mapper.event(runEvent("completed")).map((event) => event.name)).toEqual([
       "provider.turn.completed",
     ]);
-  });
-  it.effect("does not backfill a submission captured in an earlier collection epoch", () => {
-    const fixture = analyticsFixture();
-    return Effect.gen(function* () {
-      const observer = yield* makeV2AnalyticsObservers;
-      const admission: OrchestrationV2DomainEvent = { ...runEvent("running"), type: "run.created" };
-      yield* fixture.setConsent("off");
-      yield* observer.event(admission);
-      yield* fixture.setConsent("product");
-      yield* observer.event(admission, undefined, 0);
-      expect(fixture.events).toEqual([]);
-      yield* observer.event(
-        {
-          ...admission,
-          payload: {
-            ...run,
-            id: RunId.make("private-new"),
-            userMessageId: MessageId.make("private-new"),
-          },
-        },
-        undefined,
-        yield* fixture.service.collectionEpoch,
-      );
-      expect(fixture.events).toMatchObject([{ name: "provider.turn.sent" }]);
-    }).pipe(Effect.provideService(AnalyticsService, fixture.service));
   });
   it("uses the real driver and reports one observed outcome without private identifiers or transcript", () => {
     const mapper = createV2AnalyticsEventMapper();
@@ -1030,44 +859,35 @@ describe("native V2 analytics", () => {
     ]);
     expect(mapper.event(metadata({}), readyFork)).toEqual([]);
   });
-  it.effect(
-    "clears correlations on consent and data-deletion boundaries before later native outcomes",
-    () => {
-      const fixture = analyticsFixture();
-      return Effect.gen(function* () {
-        const observer = yield* makeV2AnalyticsObservers;
-        yield* observer.event(runEvent("running"));
-        yield* fixture.setConsent("off");
-        yield* fixture.setConsent("product");
-        yield* observer.event(runEvent("completed"));
-        expect(fixture.events).toEqual([]);
-        yield* observer.event({
-          ...runEvent("running"),
-          payload: { ...run, id: RunId.make("second") },
-        });
-        yield* fixture.deleteData;
-        yield* observer.event({
-          ...runEvent("completed"),
-          payload: { ...run, id: RunId.make("second"), status: "completed" },
-        });
-        expect(fixture.events).toEqual([]);
-        yield* observer.event({
-          ...runEvent("running"),
-          payload: { ...run, id: RunId.make("third") },
-        });
-        yield* observer.event({
-          ...runEvent("completed"),
-          payload: { ...run, id: RunId.make("third"), status: "completed" },
-        });
-        expect(fixture.events).toHaveLength(1);
-      }).pipe(Effect.provideService(AnalyticsService, fixture.service));
-    },
-  );
+  it.effect("clears correlations while unavailable before later native outcomes", () => {
+    const fixture = analyticsFixture();
+    return Effect.gen(function* () {
+      const observer = yield* makeV2AnalyticsObservers;
+      yield* observer.event(runEvent("running"));
+      yield* fixture.setAvailable(false);
+      yield* observer.event(runEvent("waiting"));
+      yield* fixture.setAvailable(true);
+      yield* observer.event(runEvent("completed"));
+      expect(fixture.events).toEqual([]);
+      yield* observer.event({
+        ...runEvent("running"),
+        payload: { ...run, id: RunId.make("third") },
+      });
+      yield* observer.event({
+        ...runEvent("completed"),
+        payload: { ...run, id: RunId.make("third"), status: "completed" },
+      });
+      expect(fixture.events).toHaveLength(1);
+    }).pipe(
+      Effect.provideService(AnalyticsService, fixture.service),
+      Effect.provideService(ScientAnalytics.ScientAnalyticsAvailability, fixture.availability),
+    );
+  });
   it.effect("does not acquire provider or orchestration observers when unavailable", () =>
     launchV2AnalyticsEventObservers.pipe(
       Effect.provide(
         Layer.mergeAll(
-          AnalyticsService.layerDisabled,
+          ScientAnalytics.layerDisabled,
           Layer.mock(EventSinkV2)({}),
           Layer.mock(ProjectionStoreV2)({}),
           Layer.mock(ProviderRegistry)({}),

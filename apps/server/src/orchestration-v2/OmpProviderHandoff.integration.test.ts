@@ -405,7 +405,7 @@ for (const target of [ompTarget, scientAgentTarget]) {
         assert.isBelow(firstHeld.ordinal, secondHeld.ordinal);
         const secondSequence = yield* sink.latestSequence({ threadId });
         yield* orchestrator.dispatch({
-          type: "queue.resume",
+          type: "queued-run.start",
           commandId: CommandId.make(`resume:${transition}`),
           threadId,
           runId: firstHeld.id,

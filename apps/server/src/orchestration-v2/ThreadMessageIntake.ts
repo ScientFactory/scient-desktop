@@ -14,6 +14,8 @@ import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { reconcileReservationsBestEffort } from "./AttachmentReservationReconciliation.ts";
 import { rejectThreadCommandDuringClone } from "./scient-fork/ThreadDispatchCloneGuard.ts";
+// SCIENT-FORK: an older Scient client's Send on a held message.
+import { withLegacyQueuedRunStart } from "./scient-fork/QueuedRunSend.ts";
 
 // These failures precede commitCommand; generic dispatch errors can follow commits and remain ambiguous.
 function dispatchWasNotAccepted(
@@ -93,8 +95,10 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
 });
 
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
-  incoming: OrchestrationV2Command,
+  received: OrchestrationV2Command,
 ) {
+  // SCIENT-FORK: an older Scient client's Send on a held message.
+  const incoming = withLegacyQueuedRunStart(received);
   const command =
     incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;

@@ -545,12 +545,12 @@ const withNativeQueue = <A, E, R>(
                               detail: "Synthetic external Git diff failure",
                             });
                           // Park the first real completion capture immediately before
-                          // Git imports its ref, after the actual tree/commit are built.
+                          // Git writes its ref, after the actual tree/commit are built.
                           if (
                             options.holdCheckpointCapture &&
                             !heldCapture &&
                             input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                            input.args.includes("fetch") &&
+                            input.args.includes("update-ref") &&
                             input.args.some((arg) => arg.endsWith("/ordinal/1"))
                           ) {
                             heldCapture = true;
@@ -1746,7 +1746,7 @@ it.live(
           // After the reorder, `first` is no longer the head. Send on it starts it
           // now, and the rest of the queue continues after it without a Resume.
           yield* orchestrator.dispatch({
-            type: "queue.resume",
+            type: "queued-run.start",
             threadId,
             runId: first.id,
             commandId: CommandId.make(`${threadId}:send-non-head`),
@@ -2152,10 +2152,11 @@ it.live.each(
             stopped.runs.filter((run) => run.status === "queued").every((run) => run.queueHeld),
           );
           const resume = {
-            type: "queue.resume" as const,
+            ...(release === "head"
+              ? { type: "queued-run.start" as const, runId: first.id }
+              : { type: "queue.resume" as const }),
             threadId: childThreadId,
             commandId: CommandId.make(`${childThreadId}:resume`),
-            ...(release === "head" ? { runId: first.id } : {}),
           };
           yield* orchestrator.dispatch(resume);
           stage = "resumed head offer";
@@ -2757,7 +2758,7 @@ it.live(
           assert.equal(
             (yield* Effect.result(
               orchestrator.dispatch({
-                type: "queue.resume",
+                type: "queued-run.start",
                 commandId: CommandId.make(`${threadId}:send-active`),
                 threadId,
                 runId: first.id,
@@ -2824,7 +2825,7 @@ it.live(
           assert.ok(first && second);
           phase = "send-non-head";
           yield* orchestrator.dispatch({
-            type: "queue.resume",
+            type: "queued-run.start",
             threadId,
             runId: second.id,
             commandId: CommandId.make(`${threadId}:non-head`),
@@ -5067,10 +5068,11 @@ it.live.each(["failed", "interrupted"] as const)(
           ] as const) {
             const refused = yield* orchestrator
               .dispatch({
-                type: "queue.resume",
+                ...(runId === undefined
+                  ? { type: "queue.resume" as const }
+                  : { type: "queued-run.start" as const, runId }),
                 commandId: CommandId.make(`${threadId}:${action}`),
                 threadId,
-                ...(runId === undefined ? {} : { runId }),
               })
               .pipe(Effect.flip);
             assert.include(String(refused.cause), "Retry worktree setup");

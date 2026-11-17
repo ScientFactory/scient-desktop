@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
-import type { ScientRpcServerTestHarness } from "../../server.test.ts";
+import type { ScientRpcServerTestHarness } from "../../server.testkit.ts";
 import { LocalComputeStore, layer as localComputeStoreLayer } from "./LocalComputeStore.ts";
 
 const OBSERVED_AT = "2026-08-20T09:00:00.000Z";
@@ -198,7 +198,7 @@ const outputRef = (figure: SeededFigure) => ({
 const outputResource = (figure: SeededFigure) =>
   ({ _tag: "compute-output", ...outputRef(figure) }) as const;
 
-// Registered by server.test.ts so these cases exercise the same T3 server seam.
+// Registered by server.workspace.test.ts so these cases exercise the same T3 server seam.
 export const registerComputeRpcTests = (
   it: Vitest.MethodsNonLive<
     | NodeServices.NodeServices
