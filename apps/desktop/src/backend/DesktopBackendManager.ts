@@ -517,7 +517,10 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         decodeDesktopTelemetryControlLine(line).pipe(
           Effect.flatMap((message) =>
             message.type === "serverReady"
-              ? Deferred.succeed(serverReady, undefined)
+              ? Deferred.succeed(serverReady, undefined).pipe(
+                  // SCIENT-FORK: the publisher hands journaled update facts to a ready backend.
+                  Effect.andThen(handleControl(message)),
+                )
               : handleControl(message),
           ),
           Effect.catchCause((cause) =>

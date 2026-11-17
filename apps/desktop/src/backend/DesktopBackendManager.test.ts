@@ -455,6 +455,38 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
+  // SCIENT-FORK:START — update facts wait for the publisher to see the backend become ready.
+  it.effect("passes the server ready line on to the telemetry publisher", () =>
+    Effect.gen(function* () {
+      const routed = yield* Deferred.make<void>();
+      const readyLine = encodeDesktopTelemetryControl({ version: 1, type: "serverReady" });
+      const instance = yield* makeTestInstance({
+        spawnerLayer: Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                getOutputFd: (fd) =>
+                  fd === 5 ? Stream.encodeText(Stream.make(`${readyLine}\n`)) : Stream.empty,
+                exitCode: Deferred.await(routed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              }),
+            ),
+          ),
+        ),
+        desktopTelemetryPublisher: {
+          handleControlForSource: (_sourceId, message) =>
+            message.type === "serverReady"
+              ? Deferred.succeed(routed, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      });
+
+      yield* instance.start;
+      yield* Deferred.await(routed);
+    }),
+  );
+  // SCIENT-FORK:END
+
   it.effect("continues routing desktop telemetry control messages after an invalid line", () =>
     Effect.gen(function* () {
       const handled = yield* Deferred.make<boolean>();
