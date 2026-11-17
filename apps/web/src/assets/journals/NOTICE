@@ -1,11 +1,14 @@
-Bundled journal, publisher and platform artwork
+Bundled journal and publisher artwork
 
-Retrieved 2026-11-16. The four PNG files preserve the complete source artwork,
+Retrieved 2026-11-16. The three PNG files preserve the complete source artwork,
 its aspect ratio, and transparency. No letters, symbols or registration marks
 are removed; no shape is redrawn or recomposed, and no white canvas is added.
-Only fully transparent outer margins are trimmed. Network access is not needed
-for these fallbacks. A publisher/platform fallback does not stop venue discovery
-and is replaced when the server discovers an icon for that venue.
+Only fully transparent outer margins are trimmed. Network access is not needed.
+A journal mark is shown only for its exact journal (ISSN, else title). A
+publisher mark is shown only for a record that names no journal or venue and
+whose publisher is exactly that publisher; a journal from that publisher gets
+its generated letter mark instead. Owner approval of each mark's appearance:
+pending the contact sheet of 2026-11-17.
 
 Redistribution basis: CC0-1.0 for the specified Simple Icons files; Wikimedia
 Commons PD-textlogo classification for the complete NEJM Evidence wordmark
@@ -44,10 +47,11 @@ Simple Icons sources
   License text: https://github.com/simple-icons/simple-icons/blob/c37b20d397a710fdd402aae3cb643b820b142074/LICENSE.md
   Summary: https://creativecommons.org/publicdomain/zero/1.0/
   Metadata: https://github.com/simple-icons/simple-icons/blob/c37b20d397a710fdd402aae3cb643b820b142074/data/simple-icons.json
-  No individual license override is declared for ACM, IEEE or PubMed at this
+  No individual license override is declared for ACM or IEEE at this
   revision. Brand colors and official-source URLs below are from that metadata.
   These are the complete upstream brand paths, not necessarily the website's
-  favicon. All three are explicitly labeled publisher or platform, not journal.
+  favicon. Both are labeled publisher, not journal. The PubMed platform mark was
+  retired on 2026-11-17: a PubMed link says where a paper is indexed, not what it is.
   Transformation for each: set SVG fill to its metadata brand color; rasterize
     the complete SVG using ImageMagick at density 960 on transparent background;
     trim fully transparent margins; proportionally resize within 240 x 240.
@@ -74,25 +78,7 @@ ieee.png
   Packaged: 240 x 71 RGBA PNG, 3,577 bytes.
   SHA-256: d0ebff4b1c85a0a60c15396f06ffb14429092f994f9d3070cf669582e45e878f
 
-pubmed.png
-  Identity: PubMed indexing platform, not a journal, NCBI or PubMed Central mark.
-  Trademark owner: relevant US National Library of Medicine / NIH rights holders.
-  Source: https://raw.githubusercontent.com/simple-icons/simple-icons/c37b20d397a710fdd402aae3cb643b820b142074/icons/pubmed.svg
-  Official source in metadata: https://pubmed.ncbi.nlm.nih.gov/
-  Color: #326599.
-  Source SVG SHA-256: 1425034ba757d4d8449a231e0261c9469ae44ee502500c023879beb192462064
-  Packaged: 190 x 240 RGBA PNG, 6,236 bytes.
-  SHA-256: 468690ec2bf86e1a8db61f95dbfa060fcbb5902388cdb9d27f410af48aa47ec1
-
 Not bundled
   Nature's former cropped n and NEJM's former extracted circled-N are removed.
-  Commons' assessment of the Nature wordmark does not document redistribution
-  rights for Nature's original favicon. Its complete official favicon is left
-  to server discovery/cache, rather than packaging a fabricated replacement.
-  Official Nature homepage declares:
-    https://www.nature.com/static/images/favicons/nature/favicon-48x48-b52890008c.png
-    https://www.nature.com/static/images/favicons/nature/apple-touch-icon-f39cb19454.png
-  Nature terms: https://www.nature.com/info/terms-and-conditions
-  Likewise NEJM AI and generic NEJM-family sites do not receive Evidence art.
-  Their original site artwork is left to server discovery; no redistribution
-  license is inferred for their original favicons or wordmarks.
+  Their journals get generated letter marks; Scient no longer discovers website
+  icons, so no favicon or wordmark is fetched or cached for them.

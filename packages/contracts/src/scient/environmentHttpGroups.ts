@@ -44,8 +44,6 @@ import {
   ScientSourceSavePageResult,
   ScientSourceDetailRequest,
   ScientSourceDetailResult,
-  ScientSourceJournalIconRequest,
-  ScientSourceJournalIconResult,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataRefreshResult,
   ScientSourceMetadataUpdateRequest,
@@ -373,14 +371,6 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourceSavePageRequest,
         success: ScientSourceSavePageResult,
-        error: EnvironmentHttpCommonError,
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("journalIcon", "/api/scient/sources/journal-icon", {
-        headers: OptionalBearerHeaders,
-        payload: ScientSourceJournalIconRequest,
-        success: ScientSourceJournalIconResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

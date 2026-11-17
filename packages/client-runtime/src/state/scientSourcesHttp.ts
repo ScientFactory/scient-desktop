@@ -6,7 +6,6 @@ import type {
   ScientManagedBibliographySyncRequest,
   ScientSourceAttachmentPreviewRequest,
   ScientSourceDetailRequest,
-  ScientSourceJournalIconRequest,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
@@ -151,24 +150,6 @@ export const getEnvironmentScientSourceAttachmentPreview = Effect.fn(
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) => client.attachmentPreview({ headers, payload }),
-  });
-});
-
-export const getEnvironmentScientSourceJournalIcon = Effect.fn(
-  "clientRuntime.state.getEnvironmentScientSourceJournalIcon",
-)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceJournalIconRequest) {
-  const { prepared, ...payload } = input;
-  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
-    prepared,
-    signer,
-    remoteAuthorization,
-    method: "POST",
-    url: (urls) => urls.journalIcon(),
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    group: "scientSources",
-    request: ({ client, headers }) => client.journalIcon({ headers, payload }),
   });
 });
 

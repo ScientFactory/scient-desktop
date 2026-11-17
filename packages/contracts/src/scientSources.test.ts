@@ -5,7 +5,6 @@ import {
   ScientSourcesLocalPdfUploadResult,
   ScientSourceDetailResult,
   ScientSourceAttachmentPreviewResult,
-  ScientSourceJournalIconResult,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
@@ -22,7 +21,6 @@ const decodeScientSourceAttachmentPreviewResult = Schema.decodeUnknownSync(
 );
 const decodeScientSourceDetailResult = Schema.decodeUnknownSync(ScientSourceDetailResult);
 const decodeScientSourcesOverviewResult = Schema.decodeUnknownSync(ScientSourcesOverviewResult);
-const decodeScientSourceJournalIconResult = Schema.decodeUnknownSync(ScientSourceJournalIconResult);
 const decodeScientSourceMetadataUpdateRequest = Schema.decodeUnknownSync(
   ScientSourceMetadataUpdateRequest,
 );
@@ -229,19 +227,6 @@ describe("Scient sources contracts", () => {
       expiresAt: 1_786_000_000_000,
     });
     expect(decoded).not.toHaveProperty("absolutePath");
-  });
-
-  it("keeps journal presentation optional while carrying a signed icon URL when available", () => {
-    expect(decodeScientSourceJournalIconResult({ icon: null })).toEqual({ icon: null });
-    expect(
-      decodeScientSourceJournalIconResult({
-        icon: {
-          relativeUrl: "/api/assets/journal-icon-token",
-          expiresAt: 1_786_000_000_000,
-          journalTitle: "PLOS Medicine",
-        },
-      }),
-    ).toMatchObject({ icon: { journalTitle: "PLOS Medicine" } });
   });
 
   it("round-trips bounded editable metadata without accepting protected source fields", () => {

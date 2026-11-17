@@ -1035,7 +1035,6 @@
   "src/scient/skills/ScientSkillSession.test.ts": 2.119,
   "src/scient/skills/ScientV2SkillTurn.test.ts": 5.045,
   "src/scient/sources/agentAdd.test.ts": 0.619,
-  "src/scient/sources/JournalIconResolver.test.ts": 0.339,
   "src/scient/sources/LocalPdfSourceAdapter.test.ts": 0.345,
   "src/scient/sources/NcbiRequestLane.test.ts": 0.155,
   "src/scient/sources/ScientSourcesCoordinator.test.ts": 0.806,

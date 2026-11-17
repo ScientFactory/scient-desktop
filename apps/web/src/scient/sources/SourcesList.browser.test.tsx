@@ -22,7 +22,6 @@ vi.mock("./client", () => ({
   readScientSources: mocks.readScientSources,
   setScientSourcesReadingState: mocks.setScientSourcesReadingState,
   organizeScientSources: mocks.organizeScientSources,
-  readScientSourceJournalIcon: vi.fn(async () => null),
   readScientSource: vi.fn(),
   advanceSourcesImport: vi.fn(),
   importScientSourcesFile: vi.fn(),

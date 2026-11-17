@@ -8,8 +8,6 @@ import { sortScientSourceRecords } from "./filterSources";
 import { SourceCards } from "./SourceCards";
 import { scientSourceSections } from "./sourceSections";
 
-vi.mock("./client", () => ({ readScientSourceJournalIcon: vi.fn(async () => null) }));
-
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 
 function record(id: string, issuedYear: number): SourceRecord {

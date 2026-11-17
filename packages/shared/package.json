@@ -31,10 +31,6 @@
       "types": "./src/scientPaperLinks.ts",
       "import": "./src/scientPaperLinks.ts"
     },
-    "./scientJournalIdentity": {
-      "types": "./src/scientJournalIdentity.ts",
-      "import": "./src/scientJournalIdentity.ts"
-    },
     "./scientSignInPage": {
       "types": "./src/scientSignInPage.ts",
       "import": "./src/scientSignInPage.ts"

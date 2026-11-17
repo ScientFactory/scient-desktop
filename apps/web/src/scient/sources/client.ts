@@ -8,7 +8,6 @@ import {
   getEnvironmentScientSourceAttachmentPreview,
   searchEnvironmentScientSourcesFullText,
   getEnvironmentScientSourceDetail,
-  getEnvironmentScientSourceJournalIcon,
   getEnvironmentScientSourcesOverview,
   getEnvironmentZoteroStatus,
   listEnvironmentZoteroLibrary,
@@ -317,19 +316,6 @@ export async function readScientSourceAttachmentPreview(
   const url = resolveAssetUrl(connection.httpBaseUrl, result.relativeUrl);
   if (url === null) throw new Error("The selected environment returned an invalid preview URL.");
   return { ...result, url };
-}
-
-export async function readScientSourceJournalIcon(
-  environmentId: EnvironmentId,
-  input: { readonly root: string; readonly sourceId: string },
-) {
-  const connection = prepared(environmentId);
-  const result = await runtime.runPromise(
-    getEnvironmentScientSourceJournalIcon({ prepared: connection, ...input }),
-  );
-  if (!result.icon) return null;
-  const url = resolveAssetUrl(connection.httpBaseUrl, result.icon.relativeUrl);
-  return url ? { ...result.icon, url } : null;
 }
 
 export function addScientSourcesByIdentifier(

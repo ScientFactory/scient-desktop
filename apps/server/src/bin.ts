@@ -4,7 +4,6 @@ import * as NodeSea from "node:sea";
 import * as NodeURL from "node:url";
 
 import { isEntrypoint } from "./entrypoint.ts";
-import { runJournalImageWorker } from "./scient/sources/JournalIconImageWorker.ts";
 
 // Loads the CLI outside the launcher's module graph. Packaged builds embed it as a raw asset.
 async function loadCliMain(): Promise<typeof import("./binMain.ts")> {
@@ -40,10 +39,6 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
-  if (process.argv[2] === "__journal-icon-image") {
-    await runJournalImageWorker(process.argv.slice(3));
-    process.exit(process.exitCode ?? 0);
-  }
   // Logs go to stdout and stderr, which may be a closed desktop launcher pipe or a log file on
   // a full disk. Node emits a failed write as an unhandled stream error that crashes the process
   // and skips shutdown, so drop the line instead.

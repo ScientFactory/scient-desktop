@@ -55,7 +55,6 @@ import * as Multipart from "effect/http/Multipart";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 
 import { AssetCreateUrlResult } from "./assets.ts";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const BoundedPageSize = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }));
@@ -276,22 +275,6 @@ export const ScientSourceSavePageResult = Schema.Union([
   }),
 ]);
 export type ScientSourceSavePageResult = typeof ScientSourceSavePageResult.Type;
-
-export const ScientSourceJournalIconRequest = Schema.Struct({
-  root: NonEmptyString,
-  sourceId: NonEmptyString,
-});
-export type ScientSourceJournalIconRequest = typeof ScientSourceJournalIconRequest.Type;
-
-export const ScientSourceJournalIconResult = Schema.Struct({
-  icon: Schema.NullOr(
-    Schema.Struct({
-      ...AssetCreateUrlResult.fields,
-      journalTitle: TrimmedNonEmptyString.check(Schema.isMaxLength(1_024)),
-    }),
-  ),
-});
-export type ScientSourceJournalIconResult = typeof ScientSourceJournalIconResult.Type;
 
 export const ScientSourceMetadataUpdateRequest = Schema.Struct({
   root: NonEmptyString,

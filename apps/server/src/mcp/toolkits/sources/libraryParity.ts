@@ -178,7 +178,6 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
       "Serves a PDF's bytes to the viewer; agents read its text with scient_sources_read_text.",
   },
   "scientSources.fullTextSearch": tool("scient_sources_search"),
-  "scientSources.journalIcon": { kind: "display", reason: "Serves a journal's icon for display." },
   // The Library's list tool takes `recentChanges`, as it takes `duplicates`.
   "scientSources.recentChanges": tool("scient_sources_list"),
   "scientSources.sourceUses": tool("scient_sources_get", "uses"),

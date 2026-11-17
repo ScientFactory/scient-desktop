@@ -10,7 +10,6 @@ import {
 } from "@scientfactory/scient-sources/library-root";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
@@ -19,7 +18,6 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
-import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
 import { sourceAttachmentPreview } from "./SourceAttachmentPreview.ts";
 import { searchSourceFullText } from "./SourceFullText.ts";
@@ -42,7 +40,6 @@ import {
   discardLocalPdfSources,
   getScientSourcesOverview,
   getScientSourceDetail,
-  getScientSourceJournalIconMaterial,
   inspectZoteroConnection,
   listZoteroCollections,
   listZoteroLibrary,
@@ -85,7 +82,6 @@ import {
   deleteLibrarySourcesPermanently,
   exportLibrarySources,
   libraryImportTarget,
-  libraryJournalIconMaterial,
   libraryOverview,
   libraryReview,
   libraryReviews,
@@ -338,41 +334,6 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               return saved;
             },
           ),
-        )
-        .handle("journalIcon", (args) =>
-          Effect.gen(function* () {
-            yield* annotateEnvironmentRequest(args.endpoint.name);
-            yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-            const config = yield* ServerConfig.ServerConfig;
-            const path = yield* Path.Path;
-            const library = yield* libraryFor(args.payload.root, AuthOrchestrationReadScope);
-            const cacheRoot = path.join(config.stateDir, "scient", "journal-icons", "v1");
-            const material = yield* sourcesOperation(() =>
-              library
-                ? libraryJournalIconMaterial(library, {
-                    sourceId: args.payload.sourceId,
-                    cacheRoot,
-                  })
-                : getScientSourceJournalIconMaterial({ ...args.payload, cacheRoot }),
-            ).pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("scient_sources_operation_failed", cause),
-              ),
-            );
-            if (!material) return { icon: null };
-            const asset = yield* issueAssetUrl({
-              resource: {
-                _tag: "workspace-file",
-                cwd: material.cacheRoot,
-                relativePath: path.relative(material.cacheRoot, material.absolutePath),
-              },
-            }).pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("scient_sources_operation_failed", cause),
-              ),
-            );
-            return { icon: { ...asset, journalTitle: material.journalTitle } };
-          }),
         )
         .handle("updateMetadata", (args) =>
           route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) =>

@@ -86,60 +86,29 @@ records its `sourceId`. `describeImport` counts attached PDFs apart, and for a
 PDF import names new sources with metadata diagnostics (**Check details**) and
 those `scientSourcesMayBeVersions` pairs with another record.
 
-Journal artwork is optional presentation, not source truth. The bundled catalog
-contains complete marks with documented redistribution provenance, not cropped
-initials or reconstructed favicons. Publisher and platform marks are labelled
-as fallbacks and never suppress discovery of the source's actual website icon.
-Named article, conference-paper and preprint venues are eligible; books retain
-their source-type icon. Original proportions and transparency are preserved.
+Journal marks are presentation, not source truth, and are made in the web app
+from the list row alone (`journalMark.ts`, `SourceJournalIcon.tsx`): nothing is
+fetched or cached. Articles, conference papers and preprints get up to four
+letters from `containerTitleShort` (the summary's copy of the further detail
+`container-title-short`), else `containerTitle`. The rules, in order: an alias
+table, a trailing bracketed acronym, a series letter after two longer words
+(Physical Review B → PRB), a leading acronym its expansion follows, one word
+(an all-caps word of two to four letters whole, else its first letter), and
+initials, keeping the last word when there are more than four. Scripts other than
+Latin, Greek and Cyrillic show the name's first grapheme. The tone is an FNV-1a
+hash of the normalised full title over eight `light-dark()` pairs, each tested
+for 4.5:1 contrast. Three or four letters are fitted with SVG `textLength`, so
+none is clipped and no row is measured. Marks are not identifiers: two journals
+may share one, and the full name is on hover and in the row's screen-reader text.
 
-Discovery uses the Sources-owned read endpoint and signed asset route. It
-upgrades standard HTTP metadata addresses to HTTPS without ever sending an HTTP
-request. Crossref journal titles or ISSNs must agree with the record; DataCite
-preprint platforms cannot brand a published journal. OpenAlex homepages require
-an ISSN match or a unique exact title and publisher match. Ambiguous names are not
-guessed. Canonical article artwork is accepted only on that verified venue's
-site or an explicitly known publisher-owned domain; arbitrary record URLs and
-guessed registrable-parent homepages are never venue authority.
-A small conference-homepage map distinguishes proceedings from arXiv version
-DOIs. Canonical article declarations and verified venue declarations precede
-conventional verified-venue favicons and exact publisher fallbacks; completion order
-does not change that priority. Declared favicons precede Apple touch icons.
-Verified pages may explicitly declare CDN-hosted favicons, but page and image
-redirects cannot transfer authority to another registrable domain.
-Official JAMA Network support artwork is a labelled publisher fallback.
-The official NEJM AI store wordmark requires both that exact venue and its
-publisher; it is never reused for another NEJM journal. Neither is redistributed.
-
-Client successes are shared within an environment/project only when ISSN, venue
-title, publisher and preprint/published scope agree. A bad record's fallback
-cannot brand a differently attributed record. Pending requests and misses retain
-the source evidence that produced them.
-Notes, stars and reading-state changes do not reload artwork. Signed URLs renew
-without removing a working image, and a broken discovered image restores the
-bundled fallback. Successful host-side artwork persists for 30 days and remains
-visible offline or during refresh. Source-specific misses use a bounded cache
-and exponential backoff from one minute to six hours. A separate venue backoff
-prevents repeated registry/site discovery for other papers; a verified homepage
-is retained so different canonical paper evidence can still succeed. Cache
-versions predating the authority checks are rebuilt instead of reused.
-
-Discovery has a six-second network budget after registry-lane admission.
-Public-address checks and DNS pinning apply to every request, including
-redirects. Requests retain HTTPS, redirect and body limits. Image redirects
-cannot change registrable domains, including private suffix boundaries. Raster
-and embedded ICO payload headers have dimension bounds and must actually decode
-before caching. SVGs reject active content, external/file references, entities
-and excessive complexity, then rasterize into bounded PNG pixels; SVG documents
-never reach the renderer. At most three native decode children run at once;
-queued and active decoding obey discovery cancellation. Children have bounded
-input/output and a kill deadline: malformed native decoder input cannot crash
-the server. PNG output must be complete, and packaged workers flush it before
-exiting. Cache metadata retains artwork URL and attribution and
-is replaced atomically.
-Icons never enter project records, block the list, or permit the renderer to
-contact arbitrary publisher URLs. Discovery remains best-effort: a blocked or
-unavailable website leaves the honest publisher/platform or source-type fallback.
+Bundled marks (`bundledJournalIcons.ts`, provenance in
+`apps/web/src/assets/journals/NOTICE`) replace the generated mark only for their
+exact journal (ISSN decides, else title). A publisher mark is used only for a
+record with no venue whose publisher matches exactly. Book chapters, books and
+other types keep their type icon. Website icon discovery, its image worker and
+the `journalIcon` endpoint were removed on 2026-11-17. At start-up a background
+task deletes `<stateDir>/scient/journal-icons/v1` when it is a real folder at
+exactly that path (`RetiredJournalIconCache.ts`).
 
 ## Durable project store
 

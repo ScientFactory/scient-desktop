@@ -143,15 +143,16 @@ Type, reading state, tags and collections are filters, not orders. **Show as
 cards** shows the papers as cards in one flow, at most a comfortable width
 however wide the panel is; a heading that continues onto a new row of cards is
 repeated there, dimmed. Each card keeps its journal and year. **Show as a list**
-goes back. Each row and card starts with a journal or publisher icon when one is
-available, else an icon for its type (article, book, conference paper and so on,
-named on hover). Some complete journal, publisher and platform marks ship with
-Scient. Other website icons are discovered for articles, conference papers and
-preprints, saved for offline use, and kept visible during background refresh.
-Changing a note, star, or reading state does not reload the icon. Hover names the
-journal or the website/publisher fallback actually shown; it does not claim that
-a shared publisher logo is a journal-specific mark. A blocked or unavailable
-site leaves the fallback visible and can be checked again later.
+goes back. Each article, conference paper and preprint starts with a small
+coloured mark of up to four letters from its journal, conference or preprint
+server: NEJM for the New England Journal of Medicine, PRB for Physical Review B.
+The letters come from the journal abbreviation when the source has one, else
+from the full name. The same name always gets the same colour. Two journals can
+share a mark, so hover shows the full name, and screen readers hear it too. A
+few checked logos ship with Scient and replace the mark for their exact journal.
+A source with no journal shows its publisher's logo only for those publishers
+(IEEE, ACM), else an icon for its type (book, report and so on, named on hover).
+Scient does not contact journal or publisher websites for icons.
 In list view, the blue **Unread** dot sits with the actions on the right,
 immediately before **Open PDF** when a PDF is available.
 

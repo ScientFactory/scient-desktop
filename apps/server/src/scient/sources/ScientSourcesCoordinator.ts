@@ -136,7 +136,6 @@ import {
   zoteroDescendantCollectionKeys,
   type ZoteroLibraryCollection,
 } from "./ZoteroItems.ts";
-import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import {
   syncManagedBibliography,
@@ -357,15 +356,6 @@ export async function getScientSourceAttachmentPreviewMaterial(input: {
     };
   }
   throw new Error("The source attachment was not found in this project.");
-}
-
-export async function getScientSourceJournalIconMaterial(input: {
-  readonly root: string;
-  readonly sourceId: string;
-  readonly cacheRoot: string;
-}) {
-  const record = await readScientSourceRecord(input.root, input.sourceId);
-  return record ? resolveJournalIcon({ record, cacheRoot: input.cacheRoot }) : null;
 }
 
 /** A deliberate citation key rename also renames the key where project documents cite it. */

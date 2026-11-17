@@ -305,6 +305,8 @@ export const ScientSourceSummary = Schema.Struct({
   issuedYear: ScientSourceRecord.fields.issuedYear,
   identifiers: ScientSourceRecord.fields.identifiers,
   containerTitle: ScientSourceRecord.fields.containerTitle,
+  /** The journal abbreviation from the further details, for the row's journal mark. */
+  containerTitleShort: Schema.optionalKey(NonEmptyString),
   publisher: Schema.optionalKey(ScientSourceRecord.fields.publisher),
   url: ScientSourceRecord.fields.url,
   // Optional so a client can read an older server's list.
@@ -321,6 +323,14 @@ export const ScientSourceSummary = Schema.Struct({
 });
 export type ScientSourceSummary = typeof ScientSourceSummary.Type;
 
+/** The journal abbreviation a list row carries, when the further details hold one. */
+export function scientSourceContainerTitleShort(record: Pick<ScientSourceRecord, "more">): {
+  readonly containerTitleShort?: string;
+} {
+  const short = record.more?.["container-title-short"]?.trim();
+  return short ? { containerTitleShort: short } : {};
+}
+
 export function scientSourceSummaryFromRecord(record: ScientSourceRecord): ScientSourceSummary {
   return {
     sourceId: record.sourceId,
@@ -332,6 +342,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
     containerTitle: record.containerTitle,
+    ...scientSourceContainerTitleShort(record),
     publisher: record.publisher,
     url: record.url,
     tags: record.tags,

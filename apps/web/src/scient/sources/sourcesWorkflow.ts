@@ -9,6 +9,7 @@ import type {
   ZoteroImportScope,
   ZoteroLibraryPage,
 } from "@t3tools/contracts";
+import { scientSourceContainerTitleShort } from "@scientfactory/scient-sources";
 
 import {
   completedImportCounts,
@@ -197,6 +198,8 @@ function acceptRecordIntoOverview(
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
     containerTitle: record.containerTitle,
+    ...scientSourceContainerTitleShort(record),
+    publisher: record.publisher,
     url: record.url,
     externalReferences: record.externalReferences,
     attachments: record.attachments.map((attachment) => ({

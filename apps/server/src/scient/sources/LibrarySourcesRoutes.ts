@@ -109,7 +109,6 @@ import {
 } from "@t3tools/contracts";
 
 import { exportBibliography } from "./BibliographyFileAdapter.ts";
-import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import { moveProjectBackIntoProject, restoreProjectPreMoveArchive } from "./LibraryMove.ts";
 import {
@@ -788,18 +787,6 @@ export async function libraryAttachmentMaterial(
     attachment,
     folder: store.library.root,
   };
-}
-
-export async function libraryJournalIconMaterial(
-  store: Store,
-  input: { readonly sourceId: string; readonly cacheRoot: string },
-) {
-  if (!store.exists) return null;
-  const record = await readScientSourceRecord(
-    store.library,
-    await libraryIdOf(store, input.sourceId),
-  );
-  return record ? resolveJournalIcon({ record, cacheRoot: input.cacheRoot }) : null;
 }
 
 /**

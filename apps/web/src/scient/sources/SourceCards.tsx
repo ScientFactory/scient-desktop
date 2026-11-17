@@ -103,11 +103,7 @@ function SourceCard(props: { readonly record: SourceRecord; readonly row: Source
               onClick={(event) => activateSource(event, record, row)}
             >
               <span className="flex min-w-0 items-center gap-1.5 pe-3 text-[10px] tracking-wider text-muted-foreground uppercase">
-                <SourceJournalIcon
-                  environmentId={row.environmentId}
-                  root={row.root}
-                  record={record}
-                />
+                <SourceJournalIcon record={record} />
                 <span className="truncate">
                   {journal ?? SCIENT_SOURCE_TYPE_LABELS[record.type]}
                 </span>
