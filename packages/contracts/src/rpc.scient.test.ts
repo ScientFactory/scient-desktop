@@ -83,22 +83,7 @@ describe("WebSocket RPC contracts", () => {
     }
   });
 
-  it("accepts native run forks and Scient message forks but refuses V1 turn commands", () => {
-    for (const source of [
-      { sourceAssistantMessageId: "assistant" },
-      { sourceUserMessageId: "user" },
-      { sourceRunningRunId: "running-run" },
-    ]) {
-      const command = {
-        type: "thread.fork",
-        commandId: "scient-fork",
-        originThreadId: "origin",
-        newThreadId: "destination",
-        workspaceMode: "local",
-        ...source,
-      };
-      expect(decodeDispatchPayload(command)).toEqual(command);
-    }
+  it("carries Scient fork options on T3's fork and refuses the old fork shape and V1 turn commands", () => {
     const runFork = {
       type: "thread.fork",
       commandId: "native-fork",
@@ -109,6 +94,28 @@ describe("WebSocket RPC contracts", () => {
       creationSource: "web",
     };
     expect(decodeDispatchPayload(runFork)).toEqual(runFork);
+    for (const boundary of [
+      { kind: "assistant-response", messageId: "assistant" },
+      { kind: "user-message", messageId: "user" },
+      { kind: "running-turn", runId: "running-run" },
+    ]) {
+      const command = {
+        ...runFork,
+        sourcePoint: { type: "latest_stable" },
+        scient: { boundary, workspaceMode: "new-worktree" },
+      };
+      expect(decodeDispatchPayload(command)).toEqual(command);
+    }
+    expect(() =>
+      decodeDispatchPayload({
+        type: "thread.fork",
+        commandId: "scient-fork",
+        originThreadId: "origin",
+        newThreadId: "destination",
+        workspaceMode: "local",
+        sourceAssistantMessageId: "assistant",
+      }),
+    ).toThrow();
     expect(() =>
       decodeDispatchPayload({
         type: "thread.turn.start",
