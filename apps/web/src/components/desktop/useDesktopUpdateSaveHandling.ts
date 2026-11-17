@@ -7,12 +7,17 @@ import { prepareDesktopUpdateSave } from "./prepareDesktopUpdateSave";
 
 /**
  * Windows keep composer drafts in one shared storage record that each merges and rewrites, so two
- * saving at once could each overwrite the other's draft. A lock shared by every window of the app
- * runs their saves in turn.
+ * flushing at once could each overwrite the other's draft. A lock shared by every window of the
+ * app runs those flushes in turn; editor saves stay parallel.
  */
-function oneWindowAtATime(save: () => Promise<boolean>): Promise<boolean> {
-  if (typeof navigator === "undefined" || navigator.locks === undefined) return save();
-  return navigator.locks.request("scient:update-save", save);
+async function flushComposerDraftsInTurn(): Promise<void> {
+  if (typeof navigator === "undefined" || navigator.locks === undefined) {
+    flushComposerDraftPersistence();
+    return;
+  }
+  await navigator.locks.request("scient:composer-draft-flush", () =>
+    flushComposerDraftPersistence(),
+  );
 }
 
 export function useDesktopUpdateSaveHandling(): void {
@@ -20,12 +25,10 @@ export function useDesktopUpdateSaveHandling(): void {
   useEffect(
     () =>
       registerDesktopUpdateSaveHandler(async () => {
-        const saved = await oneWindowAtATime(
-          async () =>
-            (await prepareDesktopUpdateSave(windowEditors, flushComposerDraftPersistence)) &&
-            // Leaving the page asks every other owner too: a PDF still writing an edit vetoes it.
-            window.dispatchEvent(new Event("beforeunload", { cancelable: true })),
-        );
+        const saved =
+          (await prepareDesktopUpdateSave(windowEditors, flushComposerDraftsInTurn)) &&
+          // Leaving the page asks every other owner too: a PDF still writing an edit vetoes it.
+          window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
         // The window Restart was chosen in shows the reason beside its update control; another
         // window says that it is the one holding the restart back.
         if (!saved && !document.hasFocus())

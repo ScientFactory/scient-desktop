@@ -419,6 +419,8 @@ export const make = Effect.gen(function* () {
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
   const nativePreparingRef = yield* Ref.make(false);
+  // The installer handoff reports its own synchronous failure; the event must not race it.
+  const handingOffRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
   // SCIENT-FORK:START — the background download loop runs in configure's scope, one at a time.
@@ -1343,11 +1345,14 @@ export const make = Effect.gen(function* () {
           yield* restartTiming.nativeHandoff;
           // SCIENT-FORK: the installer may end this process before anything else is recorded.
           yield* outcomes.installHandoff;
-          yield* electronUpdater.quitAndInstall({
-            expectedVersion: targetVersion,
-            isSilent: true,
-            isForceRunAfter: true,
-          });
+          yield* Ref.set(handingOffRef, true);
+          yield* electronUpdater
+            .quitAndInstall({
+              expectedVersion: targetVersion,
+              isSilent: true,
+              isForceRunAfter: true,
+            })
+            .pipe(Effect.ensuring(Ref.set(handingOffRef, false)));
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
@@ -1574,7 +1579,7 @@ export const make = Effect.gen(function* () {
       cause,
     });
     // The awaited preparation owns its error and recovery; a duplicate native event cannot release its lease.
-    if (yield* Ref.get(nativePreparingRef)) return;
+    if ((yield* Ref.get(nativePreparingRef)) || (yield* Ref.get(handingOffRef))) return;
     if (Option.isSome(activeAction) && activeAction.value === "install") {
       // SCIENT-FORK: installers report failure here; one outcome per install.
       yield* outcomes.installFailed(cause);

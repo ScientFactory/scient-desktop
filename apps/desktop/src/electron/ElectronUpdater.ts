@@ -222,9 +222,23 @@ export const make = ElectronUpdater.of({
       if (autoUpdater instanceof AppImageUpdater) relaunchWithoutInheritedDescriptors(autoUpdater);
       return Effect.try({
         try: () => {
-          if (autoUpdater instanceof MacUpdater)
+          if (autoUpdater instanceof MacUpdater) {
             getMacPreparation().quitAndInstall(expectedVersion);
-          else autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+            return;
+          }
+          // electron-updater reports a failed installer launch as an "error" event and returns
+          // normally; surface it here so the install fails with its recovery awaited.
+          let handoffError: unknown;
+          const capture = (error: unknown) => {
+            handoffError ??= error;
+          };
+          autoUpdater.on("error", capture);
+          try {
+            autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+          } finally {
+            autoUpdater.removeListener("error", capture);
+          }
+          if (handoffError !== undefined) throw handoffError;
         },
         catch: (cause) =>
           new ElectronUpdaterQuitAndInstallError({

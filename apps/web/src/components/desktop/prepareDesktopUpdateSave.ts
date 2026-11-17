@@ -7,10 +7,10 @@ import {
 /** Saves every environment this window still holds, including disconnected dirty editors. */
 export async function prepareDesktopUpdateSave(
   editors: WindowEditors,
-  flushComposer: () => void,
+  flushComposer: () => void | Promise<void>,
 ): Promise<boolean> {
   try {
-    flushComposer();
+    await flushComposer();
     for (let pass = 0; pass < 2; pass++) {
       const environmentIds = new Set(
         [
@@ -29,7 +29,7 @@ export async function prepareDesktopUpdateSave(
         );
         if (result.failures.length > 0) return false;
       }
-      flushComposer();
+      await flushComposer();
       if (!hasUnsavedWindowEditors(editors)) return true;
     }
     return false;

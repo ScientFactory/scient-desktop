@@ -110,7 +110,8 @@ export function useRestartProgressNotice(
   };
 
   if (progress !== null) {
-    return { open: anchorVisible, title: null, description: progress, reportFailure };
+    // Held open even off screen (CSS hides it there): reopening would remount the observed trigger.
+    return { open: true, title: null, description: progress, reportFailure };
   }
   return {
     open: failure !== null,
