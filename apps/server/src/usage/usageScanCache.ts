@@ -7,6 +7,8 @@ import type {
 import * as Schema from "effect/Schema";
 
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
+// SCIENT-FORK: Scient Agent's scan-state marker.
+import { scientAgentScanStateIsCurrent } from "../provider/scient/ScientAgentUsage.ts";
 import { mergeUsageCopies } from "./usageAggregation.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
@@ -316,6 +318,8 @@ export function decodeScanCache(
     const legacy =
       (entry.p === "claude" && version < 13) ||
       (entry.p === "grok" && version < 17) ||
+      // SCIENT-FORK: Scient Agent scans saved before its side calls were counted re-read whole.
+      (entry.p === "scient" && !scientAgentScanStateIsCurrent(entry.cs)) ||
       (format.state !== undefined &&
         (version < 6 ||
           (entry.p === "codex" && (version < 14 || (version < 15 && malformedRecords > 0)))));

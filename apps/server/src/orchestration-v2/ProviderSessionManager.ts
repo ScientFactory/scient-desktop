@@ -2981,6 +2981,7 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        // SCIENT-FORK: named so the Continue fallback below can start through it.
         const exposed: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           // SCIENT-FORK:START — the manager alone reads the running-fork text subscription.
           ...subscriberRuntime,
@@ -3280,6 +3281,7 @@ export const layerWithOptions = (
             : {}),
           // SCIENT-FORK:END
         };
+        // SCIENT-FORK: returns the named runtime.
         return exposed;
       };
 
