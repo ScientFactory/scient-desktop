@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { MegaphoneIcon } from "lucide-react";
+import { LightbulbIcon } from "lucide-react";
 import { useEffect } from "react";
 
 import {
@@ -11,7 +11,7 @@ import { registerMenuAction } from "../../shortcuts/dispatcher";
 import { FeedbackDialogHost, feedbackAvailable } from "./FeedbackDialog";
 import { requestFeedback } from "./feedbackStore";
 
-export const FeedbackIcon = MegaphoneIcon;
+export const FeedbackIcon = LightbulbIcon;
 
 /** The desktop Help menu item's action. */
 const SEND_FEEDBACK_MENU_ACTION = "send-feedback";
