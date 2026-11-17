@@ -211,9 +211,7 @@ function attributionProperties(input: Readonly<Record<string, unknown>>) {
   };
 }
 
-export const AnalyticsConsent = ["off", "essential", "product", "diagnostic"] as const;
-export type AnalyticsConsent = (typeof AnalyticsConsent)[number];
-export type EventPrivacyLevel = Exclude<AnalyticsConsent, "off">;
+export type EventPrivacyLevel = "essential" | "product" | "diagnostic";
 export const AnalyticsPriority = ["critical", "core", "summary"] as const;
 export type AnalyticsPriority = (typeof AnalyticsPriority)[number];
 
@@ -1853,15 +1851,4 @@ export function normalizeInheritedEvent(
     }
   }
   return { ...normalized, properties: { ...properties, ...envelope } };
-}
-
-const CONSENT_RANK: Readonly<Record<AnalyticsConsent, number>> = {
-  off: 0,
-  essential: 1,
-  product: 2,
-  diagnostic: 3,
-};
-
-export function consentAllows(consent: AnalyticsConsent, privacyLevel: EventPrivacyLevel): boolean {
-  return CONSENT_RANK[consent] >= CONSENT_RANK[privacyLevel];
 }

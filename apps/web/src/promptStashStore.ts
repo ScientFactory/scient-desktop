@@ -21,8 +21,10 @@ export const MAX_STASH_ENTRIES = 20;
 export const MAX_STASH_ENTRY_ATTACHMENT_CHARS = 2_700_000;
 
 const StashEntrySchema = Schema.Struct({
+  // SCIENT-FORK:START — a stash saved by older Scient builds references a queue-edit journal.
   queueEditKey: Schema.optionalKey(Schema.String),
   queueEditSide: Schema.optionalKey(Schema.Literals(["ordinary", "edited"])),
+  // SCIENT-FORK:END
   id: Schema.String,
   createdAt: Schema.String,
   prompt: Schema.String,

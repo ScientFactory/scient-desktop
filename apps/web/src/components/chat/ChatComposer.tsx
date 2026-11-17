@@ -235,6 +235,7 @@ import { readThreadShell } from "~/state/entities";
 import { useLinkedEnvironments } from "~/state/peerLinks";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import type {
+  ChatAttachment as ContractChatAttachment,
   ComposerContextRecord,
   OrchestrationV2Run,
   ThreadPullRequestLink,
@@ -258,6 +259,7 @@ import {
   ComposerAttachmentFileList,
   ComposerAttachmentMediaRow,
   ComposerFilePreviewDialog,
+  ComposerQueuedAttachmentRow,
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerPrimaryActions";
@@ -407,7 +409,6 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
-  onStashRecoveredDraft?: () => Promise<void>;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -505,6 +506,12 @@ export interface ChatComposerProps {
   onPageScrollKeyUp: (key: string) => void;
   onPageScrollRelease: () => void;
 
+  editingQueuedAttachments: ReadonlyArray<{
+    readonly attachment: ContractChatAttachment;
+    readonly url: string | null;
+  }> | null;
+  onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
+
   onCompactContext: () => void;
   onSend: (
     e?: { preventDefault: () => void },
@@ -559,7 +566,6 @@ const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
-    onStashRecoveredDraft,
     composerDraftTarget,
     environmentId,
     canOperateThread,
@@ -647,6 +653,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setThreadError,
     onExpandImage,
     onFileOpen,
+    editingQueuedAttachments,
+    onRemoveEditingQueuedAttachment,
   } = props;
   const {
     activePendingProgress: incomingPendingProgress,
@@ -687,6 +695,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activePendingProgress = holdingUserInput ? null : incomingPendingProgress;
   const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
+  const isEditingQueuedMessage = editingQueuedAttachments !== null;
   const applyThreadModelPick = useApplyThreadModelPick();
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
   const composerDraftTargetKeyRef = useRef("");
@@ -1279,6 +1288,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerSendState = deriveComposerSendState({
     prompt,
     imageCount: composerImages.length + composerFiles.length,
+    existingAttachmentCount: editingQueuedAttachments?.length ?? 0,
     terminalContexts: composerTerminalContexts,
     elementContextCount:
       composerPreviewAnnotations.length +
@@ -1422,7 +1432,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   // SCIENT-FORK:END
 
-  const showResumeAction = canResume && !composerDraftHasUserContent(composerDraft);
+  const showResumeAction =
+    canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
   const collapsedComposerPrimaryActionDisabled =
     isSendBusy ||
     isSendDisabled ||
@@ -2466,6 +2477,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const voiceDraftAccepted = !isComposerApprovalState && pendingUserInputs.length === 0;
   const voiceDraftOrigin = useScientVoiceDraftOrigin({
     target: composerDraftTarget,
+    openTarget: isEditingQueuedMessage ? routeThreadRef : composerDraftTarget,
     environmentId,
     title: activeThread?.title ?? null,
     acceptsDraftText: voiceDraftAccepted,
@@ -2678,7 +2690,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     deleteStashEntryStable,
     toggleStashMenuStable,
   } = useComposerStash({
-    onStashRecoveredDraft,
+    // SCIENT-FORK: a queued-message edit can't be stashed.
+    isEditingQueuedMessage,
     environmentId,
     composerDraftTarget,
     promptRef,
@@ -3463,7 +3476,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       openModelPicker: openModelPickerStable,
       stepReasoningEffort: (direction) => {
-        if (noProviderAvailable || pendingUserInputs.length > 0) {
+        if (noProviderAvailable || pendingUserInputs.length > 0 || isEditingQueuedMessage) {
           return;
         }
         const change = getComposerReasoningStep({
@@ -3648,6 +3661,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       foldPastedText,
       composerDraftTarget,
       composerModelOptions,
+      isEditingQueuedMessage,
       composerCursor,
       activePendingProgress,
       pendingApprovals,
@@ -3886,8 +3900,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   canInterrupt={canInterrupt}
                   runId={activeThread?.runtime?.activeRunId ?? null}
                   hasSendableContent={composerSendState.hasSendableContent}
-                  // SCIENT-FORK: the composer never holds a queued-message edit.
-                  isEditingQueuedMessage={false}
+                  isEditingQueuedMessage={isEditingQueuedMessage}
                   onInterrupt={handleInterruptPrimaryActionStable}
                 >
                   <button
@@ -3990,6 +4003,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   />
                 </ComposerCommandMenuLayer>
               )}
+
+              {!isComposerCollapsedMobile &&
+                pendingUserInputs.length === 0 &&
+                editingQueuedAttachments !== null &&
+                editingQueuedAttachments.length > 0 && (
+                  <ComposerQueuedAttachmentRow
+                    attachments={editingQueuedAttachments}
+                    onRemove={onRemoveEditingQueuedAttachment}
+                  />
+                )}
 
               {composerAttachmentMediaRow}
 
@@ -4269,6 +4292,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       // too while a turn runs (DF-028).
                       showSendWhileRunning
                       // SCIENT-FORK:END
+                      isEditingQueuedMessage={isEditingQueuedMessage}
                       onSubmitMessage={handleSubmitMessageStable}
                       onResume={onResume}
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}

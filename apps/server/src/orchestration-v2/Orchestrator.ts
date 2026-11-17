@@ -122,11 +122,7 @@ import {
 // SCIENT-FORK:START — Scient orchestration modules
 import { pendingStartInterruptEffect } from "./scient-fork/PendingStartInterrupt.ts";
 import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
-import {
-  planQueuedRunSend,
-  queuedRunsReleasedByDirectSend,
-  startsDirectUserRun,
-} from "./scient-fork/QueuedRunSend.ts";
+import { startsDirectUserRun } from "./scient-fork/QueuedRunSend.ts";
 import {
   ownerPreservingSwitchPlan,
   settingExecutionOwnerOf,
@@ -2379,13 +2375,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const failQueuedRunStart = Effect.fn("Orchestrator.failQueuedRunStart")(function* (
     threadId: ThreadId,
     cause: unknown,
+    queuedRunId?: RunId,
   ) {
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
       ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages"],
       { turnItemTypes: ["user_message"], messageRoles: ["user", "system"] },
     );
-    const queuedRun = nextQueuedRun(projection);
+    const queuedRun =
+      queuedRunId === undefined
+        ? nextQueuedRun(projection)
+        : projection.runs.find((run) => run.id === queuedRunId && run.status === "queued");
     if (queuedRun === undefined) return;
     // A steer that fell back to the queue keeps its user item, hidden while the
     // run is queued. Republish it before the failure so clients whose bounded
@@ -2616,6 +2616,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       options?: {
         readonly failedRunId?: RunId;
         readonly endedRunId?: RunId;
+        readonly queuedRunId?: RunId;
         /** Treat the latest executed run as the one that just ended, as its run-end handler would. */
         readonly latestRunEnded?: boolean;
         readonly userStarted?: boolean;
@@ -2645,7 +2646,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (yield* cancelStaleQuestionWakes(projection)) {
         projection = yield* readCommandProjection(threadId);
       }
-      let storedQueuedRun = nextQueuedRun(projection);
+      let storedQueuedRun =
+        options?.queuedRunId === undefined
+          ? nextQueuedRun(projection)
+          : projection.runs.find(
+              (run) => run.id === options.queuedRunId && run.status === "queued",
+            );
       while (
         storedQueuedRun !== undefined &&
         isStalePullRequestWatchWake(projection, storedQueuedRun)
@@ -3619,12 +3625,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ],
       );
     },
-    (effect, threadId, _options?) =>
+    (effect, threadId, options?) =>
       effect.pipe(
         Effect.catch((cause) => {
           const lookup = isOrchestratorDispatchError(cause) ? cause.cause : cause;
           if (!isProviderAdapterRegistryLookupError(lookup))
-            return failQueuedRunStart(threadId, cause);
+            return failQueuedRunStart(threadId, cause, options?.queuedRunId);
           // A removed account is repairable configuration, not failed work. Keep
           // its messages queued and require another explicit Resume after repair.
           return Effect.gen(function* () {
@@ -6917,7 +6923,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? "promoted_queued_to_steer"
               : "steer",
           // SCIENT-FORK: distinguish first acceptance from re-delivery even after
-          // observer restart or a consent/identity boundary clears local caches.
+          // an observer restart clears local caches.
           inputAlreadyAdmitted:
             input.admittedDroidSteer !== undefined ||
             input.command.type === "queued-message.promote-to-steer" ||
@@ -16749,11 +16755,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 context: { version: 1 as const, records: [], guest: guestSend.guest },
               };
         cancelUnsettledEffects = yield* dispatchMessage(dispatched, events, effects);
-        // SCIENT-FORK:START queued-run-send — a direct user send resumes the queue.
+        // SCIENT-FORK:START queued-run-send — a direct user send resumes the queue, held or not. A
+        // failure whose hold reaction has not run yet leaves its queue unheld; this release is the
+        // boundary that reaction must respect.
         if (startsDirectUserRun(dispatched, yield* Ref.get(events))) {
           const started = yield* getProjectionWithPendingEvents(command.threadId, events);
           const now = yield* DateTime.now;
-          for (const run of queuedRunsReleasedByDirectSend(started.runs)) {
+          for (const run of started.runs.filter((candidate) => candidate.status === "queued")) {
             yield* emit(
               events,
               command,
@@ -16860,8 +16868,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queue.resume": {
         const projection = yield* loadProjectionForCommand(
           command,
-          ["runs", "turnItems", "providerSessions"],
-          { turnItemTypes: ["error"] },
+          ["runs", "turnItems", "providerSessions", "messages"],
+          { turnItemTypes: ["error"], messageRoles: ["user"] },
         );
         if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
           return yield* new OrchestratorDispatchError({
@@ -16870,40 +16878,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is not active.`,
           });
         }
-        const now = yield* DateTime.now;
-        const queued = projection.runs.filter((run) => run.status === "queued");
-        const queueMessages = yield* loadProjectionForCommand(command, ["messages"], {
-          messageIds: queued.map((run) => run.userMessageId),
-        });
-        // SCIENT-FORK:START queued-run-send — Send on any queued message starts it
-        // now and resumes the rest of the queue after it.
-        const send =
-          command.runId === undefined
+        const selectedRunId = command.type === "queued-run.start" ? command.runId : undefined;
+        const selectedRun =
+          selectedRunId === undefined
             ? undefined
-            : planQueuedRunSend(
-                { runs: projection.runs, messages: queueMessages.messages },
-                command.runId,
-              );
-        if (send?.refusal != null) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: send.refusal,
-          });
+            : projection.runs.find((run) => run.id === selectedRunId && run.status === "queued");
+        if (selectedRunId !== undefined) {
+          const selectedMessage = projection.messages.find(
+            (message) => message.id === selectedRun?.userMessageId,
+          );
+          if (
+            selectedRun === undefined ||
+            selectedMessage === undefined ||
+            selectedMessage.delegatedCompletion !== undefined ||
+            selectedMessage.notification !== undefined ||
+            projection.runs.some(isActiveRun)
+          ) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "A queued user message can only be sent now while the thread is stopped.",
+            });
+          }
         }
-        const released = send?.refusal === null ? send.runs : queued;
-        const head =
-          send?.refusal === null
-            ? send.runs[0]
-            : queuedRunsInDeliveryOrder({ ...projection, messages: queueMessages.messages })[0];
-        // Send can replace the old head; gate the provider that will actually start.
+        const nextRun = selectedRun ?? queuedRunsInDeliveryOrder(projection)[0];
         if (
           usageLimitHoldsQueue(
             projection,
-            head === undefined
+            nextRun === undefined
               ? projection.thread.providerInstanceId
-              : queuedRunModelSelection({ ...projection, messages: queueMessages.messages }, head)
-                  .instanceId,
+              : queuedRunModelSelection(projection, nextRun).instanceId,
           )
         ) {
           return yield* new OrchestratorDispatchError({
@@ -16912,7 +16916,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "Continue the limited thread before resuming its queue.",
           });
         }
-        // SCIENT-FORK:END queued-run-send
         if (worktreeSetupPending(projection)) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -16920,9 +16923,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "Retry worktree setup or choose a workspace before resuming the queue.",
           });
         }
-        if (head !== undefined)
-          yield* providerAdapters.get(head.providerInstanceId).pipe(mapDispatchError(command));
-        for (const run of released) {
+        // SCIENT-FORK: the provider that will start must still be configured.
+        if (nextRun !== undefined)
+          yield* providerAdapters.get(nextRun.providerInstanceId).pipe(mapDispatchError(command));
+        const now = yield* DateTime.now;
+        const queued = projection.runs.filter((run) => run.status === "queued");
+        for (const run of queued) {
           yield* emit(
             events,
             command,
@@ -17068,8 +17074,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
     if (command.type === "queue.resume" || command.type === "queued-run.start") {
-      // SCIENT-FORK: the committed Scient order includes automatic predecessors before the selected send.
-      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId, { userStarted: true }));
+      yield* mapDispatchError(command)(
+        startNextQueuedRun(command.threadId, {
+          userStarted: true,
+          ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
+        }),
+      );
     }
     return {
       sequence: receipt.resultSequence,
@@ -17338,10 +17348,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "queued-run.start" ||
       (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined)
     ) {
-      // SCIENT-FORK: the committed Scient order includes automatic predecessors before the selected send.
       yield* mapDispatchError(command)(
         startNextQueuedRun(command.threadId, {
           userStarted: command.type !== "thread.runtime-mode.set",
+          ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
         }),
       );
     }

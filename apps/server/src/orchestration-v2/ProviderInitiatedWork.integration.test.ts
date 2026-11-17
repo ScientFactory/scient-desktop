@@ -417,7 +417,7 @@ const withInitiatedWork = <A, E, R>(
                           if (
                             !held &&
                             input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
-                            input.args.includes("fetch") &&
+                            input.args.includes("update-ref") &&
                             input.args.some((arg) =>
                               arg.endsWith(`/ordinal/${options.holdCaptureOrdinal}`),
                             )

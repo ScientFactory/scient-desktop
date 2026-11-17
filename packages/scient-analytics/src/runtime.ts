@@ -3,14 +3,11 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeWorkerThreads from "node:worker_threads";
 
 import {
-  type AnalyticsConsent,
   type AnalyticsPriority,
-  consentAllows,
   type NormalizationContext,
   normalizeInheritedEvent,
 } from "./contract.ts";
 import {
-  DELETE_DEADLINE_MS,
   FLUSH_DEADLINE_MS,
   type AnalyticsEventDraft,
   type AnalyticsWorkerCommand,
@@ -34,14 +31,11 @@ const PRIORITY_RANK: Readonly<Record<AnalyticsPriority, number>> = {
 
 export interface AnalyticsRuntimeOptions extends NormalizationContext {
   readonly enabled: boolean;
-  readonly consent: AnalyticsConsent;
   readonly outboxPath: string;
   readonly endpoint?: string;
   readonly workerUrl?: URL;
   readonly now?: () => Date;
   readonly randomUUID?: () => string;
-  /** A user-requested deletion may authenticate while collection stays off. */
-  readonly purpose?: "collection" | "deletion";
   /** How long a control request waits for the worker; tests shorten it. */
   readonly controlTimeoutMs?: number;
 }
@@ -50,9 +44,7 @@ export interface AnalyticsRuntime {
   readonly enabled: boolean;
   readonly record: (name: string, properties?: Readonly<Record<string, unknown>>) => boolean;
   readonly flush: () => Promise<number>;
-  readonly setConsent: (consent: AnalyticsConsent) => Promise<number>;
   readonly pendingCount: () => Promise<number>;
-  readonly deleteData: () => Promise<boolean>;
   readonly close: () => Promise<void>;
 }
 
@@ -61,9 +53,7 @@ function disabledRuntime(): AnalyticsRuntime {
     enabled: false,
     record: () => false,
     flush: async () => 0,
-    setConsent: async () => 0,
     pendingCount: async () => 0,
-    deleteData: async () => false,
     close: async () => undefined,
   };
 }
@@ -83,10 +73,7 @@ function waitForCondition(satisfied: () => boolean, deadline: number): Promise<v
 }
 
 export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): AnalyticsRuntime {
-  const purpose = options.purpose ?? "collection";
-  if (!options.enabled || (options.consent === "off" && purpose !== "deletion")) {
-    return disabledRuntime();
-  }
+  if (!options.enabled) return disabledRuntime();
 
   const now = options.now ?? (() => new Date());
   const controlTimeoutMs = options.controlTimeoutMs ?? CONTROL_TIMEOUT_MS;
@@ -98,18 +85,14 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       workerData: {
         outboxPath: options.outboxPath,
         endpoint: options.endpoint ?? DEFAULT_ENDPOINT,
-        consent: options.consent,
-        purpose,
       } satisfies AnalyticsWorkerInput,
     },
   );
   worker.unref();
 
-  let consent: AnalyticsConsent = options.consent;
   let ready = false;
   let available = true;
   let closed = false;
-  let deleting = false;
   let writeTimer: ReturnType<typeof setTimeout> | null = null;
   let nextBatchId = 1;
   let nextRequestId = 1;
@@ -160,7 +143,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   };
 
   const drain = () => {
-    if (!ready || !available || closed || deleting) return;
+    if (!ready || !available || closed) return;
     if (writeTimer !== null) {
       clearTimeout(writeTimer);
       writeTimer = null;
@@ -257,18 +240,17 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
   };
 
   const record: AnalyticsRuntime["record"] = (name, properties) => {
-    if (closed || deleting || !available || consent === "off" || purpose === "deletion") {
-      return false;
-    }
+    if (closed || !available) return false;
     const normalized = normalizeInheritedEvent(name, properties, options);
-    if (!normalized || !consentAllows(consent, normalized.privacyLevel)) return false;
+    if (!normalized) return false;
     const accepted = admit({
       id: randomUUID(),
       name: normalized.name,
       session_id: sessionId,
       occurred_at: now().toISOString(),
       privacy_level: normalized.privacyLevel,
-      consent_level: consent,
+      // The gateway still reads a consent level; analytics is always on at the full level.
+      consent_level: "diagnostic",
       properties: {
         appVersion: options.appVersion,
         buildChannel: options.buildChannel,
@@ -286,7 +268,7 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
     },
     record,
     flush: async () => {
-      if (closed || deleting || !available || consent === "off" || purpose === "deletion") return 0;
+      if (closed || !available) return 0;
       await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
       if (!ready || !available) return 0;
       drain();
@@ -297,31 +279,6 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
         )) ?? 0
       );
     },
-    setConsent: async (nextConsent) => {
-      consent = nextConsent;
-      let purged = 0;
-      for (let index = queue.length - 1; index >= 0; index -= 1) {
-        const event = queue[index];
-        if (event && !consentAllows(nextConsent, event.privacy_level)) {
-          queue.splice(index, 1);
-          purged += 1;
-        }
-      }
-      // Worker messages queue even before startup. Never silently leave a
-      // higher persisted consent active because readiness was slow.
-      const acknowledged = await request((requestId) => ({
-        type: "set-consent",
-        requestId,
-        consent: nextConsent,
-      }));
-      if (acknowledged === null) {
-        disable();
-        await worker.terminate().catch(() => undefined);
-        throw new Error("Analytics consent was not acknowledged");
-      }
-      drain();
-      return purged + acknowledged;
-    },
     pendingCount: async () => {
       if (closed || !available) return bufferedCount();
       await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
@@ -330,33 +287,6 @@ export function createAnalyticsRuntime(options: AnalyticsRuntimeOptions): Analyt
       return (
         queue.length + ((await request((requestId) => ({ type: "pending-count", requestId }))) ?? 0)
       );
-    },
-    deleteData: async () => {
-      if (closed || deleting || !available) return false;
-      deleting = true;
-      try {
-        await waitForCondition(() => ready || !available, Date.now() + controlTimeoutMs);
-        if (!ready || !available) return false;
-        // Already-posted enqueues precede deletion on the worker's message port.
-        // Hold all remaining batches until its result, including persisted ACKs.
-        const result = await request(
-          (requestId) => ({ type: "delete-data", requestId }),
-          DELETE_DEADLINE_MS + controlTimeoutMs,
-        );
-        if (result === null) {
-          // An ambiguous response may follow identity rotation; never replay the
-          // old memory buffer under that identity.
-          disable();
-          await worker.terminate().catch(() => undefined);
-          return false;
-        }
-        const deleted = result === 1;
-        if (deleted) queue.length = 0;
-        return deleted;
-      } finally {
-        deleting = false;
-        drain();
-      }
     },
     close: async () => {
       if (closed) return;

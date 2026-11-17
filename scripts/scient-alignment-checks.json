@@ -210,7 +210,7 @@
       "decidingAssertions": [
         "NativeQueueHoldPolicy drains success FIFO once, holds Stop/failure, admits explicit Resume/selected Send/direct Send, refuses active head; continuation/Queue/Steer fallback never release prior held work. Late old terminal/checkpoint cannot re-hold replacement.",
         "QueuedStartRecovery preserves full message/skills/attachment bytes, modes, root/plan and queue position; explicit Retry creates a distinct attempt, stale start cannot change it.",
-        "Budget/QueuedRunSend bound queued admission. LegacyV1RecoveryAcceptance preserves original source bytes, rebuilds/idempotently imports held rows with no automatic offers; only explicit release starts work.",
+        "Budget bounds queued admission; QueuedRunSend reads an older client's queue.resume(runId) as queued-run.start. LegacyV1RecoveryAcceptance preserves original source bytes, rebuilds/idempotently imports held rows with no automatic offers; only explicit release starts work.",
         "Client disposition preserves normal/alternate Queue/Steer intent and refuses idle steer. Real QueuedRunsControl shortcut fixture dispatches exact native queue-head/active-run identifiers, ignores repeats/unavailable shortcuts and sends the selected held run with exact environment/thread/run; the control exposes no blanket Resume. Composer markup asserts Queue availability alongside Stop."
       ],
       "checks": {
@@ -218,7 +218,7 @@
           "src/orchestration-v2/NativeQueueHoldPolicy.integration.test.ts",
           "src/orchestration-v2/QueuedStartRecovery.integration.test.ts",
           "src/orchestration-v2/QueuedMessageBudget.integration.test.ts",
-          "src/orchestration-v2/scient-fork/QueuedRunSend.integration.test.ts",
+          "src/orchestration-v2/scient-fork/QueuedRunSend.test.ts",
           "src/orchestration-v2/legacy/LegacyV1RecoveryAcceptance.integration.test.ts"
         ],
         "web-unit": ["src/scient/threadQueue/disposition.test.ts"],

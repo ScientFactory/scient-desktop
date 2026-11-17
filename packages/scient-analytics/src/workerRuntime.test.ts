@@ -50,7 +50,7 @@ function draft(name = "project.opened"): AnalyticsEventDraft {
     session_id: `session:${NodeCrypto.randomUUID()}`,
     occurred_at: EPOCH,
     privacy_level: normalized.privacyLevel,
-    consent_level: "product",
+    consent_level: "diagnostic",
     properties: normalized.properties,
     priority: normalized.priority,
   };
@@ -78,8 +78,6 @@ async function startWorker(steps: ReadonlyArray<FetchStep>, fallback: FetchStep 
     port: channel.port1,
     outboxPath: NodePath.join(root, "outbox.sqlite"),
     endpoint: "http://127.0.0.1:1/v1/events",
-    consent: "product",
-    purpose: "collection",
   });
 
   const waitFor = <T extends AnalyticsWorkerResponse>(
@@ -213,7 +211,7 @@ describe("analytics worker delivery", () => {
     expect(await worker.pendingCount()).toBe(0);
   });
 
-  it("drains a backlog in one flush and yields to a consent change between batches", async () => {
+  it("drains a backlog in one flush and stops between batches when closed", async () => {
     const drained = await startWorker([]);
     await drained.enqueue(Array.from({ length: 400 }, () => draft()));
     expect(await drained.flush()).toBe(400);
@@ -230,11 +228,7 @@ describe("analytics worker delivery", () => {
     await interrupted.enqueue(Array.from({ length: 400 }, () => draft()));
     const flushed = interrupted.flush();
     await secondSend.promise;
-    await interrupted.command((requestId) => ({
-      type: "set-consent",
-      requestId,
-      consent: "essential",
-    }));
+    await interrupted.command((requestId) => ({ type: "close", requestId }));
     expect(await flushed).toBe(50);
     expect(interrupted.fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -262,24 +256,5 @@ describe("analytics worker delivery", () => {
     // A third upload starting at 20 s could run past the 30 s budget, so the flush ends here.
     expect(await flushed).toBe(100);
     expect(worker.fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("aborts a stalled deletion when consent changes, so consent is acknowledged", async () => {
-    const deleting = Promise.withResolvers<void>();
-    const worker = await startWorker([
-      (init) => {
-        deleting.resolve();
-        return untilAborted(init);
-      },
-    ]);
-    const deleted = worker.command((requestId) => ({ type: "delete-data", requestId }));
-    await deleting.promise;
-    const consented = worker.command((requestId) => ({
-      type: "set-consent",
-      requestId,
-      consent: "off",
-    }));
-    expect(await deleted).toBe(0);
-    expect(await consented).toBe(0);
   });
 });
