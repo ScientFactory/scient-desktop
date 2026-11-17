@@ -122,7 +122,11 @@ Unchanged.
 
 ## Follow-ups
 
-None so far.
+- **#991:** HTML previews refuse symlinks to hidden files; export, share and render responses
+  accept only signed asset paths.
+- **Open:** the asset route checks a file, then opens it again to send it; a local process that
+  swaps in a symlink in that gap could still get a hidden file served. Needs a single-open response
+  path.
 
 ## Verification
 
@@ -131,3 +135,26 @@ live-profile variables.
 
 - **Static checks:** the root typecheck, `vp fmt --check`, `vp lint`, knip, `brand:check`, both
   generate checks, the seam check and the provenance check pass.
+- **Suites:** `pnpm alignment:gates --only test` (server six files at a time) plus targeted
+  reruns. Failures that are the same on owned main on this Mac:
+  - desktop: Niri and D-Bus snapshot tests, the dev-launch socket path;
+  - source-control-github: the gh Unix socket path; ssh: two launch-race tests;
+  - provider-acp-registry: two tests that time out;
+  - server: the port scanner's agent stop, the setup-script syntax error, `ClaudeSkills`, the real
+    LaTeX engine, the OMP event budget and the provider-switch integration file;
+  - web: the two `ChatMarkdown.permissions` keyboard-menu cases.
+- **Scient tests fitted to T3's behaviour:** title limits, package agents `unprepared`, realistic
+  signed asset URLs, the Compute and Sources toast mocks, and Scient's restored "clears the roster
+  when a turn fails" case, removed because T3 now keeps a failed turn's tasks on a live process and
+  tests both outcomes.
+- **Codex review (GPT-6.1 Sol, high):** an exited Claude process kept its scheduled wake on a failed
+  turn, which T3's new wait counts; fixed with a test that fails without the fix. Two pre-existing
+  Scient gaps it found (HTML-preview aliases to hidden files, unchecked signed paths on export,
+  share and render) are fixed separately in #991.
+- **Live review:** a clean dev app at `7b67e8ebc25` on a throwaway project, driven by Codex
+  GPT-6.1 Terra with rechecks by Claude (`reviews/t3-sync-e9a1-20261117/RECORD.md` in the
+  workspace). Claude and Codex turns, the spaced-path file chip opening its file while a command
+  stays plain code, a published theme's background image and its removal, a local `/side`
+  command while a turn runs, Stop, the model picker, Scient's own voice control with no T3
+  first-run prompt, and all 27 Settings pages without T3 naming pass. Snapshots, native context
+  menus and dragging pills to Finder were not exercised live; their tests pass.
