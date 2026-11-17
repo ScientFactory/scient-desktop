@@ -69,7 +69,8 @@ the stable scheduler and production gate.
   a failed detector or an unqualified skip fails the gate. It runs the release
   payload validator, packaged terminal/Cursor native probes, and an install/upgrade
   from the checksum-pinned 0.6.21 installer without signing
-  secrets or publication authority. Release Smoke uses synthetic artifacts and
+  secrets or publication authority. 0.6.21 downloads, verifies and installs in the
+  background while the candidate builds; the candidate then installs over it. Release Smoke uses synthetic artifacts and
   remains a separate workflow/manifest check.
 - Linux Packaging builds an unsigned x64 AppImage on Ubuntu for desktop,
   native, assembly, or dependency changes. Ordinary renderer/server source
@@ -87,6 +88,10 @@ the stable scheduler and production gate.
   duplicate ASAR trees for a controlled compressed-size comparison; retained
   archive bytes and external resource bytes/modes must match. This measures
   the cleanup on identical inputs, not a download comparison between releases.
+  The resource monitor and capture helpers reuse release.yml's caches by their
+  sources, the receipt-verified SyncTeX input is cached by its staging script
+  and runner image, and apt installs while dependencies install; a miss builds
+  as before, and the packaged binaries are executed either way.
 - The bundled WSL archive excludes Windows canvas, keyring, and Cursor platform
   packages; their Linux variants remain, and the Windows sidecar is separate.
   WSL installation restores execute permissions for Cursor's Linux `rg` and

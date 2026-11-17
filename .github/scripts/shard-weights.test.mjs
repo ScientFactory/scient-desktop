@@ -39,7 +39,7 @@ NodeTest.test("rejects malformed inputs instead of silently replacing recorded w
     NodeAssert.throws(() => weightsFromReports([value]));
 });
 
-NodeTest.test("server weights include serial imports and setup between file results", () => {
+NodeTest.test("server weights are each file's own duration, whatever ran beside it", () => {
   const first = report("/runner/apps/server/integration/a.test.ts", 2);
   const second = report("/runner/apps/server/scripts/b.test.ts", 1);
   second.testResults[0].startTime = 6_000;
@@ -47,7 +47,7 @@ NodeTest.test("server weights include serial imports and setup between file resu
   const combined = { success: true, testResults: [...second.testResults, ...first.testResults] };
   NodeAssert.deepEqual(weightsFromReports([combined], "server"), {
     "integration/a.test.ts": 2,
-    "scripts/b.test.ts": 4,
+    "scripts/b.test.ts": 1,
   });
   NodeAssert.throws(() => weightsFromReports([combined], "mobile"));
   NodeAssert.throws(() => weightsFromReports([{ ...first, success: false }], "server"));

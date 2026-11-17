@@ -8,8 +8,7 @@ export function weightsFromReports(reports, suite = "web") {
       throw new Error("Expected a nonempty Vitest JSON report");
     if (report.success !== true) throw new Error("Expected a successful Vitest report");
     const seen = new Set();
-    let previousEnd;
-    for (const result of [...report.testResults].sort((a, b) => a.endTime - b.endTime)) {
+    for (const result of report.testResults) {
       const name = result.name.replaceAll("\\", "/");
       const marker = `/apps/${suite}/`;
       const key = name.slice(name.lastIndexOf(marker) + marker.length);
@@ -19,15 +18,9 @@ export function weightsFromReports(reports, suite = "web") {
       seen.add(key);
       if (result.status === "pending") continue;
       if (result.status !== "passed") throw new Error(`Unsuccessful file: ${key}`);
-      const duration = (result.endTime - result.startTime) / 1_000;
-      if (!Number.isFinite(duration) || duration < 0) throw new Error(`Invalid duration: ${key}`);
-      // Server files run serially. End-to-end gaps include their import/setup cost;
-      // web projects overlap, so only their individual file durations are meaningful.
-      const seconds =
-        suite === "server" && previousEnd !== undefined
-          ? (result.endTime - previousEnd) / 1_000
-          : duration;
-      previousEnd = result.endTime;
+      // CI runs both suites' files in parallel, so gaps between results mean nothing; each
+      // sequencer adds its own per-file start cost to these durations.
+      const seconds = (result.endTime - result.startTime) / 1_000;
       if (!Number.isFinite(seconds) || seconds < 0) throw new Error(`Invalid duration: ${key}`);
       const values = samples.get(key) ?? [];
       values.push(seconds);
