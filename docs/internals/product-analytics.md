@@ -13,7 +13,7 @@ in a development candidate. Pair it with `SCIENT_ANALYTICS_TEST_ENDPOINT` set
 to `http://127.0.0.1:<port>/v1/events` (or literal IPv6 loopback). Other hosts,
 credentials, paths and query strings are rejected. Use only synthetic state;
 never send development review traffic to the production gateway. This override
-does not set consent, change released defaults or enable generic T3 telemetry.
+does not change released defaults or enable generic T3 telemetry.
 
 This document describes the source implementation, not deployed collection or a
 privacy approval. Release/activation evidence must refer to exact desktop and
@@ -30,11 +30,13 @@ characters, finite numbers, booleans or arrays of up to 32 of those, 16 KiB in a
 key (`prompt`, `message`, `error`, `path`, `url`, `email` and the like) or value that looks like a
 path, link or email address. Revision 11 permits a validated `email` only on
 `install.account_observed`; ordinary events retain the same exclusions.
-Consent level is enforced before queueing, delivery uses only Scient's first-party gateway, and
+Every event is queued at the full `diagnostic` level the gateway reads, delivery uses only Scient's first-party gateway, and
 failures cannot block normal product behavior.
 
 The Settings privacy section, with its switch and “Delete data” request, was
-removed, along with the server's consent and deletion routes.
+removed, along with the server's consent and deletion routes. The server and worker no longer
+carry consent levels, collection epochs or a deletion request; the status the server reports
+keeps `consent` (always `diagnostic` when available) only for clients that still read it.
 
 The notification is implemented but disabled by default at its component boundary
 pending an approved audience and timing policy. This gate does not change analytics
@@ -203,9 +205,8 @@ small-input turns dominate. Rows without `reportVersion` keep their missing
 fields unknown; a missing origin is never a person.
 
 UI export operations require a cached, positive status with an ephemeral
-`collectionContext`. The server derives that context from its current consent
-epoch and a random value; a new server/HTTP lifetime invalidates it. Consent is
-fixed for a server's lifetime, so the epoch stays 0. The UI carries it outside event properties, and the
+`collectionContext`. The server derives that context from a random value; a new
+server/HTTP lifetime invalidates it. The UI carries it outside event properties, and the
 HTTP adapter verifies and removes it before recording. It never enters the
 outbox or gateway and is not an installation identity. Old status responses
 remain compatible, but without a context the new UI-operation observers stay
@@ -220,7 +221,7 @@ failures. Missing terminal events are not automatically failures.
 
 The dedicated worker owns SQLite and remote delivery. Limits are 1,000 memory
 events, two in-flight local batches, 10,000 durable events, 50 events per upload,
-up to 10 uploads per flush, 15-second upload deadlines (10 seconds for deletion),
+up to 10 uploads per flush, 15-second upload deadlines,
 20 gateway rejections per event, and 100 metadata-only dead letters. A timeout,
 network error, 408, 429 or 5xx backs off the endpoint (30 seconds doubling to 15
 minutes, with jitter, and at least any `Retry-After` on 429/503); it never parks or
@@ -234,8 +235,7 @@ privacy check. Local raw events expire after 180 days, diagnostics after 30 days
 and dead-letter metadata after 30 days when maintenance runs. An app that is
 not running cannot execute cleanup; old events are filtered before delivery.
 
-Off makes no per-event HTTP, SQLite, or worker call. The server sets consent once,
-when the worker starts, and sends no later consent or deletion controls. The worker schedules delivery only while eligible events remain;
+Unavailable analytics makes no per-event HTTP, SQLite, or worker call. The worker schedules delivery only while eligible events remain;
 diagnostic summaries do not create an endless diagnostic-only feedback loop.
 Shutdown gets 300 ms for local persistence and does not await remote delivery.
 These are implementation bounds, not a claim of zero CPU cost or universally
@@ -273,8 +273,7 @@ billion; invalid values are omitted rather than clamped. Unknown counts are not
 zero. Cache and reasoning are already included in input/output and must not be
 added again. Private or mixed model labels become `other`; absent labels remain
 `unknown`. No transcript scan, raw usage object, cost estimate or subagent total
-is exported. Product consent must cover the observed turn interval; epoch
-changes suppress deferred totals. Missing/evicted starts emit unavailable usage
+is exported. Missing/evicted starts emit unavailable usage
 rather than attributing an unproven interval. Terminal failures/stops can consume
 tokens but usage remains Product-class, separate from Essential failures.
 
@@ -286,9 +285,7 @@ submission, not proof of provider delivery, an answer, or a human action.
 Progress updates, queued-to-steer promotions, retries, restart continuations,
 restored terminal history and legacy queue hydration do not produce new submissions. Driver attribution
 uses the canonical run event or configured instance's driver, never the instance
-name. Consent/identity changes clear the bounded observation state and never
-backfill earlier admissions. Consent is fixed for the server's lifetime, so
-the collection period set at start (epoch 0) never changes.
+name. Only events committed after the observers start are observed.
 Steering items carry optional canonical `inputAlreadyAdmitted` provenance:
 held Droid re-delivery and queue promotion are not first admissions, even after
 local correlation state resets. Unknown legacy provenance is not counted.
@@ -359,7 +356,7 @@ from the source implementation alone.
 
 `OperationAnalytics` observes these owners; it does not own work, add retries,
 change failures, or write scientific state. Optional-service hosts still work
-without analytics. Correlation maps are bounded and cleared at consent epochs.
+without analytics. Correlation maps are bounded and cleared while analytics is unavailable.
 Compute correlation includes current project/session/execution identity and
 session generation only in memory. When workspace-binding authority lands,
 include that binding in this local key; caller-chosen execution IDs are not globally
@@ -446,7 +443,7 @@ not proof that the user submitted or accepted the transcript.
 The UI binds the job to its original connection and collection context. A
 previously verified context does not expire mid-job; the server validates it on
 every voice event and strips it before queueing. Unknown/Off work is never replayed,
-and consent changes, deletion or a server restart invalidate old outcomes. A
+and a server restart invalidates old outcomes. A
 server must advertise lifecycle version 2 before the UI sends these job events.
 Essential permits failure metadata only; recording and successful-use events
 remain Product. Audio, transcripts, correction requests, document contents and
@@ -477,8 +474,7 @@ Source imports use a small optional Promise observer at the existing
 coordinator's actual item-processing seam and the agent source-add seam.
 `SourceImportAnalytics` bridges to the same `AnalyticsService`; there is no
 global listener, second operation store, import retry, or additional filesystem/
-network request. Off bypasses outcome inspection. A consent epoch change during
-an attempt suppresses its terminal event; future genuine attempts can be observed.
+network request. Unavailable analytics bypasses outcome inspection.
 
 `source-import` has **item-attempt** grain. A successful source-store return
 emits `scient.operation.completed`; duplicates/possible matches emit
@@ -518,14 +514,9 @@ not exact percentile measurements.
 
 ## Deletion and activation gates
 
-The desktop no longer sends deletion requests. The rest of this section describes the
-analytics worker and gateway, which keep their deletion handling.
-
-When the analytics runtime is enabled, an explicit deletion can authenticate
-while consent is Off; it does not temporarily enable Essential collection.
-The globally disabled runtime remains inert, including its remote controls.
-Acknowledgement permits local cleanup and identity rotation, not a claim that
-every downstream copy is gone.
+The desktop no longer sends deletion requests, and its analytics worker no longer
+carries one. The rest of this section describes the gateway, which keeps its
+deletion handling. The globally disabled runtime remains inert.
 
 The gateway owns atomic D1 erasure, durable anti-resurrection tombstones,
 delivery leases, and downstream erasure state. Its separate
@@ -549,7 +540,7 @@ ambiguous capture. Desktop account linking remains disabled. See the gateway
 README for qualification, pending/blocked status and deployment procedures.
 
 Useful local checks include package contract/outbox/worker tests, service/UI
-consent tests, provider lifecycle and operation observer tests, the real gateway
+tests, provider lifecycle and operation observer tests, the real gateway
 SQLite migration/retention/deletion suite, whole-repository checks, and the
 packaged analytics worker. These do not prove deployed configuration, live
 PostHog queries, Windows/Linux behavior, or human privacy-UI acceptance.

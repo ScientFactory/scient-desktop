@@ -22,8 +22,7 @@ export const scientAnalyticsHttpApiLayer = HttpApiBuilder.group(
             return Effect.void;
           }),
           flush: Effect.void,
-          status: Effect.succeed({ available: false, consent: "off" }),
-          collectionEpoch: Effect.succeed(0),
+          status: Effect.succeed({ available: false }),
         }),
     );
     const ui = makeAnalyticsUiAdapter(analytics);

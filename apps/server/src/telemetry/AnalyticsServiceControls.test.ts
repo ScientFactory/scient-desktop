@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Scoped synthetic preference files only.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { AnalyticsRuntime, AnalyticsRuntimeOptions } from "@scientfactory/analytics";
 import { assert, it } from "@effect/vitest";
@@ -6,8 +5,6 @@ import { vi } from "vite-plus/test";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -36,9 +33,7 @@ function fakeRuntime(enabled = true) {
       return alive;
     },
     flush: async () => 0,
-    setConsent: async () => 0,
     pendingCount: async () => 0,
-    deleteData: async () => true,
     close: async () => {
       alive = false;
     },
@@ -46,37 +41,7 @@ function fakeRuntime(enabled = true) {
   return { runtime, recorded, properties };
 }
 
-it.layer(NodeServices.layer)("AnalyticsService collection fences", (it) => {
-  it.effect("reports the ready boundary to observers, even one that fails", () =>
-    Effect.gen(function* () {
-      factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
-      const service = yield* AnalyticsService.make;
-      const seen: [number, string][] = [];
-      assert.ok(service.observeCollectionBoundary);
-      const remove = yield* service.observeCollectionBoundary(async (epoch, phase) => {
-        await Promise.resolve();
-        seen.push([epoch, phase]);
-      });
-      assert.deepEqual(seen, [[0, "ready"]]);
-      remove();
-      const removeFailing = yield* service.observeCollectionBoundary(async () => {
-        throw new Error("synthetic unavailable sink");
-      });
-      removeFailing();
-    }).pipe(Effect.provide(testLayer())),
-  );
-  it.effect("rejects observer records fenced to another collection epoch", () =>
-    Effect.gen(function* () {
-      const active = fakeRuntime();
-      factory.mockReset().mockImplementation(() => active.runtime);
-      const service = yield* AnalyticsService.make;
-      const currentEpoch = yield* service.collectionEpoch;
-      yield* service.record("provider.turn.sent", { provider: "scient" }, currentEpoch + 1);
-      assert.deepEqual(active.recorded, ["app.session.started"]);
-      yield* service.record("provider.turn.sent", { provider: "scient" }, currentEpoch);
-      assert.deepEqual(active.recorded, ["app.session.started", "provider.turn.sent"]);
-    }).pipe(Effect.provide(testLayer())),
-  );
+it.layer(NodeServices.layer)("AnalyticsService controls", (it) => {
   it.effect("uses an executable sibling for the analytics worker without starting collection", () =>
     Effect.gen(function* () {
       executable.active = true;
@@ -98,13 +63,13 @@ it.layer(NodeServices.layer)("AnalyticsService collection fences", (it) => {
       Effect.provide(testLayer()),
     ),
   );
-  it.effect("defaults to usage and reliability when available without a saved preference", () =>
+  it.effect("collects when enabled", () =>
     Effect.gen(function* () {
       factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
       const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: true, consent: "diagnostic" });
-      assert.equal(factory.mock.calls.at(-1)?.[0].consent, "diagnostic");
-    }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
+      assert.deepEqual(yield* service.status, { available: true });
+      assert.equal(factory.mock.calls.at(-1)?.[0].enabled, true);
+    }).pipe(Effect.provide(testLayer())),
   );
 
   it.effect("reports each owner once per process", () =>
@@ -125,42 +90,11 @@ it.layer(NodeServices.layer)("AnalyticsService collection fences", (it) => {
           { ownerSource: "claude", ownerId: "b".repeat(64), observedBy: "server" },
         ],
       );
-    }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
-  );
-
-  it.effect("ignores damaged saved preferences", () =>
-    Effect.gen(function* () {
-      factory.mockReset().mockImplementation(() => fakeRuntime(false).runtime);
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const config = yield* ServerConfig.ServerConfig;
-      const directory = path.join(config.stateDir, "analytics");
-      yield* fs.makeDirectory(directory, { recursive: true });
-      yield* fs.writeFileString(path.join(directory, "preferences.json"), "invalid");
-      const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: true, consent: "diagnostic" });
-    }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
-  );
-
-  it.effect("honors an explicit environment Off override", () =>
-    Effect.gen(function* () {
-      factory.mockReset().mockImplementation(() => fakeRuntime(false).runtime);
-      const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: true, consent: "off" });
-    }).pipe(
-      Effect.provide(
-        testLayer({ SCIENT_ANALYTICS_ENABLED: "true", SCIENT_ANALYTICS_CONSENT: "off" }),
-      ),
-    ),
+    }).pipe(Effect.provide(testLayer())),
   );
 });
 
-function testLayer(
-  env = { SCIENT_ANALYTICS_ENABLED: "true", SCIENT_ANALYTICS_CONSENT: "product" } as Record<
-    string,
-    string
-  >,
-) {
+function testLayer(env: Record<string, string> = { SCIENT_ANALYTICS_ENABLED: "true" }) {
   return Layer.mergeAll(
     ManagedPolicy.layerTest(),
     ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "scient-analytics-controls-" }),

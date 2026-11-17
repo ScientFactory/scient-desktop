@@ -36,7 +36,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ScientificRuntimePreferences from "../compute/ScientificRuntimePreferences.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
-import { AnalyticsService, type AnalyticsStatus } from "../../telemetry/AnalyticsService.ts";
+import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -128,7 +128,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
       "cancel-capture.m",
       "private-study.m",
       "later-error.m",
-      "consent.m",
+      "unobserved.m",
       "first.m",
       "queued.m",
       "cleanup.m",
@@ -223,8 +223,7 @@ const serviceTestLayer = makeServiceTestLayer();
 const analyticsFixture = Effect.gen(function* () {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
   const terminalEvents = yield* Queue.unbounded<string>();
-  let status: AnalyticsStatus = { available: true, consent: "product" };
-  let epoch = 0;
+  let available = true;
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
@@ -232,16 +231,14 @@ const analyticsFixture = Effect.gen(function* () {
         events.push({ name, properties });
         if (name !== "scient.operation.started") yield* Queue.offer(terminalEvents, name);
       }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
+    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
-  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+  const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      status = { available: true, consent };
-      epoch += 1;
+      available = next;
     });
-  return { events, terminalEvents, service, setConsent };
+  return { events, terminalEvents, service, setAvailable };
 });
 
 type ArtifactFixtureMode =
@@ -763,7 +760,7 @@ describe("analysis artifact analytics", () => {
   );
 
   it.effect.each(
-    (["off", "epoch-change", "broken"] as const).map((mode) => ({
+    (["unavailable", "broken"] as const).map((mode) => ({
       caseTitle: `keeps capture functional with ${mode} analytics without replay`,
       mode,
     })),
@@ -771,19 +768,18 @@ describe("analysis artifact analytics", () => {
     Effect.gen(function* () {
       const harness = yield* makeServiceTestLayer(artifactTestAdapter("captured"));
       const analytics = yield* analyticsFixture;
-      if (mode === "off") yield* analytics.setConsent("off");
+      if (mode === "unavailable") yield* analytics.setAvailable(false);
       yield* Effect.scoped(
         Effect.gen(function* () {
           const service = yield* AnalysisService;
           yield* service.startRun({
             cwd: harness.projectRoot,
-            relativePath: "consent.m",
+            relativePath: "unobserved.m",
             sourceRevision,
             runtimeId,
           });
           const runId = yield* Queue.take(harness.startedRuns);
-          if (mode === "epoch-change") yield* analytics.setConsent("off");
-          yield* analytics.setConsent("product");
+          yield* analytics.setAvailable(true);
           const updates = yield* service.subscribeRuns({ cwd: harness.projectRoot });
           yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
           yield* updates.pipe(
@@ -817,9 +813,7 @@ describe("analysis artifact analytics", () => {
           ),
         ),
       );
-      expect(analytics.events.map((event) => event.name)).toEqual(
-        mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
-      );
+      expect(analytics.events).toEqual([]);
       expect(yield* Ref.get(harness.processStartCount)).toBe(1);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
@@ -827,7 +821,7 @@ describe("analysis artifact analytics", () => {
 
 describe("analysis outcome analytics", () => {
   it.effect.each(
-    (["off", "epoch-change", "broken"] as const).map((mode) => ({
+    (["unavailable", "broken"] as const).map((mode) => ({
       caseTitle: `keeps execution intact with ${mode} analytics and does not replay active work`,
       mode,
     })),
@@ -835,7 +829,7 @@ describe("analysis outcome analytics", () => {
     Effect.gen(function* () {
       const harness = yield* serviceTestLayer;
       const analytics = yield* analyticsFixture;
-      if (mode === "off") yield* analytics.setConsent("off");
+      if (mode === "unavailable") yield* analytics.setAvailable(false);
       yield* Effect.scoped(
         Effect.gen(function* () {
           const service = yield* AnalysisService;
@@ -852,8 +846,7 @@ describe("analysis outcome analytics", () => {
             sourceRevision,
             runtimeId,
           });
-          if (mode === "epoch-change") yield* analytics.setConsent("off");
-          yield* analytics.setConsent("product");
+          yield* analytics.setAvailable(true);
           const cancelled = yield* service.cancelRun({
             cwd: harness.projectRoot,
             runId: queued.receipt.runId,
@@ -878,9 +871,7 @@ describe("analysis outcome analytics", () => {
           ),
         ),
       );
-      expect(analytics.events.map((event) => event.name)).toEqual(
-        mode === "epoch-change" ? ["scient.operation.started", "scient.operation.started"] : [],
-      );
+      expect(analytics.events).toEqual([]);
       expect(yield* Ref.get(harness.processStartCount)).toBe(1);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );

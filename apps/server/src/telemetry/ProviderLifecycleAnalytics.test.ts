@@ -177,7 +177,7 @@ describe("Provider lifecycle analytics", () => {
     ]);
   });
 
-  it("does not replay terminal or pre-consent operations as new successes or failures", () => {
+  it("does not replay terminal or earlier operations as new successes or failures", () => {
     const mapper = createProviderLifecycleAnalyticsMapper();
     expect(mapper.observe([provider(operation("failed"))]).map((event) => event.name)).toEqual([
       "provider.installation.observed",

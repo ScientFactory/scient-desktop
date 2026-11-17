@@ -54,16 +54,10 @@ export const makeOperationAnalytics = Effect.gen(function* () {
   if (Option.isNone(service)) return (_input: OperationObservation) => Effect.void;
   const analytics = service.value;
   const operations = new Map<string, boolean>();
-  let epoch = yield* analytics.collectionEpoch.pipe(Effect.catchDefect(() => Effect.succeed(-1)));
   return (input: OperationObservation) =>
     Effect.gen(function* () {
-      const currentEpoch = yield* analytics.collectionEpoch;
-      if (currentEpoch !== epoch) {
-        operations.clear();
-        epoch = currentEpoch;
-      }
       const status = yield* analytics.status;
-      if (!status.available || status.consent === "off") {
+      if (!status.available) {
         operations.clear();
         return;
       }
@@ -74,8 +68,7 @@ export const makeOperationAnalytics = Effect.gen(function* () {
         if (oldest !== undefined) operations.delete(oldest);
       }
       operations.set(input.key, input.status !== "active");
-      // Restored terminal state, or a completion whose start preceded consent,
-      // is not evidence of a new measured operation.
+      // Restored terminal state is not evidence of a new measured operation.
       if (previous === undefined && input.status !== "active") return;
       yield* analytics.record(
         `scient.operation.${input.status === "active" ? "started" : input.status}`,
@@ -111,18 +104,15 @@ export const observeAnalyticsEffect = Effect.fn("OperationAnalytics.observeAnaly
     const service = yield* Effect.serviceOption(AnalyticsService);
     if (Option.isNone(service)) return yield* effect;
     const analytics = service.value;
-    const observation = yield* Effect.gen(function* () {
-      const status = yield* analytics.status;
-      if (!status.available || status.consent === "off") return null;
-      return { epoch: yield* analytics.collectionEpoch };
-    }).pipe(Effect.catchDefect(() => Effect.succeed(null)));
+    const available = yield* analytics.status.pipe(
+      Effect.map((status) => status.available),
+      Effect.catchDefect(() => Effect.succeed(false)),
+    );
     // A broken observer must never prevent or retry the actual product operation.
-    if (observation === null) return yield* effect;
-    const { epoch } = observation;
+    if (!available) return yield* effect;
     const startedAt = yield* Clock.currentTimeMillis;
     const record = Effect.fn("OperationAnalytics.record")(
       function* (outcome: "started" | "completed" | "failed" | "cancelled", durationMs?: number) {
-        if ((yield* analytics.collectionEpoch) !== epoch) return;
         if (measurement.kind === "server-startup") {
           yield* analytics.record("app.health", {
             component: "server",

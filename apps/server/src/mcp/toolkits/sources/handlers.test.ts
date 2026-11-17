@@ -806,8 +806,7 @@ describe("Scient Sources MCP handlers", () => {
           Effect.sync(() => {
             events.push({ name, properties });
           }),
-        status: Effect.succeed({ available: true, consent: "product" }),
-        collectionEpoch: Effect.succeed(0),
+        status: Effect.succeed({ available: true }),
         flush: Effect.void,
       });
       const root = yield* Effect.promise(() => fixture("scient-sources-agent-add-"));
@@ -1592,8 +1591,6 @@ describe("Scient Sources MCP handlers", () => {
       const analytics = AnalyticsService.of({
         recordOwners: () => Effect.void,
         record: () => Effect.void,
-        status: Effect.succeed({ available: true, consent: "product" }),
-        collectionEpoch: Effect.succeed(0),
         flush: Effect.void,
       });
       const root = yield* Effect.promise(() => fixture("scient-sources-agent-file-"));

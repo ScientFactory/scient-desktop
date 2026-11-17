@@ -35,16 +35,10 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
       rejectionReason?: ComputeCaptureReason | undefined;
     }
   >();
-  let epoch: number | undefined;
   return (input: ComputeOutputObservation) =>
     Effect.gen(function* () {
-      const currentEpoch = yield* analytics.collectionEpoch;
-      if (currentEpoch !== epoch) {
-        active.clear();
-        epoch = currentEpoch;
-      }
       const status = yield* analytics.status;
-      if (!status.available || status.consent === "off") {
+      if (!status.available) {
         active.clear();
         return;
       }
@@ -67,7 +61,7 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
         });
         return;
       }
-      // No replay of restored work, untracked starts, post-terminal updates or pre-consent work.
+      // No replay of restored work, untracked starts or post-terminal updates.
       if (observation === undefined) return;
       if (input.phase === "coverage") {
         observation.coverage = input.capture.coverage;

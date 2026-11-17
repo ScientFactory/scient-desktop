@@ -21,8 +21,7 @@ export const makeSourceImportAnalytics = Effect.fn("makeSourceImportAnalytics")(
     runPromise(
       Effect.gen(function* () {
         const status = yield* analytics.status;
-        if (!status.available || status.consent === "off") return undefined;
-        const epoch = yield* analytics.collectionEpoch;
+        if (!status.available) return undefined;
         const startedAt = yield* Clock.currentTimeMillis;
         yield* analytics.record("scient.operation.started", {
           operationKind: "source-import",
@@ -34,9 +33,6 @@ export const makeSourceImportAnalytics = Effect.fn("makeSourceImportAnalytics")(
             Effect.gen(function* () {
               if (finished) return;
               finished = true;
-              if ((yield* analytics.collectionEpoch) !== epoch) return;
-              const current = yield* analytics.status;
-              if (!current.available || current.consent === "off") return;
               const finishedAt = yield* Clock.currentTimeMillis;
               yield* analytics.record(
                 `scient.operation.${outcome === "imported" ? "completed" : outcome}`,

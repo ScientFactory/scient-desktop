@@ -33,13 +33,13 @@ it("restricts the optional analytics QA destination to literal loopback ingestio
   }
 });
 
-it.effect("the disabled adapter reports Off without collecting events", () =>
+it.effect("the disabled adapter reports unavailable without collecting events", () =>
   Effect.gen(function* () {
     const analytics = yield* AnalyticsService.AnalyticsService;
     yield* analytics.record("server.boot.heartbeat");
     yield* analytics.recordOwners([{ source: "openai", ownerId: "a".repeat(64) }], "server");
     yield* analytics.flush;
-    assert.deepEqual(yield* analytics.status, { available: false, consent: "off" });
+    assert.deepEqual(yield* analytics.status, { available: false });
   }).pipe(Effect.provide(AnalyticsService.layerDisabled)),
 );
 
@@ -47,7 +47,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
   it.effect("a managed policy turns analytics off over the environment", () =>
     Effect.gen(function* () {
       const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: false, consent: "off" });
+      assert.deepEqual(yield* service.status, { available: false });
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -61,7 +61,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           }),
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
-              env: { SCIENT_ANALYTICS_ENABLED: "true", SCIENT_ANALYTICS_CONSENT: "product" },
+              env: { SCIENT_ANALYTICS_ENABLED: "true" },
             }),
           ),
         ),
@@ -80,7 +80,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           },
         }),
       );
-      assert.deepEqual(yield* service.status, { available: false, consent: "off" });
+      assert.deepEqual(yield* service.status, { available: false });
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -107,7 +107,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           NodeFS.mkdirSync(directory, { recursive: true });
           NodeFS.writeFileSync(NodePath.join(directory, "preferences.json"), contents);
           const service = yield* AnalyticsService.make;
-          assert.deepEqual(yield* service.status, { available: true, consent: "product" });
+          assert.deepEqual(yield* service.status, { available: true });
         }).pipe(
           Effect.scoped,
           Effect.provide(
@@ -118,10 +118,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
               }),
               ConfigProvider.layer(
                 ConfigProvider.fromEnv({
-                  env: {
-                    SCIENT_ANALYTICS_ENABLED: "true",
-                    SCIENT_ANALYTICS_CONSENT: "product",
-                  },
+                  env: { SCIENT_ANALYTICS_ENABLED: "true" },
                 }),
               ),
             ),

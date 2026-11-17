@@ -6923,7 +6923,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? "promoted_queued_to_steer"
               : "steer",
           // SCIENT-FORK: distinguish first acceptance from re-delivery even after
-          // observer restart or a consent/identity boundary clears local caches.
+          // an observer restart clears local caches.
           inputAlreadyAdmitted:
             input.admittedDroidSteer !== undefined ||
             input.command.type === "queued-message.promote-to-steer" ||

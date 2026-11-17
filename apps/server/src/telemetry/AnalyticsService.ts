@@ -20,8 +20,6 @@ export class AnalyticsService extends Context.Service<
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
-      /** In-memory observer fence; never persisted or exported. */
-      expectedCollectionEpoch?: number,
     ) => Effect.Effect<void>;
 
     /** Attempt delivery of the currently due local outbox batch. */
@@ -32,7 +30,7 @@ export class AnalyticsService extends Context.Service<
       owners: ReadonlyArray<TelemetryOwner>,
       observedBy: "server" | "client",
     ) => Effect.Effect<void>;
-    // SCIENT-FORK:START — consent and deletion controls
+    // SCIENT-FORK:START — analytics availability
   } & ScientAnalyticsControls
   // SCIENT-FORK:END
 >()("t3/telemetry/AnalyticsService") {

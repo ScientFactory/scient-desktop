@@ -1,28 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
+import { AnalyticsService } from "./AnalyticsService.ts";
 import { makeComputeOutputAnalytics } from "./ComputeOutputAnalytics.ts";
 
 const fixture = () => {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let status: AnalyticsStatus = { available: true, consent: "product" };
-  let epoch = 0;
+  let available = true;
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
+    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
-  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+  const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      status = { available: true, consent };
-      epoch += 1;
+      available = next;
     });
-  return { events, service, setConsent };
+  return { events, service, setAvailable };
 };
 
 describe("interactive output analytics", () => {
@@ -99,21 +96,17 @@ describe("interactive output analytics", () => {
     }).pipe(Effect.provideService(AnalyticsService, f.service));
   });
 
-  it.effect("does not replay pre-consent work, history, or a reset epoch", () => {
+  it.effect("does not replay work started while unavailable, or history", () => {
     const f = fixture();
     return Effect.gen(function* () {
       const observe = yield* makeComputeOutputAnalytics;
-      yield* f.setConsent("off");
+      yield* f.setAvailable(false);
       yield* observe({ key: "old", phase: "started", startedAt: 100 });
-      yield* f.setConsent("product");
+      yield* f.setAvailable(true);
       yield* observe({ key: "old", phase: "output", retained: true });
       yield* observe({ key: "old", phase: "finished" });
-      yield* observe({ key: "reset", phase: "started", startedAt: 100 });
-      yield* f.setConsent("off");
-      yield* f.setConsent("product");
-      yield* observe({ key: "reset", phase: "output", retained: true });
-      yield* observe({ key: "reset", phase: "finished" });
-      expect(f.events.map((event) => event.name)).toEqual(["scient.operation.started"]);
+      yield* observe({ key: "history", phase: "finished" });
+      expect(f.events).toEqual([]);
     }).pipe(Effect.provideService(AnalyticsService, f.service));
   });
 

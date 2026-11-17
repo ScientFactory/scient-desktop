@@ -47,7 +47,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
-import { AnalyticsService, type AnalyticsStatus } from "../../telemetry/AnalyticsService.ts";
+import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import {
   ComputeSessionService,
   DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
@@ -1655,24 +1655,21 @@ describe("compute runtime inspection", () => {
 
 const analyticsFixture = () => {
   const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] = [];
-  let status: AnalyticsStatus = { available: true, consent: "product" };
-  let epoch = 0;
+  let available = true;
   const service = AnalyticsService.of({
     recordOwners: () => Effect.void,
     record: (name, properties) =>
       Effect.sync(() => {
         events.push({ name, properties });
       }),
-    status: Effect.sync(() => status),
-    collectionEpoch: Effect.sync(() => epoch),
+    status: Effect.sync(() => ({ available })),
     flush: Effect.void,
   });
-  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+  const setAvailable = (next: boolean) =>
     Effect.sync(() => {
-      status = { available: true, consent };
-      epoch += 1;
+      available = next;
     });
-  return { events, service, setConsent };
+  return { events, service, setAvailable };
 };
 
 describe("interactive capture analytics", () => {
@@ -1958,14 +1955,14 @@ describe("interactive capture analytics", () => {
   );
 
   it.effect.each(
-    (["off", "broken"] as const).map((mode) => ({
+    (["unavailable", "broken"] as const).map((mode) => ({
       caseTitle: `keeps real output persistence intact with ${mode} analytics`,
       mode,
     })),
   )("$caseTitle", ({ mode }) =>
     Effect.gen(function* () {
       const f = analyticsFixture();
-      if (mode === "off") yield* f.setConsent("off");
+      if (mode === "unavailable") yield* f.setAvailable(false);
       const test = yield* harness({
         analytics:
           mode === "broken"
@@ -1992,45 +1989,20 @@ describe("interactive capture analytics", () => {
 });
 
 describe("compute outcome analytics", () => {
-  it.effect.each(
-    (["off", "product"] as const).map((initialConsent) => ({
-      caseTitle: `does not restart tracking queued work when ${initialConsent} consent is reset`,
-      initialConsent,
-    })),
-  )("$caseTitle", ({ initialConsent }) =>
+  it.effect("does not start tracking work submitted while unavailable", () =>
     Effect.gen(function* () {
-      const events: {
-        name: string;
-        properties: Readonly<Record<string, unknown>> | undefined;
-      }[] = [];
-      let status: AnalyticsStatus = { available: true, consent: initialConsent };
-      let epoch = 0;
-      const analytics = AnalyticsService.of({
-        recordOwners: () => Effect.void,
-        record: (name, properties) =>
-          Effect.sync(() => {
-            events.push({ name, properties });
-          }),
-        status: Effect.sync(() => status),
-        collectionEpoch: Effect.sync(() => epoch),
-        flush: Effect.void,
-      });
-      const setConsent = (consent: AnalyticsStatus["consent"]) =>
-        Effect.sync(() => {
-          status = { available: true, consent };
-          epoch += 1;
-        });
-      const test = yield* harness({ analytics });
+      const f = analyticsFixture();
+      yield* f.setAvailable(false);
+      const test = yield* harness({ analytics: f.service });
       yield* test.use(
         Effect.gen(function* () {
           const service = yield* ComputeSessionService;
           yield* start;
-          yield* submit("hold", "active-before-consent");
-          yield* waitForExecution(ComputeExecutionId.make("active-before-consent"), "running");
+          yield* submit("hold", "active-before");
+          yield* waitForExecution(ComputeExecutionId.make("active-before"), "running");
           yield* submit("hold", "queued-cancel");
           yield* submit("print(1)", "queued-complete");
-          yield* setConsent("off");
-          yield* setConsent("product");
+          yield* f.setAvailable(true);
           yield* service.cancelExecution({
             projectId: PROJECT_ID,
             sessionId: SESSION_ID,
@@ -2043,26 +2015,23 @@ describe("compute outcome analytics", () => {
             expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
           });
           yield* waitForExecution(ComputeExecutionId.make("queued-complete"), "succeeded");
-          yield* submit("boom", "fresh-after-consent");
-          yield* waitForExecution(ComputeExecutionId.make("fresh-after-consent"), "failed");
+          yield* submit("boom", "fresh-after");
+          yield* waitForExecution(ComputeExecutionId.make("fresh-after"), "failed");
         }),
       );
       for (const kind of ["compute-run", "compute-artifact"]) {
         expect(
-          events
+          f.events
             .filter((event) => event.properties?.operationKind === kind)
             .map((event) => event.name),
         ).toEqual([
-          ...(initialConsent === "product"
-            ? Array.from({ length: 3 }, () => "scient.operation.started")
-            : []),
           "scient.operation.started",
           kind === "compute-run" ? "scient.operation.failed" : "scient.operation.skipped",
         ]);
       }
-      expect(events).toHaveLength(initialConsent === "product" ? 10 : 4);
-      expect(yield* encodeUnknownJson(events)).not.toMatch(
-        /project-1|session-1|before-consent|after-consent|queued-|print\(1\)|ZeroDivisionError|division by zero|python3/u,
+      expect(f.events).toHaveLength(4);
+      expect(yield* encodeUnknownJson(f.events)).not.toMatch(
+        /project-1|session-1|active-before|fresh-after|queued-|print\(1\)|ZeroDivisionError|division by zero|python3/u,
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );

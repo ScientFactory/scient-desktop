@@ -21,23 +21,17 @@ const FENCED_FEATURES: ReadonlySet<string> = new Set([
   "accounts.google_copy.ended",
 ]);
 
-/** Fence delayed UI outcomes across consent changes and server restarts.
+/** Fence delayed UI outcomes across server restarts.
  * The random context never reaches the event contract, queue or gateway.
  */
 export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
-  let epoch: number | undefined;
   let context: string | undefined;
   const status: Effect.Effect<ScientAnalyticsStatus, never, SecureRandom.SecureRandom> = Effect.gen(
     function* () {
-      const current = yield* analytics.status;
-      const currentEpoch = yield* analytics.collectionEpoch;
-      if (!current.available || current.consent === "off") {
-        epoch = undefined;
-        context = undefined;
-        return current;
-      }
-      if (epoch !== currentEpoch || context === undefined) {
-        epoch = currentEpoch;
+      // Older clients still read a consent level; analytics is always on at the full level.
+      if (!(yield* analytics.status).available) return { available: false, consent: "off" };
+      const current = { available: true, consent: "diagnostic" } as const;
+      if (context === undefined) {
         const random = yield* SecureRandom.SecureRandom;
         context = yield* random.uuidV4().pipe(Effect.orElseSucceed(() => undefined));
       }
