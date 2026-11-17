@@ -3648,6 +3648,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "--exclude=node_modules/@napi-rs/canvas-win32-*",
       "--exclude=node_modules/@napi-rs/keyring-win32-*",
       "--exclude=node_modules/@cursor/sdk-win32-*",
+      "--exclude=node_modules/@koromix/koffi-win32-*",
+      "--exclude=node_modules/@transcribe-cpp/win32-*",
       "apps/server/dist",
       "node_modules",
     ]);
