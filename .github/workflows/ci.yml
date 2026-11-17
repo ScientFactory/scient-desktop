@@ -343,8 +343,9 @@ jobs:
 
 
   test:
-    # SCIENT-FORK:START — three runners. Part 1 keeps the required `Test` name and runs every
-    # package parts 2 and 3 don't name, so a new package always runs.
+    # SCIENT-FORK:START — six runners. Part 1 keeps the required `Test` name and runs every
+    # package the other parts don't name, so a new package always runs. Desktop, the lint-rule
+    # plugin and each half of mobile run alone: together they set this lane's longest runner.
     name: ${{ matrix.part == 1 && 'Test' || format('Test {0}', matrix.part) }}
     # SCIENT-FORK:END
     needs: [queue_ci, release_notes, changes]
@@ -362,12 +363,21 @@ jobs:
               --filter '!@t3tools/mobile' --filter '!@t3tools/oxlint-plugin-t3code'
               --filter '!@t3tools/client-runtime' --filter '!@t3tools/scripts'
               --filter '!@scientfactory/provider-runtime' --filter '!@t3tools/shared'
+              --filter '!@t3tools/desktop'
           - part: 2
-            packages: --filter @t3tools/mobile --filter @t3tools/oxlint-plugin-t3code
+            packages: --filter @t3tools/mobile
+            args: --shard 1/2
           - part: 3
             packages: >-
               --filter @t3tools/client-runtime --filter @t3tools/scripts
               --filter @scientfactory/provider-runtime --filter @t3tools/shared
+          - part: 4
+            packages: --filter @t3tools/mobile
+            args: --shard 2/2
+          - part: 5
+            packages: --filter @t3tools/oxlint-plugin-t3code
+          - part: 6
+            packages: --filter @t3tools/desktop
     # SCIENT-FORK:END
     steps:
       - name: Checkout
@@ -384,19 +394,25 @@ jobs:
       # and soft-skip when it is missing. Install build-essential so that path
       # always runs in CI instead of silently no-oping.
       - name: Install C toolchain for process-tree fixtures
-        if: ${{ matrix.part == 1 }}
+        # SCIENT-FORK:START — Scient's own runner for desktop.
+        if: ${{ matrix.part == 1 || matrix.part == 6 }}
+        # SCIENT-FORK:END
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential
           command -v cc
 
       - uses: ./.github/actions/setup-apt-mirrors
-        if: ${{ matrix.part == 1 }}
+        # SCIENT-FORK:START — Scient's own runner for desktop.
+        if: ${{ matrix.part == 1 || matrix.part == 6 }}
+        # SCIENT-FORK:END
 
       # The desktop tests compile the browser secret helper. The install runs in
       # the background while Vite+ installs; the step before the tests waits for it.
       - name: Start installing browser secret helper build libraries
-        if: ${{ matrix.part == 1 }}
+        # SCIENT-FORK:START — Scient's own runner for desktop.
+        if: ${{ matrix.part == 6 }}
+        # SCIENT-FORK:END
         run: |
           # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
           # which a slow mirror can stretch past the wait below.
@@ -417,22 +433,30 @@ jobs:
       # electron's install.js (run by ensure:electron) reads this cache before it
       # downloads from GitHub. The key changes only with the Electron version.
       - name: Cache Electron download
-        if: ${{ matrix.part == 1 }}
+        # SCIENT-FORK:START — Scient's own runner for desktop.
+        if: ${{ matrix.part == 6 }}
+        # SCIENT-FORK:END
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/electron
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
 
       - name: Ensure Electron runtime is installed
-        if: ${{ matrix.part == 1 }}
+        # SCIENT-FORK:START — Scient's own runner for desktop.
+        if: ${{ matrix.part == 6 }}
+        # SCIENT-FORK:END
         run: vp run --filter @t3tools/desktop ensure:electron
 
       # SCIENT-FORK:START — verify exports with the actual installed Electron runtime.
       - name: Verify SVG and PNG exports in Chromium
-        if: ${{ matrix.part == 1 }}
+        # SCIENT-FORK:START — Scient's own runner for desktop.
+        if: ${{ matrix.part == 6 }}
+        # SCIENT-FORK:END
         run: xvfb-run --auto-servernum node apps/desktop/scripts/svg-export-smoke.mjs
       - name: Explain Google's sign-in refusal in Electron's browser
-        if: ${{ matrix.part == 1 }}
+        # SCIENT-FORK:START — Scient's own runner for desktop.
+        if: ${{ matrix.part == 6 }}
+        # SCIENT-FORK:END
         run: xvfb-run --auto-servernum node apps/desktop/scripts/google-sign-in-smoke.mjs
       # SCIENT-FORK:END
 
@@ -445,7 +469,9 @@ jobs:
         run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs .github/scripts/mobile-ios-preview-record.test.cjs .github/scripts/test-delta.test.cjs
 
       - name: Finish installing browser secret helper build libraries
-        if: ${{ matrix.part == 1 }}
+        # SCIENT-FORK:START — Scient's own runner for desktop.
+        if: ${{ matrix.part == 6 }}
+        # SCIENT-FORK:END
         timeout-minutes: 5
         run: |
           until test -s "$RUNNER_TEMP/apt-status"; do sleep 1; done
@@ -457,7 +483,7 @@ jobs:
         run: |
           set -o pipefail
           # The runner's trace writer can crash on surrogate pairs in test output.
-          vp run --parallel --concurrency-limit 4 ${{ matrix.packages }} test 2>&1 | python3 -u -c '
+          vp run --parallel --concurrency-limit 4 ${{ matrix.packages }} test ${{ matrix.args }} 2>&1 | python3 -u -c '
           import sys
           for line in sys.stdin:
               sys.stdout.write(line.encode("ascii", "backslashreplace").decode("ascii"))
@@ -528,7 +554,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -620,21 +646,6 @@ jobs:
           retention-days: 14
       # SCIENT-FORK:END
 
-      # Browser tests run source modules; this boots the production chunk graph.
-      - name: Boot the built web client
-        if: matrix.shard == 1
-        run: |
-          vp run --filter @t3tools/web build
-          node apps/web/scripts/verify-built-boot.ts
-
-      # SCIENT-FORK:START — measure timing budgets separately from parallel correctness tests.
-      - name: Test scientific editor performance
-        if: ${{ !cancelled() && matrix.shard == 1 }}
-        env:
-          SCIENT_MARKDOWN_PERF_STRICT: "1"
-        run: vp run --filter @t3tools/web test:performance
-      # SCIENT-FORK:END
-
       - name: Upload test result
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -652,19 +663,18 @@ jobs:
   # step turns it back on with one worker per vCPU, as upstream's server shards do; each file
   # still runs in its own process.
   test_server:
-    # The organization allows 60 concurrent jobs; twelve runners keep each under eight minutes.
+    # The organization allows 60 concurrent jobs; sixteen runners keep each near three minutes.
     needs: [queue_ci, release_notes, changes, shard_weights]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    # SCIENT-FORK:START — Scient's shards take 7-8 minutes, and shard 1 also runs the Python
-    # bridge and performance steps; upstream's 20-minute limit covers both.
+    # SCIENT-FORK:START — upstream's 20-minute limit; the slowest shard takes about 5 minutes.
     timeout-minutes: 20
     # SCIENT-FORK:END
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -747,16 +757,6 @@ jobs:
           --reporter=json
           --outputFile.json="$TEST_REPORT"
 
-      # SCIENT-FORK:START — retain server measurements outside ordinary correctness tests.
-      - name: Test compute session Python bridge
-        if: ${{ !cancelled() && matrix.shard == 1 }}
-        working-directory: apps/server/src/scient/compute/bridge
-        run: python3 -m unittest discover --pattern 'test_*.py' --verbose
-      - name: Test scientific server performance
-        if: ${{ !cancelled() && matrix.shard == 1 }}
-        run: vp run --filter t3 test:performance
-      # SCIENT-FORK:END
-
       - name: Upload test result
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -810,6 +810,118 @@ jobs:
           overwrite: true
           retention-days: 30
 
+  # SCIENT-FORK:END
+
+  # SCIENT-FORK:START — the production boot and timing budgets, beside the correctness shards.
+  test_web_performance:
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
+    name: Test Web performance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/web/node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for web performance tests
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/web/node_modules/playwright/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/web/node_modules/playwright/cli.js install-deps chromium
+          fi
+
+      # Browser tests run source modules; this boots the production chunk graph.
+      - name: Boot the built web client
+        run: |
+          vp run --filter @t3tools/web build
+          node apps/web/scripts/verify-built-boot.ts
+
+      - name: Test scientific editor performance
+        if: ${{ !cancelled() }}
+        env:
+          SCIENT_MARKDOWN_PERF_STRICT: "1"
+        run: vp run --filter @t3tools/web test:performance
+  # SCIENT-FORK:END
+
+  # SCIENT-FORK:START — server measurements and the Python bridge, beside the correctness shards.
+  test_server_performance:
+    needs: [queue_ci, release_notes, changes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
+    name: Test Server performance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Seal Compute candidate metadata
+        run: node apps/server/scripts/compute-recipes.ts seal
+
+      - name: Resolve Playwright version
+        id: playwright_version
+        run: echo "version=$(node -p "require('./apps/server/node_modules/playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Chromium
+        id: chromium_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
+
+      - name: Install Chromium for server performance tests
+        if: steps.chromium_cache.outputs.cache-hit != 'true'
+        run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+
+      - name: Install missing Chromium system dependencies
+        run: |
+          browser=$(find "$HOME/.cache/ms-playwright" -name chrome-headless-shell -type f -print -quit)
+          test -n "$browser"
+          if ldd "$browser" | grep '=> not found'; then
+            node apps/server/node_modules/playwright-core/cli.js install-deps chromium
+          fi
+
+      - name: Test compute session Python bridge
+        working-directory: apps/server/src/scient/compute/bridge
+        run: python3 -m unittest discover --pattern 'test_*.py' --verbose
+
+      - name: Test scientific server performance
+        if: ${{ !cancelled() }}
+        run: vp run --filter t3 test:performance
   # SCIENT-FORK:END
 
   rust:
@@ -961,7 +1073,7 @@ jobs:
         run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers
       - name: Require every Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
-      # Each case must finish its sync; 300 files runs in Test Server shard 1's test:performance.
+      # Each case must finish its sync; 300 files runs in Test Server performance's test:performance.
       - name: Time a one-file Overleaf sync each way on Windows
         working-directory: apps/server
         run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=300000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) 1$"
@@ -1136,7 +1248,7 @@ jobs:
 
   qualification:
     name: Qualification receipt
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused]
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused]
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1171,7 +1283,7 @@ jobs:
   check:
     name: Check
     if: ${{ always() }}
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused, qualification]
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, test_web_performance, test_server_performance, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused, qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

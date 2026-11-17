@@ -28,6 +28,13 @@ it.
   Scient Agent: whether it was ready, still downloading (in quarters), failed or
   not started.
 - Which agent tools run, how long they take and whether they succeed.
+- For Scient's built-in browser, used by you or an agent: the name of each site
+  a page loads from (for example `accounts.google.com`, never the rest of the
+  address), whether it loaded, how long it took and the browser's error code
+  when it did not; how long each tab stayed open; and, for an agent's turn, how
+  many browser actions of each kind it took, how long they took, which failed,
+  why, and whether it got past them. Local addresses are reported only as
+  "local". Never page contents, titles, screenshots or what you type.
 - When something fails, whether the cause was Scient, the code or document being
   run, a missing package or program, or a network service. Never the error
   message.
@@ -73,7 +80,7 @@ it.
 ## What is never collected
 
 Prompts, responses, file contents, file names and paths, URLs (other than the
-public skill addresses above), research results, passwords, API keys, access
+public skill addresses and browser site names above), research results, passwords, API keys, access
 tokens, your skills' contents and raw provider events. Email is accepted
 only on the dedicated provider-account observation; ordinary usage events
 continue to reject email, paths and links. The Usage
@@ -89,9 +96,8 @@ An administrator can turn it off for every user on a machine with a
 
 ## Storage and retention
 
-Provider emails, work-profile answers, hashed machine IDs and network observations
-stay in Scient's Cloudflare database and are excluded from PostHog exports.
-Usage history is kept while an installation remains active, then expires two years
+Usage data is stored in Scient's Cloudflare database. Until 17 November 2026 ordinary
+usage events were also copied to PostHog; nothing is sent there now. Usage history is kept while an installation remains active, then expires two years
 after its last activity; diagnostics expire after 60 days. Daily totals without
 installation or account identifiers are kept permanently. A token-authenticated
 gateway deletion request removes the installation's records and observations;

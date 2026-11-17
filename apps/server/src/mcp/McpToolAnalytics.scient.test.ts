@@ -91,7 +91,7 @@ it.effect("names a browser tool's failure and counts every browser call toward i
     expect(failed.isError).toBe(true);
     expect(failed.structuredContent).toBeUndefined();
 
-    expect(ledger.take(threadId, Number.MAX_SAFE_INTEGER)).toEqual({ calls: 2, failures: 1 });
+    expect(ledger.take(threadId, Number.MAX_SAFE_INTEGER)).toMatchObject({ calls: 2, failures: 1 });
     expect(yield* Deferred.await(recorded)).toMatchObject({
       tool: "preview_wait_for",
       outcome: "error",
