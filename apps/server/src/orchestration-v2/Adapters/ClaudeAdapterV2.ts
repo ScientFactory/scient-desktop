@@ -9958,19 +9958,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const nativeThreadId =
                   input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
                 const liveQuery = yield* Ref.get(queryContext);
+                // SCIENT-FORK:START — Scient's EOF cleanup keeps the exited query reserved until it
+                // ends, so an exited stream is a lost process. Its tasks end with it; a wake it
+                // hands to a replacement process is kept.
+                const processExited = liveQuery === null || liveQuery.streamExited;
+                const wakeLost =
+                  liveQuery === null ||
+                  (liveQuery.streamExited && !liveQuery.preserveWakeForReplacement);
+                // SCIENT-FORK:END
                 // Background tasks outlive a failed turn while the process that ran it stays open.
                 const processKeepsTasks =
                   input.status === "failed" &&
                   liveQuery !== null &&
                   !liveQuery.stopping &&
-                  // SCIENT-FORK: Scient's EOF cleanup keeps the exited query reserved until it ends.
-                  !liveQuery.streamExited &&
+                  !processExited &&
                   liveQuery.lastTurn === input.context;
                 if (nativeThreadId !== null) {
                   if (input.status !== "completed" && !processKeepsTasks) {
                     // Stop cancels Claude's wakeup and an exited process loses it; a failed
-                    // turn on a live process leaves it pending. Process exits null the query first.
-                    if (input.status !== "failed" || liveQuery === null) {
+                    // turn on a live process leaves it pending.
+                    if (input.status !== "failed" || wakeLost) {
                       scheduledWakeupsByNativeThread.delete(nativeThreadId);
                     }
                     yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);

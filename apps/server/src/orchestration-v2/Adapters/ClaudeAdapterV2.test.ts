@@ -13575,6 +13575,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // SCIENT-FORK:START — Scient's EOF cleanup keeps the exited query reserved while it settles.
+  it.effect("drops a ScheduleWakeup hold when the Claude process exits mid-turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-wakeup-exit"),
+          text: "Wake up in a minute.",
+          attachments: [],
+        }),
+      );
+      for (const frame of scheduleWakeupFrames({
+        toolUseId: "toolu_schedule_wakeup_exit",
+        uuids: ["00000000-0000-4000-8000-000000002201", "00000000-0000-4000-8000-000000002202"],
+        toolInput: { delaySeconds: 60, prompt: "say WOKE", reason: "wake", noop: false },
+        scheduledFor: DateTime.toEpochMillis(now) + 60_000,
+      })) {
+        yield* harness.offerAndWait(frame);
+      }
+      yield* Queue.shutdown(harness.sdkMessages);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+      yield* harness.until(() => publishedRoster(harness).length === 0);
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+  // SCIENT-FORK:END
+
   it.effect("Stop on a thread waiting for a ScheduleWakeup closes Claude and drops the hold", () =>
     Effect.gen(function* () {
       let closes = 0;
