@@ -59,6 +59,9 @@ import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
+// SCIENT-FORK:START — folders that cannot hold a worktree launch at the root.
+import { makeCannotHoldWorktree } from "./scient-fork/EmptyRepositoryWorkspace.ts";
+// SCIENT-FORK:END
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 // The agent waits for its branch name; a rate-limited provider would hold it for minutes.
@@ -477,6 +480,9 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
   });
+  // SCIENT-FORK:START — a repository with nothing to branch from is a plain folder too.
+  const cannotHoldWorktree = makeCannotHoldWorktree({ isNonGitProject, projects, git });
+  // SCIENT-FORK:END
 
   /**
    * A recorded worktree strategy can outlive the ref it names: tasks saved before
@@ -1214,11 +1220,14 @@ const make = Effect.gen(function* () {
     function* (request) {
       // Scratch has no Git repository. Normalize before folder allocation so
       // durable preparation and retries use the thread's own Scratch folder.
+      // SCIENT-FORK:START — so does a folder that cannot hold a worktree, as saved tasks do.
       const input: ThreadLaunchInput =
         request.workspaceStrategy.type === "worktree" &&
-        (yield* managedFolders.isScratchProject(request.projectId))
+        ((yield* managedFolders.isScratchProject(request.projectId)) ||
+          (yield* cannotHoldWorktree(request.projectId, request.workspaceStrategy.baseRef)))
           ? { ...request, workspaceStrategy: { type: "root" } }
           : request;
+      // SCIENT-FORK:END
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,
@@ -1569,7 +1578,9 @@ const make = Effect.gen(function* () {
   return ThreadLaunchService.of({
     launch,
     checkWorktreeBase,
-    isNonGitProject,
+    // SCIENT-FORK:START — task saves treat a repository with nothing to branch from as a folder.
+    isNonGitProject: cannotHoldWorktree,
+    // SCIENT-FORK:END
     retryPreparation,
     prepareRun,
   });

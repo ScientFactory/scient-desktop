@@ -18,6 +18,9 @@ the current project, or use a project's own new-thread action. A new thread carr
 your model and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
+A worktree needs a commit to start from. In a Git repository with no commits, no
+branches and no remote, a thread or scheduled task set to use a new worktree works
+in the project folder instead, as it would in a folder that is not a Git repository.
 
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.

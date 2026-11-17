@@ -2447,6 +2447,25 @@ and clicks on it, to the start page until the next retry. Scient keeps one diver
 `resolveThreadRouteRenderState` admits an archived unlisted thread, so archived originals stay
 readable through fork lineage.
 
+## Repositories with nothing to branch from
+
+T3 refuses a new worktree only for a folder that is not a Git repository. A repository with no
+commit, no local branch and no remote passes its base check, then fails every worktree launch,
+and a scheduled task saved there with a worktree failed each run. Scient treats such a repository
+as a plain folder (`scient-fork/EmptyRepositoryWorkspace.ts`) unless the requested base resolves:
+the marked `isNonGitProject` entry in `ThreadLaunchService` makes task saves store a root
+strategy, and the marked `launch` normalization runs tasks already saved with a worktree at the
+root, as T3 does for Scratch. Only Git's "no remote configured" refusal counts as no remote.
+
+A message sent into a thread whose worktree setup failed waits behind T3's `worktreeSetupPending`
+hold until someone retries setup, and T3's scheduled-task wait gave up only after a day. The
+marked wait in `ScheduledTaskService.recordRunFailure` calls
+`scient/orchestration/WorktreeSetupHoldReport.ts`, which records that run as failed once it is
+stuck, including when the setup ahead of it fails later. `Orchestrator.ts` only re-exports the
+predicate. Tested in `ThreadLaunchService.scient.test.ts` and `EmptyRepositoryWorkspace.test.ts`.
+T3 main has the same launch, save and wait code, so this is offered upstream; when T3 takes an
+equal change, use its version and delete the blocks, modules and tests.
+
 ## Security policy
 
 `.github/SECURITY.md` is Scient's: reports go to Scient's address or a private advisory on
