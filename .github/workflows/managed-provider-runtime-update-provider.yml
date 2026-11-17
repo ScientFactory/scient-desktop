@@ -69,6 +69,8 @@ jobs:
 
       - id: catalog
         name: Build one provider candidate from its official stable channel
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: >-
           node scripts/update-managed-runtime-catalog.ts
           --provider "${{ inputs.provider }}"

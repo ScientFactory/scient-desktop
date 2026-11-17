@@ -18,6 +18,7 @@ import {
   refreshManagedRuntimeProvider,
   validateManagedRuntimeCatalog,
   validateManagedRuntimeCandidate,
+  withGitHubToken,
   type ManagedRuntimeCatalogData,
 } from "./managed-runtime-catalog.ts";
 import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json" with { type: "json" };
@@ -1466,5 +1467,31 @@ describe("qualified Cursor same-day replacements", () => {
         "cursor",
       ),
     ).toThrow(/ordering metadata/u);
+  });
+});
+
+describe("GitHub API token", () => {
+  it("authenticates only GitHub API requests and keeps their other headers", async () => {
+    const sent: Array<{ url: string; headers: Headers }> = [];
+    const fetch_ = withGitHubToken(async (input, init) => {
+      sent.push({ url: input.href, headers: new Headers(init?.headers) });
+      return new Response("{}");
+    }, "token-1");
+    const headers = { "user-agent": "catalog-test" };
+    await fetch_(new URL(scientApi), { headers });
+    await fetch_(new URL("https://github.com/ScientFactory/scient-agent/releases"), { headers });
+    await fetch_(new URL("https://api.github.com.example.org/repos"), { headers });
+    expect(sent.map(({ headers }) => headers.get("authorization"))).toEqual([
+      "Bearer token-1",
+      null,
+      null,
+    ]);
+    expect(sent.every(({ headers }) => headers.get("user-agent") === "catalog-test")).toBe(true);
+  });
+
+  it("leaves requests anonymous without a token", async () => {
+    const plain = async () => new Response("{}");
+    expect(withGitHubToken(plain, undefined)).toBe(plain);
+    expect(withGitHubToken(plain, "")).toBe(plain);
   });
 });
