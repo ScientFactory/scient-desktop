@@ -606,7 +606,10 @@ approval, or question state is copied only as history. A native clone needs a co
 boundary, so a running cut takes the portable path. Source execution continues independently.
 
 A running fork never refuses for a reason inside the source run. Live text capture (Codex only)
-adds the reply text not yet saved. When the capture is unavailable, fails, times out, or the run
+adds the reply text not yet saved. `scient-fork/RunningTurnFork.ts` owns it on the fork side: it
+chooses the live owner (`runningTurnCaptureTarget`), captures before the Orchestrator takes the
+fork's thread locks, and fences the commit; `scient-provider/ProviderTextSnapshots.ts` owns the
+session-manager registry of live owners, run consumers and waiters. When the capture is unavailable, fails, times out, or the run
 moves on before the fork is saved (it finishes, stops, or its session is replaced), the fork keeps
 the history saved at that moment, logged as `Running fork forks saved history without live text`.
 A run that settled before planning forks through its saved end; a run that saved nothing yet forks

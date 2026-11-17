@@ -8,7 +8,6 @@ import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import {
   ProviderTextSnapshotError,
   type CapturedProviderText,
-  type ProviderTextSnapshotOwner,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   type CheckpointRef,
@@ -57,6 +56,7 @@ import {
   ConversationForkPlanError,
   type ConversationForkSource,
 } from "./ConversationForkPlan.ts";
+import { makeRunningTurnFork } from "./RunningTurnFork.ts";
 import {
   freezeConversationForkNativeSource,
   type ConversationForkNativeSourceDecision,
@@ -414,117 +414,23 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const prepareTextCapture = Effect.fnUntraced(function* (command: ThreadForkV2Command) {
-    const boundary = command.scient?.boundary;
-    if (boundary?.kind !== "running-turn") return null;
-    if (Option.isSome(yield* receipts.getByCommandId(command.commandId))) return null;
-    yield* legacyImporter.ensureTranscript(command.sourceThreadId);
-    // Control records only: the capture reads the source's history once, at its frame.
-    const projection = yield* projections.getThreadRecords(command.sourceThreadId, [
-      "runs",
-      "attempts",
-      "providerThreads",
-      "providerTurns",
-    ]);
-    const run = projection.runs.find((row) => row.id === boundary.runId);
-    const thread = projection.providerThreads.find((row) => row.id === run?.providerThreadId);
-    if (thread?.driver !== "codex") return null;
-    const attempt = projection.attempts.find((row) => row.id === run?.activeAttemptId);
-    // Native turn/started can be committed before the start RPC binds the attempt.
-    // The accepted turn's exact attempt/root/thread links remain canonical authority.
-    const turns = projection.providerTurns.filter(
-      (row) =>
-        row.runAttemptId === attempt?.id &&
-        row.nodeId === run?.rootNodeId &&
-        row.providerThreadId === thread.id &&
-        row.nativeAcceptance === "accepted" &&
-        ["running", "waiting"].includes(row.status) &&
-        (attempt?.providerTurnId == null || row.id === attempt.providerTurnId),
-    );
-    // Before the native turn is accepted (Codex can take many seconds to start),
-    // nothing native is buffered yet: the fork freezes what is committed.
-    if (turns.length === 0) return null;
-    // The capture only adds reply text not yet saved. When it cannot run, the
-    // fork keeps the saved history instead of refusing.
-    const withoutCapture = (reason: string) =>
-      Effect.logWarning("Running fork forks saved history without live text", {
-        reason,
-        threadId: command.sourceThreadId,
-        runId: boundary.runId,
-      }).pipe(Effect.as(null));
-    if (Option.isNone(snapshots) || snapshots.value.captureRunningForkText === undefined)
-      return yield* withoutCapture("unavailable");
-    const turn = turns.length === 1 ? turns[0] : undefined;
-    if (
-      run === undefined ||
-      attempt === undefined ||
-      turn === undefined ||
-      run.rootNodeId === null ||
-      thread.providerSessionId === null ||
-      thread.nativeThreadRef?.nativeId == null ||
-      turn.nativeTurnRef?.nativeId == null
-    )
-      return yield* withoutCapture("boundary-not-ready");
-    const owner: ProviderTextSnapshotOwner = {
-      threadId: projection.thread.id,
-      runId: run.id,
-      activeAttemptId: attempt.id,
-      rootNodeId: run.rootNodeId,
-      runOrdinal: run.ordinal,
-      providerThreadId: thread.id,
-      nativeThreadId: thread.nativeThreadRef.nativeId,
-      providerTurnId: turn.id,
-      nativeTurnId: turn.nativeTurnRef.nativeId,
-      providerSessionId: thread.providerSessionId,
-      providerInstanceId: run.providerInstanceId,
-      driver: thread.driver,
-    };
-    return yield* snapshots.value
-      .captureRunningForkText(owner)
-      .pipe(
-        Effect.catchTags({ ProviderTextSnapshotError: (cause) => withoutCapture(cause.reason) }),
-      );
+  const runningTurn = makeRunningTurnFork({
+    snapshots,
+    readRecords: Effect.fnUntraced(function* (fork) {
+      if (Option.isSome(yield* receipts.getByCommandId(fork.commandId))) return null;
+      yield* legacyImporter.ensureTranscript(fork.sourceThreadId);
+      // Control records only: the capture reads the source's history once, at its frame.
+      return yield* projections.getThreadRecords(fork.sourceThreadId, [
+        "runs",
+        "attempts",
+        "providerThreads",
+        "providerTurns",
+      ]);
+    }),
+    withAttachmentPermit: attachmentArbitration.withPermit,
+    workspaceExists: baseline.workspaceExists,
+    unavailable: (message) => failure(message),
   });
-
-  const releaseCapture = (captured: CapturedProviderText | null) =>
-    captured === null || Option.isNone(snapshots)
-      ? Effect.void
-      : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void);
-
-  const withRunningCapture = <A, E, R>(
-    command: ThreadForkV2Command,
-    attempt: (capture: CapturedProviderText | null) => Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> =>
-    command.scient?.boundary.kind !== "running-turn"
-      ? attempt(null)
-      : Effect.scoped(
-          Effect.gen(function* () {
-            const captured = yield* Effect.acquireRelease(
-              prepareTextCapture(command).pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("Running fork forks saved history without live text", {
-                    reason: "prepare-failed",
-                    cause,
-                  }).pipe(Effect.as(null)),
-                ),
-              ),
-              releaseCapture,
-              { interruptible: true },
-            );
-            if (captured === null) return yield* attempt(null);
-            // An attempt built on the capture can fail because the source moved on after
-            // it (its turn finished, its worktree changed). Release the capture and fork
-            // the saved history as it is now, rather than refusing.
-            return yield* attempt(captured).pipe(
-              Effect.ensuring(releaseCapture(captured)),
-              Effect.catch((cause) =>
-                Effect.logWarning("Running fork forks saved history after its source moved on", {
-                  cause,
-                }).pipe(Effect.andThen(attempt(null))),
-              ),
-            );
-          }),
-        );
 
   // Reserves and publishes the fork's own checkpoint ref, copied from the boundary
   // or, for a running fork, captured from the current files.
@@ -739,15 +645,9 @@ const make = Effect.gen(function* () {
           events,
           ...(capture === null ? {} : { runningForkSource: { owner: capture.owner, capture } }),
         });
-        if (capture === null) return yield* committed;
-        const guarded = Effect.gen(function* () {
-          if (!(yield* baseline.workspaceExists(admission.cwd)))
-            return yield* failure("The captured workspace is unavailable. Retry the fork.");
-          return yield* committed;
-        }).pipe(attachmentArbitration.withPermit);
-        return yield* Option.isSome(snapshots) && snapshots.value.withCapturedForkText !== undefined
-          ? snapshots.value.withCapturedForkText(capture, guarded)
-          : Effect.fail(new ProviderTextSnapshotError({ reason: "owner-lost" }));
+        return yield* capture === null
+          ? committed
+          : runningTurn.fence(capture, admission.cwd, committed);
       }),
     );
   };
@@ -904,7 +804,7 @@ const make = Effect.gen(function* () {
       return withoutVcsDiagnostics(admit(input)).pipe(asDispatchError("rejected"));
     }),
     commit,
-    withRunningCapture,
+    withRunningCapture: runningTurn.withCapture,
     retryFailedSetup: Effect.fn("ConversationForkService.retryFailedSetup")(
       function (threadId, commandId) {
         return retryFailedSetup(threadId, commandId).pipe(asDispatchError("failed"));
