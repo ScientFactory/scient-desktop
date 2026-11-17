@@ -9,15 +9,14 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import "../../index.css";
 import { EnvironmentId, MessageId, ProviderInstanceId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { StrictMode, createRef, useLayoutEffect, useRef, useState } from "react";
+import { StrictMode, createRef, useLayoutEffect, useState } from "react";
 
 import { expect, it, vi, type TestContext } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { HandoffRow } from "./V2LifecycleRow";
-import { useTimelineEndControl } from "./useTimelineEndControl";
-import { scrollTimelineToEnd } from "./timelineEndScroll";
+import { measuredEndOffset, settleListScroll } from "./useTimelinePositionRestore";
 import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 const env = EnvironmentId.make("scroll-geometry-tests");
@@ -921,8 +920,7 @@ it("remeasures pending handoff footer layout and clears end navigation through t
     );
   }
   function Reader({ pending }: { pending: boolean }) {
-    const isAtEndRef = useRef(true);
-    const control = useTimelineEndControl({ isAtEndRef, onReachedEnd: () => {} });
+    const [showScrollToBottom, setShowScrollToBottom] = useState(false);
     const report = useStableCallback((atEnd: boolean) => {
       const list = _fixture.listRef.current;
       const viewport = list?.getScrollableNode();
@@ -941,7 +939,7 @@ it("remeasures pending handoff footer layout and clears end navigation through t
           virtualViewport: state.scrollLength,
           positionedThreadKey,
         });
-      control.onIsAtEndChange(atEnd);
+      setShowScrollToBottom(!atEnd);
     });
     return (
       <div style={{ position: "relative", height: "100%" }}>
@@ -956,14 +954,16 @@ it("remeasures pending handoff footer layout and clears end navigation through t
             positionedThreadKey = nextKey;
           }}
         />
-        {control.showScrollToBottom ? (
+        {showScrollToBottom ? (
           <button
             type="button"
             data-reader-end-control
             onPointerDown={(event) => event.preventDefault()}
             style={{ position: "absolute", bottom: _fixture.base.contentInsetEndAdjustment + 4 }}
             onClick={async () => {
-              await scrollTimelineToEnd(_fixture.listRef.current, { animated: false });
+              const list = _fixture.listRef.current!;
+              await list.scrollToEnd({ animated: false });
+              await settleListScroll(list, measuredEndOffset, () => false);
               _fixture.listRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
             }}
           >
@@ -1137,7 +1137,6 @@ function _createFixture(context: TestContext) {
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 100,
     onIsAtEndChange: vi.fn(),
-    onManualNavigation: () => {},
   };
   return {
     listRef,

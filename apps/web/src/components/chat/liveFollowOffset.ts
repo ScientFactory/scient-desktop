@@ -77,11 +77,12 @@ function liveFollowOffset(
 
 /**
  * Render and measure needed rows before restoring follow. Route frames through nextFrame so restore
- * cleanup can cancel them; finish after stability or the bounded frame limit.
+ * cleanup can cancel them; finish after stability or the bounded frame limit. Each step continues on
+ * the next frame rather than on the list's scroll promise, which need not settle while the end
+ * still moves (an answer still appearing), so the frame limit always ends it.
  */
 export function returnToLiveFollow(input: {
   list: LegendListRef;
-  rows: readonly MessagesTimelineRow[];
   composerInset: number;
   /** The prompt being followed when the reader left. */
   promptId: string;
@@ -89,38 +90,34 @@ export function returnToLiveFollow(input: {
   nextFrame: (step: () => void) => void;
   done: () => void;
 }) {
-  const { list, rows, composerInset, promptId, cancelled, nextFrame, done } = input;
-  void Promise.resolve(list.scrollToEnd({ animated: false })).then(() => {
+  const { list, composerInset, promptId, cancelled, nextFrame, done } = input;
+  void list.scrollToEnd({ animated: false });
+  let stableFrames = 0;
+  let remainingFrames = 60;
+  const settle = () => {
     if (cancelled()) return;
-    let stableFrames = 0;
-    let remainingFrames = 60;
-    const settle = () => {
-      if (cancelled()) return;
-      const target = liveFollowOffset(list, rows, composerInset, promptId);
-      const element = list.getScrollableNode();
-      if (target === null || !element || --remainingFrames <= 0) {
-        done();
-        return;
-      }
-      if ("mount" in target) {
-        stableFrames = 0;
-        void Promise.resolve(
-          list.scrollToIndex({ index: target.mount, animated: false, viewPosition: 1 }),
-        ).then(() => {
-          if (!cancelled()) nextFrame(settle);
-        });
-        return;
-      }
-      if (Math.abs(element.scrollTop - target.offset) > 1) {
-        stableFrames = 0;
-        void list.scrollToOffset({ offset: target.offset, animated: false }).then(() => {
-          if (!cancelled()) nextFrame(settle);
-        });
-        return;
-      }
-      if (++stableFrames < 2) nextFrame(settle);
-      else done();
-    };
-    nextFrame(settle);
-  });
+    // The rows the list shows now: more of the response can arrive while this settles.
+    const rows = list.getState().data as readonly MessagesTimelineRow[];
+    const target = liveFollowOffset(list, rows, composerInset, promptId);
+    const element = list.getScrollableNode();
+    if (target === null || !element || --remainingFrames <= 0) {
+      done();
+      return;
+    }
+    if ("mount" in target) {
+      stableFrames = 0;
+      void list.scrollToIndex({ index: target.mount, animated: false, viewPosition: 1 });
+      nextFrame(settle);
+      return;
+    }
+    if (Math.abs(element.scrollTop - target.offset) > 1) {
+      stableFrames = 0;
+      void list.scrollToOffset({ offset: target.offset, animated: false });
+      nextFrame(settle);
+      return;
+    }
+    if (++stableFrames < 2) nextFrame(settle);
+    else done();
+  };
+  nextFrame(settle);
 }
