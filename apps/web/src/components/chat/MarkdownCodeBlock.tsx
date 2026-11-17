@@ -1,6 +1,8 @@
 import { PlayIcon, WrapTextIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
+// SCIENT-FORK:START — useRef and RefObject anchor the copy-failure message.
 import React, { use, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+// SCIENT-FORK:END
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -154,14 +156,16 @@ export function MarkdownCodeBlock({
   diagram?: boolean;
   /** SCIENT-FORK: the code box's direction; left-to-right by default. */
   dir?: "ltr" | "rtl" | "auto";
-  /** SCIENT-FORK: lets the surrounding surface tell the user, beside Copy, that copying failed. */
+  // SCIENT-FORK:START — lets the surrounding surface tell the user, beside Copy, that copying failed.
   onCopyFailure?:
     | ((cause: Error, copyButton: RefObject<HTMLButtonElement | null>) => void)
     | undefined;
+  // SCIENT-FORK:END
   children: ReactNode;
 }) {
-  // SCIENT-FORK: the Copy button anchors a copy-failure message.
+  // SCIENT-FORK:START — the Copy button anchors a copy-failure message.
   const copyButtonRef = useRef<HTMLButtonElement>(null);
+  // SCIENT-FORK:END
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
     timeout: 1200,
     onError: (cause) => {
@@ -173,7 +177,9 @@ export function MarkdownCodeBlock({
         },
         cause,
       );
+      // SCIENT-FORK:START — the surface shows the failure beside this Copy button.
       onCopyFailure?.(cause, copyButtonRef);
+      // SCIENT-FORK:END
     },
   });
   const defaultWrapped = useClientSettings((settings) => settings.wordWrap);
@@ -200,7 +206,9 @@ export function MarkdownCodeBlock({
       <TooltipTrigger
         render={
           <Button
+            // SCIENT-FORK:START — anchor for the copy-failure message.
             ref={copyButtonRef}
+            // SCIENT-FORK:END
             type="button"
             variant="ghost-muted"
             size="icon-xs"
