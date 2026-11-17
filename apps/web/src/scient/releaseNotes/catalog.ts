@@ -9,6 +9,64 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.30",
+    publishedAt: "2026-11-17",
+    format: "paragraphs",
+    headline: "An agentic library for your research.",
+    highlights: [
+      {
+        id: "personal-library-0630",
+        title: "Keep your papers across projects",
+        description:
+          "Sources becomes Library: one collection for all your projects on this computer. Organize papers with collections, tags, reading status and stars, find possible duplicates, and undo bulk changes. Each project keeps its own references and notes. Libraries on different computers are separate for now.",
+      },
+      {
+        id: "library-import-export-0630",
+        title: "Bring your references with you",
+        description:
+          "Import Zotero libraries, groups and collections, PDFs, or reference files. Add papers by identifier, refresh them from Zotero, or send them back with their PDFs. Back up your Library or save a project package to share its papers, notes and highlights.",
+      },
+      {
+        id: "library-reading-0630",
+        title: "Read, highlight and ask about your papers",
+        description:
+          "Highlight passages, add notes and search your papers’ full text. Ask the Library to help answer a question from your papers, with citations and checked quotations. Quote a passage directly into your document with its source and page.",
+      },
+      {
+        id: "library-citations-0630",
+        title: "Cite as you write, and check your references",
+        description:
+          "Find Library references while writing citations in Markdown or LaTeX, and choose a citation style for your project and Word exports. Check references in your Library or documents, including Word files, for incorrect details, missing entries, retractions and published versions of preprints.",
+      },
+      {
+        id: "systematic-reviews-0630",
+        title: "Keep a systematic review organized",
+        description:
+          "Record searches, screen titles and abstracts, track full-text decisions and resolve disagreements in the Library. Scient builds a PRISMA flow diagram from those records. Agents can help with screening, and their decisions are marked for you to review.",
+      },
+      {
+        id: "feedback-0630",
+        title: "Send feedback without leaving Scient",
+        description:
+          "Use the lightbulb beside Settings, type /feedback, or choose Report after a failed turn. Review what will be sent and optionally attach a screenshot, logs or the conversation. Reports saved offline are sent when the connection returns.",
+      },
+      {
+        id: "scient-agent-0630",
+        title: "Improvements to Scient Agent",
+        description:
+          "Continue works after Stop or a usage limit, and recovered turns no longer keep an earlier failure. Long idle conversations can be compacted before their cache expires, while supported agents load optional tools when needed to leave more room for your work. Usage now includes background requests such as titles and prompt suggestions.",
+      },
+      {
+        id: "windows-browser-import-0630",
+        title: "Bring Windows browser sign-ins into Scient",
+        description:
+          "Import Chrome and Edge profiles on Windows through the browser’s own approval flow, without closing it. Saved passwords remain in the browser. Google sign-ins can work directly in Scient again, with clearer alternatives when Google refuses.",
+      },
+    ],
+    alsoIncluded:
+      "A smoother update flow with background downloads and automatic retries. Fork conversations in one click or into a new worktree. Edit queued messages without losing their place. Faster loading of long conversations, less storage used by forks, and startup and crash fixes. Font sizes reset once to the new defaults; you can adjust them again in Settings.",
+  },
+  {
     version: "0.6.29",
     publishedAt: "2026-11-15",
     format: "paragraphs",
