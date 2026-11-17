@@ -473,12 +473,16 @@ export function useScientThreadFork({
       async (): Promise<ForkAcceptanceOutcome> => {
         const key = forkAttemptKey(environmentId, originId, sourceKey(source));
         let workspaceNotice: string | undefined;
+        // The notice the fork card already showed, so it is not said twice.
+        let cardNotice: string | undefined;
         if (fromCard) setErrorUpdate(null);
         try {
           // A fork already under way from this point resumes with its saved command.
           let attempt = attemptStore.get(key);
+          if (attempt) cardNotice = attempt.workspaceNotice;
           if (!attempt) {
             const checked = checkedOptions.current;
+            if (checked?.key === key) cardNotice = checked.options.workspaceNotice;
             checkedOptions.current = null;
             // "Latest" names whatever response is newest now, so check it again.
             const eligibility =
@@ -606,8 +610,8 @@ export function useScientThreadFork({
             params: { environmentId, threadId: attempt.command.targetThreadId },
           });
           attemptStore.delete(key);
-          // The fork card showed the notice before the fork was made.
-          if (workspaceNotice !== undefined && !fromCard)
+          // Said here unless the fork card showed this notice before the fork was made.
+          if (workspaceNotice !== undefined && !(fromCard && workspaceNotice === cardNotice))
             toastManager.add({ type: "info", title: "Forked", description: workspaceNotice });
           return "accepted";
         } catch (cause) {

@@ -645,6 +645,41 @@ describe("forks from the fork card", () => {
     });
   });
 
+  it("says a workspace move found only when Fork is pressed, but not one the card showed", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const notice = "The original worktree was removed, so this fork works in the project folder.";
+    const latest = { kind: "assistant-response" as const, messageId: null, latest: true };
+    await render(_fixture);
+    await act(() => _fixture.hook.prepareFork(latest));
+    // "Latest" is checked again on Fork, and only then finds the worktree gone.
+    commands.options.mockResolvedValue(
+      AsyncResult.success({
+        available: true,
+        localAvailable: true,
+        reason: null,
+        newWorktree: false,
+        workspaceNotice: notice,
+        sourceAssistantMessageId: source.messageId,
+        sourceUserMessageId: null,
+      }),
+    );
+    await act(() =>
+      _fixture.hook.forkFromMessage(latest, { workspaceMode: "local", fromCard: true }, "/w"),
+    );
+    expect(commands.toast).toHaveBeenCalledWith(expect.objectContaining({ description: notice }));
+
+    // A card that already showed the notice does not say it again.
+    commands.toast.mockClear();
+    await act(() => _fixture.hook.prepareFork(source));
+    await act(() =>
+      _fixture.hook.forkFromMessage(source, { workspaceMode: "local", fromCard: true }, "/w"),
+    );
+    expect(commands.toast).not.toHaveBeenCalled();
+  });
+
   it("says in the card that an older server cannot take this fork", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

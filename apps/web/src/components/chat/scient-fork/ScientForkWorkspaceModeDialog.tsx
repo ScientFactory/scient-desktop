@@ -252,6 +252,19 @@ export function ScientForkWorkspaceModeDialog({
     }
   }
 
+  // SCIENT-FORK:START — a saved fork that failed for good unlocks the card; its
+  // title and worktree choice stay as the user's own instead of resetting.
+  const [unlockedRetry, setUnlockedRetry] = useState(false);
+  if (open && !locked && retryTitle !== undefined && !unlockedRetry) {
+    setUnlockedRetry(true);
+    setTitleDraft(retryTitle);
+    // A title that was the automatic proposal keeps following it.
+    setTitleEdited(retryTitle !== proposedTitle);
+    setNewWorktree(retryWorkspaceMode === "new-worktree");
+  }
+  if ((!open || locked) && unlockedRetry) setUnlockedRetry(false);
+  // SCIENT-FORK:END
+
   // Follow live sibling-title changes only until the user edits the proposal.
   if (open && !titleEdited && !disabled && !locked && titleDraft !== proposedTitle) {
     setTitleDraft(proposedTitle);
