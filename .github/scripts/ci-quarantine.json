@@ -33,7 +33,7 @@
     },
     {
       "id": "linux-google-sign-in-restart",
-      "job": "Test",
+      "job": "Test 6",
       "step": "Explain Google's sign-in refusal in Electron's browser",
       "test": null,
       "signature": "Error: Failed during Google refusing that site's Continue with Google",

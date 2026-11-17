@@ -1,9 +1,6 @@
 // SCIENT-FORK:START — flaky-test quarantine for the required Check (docs/operations/ci-flakes.md).
-//
-// A failed job passes the gate only when every failure in it is explained by an unexpired row of
-// ci-quarantine.json: the exact job, failed step, test id and failure signature. The failing job
-// stays red and the run's conclusion stays `failure`; only `Check` accepts it, and it writes each
-// quarantined failure into its summary. Anything this module cannot read or explain blocks.
+// A failed job passes only when unexpired rows explain every failure in it: job, step, test id
+// and signature. The job stays red; Check lists it. Anything unread or unexplained blocks.
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -36,6 +33,13 @@ const CONSEQUENCES = [
 // Steps that may be skipped after a quarantined failure: GitHub's post steps, cache saves and
 // artifact uploads. Any other skipped step after it is a check that never ran, so it blocks.
 const AFTER_FAILURE = /^(Post |Save |Upload |Run actions\/(upload-artifact|cache)@)/;
+// Steps whose `if` starts with `!cancelled()` or `always()` in ci.yml: they run after an earlier
+// failure, so when one is skipped its own condition (such as its matrix part) was false.
+const RUN_DESPITE_FAILURE = [
+  "Verify SVG and PNG exports in Chromium",
+  "Explain Google's sign-in refusal in Electron's browser",
+  "Publish transfer budget report",
+];
 const GATE = "Check";
 // ci-check.cjs ADVISORY jobs: evidence and upkeep beside the gate, which never block.
 const ADVISORY_JOBS = ["Overleaf macOS", "Shard weights", "Main dependency store"];
@@ -90,8 +94,13 @@ function jobMatches(pattern, name) {
 
 // Terminal colour codes, which GitHub keeps in raw logs.
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+// The `Test` job pipes output through Python's backslashreplace, so `⎯` arrives as `\u23af`.
+const unescape = (line) =>
+  line.replace(/\\(?:x([0-9a-f]{2})|u([0-9a-f]{4})|U([0-9a-f]{8}))/g, (_, x, u, U) =>
+    String.fromCodePoint(Number.parseInt(x ?? u ?? U, 16)),
+  );
 const strip = (line) =>
-  line
+  unescape(line)
     .replace(ANSI, "")
     .replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/, "")
     .replace(/\s+$/, "");
@@ -242,18 +251,17 @@ function unrunSteps(job) {
   return steps.filter(
     (step, index) =>
       (index < first && step.conclusion !== "success" && step.conclusion !== "skipped") ||
-      (index > first && step.conclusion === "skipped" && !AFTER_FAILURE.test(step.name)) ||
+      (index > first &&
+        step.conclusion === "skipped" &&
+        !AFTER_FAILURE.test(step.name) &&
+        !RUN_DESPITE_FAILURE.includes(step.name)) ||
       (step.conclusion !== "success" &&
         step.conclusion !== "skipped" &&
         step.conclusion !== "failure"),
   );
 }
 
-/**
- * Explains one failed job with open rows. Returns the rows it matched, or the reason it blocks.
- * `job` is an Actions API job: { name, conclusion, steps: [{ name, conclusion, started_at,
- * completed_at }] }.
- */
+/** Explains one failed Actions API job with open rows: the rows it matched, or why it blocks. */
 function explainJob(job, log, rows) {
   const candidates = rows.filter((row) => jobMatches(row.job, job.name));
   const failedSteps = (job.steps ?? []).filter((step) => step.conclusion === "failure");
@@ -426,6 +434,7 @@ async function run({ github, context, core, registerText }) {
 module.exports = {
   ADVISORY_JOBS,
   CONSEQUENCES,
+  RUN_DESPITE_FAILURE,
   QUARANTINE_DAYS,
   REGISTER,
   evaluate,

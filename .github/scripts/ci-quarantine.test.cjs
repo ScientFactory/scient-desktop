@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   ADVISORY_JOBS,
   CONSEQUENCES,
+  RUN_DESPITE_FAILURE,
   evaluate,
   isOpen,
   jobMatches,
@@ -339,7 +340,7 @@ test("the receipt and the WSL wait pass only as consequences of quarantined jobs
 test("a quarantined failure that skipped a later check blocks", () => {
   const google = {
     id: "google",
-    job: "Test",
+    job: "Test 6",
     step: "Explain Google's sign-in refusal in Electron's browser",
     test: null,
     signature: "Error: Failed during Google refusing that site's Continue with Google",
@@ -349,7 +350,7 @@ test("a quarantined failure that skipped a later check blocks", () => {
   };
   const googleLog = log(google.signature, "##[error]Process completed with exit code 1.");
   const testJob = (later) =>
-    job(4, "Test", [step("Test"), step(google.step, "failure", at(9), at(11)), ...later]);
+    job(4, "Test 6", [step("Test"), step(google.step, "failure", at(9), at(11)), ...later]);
   const decide = (later) =>
     evaluate({
       jobs: [testJob(later)],
@@ -481,4 +482,63 @@ test("the consequence jobs and steps exist under these names", () => {
     assert.ok(workflows.includes(`name: ${own}`), name);
     assert.ok(workflows.includes(`- name: ${s}`), s);
   }
+});
+
+test("the checked-in Google smoke row names the job its step runs in", () => {
+  const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  const row = readRegister(ROOT).rows.find((r) => r.id === "linux-google-sign-in-restart");
+  assert.equal(row.job, "Test 6");
+  assert.match(
+    workflow,
+    /name: \$\{\{ matrix\.part == 1 && 'Test' \|\| format\('Test \{0\}', matrix\.part\) \}\}/,
+  );
+  assert.match(
+    workflow,
+    new RegExp(
+      `- name: ${row.step}\\n\\s+if: \\$\\{\\{ !cancelled\\(\\) && matrix\\.part == 6 \\}\\}`,
+    ),
+  );
+});
+
+test("steps that run despite an earlier failure say so in ci.yml, wherever they are", () => {
+  const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  for (const name of RUN_DESPITE_FAILURE) {
+    const conditions = [
+      ...workflow.matchAll(
+        new RegExp(`- name: ${name.replace(/[()]/g, "\\$&")}\\n\\s+if: (.+)`, "g"),
+      ),
+    ];
+    assert.ok(conditions.length > 0, name);
+    for (const [, condition] of conditions)
+      assert.match(condition, /^(\$\{\{ !cancelled\(\) && |always\(\) && )/, name);
+  }
+  // In the parts where they do not apply they are skipped by their own condition, which does
+  // not block a quarantined failure of the package tests before them.
+  const row = {
+    ...readRegister(ROOT).rows[0],
+    id: "part-1-test",
+    job: "Test",
+    step: "Test",
+    test: "src/a.test.ts > one",
+    signature: "Error: Test timed out in 30000ms.",
+  };
+  const failure = log(
+    "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯",
+    " FAIL  src/a.test.ts > one",
+    "Error: Test timed out in 30000ms.",
+    "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯",
+    "      Tests  1 failed | 3 passed (4)",
+  );
+  const part1 = job(7, "Test", [
+    step("Test", "failure"),
+    ...RUN_DESPITE_FAILURE.map((name) => step(name, "skipped")),
+    step("Post Checkout"),
+  ]);
+  const result = evaluate({
+    jobs: [part1],
+    logs: { 7: failure },
+    register: register(row),
+    now: NOW,
+  });
+  assert.equal(result.ok, true, result.blocked.join("\n"));
 });
