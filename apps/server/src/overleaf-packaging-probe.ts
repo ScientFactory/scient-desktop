@@ -4,6 +4,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as ServerConfig from "./config.ts";
@@ -228,8 +229,21 @@ if (phase === "refuse") {
       for (const [name, content] of Object.entries(expected))
         NodeAssert.equal(await NodeFSP.readFile(NodePath.join(folder, name), "utf8"), content);
     });
+    const platform = yield* HostProcess.Platform,
+      arch = yield* HostProcess.Architecture;
     console.log(
-      JSON.stringify({ overleaf: phase, helper, executable: process.execPath, passed: true }),
+      JSON.stringify({
+        overleaf: phase,
+        helper,
+        executable: process.execPath,
+        runtime: {
+          node: process.version,
+          electron: process.versions.electron ?? null,
+          platform,
+          arch,
+        },
+        passed: true,
+      }),
     );
   });
   await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
