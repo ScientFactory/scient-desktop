@@ -170,6 +170,11 @@ describe("Pi orchestration prompt section", () => {
 
     assert.isUndefined(await hook(event, ctx));
     assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+    // Every schema is loaded on completion gateways, so an empty search must not read as "no bash".
+    assert.include(
+      sections.t3_code_orchestration,
+      "tool_search finds only tools that are not loaded yet",
+    );
     assert.equal(event.systemPrompt, "base");
     assert.include(bridge.getActiveTools(), "preview_snapshot");
 

@@ -1,6 +1,9 @@
 import { ompExtensionBootstrapPrelude } from "./OmpExtensionBootstrap.ts";
 import type { OmpTarget } from "./OmpTarget.ts";
-import { SCIENT_CONNECTOR_LOAD_MODE_ENV } from "../scient/ScientAgentToolLoading.ts";
+import {
+  SCIENT_ALWAYS_LOADED_TOOLS,
+  SCIENT_CONNECTOR_LOAD_MODE_ENV,
+} from "../scient/ScientAgentToolLoading.ts";
 
 /** A connector the extension proxies, through Scient's connector endpoint. */
 export interface OmpScientExtensionConnector {
@@ -28,8 +31,8 @@ export interface OmpScientExtensionBootstrap {
 const OMP_SCIENT_TOOL_CALL_TIMEOUT_MS = 65 * 60 * 1_000;
 
 /**
- * Older runtimes need essential tools. Supported Scient runtimes mount connector schemas under
- * xd://; Scient controls stay essential. Share connections and load mode across subagent reruns.
+ * Older runtimes need essential tools. Supported runtimes mount optional Scient and connector
+ * tools under xd://, keeping a small Scient core direct. Share connections across subagent reruns.
  * before_agent_start replaces the string-array prompt. Connector aliases preserve call names;
  * one failed connector must not remove others' tools.
  */
@@ -159,6 +162,11 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     ),
   );
   if (typeof initialized?.protocolVersion === "string") protocolVersion = initialized.protocolVersion;
+  // The server's first instruction line describes it in Scient Agent's catalog, as Codex shows it.
+  const description =
+    typeof initialized?.instructions === "string"
+      ? initialized.instructions.split(/\\r?\\n/u).find((line) => line.trim())?.trim().slice(0, 200)
+      : undefined;
   await request("notifications/initialized", {}, connectSignal, true);
   const tools = [];
   let cursor;
@@ -182,7 +190,7 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
     if (seen.has(cursor) || page === 99) throw new Error(label + " tool catalog pagination did not finish.");
     seen.add(cursor);
   }
-  return { tools, request };
+  return { tools, request, description };
 };
 
 /** The tool's model-facing name, or undefined when none is usable. */
@@ -237,19 +245,23 @@ export default async function scientOmpExtension(pi) {
     connectors: scientConnectors(bootstrap.connectors).map((connector) => {
       const label = "Connector " + JSON.stringify(connector.displayName);
       return scientConnect(connector.url, bootstrap.authorization, label, AbortSignal.timeout(30_000)).then(
-        ({ tools, request }) => ({ ...connector, label, connected: true, tools, request }),
+        ({ tools, request, description }) => ({ ...connector, label, connected: true, tools, request, description }),
         () => ({ ...connector, label, connected: false, tools: [], request: undefined }),
       );
     }),
   }));
   const awareness = shared.awareness + (shared.connectorLoadMode === "discoverable"
-    ? "\\nConnector tools are available as xd:// devices: use read on xd:// to discover them, read xd://<name> for the schema, and write xd://<name> to call them."
+    ? "\\nAdditional Scient and connector tools are available as xd:// devices: use read on xd:// to discover them, read xd://<name> for the schema, and write JSON arguments to xd://<name> to call them. Tools named in these instructions may be devices rather than top-level tools."
     : "");
-  const [{ tools, request }, connectors] = await Promise.all([
+  const [{ tools, request, description }, connectors] = await Promise.all([
     shared.connection,
     Promise.all(shared.connectors),
   ]);
-  const proxied = tools.map((tool) => ({ ...tool, remoteName: tool.name, label: "Scient", request, loadMode: "essential" }));
+  const coreTools = new Set(${JSON.stringify(SCIENT_ALWAYS_LOADED_TOOLS)});
+  const proxied = tools.map((tool) => ({
+    ...tool, remoteName: tool.name, label: "Scient", request, serverName: "Scient", serverDescription: description ?? "Scient workspace tools",
+    loadMode: coreTools.has(tool.name) ? "essential" : shared.connectorLoadMode,
+  }));
   const skipped = new Map();
   const taken = new Set(proxied.map((tool) => tool.name));
   for (const connector of connectors) {
@@ -260,7 +272,7 @@ export default async function scientOmpExtension(pi) {
         continue;
       }
       taken.add(name);
-      proxied.push({ ...tool, name, remoteName: tool.name, label: connector.label, request: connector.request, loadMode: shared.connectorLoadMode });
+      proxied.push({ ...tool, name, remoteName: tool.name, label: connector.label, serverName: connector.serverName, serverDescription: connector.description ?? connector.displayName + ", a Scient connector", request: connector.request, loadMode: shared.connectorLoadMode });
     }
   }
   const toolNames = proxied.map((tool) => tool.name);
@@ -270,6 +282,10 @@ export default async function scientOmpExtension(pi) {
       name,
       label: name,
       loadMode: tool.loadMode,
+      mcpServerName: tool.serverName,
+      // Scient Agent lists a described service as one catalog row.
+      mcpServerDescription: tool.serverDescription,
+      mcpToolName: remoteName,
       description: tool.description,
       parameters: tool.parameters,
       // A strict grammar makes models fill optional fields, and a filled field changes

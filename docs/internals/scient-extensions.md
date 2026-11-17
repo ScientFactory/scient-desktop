@@ -53,6 +53,25 @@ The library is a **projection**, never a new owner. Each entry is read from its
 owning system, and every change is dispatched back to that owner and re-read
 before the UI updates. The UI never predicts success.
 
+## Agent tool loading
+
+Scient Agent 0.1.4 and later on OMP 18.18 or later, and stock OMP 18.18 and later,
+keep a small Scient core loaded: Compute, paper retrieval, messaging, HTML rendering,
+thread inspection and management, delegation, secrets and skill discovery. Other Scient
+and connector tools remain callable through `xd://` devices. Older runtimes receive
+all schemas directly. The bridge passes service ownership metadata so runtimes with
+grouped catalogs can list a service once and expose its individual tools on demand.
+Each service's description is the first line of its MCP server's `instructions`. Scient's
+own server sends `SCIENT_MCP_INSTRUCTIONS`, which Codex also shows for its namespace.
+
+Pi's `tool_search` finds only tools that are not loaded yet. On completion gateways the
+bridge loads every schema, so its guidance says that loaded tools are called directly
+and that an empty search does not mean a capability is missing.
+
+Custom-model connections to OpenRouter carry Scient's app headers (`HTTP-Referer`,
+`X-OpenRouter-Title`). OMP adds its own headers only for its built-in `openrouter`
+provider.
+
 ## Product surface
 
 **Settings → Extensions** (`/settings/extensions`). "Connections" already means

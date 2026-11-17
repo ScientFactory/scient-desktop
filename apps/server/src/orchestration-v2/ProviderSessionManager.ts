@@ -36,6 +36,8 @@ import {
   registerStartupSessionReservations,
 } from "./scient-provider/StartupSessionHold.ts";
 import { requireEnabledProviderInstance } from "./scient-provider/ProviderInstanceEnabled.ts";
+// SCIENT-FORK: Continue on agents that cannot resume natively.
+import { continuationTurnInput } from "./scient-provider/ContinuationTurn.ts";
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -3002,7 +3004,8 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
-        return {
+        // SCIENT-FORK: named so the Continue fallback below can start through it.
+        const exposed: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           // SCIENT-FORK:START — the manager alone reads the running-fork text subscription.
           ...subscriberRuntime,
           mcpSessionInjection,
@@ -3301,7 +3304,18 @@ export const layerWithOptions = (
                   .pipe(turnMetrics("runtime-request-response")),
               ),
             ),
+          // SCIENT-FORK:START — Continue on agents that cannot resume natively: the prompt OMP's
+          // protocol needs too, as an ordinary turn through this manager's start.
+          ...(runtime.resumeTurn === undefined
+            ? {
+                resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
+                  exposed.startTurn(continuationTurnInput(input)),
+              }
+            : {}),
+          // SCIENT-FORK:END
         };
+        // SCIENT-FORK: returns the named runtime.
+        return exposed;
       };
 
       const persistProviderSessionUpdate = Effect.fn(

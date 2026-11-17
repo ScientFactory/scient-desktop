@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import type { ProviderConnectionAccount } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -7,6 +7,11 @@ import {
   scientAgentUsageLimits,
   scientAgentUsageReader,
 } from "./ScientAgentUsage.ts";
+import {
+  decodeScanCache,
+  makeScanCacheWriter,
+  type CachedFile,
+} from "../../usage/usageScanCache.ts";
 
 const CHECKED_AT = "2026-11-13T12:00:00.000Z";
 const RESET_MS = Date.parse("2026-11-16T09:00:00.000Z");
@@ -140,5 +145,58 @@ describe("scientAgentUsageReader", () => {
     );
     assert.strictEqual(record?.provider, "scient");
     assert.isTrue(record?.dedupeKey?.startsWith("scient:"));
+  });
+
+  it("counts the agent's calls outside the conversation, such as prompt predictions", () => {
+    if (scientAgentUsageReader.kind !== "transcripts") throw new Error("transcripts reader");
+    const format = scientAgentUsageReader.format;
+    const state = format.state!.initial();
+    const [record] = format.parseLine(
+      JSON.stringify({
+        type: "model_usage",
+        id: "u1",
+        timestamp: "2026-11-16T10:00:00.000Z",
+        purpose: "composer-prediction",
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+        model: "gpt-6-luna",
+        usage: { input: 900, output: 12, cacheRead: 80_000, cacheWrite: 0 },
+        stopReason: "stop",
+      }),
+      state,
+    );
+    assert.deepInclude(record, { provider: "scient", model: "openai-codex/gpt-6-luna" });
+    assert.strictEqual(record?.totals.cachedInputTokens, 80_000);
+  });
+
+  it("re-reads a scan cached before side calls were counted, keeping its records", () => {
+    if (scientAgentUsageReader.kind !== "transcripts") throw new Error("transcripts reader");
+    const format = scientAgentUsageReader.format;
+    const entry = (state: unknown): CachedFile => ({
+      size: 10,
+      mtimeMs: 100,
+      provider: "scient",
+      records: [],
+      tailRecords: [],
+      malformedRecords: 0,
+      position: { resumeOffset: 10, guardLength: 4, guardHash: 1, state },
+    });
+    const saved = JSON.parse(
+      [
+        ...makeScanCacheWriter()(
+          new Map([
+            ["/old.jsonl", entry({ sessionId: "s1" })],
+            ["/current.jsonl", entry(format.state!.initial())],
+          ]),
+          {},
+        ),
+      ].join(""),
+    );
+    const restored = decodeScanCache(saved, new Map([["scient", format]]));
+    expect(restored.get("/old.jsonl")).toMatchObject({
+      size: -1,
+      position: { resumeOffset: 0, state: null },
+    });
+    expect(restored.get("/current.jsonl")).toEqual(entry(format.state!.initial()));
   });
 });

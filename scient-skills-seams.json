@@ -366,6 +366,11 @@
       "path": "apps/web/src/scient/extensions/InstalledPage.tsx",
       "anchor": "<ScientSkillsLibrary",
       "purpose": "List turned-on Scient skills, every agent's skills and project skills under Extensions ▸ Installed ▸ Skills."
+    },
+    {
+      "path": "apps/server/src/provider/scient/ScientAgentToolLoading.ts",
+      "anchor": "scient_skill_load",
+      "purpose": "Keep skill discovery and loading in the Scient tool core that capable OMP runtimes load directly."
     }
   ]
 }
