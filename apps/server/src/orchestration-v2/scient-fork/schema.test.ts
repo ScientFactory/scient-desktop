@@ -57,7 +57,7 @@ const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
 const SCIENT_MIGRATION_IDS = [
   1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-  28, 29, 30,
+  28, 29, 30, 31,
 ];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
@@ -90,6 +90,7 @@ const SCIENT_MIGRATION_NAMES = [
   "copy-legacy-handoff-sources",
   "shared-history-bodies",
   "conversation-fork-records",
+  "fork-handoff-history-ranges",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
 
@@ -127,6 +128,7 @@ it.effect.each(["projection", "event"] as const)(
           [28, "copy-legacy-handoff-sources"],
           [29, "shared-history-bodies"],
           [30, "conversation-fork-records"],
+          [31, "fork-handoff-history-ranges"],
         ]);
         assert.deepEqual(yield* runScientMigrations(sql), []);
         const kept = yield* sql<{ readonly payload_json: string }>`
@@ -227,6 +229,7 @@ it.effect("compacts archived legacy projection handoffs without changing what re
         [28, "copy-legacy-handoff-sources"],
         [29, "shared-history-bodies"],
         [30, "conversation-fork-records"],
+        [31, "fork-handoff-history-ranges"],
       ]);
       yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 26`;
       for (const [id, payload] of Object.entries(rows))
@@ -240,6 +243,7 @@ it.effect("compacts archived legacy projection handoffs without changing what re
         [28, "copy-legacy-handoff-sources"],
         [29, "shared-history-bodies"],
         [30, "conversation-fork-records"],
+        [31, "fork-handoff-history-ranges"],
       ]);
 
       const stored = new Map<string, string>();
@@ -814,6 +818,7 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [28, "copy-legacy-handoff-sources"],
           [29, "shared-history-bodies"],
           [30, "conversation-fork-records"],
+          [31, "fork-handoff-history-ranges"],
         ] as const,
       );
 
@@ -2223,6 +2228,7 @@ it.effect("migration 9 converges a development database that already recorded mi
         [28, "copy-legacy-handoff-sources"],
         [29, "shared-history-bodies"],
         [30, "conversation-fork-records"],
+        [31, "fork-handoff-history-ranges"],
       ]);
       const columns = yield* sql<{
         readonly name: string;
@@ -2271,6 +2277,7 @@ it.effect("reconciles only the exact former import-17 ledger without losing rece
         [28, "copy-legacy-handoff-sources"],
         [29, "shared-history-bodies"],
         [30, "conversation-fork-records"],
+        [31, "fork-handoff-history-ranges"],
       ]);
       const ledger = yield* sql<{
         readonly migration_id: number;
@@ -2391,7 +2398,8 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (28, 'copy-legacy-handoff-sources')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (29, 'shared-history-bodies')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (30, 'conversation-fork-records')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (31, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (31, 'fork-handoff-history-ranges')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (32, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -2399,7 +2407,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 31"),
+          error.message.includes("unknown migration 32"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -2410,7 +2418,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [...SCIENT_MIGRATION_IDS, 31],
+        [...SCIENT_MIGRATION_IDS, 32],
       );
     }),
   ),

@@ -26,6 +26,7 @@ import {
   isLegacyContextHistoryReadable,
 } from "./scient-fork/ContextHistorySource.ts";
 import { handoffMetadataSql, turnItemMetadataSql } from "./scient-fork/ContextHistorySql.ts";
+import { handoffHistoryRowsSql } from "./scient-fork/ForkHandoffRanges.ts";
 import {
   readNativeHistoryEstimates,
   type NativeHistoryEstimate,
@@ -5385,6 +5386,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT 1 FROM scient_handoff_shared_sources AS shared
           JOIN scient_history_bodies AS body ON body.hash = shared.summary_hash
           WHERE shared.source_id = json_extract(context.payload_json, '$.historySource.id'))`;
+        // Fork handoffs keep runs of inherited positions as ranges of the fork's history.
+        const handoffRows = handoffHistoryRowsSql(
+          sql,
+          sql`json_extract(context.payload_json, '$.historySource.id')`,
+        );
         // SCIENT-FORK:END
         // Source identity must not hide a missing body behind otherwise-decodable metadata.
         const brokenSources = yield* sql<{ readonly thread_id: string }>`
@@ -5404,14 +5410,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')) AND (
                 json_extract(context.payload_json, '$.historySource.summaryOnly') = 1
                 OR json_extract(context.payload_json, '$.historySource.itemCount') <> (
-                  SELECT COUNT(*) FROM scient_handoff_history WHERE source_id = json_extract(context.payload_json, '$.historySource.id'))
+                  SELECT COUNT(*) FROM (${handoffRows}))
                 OR EXISTS (
-                  SELECT 1 FROM scient_handoff_history AS history
+                  SELECT 1 FROM (${handoffRows}) AS history
                   LEFT JOIN scient_handoff_frozen_items AS body ON body.body_id = history.body_id
                   LEFT JOIN scient_fork_frozen_items AS frozen ON frozen.thread_id = history.view_thread_id AND frozen.position = history.fork_position
                   LEFT JOIN orchestration_v2_projection_turn_items AS item ON item.turn_item_id = history.source_item_id AND item.thread_id = history.source_thread_id
-                  WHERE history.source_id = json_extract(context.payload_json, '$.historySource.id')
-                    AND octet_length(frozen.item_json) IS NULL AND octet_length(body.item_json) IS NULL
+                  WHERE octet_length(frozen.item_json) IS NULL AND octet_length(body.item_json) IS NULL
                     AND octet_length(item.payload_json) IS NULL
                 )
               ))

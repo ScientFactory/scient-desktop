@@ -32,6 +32,15 @@ stored once for the rewrite and shared by every affected handoff. This source re
 through ancestor edits, rollback, deletion and projection rebuild. Timeline rows carry coverage and
 causal identity rather than another transcript.
 
+A fork already records its inherited membership in its own history list, which is never rewritten.
+A handoff therefore stores each consecutive run of inherited fork positions as one range of that
+list, not one row per item; copies the fork owns, its own items and any position with a captured
+run status or kept body stay per item. Every reader expands ranges through one SQL fragment into
+exactly the rows they replace. If a shown item is rewritten before the fork kept its version, its
+range returns to per-item rows so the handoff can keep the old body. Per-item rows written before
+ranges existed are converted by a throttled background pass, one source per short transaction, and
+a batch that does not read back identically rolls back and stays per item.
+
 The first command result and a repeated command's receipt use the same bounded event-read
 representation. Projection and publication still commit from the original events; lossless event
 payloads stay in the journal. Retrying a command does not change its returned history metadata.
